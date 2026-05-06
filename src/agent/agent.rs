@@ -52,6 +52,12 @@ pub(crate) const ARCHITECT_EDITOR_STATE_MARKER: &str = "<editor-state>";
 /// we strip these from the tool list advertised to the LLM — the LLM cannot
 /// call what it cannot see.  Names match the bare operator-mcp tool name;
 /// the `construct-operator__` prefix is stripped before comparison.
+///
+/// `validate_workflow` and `dry_run_workflow` are also denied: they give the
+/// LLM a "I sanity-checked, my job is done, I'll just print the YAML in chat"
+/// exit path that doesn't surface the YAML to the editor.
+/// `propose_workflow_yaml` validates internally — it's the only validation
+/// path the Architect needs.
 pub(crate) const ARCHITECT_DENIED_TOOLS: &[&str] = &[
     "create_workflow",
     "revise_workflow",
@@ -61,6 +67,8 @@ pub(crate) const ARCHITECT_DENIED_TOOLS: &[&str] = &[
     "run_workflow",
     "delete_workflow",
     "deprecate_workflow",
+    "validate_workflow",
+    "dry_run_workflow",
 ];
 
 /// True when the current turn's user message carries the Architect

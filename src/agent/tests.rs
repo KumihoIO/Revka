@@ -1301,12 +1301,17 @@ fn filter_tool_specs_for_architect_strips_denied_tools_when_marker_present() {
             parameters: serde_json::json!({}),
         },
         ToolSpec {
-            name: "construct-operator__propose_workflow_yaml".into(),
-            description: "allowed".into(),
+            name: "construct-operator__validate_workflow".into(),
+            description: "denied".into(),
             parameters: serde_json::json!({}),
         },
         ToolSpec {
-            name: "construct-operator__validate_workflow".into(),
+            name: "construct-operator__dry_run_workflow".into(),
+            description: "denied".into(),
+            parameters: serde_json::json!({}),
+        },
+        ToolSpec {
+            name: "construct-operator__propose_workflow_yaml".into(),
             description: "allowed".into(),
             parameters: serde_json::json!({}),
         },
@@ -1334,12 +1339,16 @@ fn filter_tool_specs_for_architect_strips_denied_tools_when_marker_present() {
         "run_workflow must be filtered out in Architect mode; got {names:?}"
     );
     assert!(
-        names.contains(&"construct-operator__propose_workflow_yaml"),
-        "propose_workflow_yaml must remain available; got {names:?}"
+        !names.contains(&"construct-operator__validate_workflow"),
+        "validate_workflow must be filtered out in Architect mode; got {names:?}"
     );
     assert!(
-        names.contains(&"construct-operator__validate_workflow"),
-        "validate_workflow must remain available; got {names:?}"
+        !names.contains(&"construct-operator__dry_run_workflow"),
+        "dry_run_workflow must be filtered out in Architect mode; got {names:?}"
+    );
+    assert!(
+        names.contains(&"construct-operator__propose_workflow_yaml"),
+        "propose_workflow_yaml must remain available; got {names:?}"
     );
     assert!(
         names.contains(&"echo"),
