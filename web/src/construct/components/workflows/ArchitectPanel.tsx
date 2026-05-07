@@ -127,6 +127,20 @@ function buildContextPreface(workflowName: string): string {
   ].join('\n');
 }
 
+/** Defense-in-depth: extract the LAST ```yaml/```yml fenced block from a
+ *  chat content string. We only match explicitly-tagged fences — bare
+ *  ``` fences carry too high a false-positive risk. Returns null when no
+ *  tagged fenced block is present. */
+function extractLastYamlBlock(content: string): string | null {
+  const fenced = /```(?:yaml|yml)\n([\s\S]*?)\n```/g;
+  let lastMatch: string | null = null;
+  let m: RegExpExecArray | null;
+  while ((m = fenced.exec(content)) !== null) {
+    lastMatch = m[1] ?? null;
+  }
+  return lastMatch;
+}
+
 /** Compose the `pageContext` string sent on every chat turn. Includes the
  *  editor's current YAML so Architect always sees the latest state — and
  *  can pass it as `base_yaml` when calling `propose_workflow_yaml`. */
@@ -186,6 +200,19 @@ function ArchitectChatSurface({
   // for the same proposal.
   const lastProcessedResultId = useRef<string | null>(null);
 
+  // Per-turn dedup for the chat-YAML fallback. Reset on every user-message
+  // submit; set to true the moment onYamlProposed fires from EITHER path
+  // (tool result or chat fallback). Guarantees a single apply per turn —
+  // and lets the tool-result path win the rare "tool call AND inline
+  // YAML in chat" mixed case, because tool results arrive before the
+  // assistant message lands in `messages`.
+  const yamlAppliedThisTurnRef = useRef(false);
+
+  // Track which assistant messages we've already inspected so the
+  // fallback effect doesn't reconsider the same completed message on
+  // every unrelated re-render.
+  const fallbackInspectedRef = useRef<Set<string>>(new Set());
+
   const handleToolResult = useCallback(
     (evt: ToolResultEvent) => {
       if (evt.name !== 'propose_workflow_yaml') return;
@@ -216,12 +243,20 @@ function ArchitectChatSurface({
       if (!parsed) return;
       if (parsed.valid && typeof parsed.yaml === 'string' && parsed.yaml.trim()) {
         onYamlProposed(parsed.yaml, parsed.summary ?? '');
+        yamlAppliedThisTurnRef.current = true;
       }
       // Validation failures already surface in the activity feed via the
       // tool_result card — no extra UI needed here. The LLM should re-roll.
     },
     [onYamlProposed],
   );
+
+  // Reset the per-turn fallback flag whenever the user sends a new
+  // message (either via the textarea or a slash command). Fires inside
+  // the hook's send path so it stays in sync with the WS turn boundary.
+  const handleUserMessage = useCallback(() => {
+    yamlAppliedThisTurnRef.current = false;
+  }, []);
 
   const {
     activities,
@@ -244,7 +279,35 @@ function ArchitectChatSurface({
     draftKey,
     pageContext,
     onToolResult: handleToolResult,
+    onUserMessage: handleUserMessage,
   });
+
+  // Fallback: when an assistant turn completes WITHOUT propose_workflow_yaml
+  // having fired, scan the latest agent message for a ```yaml/```yml fenced
+  // block and pipe it into onYamlProposed. Only runs when the message has
+  // settled (typing === false, content present in `messages`) — never while
+  // streaming. Per-turn dedup via yamlAppliedThisTurnRef and per-message
+  // dedup via fallbackInspectedRef.
+  useEffect(() => {
+    if (typing) return;
+    if (yamlAppliedThisTurnRef.current) return;
+    if (messages.length === 0) return;
+    const last = messages[messages.length - 1];
+    if (!last) return;
+    if (last.role !== 'agent') return;
+    if (fallbackInspectedRef.current.has(last.id)) return;
+    fallbackInspectedRef.current.add(last.id);
+    const extracted = extractLastYamlBlock(last.content);
+    if (!extracted || !extracted.trim()) return;
+    yamlAppliedThisTurnRef.current = true;
+    onYamlProposed(
+      extracted,
+      '<chat-fallback>: extracted from chat content because propose_workflow_yaml was not called',
+    );
+    appendSystemMessage(
+      'Architect wrote YAML in chat instead of calling propose_workflow_yaml. Applied from chat as a fallback. The DAG canvas updated.',
+    );
+  }, [messages, typing, onYamlProposed, appendSystemMessage]);
 
   // Inject the context preface as a synthetic operator-role message the
   // first time we observe an empty scrollback for this session.
