@@ -901,7 +901,8 @@ every non-internal agent.
 |---|---|---|
 | `enabled` | `true` | Enable Operator injection for non-internal agents |
 | `mcp_path` | `~/.construct/operator_mcp/run_operator_mcp.py` | Absolute path to the MCP runner script |
-| `max_tool_iterations` | (operator override) | Override `agent.max_tool_iterations` for operator-enabled sessions (operator tasks are multi-step by nature) |
+| `max_tool_iterations` | `80` | Override `agent.max_tool_iterations` for operator-enabled sessions (operator tasks are multi-step by nature) |
+| `tool_timeout_secs` | `600` | Per-tool timeout for the auto-injected operator MCP server. Some operator tools are inherently slow (codex image generation, workflow execution, dry-run, bulk recall); the runtime's global default (180 s) is too tight. Capped at `600` (the runtime's `MAX_TOOL_TIMEOUT_SECS`); higher values are silently truncated. Set to `0` to fall back to the global default. |
 
 Notes:
 

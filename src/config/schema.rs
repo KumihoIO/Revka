@@ -1093,10 +1093,28 @@ pub struct OperatorConfig {
     /// Default: 80.
     #[serde(default = "default_operator_max_tool_iterations")]
     pub max_tool_iterations: usize,
+
+    /// Tool-call timeout in seconds for the auto-injected
+    /// `construct-operator` MCP server.
+    ///
+    /// Some operator tools are inherently slow: codex image generation
+    /// (typically 80–110 s/image with significant variance), workflow
+    /// execution, dry-run, and bulk recall. The runtime's global default
+    /// at `tools/mcp_client.rs` (180 s) is too tight for these. Bump for
+    /// environments with slow ChatGPT plans or large workflows; lower
+    /// for fast-fail dev loops. Capped at 600 (the runtime
+    /// `MAX_TOOL_TIMEOUT_SECS`); higher values are silently truncated.
+    /// Default: 600.
+    #[serde(default = "default_operator_tool_timeout_secs")]
+    pub tool_timeout_secs: u64,
 }
 
 fn default_operator_max_tool_iterations() -> usize {
     80
+}
+
+fn default_operator_tool_timeout_secs() -> u64 {
+    600
 }
 
 impl Default for OperatorConfig {
@@ -1105,6 +1123,7 @@ impl Default for OperatorConfig {
             enabled: default_true(),
             mcp_path: String::new(),
             max_tool_iterations: default_operator_max_tool_iterations(),
+            tool_timeout_secs: default_operator_tool_timeout_secs(),
         }
     }
 }
