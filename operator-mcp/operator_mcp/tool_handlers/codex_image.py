@@ -179,12 +179,23 @@ async def _spawn_codex_image(
     output_path: Path,
     cwd: Path,
     codex_executable: str | None = None,
+    sandbox: str = "workspace-write",
 ) -> dict[str, Any]:
     """Run a single ``codex exec`` and return success/failure with the path.
 
     ``codex_executable`` is the absolute path resolved by
     ``_resolve_codex_executable``; required on Windows because
     ``create_subprocess_exec`` does not apply PATHEXT to the bare name.
+
+    ``sandbox`` is forwarded to codex's ``--sandbox`` flag. Default
+    ``workspace-write`` matches the original SKILL.md and works on macOS
+    and Linux. On Windows installs where the codex sandbox helper isn't
+    set up correctly (``CreateProcessAsUserW failed: 5``), codex can't
+    spawn the helper that loads its internal ``imagegen`` skill, so the
+    model hallucinates a "saved" reply without actually calling
+    ``image_generation``. Passing ``danger-full-access`` bypasses the
+    helper entirely. The proper fix is to repair the codex install
+    (admin reinstall on Windows); the override exists as an escape hatch.
     """
     if codex_executable is None:
         codex_executable = _resolve_codex_executable() or "codex"
@@ -198,7 +209,7 @@ async def _spawn_codex_image(
         codex_executable,
         "exec",
         "--sandbox",
-        "workspace-write",
+        sandbox,
         "--skip-git-repo-check",
         "--cd",
         str(cwd),
@@ -454,6 +465,14 @@ async def tool_generate_image_codex(
         register = bool(register)
     item_name = args.get("item_name")
     space = args.get("space")
+    sandbox = args.get("sandbox") or "workspace-write"
+    if sandbox not in {"read-only", "workspace-write", "danger-full-access"}:
+        return {
+            "error": (
+                f"sandbox must be one of read-only / workspace-write / "
+                f"danger-full-access (got {sandbox!r})"
+            )
+        }
 
     if not prompt:
         return {"error": "prompt is required"}
@@ -479,7 +498,10 @@ async def tool_generate_image_codex(
         p.parent.mkdir(parents=True, exist_ok=True)
 
     results = await asyncio.gather(
-        *(_spawn_codex_image(prompt, p, cwd_path, codex_exe) for p in paths),
+        *(
+            _spawn_codex_image(prompt, p, cwd_path, codex_exe, sandbox=sandbox)
+            for p in paths
+        ),
         return_exceptions=True,
     )
 

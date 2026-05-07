@@ -1365,6 +1365,20 @@ async def list_tools() -> list[Tool]:
                             "filename stem (with the auto-appended `-N` suffix stripped)."
                         ),
                     },
+                    "sandbox": {
+                        "type": "string",
+                        "enum": ["read-only", "workspace-write", "danger-full-access"],
+                        "description": (
+                            "codex `--sandbox` mode. Default `workspace-write` works on "
+                            "macOS/Linux. On Windows installs where the codex sandbox "
+                            "helper isn't set up correctly (CreateProcessAsUserW failed: 5), "
+                            "use `danger-full-access` as a workaround — codex's image "
+                            "skill won't load otherwise and the model hallucinates a "
+                            "'saved' reply without generating a real PNG. The proper "
+                            "fix is to reinstall codex CLI as Administrator."
+                        ),
+                        "default": "workspace-write",
+                    },
                 },
                 "required": ["prompt", "output_path"],
             },

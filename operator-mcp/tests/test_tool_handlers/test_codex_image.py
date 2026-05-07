@@ -170,7 +170,7 @@ async def test_happy_path_single_image_with_canvas_and_artifact(fake_gw, tmp_pat
     """Mock codex spawn + canvas + Kumiho; verify the full path end-to-end."""
     target = tmp_path / "fox.png"
 
-    async def _fake_spawn(prompt, output_path, cwd, codex_executable=None):
+    async def _fake_spawn(prompt, output_path, cwd, codex_executable=None, sandbox="workspace-write"):
         # Write a non-empty PNG-like file to simulate codex success.
         output_path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
         return {"ok": True, "path": str(output_path), "size": output_path.stat().st_size}
@@ -223,7 +223,7 @@ async def test_batch_mode_strips_n_suffix_for_item_name(fake_gw, tmp_path):
     """For count=3 with default pattern, the Kumiho item name is the bare stem."""
     target = tmp_path / "logo.png"
 
-    async def _fake_spawn(prompt, output_path, cwd, codex_executable=None):
+    async def _fake_spawn(prompt, output_path, cwd, codex_executable=None, sandbox="workspace-write"):
         output_path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
         return {"ok": True, "path": str(output_path), "size": 100}
 
@@ -266,7 +266,7 @@ async def test_batch_mode_strips_n_suffix_for_item_name(fake_gw, tmp_path):
 async def test_register_artifact_false_skips_kumiho(fake_gw, tmp_path):
     target = tmp_path / "fox.png"
 
-    async def _fake_spawn(prompt, output_path, cwd, codex_executable=None):
+    async def _fake_spawn(prompt, output_path, cwd, codex_executable=None, sandbox="workspace-write"):
         output_path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
         return {"ok": True, "path": str(output_path), "size": 100}
 
@@ -296,7 +296,7 @@ async def test_custom_space_and_item_name_are_used_verbatim(fake_gw, tmp_path):
     """User-provided `space` and `item_name` override the defaults."""
     target = tmp_path / "fox.png"
 
-    async def _fake_spawn(prompt, output_path, cwd, codex_executable=None):
+    async def _fake_spawn(prompt, output_path, cwd, codex_executable=None, sandbox="workspace-write"):
         output_path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
         return {"ok": True, "path": str(output_path), "size": 100}
 
@@ -334,7 +334,7 @@ async def test_space_default_is_images(fake_gw, tmp_path):
     """Omitting `space` falls back to `Images`; ensure_space sees that."""
     target = tmp_path / "fox.png"
 
-    async def _fake_spawn(prompt, output_path, cwd, codex_executable=None):
+    async def _fake_spawn(prompt, output_path, cwd, codex_executable=None, sandbox="workspace-write"):
         output_path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
         return {"ok": True, "path": str(output_path), "size": 100}
 
@@ -362,11 +362,76 @@ async def test_space_default_is_images(fake_gw, tmp_path):
     sdk_mock.ensure_space.assert_awaited_once_with("Construct", "Images")
 
 
+async def test_sandbox_arg_is_threaded_into_codex_command(fake_gw, tmp_path):
+    """User-supplied `sandbox` reaches `_spawn_codex_image`."""
+    target = tmp_path / "fox.png"
+    captured: dict[str, Any] = {}
+
+    async def _fake_spawn(prompt, output_path, cwd, codex_executable=None, sandbox="workspace-write"):
+        captured["sandbox"] = sandbox
+        output_path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
+        return {"ok": True, "path": str(output_path), "size": 100}
+
+    with patch.object(
+        ci, "_check_codex_available", AsyncMock(return_value={"ok": True, "executable": "/fake/codex"})
+    ), patch.object(ci, "_spawn_codex_image", side_effect=_fake_spawn):
+        out = await ci.tool_generate_image_codex(
+            {
+                "prompt": "fox",
+                "output_path": str(target),
+                "register_artifact": False,
+                "sandbox": "danger-full-access",
+            },
+            fake_gw,
+        )
+
+    assert out["generated"] == 1
+    assert captured["sandbox"] == "danger-full-access"
+
+
+async def test_sandbox_default_is_workspace_write(fake_gw, tmp_path):
+    """Omitting `sandbox` defaults to workspace-write."""
+    target = tmp_path / "fox.png"
+    captured: dict[str, Any] = {}
+
+    async def _fake_spawn(prompt, output_path, cwd, codex_executable=None, sandbox="workspace-write"):
+        captured["sandbox"] = sandbox
+        output_path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
+        return {"ok": True, "path": str(output_path), "size": 100}
+
+    with patch.object(
+        ci, "_check_codex_available", AsyncMock(return_value={"ok": True, "executable": "/fake/codex"})
+    ), patch.object(ci, "_spawn_codex_image", side_effect=_fake_spawn):
+        await ci.tool_generate_image_codex(
+            {
+                "prompt": "fox",
+                "output_path": str(target),
+                "register_artifact": False,
+            },
+            fake_gw,
+        )
+
+    assert captured["sandbox"] == "workspace-write"
+
+
+async def test_invalid_sandbox_value_is_rejected(fake_gw, tmp_path):
+    out = await ci.tool_generate_image_codex(
+        {
+            "prompt": "fox",
+            "output_path": str(tmp_path / "fox.png"),
+            "register_artifact": False,
+            "sandbox": "wide-open",
+        },
+        fake_gw,
+    )
+    assert "sandbox must be one of" in out.get("error", "")
+
+
 async def test_partial_failure_reports_failures_and_keeps_successes(fake_gw, tmp_path):
     """If 1 of 2 codex spawns fails, the response includes both arrays."""
     target = tmp_path / "fox.png"
 
-    async def _flaky_spawn(prompt, output_path, cwd, codex_executable=None):
+    async def _flaky_spawn(prompt, output_path, cwd, codex_executable=None, sandbox="workspace-write"):
         if output_path.name == "fox-1.png":
             output_path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
             return {"ok": True, "path": str(output_path), "size": 100}
