@@ -98,7 +98,7 @@ class SessionManagerClient:
             return False
 
         # Acquire spawn lock to prevent racing sibling operator processes
-        import fcntl
+        from . import _fcntl_compat as fcntl
         lock_path = self.socket_path + ".lock"
         try:
             lock_fd = open(lock_path, "w")

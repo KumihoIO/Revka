@@ -42,12 +42,42 @@ _USER_DIR = os.path.expanduser("~/.construct/workflows")
 # Single workflow loading
 # ---------------------------------------------------------------------------
 
+def _read_workflow_text(path: str) -> str:
+    """Read workflow YAML with encoding fallback.
+
+    utf-8 → cp949 → utf-8 with errors='replace'. CP949 covers Korean
+    Windows files saved by older editors. The replace-fallback ensures
+    we never hard-skip a workflow over a single bad byte.
+    """
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read()
+    except UnicodeDecodeError:
+        try:
+            with open(path, "r", encoding="cp949") as f:
+                text = f.read()
+            _log(
+                f"workflow_loader: '{os.path.basename(path)}' decoded as cp949 "
+                "(not utf-8) — consider re-saving as utf-8"
+            )
+            return text
+        except UnicodeDecodeError:
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                text = f.read()
+            _log(
+                f"workflow_loader: '{os.path.basename(path)}' had undecodable "
+                "bytes — using utf-8 with errors='replace'"
+            )
+            return text
+
+
 def load_workflow_from_yaml(path: str) -> WorkflowDef:
     """Parse a YAML file into a WorkflowDef. Raises on parse errors."""
     # Pin UTF-8 explicitly so loading on Windows (default cp949 on Korean
-    # locales) doesn't blow up on non-ASCII workflow YAML.
-    with open(path, "r", encoding="utf-8") as f:
-        data = yaml.safe_load(f)
+    # locales) doesn't blow up on non-ASCII workflow YAML. Falls back to
+    # cp949 (and ultimately utf-8 with errors='replace') for files saved
+    # by older Korean Windows editors that emit legacy bytes.
+    data = yaml.safe_load(_read_workflow_text(path))
 
     if not isinstance(data, dict):
         raise ValueError(f"Expected YAML dict at root, got {type(data).__name__}")
