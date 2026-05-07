@@ -32,6 +32,14 @@ import { createPortal } from 'react-dom';
 const POPOVER_Z = 9100;
 const MAX_SUGGESTIONS = 12;
 
+// Popover sizing / margin constants used both in the inline style below and
+// in the viewport-clamp logic that keeps the popover on-screen when the
+// caret is near a viewport edge.
+const POPOVER_MIN_W = 240;
+const POPOVER_MAX_W = 360;
+const POPOVER_MAX_H = 280;
+const POPOVER_VIEWPORT_MARGIN = 8;
+
 type Group = 'Steps' | 'Inputs' | 'Trigger' | 'Env';
 
 interface Suggestion {
@@ -231,6 +239,32 @@ function computeCaretPosition(
   };
 }
 
+interface ClampedPos {
+  left: number;
+  top: number;
+}
+
+/** Clamp a caret-anchored popover position so it stays inside the viewport.
+ *  When there's not enough room below the caret to fit the popover, flip it
+ *  above the caret instead. Estimates with the popover's MAX dimensions so we
+ *  never clip even if the rendered popover hits the upper bound. */
+export function clampPopoverPosition(
+  caret: CaretPos,
+  viewport: { width: number; height: number },
+): ClampedPos {
+  const { width: vw, height: vh } = viewport;
+  const clampedLeft = Math.max(
+    POPOVER_VIEWPORT_MARGIN,
+    Math.min(caret.left, vw - POPOVER_MAX_W - POPOVER_VIEWPORT_MARGIN),
+  );
+  const wantBottom = caret.bottom + 4;
+  const flipUp = wantBottom + POPOVER_MAX_H + POPOVER_VIEWPORT_MARGIN > vh;
+  const clampedTop = flipUp
+    ? Math.max(POPOVER_VIEWPORT_MARGIN, caret.bottom - 4 - POPOVER_MAX_H)
+    : Math.min(wantBottom, vh - POPOVER_MAX_H - POPOVER_VIEWPORT_MARGIN);
+  return { left: clampedLeft, top: clampedTop };
+}
+
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
@@ -267,6 +301,13 @@ export default function ExpressionTextarea({
   const dollarIndexRef = useRef<number>(-1);
   const [activeIndex, setActiveIndex] = useState(0);
   const [caretPos, setCaretPos] = useState<CaretPos>({ left: 0, bottom: 0 });
+  /** Viewport size, tracked so clampPopoverPosition recomputes on resize. */
+  const [viewport, setViewport] = useState<{ width: number; height: number }>(
+    () =>
+      typeof window !== 'undefined'
+        ? { width: window.innerWidth, height: window.innerHeight }
+        : { width: 0, height: 0 },
+  );
 
   const allSuggestions = useMemo(
     () => buildSuggestions(stepIds, workflowInputs, triggerFields),
@@ -383,7 +424,9 @@ export default function ExpressionTextarea({
     setOpen(false);
   }, []);
 
-  // Reposition popover when window resizes / scrolls while open.
+  // Reposition popover + refresh viewport size when window resizes / scrolls
+  // while open. Both feed into clampPopoverPosition so the popover stays on
+  // screen even when the caret is near the right/bottom viewport edge.
   useLayoutEffect(() => {
     if (!open) return;
     const onScrollOrResize = () => {
@@ -391,6 +434,7 @@ export default function ExpressionTextarea({
       if (!ta) return;
       const caret = ta.selectionStart ?? 0;
       setCaretPos(computeCaretPosition(ta, caret));
+      setViewport({ width: window.innerWidth, height: window.innerHeight });
     };
     window.addEventListener('scroll', onScrollOrResize, true);
     window.addEventListener('resize', onScrollOrResize);
@@ -399,6 +443,12 @@ export default function ExpressionTextarea({
       window.removeEventListener('resize', onScrollOrResize);
     };
   }, [open]);
+
+  // Clamped popover position — recomputes when caret moves or viewport changes.
+  const clampedPos = useMemo(
+    () => clampPopoverPosition(caretPos, viewport),
+    [caretPos, viewport],
+  );
 
   // Group filtered suggestions for rendering, preserving filter order.
   const grouped = useMemo(() => {
@@ -431,12 +481,12 @@ export default function ExpressionTextarea({
             onMouseDown={(e) => e.preventDefault()}
             style={{
               position: 'fixed',
-              left: caretPos.left,
-              top: caretPos.bottom + 4,
+              left: clampedPos.left,
+              top: clampedPos.top,
               zIndex: POPOVER_Z,
-              minWidth: 240,
-              maxWidth: 360,
-              maxHeight: 280,
+              minWidth: POPOVER_MIN_W,
+              maxWidth: POPOVER_MAX_W,
+              maxHeight: POPOVER_MAX_H,
               overflowY: 'auto',
               background: 'var(--pc-bg-elevated)',
               border: '1px solid var(--pc-border)',
