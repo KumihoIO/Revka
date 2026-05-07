@@ -466,7 +466,7 @@ function ArchitectChatSurface({
         ) : (
           <div className="space-y-3">
             {messages.map((msg) => {
-              const prefix = msg.role === 'user' ? 'you' : msg.role === 'operator' ? 'sys' : 'op';
+              const prefix = msg.role === 'user' ? 'you' : msg.role === 'operator' ? 'sys' : 'architect';
               const color =
                 msg.role === 'user'
                   ? 'var(--construct-text-secondary)'
@@ -540,7 +540,7 @@ function ArchitectChatSurface({
                 <span
                   style={{ color: 'var(--construct-signal-live)', fontWeight: 600 }}
                 >
-                  op {'>'}{' '}
+                  architect {'>'}{' '}
                 </span>
                 <span style={{ color: 'var(--construct-signal-live)' }}>
                   {streamingContent || '…'}
@@ -553,7 +553,7 @@ function ArchitectChatSurface({
                 className="animate-pulse"
                 style={{ color: 'var(--construct-signal-live)' }}
               >
-                op {'>'} <Loader2 className="inline h-3 w-3 animate-spin" />
+                architect {'>'} <Loader2 className="inline h-3 w-3 animate-spin" />
               </div>
             )}
           </div>
