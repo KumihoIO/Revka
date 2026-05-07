@@ -91,15 +91,12 @@ pub fn operator_mcp_server_config(cfg: &OperatorConfig) -> McpServerConfig {
     }
     // Enable Kumiho SDK auto-configure (uses cached credentials from ~/.kumiho/).
     env.insert("KUMIHO_AUTO_CONFIGURE".to_string(), "1".to_string());
-    // Forward gateway URL + token so the operator can query cost/audit APIs.
+    // Forward gateway URL so the operator can query cost/audit APIs. Auth
+    // uses the service token at ~/.construct/service-token (read directly by
+    // operator-mcp's gateway_client), so no token env-forwarding is needed.
     if let Ok(url) = std::env::var("CONSTRUCT_GATEWAY_URL") {
         if !url.trim().is_empty() {
             env.insert("CONSTRUCT_GATEWAY_URL".to_string(), url);
-        }
-    }
-    if let Ok(token) = std::env::var("CONSTRUCT_GATEWAY_TOKEN") {
-        if !token.trim().is_empty() {
-            env.insert("CONSTRUCT_GATEWAY_TOKEN".to_string(), token);
         }
     }
     McpServerConfig {
@@ -180,14 +177,9 @@ pub fn inject_operator(mut config: Config, is_internal: bool) -> Config {
         server
             .env
             .insert("CONSTRUCT_GATEWAY_URL".to_string(), gw_url);
-        // Forward the first paired token (if any) for API auth.
-        if let Some(token) = config.gateway.paired_tokens.first() {
-            if !token.is_empty() {
-                server
-                    .env
-                    .insert("CONSTRUCT_GATEWAY_TOKEN".to_string(), token.clone());
-            }
-        }
+        // Auth uses the service token at ~/.construct/service-token (written
+        // by the gateway at startup, read directly by operator-mcp's
+        // gateway_client). No token env-forwarding required.
         // Prepend so Operator tools appear early in deferred tool listings.
         config.mcp.servers.insert(0, server);
     }
