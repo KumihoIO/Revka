@@ -1341,11 +1341,20 @@ async def list_tools() -> list[Tool]:
                     "register_artifact": {
                         "type": "boolean",
                         "description": (
-                            "Create a Kumiho item under <harness>/Images and attach each "
+                            "Create a Kumiho item under <harness>/<space> and attach each "
                             "generated PNG as an artifact on a `latest`-tagged revision. "
                             "Default: true."
                         ),
                         "default": True,
+                    },
+                    "space": {
+                        "type": "string",
+                        "description": (
+                            "Kumiho space (relative to the harness project) where the item "
+                            "is created. Multi-segment paths supported, e.g. "
+                            "`Marketing/Logos`. Default: `Images`."
+                        ),
+                        "default": "Images",
                     },
                     "item_name": {
                         "type": "string",

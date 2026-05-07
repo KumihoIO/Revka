@@ -264,8 +264,14 @@ async def _register_artifacts(
     paths: list[Path],
     prompt: str,
     item_name: str | None,
+    space: str | None = None,
 ) -> dict[str, Any]:
-    """Create a Kumiho item under ``<harness>/Images`` with file artifacts.
+    """Create a Kumiho item under ``<harness>/<space>`` with file artifacts.
+
+    The ``space`` argument is a path relative to the harness project — e.g.
+    ``"Images"`` (default) or ``"Marketing/Logos"``. Multi-segment paths
+    are supported; the leftmost segment is the Kumiho space directly under
+    the harness project, the rest is treated as a sub-namespace.
 
     Each generated PNG is attached to the same revision so they can be
     retrieved together. Returns the item kref, revision kref, and a list
@@ -274,7 +280,14 @@ async def _register_artifacts(
     from ..operator_mcp import KUMIHO_SDK  # lazy: avoids import cycle
 
     project = harness_project()
-    space_path = f"{project}/Images"
+    space_relative = (space or "Images").strip().strip("/")
+    if not space_relative:
+        space_relative = "Images"
+    space_path = f"{project}/{space_relative}"
+    # The Kumiho `ensure_space` API takes (project, top_level_space). For
+    # multi-segment paths like "Marketing/Logos" we ensure the top segment
+    # exists; subspaces are created lazily by `create_item`.
+    top_space = space_relative.split("/", 1)[0]
 
     # Derive item name from first PNG's stem unless caller supplied one.
     if not item_name and paths:
@@ -292,7 +305,7 @@ async def _register_artifacts(
         return {"error": "no item name resolved"}
 
     try:
-        await KUMIHO_SDK.ensure_space(project, "Images")
+        await KUMIHO_SDK.ensure_space(project, top_space)
     except Exception as exc:
         _log(f"codex_image: ensure_space warning: {exc}")
 
@@ -373,6 +386,8 @@ async def tool_generate_image_codex(
       ``count > 1``; if omitted, derived as ``<stem>-N.<ext>``
     * ``canvas`` — bool or canvas_id string; pushes a gallery frame
     * ``register_artifact`` — bool, default True; creates a Kumiho item
+    * ``space`` — Kumiho space relative to the harness project, default
+      ``Images``. Multi-segment paths like ``Marketing/Logos`` supported.
     * ``item_name`` — optional override for the Kumiho item name
     """
     prompt = (args.get("prompt") or "").strip()
@@ -388,6 +403,7 @@ async def tool_generate_image_codex(
     if not isinstance(register, bool):
         register = bool(register)
     item_name = args.get("item_name")
+    space = args.get("space")
 
     if not prompt:
         return {"error": "prompt is required"}
@@ -446,7 +462,7 @@ async def tool_generate_image_codex(
 
     if register:
         response["artifact"] = await _register_artifacts(
-            success_paths, prompt, item_name
+            success_paths, prompt, item_name, space=space
         )
 
     return response

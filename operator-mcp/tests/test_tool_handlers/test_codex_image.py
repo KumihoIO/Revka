@@ -257,6 +257,76 @@ async def test_register_artifact_false_skips_kumiho(fake_gw, tmp_path):
     sdk_mock.create_item.assert_not_called()
 
 
+async def test_custom_space_and_item_name_are_used_verbatim(fake_gw, tmp_path):
+    """User-provided `space` and `item_name` override the defaults."""
+    target = tmp_path / "fox.png"
+
+    async def _fake_spawn(prompt, output_path, cwd):
+        output_path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
+        return {"ok": True, "path": str(output_path), "size": 100}
+
+    sdk_mock = MagicMock()
+    sdk_mock.ensure_space = AsyncMock(return_value=None)
+    sdk_mock.create_item = AsyncMock(return_value={"kref": "i"})
+    sdk_mock.create_revision = AsyncMock(return_value={"kref": "r"})
+    sdk_mock.create_artifact = AsyncMock(return_value={"kref": "a"})
+
+    with patch.object(
+        ci, "_check_codex_available", AsyncMock(return_value={"ok": True})
+    ), patch.object(ci, "_spawn_codex_image", side_effect=_fake_spawn), patch(
+        "operator_mcp.operator_mcp.KUMIHO_SDK", sdk_mock
+    ), patch.object(ci, "harness_project", lambda: "Construct"):
+        out = await ci.tool_generate_image_codex(
+            {
+                "prompt": "construct quarterly logo",
+                "output_path": str(target),
+                "register_artifact": True,
+                "space": "Marketing/Logos",
+                "item_name": "q2-rebrand",
+            },
+            fake_gw,
+        )
+
+    assert out["artifact"]["space_path"] == "Construct/Marketing/Logos"
+    create_item_kwargs = sdk_mock.create_item.await_args.kwargs
+    assert create_item_kwargs["name"] == "q2-rebrand"
+    assert create_item_kwargs["space_path"] == "Construct/Marketing/Logos"
+    # ensure_space is called with the top segment of a multi-segment space.
+    sdk_mock.ensure_space.assert_awaited_once_with("Construct", "Marketing")
+
+
+async def test_space_default_is_images(fake_gw, tmp_path):
+    """Omitting `space` falls back to `Images`; ensure_space sees that."""
+    target = tmp_path / "fox.png"
+
+    async def _fake_spawn(prompt, output_path, cwd):
+        output_path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
+        return {"ok": True, "path": str(output_path), "size": 100}
+
+    sdk_mock = MagicMock()
+    sdk_mock.ensure_space = AsyncMock(return_value=None)
+    sdk_mock.create_item = AsyncMock(return_value={"kref": "i"})
+    sdk_mock.create_revision = AsyncMock(return_value={"kref": "r"})
+    sdk_mock.create_artifact = AsyncMock(return_value={"kref": "a"})
+
+    with patch.object(
+        ci, "_check_codex_available", AsyncMock(return_value={"ok": True})
+    ), patch.object(ci, "_spawn_codex_image", side_effect=_fake_spawn), patch(
+        "operator_mcp.operator_mcp.KUMIHO_SDK", sdk_mock
+    ), patch.object(ci, "harness_project", lambda: "Construct"):
+        out = await ci.tool_generate_image_codex(
+            {
+                "prompt": "fox",
+                "output_path": str(target),
+                "register_artifact": True,
+            },
+            fake_gw,
+        )
+
+    assert out["artifact"]["space_path"] == "Construct/Images"
+    sdk_mock.ensure_space.assert_awaited_once_with("Construct", "Images")
+
+
 async def test_partial_failure_reports_failures_and_keeps_successes(fake_gw, tmp_path):
     """If 1 of 2 codex spawns fails, the response includes both arrays."""
     target = tmp_path / "fox.png"
