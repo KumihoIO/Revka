@@ -183,3 +183,77 @@ class TestDependsOnInference:
         t = wf.step_by_id("transform")
         assert t is not None
         assert t.depends_on == ["fetch"]
+
+    def test_for_each_range_and_items_interpolation(self):
+        """for_each.range and for_each.items are interpolated at runtime
+        (executor.py:1241 / :1272). Without scanning them, a dynamic range
+        like ``1..${count.output_data.n}`` would fan count + the for_each
+        step into the same wave and crash with "for_each range resolved
+        to empty"."""
+        # range case
+        wf = load_workflow_from_dict(_wf([
+            {"id": "count", "type": "agent", "agent": {"prompt": "how many"}},
+            {"id": "body", "type": "agent", "agent": {"prompt": "iter"}},
+            {
+                "id": "loop",
+                "type": "for_each",
+                "for_each": {
+                    "range": "1..${count.output_data.n}",
+                    "steps": ["body"],
+                },
+            },
+        ]))
+        loop = wf.step_by_id("loop")
+        assert loop is not None
+        assert loop.depends_on == ["count"]
+
+        # items case — both string interpolation and list-element scanning
+        wf2 = load_workflow_from_dict(_wf([
+            {"id": "alpha", "type": "agent", "agent": {"prompt": "a"}},
+            {"id": "beta", "type": "agent", "agent": {"prompt": "b"}},
+            {"id": "body", "type": "agent", "agent": {"prompt": "iter"}},
+            {
+                "id": "loop",
+                "type": "for_each",
+                "for_each": {
+                    "items": ["${alpha.output}", "${beta.output}"],
+                    "steps": ["body"],
+                },
+            },
+        ]))
+        loop2 = wf2.step_by_id("loop")
+        assert loop2 is not None
+        assert sorted(loop2.depends_on) == ["alpha", "beta"]
+
+    def test_notify_and_human_approval_channel_id_interpolation(self):
+        """notify.channel_id and human_approval.channel_id are interpolated
+        at executor.py:2547 / :2596. Workflows that pick the channel ID
+        dynamically (``${pick.output_data.channel}``) need an inferred dep
+        on the picker step or the pause/notify step fans into the same
+        wave with an empty channel."""
+        wf = load_workflow_from_dict(_wf([
+            {"id": "pick", "type": "agent", "agent": {"prompt": "pick channel"}},
+            {
+                "id": "ask",
+                "type": "human_approval",
+                "human_approval": {
+                    "message": "approve?",
+                    "channel": "discord",
+                    "channel_id": "${pick.output_data.channel}",
+                },
+            },
+            {
+                "id": "tell",
+                "type": "notify",
+                "notify": {
+                    "channels": ["discord"],
+                    "channel_id": "${pick.output_data.channel}",
+                    "message": "done",
+                },
+            },
+        ]))
+        ask = wf.step_by_id("ask")
+        tell = wf.step_by_id("tell")
+        assert ask is not None and tell is not None
+        assert ask.depends_on == ["pick"]
+        assert tell.depends_on == ["pick"]

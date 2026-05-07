@@ -127,14 +127,23 @@ def _scan_step_for_refs(step: StepDef) -> set[str]:
     # goto
     if step.goto is not None:
         _scan_text(step.goto.condition)
-    # human_approval / human_input / notify
+    # human_approval / human_input / notify — channel_id may be templated
+    # off a prior step (e.g. dynamic Discord channel pick).
     if step.human_approval is not None:
         _scan_text(step.human_approval.message)
+        _scan_text(step.human_approval.channel_id)
     if step.human_input is not None:
         _scan_text(step.human_input.message)
     if step.notify is not None:
         _scan_text(step.notify.title)
         _scan_text(step.notify.message)
+        _scan_text(step.notify.channel_id)
+    # for_each — range expression and explicit items list both interpolate
+    # at executor.py:1241 / :1272. Without scanning these, a dynamic range
+    # like "1..${count.output}" fans count + for_each into the same wave.
+    if step.for_each is not None:
+        _scan_text(step.for_each.range)
+        _scan_value(step.for_each.items)
     # output — template + entity_name + entity_metadata values
     if step.output is not None:
         _scan_text(step.output.template)
