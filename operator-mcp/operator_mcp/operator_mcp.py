@@ -1287,6 +1287,87 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
+            name="generate_image_codex",
+            description=(
+                "Generate one or more PNG images via the OpenAI Codex CLI's "
+                "built-in `image_generation` tool. Up to 5 in parallel "
+                "(asyncio.gather over independent codex sessions); for more, "
+                "call the tool repeatedly in batches. Optionally pushes a "
+                "gallery frame to the Live Canvas and registers each PNG as "
+                "a Kumiho artifact under <harness>/Images. Requires "
+                "`codex` (0.128+) authenticated via ChatGPT OAuth."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "prompt": {
+                        "type": "string",
+                        "description": "Natural-language description of the image to generate.",
+                    },
+                    "output_path": {
+                        "type": "string",
+                        "description": (
+                            "Target PNG path. Relative to `cwd` unless absolute. "
+                            "When `count > 1` and `output_pattern` is unset, "
+                            "the path is expanded as `<stem>-N.<ext>` per image."
+                        ),
+                    },
+                    "cwd": {
+                        "type": "string",
+                        "description": "Working directory for codex (default: ~/.construct/workspace).",
+                    },
+                    "count": {
+                        "type": "integer",
+                        "description": "Number of images to generate in parallel (1..5, default 1).",
+                        "minimum": 1,
+                        "maximum": 5,
+                        "default": 1,
+                    },
+                    "output_pattern": {
+                        "type": "string",
+                        "description": (
+                            "Filename template with `{n}` placeholder when count > 1, "
+                            "e.g. `logo-{n}.png`. Overrides the default `<stem>-N` derivation."
+                        ),
+                    },
+                    "canvas": {
+                        "oneOf": [{"type": "boolean"}, {"type": "string"}],
+                        "description": (
+                            "If true, push a gallery frame to the default Live Canvas. "
+                            "If a string, use that canvas_id. Default: false."
+                        ),
+                        "default": False,
+                    },
+                    "register_artifact": {
+                        "type": "boolean",
+                        "description": (
+                            "Create a Kumiho item under <harness>/<space> and attach each "
+                            "generated PNG as an artifact on a `latest`-tagged revision. "
+                            "Default: true."
+                        ),
+                        "default": True,
+                    },
+                    "space": {
+                        "type": "string",
+                        "description": (
+                            "Kumiho space (relative to the harness project) where the item "
+                            "is created. Multi-segment paths supported, e.g. "
+                            "`Marketing/Logos`. Default: `Images`."
+                        ),
+                        "default": "Images",
+                    },
+                    "item_name": {
+                        "type": "string",
+                        "description": (
+                            "Optional name for the Kumiho item. Defaults to the output "
+                            "filename stem (with the auto-appended `-N` suffix stripped)."
+                        ),
+                    },
+                },
+                "required": ["prompt", "output_path"],
+            },
+        ),
+        Tool(
             name="list_nodes",
             description="List connected remote nodes and their capabilities. Nodes connect via WebSocket and advertise tools (e.g. camera.snap, shell.exec).",
             inputSchema={
@@ -2724,6 +2805,11 @@ async def _dispatch(name: str, args: dict[str, Any]) -> dict[str, Any]:
         return await canvas.tool_render_canvas(args, CONSTRUCT_GW)
     if name == "clear_canvas":
         return await canvas.tool_clear_canvas(args, CONSTRUCT_GW)
+
+    # -- Codex image generation --
+    if name == "generate_image_codex":
+        from .tool_handlers import codex_image
+        return await codex_image.tool_generate_image_codex(args, CONSTRUCT_GW)
 
     # -- Nodes --
     if name == "list_nodes":
