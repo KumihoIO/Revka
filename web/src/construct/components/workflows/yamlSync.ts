@@ -580,7 +580,11 @@ export function parseWorkflowYaml(yaml: string): TaskDefinition[] {
         current.retry_delay = parseFloat(value) || 5;
       } else if (key === 'disabled') {
         current.disabled = value.toLowerCase() === 'true';
-      } else if (key === 'assign' || key === 'template') {
+      } else if (key === 'assign') {
+        // Top-level assign: only. Nested `agent.template:` is captured
+        // separately by extractStepBlockData → data.template, so the two
+        // YAML keys preserve the AgentPicker (assign) vs persona (template)
+        // distinction across save/reload.
         current.assign = value;
       } else if (key === 'params' || key === 'parameters' || key === 'config') {
         inParams = true;
