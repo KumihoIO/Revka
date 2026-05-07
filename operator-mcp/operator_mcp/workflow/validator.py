@@ -89,10 +89,22 @@ class ValidationResult:
 
 _VAR_PATTERN = re.compile(r"\$\{([^}]+)\}")
 
+# Mirrors loader._STEP_REF_RE — matches ${step_id} or ${step_id.path}.
+# Duplicated rather than imported to avoid coupling the validator to
+# loader internals; the patterns must stay in sync.
+_STEP_REF_RE = re.compile(r"\$\{([a-zA-Z_][a-zA-Z0-9_-]*)(?:\.[a-zA-Z_][a-zA-Z0-9_.-]*)?\}")
+
 
 def _extract_var_refs(text: str) -> list[str]:
     """Extract all ${...} variable references from a string."""
     return _VAR_PATTERN.findall(text)
+
+
+def _extract_step_ref_namespaces(text: str) -> set[str]:
+    """Return the set of leading namespaces in ${X} / ${X.field} refs."""
+    if not isinstance(text, str) or not text:
+        return set()
+    return {m.group(1) for m in _STEP_REF_RE.finditer(text)}
 
 
 # ---------------------------------------------------------------------------
@@ -395,6 +407,49 @@ def _check_step_configs(wf: WorkflowDef, valid_ids: set[str],
                 ))
 
 
+def _check_agent_unused_depends(wf: WorkflowDef, result: ValidationResult) -> None:
+    """Reject agent steps that declare a depends_on entry whose output is
+    never referenced in any interpolatable text field.
+
+    The Architect (and humans) frequently produce synthesize/combine steps
+    where ``depends_on`` lists upstream IDs but the prompt itself doesn't
+    mention them — e.g. ``depends_on: [research_a, research_b]`` paired
+    with prompt ``"Combine the upstream reports."``. The runtime starts
+    the agent with no actual content from the upstream steps because
+    nothing in the prompt expands to their output.
+
+    Agent-only: notify/cleanup/output and other step types may legitimately
+    use depends_on purely for ordering without consuming a value.
+    """
+    for step in wf.steps:
+        if step.type != StepType.AGENT or not step.depends_on:
+            continue
+        cfg = step.agent
+        if cfg is None:
+            # No agent block at all — the executor synthesizes a default.
+            # Without a prompt there's nothing to reference, so skip rather
+            # than fire on every templated agent step.
+            continue
+        # Collect refs from every interpolatable string field on AgentStepConfig.
+        # Currently: prompt and role. (No system_hint on the schema; if added,
+        # extend this list.)
+        referenced: set[str] = set()
+        for text in (cfg.prompt, cfg.role):
+            referenced |= _extract_step_ref_namespaces(text)
+
+        for dep in step.depends_on:
+            if dep not in referenced:
+                result.add_error(
+                    f"Step '{step.id}' depends on '{dep}' but its agent.prompt "
+                    f"does not reference ${{{dep}.output}} (or any other "
+                    f"${{{dep}.*}} field). Either reference an upstream field "
+                    f"in the prompt, or drop '{dep}' from depends_on if you "
+                    f"only need it for ordering.",
+                    step.id,
+                    "depends_on",
+                )
+
+
 def _check_variable_refs(wf: WorkflowDef, valid_ids: set[str],
                          result: ValidationResult) -> None:
     """Check that ${step_id.field} references point to existing steps.
@@ -483,6 +538,9 @@ def validate_workflow(wf: WorkflowDef) -> ValidationResult:
 
     # Pass 5: variable references
     _check_variable_refs(wf, valid_ids, result)
+
+    # Pass 5.5: agent steps must reference each declared dependency
+    _check_agent_unused_depends(wf, result)
 
     # --- Pass 6: Trigger definitions ----------------------------------------
     for i, trigger in enumerate(wf.triggers):
