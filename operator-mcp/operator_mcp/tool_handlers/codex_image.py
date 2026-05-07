@@ -27,6 +27,7 @@ import asyncio
 import base64
 import os
 import shutil
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -39,10 +40,44 @@ from ..gateway_client import ConstructGatewayClient
 # instead — same pattern used by workflow/memory.py and patterns/handoff.py.
 
 
-# Cached availability check — codex on PATH and authenticated. The first
-# call probes; subsequent calls reuse the result for the lifetime of the
-# operator process. Restart the operator MCP if codex auth changes.
+# Cached availability check — codex executable resolved + authenticated.
+# Stores the absolute path to codex so subprocess_exec doesn't have to
+# re-resolve PATHEXT on every call. Restart the operator MCP if codex auth
+# or install location changes.
 _CODEX_AVAILABILITY: dict[str, Any] | None = None
+
+
+def _resolve_codex_executable() -> str | None:
+    """Find the codex executable, returning an absolute path or None.
+
+    `asyncio.create_subprocess_exec` calls CreateProcess on Windows which
+    does NOT apply PATHEXT — handing it bare "codex" fails with WinError 2
+    even when `codex` runs fine from a shell, because npm installs it as
+    `codex.CMD`. `shutil.which()` does the right thing (walks PATH +
+    PATHEXT on Windows), so we use it as the primary resolver.
+
+    On Windows, if PATH doesn't include the npm global bin dir, we also
+    check the conventional install locations (`%APPDATA%\\npm\\codex.CMD`
+    and `%LOCALAPPDATA%\\npm\\codex.CMD`) as a fallback.
+    """
+    found = shutil.which("codex")
+    if found:
+        return found
+
+    if sys.platform == "win32":
+        candidates: list[str] = []
+        appdata = os.environ.get("APPDATA")
+        local_appdata = os.environ.get("LOCALAPPDATA")
+        for root in (appdata, local_appdata):
+            if not root:
+                continue
+            for ext in ("CMD", "cmd", "EXE", "exe"):
+                candidates.append(os.path.join(root, "npm", f"codex.{ext}"))
+        for c in candidates:
+            if os.path.isfile(c):
+                return c
+
+    return None
 
 
 async def _check_codex_available() -> dict[str, Any]:
@@ -50,19 +85,21 @@ async def _check_codex_available() -> dict[str, Any]:
     if _CODEX_AVAILABILITY is not None:
         return _CODEX_AVAILABILITY
 
-    if shutil.which("codex") is None:
+    codex_path = _resolve_codex_executable()
+    if not codex_path:
         _CODEX_AVAILABILITY = {
             "ok": False,
             "error": (
-                "codex CLI not found on PATH. Install from "
-                "https://github.com/openai/codex and run `codex login`."
+                "codex CLI not found. Install from https://github.com/openai/codex "
+                "and run `codex login`. On Windows, ensure your PATH includes the "
+                "npm global bin (e.g. `%APPDATA%\\npm`)."
             ),
         }
         return _CODEX_AVAILABILITY
 
     try:
         proc = await asyncio.create_subprocess_exec(
-            "codex",
+            codex_path,
             "login",
             "status",
             stdout=asyncio.subprocess.PIPE,
@@ -72,7 +109,7 @@ async def _check_codex_available() -> dict[str, Any]:
     except Exception as exc:
         _CODEX_AVAILABILITY = {
             "ok": False,
-            "error": f"codex login status failed: {exc}",
+            "error": f"codex login status failed (executable: {codex_path}): {exc}",
         }
         return _CODEX_AVAILABILITY
 
@@ -88,7 +125,7 @@ async def _check_codex_available() -> dict[str, Any]:
         }
         return _CODEX_AVAILABILITY
 
-    _CODEX_AVAILABILITY = {"ok": True}
+    _CODEX_AVAILABILITY = {"ok": True, "executable": codex_path}
     return _CODEX_AVAILABILITY
 
 
@@ -141,11 +178,24 @@ async def _spawn_codex_image(
     prompt: str,
     output_path: Path,
     cwd: Path,
+    codex_executable: str | None = None,
 ) -> dict[str, Any]:
-    """Run a single ``codex exec`` and return success/failure with the path."""
-    log_path = f"/tmp/codex-img-{os.getpid()}-{output_path.stem}.md"
+    """Run a single ``codex exec`` and return success/failure with the path.
+
+    ``codex_executable`` is the absolute path resolved by
+    ``_resolve_codex_executable``; required on Windows because
+    ``create_subprocess_exec`` does not apply PATHEXT to the bare name.
+    """
+    if codex_executable is None:
+        codex_executable = _resolve_codex_executable() or "codex"
+    # Use the OS temp dir so this works on Windows too.
+    import tempfile
+
+    log_path = os.path.join(
+        tempfile.gettempdir(), f"codex-img-{os.getpid()}-{output_path.stem}.md"
+    )
     cmd = [
-        "codex",
+        codex_executable,
         "exec",
         "--sandbox",
         "workspace-write",
@@ -421,6 +471,7 @@ async def tool_generate_image_codex(
     if not avail.get("ok"):
         return {"error": avail.get("error", "codex unavailable")}
 
+    codex_exe = avail.get("executable")
     cwd_path = Path(os.path.expanduser(cwd))
     cwd_path.mkdir(parents=True, exist_ok=True)
     paths = _resolve_output_paths(output_path, count, pattern, cwd)
@@ -428,7 +479,7 @@ async def tool_generate_image_codex(
         p.parent.mkdir(parents=True, exist_ok=True)
 
     results = await asyncio.gather(
-        *(_spawn_codex_image(prompt, p, cwd_path) for p in paths),
+        *(_spawn_codex_image(prompt, p, cwd_path, codex_exe) for p in paths),
         return_exceptions=True,
     )
 

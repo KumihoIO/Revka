@@ -71,7 +71,10 @@ async def test_count_out_of_range_returns_error(fake_gw, tmp_path, count):
 
 
 async def test_codex_not_on_path_returns_clear_error(fake_gw, tmp_path):
-    with patch.object(ci.shutil, "which", return_value=None):
+    with patch.object(ci.shutil, "which", return_value=None), patch.object(
+        ci, "sys"
+    ) as sys_mock:
+        sys_mock.platform = "linux"  # disable the Windows fallback for this test
         out = await ci.tool_generate_image_codex(
             {
                 "prompt": "a fox",
@@ -81,6 +84,38 @@ async def test_codex_not_on_path_returns_clear_error(fake_gw, tmp_path):
             fake_gw,
         )
     assert "codex CLI not found" in out.get("error", "")
+
+
+def test_resolve_codex_executable_uses_shutil_which_when_available():
+    with patch.object(ci.shutil, "which", return_value="/usr/local/bin/codex"):
+        assert ci._resolve_codex_executable() == "/usr/local/bin/codex"
+
+
+def test_resolve_codex_executable_windows_npm_fallback(tmp_path, monkeypatch):
+    """When PATH doesn't have codex, Windows checks %APPDATA%\\npm\\codex.CMD."""
+    fake_npm = tmp_path / "npm"
+    fake_npm.mkdir()
+    fake_codex = fake_npm / "codex.CMD"
+    fake_codex.write_text("@echo codex shim")
+
+    monkeypatch.setenv("APPDATA", str(tmp_path))
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+    with patch.object(ci.shutil, "which", return_value=None), patch.object(
+        ci, "sys"
+    ) as sys_mock:
+        sys_mock.platform = "win32"
+        resolved = ci._resolve_codex_executable()
+    assert resolved == str(fake_codex)
+
+
+def test_resolve_codex_executable_returns_none_when_truly_missing(monkeypatch):
+    monkeypatch.delenv("APPDATA", raising=False)
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+    with patch.object(ci.shutil, "which", return_value=None), patch.object(
+        ci, "sys"
+    ) as sys_mock:
+        sys_mock.platform = "win32"
+        assert ci._resolve_codex_executable() is None
 
 
 # -------------------------- path resolution -------------------------------
@@ -135,7 +170,7 @@ async def test_happy_path_single_image_with_canvas_and_artifact(fake_gw, tmp_pat
     """Mock codex spawn + canvas + Kumiho; verify the full path end-to-end."""
     target = tmp_path / "fox.png"
 
-    async def _fake_spawn(prompt, output_path, cwd):
+    async def _fake_spawn(prompt, output_path, cwd, codex_executable=None):
         # Write a non-empty PNG-like file to simulate codex success.
         output_path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
         return {"ok": True, "path": str(output_path), "size": output_path.stat().st_size}
@@ -154,7 +189,7 @@ async def test_happy_path_single_image_with_canvas_and_artifact(fake_gw, tmp_pat
     sdk_mock.create_artifact = AsyncMock(return_value={"kref": fake_artifact_kref})
 
     with patch.object(
-        ci, "_check_codex_available", AsyncMock(return_value={"ok": True})
+        ci, "_check_codex_available", AsyncMock(return_value={"ok": True, "executable": "/usr/local/bin/codex"})
     ), patch.object(ci, "_spawn_codex_image", side_effect=_fake_spawn), patch.object(
         ci, "_push_to_canvas", side_effect=_fake_canvas
     ), patch("operator_mcp.operator_mcp.KUMIHO_SDK", sdk_mock), patch.object(
@@ -188,7 +223,7 @@ async def test_batch_mode_strips_n_suffix_for_item_name(fake_gw, tmp_path):
     """For count=3 with default pattern, the Kumiho item name is the bare stem."""
     target = tmp_path / "logo.png"
 
-    async def _fake_spawn(prompt, output_path, cwd):
+    async def _fake_spawn(prompt, output_path, cwd, codex_executable=None):
         output_path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
         return {"ok": True, "path": str(output_path), "size": 100}
 
@@ -199,7 +234,7 @@ async def test_batch_mode_strips_n_suffix_for_item_name(fake_gw, tmp_path):
     sdk_mock.create_artifact = AsyncMock(return_value={"kref": "art"})
 
     with patch.object(
-        ci, "_check_codex_available", AsyncMock(return_value={"ok": True})
+        ci, "_check_codex_available", AsyncMock(return_value={"ok": True, "executable": "/usr/local/bin/codex"})
     ), patch.object(ci, "_spawn_codex_image", side_effect=_fake_spawn), patch(
         "operator_mcp.operator_mcp.KUMIHO_SDK", sdk_mock
     ), patch.object(ci, "harness_project", lambda: "Construct"):
@@ -231,7 +266,7 @@ async def test_batch_mode_strips_n_suffix_for_item_name(fake_gw, tmp_path):
 async def test_register_artifact_false_skips_kumiho(fake_gw, tmp_path):
     target = tmp_path / "fox.png"
 
-    async def _fake_spawn(prompt, output_path, cwd):
+    async def _fake_spawn(prompt, output_path, cwd, codex_executable=None):
         output_path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
         return {"ok": True, "path": str(output_path), "size": 100}
 
@@ -239,7 +274,7 @@ async def test_register_artifact_false_skips_kumiho(fake_gw, tmp_path):
     sdk_mock.create_item = AsyncMock()
 
     with patch.object(
-        ci, "_check_codex_available", AsyncMock(return_value={"ok": True})
+        ci, "_check_codex_available", AsyncMock(return_value={"ok": True, "executable": "/usr/local/bin/codex"})
     ), patch.object(ci, "_spawn_codex_image", side_effect=_fake_spawn), patch(
         "operator_mcp.operator_mcp.KUMIHO_SDK", sdk_mock
     ):
@@ -261,7 +296,7 @@ async def test_custom_space_and_item_name_are_used_verbatim(fake_gw, tmp_path):
     """User-provided `space` and `item_name` override the defaults."""
     target = tmp_path / "fox.png"
 
-    async def _fake_spawn(prompt, output_path, cwd):
+    async def _fake_spawn(prompt, output_path, cwd, codex_executable=None):
         output_path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
         return {"ok": True, "path": str(output_path), "size": 100}
 
@@ -272,7 +307,7 @@ async def test_custom_space_and_item_name_are_used_verbatim(fake_gw, tmp_path):
     sdk_mock.create_artifact = AsyncMock(return_value={"kref": "a"})
 
     with patch.object(
-        ci, "_check_codex_available", AsyncMock(return_value={"ok": True})
+        ci, "_check_codex_available", AsyncMock(return_value={"ok": True, "executable": "/usr/local/bin/codex"})
     ), patch.object(ci, "_spawn_codex_image", side_effect=_fake_spawn), patch(
         "operator_mcp.operator_mcp.KUMIHO_SDK", sdk_mock
     ), patch.object(ci, "harness_project", lambda: "Construct"):
@@ -299,7 +334,7 @@ async def test_space_default_is_images(fake_gw, tmp_path):
     """Omitting `space` falls back to `Images`; ensure_space sees that."""
     target = tmp_path / "fox.png"
 
-    async def _fake_spawn(prompt, output_path, cwd):
+    async def _fake_spawn(prompt, output_path, cwd, codex_executable=None):
         output_path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
         return {"ok": True, "path": str(output_path), "size": 100}
 
@@ -310,7 +345,7 @@ async def test_space_default_is_images(fake_gw, tmp_path):
     sdk_mock.create_artifact = AsyncMock(return_value={"kref": "a"})
 
     with patch.object(
-        ci, "_check_codex_available", AsyncMock(return_value={"ok": True})
+        ci, "_check_codex_available", AsyncMock(return_value={"ok": True, "executable": "/usr/local/bin/codex"})
     ), patch.object(ci, "_spawn_codex_image", side_effect=_fake_spawn), patch(
         "operator_mcp.operator_mcp.KUMIHO_SDK", sdk_mock
     ), patch.object(ci, "harness_project", lambda: "Construct"):
@@ -331,7 +366,7 @@ async def test_partial_failure_reports_failures_and_keeps_successes(fake_gw, tmp
     """If 1 of 2 codex spawns fails, the response includes both arrays."""
     target = tmp_path / "fox.png"
 
-    async def _flaky_spawn(prompt, output_path, cwd):
+    async def _flaky_spawn(prompt, output_path, cwd, codex_executable=None):
         if output_path.name == "fox-1.png":
             output_path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
             return {"ok": True, "path": str(output_path), "size": 100}
@@ -344,7 +379,7 @@ async def test_partial_failure_reports_failures_and_keeps_successes(fake_gw, tmp
     sdk_mock.create_artifact = AsyncMock(return_value={"kref": "a"})
 
     with patch.object(
-        ci, "_check_codex_available", AsyncMock(return_value={"ok": True})
+        ci, "_check_codex_available", AsyncMock(return_value={"ok": True, "executable": "/usr/local/bin/codex"})
     ), patch.object(ci, "_spawn_codex_image", side_effect=_flaky_spawn), patch(
         "operator_mcp.operator_mcp.KUMIHO_SDK", sdk_mock
     ), patch.object(ci, "harness_project", lambda: "Construct"):
