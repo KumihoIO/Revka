@@ -1,11 +1,14 @@
 # P0-2 Remediation Review — Row 6 (unify system-prompt builders)
+
 ## Round 2
+
 **Verdict:** FAIL-fix
 **Reviewed by:** codex/gpt-5.5 (auto mode)
 **Reviewed at:** 2026-05-05T16:16:30+09:00
 **Branch:** fix/unify-system-prompt-builders
 
 ### Summary
+
 Round 2 resolves the substantive Row 6 concerns from Round 1. The channel path now routes through `SystemPromptBuilder`, the canonical section block is in the requested order, and channel-only sections are appended after the canonical block. The old `CHANNEL_FILE_ORDER` is gone, and daemon/channel personality loading now share `personality::load_personality_with_options` with channel behavior expressed as filters (`HEARTBEAT.md` denylist and `BOOTSTRAP.md` conditional list).
 
 The remaining blocker is scope and test hygiene, not the Row 6 architecture. The branch diff against `origin/dev` includes an unexplained `src/gateway/api.rs` edit that removes `auth_profiles` and `service_token` from a test `AppState` literal. That file is outside the Row 6 scope and outside the coder's justified plumbing list. It also reintroduces the exact `AppState` test-compile breakage the brief said was fixed on `origin/dev`: `cargo test --lib agent::prompt::tests` and `cargo test --lib agent::personality::tests` both fail at compile time because of this unrelated gateway change. `cargo check --lib` passes.
@@ -13,6 +16,7 @@ The remaining blocker is scope and test hygiene, not the Row 6 architecture. The
 I accept the AntiNarration move. Canonical section-order convergence is the point of Row 6, and the branch still includes the no-narration instruction in channel mode plus repeats the warning in `ChannelCapabilities`. The old early placement was justified only by a comment, with no telemetry proving it is more effective. If narration suppression regresses, it should be handled with an explicit prompt-priority experiment or channel telemetry rather than by violating the canonical order in this unification PR.
 
 ### Checklist results
+
 1. Real unification (not wrapper): ✓
 2. Channel behavior preserved: ✓
 3. Section-order convergence: ✓
@@ -22,6 +26,7 @@ I accept the AntiNarration move. Canonical section-order convergence is the poin
 7. Scope discipline: ✗
 
 ### Spot-checks
+
 `git status --short --branch` confirms the corrected branch:
 ```text
 ## fix/unify-system-prompt-builders
@@ -153,17 +158,20 @@ error[E0063]: missing fields `auth_profiles` and `service_token` in initializer 
 ```
 
 ### Required fixes
+
 1. Revert or otherwise remove the unrelated `src/gateway/api.rs` deletion so `cargo test --lib` compiles again.
 2. After that, rerun at least `cargo test --lib agent::prompt::tests` and `cargo test --lib agent::personality::tests`; the new tests are well targeted but currently cannot be proven runnable from this worktree.
 3. Decide whether the stale doc comment in `src/channels/mod.rs:3729` should keep naming the removed `build_system_prompt_with_mode_and_autonomy` function. I do not consider it a blocker because it explicitly says it was the previous ad-hoc builder, but it is still a grep hit from the reviewer brief.
 
 ## Round 1
+
 **Verdict:** FAIL-fix
 **Reviewed by:** codex/gpt-5.5 (auto mode)
 **Reviewed at:** 2026-05-05T00:49:50+09:00
 **Branch:** fix/unify-system-prompt-builders
 
 ## Summary
+
 The old channel builder body is gone and live channel callers now route through `SystemPromptBuilder`, so this is a real step toward consolidation. `cargo check --lib` passes. Channel prompts also retain the major visible channel affordances I checked: project context, tool/action guidance, channel capability text, prompt truncation, and the intentional `HEARTBEAT.md` exclusion.
 
 This is not ready to pass. The refactor still keeps a separate channel personality/bootstrap file loader inside `src/agent/prompt.rs` with its own `CHANNEL_FILE_ORDER`, explicitly documenting that it differs from `personality::PERSONALITY_FILES`. That leaves the original drift mechanism alive, just moved out of `src/channels/mod.rs`. The default section order also does not match the required canonical order: channel-only `AntiNarration`, `Hardware`, and `ActionInstruction` sections are inserted between canonical sections instead of being appended after the canonical sequence.
@@ -171,6 +179,7 @@ This is not ready to pass. The refactor still keeps a separate channel personali
 There is also scope drift. The brief allowed `src/agent/prompt.rs`, `src/channels/mod.rs`, possibly `src/agent/personality.rs`, and tests. The current diff also touches `src/agent/agent.rs`, `src/agent/kumiho.rs`, `src/agent/loop_.rs`, and `src/tools/delegate.rs`. Some of that may be mechanical `PromptContext` plumbing, but it was not flagged or justified, and the review target is currently a dirty `dev` worktree rather than a checked-out `fix/unify-system-prompt-builders` branch.
 
 ## Checklist results
+
 1. Real unification (not wrapper): ✗
 2. Channel behavior preserved: ✓
 3. Section-order convergence: ✗
@@ -180,6 +189,7 @@ There is also scope drift. The brief allowed `src/agent/prompt.rs`, `src/channel
 7. Scope discipline: ✗
 
 ## Spot-checks
+
 `src/channels/mod.rs:3727` shows the live channel entry point now delegates to the unified builder:
 ```rust
 /// Build a channel-mode system prompt by delegating to the unified
@@ -290,6 +300,7 @@ rg -n "load_openclaw_bootstrap_files" src
 ```
 
 ## Required fixes (if FAIL-fix)
+
 1. Move personality/bootstrap file loading into one shared source of truth. Do not keep `CHANNEL_FILE_ORDER` as a second hard-coded list that differs from `personality::PERSONALITY_FILES`; express channel exclusions/conditionals as metadata or mode filters on the shared list.
 2. Restore the required canonical order: `DateTime → Identity → OperatorIdentity → KumihoBootstrap → ToolHonesty → Tools → Safety → Skills → Workspace → Runtime → ChannelMedia`. Channel-only additions should not interrupt that canonical sequence.
 3. Add tests that assert full ordered section sequences, not only presence and identity-before-tools. Cover daemon and channel outputs.
@@ -298,4 +309,5 @@ rg -n "load_openclaw_bootstrap_files" src
 6. Put the worktree on the stated `fix/unify-system-prompt-builders` branch, or update the review metadata if this dirty `dev` worktree is the intended review target.
 
 ## Required rescope (if FAIL-rescope)
+
 Not applicable. The section-based approach can work, but this implementation needs coder-revisable cleanup before it satisfies Row 6.

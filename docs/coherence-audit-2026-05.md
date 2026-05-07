@@ -1,4 +1,5 @@
 # Coherence Audit — Phase 0-1
+
 **Date:** 2026-05-04
 **Branch:** `chore/coherence-audit-2026-05`
 **Auditor:** claude/claude-opus-4-7 (xHigh thinking)
@@ -232,9 +233,11 @@ These were checked and found to align; recorded here so they don't reappear in l
 Grouped by remediation class, ordered by severity within each group.
 
 ### `delete`
+
 - **Row 2** (med) — Drop `BOOTSTRAP.md` from `PERSONALITY_FILES` at `src/agent/personality.rs:22`. If keeping the test that asserts missing-file handling, switch the assertion target to a different filename or remove that specific test row. Move any first-turn instruction value to the prompt builder per the brief.
 
 ### `config-follows-code`
+
 - **Row 7** (high) — Strip every `memory_store` / `memory_recall` / `memory_forget` reference from: `tool_descriptions/en.toml:38-40` (and parity locales — `ar.toml … zh-CN.toml`), `src/config/schema.rs:5295, 7260, 11472, 11522, 15850, 15864-15865`, `src/onboard/wizard.rs:6068-6074, 7099-7118`, `src/channels/mod.rs:5356-5364`, and any tests that assert their presence. Where appropriate (auto_approve list especially), substitute the Kumiho equivalents. Cross-check that `src/onboard/wizard.rs:5913-5915` remains consistent after the removal.
 - **Row 5** (med) — Update `src/config/schema.rs:5250` docstring to `Default: 20.` (or change the runtime default to 100 if 100 is what the project actually wants — defer to product owner; the audit's job is to flag the divergence).
 - **Row 6** (med) — Same as Row 5 for `src/config/schema.rs:5252` / 5377 (`500` vs `1000`).
@@ -245,10 +248,12 @@ Grouped by remediation class, ordered by severity within each group.
 - **Row 11** (low) — Add tunnel-provider examples to `.env.example` and a `docs/ops/tunneling.md` page covering Cloudflare, Tailscale, ngrok, Pinggy, OpenVPN, custom.
 
 ### `rewrite-both`
+
 - **Row 1** (med) — Extend the Kumiho prompt-conditional pattern: only emit `KUMIHO_BOOTSTRAP_PROMPT*` once MCP registration has confirmed Kumiho tools are reachable. Otherwise emit a one-liner ("Kumiho memory disabled this session.") or nothing. Rename `probe_kumiho_memory_advanced` to a broader liveness probe, or add a sibling `probe_kumiho_sidecar_runnable` and gate `append_kumiho_bootstrap` on it.
 - **Row 3** (low) — For each of `USER.md`, `TOOLS.md`, `HEARTBEAT.md`, `MEMORY.md`: either define a schema + add a default + document it (and add a creator in `ensure_bootstrap_files`), or delete the entry from `PERSONALITY_FILES`. Recommend deletion unless there is a concrete near-term use case.
 - **Row 12** (low) — Either rename one of the two `Low/Medium/High` tier vocabularies, or add a one-paragraph note in `AGENTS.md` and `src/security/policy.rs` cross-referencing each other to dispel the false coupling.
 - **Row 13** (low) — Decide AGENTS.md's role. If it remains contributor-facing, drop it from `PERSONALITY_FILES` (it should not be inlined into the agent persona). If a workspace persona file is needed, give it a distinct name (e.g. `WORKSPACE.md`).
 
 ### `code-follows-config`
+
 - **Row 14** (low) — Add `probe_operator_sidecar_installed()` mirroring `probe_kumiho_memory_advanced()`, and have `inject_operator()` skip injection (or emit a warning + lite prompt) when the launcher is missing. Also avoid appending `OPERATOR_CORE_PROMPT` when the sidecar is unavailable.

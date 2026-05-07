@@ -32,6 +32,7 @@
 //!   - `\b(<snake>)\s*\(` — function-call style.
 //!   - Inside any sentence intro'd by a `tools:` header, every
 //!     `\b(<snake>)\b` until the next period.
+//!
 //! `<snake>` requires at least one underscore so prose words like
 //! "agents" / "patterns" don't false-positive.
 

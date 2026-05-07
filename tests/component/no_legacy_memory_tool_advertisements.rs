@@ -79,13 +79,7 @@ const ALLOWLIST: &[&str] = &[
 ];
 
 /// Directories whose entire subtree is excluded from the walk.
-const SKIP_DIRS: &[&str] = &[
-    "target",
-    "node_modules",
-    ".git",
-    "dist",
-    "build",
-];
+const SKIP_DIRS: &[&str] = &["target", "node_modules", ".git", "dist", "build"];
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -110,7 +104,7 @@ fn is_allowed(rel_path: &str) -> bool {
     })
 }
 
-fn walk(dir: &Path, root: &Path, out: &mut Vec<PathBuf>) {
+fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
     let entries = match fs::read_dir(dir) {
         Ok(e) => e,
         Err(_) => return,
@@ -123,7 +117,7 @@ fn walk(dir: &Path, root: &Path, out: &mut Vec<PathBuf>) {
             continue;
         }
         if path.is_dir() {
-            walk(&path, root, out);
+            walk(&path, out);
         } else if relevant_extension(&path) {
             out.push(path);
         }
@@ -168,7 +162,7 @@ fn line_has_bare_legacy(line: &str, name: &str) -> bool {
 fn no_bare_legacy_memory_tool_names_outside_allowlist() {
     let root = repo_root();
     let mut files = Vec::new();
-    walk(&root, &root, &mut files);
+    walk(&root, &mut files);
 
     let mut violations: Vec<Hit> = Vec::new();
 
@@ -232,8 +226,7 @@ fn allowlist_does_not_silence_bootstrap_prompts() {
     let kumiho_rs = fs::read_to_string(repo_root().join("src/agent/kumiho.rs"))
         .expect("read src/agent/kumiho.rs");
     assert!(
-        kumiho_rs
-            .contains("bootstrap_prompts_have_no_bare_legacy_memory_tool_names"),
+        kumiho_rs.contains("bootstrap_prompts_have_no_bare_legacy_memory_tool_names"),
         "src/agent/kumiho.rs is on the allowlist for legitimate reasons \
          (deprecation guard tests live there), but the local guard test \
          `bootstrap_prompts_have_no_bare_legacy_memory_tool_names` MUST \

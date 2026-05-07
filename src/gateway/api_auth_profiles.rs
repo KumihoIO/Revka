@@ -159,7 +159,8 @@ pub async fn handle_create_auth_profile(
 
     // Rate-limit before any work — applies even to authenticated callers
     // because the duplicate-detection response (409) is a side-channel.
-    let rate_key = client_key_from_request(Some(peer_addr), &headers, state.trust_forwarded_headers);
+    let rate_key =
+        client_key_from_request(Some(peer_addr), &headers, state.trust_forwarded_headers);
     let peer_is_loopback = peer_addr.ip().is_loopback();
     if let Err(e) = state
         .auth_limiter

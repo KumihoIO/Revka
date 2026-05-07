@@ -8504,10 +8504,7 @@ BTC is currently around $65,000 based on latest tool output."#
     #[test]
     fn prompt_injects_tools() {
         let ws = make_workspace();
-        let tools = vec![
-            ("shell", "Run commands"),
-            ("file_read", "Read files"),
-        ];
+        let tools = vec![("shell", "Run commands"), ("file_read", "Read files")];
         let prompt = build_system_prompt(ws.path(), "gpt-4o", &tools, &[], None, None);
 
         assert!(prompt.contains("**shell**"));

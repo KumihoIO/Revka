@@ -287,7 +287,7 @@ pub async fn handle_republish_revision(
     let client = build_kumiho_client(&state);
 
     match client.tag_revision(&revision_kref, "published").await {
-        Ok(_) => {
+        Ok(()) => {
             // Invalidate the workflows list cache so the next /api/workflows
             // poll reflects the newly-published revision.
             super::api_workflows::invalidate_cache();

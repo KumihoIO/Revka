@@ -575,7 +575,10 @@ Some conditions here.
         assert_eq!(steps[0].number, 1);
         assert_eq!(steps[0].title, "Check readings");
         assert!(steps[0].body.contains("Read sensor data"));
-        assert_eq!(steps[0].suggested_tools, vec!["gpio_read", "kumiho_memory_store"]);
+        assert_eq!(
+            steps[0].suggested_tools,
+            vec!["gpio_read", "kumiho_memory_store"]
+        );
         assert!(!steps[0].requires_confirmation);
 
         assert_eq!(steps[1].number, 2);

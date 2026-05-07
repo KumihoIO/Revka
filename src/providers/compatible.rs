@@ -2779,7 +2779,10 @@ mod tests {
         }))
         .unwrap();
 
-        assert_eq!(call.function_name().as_deref(), Some("kumiho_memory_engage"));
+        assert_eq!(
+            call.function_name().as_deref(),
+            Some("kumiho_memory_engage")
+        );
     }
 
     #[test]
@@ -2808,7 +2811,10 @@ mod tests {
         }))
         .unwrap();
 
-        assert_eq!(call.function_name().as_deref(), Some("kumiho_memory_engage"));
+        assert_eq!(
+            call.function_name().as_deref(),
+            Some("kumiho_memory_engage")
+        );
         assert_eq!(
             call.function_arguments().as_deref(),
             Some("{\"query\":\"preferred\"}")

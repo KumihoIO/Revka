@@ -666,7 +666,8 @@ mod tests {
                         preceded_by_kumiho,
                         "bare legacy tool name '{stale}' found in bootstrap prompt at offset {abs}: \
                          {snippet}",
-                        snippet = &prompt[abs.saturating_sub(40)..(abs + stale.len() + 40).min(prompt.len())],
+                        snippet = &prompt
+                            [abs.saturating_sub(40)..(abs + stale.len() + 40).min(prompt.len())],
                     );
                     search_start = abs + stale.len();
                 }
