@@ -215,7 +215,16 @@ function ArchitectChatSurface({
 
   const handleToolResult = useCallback(
     (evt: ToolResultEvent) => {
-      if (evt.name !== 'propose_workflow_yaml') return;
+      // The MCP gateway namespaces tool names with the server prefix
+      // (e.g. `construct-operator__propose_workflow_yaml`). Match on the
+      // bare tool name suffix so we still fire when the prefix is present.
+      // Without this we silently dropped every tool result, the dedup
+      // ref never flipped, and the chat-fallback note fired even when
+      // propose_workflow_yaml had succeeded (regression from PR #161).
+      const bareName = evt.name.includes('__')
+        ? evt.name.split('__').pop() ?? evt.name
+        : evt.name;
+      if (bareName !== 'propose_workflow_yaml') return;
       if (lastProcessedResultId.current === evt.id) return;
       lastProcessedResultId.current = evt.id;
 

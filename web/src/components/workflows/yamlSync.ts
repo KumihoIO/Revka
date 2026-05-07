@@ -1382,6 +1382,18 @@ export function tasksToFlow(tasks: TaskDefinition[]): { nodes: Node<TaskNodeData
   const edges: Edge[] = [];
   const nodeIds = new Set(tasks.map((t) => t.id));
 
+  // Track edges already added so we never emit duplicates. Keyed on
+  // `${source}->${target}` so a single edge is never drawn twice even
+  // when multiple inference passes (depends_on, parallel.steps,
+  // ${ref.output} interpolation) all want to add it.
+  const seenEdges = new Set<string>();
+  const pushEdge = (edge: Edge): void => {
+    const key = `${edge.source}->${edge.target}`;
+    if (seenEdges.has(key)) return;
+    seenEdges.add(key);
+    edges.push(edge);
+  };
+
   // Build a map of parallel step → children for edge rewriting
   const parallelChildrenMap = new Map<string, string[]>();
   for (const task of tasks) {
@@ -1407,7 +1419,7 @@ export function tasksToFlow(tasks: TaskDefinition[]): { nodes: Node<TaskNodeData
       const children = parallelChildrenMap.get(dep);
       if (children) {
         for (const child of children) {
-          edges.push({
+          pushEdge({
             id: `${child}->${task.id}`,
             source: child,
             target: task.id,
@@ -1422,7 +1434,7 @@ export function tasksToFlow(tasks: TaskDefinition[]): { nodes: Node<TaskNodeData
       } else if (forEachChildrenMap.has(dep)) {
         const feChildren = forEachChildrenMap.get(dep)!;
         const lastChild = feChildren[feChildren.length - 1]!;
-        edges.push({
+        pushEdge({
           id: `${lastChild}->${task.id}`,
           source: lastChild,
           target: task.id,
@@ -1433,7 +1445,7 @@ export function tasksToFlow(tasks: TaskDefinition[]): { nodes: Node<TaskNodeData
           style: GATE_EDGE_STYLES.default,
         });
       } else if (nodeIds.has(dep)) {
-        edges.push({
+        pushEdge({
           id: `${dep}->${task.id}`,
           source: dep,
           target: task.id,
@@ -1450,7 +1462,7 @@ export function tasksToFlow(tasks: TaskDefinition[]): { nodes: Node<TaskNodeData
   // Add edges from parallel parent to its children (synthetic — visual only)
   for (const [parentId, children] of parallelChildrenMap) {
     for (const child of children) {
-      edges.push({
+      pushEdge({
         id: `par:${parentId}->${child}`,
         source: parentId,
         target: child,
@@ -1472,7 +1484,7 @@ export function tasksToFlow(tasks: TaskDefinition[]): { nodes: Node<TaskNodeData
       const child = children[ci]!;
       if (ci === 0) {
         // Parent → first child
-        edges.push({
+        pushEdge({
           id: `fe:${parentId}->${child}`,
           source: parentId,
           target: child,
@@ -1486,20 +1498,17 @@ export function tasksToFlow(tasks: TaskDefinition[]): { nodes: Node<TaskNodeData
       } else {
         // Chain: previous child → this child (unless already has depends_on edges)
         const prev = children[ci - 1]!;
-        const existingEdge = edges.find(e => e.source === prev && e.target === child);
-        if (!existingEdge) {
-          edges.push({
-            id: `fe:${prev}->${child}`,
-            source: prev,
-            target: child,
-            type: 'default',
-            animated: true,
-            selectable: true,
-            interactionWidth: 20,
-            style: { stroke: 'var(--construct-signal-live)', strokeWidth: 2 },
-            data: { synthetic: true },
-          });
-        }
+        pushEdge({
+          id: `fe:${prev}->${child}`,
+          source: prev,
+          target: child,
+          type: 'default',
+          animated: true,
+          selectable: true,
+          interactionWidth: 20,
+          style: { stroke: 'var(--construct-signal-live)', strokeWidth: 2 },
+          data: { synthetic: true },
+        });
       }
     }
   }
@@ -1508,7 +1517,7 @@ export function tasksToFlow(tasks: TaskDefinition[]): { nodes: Node<TaskNodeData
   for (const task of tasks) {
     if (!isGate(task)) continue;
     if (task.on_true && nodeIds.has(task.on_true)) {
-      edges.push({
+      pushEdge({
         id: `${task.id}->true->${task.on_true}`,
         source: task.id,
         sourceHandle: 'true',
@@ -1523,7 +1532,7 @@ export function tasksToFlow(tasks: TaskDefinition[]): { nodes: Node<TaskNodeData
       });
     }
     if (task.on_false && nodeIds.has(task.on_false)) {
-      edges.push({
+      pushEdge({
         id: `${task.id}->false->${task.on_false}`,
         source: task.id,
         sourceHandle: 'false',
@@ -1539,7 +1548,90 @@ export function tasksToFlow(tasks: TaskDefinition[]): { nodes: Node<TaskNodeData
     }
   }
 
+  // Inferred dependency edges from `${step_id.<field>}` interpolations in
+  // text fields. Architect-generated YAML (and many hand-written workflows)
+  // express deps via prompt/template references rather than explicit
+  // depends_on. We mirror the depends_on direction (source = referenced
+  // step, target = referencing step) so the Set-based dedup naturally
+  // suppresses doubles when both depends_on and interpolation point at
+  // the same source. ${input.X} / ${trigger.X} / ${env.X} are skipped —
+  // those are workflow-scope references, not step references.
+  for (const task of tasks) {
+    const refs = collectStepRefs(task, nodeIds);
+    for (const ref of refs) {
+      if (ref === task.id) continue; // ignore self-references
+      pushEdge({
+        id: `ref:${ref}->${task.id}`,
+        source: ref,
+        target: task.id,
+        type: 'default',
+        animated: true,
+        selectable: true,
+        interactionWidth: 20,
+        style: GATE_EDGE_STYLES.default,
+        data: { inferred: 'interpolation' },
+      });
+    }
+  }
+
   return { nodes, edges };
+}
+
+/** Text fields on a TaskDefinition that may contain `${step_id.<field>}`
+ *  interpolations referencing other steps. Limited to the obvious
+ *  text-bearing fields LLMs and humans write — we don't traverse params or
+ *  arbitrary nested dicts (those rarely carry inter-step refs and would
+ *  produce false positives from JSON-ish payloads). */
+const INTERPOLATION_TEXT_FIELDS: ReadonlyArray<keyof TaskDefinition> = [
+  'prompt',
+  'shell_command',
+  'python_code',
+  'python_args',
+  'python_script',
+  'email_body',
+  'email_body_html',
+  'email_subject',
+  'email_to',
+  'email_cc',
+  'email_bcc',
+  'output_template',
+  'condition',
+  'goto_condition',
+  'human_input_message',
+  'human_approval_message',
+  'notify_message',
+  'notify_title',
+  'group_chat_topic',
+  'supervisor_task',
+  'a2a_message',
+  'map_reduce_task',
+  'handoff_reason',
+];
+
+/** IDs that look like step refs but are actually workflow-scope sources. */
+const NON_STEP_REF_IDS = new Set(['input', 'trigger', 'env', 'inputs', 'outputs', 'context']);
+
+/** Match `${step_id}` and `${step_id.field}` (and `${step_id.field.subfield}`).
+ *  step_id matches the YAML id rule: starts with a letter or underscore,
+ *  then letters/digits/underscores/hyphens. We don't try to handle nested
+ *  expressions or pipes — LLMs use simple references. */
+const STEP_REF_REGEX = /\$\{([a-zA-Z_][a-zA-Z0-9_-]*)(?:\.[a-zA-Z_][a-zA-Z0-9_.-]*)?\}/g;
+
+function collectStepRefs(task: TaskDefinition, nodeIds: Set<string>): Set<string> {
+  const refs = new Set<string>();
+  for (const field of INTERPOLATION_TEXT_FIELDS) {
+    const value = task[field];
+    if (typeof value !== 'string' || !value) continue;
+    STEP_REF_REGEX.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = STEP_REF_REGEX.exec(value)) !== null) {
+      const id = m[1]!;
+      if (NON_STEP_REF_IDS.has(id)) continue;
+      if (!nodeIds.has(id)) continue;
+      refs.add(id);
+    }
+  }
+  return refs;
 }
 
 /** Legacy adapter for the read-only WorkflowGraph viewer */
