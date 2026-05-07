@@ -662,10 +662,7 @@ mod tests {
 
     #[test]
     fn build_deferred_section_renders_server_instructions() {
-        let stubs = vec![make_stub(
-            "opencrab__opencrab_query",
-            "Query the ontology",
-        )];
+        let stubs = vec![make_stub("opencrab__opencrab_query", "Query the ontology")];
         let set = DeferredMcpToolSet {
             stubs,
             registry: std::sync::Arc::new(

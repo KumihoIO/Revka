@@ -7157,10 +7157,7 @@ mod tests {
             "kumiho_memory_reflect",
             "kumiho_memory_store",
         ] {
-            assert!(
-                tools.contains(tool),
-                "TOOLS.md should list tool: {tool}"
-            );
+            assert!(tools.contains(tool), "TOOLS.md should list tool: {tool}");
         }
         // Audit row 11: bare `memory_*` tool names must not appear in TOOLS.md
         // — they have no native impl in Construct and the bootstrap prompt

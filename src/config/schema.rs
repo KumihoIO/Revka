@@ -11029,7 +11029,12 @@ mod tests {
     async fn warn_on_legacy_memory_tool_names_does_not_panic_on_clean_config() {
         let cfg = Config::default();
         // Default config should not contain any legacy bare names.
-        for stale in &["memory_recall", "memory_forget", "memory_store", "memory_search"] {
+        for stale in &[
+            "memory_recall",
+            "memory_forget",
+            "memory_store",
+            "memory_search",
+        ] {
             assert!(
                 !cfg.autonomy.auto_approve.iter().any(|t| t == stale),
                 "default auto_approve must not list legacy '{stale}'"
@@ -11050,7 +11055,10 @@ mod tests {
         // advisory, never fatal.
         let mut cfg = Config::default();
         cfg.autonomy.auto_approve.push("memory_recall".to_string());
-        cfg.security.otp.gated_actions.push("memory_forget".to_string());
+        cfg.security
+            .otp
+            .gated_actions
+            .push("memory_forget".to_string());
         warn_on_legacy_memory_tool_names(&cfg);
     }
 
@@ -11645,12 +11653,7 @@ auto_approve = ["my_custom_tool", "another_tool"]
             "user-supplied tool must remain in auto_approve"
         );
         // Defaults are merged in
-        for default_tool in &[
-            "file_read",
-            "weather",
-            "calculator",
-            "web_fetch",
-        ] {
+        for default_tool in &["file_read", "weather", "calculator", "web_fetch"] {
             assert!(
                 parsed
                     .autonomy

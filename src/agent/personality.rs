@@ -88,7 +88,7 @@ pub struct PersonalityLoadOptions<'a> {
     pub max_chars: usize,
 }
 
-impl<'a> Default for PersonalityLoadOptions<'a> {
+impl Default for PersonalityLoadOptions<'_> {
     fn default() -> Self {
         Self {
             files: PERSONALITY_FILES,

@@ -144,6 +144,7 @@ in `agent::kumiho::registry_has_advanced_kumiho_tools`.
 ### Row 11 — `memory_store` / `memory_recall` / `memory_forget`
 
 #### Phantom advertisements in system-prompt tool descriptions
+
 LLM is told these names exist; dispatch then fails because there is no native
 `impl Tool` and the bare name does not match any MCP-prefixed registration.
 
@@ -166,6 +167,7 @@ LLM is told these names exist; dispatch then fails because there is no native
 | `scripts/rpi-config.toml:80, 98, 99, 145`  | RPi sample config                      | B/C | Drop `memory_recall`/`memory_store`/`memory_forget`.                                            |
 
 #### Runtime alias mapping & param defaults
+
 The alias mapper normalizes LLM-emitted variants to a canonical name. Since
 the canonical bare names do not dispatch, normalizing to them is misleading.
 
@@ -176,6 +178,7 @@ the canonical bare names do not dispatch, normalizing to them is misleading.
 | `src/agent/loop_.rs:594`           | `parse_xml_tool_calls` doc-comment example        | C   | Change the example tag to a generic one to avoid implying a tool exists. |
 
 #### Test-only fixtures
+
 Tests that used `memory_*` as illustrative tool-name strings. Most are
 parser/policy tests where the specific name is incidental.
 

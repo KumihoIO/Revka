@@ -34,7 +34,7 @@ pub enum PromptTools<'a> {
     Simple(&'a [(&'a str, &'a str)]),
 }
 
-impl<'a> PromptTools<'a> {
+impl PromptTools<'_> {
     pub fn is_empty(&self) -> bool {
         match self {
             PromptTools::Full(t) => t.is_empty(),
@@ -80,7 +80,7 @@ pub struct ChannelOptions<'a> {
     pub conditional_personality_files: &'a [&'a str],
 }
 
-impl<'a> Default for ChannelOptions<'a> {
+impl Default for ChannelOptions<'_> {
     fn default() -> Self {
         Self {
             native_tools: false,
@@ -675,7 +675,7 @@ impl PromptSection for ActionInstructionSection {
     fn build(&self, ctx: &PromptContext<'_>) -> Result<String> {
         let opts = match &ctx.mode {
             BuilderMode::Channel(opts) => opts,
-            _ => return Ok(String::new()),
+            BuilderMode::Daemon => return Ok(String::new()),
         };
         Ok(if opts.native_tools {
             "## Your Task\n\n\
@@ -702,7 +702,7 @@ impl PromptSection for ChannelCapabilitiesSection {
     fn build(&self, ctx: &PromptContext<'_>) -> Result<String> {
         let opts = match &ctx.mode {
             BuilderMode::Channel(opts) => opts,
-            _ => return Ok(String::new()),
+            BuilderMode::Daemon => return Ok(String::new()),
         };
         if opts.compact_context {
             return Ok(String::new());
@@ -1335,11 +1335,11 @@ mod tests {
         );
     }
 
-    fn kumiho_test_ctx<'a>(
-        tools: &'a [Box<dyn Tool>],
+    fn kumiho_test_ctx(
+        tools: &[Box<dyn Tool>],
         kumiho_enabled: bool,
         advanced: bool,
-    ) -> PromptContext<'a> {
+    ) -> PromptContext<'_> {
         PromptContext {
             workspace_dir: Path::new("/tmp"),
             model_name: "test-model",
