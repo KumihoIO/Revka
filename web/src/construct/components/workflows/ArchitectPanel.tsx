@@ -324,7 +324,12 @@ function ArchitectChatSurface({
 
     let cancelled = false;
     (async () => {
-      type ValidatorError = { message?: string; path?: string };
+      type ValidatorError = {
+        message?: string;
+        path?: string;
+        step_id?: string;
+        field?: string;
+      };
       type ValidatorResult = {
         valid?: boolean;
         yaml?: string;
@@ -376,7 +381,11 @@ function ArchitectChatSurface({
       const errLines = (result.errors ?? [])
         .map((e) => {
           const msg = e?.message ?? 'validation error';
-          return e?.path ? `- ${msg} (at ${e.path})` : `- ${msg}`;
+          const loc =
+            e?.path ??
+            [e?.step_id, e?.field].filter(Boolean).join('.') ??
+            '';
+          return loc ? `- ${msg} (at ${loc})` : `- ${msg}`;
         })
         .join('\n');
       const detail = errLines || '- (no error detail returned)';
