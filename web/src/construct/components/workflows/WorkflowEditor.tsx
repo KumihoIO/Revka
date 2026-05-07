@@ -2023,7 +2023,7 @@ function WorkflowSettingsPanel({
               >
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <span style={{ fontSize: 10, color: 'var(--pc-text-faint)' }}>
-                    {trigger.inputMap.__cron ? 'Cron' : 'Entity'}
+                    {'__cron' in trigger.inputMap ? 'Cron' : 'Entity'}
                   </span>
                   <button
                     onClick={() =>
@@ -2040,7 +2040,7 @@ function WorkflowSettingsPanel({
                     Remove
                   </button>
                 </div>
-                {trigger.inputMap.__cron ? (
+                {'__cron' in trigger.inputMap ? (
                   <input
                     type="text"
                     value={trigger.inputMap.__cron}
