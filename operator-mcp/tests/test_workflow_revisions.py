@@ -87,7 +87,11 @@ async def test_revise_happy_path_add_and_wire(fake_gateway, monkeypatch):
                         "agent": {
                             "agent_type": "claude",
                             "role": "reviewer",
-                            "prompt": "Review prior work",
+                            # Prompt must reference the step we wire to;
+                            # the agent-unused-depends_on validator rule
+                            # rejects depends_on entries that don't appear
+                            # in any interpolatable text field.
+                            "prompt": "Review ${second.output}",
                         },
                     },
                 },
