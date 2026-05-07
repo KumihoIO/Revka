@@ -16,7 +16,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { parseWorkflowYaml, tasksToFlow } from './yamlSync';
+import { flowToTasks, parseWorkflowYaml, tasksToFlow, tasksToYaml } from './yamlSync';
+import type { TaskNodeData } from './yamlSync';
+import type { Node } from '@xyflow/react';
 
 function edgePairs(edges: { source: string; target: string }[]): Set<string> {
   return new Set(edges.map((e) => `${e.source}->${e.target}`));
@@ -212,4 +214,35 @@ steps:
     assert.ok(pairs.has(p), `missing expected edge ${p}; got ${[...pairs].join(', ')}`);
   }
   assert.equal(edges.length, expected.length, `expected ${expected.length} edges, got ${edges.length}`);
+});
+
+test('agent.template round-trips through parse → flow → emit', () => {
+  const yaml = `
+steps:
+  - id: research_step
+    type: agent
+    agent:
+      agent_type: claude
+      role: researcher
+      template: construct-vs-simai-researcher
+      prompt: "Research the topic."
+`;
+  const tasks = parseWorkflowYaml(yaml);
+  // Parse routes agent.template → TaskDefinition.template (NOT assign).
+  assert.equal(tasks[0]!.template, 'construct-vs-simai-researcher');
+  assert.equal(tasks[0]!.assign, undefined);
+
+  // tasksToFlow surfaces it on TaskNodeData.template for the chip.
+  const { nodes } = tasksToFlow(tasks);
+  const data = nodes[0]!.data as TaskNodeData;
+  assert.equal(data.template, 'construct-vs-simai-researcher');
+  assert.equal(data.assign, '');
+
+  // flowToTasks → tasksToYaml emits agent.template back into YAML.
+  const roundTripped = tasksToYaml(flowToTasks(nodes as Node<TaskNodeData>[], []));
+  assert.match(
+    roundTripped,
+    /agent:[\s\S]*?template: construct-vs-simai-researcher/,
+    'expected agent.template to be re-emitted on round-trip',
+  );
 });

@@ -40,6 +40,10 @@ export interface TaskDefinition {
   disabled?: boolean;
   /** Pre-assigned pool agent template name */
   assign?: string;
+  /** Pool persona binding for agent steps — resolves `AgentStepConfig.template`
+   *  at dispatch. Architect's persona-discovery flow writes this; round-trips
+   *  through `agent.template:` in YAML. */
+  template?: string;
   /** Gate-only fields */
   condition?: string;
   on_true?: string;
@@ -250,6 +254,10 @@ export interface TaskNodeData {
   disabled?: boolean;
   /** Pre-assigned pool agent template name */
   assign: string;
+  /** Pool persona binding (`agent.template`) — set by Architect's persona
+   *  discovery or by a hand-edited YAML. Distinct from `assign`, which is
+   *  only written by the AgentPicker side-panel UI. */
+  template: string;
   paramCount: number;
   dependencyCount: number;
   /** Gate-only: condition expression */
@@ -842,7 +850,7 @@ function extractStepBlockData(yaml: string): Map<string, Partial<TaskDefinition>
       if (agentType) data.agent_type = agentType[1]!.replace(/["']/g, '') as 'claude' | 'codex';
       if (role) data.role = role[1]!.replace(/["']/g, '');
       if (timeout) data.timeout = parseInt(timeout[1]!);
-      if (template) data.assign = template[1]!.replace(/["']/g, '');
+      if (template) data.template = template[1]!.replace(/["']/g, '');
       // Extract prompt (may be multi-line with |)
       const promptMatch = block.match(/prompt:\s*\|?\s*\n([\s\S]*?)(?=\n\s{6}\w|\n\s{4}\w|\n\s{2}-|\n\w|$)/);
       if (promptMatch) {
@@ -1292,6 +1300,7 @@ export function tasksToFlow(tasks: TaskDefinition[]): { nodes: Node<TaskNodeData
       skills: task.skills,
       disabled: task.disabled ?? false,
       assign: task.assign || '',
+      template: task.template || '',
       paramCount: task.params ? Object.keys(task.params).length : 0,
       dependencyCount: task.depends_on.length,
       condition: task.condition || '',
@@ -1771,6 +1780,7 @@ export function flowToTasks(nodes: Node<TaskNodeData>[], edges: Edge[]): TaskDef
       if (d.prompt) base.prompt = d.prompt;
       if (d.timeout && d.timeout !== 300) base.timeout = d.timeout;
       if (d.assign) base.assign = d.assign;
+      if (d.template) base.template = d.template;
       if (d.model) base.model = d.model;
     }
     if (st === 'parallel') {
@@ -2001,11 +2011,12 @@ export function tasksToYaml(tasks: TaskDefinition[], meta?: Partial<WorkflowMeta
       if (notifyTitle) lines.push(`      title: ${yamlEscape(notifyTitle)}`);
     }
     // Executor-specific nested blocks
-    if (stepType === 'agent' && (task.agent_type || task.role || task.prompt || task.assign || task.auth)) {
+    if (stepType === 'agent' && (task.agent_type || task.role || task.prompt || task.assign || task.template || task.auth)) {
       lines.push(`    agent:`);
       if (task.agent_type) lines.push(`      agent_type: ${task.agent_type}`);
       if (task.role) lines.push(`      role: ${task.role}`);
-      if (task.assign) lines.push(`      template: ${task.assign}`);
+      const personaTemplate = task.template || task.assign;
+      if (personaTemplate) lines.push(`      template: ${personaTemplate}`);
       if (task.prompt) {
         if (task.prompt.includes('\n')) {
           lines.push(`      prompt: |`);

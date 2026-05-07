@@ -184,11 +184,35 @@ function TaskNode({ id, data, selected }: { id: string; data: TaskNodeData; sele
         </button>
       )}
 
+      {/* Persona pill — agent.template binding from Architect persona discovery
+          or hand-edited YAML. Distinct from the green "Assigned" button above
+          (set via AgentPicker side-panel) but still actionable. */}
+      {!data.assign && data.template && isAgentStep && !data.runInfo && (
+        <button
+          type="button"
+          onClick={openAgentPicker}
+          onMouseDown={(e) => e.stopPropagation()}
+          className="mt-1.5 px-2 py-0.5 rounded-md text-[10px] font-semibold truncate inline-flex items-center gap-1"
+          style={{
+            background: 'transparent',
+            color: 'var(--construct-text-secondary)',
+            border: '1px solid var(--construct-border-strong)',
+            maxWidth: '100%',
+            cursor: 'pointer',
+            font: 'inherit',
+          }}
+          title={`Pool persona "${data.template}" — click to change`}
+        >
+          <Bot size={10} />
+          Persona · {data.template}
+        </button>
+      )}
+
       {/* Default-agent / unassigned pill — agent steps without a specific pool-agent binding.
           When agent_type is set the workflow runs fine on the default agent of that kind, so we
           show a neutral "Default · {Type}" chip rather than an alarming warning. The button still
           opens the picker for users who want to bind a specific pool agent. */}
-      {!data.assign && isAgentStep && !data.runInfo && (() => {
+      {!data.assign && !data.template && isAgentStep && !data.runInfo && (() => {
         const agentTypeLabel = data.agentType
           ? data.agentType.charAt(0).toUpperCase() + data.agentType.slice(1)
           : '';
