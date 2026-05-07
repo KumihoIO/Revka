@@ -246,3 +246,69 @@ steps:
     'expected agent.template to be re-emitted on round-trip',
   );
 });
+
+test('top-level assign and agent.template round-trip independently', () => {
+  // The two YAML keys map to different UI concepts: top-level `assign:` is
+  // the AgentPicker's pool-agent binding (green "Assigned" chip) and nested
+  // `agent.template:` is the Architect persona binding ("Persona" chip).
+  // They must round-trip without collapsing.
+  const yaml = `
+steps:
+  - id: dual
+    type: agent
+    assign: pool-agent-foo
+    agent:
+      agent_type: claude
+      role: researcher
+      template: persona-bar
+      prompt: "Do the thing."
+`;
+  const tasks = parseWorkflowYaml(yaml);
+  assert.equal(tasks[0]!.assign, 'pool-agent-foo', 'assign should preserve');
+  assert.equal(tasks[0]!.template, 'persona-bar', 'template should preserve');
+
+  const { nodes } = tasksToFlow(tasks);
+  const data = nodes[0]!.data as TaskNodeData;
+  assert.equal(data.assign, 'pool-agent-foo');
+  assert.equal(data.template, 'persona-bar');
+
+  const roundTripped = tasksToYaml(flowToTasks(nodes as Node<TaskNodeData>[], []));
+  assert.match(roundTripped, /assign: pool-agent-foo/, 'top-level assign must persist');
+  assert.match(
+    roundTripped,
+    /agent:[\s\S]*?template: persona-bar/,
+    'agent.template must persist',
+  );
+});
+
+test('AgentPicker assign on agent step round-trips through top-level assign', () => {
+  // Regression guard: pre-fix, the emitter folded task.assign into
+  // agent.template: for agent steps. After save+reload, AgentPicker's green
+  // "Assigned" chip silently demoted to "Persona". This test locks in the
+  // independent-key behavior so it doesn't regress.
+  const yaml = `
+steps:
+  - id: picker_only
+    type: agent
+    assign: pool-agent-baz
+    agent:
+      agent_type: claude
+      prompt: "Picked via the AgentPicker."
+`;
+  const tasks = parseWorkflowYaml(yaml);
+  assert.equal(tasks[0]!.assign, 'pool-agent-baz');
+  assert.equal(tasks[0]!.template, undefined);
+
+  const { nodes } = tasksToFlow(tasks);
+  const data = nodes[0]!.data as TaskNodeData;
+  assert.equal(data.assign, 'pool-agent-baz');
+  assert.equal(data.template, '');
+
+  const roundTripped = tasksToYaml(flowToTasks(nodes as Node<TaskNodeData>[], []));
+  assert.match(roundTripped, /assign: pool-agent-baz/);
+  assert.doesNotMatch(
+    roundTripped,
+    /template: pool-agent-baz/,
+    'assign must NOT leak into agent.template',
+  );
+});

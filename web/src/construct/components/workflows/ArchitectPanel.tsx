@@ -128,7 +128,7 @@ function buildContextPreface(workflowName: string): string {
     '',
     'Persona discovery (do this BEFORE proposing YAML when a step needs a specific role/expertise):',
     '- Call `search_agent_pool` or `list_agent_templates` to find existing personas. If one fits, set `agent.template: <name>` on the step — agent_type/role/model resolve from the template at dispatch.',
-    '- If no fit AND the user described a recurring named role, call `save_agent_template` with kebab-case name, agent_type, role, expertise tags, and a brief system_hint — then reference it via `agent.template`.',
+    '- If no fit AND the user described a recurring named role, call `save_agent_template` with required fields: `name` (kebab-case), `agent_type` (claude|codex), `role` (one of: coder, reviewer, researcher, tester, architect, planner), `capabilities` (string array of tags), `description`. Optional: `system_hint`, `identity`, `soul`, `tone`, `model`. Then reference the new template via `agent.template`.',
     '- Skip persona creation for one-shot generic steps; bare `agent_type: claude/codex` (no template) is correct there.',
     '- In your post-proposal summary, briefly note which personas were reused vs created.',
     '',

@@ -833,6 +833,11 @@ function extractStepBlockData(yaml: string): Map<string, Partial<TaskDefinition>
     const stepId = idMatch[1]!.replace(/^["']|["']$/g, '');
     const data: Partial<TaskDefinition> = {};
 
+    // Top-level `assign:` — AgentPicker pool-agent binding. Distinct from
+    // `agent.template:` (Architect persona binding) which is captured below.
+    const assign = block.match(/^\s*assign:\s*(\S+)/m);
+    if (assign) data.assign = assign[1]!.replace(/^["']|["']$/g, '');
+
     // Agent block: agent_type, role, prompt, timeout
     if (block.match(/\bagent\s*:/m)) {
       const agentType = block.match(/agent_type:\s*(\S+)/);
@@ -2006,12 +2011,13 @@ export function tasksToYaml(tasks: TaskDefinition[], meta?: Partial<WorkflowMeta
       if (notifyTitle) lines.push(`      title: ${yamlEscape(notifyTitle)}`);
     }
     // Executor-specific nested blocks
-    if (stepType === 'agent' && (task.agent_type || task.role || task.prompt || task.assign || task.template || task.auth)) {
+    if (stepType === 'agent' && (task.agent_type || task.role || task.prompt || task.template || task.auth)) {
       lines.push(`    agent:`);
       if (task.agent_type) lines.push(`      agent_type: ${task.agent_type}`);
       if (task.role) lines.push(`      role: ${task.role}`);
-      const personaTemplate = task.template || task.assign;
-      if (personaTemplate) lines.push(`      template: ${personaTemplate}`);
+      // Persona binding ONLY from task.template. task.assign emits separately
+      // as a top-level `assign:` key so the two round-trip independently.
+      if (task.template) lines.push(`      template: ${task.template}`);
       if (task.prompt) {
         if (task.prompt.includes('\n')) {
           lines.push(`      prompt: |`);
@@ -2246,7 +2252,9 @@ export function tasksToYaml(tasks: TaskDefinition[], meta?: Partial<WorkflowMeta
     if (task.skills.length > 0) {
       lines.push(`    skills: [${task.skills.join(', ')}]`);
     }
-    if (task.assign && stepType !== 'agent') {
+    // AgentPicker pool-agent binding. Applies to agent steps too — emitted
+    // alongside `agent.template:` so the two keys round-trip independently.
+    if (task.assign) {
       lines.push(`    assign: ${task.assign}`);
     }
     if (task.depends_on.length > 0) {
