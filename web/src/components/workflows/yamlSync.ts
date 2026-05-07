@@ -1921,7 +1921,11 @@ export function tasksToYaml(tasks: TaskDefinition[], meta?: Partial<WorkflowMeta
     lines.push('');
     lines.push('triggers:');
     for (const t of meta.triggers) {
-      if (t.inputMap.__cron) {
+      // Discriminate Cron vs Entity by KEY PRESENCE of __cron, not truthiness.
+      // An empty cron expression still emits as `cron: ""` so the trigger
+      // round-trips as Cron rather than silently flipping to Entity on
+      // reload. The validator catches empty cron expressions separately.
+      if ('__cron' in t.inputMap) {
         lines.push(`  - cron: ${yamlEscape(t.inputMap.__cron)}`);
       } else {
         lines.push(`  - on_kind: ${yamlEscape(t.onKind)}`);
