@@ -144,15 +144,31 @@ export default function Workflows() {
     let cancelled = false;
     let attempts = 0;
     let timer: ReturnType<typeof setTimeout> | null = null;
+    const TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled']);
+    const POLL_INTERVAL_MS = 4000;
+    const scheduleNext = (delay: number) => {
+      timer = setTimeout(poll, delay);
+    };
     const poll = () => {
       fetchWorkflowRun(selectedRunId)
-        .then((run) => { if (!cancelled) setSelectedRun(run); })
+        .then((run) => {
+          if (cancelled) return;
+          setSelectedRun(run);
+          // Keep polling while the run is still in flight. Treat any
+          // unrecognized status as terminal so we don't loop forever.
+          if (run.status === 'running' || run.status === 'pending') {
+            scheduleNext(POLL_INTERVAL_MS);
+          } else if (!TERMINAL_STATUSES.has(run.status)) {
+            // Unknown status — stop polling defensively.
+            return;
+          }
+        })
         .catch((err) => {
           if (cancelled) return;
           const msg = err instanceof Error ? err.message : String(err);
           if (attempts < 6 && /not found|404/i.test(msg)) {
             attempts += 1;
-            timer = setTimeout(poll, 1500);
+            scheduleNext(1500);
             return;
           }
           setError(msg);
