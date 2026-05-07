@@ -126,6 +126,7 @@ function buildContextPreface(workflowName: string): string {
     '- Wrong: `type: parallel` with no `parallel.steps` — the step is an orphan and `propose_workflow_yaml` will reject it.',
     '- Right (preferred for simple cases): just declare the steps as siblings without depends_on. They parallelize automatically. Add depends_on on the consumer step (e.g. `combine_report.depends_on: [research_a, research_b]`) so the consumer waits for all of them.',
     '- Whenever a step\'s prompt/command/template references another step\'s output via `${X.output}` or `${X.status}`, also list X in that step\'s `depends_on`. The runtime infers missing deps automatically, but explicit declarations are clearer.',
+    '- Chaining steps: when a step needs information from a prior step, you MUST reference it explicitly via `${prior_step.output}` or `${prior_step.output_data.field}` in the prompt/command/template (and add the prior step to depends_on per the rule above). The runtime cannot auto-inject prior results into prompts — without the `${...}` reference the downstream agent receives no context.',
     '',
     'Persona discovery (do this BEFORE proposing YAML when a step needs a specific role/expertise):',
     '- Call `search_agent_pool` or `list_agent_templates` to find existing personas. If one fits, set `agent.template: <name>` on the step — agent_type/role/model resolve from the template at dispatch.',
