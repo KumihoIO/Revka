@@ -248,13 +248,33 @@ function ArchitectChatSurface({
       if (lastProcessedResultId.current === evt.id) return;
       lastProcessedResultId.current = evt.id;
 
-      let parsed: {
-        yaml?: string;
-        summary?: string;
-        valid?: boolean;
-      } | null = null;
+      type Parsed = { yaml?: string; summary?: string; valid?: boolean };
+      let parsed: Parsed | null = null;
       try {
-        parsed = JSON.parse(evt.output);
+        const raw: unknown = JSON.parse(evt.output);
+        // The gateway delivers tool results as the MCP envelope shape
+        // ({ content: [{ type: 'text', text: '<inner-json>' }], isError? }),
+        // JSON-pretty-stringified. Unwrap it before checking valid/yaml,
+        // otherwise parsed.valid is undefined and we silently bail.
+        if (
+          raw &&
+          typeof raw === 'object' &&
+          Array.isArray((raw as { content?: unknown }).content)
+        ) {
+          const content = (raw as { content: unknown[] }).content;
+          const first = content[0] as { type?: unknown; text?: unknown } | undefined;
+          if (first && first.type === 'text' && typeof first.text === 'string') {
+            try {
+              parsed = JSON.parse(first.text) as Parsed;
+            } catch {
+              parsed = null;
+            }
+          } else {
+            parsed = raw as Parsed;
+          }
+        } else {
+          parsed = raw as Parsed;
+        }
       } catch {
         // Some servers stringify with extra wrapper text; try a best-effort
         // brace-match. If that fails, just bail — the activity feed already
