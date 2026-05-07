@@ -46,6 +46,7 @@ import ActivityCard from '@/construct/components/assistant/ActivityCard';
 import { useTheme } from '@/construct/hooks/useTheme';
 import { useT, type Locale } from '@/construct/hooks/useT';
 import { copyToClipboard } from '@/construct/lib/clipboard';
+import { validateArchitectYaml, ApiError } from '@/lib/api';
 
 interface ArchitectPanelProps {
   open: boolean;
@@ -147,9 +148,15 @@ function extractLastYamlBlock(content: string): string | null {
   return lastMatch;
 }
 
-/** Compose the `pageContext` string sent on every chat turn. Includes the
- *  editor's current YAML so Architect always sees the latest state — and
- *  can pass it as `base_yaml` when calling `propose_workflow_yaml`. */
+/** Compose the `pageContext` string sent on every chat turn. Includes both
+ *  the system preface (as `<architect-instructions>`) and the editor's
+ *  current YAML (as `<editor-state>`) inside the same Architect envelope.
+ *
+ *  The preface lives here — not in chat scrollback — because operator-role
+ *  messages stay client-side (they never travel the WS to the LLM). Routing
+ *  the preface through `pageContext` is what actually gets it in front of
+ *  the model on every turn. The gateway WS handler folds both blocks into
+ *  the user message before the agent loop runs. */
 function buildPageContext(
   workflowName: string,
   currentYaml: string,
@@ -158,8 +165,15 @@ function buildPageContext(
     .split('\n')
     .map((line) => `  ${line}`)
     .join('\n');
+  const preface = buildContextPreface(workflowName)
+    .split('\n')
+    .map((line) => (line.length > 0 ? `  ${line}` : line))
+    .join('\n');
   return [
     'v2:workflow_editor:architect',
+    '<architect-instructions>',
+    preface,
+    '</architect-instructions>',
     '<editor-state>',
     `  <workflow_name>${workflowName || '(unnamed)'}</workflow_name>`,
     '  <current_yaml>',
@@ -324,43 +338,25 @@ function ArchitectChatSurface({
 
     let cancelled = false;
     (async () => {
-      type ValidatorError = {
-        message?: string;
-        path?: string;
-        step_id?: string;
-        field?: string;
-      };
-      type ValidatorResult = {
-        valid?: boolean;
-        yaml?: string;
-        summary?: string;
-        errors?: ValidatorError[];
-      };
-      let result: ValidatorResult | null = null;
+      let result: Awaited<ReturnType<typeof validateArchitectYaml>> | null = null;
       try {
-        const resp = await fetch('/api/architect/validate_yaml', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            yaml: extracted,
-            base_yaml: currentYaml,
-            intent_summary: '<chat-fallback>',
-          }),
+        result = await validateArchitectYaml({
+          yaml: extracted,
+          base_yaml: currentYaml,
+          intent_summary: '<chat-fallback>',
         });
-        if (!resp.ok) {
-          if (cancelled) return;
-          appendSystemMessage(
-            `Architect wrote YAML in chat instead of calling propose_workflow_yaml. Fallback validation failed (HTTP ${resp.status}); canvas not updated.`,
-          );
-          return;
-        }
-        result = (await resp.json()) as ValidatorResult;
       } catch (err) {
         if (cancelled) return;
-        const msg = err instanceof Error ? err.message : String(err);
-        appendSystemMessage(
-          `Architect wrote YAML in chat instead of calling propose_workflow_yaml. Fallback validation failed (${msg}); canvas not updated.`,
-        );
+        if (err instanceof ApiError) {
+          appendSystemMessage(
+            `Architect wrote YAML in chat instead of calling propose_workflow_yaml. Fallback validation failed (HTTP ${err.status}); canvas not updated.`,
+          );
+        } else {
+          const msg = err instanceof Error ? err.message : String(err);
+          appendSystemMessage(
+            `Architect wrote YAML in chat instead of calling propose_workflow_yaml. Fallback validation failed (${msg}); canvas not updated.`,
+          );
+        }
         return;
       }
       if (cancelled || !result) return;
@@ -398,20 +394,6 @@ function ArchitectChatSurface({
       cancelled = true;
     };
   }, [messages, typing, onYamlProposed, appendSystemMessage, currentYaml]);
-
-  // Inject the context preface as a synthetic operator-role message the
-  // first time we observe an empty scrollback for this session.
-  const prefacedRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (prefacedRef.current === sessionId) return;
-    if (!open) return;
-    if (messages.length > 0) {
-      prefacedRef.current = sessionId;
-      return;
-    }
-    appendSystemMessage(buildContextPreface(workflowName));
-    prefacedRef.current = sessionId;
-  }, [open, sessionId, messages.length, appendSystemMessage, workflowName]);
 
   // Pre-fill the input on first open if `initialPrompt` was supplied.
   // We only do this when the input is empty so a user's existing draft
