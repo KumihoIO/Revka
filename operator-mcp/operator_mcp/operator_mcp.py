@@ -1294,8 +1294,10 @@ async def list_tools() -> list[Tool]:
                 "(asyncio.gather over independent codex sessions); for more, "
                 "call the tool repeatedly in batches. Optionally pushes a "
                 "gallery frame to the Live Canvas and registers each PNG as "
-                "a Kumiho artifact under <harness>/Images. Requires "
-                "`codex` (0.128+) authenticated via ChatGPT OAuth."
+                "a Kumiho artifact under <harness>/<space>. Requires the "
+                "`codex` CLI installed and authenticated via ChatGPT OAuth "
+                "(0.128+ recommended for the latest image_generation feature; "
+                "earlier versions may work if image_generation is enabled)."
             ),
             inputSchema={
                 "type": "object",
