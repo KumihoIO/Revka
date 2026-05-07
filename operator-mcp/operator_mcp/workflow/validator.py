@@ -194,12 +194,38 @@ def _check_step_configs(wf: WorkflowDef, valid_ids: set[str],
                 cfg_p: ParallelStepConfig = config  # type: ignore
                 if len(cfg_p.steps) < 2:
                     result.add_error("'parallel' needs at least 2 sub-steps", step.id)
+                par_set = set(cfg_p.steps)
                 for sub in cfg_p.steps:
                     if sub not in valid_ids:
                         result.add_error(
-                            f"Parallel sub-step '{sub}' not found",
+                            f"Parallel sub-step '{sub}' not defined elsewhere in the workflow",
                             step.id, "parallel",
                         )
+                        continue
+                    sub_step = wf.step_by_id(sub)
+                    if sub_step is None:
+                        continue
+                    for dep in sub_step.depends_on:
+                        # depends_on the parallel wrapper itself is the
+                        # natural way to gate the parallel block — fine.
+                        if dep == step.id:
+                            continue
+                        # Inside the same parallel group, ordering between
+                        # children defeats the point of "run in parallel".
+                        if dep in par_set:
+                            result.add_error(
+                                f"Parallel sub-step '{sub}' has depends_on '{dep}' "
+                                f"which is another child of the same parallel group "
+                                f"(creates ambiguous ordering inside the parallel block)",
+                                step.id, "parallel",
+                            )
+                        elif dep in valid_ids:
+                            result.add_error(
+                                f"Parallel sub-step '{sub}' has depends_on '{dep}' "
+                                f"which is outside the parallel group "
+                                f"(creates ambiguous ordering — move the dep onto the parallel step)",
+                                step.id, "parallel",
+                            )
 
         elif step.type == StepType.GOTO:
             if config is None:

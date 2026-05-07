@@ -231,9 +231,20 @@ class ConditionalStepConfig(BaseModel):
 
 class ParallelStepConfig(BaseModel):
     """Config for 'parallel' step type."""
-    steps: list[str]  # Step IDs to run in parallel
+    steps: list[str] = Field(..., description="IDs of steps to execute in parallel.")
     join: JoinStrategy = JoinStrategy.ALL
     max_concurrency: int = Field(default=5, ge=1, le=10)
+
+    @field_validator("steps")
+    @classmethod
+    def steps_must_be_non_empty(cls, v: list[str]) -> list[str]:
+        if not v:
+            raise ValueError(
+                "parallel.steps must list at least one step ID. "
+                "If you don't need explicit grouping, drop the parallel wrapper "
+                "entirely — sibling steps without depends_on run in parallel naturally."
+            )
+        return v
 
 
 class GotoStepConfig(BaseModel):

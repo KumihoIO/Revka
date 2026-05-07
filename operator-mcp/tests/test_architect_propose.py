@@ -106,6 +106,28 @@ async def test_diff_added_step_id() -> None:
 
 
 @pytest.mark.asyncio
+async def test_propose_workflow_yaml_rejects_orphan_parallel_step() -> None:
+    """parallel step with no parallel.steps array should fail validation."""
+    args = {
+        "proposed_yaml": """
+name: bad-parallel
+version: '1.0'
+steps:
+  - id: orphan
+    type: parallel
+    parallel:
+      join: all
+""",
+        "intent_summary": "test",
+    }
+    result = await tool_propose_workflow_yaml(args)
+    assert result["valid"] is False
+    assert any(
+        "parallel.steps" in str(e).lower() for e in result.get("errors", [])
+    )
+
+
+@pytest.mark.asyncio
 async def test_no_persistence_imports() -> None:
     """The tool module must never import gateway/kumiho — the whole point
     of propose_workflow_yaml is that it can't persist."""
