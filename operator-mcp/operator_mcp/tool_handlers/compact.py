@@ -94,8 +94,13 @@ async def tool_store_compaction(
     stored_kref = None
     if kumiho_sdk and getattr(kumiho_sdk, "_available", False):
         try:
-            # Ensure the compactions space exists
-            await kumiho_sdk.ensure_space(_MEMORY_PROJECT, f"compactions/{session_id}")
+            # Ensure every level of the nested compactions space exists.
+            # ensure_space() only creates a single space directly under a
+            # project — passing "compactions/<session>" as a name would create
+            # a literal slashed-name space, not a nested one. Reuse the
+            # walk-and-create helper from workflow.memory (added in PR #171).
+            from ..workflow.memory import _ensure_space_path
+            await _ensure_space_path(f"/{_MEMORY_PROJECT}/compactions/{session_id}")
 
             # Create item for this compaction
             now = datetime.now(timezone.utc)

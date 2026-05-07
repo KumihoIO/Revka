@@ -152,33 +152,62 @@ export default function WorkflowRuns() {
     if (!selectedRunId) return;
     const runId = selectedRunId;
     setPinnedDefinition(null);
-    fetchWorkflowRun(runId)
-      .then((run) => {
-        setSelectedRun(run);
-        // If the run was persisted with the exact revision it executed, fetch that
-        // pinned YAML so the DAG reflects what actually ran (not current published).
-        if (run.workflow_revision_kref) {
-          fetchWorkflowByRevisionKref(run.workflow_revision_kref)
-            .then((def) => setPinnedDefinition(def))
-            .catch(() => setPinnedDefinition(null));
-        }
-      })
-      .catch((err: unknown) => {
-        if (isMissingRunError(err)) {
-          // Backend lost the run (daemon restart or deletion). Clean up the
-          // stale notification + URL state and pick a different run.
-          dismissPendingApproval(runId);
-          setSelectedRun(null);
-          setSelectedRunId(null);
-          setSearchParams((current) => {
-            const next = new URLSearchParams(current);
-            next.delete('run');
-            return next;
-          }, { replace: true });
-          return;
-        }
-        setError(err instanceof Error ? err.message : String(err));
-      });
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let lastPinnedKref: string | null = null;
+    const TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled']);
+    const POLL_INTERVAL_MS = 4000;
+    const scheduleNext = (delay: number) => {
+      timer = setTimeout(poll, delay);
+    };
+    const poll = () => {
+      fetchWorkflowRun(runId)
+        .then((run) => {
+          if (cancelled) return;
+          setSelectedRun(run);
+          // The pinned-definition kref is stable for a given run, so only
+          // fetch it once (or when it actually changes between polls).
+          if (run.workflow_revision_kref && run.workflow_revision_kref !== lastPinnedKref) {
+            lastPinnedKref = run.workflow_revision_kref;
+            fetchWorkflowByRevisionKref(run.workflow_revision_kref)
+              .then((def) => {
+                if (!cancelled) setPinnedDefinition(def);
+              })
+              .catch(() => {
+                if (!cancelled) setPinnedDefinition(null);
+              });
+          }
+          // Keep polling while the run is still in flight. Treat any
+          // unrecognized status as terminal so we don't loop forever.
+          if (run.status === 'running' || run.status === 'pending') {
+            scheduleNext(POLL_INTERVAL_MS);
+          } else if (!TERMINAL_STATUSES.has(run.status)) {
+            return;
+          }
+        })
+        .catch((err: unknown) => {
+          if (cancelled) return;
+          if (isMissingRunError(err)) {
+            // Backend lost the run (daemon restart or deletion). Clean up the
+            // stale notification + URL state and pick a different run.
+            dismissPendingApproval(runId);
+            setSelectedRun(null);
+            setSelectedRunId(null);
+            setSearchParams((current) => {
+              const next = new URLSearchParams(current);
+              next.delete('run');
+              return next;
+            }, { replace: true });
+            return;
+          }
+          setError(err instanceof Error ? err.message : String(err));
+        });
+    };
+    poll();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
   }, [selectedRunId]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
