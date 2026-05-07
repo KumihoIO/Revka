@@ -407,7 +407,9 @@ def _check_step_configs(wf: WorkflowDef, valid_ids: set[str],
                 ))
 
 
-def _check_agent_unused_depends(wf: WorkflowDef, result: ValidationResult) -> None:
+def _check_agent_unused_depends(
+    wf: WorkflowDef, valid_ids: set[str], result: ValidationResult
+) -> None:
     """Reject agent steps that declare a depends_on entry whose output is
     never referenced in any interpolatable text field.
 
@@ -430,14 +432,18 @@ def _check_agent_unused_depends(wf: WorkflowDef, result: ValidationResult) -> No
             # Without a prompt there's nothing to reference, so skip rather
             # than fire on every templated agent step.
             continue
-        # Collect refs from every interpolatable string field on AgentStepConfig.
-        # Currently: prompt and role. (No system_hint on the schema; if added,
-        # extend this list.)
-        referenced: set[str] = set()
-        for text in (cfg.prompt, cfg.role):
-            referenced |= _extract_step_ref_namespaces(text)
+        # Only `cfg.prompt` is interpolated by the runtime (executor.py
+        # `_exec_agent` calls `interpolate(cfg.prompt, state)`); `role`,
+        # `model`, `template`, etc. are passed verbatim. Scan only the
+        # field that runtime expansion will actually consume.
+        referenced = _extract_step_ref_namespaces(cfg.prompt)
 
         for dep in step.depends_on:
+            # Skip deps that don't resolve to a real step — `_check_dependencies`
+            # already errors on those; suggesting `${dep.output}` here would just
+            # add noise.
+            if dep not in valid_ids:
+                continue
             if dep not in referenced:
                 result.add_error(
                     f"Step '{step.id}' depends on '{dep}' but its agent.prompt "
@@ -540,7 +546,7 @@ def validate_workflow(wf: WorkflowDef) -> ValidationResult:
     _check_variable_refs(wf, valid_ids, result)
 
     # Pass 5.5: agent steps must reference each declared dependency
-    _check_agent_unused_depends(wf, result)
+    _check_agent_unused_depends(wf, valid_ids, result)
 
     # --- Pass 6: Trigger definitions ----------------------------------------
     for i, trigger in enumerate(wf.triggers):
