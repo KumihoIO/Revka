@@ -1343,9 +1343,11 @@ async def list_tools() -> list[Tool]:
                     "register_artifact": {
                         "type": "boolean",
                         "description": (
-                            "Create a Kumiho item under <harness>/<space> and attach each "
-                            "generated PNG as an artifact on a `latest`-tagged revision. "
-                            "Default: true."
+                            "Create a Kumiho item + revision under <harness>/<space> and "
+                            "attach each generated PNG as an artifact. The on-disk path "
+                            "mirrors the kref hierarchy: "
+                            "`~/.construct/workspace/<harness>/<space>/<item>.<kind>/r<N>/<filename>`. "
+                            "When false, falls back to `<cwd>/<output_path>`. Default: true."
                         ),
                         "default": True,
                     },
@@ -1364,6 +1366,20 @@ async def list_tools() -> list[Tool]:
                             "Optional name for the Kumiho item. Defaults to the output "
                             "filename stem (with the auto-appended `-N` suffix stripped)."
                         ),
+                    },
+                    "sandbox": {
+                        "type": "string",
+                        "enum": ["read-only", "workspace-write", "danger-full-access"],
+                        "description": (
+                            "codex `--sandbox` mode. Default `workspace-write` works on "
+                            "macOS/Linux. On Windows installs where the codex sandbox "
+                            "helper isn't set up correctly (CreateProcessAsUserW failed: 5), "
+                            "use `danger-full-access` as a workaround — codex's image "
+                            "skill won't load otherwise and the model hallucinates a "
+                            "'saved' reply without generating a real PNG. The proper "
+                            "fix is to reinstall codex CLI as Administrator."
+                        ),
+                        "default": "workspace-write",
                     },
                 },
                 "required": ["prompt", "output_path"],
