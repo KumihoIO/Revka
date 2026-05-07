@@ -1969,11 +1969,43 @@ function WorkflowSettingsPanel({
           <SectionGroup
             kicker="Triggers"
             count={meta.triggers.length}
-            onAdd={() =>
-              setMeta((m) => ({
-                ...m,
-                triggers: [...m.triggers, { onKind: '', onTag: 'ready', onNamePattern: '', inputMap: {} }],
-              }))
+            addSlot={
+              <div style={{ display: 'flex', gap: 4 }}>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setMeta((m) => ({
+                      ...m,
+                      triggers: [
+                        ...m.triggers,
+                        { onKind: '', onTag: '', onNamePattern: '', inputMap: { __cron: '' } },
+                      ],
+                    }))
+                  }
+                  className="construct-button"
+                  style={{ padding: '2px 8px', fontSize: 10 }}
+                  title="Run on a cron schedule"
+                >
+                  + Cron
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setMeta((m) => ({
+                      ...m,
+                      triggers: [
+                        ...m.triggers,
+                        { onKind: '', onTag: 'ready', onNamePattern: '', inputMap: {} },
+                      ],
+                    }))
+                  }
+                  className="construct-button"
+                  style={{ padding: '2px 8px', fontSize: 10 }}
+                  title="Run when an entity matches"
+                >
+                  + Entity
+                </button>
+              </div>
             }
           >
             {meta.triggers.map((trigger, ti) => (
@@ -2251,11 +2283,13 @@ function SectionGroup({
   kicker,
   count,
   onAdd,
+  addSlot,
   children,
 }: {
   kicker: string;
   count: number;
-  onAdd: () => void;
+  onAdd?: () => void;
+  addSlot?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
@@ -2264,14 +2298,18 @@ function SectionGroup({
         <span className="construct-kicker">
           {kicker} ({count})
         </span>
-        <button
-          type="button"
-          onClick={onAdd}
-          className="construct-button"
-          style={{ padding: '2px 8px', fontSize: 10 }}
-        >
-          + Add
-        </button>
+        {addSlot ?? (
+          onAdd ? (
+            <button
+              type="button"
+              onClick={onAdd}
+              className="construct-button"
+              style={{ padding: '2px 8px', fontSize: 10 }}
+            >
+              + Add
+            </button>
+          ) : null
+        )}
       </div>
       {children}
     </div>
