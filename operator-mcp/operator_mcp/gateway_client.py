@@ -13,15 +13,40 @@ except ImportError:
     _HAS_HTTPX = False
 
 
+def _read_service_token() -> str:
+    """Read the gateway service token.
+
+    Order: ``CONSTRUCT_SERVICE_TOKEN`` env override →
+    ``~/.construct/service-token`` (written by the Rust gateway at startup).
+    Returns empty string when neither source is available; the caller logs and
+    proceeds without auth (gateway will then 401, which is the correct signal).
+
+    Mirrors ``operator_mcp.workflow.auth_resolver._service_token``.
+    """
+    env_tok = os.environ.get("CONSTRUCT_SERVICE_TOKEN", "").strip()
+    if env_tok:
+        return env_tok
+    path = os.path.expanduser("~/.construct/service-token")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    except FileNotFoundError:
+        return ""
+    except OSError as exc:
+        _log(f"gateway_client: failed to read service token at {path}: {exc}")
+        return ""
+
+
 class ConstructGatewayClient:
     """Queries the Construct gateway REST API for cost/audit/governance data."""
 
     def __init__(self) -> None:
         self.gateway_url = os.environ.get("CONSTRUCT_GATEWAY_URL", "").rstrip("/")
-        self.gateway_token = os.environ.get("CONSTRUCT_GATEWAY_TOKEN", "")
+        self.service_token = _read_service_token()
         self._available = bool(self.gateway_url and _HAS_HTTPX)
         if self._available:
-            _log(f"Construct Gateway client enabled: {self.gateway_url}")
+            auth_state = "service-token" if self.service_token else "no token (calls will 401)"
+            _log(f"Construct Gateway client enabled: {self.gateway_url} ({auth_state})")
         else:
             missing = []
             if not _HAS_HTTPX:
@@ -32,8 +57,8 @@ class ConstructGatewayClient:
 
     def _headers(self) -> dict[str, str]:
         h: dict[str, str] = {"Accept": "application/json"}
-        if self.gateway_token:
-            h["Authorization"] = f"Bearer {self.gateway_token}"
+        if self.service_token:
+            h["X-Construct-Service-Token"] = self.service_token
         return h
 
     async def get_cost_summary(self) -> dict[str, Any] | None:

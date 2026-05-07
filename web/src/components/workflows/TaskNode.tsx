@@ -184,27 +184,46 @@ function TaskNode({ id, data, selected }: { id: string; data: TaskNodeData; sele
         </button>
       )}
 
-      {/* Unassigned pill — only for agent steps without an assignment */}
-      {!data.assign && isAgentStep && !data.runInfo && (
-        <button
-          type="button"
-          onClick={openAgentPicker}
-          onMouseDown={(e) => e.stopPropagation()}
-          className="mt-1.5 px-2 py-0.5 rounded-md text-[10px] font-semibold truncate inline-flex items-center gap-1"
-          style={{
-            background: 'color-mix(in srgb, var(--construct-status-warning) 16%, transparent)',
-            color: 'var(--construct-status-warning)',
-            border: '1px solid var(--construct-status-warning)',
-            maxWidth: '100%',
-            cursor: 'pointer',
-            font: 'inherit',
-          }}
-          title="No pool agent assigned — click to choose"
-        >
-          <Bot size={10} />
-          Unassigned
-        </button>
-      )}
+      {/* Default-agent / unassigned pill — agent steps without a specific pool-agent binding.
+          When agent_type is set the workflow runs fine on the default agent of that kind, so we
+          show a neutral "Default · {Type}" chip rather than an alarming warning. The button still
+          opens the picker for users who want to bind a specific pool agent. */}
+      {!data.assign && isAgentStep && !data.runInfo && (() => {
+        const agentTypeLabel = data.agentType
+          ? data.agentType.charAt(0).toUpperCase() + data.agentType.slice(1)
+          : '';
+        const isDefault = !!data.agentType;
+        return (
+          <button
+            type="button"
+            onClick={openAgentPicker}
+            onMouseDown={(e) => e.stopPropagation()}
+            className="mt-1.5 px-2 py-0.5 rounded-md text-[10px] font-medium truncate inline-flex items-center gap-1"
+            style={{
+              background: isDefault
+                ? 'transparent'
+                : 'color-mix(in srgb, var(--construct-status-warning) 16%, transparent)',
+              color: isDefault
+                ? 'var(--construct-text-muted)'
+                : 'var(--construct-status-warning)',
+              border: isDefault
+                ? '1px solid var(--construct-border-soft)'
+                : '1px solid var(--construct-status-warning)',
+              maxWidth: '100%',
+              cursor: 'pointer',
+              font: 'inherit',
+            }}
+            title={
+              isDefault
+                ? `Default ${data.agentType} agent — click to assign a specific pool agent`
+                : 'No pool agent assigned — click to choose'
+            }
+          >
+            <Bot size={10} />
+            {isDefault ? `Default · ${agentTypeLabel}` : 'Unassigned'}
+          </button>
+        );
+      })()}
 
       {/* Agent hints */}
       {data.agentHints.length > 0 && (
