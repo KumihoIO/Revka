@@ -25,9 +25,195 @@ from pydantic import ValidationError as PydanticValidationError
 
 from .._log import _log
 from ..construct_config import harness_project
-from .schema import WorkflowDef
+from .schema import StepDef, WorkflowDef
 from .validator import validate_workflow, ValidationResult
 from operator_mcp.workflow.event_listener import get_trigger_registry
+
+
+# ---------------------------------------------------------------------------
+# depends_on inference from ${step.field} interpolations
+# ---------------------------------------------------------------------------
+#
+# Mirror of the frontend edge inference in
+# web/src/construct/components/workflows/yamlSync.ts (search "Inferred
+# dependency edges from `${step_id.<field>}`"). The DAG visualizer already
+# infers edges from interpolation references; the runtime wave scheduler
+# (executor.py wave loop) reads only step.depends_on, so without this pass
+# a YAML that expresses deps purely via `${X.output}` interpolation fans
+# every step out into Wave 1 and downstream steps see empty inputs.
+#
+# Cheap and pure: scans declared text-bearing fields once at load time,
+# adds inferred deps in place. No-ops for refs to non-existent steps
+# (validator catches those separately) and self-references.
+
+_STEP_REF_RE = re.compile(r"\$\{([a-zA-Z_][a-zA-Z0-9_-]*)(?:\.[a-zA-Z_][a-zA-Z0-9_.-]*)?\}")
+
+# Namespaces that are NOT step references — workflow-scope, runtime-scope,
+# or loop-iteration-scope. Mirrors the executor's interpolate() resolver
+# (executor.py ~L83) and the frontend's NON_STEP_REF_IDS.
+_NON_STEP_NAMESPACES = frozenset({
+    "inputs", "input",          # workflow input parameters
+    "trigger",                  # event trigger context
+    "env",                      # environment variables
+    "context",                  # workflow context (frontend convention)
+    "loop",                     # goto loop iteration
+    "for_each",                 # for_each iteration scope
+    "previous",                 # for_each previous-iteration step results
+    "rejection",                # human_approval rejection feedback
+    "run_id",                   # workflow run id
+    "outputs",                  # workflow-level outputs (frontend convention)
+})
+
+
+def _scan_step_for_refs(step: StepDef) -> set[str]:
+    """Return the set of step-namespace identifiers referenced via
+    ``${X}`` / ``${X.field}`` in this step's text-bearing config fields.
+
+    Does not filter against the workflow's known step IDs — caller is
+    responsible for intersecting with valid step IDs. Filters out the
+    workflow-scope / runtime-scope namespaces in ``_NON_STEP_NAMESPACES``.
+    """
+    refs: set[str] = set()
+
+    def _scan_text(text: Any) -> None:
+        if not isinstance(text, str) or not text:
+            return
+        for m in _STEP_REF_RE.finditer(text):
+            ns = m.group(1)
+            if ns in _NON_STEP_NAMESPACES:
+                continue
+            refs.add(ns)
+
+    def _scan_value(value: Any) -> None:
+        # Recurse into dict values and list items so dict/list-shaped
+        # interpolatable fields (python.args, output.entity_metadata,
+        # email.cc/bcc, map_reduce.splits) get the same treatment as
+        # plain strings.
+        if isinstance(value, str):
+            _scan_text(value)
+        elif isinstance(value, dict):
+            for v in value.values():
+                _scan_value(v)
+        elif isinstance(value, list):
+            for v in value:
+                _scan_value(v)
+
+    # agent
+    if step.agent is not None:
+        _scan_text(step.agent.prompt)
+    # shell
+    if step.shell is not None:
+        _scan_text(step.shell.command)
+    # python — code, script (path may include ${...}), and args (dict)
+    if step.python is not None:
+        _scan_text(step.python.code)
+        _scan_text(step.python.script)
+        _scan_value(step.python.args)
+    # email
+    if step.email is not None:
+        _scan_value(step.email.to)
+        _scan_text(step.email.subject)
+        _scan_text(step.email.body)
+        _scan_text(step.email.body_html)
+        _scan_text(step.email.from_address)
+        _scan_value(step.email.cc)
+        _scan_value(step.email.bcc)
+        _scan_text(step.email.reply_to)
+        _scan_text(step.email.track_kref)
+    # conditional — branch conditions are interpolated
+    if step.conditional is not None:
+        for branch in step.conditional.branches:
+            _scan_text(branch.condition)
+    # goto
+    if step.goto is not None:
+        _scan_text(step.goto.condition)
+    # human_approval / human_input / notify — channel_id may be templated
+    # off a prior step (e.g. dynamic Discord channel pick).
+    if step.human_approval is not None:
+        _scan_text(step.human_approval.message)
+        _scan_text(step.human_approval.channel_id)
+    if step.human_input is not None:
+        _scan_text(step.human_input.message)
+    if step.notify is not None:
+        _scan_text(step.notify.title)
+        _scan_text(step.notify.message)
+        _scan_text(step.notify.channel_id)
+    # for_each — range expression and explicit items list both interpolate
+    # at executor.py:1241 / :1272. Without scanning these, a dynamic range
+    # like "1..${count.output}" fans count + for_each into the same wave.
+    if step.for_each is not None:
+        _scan_text(step.for_each.range)
+        _scan_value(step.for_each.items)
+    # output — template + entity_name + entity_metadata values
+    if step.output is not None:
+        _scan_text(step.output.template)
+        _scan_text(step.output.entity_name)
+        _scan_value(step.output.entity_metadata)
+    # a2a
+    if step.a2a is not None:
+        _scan_text(step.a2a.url)
+        _scan_text(step.a2a.message)
+    # resolve — name_pattern / space may template off prior steps
+    if step.resolve is not None:
+        _scan_text(step.resolve.name_pattern)
+        _scan_text(step.resolve.space)
+    # handoff
+    if step.handoff is not None:
+        _scan_text(step.handoff.reason)
+        _scan_text(step.handoff.task)
+    # map_reduce — task + splits list
+    if step.map_reduce is not None:
+        _scan_text(step.map_reduce.task)
+        _scan_value(step.map_reduce.splits)
+    # supervisor
+    if step.supervisor is not None:
+        _scan_text(step.supervisor.task)
+    # group_chat
+    if step.group_chat is not None:
+        _scan_text(step.group_chat.topic)
+    # tag / deprecate — item_kref typically templated from a prior step
+    if step.tag_step is not None:
+        _scan_text(step.tag_step.item_kref)
+    if step.deprecate_step is not None:
+        _scan_text(step.deprecate_step.item_kref)
+
+    return refs
+
+
+def _infer_depends_on(wf: WorkflowDef) -> None:
+    """Augment ``step.depends_on`` for every step in ``wf`` based on
+    ``${other_step.field}`` interpolation references. Mutates in place.
+
+    Idempotent — running twice produces the same result.
+
+    Safe for unknown-step references: ignored here, the validator catches
+    them separately as missing-reference errors so the user still gets a
+    clear failure mode.
+    """
+    known_ids = {s.id for s in wf.steps}
+    for step in wf.steps:
+        refs = _scan_step_for_refs(step)
+        if not refs:
+            continue
+        existing = list(step.depends_on)
+        existing_set = set(existing)
+        added: list[str] = []
+        for ref in refs:
+            if ref == step.id:
+                continue  # self-reference — skip silently
+            if ref not in known_ids:
+                continue  # validator surfaces this as a missing-step error
+            if ref in existing_set:
+                continue
+            existing.append(ref)
+            existing_set.add(ref)
+            added.append(ref)
+        if added:
+            step.depends_on = existing
+            _log(
+                f"workflow_loader: inferred depends_on for '{step.id}' "
+                f"from interpolation: +{added}"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -82,12 +268,16 @@ def load_workflow_from_yaml(path: str) -> WorkflowDef:
     if not isinstance(data, dict):
         raise ValueError(f"Expected YAML dict at root, got {type(data).__name__}")
 
-    return WorkflowDef(**data)
+    wf = WorkflowDef(**data)
+    _infer_depends_on(wf)
+    return wf
 
 
 def load_workflow_from_dict(data: dict[str, Any]) -> WorkflowDef:
     """Parse a dict (from JSON/YAML) into a WorkflowDef."""
-    return WorkflowDef(**data)
+    wf = WorkflowDef(**data)
+    _infer_depends_on(wf)
+    return wf
 
 
 # ---------------------------------------------------------------------------
