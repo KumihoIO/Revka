@@ -857,6 +857,45 @@ export async function republishRevision(
   );
 }
 
+export interface ArchitectValidatorError {
+  message?: string;
+  path?: string;
+  step_id?: string;
+  field?: string;
+  severity?: string;
+}
+
+export interface ArchitectValidateYamlResponse {
+  valid: boolean;
+  yaml: string;
+  summary: string;
+  errors: ArchitectValidatorError[];
+  warnings: ArchitectValidatorError[];
+  added_step_ids: string[];
+  modified_step_ids: string[];
+  removed_step_ids: string[];
+}
+
+/** POST /api/architect/validate_yaml — routes a YAML proposal through the
+ *  same `propose_workflow_yaml` Operator tool the LLM uses. Used by the
+ *  editor's chat-fallback path when Architect dumps YAML in chat instead
+ *  of calling the tool. The endpoint is auth-gated (require_auth), so the
+ *  raw fetch call previously used here returned 401; this helper threads
+ *  the bearer token via apiFetch. */
+export async function validateArchitectYaml(body: {
+  yaml: string;
+  base_yaml?: string;
+  intent_summary?: string;
+}): Promise<ArchitectValidateYamlResponse> {
+  return apiFetch<ArchitectValidateYamlResponse>(
+    '/api/architect/validate_yaml',
+    {
+      method: 'POST',
+      body: JSON.stringify(body),
+    },
+  );
+}
+
 export interface AgentActivity {
   agent_id: string;
   view: string;
