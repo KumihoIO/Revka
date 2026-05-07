@@ -100,6 +100,13 @@ pub struct ReviseBody {
 }
 
 #[derive(Deserialize)]
+pub struct ValidateYamlBody {
+    pub yaml: String,
+    pub base_yaml: Option<String>,
+    pub intent_summary: Option<String>,
+}
+
+#[derive(Deserialize)]
 pub struct RepublishBody {
     pub revision_kref: String,
 }
@@ -159,6 +166,55 @@ pub async fn handle_architect_revise(
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("revise_workflow failed: {e}"),
+        )
+            .into_response(),
+    }
+}
+
+/// `POST /api/architect/validate_yaml`
+///
+/// Validates a workflow YAML proposal by routing through the same
+/// `propose_workflow_yaml` Operator tool the LLM uses. Used by the editor's
+/// chat-fallback path: when Architect dumps YAML in chat instead of calling
+/// the tool, the client posts the extracted YAML here so it goes through
+/// schema + workflow-level validation (matching the orphan-parallel guard
+/// added in PR #163) before reaching the canvas.
+///
+/// Returns the tool result body verbatim — same shape as
+/// `propose_workflow_yaml`'s tool result: `{ valid, errors, warnings, yaml,
+/// summary, added_step_ids, modified_step_ids, removed_step_ids }`. No
+/// persistence — `propose_workflow_yaml` is in-memory only by design.
+pub async fn handle_architect_validate_yaml(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<ValidateYamlBody>,
+) -> impl IntoResponse {
+    if let Err(e) = require_auth(&state, &headers) {
+        return e.into_response();
+    }
+
+    if body.yaml.trim().is_empty() {
+        return (StatusCode::BAD_REQUEST, "yaml required").into_response();
+    }
+
+    let mut args = serde_json::Map::new();
+    args.insert(
+        "proposed_yaml".to_string(),
+        serde_json::Value::String(body.yaml),
+    );
+    args.insert(
+        "intent_summary".to_string(),
+        serde_json::Value::String(body.intent_summary.unwrap_or_default()),
+    );
+    if let Some(b) = body.base_yaml {
+        args.insert("base_yaml".to_string(), serde_json::Value::String(b));
+    }
+
+    match call_operator_tool(&state, "propose_workflow_yaml", args).await {
+        Ok(result) => Json(result).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("propose_workflow_yaml failed: {e}"),
         )
             .into_response(),
     }

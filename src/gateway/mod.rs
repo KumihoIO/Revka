@@ -1667,6 +1667,7 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
         .route("/api/teams/{*kref}", get(api_teams::handle_get_team).put(api_teams::handle_update_team).delete(api_teams::handle_delete_team))
         // ── Architect: workflow revision via Operator (P2) ──
         .route("/api/architect/revise", post(api_architect::handle_architect_revise))
+        .route("/api/architect/validate_yaml", post(api_architect::handle_architect_validate_yaml))
         .route("/api/architect/revisions", get(api_architect::handle_list_workflow_revisions))
         .route("/api/architect/republish", post(api_architect::handle_republish_revision))
         // ── Workflow management API (proxied to Kumiho FastAPI) ──
