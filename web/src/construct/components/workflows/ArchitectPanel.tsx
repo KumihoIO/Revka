@@ -299,10 +299,13 @@ function ArchitectChatSurface({
 
   // Fallback: when an assistant turn completes WITHOUT propose_workflow_yaml
   // having fired, scan the latest agent message for a ```yaml/```yml fenced
-  // block and pipe it into onYamlProposed. Only runs when the message has
-  // settled (typing === false, content present in `messages`) — never while
-  // streaming. Per-turn dedup via yamlAppliedThisTurnRef and per-message
-  // dedup via fallbackInspectedRef.
+  // block and route it through the same validator the tool path uses
+  // (POST /api/architect/validate_yaml → propose_workflow_yaml). Only applies
+  // to the canvas when validation succeeds; on failure we surface the errors
+  // as a system message and leave the canvas untouched. Only runs when the
+  // message has settled (typing === false, content present in `messages`) —
+  // never while streaming. Per-turn dedup via yamlAppliedThisTurnRef and
+  // per-message dedup via fallbackInspectedRef.
   useEffect(() => {
     if (typing) return;
     if (yamlAppliedThisTurnRef.current) return;
@@ -314,15 +317,78 @@ function ArchitectChatSurface({
     fallbackInspectedRef.current.add(last.id);
     const extracted = extractLastYamlBlock(last.content);
     if (!extracted || !extracted.trim()) return;
+    // Mark the turn handled up-front so a re-render mid-fetch doesn't queue
+    // a second apply. We still set this on the validation-failure branch
+    // below — there's no canvas update either way.
     yamlAppliedThisTurnRef.current = true;
-    onYamlProposed(
-      extracted,
-      '<chat-fallback>: extracted from chat content because propose_workflow_yaml was not called',
-    );
-    appendSystemMessage(
-      'Architect wrote YAML in chat instead of calling propose_workflow_yaml. Applied from chat as a fallback. The DAG canvas updated.',
-    );
-  }, [messages, typing, onYamlProposed, appendSystemMessage]);
+
+    let cancelled = false;
+    (async () => {
+      type ValidatorError = { message?: string; path?: string };
+      type ValidatorResult = {
+        valid?: boolean;
+        yaml?: string;
+        summary?: string;
+        errors?: ValidatorError[];
+      };
+      let result: ValidatorResult | null = null;
+      try {
+        const resp = await fetch('/api/architect/validate_yaml', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            yaml: extracted,
+            base_yaml: currentYaml,
+            intent_summary: '<chat-fallback>',
+          }),
+        });
+        if (!resp.ok) {
+          if (cancelled) return;
+          appendSystemMessage(
+            `Architect wrote YAML in chat instead of calling propose_workflow_yaml. Fallback validation failed (HTTP ${resp.status}); canvas not updated.`,
+          );
+          return;
+        }
+        result = (await resp.json()) as ValidatorResult;
+      } catch (err) {
+        if (cancelled) return;
+        const msg = err instanceof Error ? err.message : String(err);
+        appendSystemMessage(
+          `Architect wrote YAML in chat instead of calling propose_workflow_yaml. Fallback validation failed (${msg}); canvas not updated.`,
+        );
+        return;
+      }
+      if (cancelled || !result) return;
+      if (result.valid) {
+        const yamlToApply =
+          typeof result.yaml === 'string' && result.yaml.trim()
+            ? result.yaml
+            : extracted;
+        onYamlProposed(
+          yamlToApply,
+          '<chat-fallback>: extracted from chat content because propose_workflow_yaml was not called',
+        );
+        appendSystemMessage(
+          'Architect wrote YAML in chat instead of calling propose_workflow_yaml. Validated via fallback and applied. The DAG canvas updated.',
+        );
+        return;
+      }
+      const errLines = (result.errors ?? [])
+        .map((e) => {
+          const msg = e?.message ?? 'validation error';
+          return e?.path ? `- ${msg} (at ${e.path})` : `- ${msg}`;
+        })
+        .join('\n');
+      const detail = errLines || '- (no error detail returned)';
+      appendSystemMessage(
+        `Architect wrote YAML in chat instead of calling propose_workflow_yaml AND that YAML failed validation. Canvas not updated.\n\nValidator errors:\n${detail}`,
+      );
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [messages, typing, onYamlProposed, appendSystemMessage, currentYaml]);
 
   // Inject the context preface as a synthetic operator-role message the
   // first time we observe an empty scrollback for this session.
