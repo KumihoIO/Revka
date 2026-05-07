@@ -91,6 +91,54 @@ def test_resolve_codex_executable_uses_shutil_which_when_available():
         assert ci._resolve_codex_executable() == "/usr/local/bin/codex"
 
 
+async def test_check_codex_available_accepts_login_marker_on_stderr():
+    """Windows `.CMD` shim prints `Logged in using ChatGPT` to stderr.
+
+    Regression for the false-negative authentication check that surfaced
+    after PR #177: the resolver found codex.CMD and the subprocess ran
+    cleanly, but the login-marker scan only looked at stdout.
+    """
+
+    class _FakeProc:
+        returncode = 0
+
+        async def communicate(self):
+            return (b"", b"Logged in using ChatGPT\n")
+
+    async def _fake_create_subprocess_exec(*args, **kwargs):
+        return _FakeProc()
+
+    with patch.object(
+        ci, "_resolve_codex_executable", return_value="/fake/codex.CMD"
+    ), patch.object(
+        ci.asyncio, "create_subprocess_exec", side_effect=_fake_create_subprocess_exec
+    ):
+        result = await ci._check_codex_available()
+    assert result == {"ok": True, "executable": "/fake/codex.CMD"}
+
+
+async def test_check_codex_available_rejects_when_neither_stream_has_marker():
+    """If neither stdout nor stderr mentions a login, fail with a clear hint."""
+
+    class _FakeProc:
+        returncode = 0
+
+        async def communicate(self):
+            return (b"Not logged in\n", b"")
+
+    async def _fake_create_subprocess_exec(*args, **kwargs):
+        return _FakeProc()
+
+    with patch.object(
+        ci, "_resolve_codex_executable", return_value="/fake/codex"
+    ), patch.object(
+        ci.asyncio, "create_subprocess_exec", side_effect=_fake_create_subprocess_exec
+    ):
+        result = await ci._check_codex_available()
+    assert result["ok"] is False
+    assert "not authenticated" in result["error"]
+
+
 def test_resolve_codex_executable_windows_npm_fallback(tmp_path, monkeypatch):
     """When PATH doesn't have codex, Windows checks %APPDATA%\\npm\\codex.CMD."""
     fake_npm = tmp_path / "npm"

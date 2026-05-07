@@ -115,7 +115,10 @@ async def _check_codex_available() -> dict[str, Any]:
 
     out = (stdout or b"").decode("utf-8", errors="replace")
     err = (stderr or b"").decode("utf-8", errors="replace")
-    if "Logged in" not in out:
+    # Some codex builds (notably the Windows `.CMD` shim) print the login
+    # status to stderr instead of stdout, so check both streams.
+    combined = f"{out}\n{err}"
+    if "Logged in" not in combined:
         _CODEX_AVAILABILITY = {
             "ok": False,
             "error": (
