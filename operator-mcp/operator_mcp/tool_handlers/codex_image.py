@@ -321,49 +321,86 @@ async def _push_to_canvas(
         return {"error": f"canvas push failed: {exc}"}
 
 
-async def _register_artifacts(
-    paths: list[Path],
+import re
+
+# Default workspace root for kref-mirroring artifact storage. Match Construct's
+# `~/.construct/workspace` convention so the on-disk layout is predictable.
+_WORKSPACE_ROOT = Path(os.path.expanduser("~/.construct/workspace"))
+
+# Parses the revision number from a kref like
+# `kref://Construct/Images/foo.image?r=3` → `3`.
+_KREF_REVISION_RE = re.compile(r"\?r=(\d+)")
+
+
+def _derive_item_name(
+    output_path: str, count: int, explicit: str | None = None
+) -> str:
+    """Compute the Kumiho item name used as the second-to-last path segment.
+
+    Caller-supplied ``item_name`` wins. Otherwise we derive from the
+    output filename stem; for batch mode (``count > 1``) the trailing
+    ``-N`` numeric suffix that the resolver auto-appends is stripped.
+    """
+    if explicit:
+        return explicit
+    stem = Path(output_path).stem or "image"
+    if count == 1:
+        return stem
+    # Batch mode: caller's `output_path` is e.g. "logo.png" and the
+    # resolver expands to logo-1.png/logo-2.png/…; strip the suffix
+    # so the item name is the bare stem.
+    return stem
+
+
+def _resolve_space(space: str | None) -> tuple[str, str, str]:
+    """Return ``(project, space_relative, top_space)`` for the active harness.
+
+    ``space_relative`` is the path under ``<harness>/`` (default ``Images``);
+    multi-segment values like ``Marketing/Logos`` are supported. ``top_space``
+    is the leftmost segment which Kumiho's ``ensure_space`` API requires.
+    """
+    project = harness_project()
+    space_relative = (space or "Images").strip().strip("/") or "Images"
+    top_space = space_relative.split("/", 1)[0]
+    return project, space_relative, top_space
+
+
+def _kref_artifact_dir(
+    project: str, space_relative: str, item_name: str, kind: str, revision_number: int
+) -> Path:
+    """Compute the on-disk directory mirroring a Kumiho revision kref.
+
+    Returns ``<workspace>/<project>/<space>/<item>.<kind>/r<N>/`` so that the
+    file layout matches the kref hierarchy. Multi-segment spaces flow through
+    as nested directories.
+    """
+    return (
+        _WORKSPACE_ROOT
+        / project
+        / space_relative
+        / f"{item_name}.{kind}"
+        / f"r{revision_number}"
+    )
+
+
+async def _create_item_and_revision(
     prompt: str,
-    item_name: str | None,
-    space: str | None = None,
+    space: str | None,
+    item_name: str,
+    file_count: int,
+    kind: str = "image",
 ) -> dict[str, Any]:
-    """Create a Kumiho item under ``<harness>/<space>`` with file artifacts.
+    """Pre-create the Kumiho item + revision so we know the on-disk path.
 
-    The ``space`` argument is a path relative to the harness project — e.g.
-    ``"Images"`` (default) or ``"Marketing/Logos"``. Multi-segment paths
-    are supported; the leftmost segment is the Kumiho space directly under
-    the harness project, the rest is treated as a sub-namespace.
-
-    Each generated PNG is attached to the same revision so they can be
-    retrieved together. Returns the item kref, revision kref, and a list
-    of artifact krefs.
+    The revision number lets us derive ``r<N>`` for the artifact directory
+    BEFORE codex writes anything, so the file lands at the kref-mirroring
+    location directly (no post-hoc move). Returns a ``rev_meta`` dict
+    that ``_attach_artifacts`` consumes, or ``{"error": ...}`` on failure.
     """
     from ..operator_mcp import KUMIHO_SDK  # lazy: avoids import cycle
 
-    project = harness_project()
-    space_relative = (space or "Images").strip().strip("/")
-    if not space_relative:
-        space_relative = "Images"
+    project, space_relative, top_space = _resolve_space(space)
     space_path = f"{project}/{space_relative}"
-    # The Kumiho `ensure_space` API takes (project, top_level_space). For
-    # multi-segment paths like "Marketing/Logos" we ensure the top segment
-    # exists; subspaces are created lazily by `create_item`.
-    top_space = space_relative.split("/", 1)[0]
-
-    # Derive item name from first PNG's stem unless caller supplied one.
-    if not item_name and paths:
-        first_stem = paths[0].stem
-        # Drop the auto-appended -1/-2/... suffix when batch-generating.
-        for sep in ("-",):
-            if sep in first_stem:
-                head, _, tail = first_stem.rpartition(sep)
-                if tail.isdigit() and head:
-                    first_stem = head
-                    break
-        item_name = first_stem or "image"
-
-    if not item_name:
-        return {"error": "no item name resolved"}
 
     try:
         await KUMIHO_SDK.ensure_space(project, top_space)
@@ -374,10 +411,10 @@ async def _register_artifacts(
         item = await KUMIHO_SDK.create_item(
             space_path=space_path,
             name=item_name,
-            kind="image",
+            kind=kind,
             metadata={
                 "prompt": prompt[:500],
-                "count": str(len(paths)),
+                "count": str(file_count),
                 "source": "codex_image_generation",
             },
         )
@@ -395,8 +432,7 @@ async def _register_artifacts(
             item_kref=item_kref,
             metadata={
                 "prompt": prompt[:500],
-                "files": ",".join(p.name for p in paths),
-                "count": str(len(paths)),
+                "count": str(file_count),
             },
             tag="latest",
         )
@@ -410,25 +446,42 @@ async def _register_artifacts(
     if not rev_kref:
         return {"item_kref": item_kref, "error": "create_revision returned no kref"}
 
-    artifact_krefs: list[str] = []
+    match = _KREF_REVISION_RE.search(rev_kref)
+    revision_number = int(match.group(1)) if match else 1
+
+    return {
+        "item_kref": item_kref,
+        "revision_kref": rev_kref,
+        "revision_number": revision_number,
+        "project": project,
+        "space_relative": space_relative,
+        "space_path": space_path,
+        "item_name": item_name,
+        "kind": kind,
+    }
+
+
+async def _attach_artifacts(
+    rev_meta: dict[str, Any], paths: list[Path]
+) -> list[str]:
+    """Attach each PNG path as a Kumiho artifact under the existing revision."""
+    from ..operator_mcp import KUMIHO_SDK  # lazy: avoids import cycle
+
+    krefs: list[str] = []
     for p in paths:
         if not p.exists():
             continue
         try:
-            art = await KUMIHO_SDK.create_artifact(rev_kref, p.name, str(p))
+            art = await KUMIHO_SDK.create_artifact(
+                rev_meta["revision_kref"], p.name, str(p)
+            )
         except Exception as exc:
             _log(f"codex_image: create_artifact failed for {p}: {exc}")
             continue
         ak = art.get("kref") if isinstance(art, dict) else getattr(art, "kref", "")
         if ak:
-            artifact_krefs.append(ak)
-
-    return {
-        "item_kref": item_kref,
-        "revision_kref": rev_kref,
-        "artifact_krefs": artifact_krefs,
-        "space_path": space_path,
-    }
+            krefs.append(ak)
+    return krefs
 
 
 async def tool_generate_image_codex(
@@ -440,16 +493,25 @@ async def tool_generate_image_codex(
     Inputs (see registration in ``operator_mcp.py`` for the JSON schema):
 
     * ``prompt`` — required, image description
-    * ``output_path`` — required, target PNG path (relative or absolute)
-    * ``cwd`` — optional, defaults to ``~/.construct/workspace``
+    * ``output_path`` — required. When ``register_artifact`` is true, only
+      the **filename** is honored (the directory is auto-derived from the
+      kref hierarchy). When ``register_artifact`` is false, treated as a
+      file path relative to ``cwd``.
+    * ``cwd`` — optional, defaults to ``~/.construct/workspace``. Only
+      used when ``register_artifact`` is false.
     * ``count`` — optional 1..5, default 1
     * ``output_pattern`` — optional template with ``{n}`` placeholder when
       ``count > 1``; if omitted, derived as ``<stem>-N.<ext>``
     * ``canvas`` — bool or canvas_id string; pushes a gallery frame
-    * ``register_artifact`` — bool, default True; creates a Kumiho item
+    * ``register_artifact`` — bool, default True; creates a Kumiho item +
+      revision and lays the PNG(s) out at
+      ``<workspace>/<harness>/<space>/<item>.<kind>/r<N>/<filename>`` so
+      the on-disk path mirrors the kref hierarchy.
     * ``space`` — Kumiho space relative to the harness project, default
       ``Images``. Multi-segment paths like ``Marketing/Logos`` supported.
-    * ``item_name`` — optional override for the Kumiho item name
+    * ``item_name`` — optional override for the Kumiho item name; defaults
+      to the bare filename stem of ``output_path``.
+    * ``sandbox`` — codex ``--sandbox`` mode (default ``workspace-write``).
     """
     prompt = (args.get("prompt") or "").strip()
     output_path = (args.get("output_path") or "").strip()
@@ -491,9 +553,45 @@ async def tool_generate_image_codex(
         return {"error": avail.get("error", "codex unavailable")}
 
     codex_exe = avail.get("executable")
-    cwd_path = Path(os.path.expanduser(cwd))
-    cwd_path.mkdir(parents=True, exist_ok=True)
-    paths = _resolve_output_paths(output_path, count, pattern, cwd)
+
+    # Path resolution: when `register_artifact` is on, lay the file out at
+    # the kref-mirroring path so the on-disk hierarchy matches Kumiho's
+    # graph hierarchy. Pre-create the item + revision so we know the
+    # revision number BEFORE codex writes — no post-hoc move required.
+    rev_meta: dict[str, Any] | None = None
+    response: dict[str, Any] = {"requested": count}
+    if register:
+        derived_item = _derive_item_name(output_path, count, item_name)
+        rev_meta = await _create_item_and_revision(
+            prompt=prompt,
+            space=space,
+            item_name=derived_item,
+            file_count=count,
+        )
+        if "error" in rev_meta:
+            # Fall back to the legacy cwd-rooted layout so the user still
+            # gets the PNG; surface the registration error in the response.
+            response["artifact"] = rev_meta
+            register = False
+            rev_meta = None
+
+    if rev_meta is not None:
+        # kref-mirroring layout: derive the directory and route paths there.
+        rev_dir = _kref_artifact_dir(
+            rev_meta["project"],
+            rev_meta["space_relative"],
+            rev_meta["item_name"],
+            rev_meta["kind"],
+            rev_meta["revision_number"],
+        )
+        rev_dir.mkdir(parents=True, exist_ok=True)
+        cwd_path = rev_dir
+        paths = _resolve_output_paths(output_path, count, pattern, str(rev_dir))
+    else:
+        cwd_path = Path(os.path.expanduser(cwd))
+        cwd_path.mkdir(parents=True, exist_ok=True)
+        paths = _resolve_output_paths(output_path, count, pattern, cwd)
+
     for p in paths:
         p.parent.mkdir(parents=True, exist_ok=True)
 
@@ -515,11 +613,8 @@ async def tool_generate_image_codex(
         else:
             failures.append({"error": f"unexpected exception: {r!r}"})
 
-    response: dict[str, Any] = {
-        "generated": len(successes),
-        "requested": count,
-        "files": [r["path"] for r in successes],
-    }
+    response["generated"] = len(successes)
+    response["files"] = [r["path"] for r in successes]
     if failures:
         response["failures"] = failures
 
@@ -533,10 +628,22 @@ async def tool_generate_image_codex(
         canvas_id = canvas_arg if isinstance(canvas_arg, str) else "default"
         response["canvas"] = await _push_to_canvas(success_paths, canvas_id, gw)
 
-    if register:
-        response["artifact"] = await _register_artifacts(
-            success_paths, prompt, item_name, space=space
-        )
+    if rev_meta is not None:
+        artifact_krefs = await _attach_artifacts(rev_meta, success_paths)
+        response["artifact"] = {
+            "item_kref": rev_meta["item_kref"],
+            "revision_kref": rev_meta["revision_kref"],
+            "revision_number": rev_meta["revision_number"],
+            "artifact_krefs": artifact_krefs,
+            "space_path": rev_meta["space_path"],
+            "directory": str(_kref_artifact_dir(
+                rev_meta["project"],
+                rev_meta["space_relative"],
+                rev_meta["item_name"],
+                rev_meta["kind"],
+                rev_meta["revision_number"],
+            )),
+        }
 
     return response
 

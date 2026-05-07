@@ -168,10 +168,10 @@ def test_resolve_paths_batch_custom_pattern(tmp_path):
 
 async def test_happy_path_single_image_with_canvas_and_artifact(fake_gw, tmp_path):
     """Mock codex spawn + canvas + Kumiho; verify the full path end-to-end."""
-    target = tmp_path / "fox.png"
 
     async def _fake_spawn(prompt, output_path, cwd, codex_executable=None, sandbox="workspace-write"):
         # Write a non-empty PNG-like file to simulate codex success.
+        output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
         return {"ok": True, "path": str(output_path), "size": output_path.stat().st_size}
 
@@ -194,11 +194,11 @@ async def test_happy_path_single_image_with_canvas_and_artifact(fake_gw, tmp_pat
         ci, "_push_to_canvas", side_effect=_fake_canvas
     ), patch("operator_mcp.operator_mcp.KUMIHO_SDK", sdk_mock), patch.object(
         ci, "harness_project", lambda: "Construct"
-    ):
+    ), patch.object(ci, "_WORKSPACE_ROOT", tmp_path):
         out = await ci.tool_generate_image_codex(
             {
                 "prompt": "a fox in a forest",
-                "output_path": str(target),
+                "output_path": "fox.png",
                 "count": 1,
                 "canvas": True,
                 "register_artifact": True,
@@ -206,42 +206,49 @@ async def test_happy_path_single_image_with_canvas_and_artifact(fake_gw, tmp_pat
             fake_gw,
         )
 
+    expected_path = tmp_path / "Construct" / "Images" / "fox.image" / "r1" / "fox.png"
     assert out["generated"] == 1
-    assert out["files"] == [str(target)]
+    assert out["files"] == [str(expected_path)]
     assert out["canvas"]["frame_id"] == "frame-1"
     assert out["artifact"]["item_kref"] == fake_item_kref
     assert out["artifact"]["revision_kref"] == fake_rev_kref
+    assert out["artifact"]["revision_number"] == 1
     assert fake_artifact_kref in out["artifact"]["artifact_krefs"]
     assert out["artifact"]["space_path"] == "Construct/Images"
+    assert out["artifact"]["directory"] == str(expected_path.parent)
 
     sdk_mock.create_item.assert_awaited_once()
     sdk_mock.create_revision.assert_awaited_once()
     sdk_mock.create_artifact.assert_awaited_once()
 
 
-async def test_batch_mode_strips_n_suffix_for_item_name(fake_gw, tmp_path):
-    """For count=3 with default pattern, the Kumiho item name is the bare stem."""
-    target = tmp_path / "logo.png"
+async def test_batch_mode_lays_files_under_revision_dir(fake_gw, tmp_path):
+    """Batch generation places all PNGs under <ws>/<harness>/<space>/<item>.<kind>/r<N>/."""
 
     async def _fake_spawn(prompt, output_path, cwd, codex_executable=None, sandbox="workspace-write"):
+        output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
         return {"ok": True, "path": str(output_path), "size": 100}
 
     sdk_mock = MagicMock()
     sdk_mock.ensure_space = AsyncMock(return_value=None)
     sdk_mock.create_item = AsyncMock(return_value={"kref": "kref://Construct/Images/logo.image"})
-    sdk_mock.create_revision = AsyncMock(return_value={"kref": "rev"})
+    sdk_mock.create_revision = AsyncMock(
+        return_value={"kref": "kref://Construct/Images/logo.image?r=2"}
+    )
     sdk_mock.create_artifact = AsyncMock(return_value={"kref": "art"})
 
     with patch.object(
         ci, "_check_codex_available", AsyncMock(return_value={"ok": True, "executable": "/usr/local/bin/codex"})
     ), patch.object(ci, "_spawn_codex_image", side_effect=_fake_spawn), patch(
         "operator_mcp.operator_mcp.KUMIHO_SDK", sdk_mock
-    ), patch.object(ci, "harness_project", lambda: "Construct"):
+    ), patch.object(ci, "harness_project", lambda: "Construct"), patch.object(
+        ci, "_WORKSPACE_ROOT", tmp_path
+    ):
         out = await ci.tool_generate_image_codex(
             {
                 "prompt": "construct logo",
-                "output_path": str(target),
+                "output_path": "logo.png",
                 "count": 3,
                 "canvas": False,
                 "register_artifact": True,
@@ -249,12 +256,15 @@ async def test_batch_mode_strips_n_suffix_for_item_name(fake_gw, tmp_path):
             fake_gw,
         )
 
+    rev_dir = tmp_path / "Construct" / "Images" / "logo.image" / "r2"
     assert out["generated"] == 3
-    assert [Path(p).name for p in out["files"]] == [
-        "logo-1.png",
-        "logo-2.png",
-        "logo-3.png",
+    assert out["files"] == [
+        str(rev_dir / "logo-1.png"),
+        str(rev_dir / "logo-2.png"),
+        str(rev_dir / "logo-3.png"),
     ]
+    assert out["artifact"]["revision_number"] == 2
+    assert out["artifact"]["directory"] == str(rev_dir)
     # The item name passed to create_item should be the bare stem, not "logo-1".
     create_item_kwargs = sdk_mock.create_item.await_args.kwargs
     assert create_item_kwargs["name"] == "logo"
@@ -263,7 +273,8 @@ async def test_batch_mode_strips_n_suffix_for_item_name(fake_gw, tmp_path):
     assert sdk_mock.create_artifact.await_count == 3
 
 
-async def test_register_artifact_false_skips_kumiho(fake_gw, tmp_path):
+async def test_register_artifact_false_uses_legacy_cwd_layout(fake_gw, tmp_path):
+    """When register_artifact is off, fall back to the cwd-rooted output_path."""
     target = tmp_path / "fox.png"
 
     async def _fake_spawn(prompt, output_path, cwd, codex_executable=None, sandbox="workspace-write"):
@@ -288,33 +299,38 @@ async def test_register_artifact_false_skips_kumiho(fake_gw, tmp_path):
         )
 
     assert out["generated"] == 1
+    assert out["files"] == [str(target)]  # legacy layout honored
     assert "artifact" not in out
     sdk_mock.create_item.assert_not_called()
 
 
-async def test_custom_space_and_item_name_are_used_verbatim(fake_gw, tmp_path):
-    """User-provided `space` and `item_name` override the defaults."""
-    target = tmp_path / "fox.png"
+async def test_custom_space_and_item_name_drive_kref_path(fake_gw, tmp_path):
+    """User-provided `space` and `item_name` flow through to the on-disk path."""
 
     async def _fake_spawn(prompt, output_path, cwd, codex_executable=None, sandbox="workspace-write"):
+        output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
         return {"ok": True, "path": str(output_path), "size": 100}
 
     sdk_mock = MagicMock()
     sdk_mock.ensure_space = AsyncMock(return_value=None)
     sdk_mock.create_item = AsyncMock(return_value={"kref": "i"})
-    sdk_mock.create_revision = AsyncMock(return_value={"kref": "r"})
+    sdk_mock.create_revision = AsyncMock(
+        return_value={"kref": "kref://Construct/Marketing/Logos/q2-rebrand.image?r=1"}
+    )
     sdk_mock.create_artifact = AsyncMock(return_value={"kref": "a"})
 
     with patch.object(
         ci, "_check_codex_available", AsyncMock(return_value={"ok": True, "executable": "/usr/local/bin/codex"})
     ), patch.object(ci, "_spawn_codex_image", side_effect=_fake_spawn), patch(
         "operator_mcp.operator_mcp.KUMIHO_SDK", sdk_mock
-    ), patch.object(ci, "harness_project", lambda: "Construct"):
+    ), patch.object(ci, "harness_project", lambda: "Construct"), patch.object(
+        ci, "_WORKSPACE_ROOT", tmp_path
+    ):
         out = await ci.tool_generate_image_codex(
             {
                 "prompt": "construct quarterly logo",
-                "output_path": str(target),
+                "output_path": "logo.png",
                 "register_artifact": True,
                 "space": "Marketing/Logos",
                 "item_name": "q2-rebrand",
@@ -322,7 +338,12 @@ async def test_custom_space_and_item_name_are_used_verbatim(fake_gw, tmp_path):
             fake_gw,
         )
 
+    expected_path = (
+        tmp_path / "Construct" / "Marketing" / "Logos" / "q2-rebrand.image" / "r1" / "logo.png"
+    )
+    assert out["files"] == [str(expected_path)]
     assert out["artifact"]["space_path"] == "Construct/Marketing/Logos"
+    assert out["artifact"]["directory"] == str(expected_path.parent)
     create_item_kwargs = sdk_mock.create_item.await_args.kwargs
     assert create_item_kwargs["name"] == "q2-rebrand"
     assert create_item_kwargs["space_path"] == "Construct/Marketing/Logos"
@@ -332,9 +353,9 @@ async def test_custom_space_and_item_name_are_used_verbatim(fake_gw, tmp_path):
 
 async def test_space_default_is_images(fake_gw, tmp_path):
     """Omitting `space` falls back to `Images`; ensure_space sees that."""
-    target = tmp_path / "fox.png"
 
     async def _fake_spawn(prompt, output_path, cwd, codex_executable=None, sandbox="workspace-write"):
+        output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
         return {"ok": True, "path": str(output_path), "size": 100}
 
@@ -348,11 +369,13 @@ async def test_space_default_is_images(fake_gw, tmp_path):
         ci, "_check_codex_available", AsyncMock(return_value={"ok": True, "executable": "/usr/local/bin/codex"})
     ), patch.object(ci, "_spawn_codex_image", side_effect=_fake_spawn), patch(
         "operator_mcp.operator_mcp.KUMIHO_SDK", sdk_mock
-    ), patch.object(ci, "harness_project", lambda: "Construct"):
+    ), patch.object(ci, "harness_project", lambda: "Construct"), patch.object(
+        ci, "_WORKSPACE_ROOT", tmp_path
+    ):
         out = await ci.tool_generate_image_codex(
             {
                 "prompt": "fox",
-                "output_path": str(target),
+                "output_path": "fox.png",
                 "register_artifact": True,
             },
             fake_gw,
@@ -360,6 +383,42 @@ async def test_space_default_is_images(fake_gw, tmp_path):
 
     assert out["artifact"]["space_path"] == "Construct/Images"
     sdk_mock.ensure_space.assert_awaited_once_with("Construct", "Images")
+
+
+async def test_create_item_failure_falls_back_to_legacy_layout(fake_gw, tmp_path):
+    """If Kumiho item creation fails, the PNG still lands at the cwd path."""
+    target = tmp_path / "fox.png"
+
+    async def _fake_spawn(prompt, output_path, cwd, codex_executable=None, sandbox="workspace-write"):
+        output_path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
+        return {"ok": True, "path": str(output_path), "size": 100}
+
+    sdk_mock = MagicMock()
+    sdk_mock.ensure_space = AsyncMock(return_value=None)
+    sdk_mock.create_item = AsyncMock(side_effect=RuntimeError("kumiho down"))
+    sdk_mock.create_revision = AsyncMock()
+    sdk_mock.create_artifact = AsyncMock()
+
+    with patch.object(
+        ci, "_check_codex_available", AsyncMock(return_value={"ok": True, "executable": "/usr/local/bin/codex"})
+    ), patch.object(ci, "_spawn_codex_image", side_effect=_fake_spawn), patch(
+        "operator_mcp.operator_mcp.KUMIHO_SDK", sdk_mock
+    ), patch.object(ci, "harness_project", lambda: "Construct"):
+        out = await ci.tool_generate_image_codex(
+            {
+                "prompt": "a fox",
+                "output_path": str(target),
+                "register_artifact": True,
+                "cwd": str(tmp_path),
+            },
+            fake_gw,
+        )
+
+    # Falls back to legacy cwd-rooted layout when Kumiho item creation fails.
+    assert out["generated"] == 1
+    assert out["files"] == [str(target)]
+    # The error from create_item is surfaced under `artifact`.
+    assert "create_item failed" in out["artifact"]["error"]
 
 
 async def test_sandbox_arg_is_threaded_into_codex_command(fake_gw, tmp_path):

@@ -1343,9 +1343,11 @@ async def list_tools() -> list[Tool]:
                     "register_artifact": {
                         "type": "boolean",
                         "description": (
-                            "Create a Kumiho item under <harness>/<space> and attach each "
-                            "generated PNG as an artifact on a `latest`-tagged revision. "
-                            "Default: true."
+                            "Create a Kumiho item + revision under <harness>/<space> and "
+                            "attach each generated PNG as an artifact. The on-disk path "
+                            "mirrors the kref hierarchy: "
+                            "`~/.construct/workspace/<harness>/<space>/<item>.<kind>/r<N>/<filename>`. "
+                            "When false, falls back to `<cwd>/<output_path>`. Default: true."
                         ),
                         "default": True,
                     },
