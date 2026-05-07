@@ -38,6 +38,10 @@ export interface TaskDefinition {
   params?: Record<string, string>;
   /** Pre-assigned pool agent template name */
   assign?: string;
+  /** Pool persona binding for agent steps — resolves `AgentStepConfig.template`
+   *  at dispatch. Architect's persona-discovery flow writes this; round-trips
+   *  through `agent.template:` in YAML. */
+  template?: string;
   /** When true, executor skips the step and passes inputs straight through as output_data */
   disabled?: boolean;
   /** Gate-only fields */
@@ -248,6 +252,10 @@ export interface TaskNodeData {
   skills: string[];
   /** Pre-assigned pool agent template name */
   assign: string;
+  /** Pool persona binding (`agent.template`) — set by Architect's persona
+   *  discovery or by a hand-edited YAML. Distinct from `assign`, which is
+   *  only written by the AgentPicker side-panel UI. */
+  template: string;
   /** When true, executor skips the step and passes inputs straight through as output_data */
   disabled?: boolean;
   paramCount: number;
@@ -575,7 +583,11 @@ export function parseWorkflowYaml(yaml: string): TaskDefinition[] {
         current.retry_delay = parseFloat(value) || 5;
       } else if (key === 'disabled') {
         current.disabled = value.toLowerCase() === 'true';
-      } else if (key === 'assign' || key === 'template') {
+      } else if (key === 'assign') {
+        // Top-level assign: only. Nested `agent.template:` is captured
+        // separately by extractStepBlockData → data.template, so the two
+        // YAML keys preserve the AgentPicker (assign) vs persona (template)
+        // distinction across save/reload.
         current.assign = value;
       } else if (key === 'params' || key === 'parameters' || key === 'config') {
         inParams = true;
@@ -821,6 +833,11 @@ function extractStepBlockData(yaml: string): Map<string, Partial<TaskDefinition>
     const stepId = idMatch[1]!.replace(/^["']|["']$/g, '');
     const data: Partial<TaskDefinition> = {};
 
+    // Top-level `assign:` — AgentPicker pool-agent binding. Distinct from
+    // `agent.template:` (Architect persona binding) which is captured below.
+    const assign = block.match(/^\s*assign:\s*(\S+)/m);
+    if (assign) data.assign = assign[1]!.replace(/^["']|["']$/g, '');
+
     // Agent block: agent_type, role, prompt, timeout
     if (block.match(/\bagent\s*:/m)) {
       const agentType = block.match(/agent_type:\s*(\S+)/);
@@ -830,7 +847,7 @@ function extractStepBlockData(yaml: string): Map<string, Partial<TaskDefinition>
       if (agentType) data.agent_type = agentType[1]!.replace(/["']/g, '') as 'claude' | 'codex';
       if (role) data.role = role[1]!.replace(/["']/g, '');
       if (timeout) data.timeout = parseInt(timeout[1]!);
-      if (template) data.assign = template[1]!.replace(/["']/g, '');
+      if (template) data.template = template[1]!.replace(/["']/g, '');
       // Extract prompt (may be multi-line with |)
       const promptMatch = block.match(/prompt:\s*\|?\s*\n([\s\S]*?)(?=\n\s{6}\w|\n\s{4}\w|\n\s{2}-|\n\w|$)/);
       if (promptMatch) {
@@ -1276,6 +1293,7 @@ export function tasksToFlow(tasks: TaskDefinition[]): { nodes: Node<TaskNodeData
       agentHints: task.agent_hints,
       skills: task.skills,
       assign: task.assign || '',
+      template: task.template || '',
       paramCount: task.params ? Object.keys(task.params).length : 0,
       dependencyCount: task.depends_on.length,
       condition: task.condition || '',
@@ -1760,6 +1778,7 @@ export function flowToTasks(nodes: Node<TaskNodeData>[], edges: Edge[]): TaskDef
       if (d.prompt) base.prompt = d.prompt;
       if (d.timeout && d.timeout !== 300) base.timeout = d.timeout;
       if (d.assign) base.assign = d.assign;
+      if (d.template) base.template = d.template;
       if (d.model) base.model = d.model;
     }
     if (st === 'parallel') {
@@ -1992,11 +2011,13 @@ export function tasksToYaml(tasks: TaskDefinition[], meta?: Partial<WorkflowMeta
       if (notifyTitle) lines.push(`      title: ${yamlEscape(notifyTitle)}`);
     }
     // Executor-specific nested blocks
-    if (stepType === 'agent' && (task.agent_type || task.role || task.prompt || task.assign || task.auth)) {
+    if (stepType === 'agent' && (task.agent_type || task.role || task.prompt || task.template || task.auth)) {
       lines.push(`    agent:`);
       if (task.agent_type) lines.push(`      agent_type: ${task.agent_type}`);
       if (task.role) lines.push(`      role: ${task.role}`);
-      if (task.assign) lines.push(`      template: ${task.assign}`);
+      // Persona binding ONLY from task.template. task.assign emits separately
+      // as a top-level `assign:` key so the two round-trip independently.
+      if (task.template) lines.push(`      template: ${task.template}`);
       if (task.prompt) {
         if (task.prompt.includes('\n')) {
           lines.push(`      prompt: |`);
@@ -2231,7 +2252,9 @@ export function tasksToYaml(tasks: TaskDefinition[], meta?: Partial<WorkflowMeta
     if (task.skills.length > 0) {
       lines.push(`    skills: [${task.skills.join(', ')}]`);
     }
-    if (task.assign && stepType !== 'agent') {
+    // AgentPicker pool-agent binding. Applies to agent steps too — emitted
+    // alongside `agent.template:` so the two keys round-trip independently.
+    if (task.assign) {
       lines.push(`    assign: ${task.assign}`);
     }
     if (task.depends_on.length > 0) {
