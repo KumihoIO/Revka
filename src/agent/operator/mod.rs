@@ -99,6 +99,17 @@ pub fn operator_mcp_server_config(cfg: &OperatorConfig) -> McpServerConfig {
             env.insert("CONSTRUCT_GATEWAY_URL".to_string(), url);
         }
     }
+    // Tool timeout is user-configurable via `[operator] tool_timeout_secs`
+    // (default 600). Operator tools include long-running operations
+    // (codex image generation, workflow execution, dry-run) that exceed
+    // the runtime's 180s global default. We surface the value here so a
+    // user with very slow plans can dial it down for fast-fail behavior
+    // or raise it up to the 600s runtime cap.
+    let tool_timeout_secs = if cfg.tool_timeout_secs == 0 {
+        None
+    } else {
+        Some(cfg.tool_timeout_secs)
+    };
     McpServerConfig {
         name: OPERATOR_SERVER_NAME.to_string(),
         transport: McpTransport::Stdio,
@@ -107,7 +118,7 @@ pub fn operator_mcp_server_config(cfg: &OperatorConfig) -> McpServerConfig {
         env,
         url: None,
         headers: HashMap::new(),
-        tool_timeout_secs: None,
+        tool_timeout_secs,
     }
 }
 
@@ -311,6 +322,44 @@ mod tests {
                 .iter()
                 .any(|s| s.name == OPERATOR_SERVER_NAME)
         );
+    }
+
+    #[test]
+    fn injected_operator_server_uses_configured_tool_timeout() {
+        // Default config -> default timeout (600s).
+        let injected = inject_operator(Config::default(), false);
+        let entry = injected
+            .mcp
+            .servers
+            .iter()
+            .find(|s| s.name == OPERATOR_SERVER_NAME)
+            .expect("operator server injected");
+        assert_eq!(entry.tool_timeout_secs, Some(600));
+
+        // Custom config value flows through.
+        let mut cfg = Config::default();
+        cfg.operator.tool_timeout_secs = 300;
+        let injected = inject_operator(cfg, false);
+        let entry = injected
+            .mcp
+            .servers
+            .iter()
+            .find(|s| s.name == OPERATOR_SERVER_NAME)
+            .expect("operator server injected");
+        assert_eq!(entry.tool_timeout_secs, Some(300));
+
+        // 0 means "fall back to the runtime default" (mirrors the
+        // `Option::None` semantics used by user-configured MCP servers).
+        let mut cfg = Config::default();
+        cfg.operator.tool_timeout_secs = 0;
+        let injected = inject_operator(cfg, false);
+        let entry = injected
+            .mcp
+            .servers
+            .iter()
+            .find(|s| s.name == OPERATOR_SERVER_NAME)
+            .expect("operator server injected");
+        assert_eq!(entry.tool_timeout_secs, None);
     }
 
     #[test]
