@@ -204,7 +204,7 @@ class WorkflowEventListener:
             return
 
         # Singleton lock — only one event listener across all operator processes
-        import fcntl
+        from .. import _fcntl_compat as fcntl
         try:
             self._listener_lock_fd = open(self._LISTENER_LOCK_PATH, "w")
             fcntl.flock(self._listener_lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -313,7 +313,7 @@ class WorkflowEventListener:
         Returns ``True`` if the lock was acquired (stream consumed),
         ``False`` if another process held the lock.
         """
-        import fcntl
+        from .. import _fcntl_compat as fcntl
         import kumiho  # type: ignore[import-untyped]
 
         # Acquire exclusive lock — if another process holds it, exit quietly
@@ -682,7 +682,7 @@ class WorkflowEventListener:
         processes, and a persistent seen-set to survive restarts.
         """
         import sys as _sys
-        import fcntl
+        from .. import _fcntl_compat as fcntl
 
         # Acquire exclusive lock — if another process holds it, exit quietly
         lock_fd = None
@@ -747,7 +747,7 @@ class WorkflowEventListener:
                     await asyncio.sleep(10)
         finally:
             try:
-                import fcntl as _fcntl
+                from .. import _fcntl_compat as _fcntl
                 _fcntl.flock(lock_fd, _fcntl.LOCK_UN)
                 lock_fd.close()
             except Exception:
