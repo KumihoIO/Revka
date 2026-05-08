@@ -185,6 +185,10 @@ def _check_step_configs(wf: WorkflowDef, valid_ids: set[str],
             if config is None or not getattr(config, "command", ""):
                 result.add_error("'shell' step missing command", step.id, "shell")
 
+        elif step.type == StepType.IMAGE:
+            if config is None or not getattr(config, "prompt", ""):
+                result.add_error("'image' step missing prompt", step.id, "image")
+
         elif step.type == StepType.CONDITIONAL:
             if config is None:
                 result.add_error("'conditional' step missing config", step.id, "conditional")
