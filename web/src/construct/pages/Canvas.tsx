@@ -302,7 +302,7 @@ export default function Canvas() {
             style={{
               borderColor: 'var(--construct-border-soft)',
               background: viewportBackground,
-              minHeight: '36rem',
+              minHeight: '48rem',
               position: 'relative',
             }}
           >
@@ -334,12 +334,12 @@ export default function Canvas() {
               <iframe
                 sandbox="allow-scripts"
                 srcDoc={iframeSrcDoc}
-                className="h-[calc(36rem-3.25rem)] w-full border-0"
+                className="h-[calc(48rem-3.25rem)] w-full border-0"
                 title={`Canvas: ${canvasId}`}
                 style={{ background: 'transparent', position: 'relative', zIndex: 1 }}
               />
             ) : (
-              <div className="flex h-[calc(36rem-3.25rem)] items-center justify-center p-6" style={{ position: 'relative', zIndex: 1 }}>
+              <div className="flex h-[calc(48rem-3.25rem)] items-center justify-center p-6" style={{ position: 'relative', zIndex: 1 }}>
                 <StateMessage
                   tone={connected ? 'empty' : 'error'}
                   title={connected ? tpl('canvas.waiting_for_content', { id: canvasId }) : t('canvas.disconnected_title')}
