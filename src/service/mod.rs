@@ -678,23 +678,75 @@ fn install_macos(config: &Config) -> Result<()> {
     let stdout = logs_dir.join("daemon.stdout.log");
     let stderr = logs_dir.join("daemon.stderr.log");
 
-    // When running under Homebrew, inject CONSTRUCT_CONFIG_DIR and
-    // WorkingDirectory so the daemon finds its data in the Homebrew prefix.
+    // PATH for the daemon's launchd context.
+    //
+    // Why this is necessary: launchd's default PATH is just
+    // `/usr/bin:/bin:/usr/sbin:/sbin` (per `man launchd.plist`). The
+    // daemon spawns external CLIs by name (e.g. `codex`, `claude`,
+    // `node`, `python3`) via subprocess, and those commonly live under
+    // `/usr/local/bin` (npm + Intel Homebrew), `/opt/homebrew/bin` (ARM
+    // Homebrew), `~/.cargo/bin` (Rust), or `~/.local/bin` (pipx /
+    // pip --user). Without an explicit PATH override, the spawn fails
+    // with `[Errno 2] No such file or directory: 'codex'` even though
+    // the user's interactive shell finds the binary fine.
+    //
+    // We also fold in the install-time `PATH` env (whatever the user
+    // had when they ran `construct service install`) so unusual setups
+    // (nvm, asdf, fnm, custom prefixes) keep working without the user
+    // having to hand-edit the plist.
+    let mut path_dirs: Vec<String> = Vec::new();
+    if let Some(home) = std::env::var_os("HOME") {
+        let home_str = home.to_string_lossy().into_owned();
+        path_dirs.push(format!("{home_str}/.cargo/bin"));
+        path_dirs.push(format!("{home_str}/.local/bin"));
+    }
+    path_dirs.extend([
+        "/usr/local/bin".to_string(),
+        "/opt/homebrew/bin".to_string(),
+        "/usr/bin".to_string(),
+        "/bin".to_string(),
+        "/usr/sbin".to_string(),
+        "/sbin".to_string(),
+    ]);
+    if let Ok(install_path) = std::env::var("PATH") {
+        for dir in install_path.split(':') {
+            if !dir.is_empty() && !path_dirs.iter().any(|d| d == dir) {
+                path_dirs.push(dir.to_string());
+            }
+        }
+    }
+    let path_env = path_dirs.join(":");
+
+    // EnvironmentVariables always carries PATH; under Homebrew it also
+    // carries CONSTRUCT_CONFIG_DIR. WorkingDirectory is Homebrew-only
+    // (lives outside the EnvironmentVariables dict, so it stays a
+    // separate stanza).
     let env_section = if let Some(ref var_dir) = homebrew_var_dir {
         format!(
             r#"  <key>EnvironmentVariables</key>
   <dict>
+    <key>PATH</key>
+    <string>{path}</string>
     <key>CONSTRUCT_CONFIG_DIR</key>
     <string>{config_dir}</string>
   </dict>
   <key>WorkingDirectory</key>
   <string>{working_dir}</string>
 "#,
+            path = xml_escape(&path_env),
             config_dir = xml_escape(&var_dir.display().to_string()),
             working_dir = xml_escape(&var_dir.display().to_string()),
         )
     } else {
-        String::new()
+        format!(
+            r#"  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>{path}</string>
+  </dict>
+"#,
+            path = xml_escape(&path_env),
+        )
     };
 
     let plist = format!(
