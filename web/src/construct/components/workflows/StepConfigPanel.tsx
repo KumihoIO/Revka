@@ -1156,6 +1156,116 @@ export default function StepConfigPanel({
             </div>
           )}
 
+          {/* ── Image ── */}
+          {stepType === 'image' && (
+            <div style={sectionShellStyle}>
+              <div style={sectionTitleStyle}>Image Config</div>
+              <div>
+                <label style={labelStyle}>Prompt</label>
+                <ExpressionTextarea
+                  value={data.imagePrompt || ''}
+                  onChange={(next) => onUpdate(node.id, { imagePrompt: next })}
+                  rows={5}
+                  placeholder="Architectural panel of Seoul Station 2040, golden hour…"
+                  style={inputStyle}
+                  stepIds={dagStepIds}
+                  workflowInputs={dagInputs}
+                  triggerFields={dagTriggerFields}
+                />
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <div style={{ flex: 1 }}>
+                  <label style={labelStyle}>Count (1–5)</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={5}
+                    value={data.imageCount ?? 1}
+                    onChange={(e) => onUpdate(node.id, { imageCount: Math.max(1, Math.min(5, parseInt(e.target.value) || 1)) })}
+                    style={inputStyle}
+                  />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={labelStyle}>Timeout (s)</label>
+                  <input
+                    type="number"
+                    min={1}
+                    value={data.imageTimeout ?? 1200}
+                    onChange={(e) => onUpdate(node.id, { imageTimeout: parseInt(e.target.value) || 1200 })}
+                    style={inputStyle}
+                  />
+                </div>
+              </div>
+              <div>
+                <label style={labelStyle}>Item name (override)</label>
+                <input
+                  type="text"
+                  value={data.imageItemName || ''}
+                  onChange={(e) => onUpdate(node.id, { imageItemName: e.target.value })}
+                  placeholder="default: derived from step id"
+                  style={inputStyle}
+                />
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <div style={{ flex: 1 }}>
+                  <label style={labelStyle}>Space</label>
+                  <input
+                    type="text"
+                    value={data.imageSpace || ''}
+                    onChange={(e) => onUpdate(node.id, { imageSpace: e.target.value })}
+                    placeholder="default: Images (under harness)"
+                    style={inputStyle}
+                  />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={labelStyle}>Sandbox</label>
+                  <select
+                    value={data.imageSandbox || ''}
+                    onChange={(e) => onUpdate(node.id, { imageSandbox: e.target.value })}
+                    style={inputStyle}
+                  >
+                    <option value="">auto (platform default)</option>
+                    <option value="read-only">read-only</option>
+                    <option value="workspace-write">workspace-write</option>
+                    <option value="danger-full-access">danger-full-access</option>
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label style={labelStyle}>Output filename (override)</label>
+                <input
+                  type="text"
+                  value={data.imageOutputPath || ''}
+                  onChange={(e) => onUpdate(node.id, { imageOutputPath: e.target.value })}
+                  placeholder="default: <step_id>.png"
+                  style={monoInputStyle}
+                />
+              </div>
+              <div>
+                <label style={labelStyle}>Output pattern (count &gt; 1)</label>
+                <input
+                  type="text"
+                  value={data.imageOutputPattern || ''}
+                  onChange={(e) => onUpdate(node.id, { imageOutputPattern: e.target.value })}
+                  placeholder="e.g. panel-{n}.png"
+                  style={monoInputStyle}
+                />
+              </div>
+              <div style={{ display: 'flex', gap: 16, paddingTop: 8, borderTop: '1px solid var(--pc-border)' }}>
+                <Checkbox
+                  checked={data.imageCanvas !== false}
+                  onChange={(v) => onUpdate(node.id, { imageCanvas: v })}
+                  label="Push to canvas"
+                />
+                <Checkbox
+                  checked={data.imageRegisterArtifact !== false}
+                  onChange={(v) => onUpdate(node.id, { imageRegisterArtifact: v })}
+                  label="Register Kumiho artifact"
+                />
+              </div>
+            </div>
+          )}
+
           {/* ── Output ── */}
           {stepType === 'output' && (
             <div style={sectionShellStyle}>

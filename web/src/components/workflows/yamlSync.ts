@@ -178,6 +178,18 @@ export interface TaskDefinition {
   email_smtp_host?: string;      // override; default reads from config.toml
   email_dry_run?: boolean;
   email_timeout?: number;
+  // --- Image step (see operator_mcp/workflow/schema.py::ImageStepConfig) ---
+  image_prompt?: string;
+  image_count?: number;
+  image_canvas?: boolean | string;
+  image_register_artifact?: boolean;
+  image_space?: string;
+  image_item_name?: string;
+  image_output_path?: string;
+  image_output_pattern?: string;
+  image_sandbox?: string;
+  image_cwd?: string;
+  image_timeout?: number;
   // --- Tag step: re-tag an existing Kumiho entity revision ---
   tag_item_kref?: string;        // kref of the item (supports ${...} interpolation)
   tag_value?: string;            // tag to apply to the latest revision
@@ -373,6 +385,18 @@ export interface TaskNodeData {
   emailSmtpHost: string;
   emailDryRun: boolean;
   emailTimeout: number;
+  // Image step
+  imagePrompt: string;
+  imageCount: number;
+  imageCanvas: boolean;
+  imageRegisterArtifact: boolean;
+  imageSpace: string;
+  imageItemName: string;
+  imageOutputPath: string;
+  imageOutputPattern: string;
+  imageSandbox: string;
+  imageCwd: string;
+  imageTimeout: number;
   // Tag step
   tagItemKref: string;
   tagValue: string;
@@ -988,6 +1012,37 @@ function extractStepBlockData(yaml: string): Map<string, Partial<TaskDefinition>
       if (auth) data.auth = auth[1]!.trim().replace(/^["']|["']$/g, '');
     }
 
+    // Image block
+    if (block.match(/type:\s*image/)) {
+      const promptBlock = block.match(/prompt:\s*\|\s*\n([\s\S]*?)(?=\n\s{6}\w|\n\s{4}\w|\n\s{2}-|\n\w|$)/);
+      if (promptBlock) {
+        data.image_prompt = promptBlock[1]!.split('\n').map(l => l.replace(/^\s{8}/, '')).join('\n').trim();
+      } else {
+        const inlinePrompt = block.match(/prompt:\s*["']?(.+?)["']?\s*$/m);
+        if (inlinePrompt) data.image_prompt = inlinePrompt[1]!.trim().replace(/^["']|["']$/g, '');
+      }
+      const imgCount = block.match(/^\s{6}count:\s*(\d+)/m);
+      if (imgCount) data.image_count = parseInt(imgCount[1]!);
+      const imgCanvas = block.match(/^\s{6}canvas:\s*(true|false)/im);
+      if (imgCanvas) data.image_canvas = imgCanvas[1]!.toLowerCase() === 'true';
+      const imgRegister = block.match(/register_artifact:\s*(true|false)/i);
+      if (imgRegister) data.image_register_artifact = imgRegister[1]!.toLowerCase() === 'true';
+      const imgSpace = block.match(/^\s{6}space:\s*(.+)/m);
+      if (imgSpace) data.image_space = imgSpace[1]!.trim().replace(/^["']|["']$/g, '');
+      const imgItemName = block.match(/item_name:\s*(.+)/);
+      if (imgItemName) data.image_item_name = imgItemName[1]!.trim().replace(/^["']|["']$/g, '');
+      const imgOutPath = block.match(/output_path:\s*(.+)/);
+      if (imgOutPath) data.image_output_path = imgOutPath[1]!.trim().replace(/^["']|["']$/g, '');
+      const imgOutPattern = block.match(/output_pattern:\s*(.+)/);
+      if (imgOutPattern) data.image_output_pattern = imgOutPattern[1]!.trim().replace(/^["']|["']$/g, '');
+      const imgSandbox = block.match(/sandbox:\s*(read-only|workspace-write|danger-full-access)/);
+      if (imgSandbox) data.image_sandbox = imgSandbox[1]!;
+      const imgCwd = block.match(/^\s{6}cwd:\s*(.+)/m);
+      if (imgCwd) data.image_cwd = imgCwd[1]!.trim().replace(/^["']|["']$/g, '');
+      const imgTimeout = block.match(/^\s{6}timeout:\s*(\d+(?:\.\d+)?)/m);
+      if (imgTimeout) data.image_timeout = parseFloat(imgTimeout[1]!);
+    }
+
     // Output block
     if (block.match(/type:\s*output/)) {
       const fmt = block.match(/format:\s*(\S+)/);
@@ -1387,6 +1442,17 @@ export function tasksToFlow(tasks: TaskDefinition[]): { nodes: Node<TaskNodeData
       emailSmtpHost: task.email_smtp_host || '',
       emailDryRun: task.email_dry_run || false,
       emailTimeout: task.email_timeout || 30,
+      imagePrompt: task.image_prompt || '',
+      imageCount: task.image_count ?? 1,
+      imageCanvas: task.image_canvas !== false,
+      imageRegisterArtifact: task.image_register_artifact !== false,
+      imageSpace: task.image_space || '',
+      imageItemName: task.image_item_name || '',
+      imageOutputPath: task.image_output_path || '',
+      imageOutputPattern: task.image_output_pattern || '',
+      imageSandbox: task.image_sandbox || '',
+      imageCwd: task.image_cwd || '',
+      imageTimeout: task.image_timeout || 1200,
       tagItemKref: task.tag_item_kref || '',
       tagValue: task.tag_value || '',
       tagUntag: task.tag_untag || '',
@@ -1612,6 +1678,7 @@ const INTERPOLATION_TEXT_FIELDS: ReadonlyArray<keyof TaskDefinition> = [
   'email_to',
   'email_cc',
   'email_bcc',
+  'image_prompt',
   'output_template',
   'condition',
   'goto_condition',
@@ -1837,6 +1904,19 @@ export function flowToTasks(nodes: Node<TaskNodeData>[], edges: Edge[]): TaskDef
       if (d.emailSmtpHost) base.email_smtp_host = d.emailSmtpHost;
       if (d.emailDryRun) base.email_dry_run = true;
       if (d.emailTimeout && d.emailTimeout !== 30) base.email_timeout = d.emailTimeout;
+    }
+    if (st === 'image') {
+      if (d.imagePrompt) base.image_prompt = d.imagePrompt;
+      if (d.imageCount && d.imageCount !== 1) base.image_count = d.imageCount;
+      if (d.imageCanvas === false) base.image_canvas = false;
+      if (d.imageRegisterArtifact === false) base.image_register_artifact = false;
+      if (d.imageSpace) base.image_space = d.imageSpace;
+      if (d.imageItemName) base.image_item_name = d.imageItemName;
+      if (d.imageOutputPath) base.image_output_path = d.imageOutputPath;
+      if (d.imageOutputPattern) base.image_output_pattern = d.imageOutputPattern;
+      if (d.imageSandbox) base.image_sandbox = d.imageSandbox;
+      if (d.imageCwd) base.image_cwd = d.imageCwd;
+      if (d.imageTimeout && d.imageTimeout !== 1200) base.image_timeout = d.imageTimeout;
     }
     if (st === 'output') {
       if (d.outputFormat) base.output_format = d.outputFormat;
@@ -2126,6 +2206,27 @@ export function tasksToYaml(tasks: TaskDefinition[], meta?: Partial<WorkflowMeta
       if (task.email_dry_run) lines.push(`      dry_run: true`);
       if (task.email_timeout && task.email_timeout !== 30) lines.push(`      timeout: ${task.email_timeout}`);
       if (task.auth) lines.push(`      auth: ${yamlEscape(task.auth)}`);
+    }
+    if (stepType === 'image') {
+      lines.push(`    image:`);
+      if (task.image_prompt) {
+        if (task.image_prompt.includes('\n')) {
+          lines.push(`      prompt: |`);
+          for (const pl of task.image_prompt.split('\n')) lines.push(`        ${pl}`);
+        } else {
+          lines.push(`      prompt: ${yamlEscape(task.image_prompt)}`);
+        }
+      }
+      if (task.image_count && task.image_count !== 1) lines.push(`      count: ${task.image_count}`);
+      if (task.image_canvas === false) lines.push(`      canvas: false`);
+      if (task.image_register_artifact === false) lines.push(`      register_artifact: false`);
+      if (task.image_space) lines.push(`      space: ${yamlEscape(task.image_space)}`);
+      if (task.image_item_name) lines.push(`      item_name: ${yamlEscape(task.image_item_name)}`);
+      if (task.image_output_path) lines.push(`      output_path: ${yamlEscape(task.image_output_path)}`);
+      if (task.image_output_pattern) lines.push(`      output_pattern: ${yamlEscape(task.image_output_pattern)}`);
+      if (task.image_sandbox) lines.push(`      sandbox: ${task.image_sandbox}`);
+      if (task.image_cwd) lines.push(`      cwd: ${yamlEscape(task.image_cwd)}`);
+      if (task.image_timeout && task.image_timeout !== 1200) lines.push(`      timeout: ${task.image_timeout}`);
     }
     if (stepType === 'output') {
       lines.push(`    output:`);
