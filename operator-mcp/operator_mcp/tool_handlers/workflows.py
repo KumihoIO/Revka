@@ -53,8 +53,14 @@ async def tool_run_workflow(args: dict[str, Any]) -> dict[str, Any]:
     cwd = args.get("cwd", "")
     run_id = args.get("run_id", str(uuid.uuid4()))
 
+    # Empty cwd → fall back to the user's home directory. Mirrors what the
+    # event listener does at `_async_run_request` (metadata.cwd or self._cwd).
+    # The gateway's /api/workflows/run/{name} also leaves cwd empty when the
+    # web client's Execute button doesn't supply one — without this fallback
+    # the direct dispatch from gateway short-circuits with `missing_cwd` and
+    # the run only starts after the 30s listener poll.
     if not cwd:
-        return classified_error("cwd is required", code="missing_cwd", category=VALIDATION_ERROR)
+        cwd = os.path.expanduser("~")
 
     cwd = os.path.realpath(os.path.expanduser(cwd))
     if not os.path.isdir(cwd):
