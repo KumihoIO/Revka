@@ -74,10 +74,10 @@ function extractStepId(
 function eventIcon(eventType: string) {
   switch (eventType) {
     case 'agent.started': return <Bot className="h-3 w-3" style={{ color: 'var(--pc-accent)' }} />;
-    case 'agent.completed': return <CheckCircle2 className="h-3 w-3" style={{ color: '#34d399' }} />;
-    case 'agent.error': return <AlertTriangle className="h-3 w-3" style={{ color: '#f87171' }} />;
+    case 'agent.completed': return <CheckCircle2 className="h-3 w-3" style={{ color: 'var(--construct-status-success)' }} />;
+    case 'agent.error': return <AlertTriangle className="h-3 w-3" style={{ color: 'var(--construct-status-danger)' }} />;
     case 'agent.tool_use': return <Wrench className="h-3 w-3" style={{ color: 'var(--pc-text-muted)' }} />;
-    case 'agent.thinking': return <Brain className="h-3 w-3" style={{ color: '#c084fc' }} />;
+    case 'agent.thinking': return <Brain className="h-3 w-3" style={{ color: 'var(--construct-signal-network)' }} />;
     case 'agent.message': return <MessageSquare className="h-3 w-3" style={{ color: 'var(--pc-accent)' }} />;
     default: return <Radio className="h-3 w-3" style={{ color: 'var(--pc-text-muted)' }} />;
   }
@@ -121,11 +121,11 @@ function StepEventCard({ ev }: { ev: AgentChannelEvent }) {
           ) : ev.type === 'agent.started' ? (
             <span style={{ color: 'var(--pc-accent)' }}>Agent spawned</span>
           ) : ev.type === 'agent.completed' ? (
-            <span style={{ color: '#34d399' }}>Completed</span>
+            <span style={{ color: 'var(--construct-status-success)' }}>Completed</span>
           ) : ev.type === 'agent.error' ? (
-            <span style={{ color: '#f87171' }}>{String(ev.content?.error ?? 'Error').slice(0, 80)}</span>
+            <span style={{ color: 'var(--construct-status-danger)' }}>{String(ev.content?.error ?? 'Error').slice(0, 80)}</span>
           ) : isThinking ? (
-            <span style={{ color: '#c084fc' }}>Thinking...</span>
+            <span style={{ color: 'var(--construct-signal-network)' }}>Thinking...</span>
           ) : (
             <span>{String(ev.content?.text ?? ev.type).slice(0, 80)}</span>
           )}
@@ -181,7 +181,11 @@ function RunLogToolCard({ entry }: { entry: AgentToolCall }) {
     : '⚙️';
 
   const statusIcon = status === 'completed' ? '✓' : status === 'failed' ? '✗' : '⋯';
-  const statusClr = status === 'completed' ? '#34d399' : status === 'failed' ? '#f87171' : '#eab308';
+  const statusClr = status === 'completed'
+    ? 'var(--construct-status-success)'
+    : status === 'failed'
+      ? 'var(--construct-status-danger)'
+      : 'var(--construct-signal-live)';
 
   return (
     <div
@@ -286,9 +290,9 @@ function StepEventPanel({
     : errorEvent ? 'failed'
     : startedEvent ? 'running'
     : stepInfo?.status || 'pending';
-  const statusColor = status === 'completed' ? '#34d399'
-    : status === 'failed' ? '#f87171'
-    : status === 'running' ? '#eab308'
+  const statusColor = status === 'completed' ? 'var(--construct-status-success)'
+    : status === 'failed' ? 'var(--construct-status-danger)'
+    : status === 'running' ? 'var(--construct-signal-live)'
     : 'var(--pc-text-muted)';
 
   let duration = '';
@@ -315,13 +319,13 @@ function StepEventPanel({
           </h3>
           <div className="flex items-center gap-2 mt-1 text-[10px] flex-wrap" style={{ color: 'var(--pc-text-muted)' }}>
             {stepInfo?.agent_type && (
-              <span style={{ color: stepInfo.agent_type === 'claude' ? '#a855f7' : '#f97316' }}>
+              <span style={{ color: 'var(--construct-signal-network)' }}>
                 {stepInfo.agent_type}
               </span>
             )}
             {stepInfo?.role && <span>{stepInfo.role}</span>}
             {toolCount > 0 && <span>{toolCount} tools</span>}
-            {activity?.error_count ? <span style={{ color: '#f87171' }}>{activity.error_count} errors</span> : null}
+            {activity?.error_count ? <span style={{ color: 'var(--construct-status-danger)' }}>{activity.error_count} errors</span> : null}
             {duration && (
               <span className="flex items-center gap-0.5">
                 <Clock className="h-2.5 w-2.5" />
@@ -347,11 +351,19 @@ function StepEventPanel({
                   key={skill}
                   className="px-1 py-0.5 rounded text-[8px] font-medium inline-flex items-center gap-0.5"
                   style={{
-                    background: status === 'running' ? 'rgba(34,211,238,0.18)' : status === 'completed' ? 'rgba(52,211,153,0.15)' : 'var(--pc-accent-glow)',
-                    color: status === 'running' ? '#22d3ee' : status === 'completed' ? '#34d399' : 'var(--pc-accent-light)',
+                    background: status === 'running'
+                      ? 'color-mix(in srgb, var(--construct-signal-live) 16%, transparent)'
+                      : status === 'completed'
+                        ? 'color-mix(in srgb, var(--construct-status-success) 16%, transparent)'
+                        : 'var(--pc-accent-glow)',
+                    color: status === 'running'
+                      ? 'var(--construct-signal-live)'
+                      : status === 'completed'
+                        ? 'var(--construct-status-success)'
+                        : 'var(--pc-accent-light)',
                   }}
                 >
-                  {status === 'running' && <span className="inline-block h-1 w-1 rounded-full" style={{ background: '#22d3ee', animation: 'pulse-dot 1.5s ease-in-out infinite' }} />}
+                  {status === 'running' && <span className="inline-block h-1 w-1 rounded-full" style={{ background: 'var(--construct-signal-live)', animation: 'pulse-dot 1.5s ease-in-out infinite' }} />}
                   {status === 'completed' && <span style={{ fontSize: '7px' }}>✓</span>}
                   {skill}
                 </span>
@@ -410,11 +422,11 @@ function StepEventPanel({
             >
               <div className="flex items-center gap-2 text-[11px]">
                 {status === 'completed' ? (
-                  <CheckCircle2 className="h-3.5 w-3.5 shrink-0" style={{ color: '#34d399' }} />
+                  <CheckCircle2 className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--construct-status-success)' }} />
                 ) : status === 'failed' ? (
-                  <AlertTriangle className="h-3.5 w-3.5 shrink-0" style={{ color: '#f87171' }} />
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--construct-status-danger)' }} />
                 ) : status === 'running' ? (
-                  <Activity className="h-3.5 w-3.5 shrink-0 animate-spin" style={{ color: '#eab308' }} />
+                  <Activity className="h-3.5 w-3.5 shrink-0 animate-spin" style={{ color: 'var(--construct-signal-live)' }} />
                 ) : (
                   <Clock className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--pc-text-muted)' }} />
                 )}
@@ -508,9 +520,9 @@ function RunStatusBar({
   const running = Object.values(stepResults).filter((s) => s.status === 'running').length;
   const failed = Object.values(stepResults).filter((s) => s.status === 'failed').length;
 
-  const statusColor = runStatus === 'completed' ? '#34d399'
-    : runStatus === 'failed' ? '#f87171'
-    : runStatus === 'running' ? '#eab308'
+  const statusColor = runStatus === 'completed' ? 'var(--construct-status-success)'
+    : runStatus === 'failed' ? 'var(--construct-status-danger)'
+    : runStatus === 'running' ? 'var(--construct-signal-live)'
     : 'var(--pc-text-muted)';
 
   return (
@@ -535,9 +547,9 @@ function RunStatusBar({
 
       {/* Step counts */}
       <div className="flex items-center gap-3" style={{ color: 'var(--pc-text-muted)' }}>
-        {completed > 0 && <span style={{ color: '#34d399' }}>{completed} done</span>}
-        {running > 0 && <span style={{ color: '#eab308' }}>{running} running</span>}
-        {failed > 0 && <span style={{ color: '#f87171' }}>{failed} failed</span>}
+        {completed > 0 && <span style={{ color: 'var(--construct-status-success)' }}>{completed} done</span>}
+        {running > 0 && <span style={{ color: 'var(--construct-signal-live)' }}>{running} running</span>}
+        {failed > 0 && <span style={{ color: 'var(--construct-status-danger)' }}>{failed} failed</span>}
         <span>{Object.keys(stepResults).length}/{totalSteps} steps</span>
       </div>
 
@@ -885,7 +897,9 @@ function WorkflowGraphLive({
           status: 'pending',
           agent_type: inferred.agent_type,
           role: inferred.role,
-          action: yamlTask.action,
+          // StepRunInfo.action is the runtime overlay's free-text label —
+          // for the YAML pre-fill we surface the canonical step type.
+          action: yamlTask.type,
           skills: yamlTask.skills.length > 0 ? yamlTask.skills : undefined,
           template_name: yamlTask.assign || undefined,
         };
@@ -925,13 +939,13 @@ function WorkflowGraphLive({
     for (const edge of flowEdges) {
       const sourceStep = stepResults[edge.source];
       if (sourceStep?.status === 'completed') {
-        edge.style = { stroke: '#34d399', strokeWidth: 2 };
+        edge.style = { stroke: 'var(--construct-status-success)', strokeWidth: 2 };
         edge.animated = false;
       } else if (sourceStep?.status === 'running') {
-        edge.style = { stroke: '#eab308', strokeWidth: 2 };
+        edge.style = { stroke: 'var(--construct-signal-live)', strokeWidth: 2 };
         edge.animated = true;
       } else if (sourceStep?.status === 'failed') {
-        edge.style = { stroke: '#f87171', strokeWidth: 2 };
+        edge.style = { stroke: 'var(--construct-status-danger)', strokeWidth: 2 };
         edge.animated = false;
       }
     }
@@ -970,34 +984,31 @@ function WorkflowGraphLive({
           <MiniMap
             nodeColor={(node: Node) => {
               const data = node.data as TaskNodeData;
-              if (data?.runInfo?.status === 'completed') return '#34d399';
-              if (data?.runInfo?.status === 'running') return '#eab308';
-              if (data?.runInfo?.status === 'failed') return '#f87171';
-              const action = data?.action?.toLowerCase() ?? '';
-              if (action === 'gate' || action === 'conditional') return '#eab308';
-              if (action.includes('review')) return '#a855f7';
-              if (action.includes('deploy')) return '#f97316';
-              if (action.includes('test')) return '#06b6d4';
-              if (action.includes('code') || action.includes('build')) return '#00b4d8';
-              if (action.includes('research')) return '#22c55e';
-              if (action.includes('notify')) return '#ec4899';
-              if (action.includes('approve') || action.includes('human')) return '#8b5cf6';
-              return '#22d3ee';
+              if (data?.runInfo?.status === 'completed') return 'var(--construct-status-success)';
+              if (data?.runInfo?.status === 'running') return 'var(--construct-signal-live)';
+              if (data?.runInfo?.status === 'failed') return 'var(--construct-status-danger)';
+              const stepType = data?.type?.toLowerCase() ?? '';
+              if (stepType === 'conditional') return 'var(--construct-status-warning)';
+              if (stepType.includes('research')) return 'var(--construct-signal-live)';
+              if (stepType.includes('deploy')) return 'var(--construct-status-warning)';
+              // All other decorative type accents collapse onto the network signal
+              // — copper inside the Zion editor scope, neutral elsewhere.
+              return 'var(--construct-signal-network)';
             }}
             nodeStrokeColor={(node: Node) => {
               const data = node.data as TaskNodeData;
-              if (data?.runInfo?.status === 'completed') return '#34d399';
-              if (data?.runInfo?.status === 'running') return '#eab308';
-              if (data?.runInfo?.status === 'failed') return '#f87171';
-              return '#333';
+              if (data?.runInfo?.status === 'completed') return 'var(--construct-status-success)';
+              if (data?.runInfo?.status === 'running') return 'var(--construct-signal-live)';
+              if (data?.runInfo?.status === 'failed') return 'var(--construct-status-danger)';
+              return 'var(--construct-text-faint)';
             }}
             nodeStrokeWidth={2}
             nodeBorderRadius={8}
             pannable
             zoomable
             style={{
-              background: '#1a1a2e',
-              border: '1px solid #333',
+              background: 'var(--pc-bg-elevated)',
+              border: '1px solid var(--construct-border-soft)',
               borderRadius: '0.75rem',
             }}
             maskColor="rgba(0,0,0,0.4)"

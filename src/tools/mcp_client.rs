@@ -42,6 +42,12 @@ struct McpServerInner {
     #[cfg(not(target_has_atomic = "64"))]
     next_id: AtomicU32,
     tools: Vec<McpToolDef>,
+    /// Server-supplied `instructions` from the `initialize` response. The MCP
+    /// spec uses this for free-form domain hints — e.g. "Use OpenCrab tools
+    /// to query the ontology". Surfacing it in the agent's system prompt
+    /// primes the LLM to reach for the server's tools when relevant, instead
+    /// of waiting for the user to name the server explicitly.
+    instructions: Option<String>,
 }
 
 // ── McpServer ──────────────────────────────────────────────────────────────
@@ -98,6 +104,17 @@ impl McpServer {
             );
         }
 
+        // Capture the optional `instructions` field. Some servers (e.g.
+        // OpenCrab) use it to describe their domain; we surface it in the
+        // deferred-tools section of the system prompt.
+        let instructions = init_resp
+            .result
+            .as_ref()
+            .and_then(|v| v.get("instructions"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+
         // Notify server that client is initialized (no response expected for notifications)
         // For notifications, we send but don't wait for response
         let notif = JsonRpcRequest::notification("notifications/initialized", json!({}));
@@ -136,6 +153,7 @@ impl McpServer {
             #[cfg(not(target_has_atomic = "64"))]
             next_id: AtomicU32::new(3), // Start at 3 since we used 1 and 2
             tools: tool_list.tools,
+            instructions,
         };
 
         tracing::info!(
@@ -157,6 +175,12 @@ impl McpServer {
     /// Server display name.
     pub async fn name(&self) -> String {
         self.inner.lock().await.config.name.clone()
+    }
+
+    /// Server-supplied free-form instructions captured from the MCP
+    /// `initialize` response. `None` for servers that don't advertise any.
+    pub async fn instructions(&self) -> Option<String> {
+        self.inner.lock().await.instructions.clone()
     }
 
     /// Call a tool on this server. Returns the raw JSON result.
@@ -291,6 +315,23 @@ impl McpRegistry {
 
     pub fn tool_count(&self) -> usize {
         self.tool_index.len()
+    }
+
+    /// Map of `<server-name>` → `instructions` for every connected server
+    /// that advertised a non-empty `instructions` field on initialize.
+    /// Empty when no server provided one.
+    ///
+    /// Used by the deferred-tools section builder so the agent's system
+    /// prompt can prime the LLM with each server's domain hint.
+    pub async fn server_instructions(&self) -> HashMap<String, String> {
+        let mut out = HashMap::new();
+        for server in &self.servers {
+            let name = server.name().await;
+            if let Some(instr) = server.instructions().await {
+                out.insert(name, instr);
+            }
+        }
+        out
     }
 }
 

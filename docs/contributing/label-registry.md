@@ -115,7 +115,6 @@ Tools are grouped by logical function rather than one label per file.
 | `tool:file` | `file_edit.rs`, `file_read.rs`, `file_write.rs`, `glob_search.rs`, `content_search.rs` |
 | `tool:google-workspace` | `google_workspace.rs` |
 | `tool:mcp` | `mcp_client.rs`, `mcp_deferred.rs`, `mcp_protocol.rs`, `mcp_tool.rs`, `mcp_transport.rs` |
-| `tool:memory` | `memory_forget.rs`, `memory_recall.rs`, `memory_store.rs` |
 | `tool:microsoft365` | `microsoft365/**` |
 | `tool:security` | `security_ops.rs`, `verifiable_intent.rs` |
 | `tool:shell` | `shell.rs`, `node_tool.rs`, `cli_discovery.rs` |

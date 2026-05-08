@@ -91,17 +91,25 @@ pub fn operator_mcp_server_config(cfg: &OperatorConfig) -> McpServerConfig {
     }
     // Enable Kumiho SDK auto-configure (uses cached credentials from ~/.kumiho/).
     env.insert("KUMIHO_AUTO_CONFIGURE".to_string(), "1".to_string());
-    // Forward gateway URL + token so the operator can query cost/audit APIs.
+    // Forward gateway URL so the operator can query cost/audit APIs. Auth
+    // uses the service token at ~/.construct/service-token (read directly by
+    // operator-mcp's gateway_client), so no token env-forwarding is needed.
     if let Ok(url) = std::env::var("CONSTRUCT_GATEWAY_URL") {
         if !url.trim().is_empty() {
             env.insert("CONSTRUCT_GATEWAY_URL".to_string(), url);
         }
     }
-    if let Ok(token) = std::env::var("CONSTRUCT_GATEWAY_TOKEN") {
-        if !token.trim().is_empty() {
-            env.insert("CONSTRUCT_GATEWAY_TOKEN".to_string(), token);
-        }
-    }
+    // Tool timeout is user-configurable via `[operator] tool_timeout_secs`
+    // (default 600). Operator tools include long-running operations
+    // (codex image generation, workflow execution, dry-run) that exceed
+    // the runtime's 180s global default. We surface the value here so a
+    // user with very slow plans can dial it down for fast-fail behavior
+    // or raise it up to the 600s runtime cap.
+    let tool_timeout_secs = if cfg.tool_timeout_secs == 0 {
+        None
+    } else {
+        Some(cfg.tool_timeout_secs)
+    };
     McpServerConfig {
         name: OPERATOR_SERVER_NAME.to_string(),
         transport: McpTransport::Stdio,
@@ -110,7 +118,7 @@ pub fn operator_mcp_server_config(cfg: &OperatorConfig) -> McpServerConfig {
         env,
         url: None,
         headers: HashMap::new(),
-        tool_timeout_secs: None,
+        tool_timeout_secs,
     }
 }
 
@@ -180,14 +188,9 @@ pub fn inject_operator(mut config: Config, is_internal: bool) -> Config {
         server
             .env
             .insert("CONSTRUCT_GATEWAY_URL".to_string(), gw_url);
-        // Forward the first paired token (if any) for API auth.
-        if let Some(token) = config.gateway.paired_tokens.first() {
-            if !token.is_empty() {
-                server
-                    .env
-                    .insert("CONSTRUCT_GATEWAY_TOKEN".to_string(), token.clone());
-            }
-        }
+        // Auth uses the service token at ~/.construct/service-token (written
+        // by the gateway at startup, read directly by operator-mcp's
+        // gateway_client). No token env-forwarding required.
         // Prepend so Operator tools appear early in deferred tool listings.
         config.mcp.servers.insert(0, server);
     }
@@ -233,7 +236,12 @@ pub fn append_operator_prompt(
 /// following OpenClaw's one-shot pattern.
 const OPERATOR_CHANNEL_PROMPT: &str = "\
 OPERATOR (Construct) — You have access to construct-operator MCP tools \
-for multi-agent orchestration. Available tools: create_agent, \
+for multi-agent orchestration.
+
+Voice: detached Operator (Matrix). Status reports, not commentary. \
+Brevity is respect.
+
+Available tools: create_agent, \
 wait_for_agent, send_agent_prompt, get_agent_activity, list_agents, \
 save_agent_template, search_agent_pool, create_team, spawn_team, \
 save_plan, compact_conversation, store_compaction.
@@ -314,6 +322,44 @@ mod tests {
                 .iter()
                 .any(|s| s.name == OPERATOR_SERVER_NAME)
         );
+    }
+
+    #[test]
+    fn injected_operator_server_uses_configured_tool_timeout() {
+        // Default config -> default timeout (600s).
+        let injected = inject_operator(Config::default(), false);
+        let entry = injected
+            .mcp
+            .servers
+            .iter()
+            .find(|s| s.name == OPERATOR_SERVER_NAME)
+            .expect("operator server injected");
+        assert_eq!(entry.tool_timeout_secs, Some(600));
+
+        // Custom config value flows through.
+        let mut cfg = Config::default();
+        cfg.operator.tool_timeout_secs = 300;
+        let injected = inject_operator(cfg, false);
+        let entry = injected
+            .mcp
+            .servers
+            .iter()
+            .find(|s| s.name == OPERATOR_SERVER_NAME)
+            .expect("operator server injected");
+        assert_eq!(entry.tool_timeout_secs, Some(300));
+
+        // 0 means "fall back to the runtime default" (mirrors the
+        // `Option::None` semantics used by user-configured MCP servers).
+        let mut cfg = Config::default();
+        cfg.operator.tool_timeout_secs = 0;
+        let injected = inject_operator(cfg, false);
+        let entry = injected
+            .mcp
+            .servers
+            .iter()
+            .find(|s| s.name == OPERATOR_SERVER_NAME)
+            .expect("operator server injected");
+        assert_eq!(entry.tool_timeout_secs, None);
     }
 
     #[test]

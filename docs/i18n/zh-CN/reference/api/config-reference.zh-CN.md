@@ -101,7 +101,7 @@ runtime_trace_max_entries = 200
 | `method` | `totp` | OTP 方法（`totp`、`pairing`、`cli-prompt`） |
 | `token_ttl_secs` | `30` | TOTP 时间步长窗口（秒） |
 | `cache_valid_secs` | `300` | 最近验证的 OTP 代码的缓存窗口 |
-| `gated_actions` | `[\"shell\",\"file_write\",\"browser_open\",\"browser\",\"memory_forget\"]` | 受 OTP 保护的工具操作 |
+| `gated_actions` | `[\"shell\",\"file_write\",\"browser_open\",\"browser\"]` | 受 OTP 保护的工具操作 |
 | `gated_domains` | `[]` | 需要 OTP 的显式域模式（`*.example.com`、`login.example.com`） |
 | `gated_domain_categories` | `[]` | 域预设类别（`banking`、`medical`、`government`、`identity_providers`） |
 

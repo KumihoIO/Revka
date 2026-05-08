@@ -86,7 +86,7 @@ export default function WorkflowDagWorkspace({
       autoFocusNodeId={selectedTaskId}
       minimapColor={(node) => {
         const data = node.data as TaskNodeData;
-        return resolveCssVar(workflowActionTone(data.action));
+        return resolveCssVar(workflowActionTone(data.type));
       }}
       emptyState="Select a workflow to inspect its DAG."
     />

@@ -45,53 +45,6 @@ export default function Header({ onOpenMobileNav }: HeaderProps) {
     };
   }, []);
 
-  const renderTrustPill = () => {
-    if (audit === null) {
-      return (
-        <span
-          className="construct-status-pill"
-          title={t('header.trust_checking')}
-          style={{ color: 'var(--construct-text-secondary)' }}
-        >
-          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          {t('header.trust_checking')}
-        </span>
-      );
-    }
-    if (audit.verified) {
-      const count = audit.entry_count ?? 0;
-      return (
-        <span
-          className="construct-status-pill"
-          title={`${t('header.trust_verified')} · ${count} ${count === 1 ? 'entry' : 'entries'}`}
-          style={{
-            color: 'var(--construct-signal-live)',
-            borderColor: 'color-mix(in srgb, var(--construct-signal-live) 40%, transparent)',
-            background: 'color-mix(in srgb, var(--construct-signal-live) 10%, transparent)',
-          }}
-        >
-          <span className="construct-dot" style={{ background: 'var(--construct-signal-live)' }} />
-          <ShieldCheck className="h-3.5 w-3.5" />
-          {t('header.trust_verified')}
-        </span>
-      );
-    }
-    return (
-      <span
-        className="construct-status-pill"
-        title={audit.error ?? t('header.trust_unverified')}
-        style={{
-          color: 'var(--construct-status-warning)',
-          borderColor: 'color-mix(in srgb, var(--construct-status-warning) 40%, transparent)',
-          background: 'color-mix(in srgb, var(--construct-status-warning) 10%, transparent)',
-        }}
-      >
-        <ShieldAlert className="h-3.5 w-3.5" />
-        {t('header.trust_unverified')}
-      </span>
-    );
-  };
-
   return (
     <header className="px-4 py-3 lg:px-6 lg:py-4">
       <div className="construct-panel p-3 lg:p-4">
@@ -147,43 +100,79 @@ export default function Header({ onOpenMobileNav }: HeaderProps) {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <ApprovalBadge />
-            <span className="construct-status-pill">
-              <span className="construct-dot" style={{ background: 'var(--construct-signal-live)' }} />
-              {t('header.runtime_healthy')}
-            </span>
-            {renderTrustPill()}
-            <span className="construct-status-pill">
-              <MonitorCog className="h-3.5 w-3.5" />
-              {t('theme.mode')} {theme === 'system' ? `${t('theme.system')}/${t(resolvedTheme === 'dark' ? 'theme.dark' : 'theme.light')}` : t(resolvedTheme === 'dark' ? 'theme.dark' : 'theme.light')}
+            {/* Single combined health pill — runtime + trust state read
+                from a single glance instead of two adjacent pills both
+                saying "ok". Keeps the trust-verified accent on the icon
+                so the brand-defining shield is still front and centre. */}
+            <span
+              className="construct-status-pill"
+              title={
+                audit === null
+                  ? t('header.trust_checking')
+                  : audit.verified
+                    ? `${t('header.runtime_healthy')} · ${t('header.trust_verified')}`
+                    : (audit.error ?? t('header.trust_unverified'))
+              }
+              style={
+                audit?.verified
+                  ? {
+                      color: 'var(--construct-signal-live)',
+                      borderColor: 'color-mix(in srgb, var(--construct-signal-live) 40%, transparent)',
+                      background: 'color-mix(in srgb, var(--construct-signal-live) 10%, transparent)',
+                    }
+                  : audit && !audit.verified
+                    ? {
+                        color: 'var(--construct-status-warning)',
+                        borderColor: 'color-mix(in srgb, var(--construct-status-warning) 40%, transparent)',
+                        background: 'color-mix(in srgb, var(--construct-status-warning) 10%, transparent)',
+                      }
+                    : undefined
+              }
+            >
+              <span className="construct-dot" style={{ background: audit?.verified === false ? 'var(--construct-status-warning)' : 'var(--construct-signal-live)' }} />
+              {audit === null ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : audit.verified ? (
+                <ShieldCheck className="h-3.5 w-3.5" />
+              ) : (
+                <ShieldAlert className="h-3.5 w-3.5" />
+              )}
+              {audit?.verified ? t('header.trust_verified') : audit && !audit.verified ? t('header.trust_unverified') : t('header.trust_checking')}
             </span>
             <LanguageSwitcher />
+            {/* Theme toggle — icon-only buttons (text labels removed; the
+                pill duplicating the active mode was also dropped, since the
+                active state on this group already conveys the same info). */}
             <div className="construct-theme-toggle" role="group" aria-label={t('theme.mode')}>
               <button
                 type="button"
                 className="construct-theme-toggle-button"
                 data-active={String(theme === 'dark')}
                 onClick={() => setTheme('dark')}
+                title={t('theme.dark')}
+                aria-label={t('theme.dark')}
               >
                 <MoonStar className="h-4 w-4" />
-                {t('theme.dark')}
               </button>
               <button
                 type="button"
                 className="construct-theme-toggle-button"
                 data-active={String(theme === 'light')}
                 onClick={() => setTheme('light')}
+                title={t('theme.light')}
+                aria-label={t('theme.light')}
               >
                 <SunMedium className="h-4 w-4" />
-                {t('theme.light')}
               </button>
               <button
                 type="button"
                 className="construct-theme-toggle-button"
                 data-active={String(theme === 'system')}
                 onClick={() => setTheme('system')}
+                title={t('theme.system')}
+                aria-label={t('theme.system')}
               >
                 <MonitorCog className="h-4 w-4" />
-                {t('theme.system')}
               </button>
             </div>
             <button

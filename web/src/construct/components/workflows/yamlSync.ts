@@ -6,11 +6,16 @@
  *     - id: step-1
  *       name: Greeting Task
  *       description: Send a greeting to the user
- *       action: greet
+ *       type: agent
  *       agent_hints: [coder, researcher]
  *       skills: [code-review, rust-analysis]
  *       depends_on: step-0
  *       params: { ... }
+ *
+ * NOTE: legacy YAML may contain `action: <friendly verb>` (e.g.
+ * `action: research`). On parse we map it through ACTION_TO_TYPE to a
+ * canonical `type` and drop the `action` field. The emitter only writes
+ * `type:` going forward.
  */
 
 import type { Node, Edge } from '@xyflow/react';
@@ -23,7 +28,10 @@ export interface TaskDefinition {
   id: string;
   name: string;
   description: string;
-  action: string;
+  /** Canonical step type (matches StepType in operator schema). Legacy YAML
+   *  may carry `action:` instead — the parser maps it through ACTION_TO_TYPE
+   *  and drops the `action` field, so callers should always read `type`. */
+  type: string;
   agent_hints: string[];
   skills: string[];
   depends_on: string[];
@@ -32,6 +40,10 @@ export interface TaskDefinition {
   disabled?: boolean;
   /** Pre-assigned pool agent template name */
   assign?: string;
+  /** Pool persona binding for agent steps — resolves `AgentStepConfig.template`
+   *  at dispatch. Architect's persona-discovery flow writes this; round-trips
+   *  through `agent.template:` in YAML. */
+  template?: string;
   /** Gate-only fields */
   condition?: string;
   on_true?: string;
@@ -166,6 +178,32 @@ export interface TaskDefinition {
   email_smtp_host?: string;
   email_dry_run?: boolean;
   email_timeout?: number;
+  // --- Image step (see operator_mcp/workflow/schema.py::ImageStepConfig) ---
+  image_prompt?: string;
+  image_count?: number;
+  image_canvas?: boolean | string;
+  image_register_artifact?: boolean;
+  image_space?: string;
+  image_item_name?: string;
+  image_output_path?: string;
+  image_output_pattern?: string;
+  image_sandbox?: string;
+  image_cwd?: string;
+  image_timeout?: number;
+  // --- Tag step: re-tag an existing Kumiho entity revision ---
+  tag_item_kref?: string;
+  tag_value?: string;
+  tag_untag?: string;
+  // --- Deprecate step: deprecate a Kumiho item ---
+  deprecate_item_kref?: string;
+  deprecate_reason?: string;
+  /**
+   * Encrypted auth-profile binding for agent / shell / python / email / a2a
+   * steps. Format: `<provider>:<profile_name>`. Resolved at runtime via the
+   * gateway's auth-profile resolve endpoint — token bytes never appear in
+   * YAML, list responses, or agent system prompts.
+   */
+  auth?: string;
 }
 
 /** Step result from a workflow run — overlaid on nodes when viewing runs */
@@ -187,7 +225,9 @@ export interface StepRunInfo {
   reject_keywords?: string[];
 }
 
-/** Infer agent_type and role from action + hints (mirrors Python ACTION_DEFAULTS) */
+/** Infer agent_type and role from type + hints (mirrors Python ACTION_DEFAULTS).
+ *  Keys here are legacy `action` verbs and canonical step types alike — the
+ *  fallback handles both cleanly. */
 const ACTION_AGENT_MAP: Record<string, { agent_type: string; role: string }> = {
   research:  { agent_type: 'claude', role: 'researcher' },
   code:      { agent_type: 'codex',  role: 'coder' },
@@ -198,10 +238,11 @@ const ACTION_AGENT_MAP: Record<string, { agent_type: string; role: string }> = {
   notify:    { agent_type: 'claude', role: 'notifier' },
   summarize: { agent_type: 'claude', role: 'summarizer' },
   task:      { agent_type: 'claude', role: 'coder' },
+  agent:     { agent_type: 'claude', role: 'coder' },
 };
 
 export function inferAgentFromTask(task: TaskDefinition): { agent_type: string; role: string } {
-  const defaults = ACTION_AGENT_MAP[task.action.toLowerCase()] ?? { agent_type: 'claude', role: 'coder' };
+  const defaults = ACTION_AGENT_MAP[(task.type || '').toLowerCase()] ?? { agent_type: 'claude', role: 'coder' };
   let { agent_type, role } = defaults;
   // Agent hints override
   if (task.agent_hints.includes('codex') || task.agent_hints.includes('coder')) agent_type = 'codex';
@@ -217,13 +258,18 @@ export interface TaskNodeData {
   taskId: string;
   name: string;
   description: string;
-  action: string;
+  /** Canonical step type — see TaskDefinition.type. */
+  type: string;
   agentHints: string[];
   skills: string[];
   /** When true, executor skips the step and passes inputs straight through as output_data */
   disabled?: boolean;
   /** Pre-assigned pool agent template name */
   assign: string;
+  /** Pool persona binding (`agent.template`) — set by Architect's persona
+   *  discovery or by a hand-edited YAML. Distinct from `assign`, which is
+   *  only written by the AgentPicker side-panel UI. */
+  template: string;
   paramCount: number;
   dependencyCount: number;
   /** Gate-only: condition expression */
@@ -339,6 +385,27 @@ export interface TaskNodeData {
   emailSmtpHost: string;
   emailDryRun: boolean;
   emailTimeout: number;
+  // Image step
+  imagePrompt: string;
+  imageCount: number;
+  imageCanvas: boolean;
+  imageRegisterArtifact: boolean;
+  imageSpace: string;
+  imageItemName: string;
+  imageOutputPath: string;
+  imageOutputPattern: string;
+  imageSandbox: string;
+  imageCwd: string;
+  imageTimeout: number;
+  // Tag step
+  tagItemKref: string;
+  tagValue: string;
+  tagUntag: string;
+  // Deprecate step
+  deprecateItemKref: string;
+  deprecateReason: string;
+  /** Encrypted auth-profile id (e.g. `gmail:work`) — resolved at runtime. */
+  auth?: string;
   /** Run-mode overlay — populated when viewing a workflow run */
   runInfo?: StepRunInfo;
   [key: string]: unknown;
@@ -383,7 +450,7 @@ export interface WorkflowMeta {
 export interface StepNodeData {
   label: string;
   stepId: string;
-  action: string;
+  type: string;
   agent: string;
   paramCount: number;
   dependencyCount: number;
@@ -391,6 +458,31 @@ export interface StepNodeData {
 }
 
 export type ParsedStep = TaskDefinition;
+
+/** Map editor action / friendly verb to canonical executor step type.
+ *  Hoisted above the parser so YAML containing legacy `action:` can be
+ *  canonicalized at parse time. Self-mapping entries make the lookup safe
+ *  to use against either an action verb or a canonical type. */
+export const ACTION_TO_TYPE: Record<string, string> = {
+  research: 'agent', code: 'agent', review: 'agent', deploy: 'agent',
+  test: 'agent', build: 'agent', notify: 'notify', summarize: 'agent',
+  task: 'agent', approve: 'human_approval', gate: 'conditional',
+  human_input: 'human_input',
+  // Executor types map to themselves
+  agent: 'agent', parallel: 'parallel', shell: 'shell', goto: 'goto',
+  output: 'output', conditional: 'conditional', group_chat: 'group_chat',
+  supervisor: 'supervisor', map_reduce: 'map_reduce', handoff: 'handoff',
+  a2a: 'a2a', resolve: 'resolve', for_each: 'for_each',
+  human_approval: 'human_approval',
+  // New step types — see operator_mcp/workflow/schema.py
+  python: 'python', email: 'email',
+  tag: 'tag', deprecate: 'deprecate',
+};
+
+/** Resolve legacy `action:` verb or `type:` value to a canonical step type. */
+function canonicalizeType(raw: string): string {
+  return ACTION_TO_TYPE[raw] ?? raw;
+}
 
 // ---------------------------------------------------------------------------
 // YAML → Tasks parser (lightweight, no external YAML lib)
@@ -455,8 +547,13 @@ export function parseWorkflowYaml(yaml: string): TaskDefinition[] {
         current.name = value;
       } else if (key === 'description' || key === 'desc') {
         current.description = value;
-      } else if (key === 'action' || key === 'type' || key === 'task') {
-        current.action = value;
+      } else if (key === 'type' || key === 'action' || key === 'task') {
+        // `type:` wins over legacy `action:` if both appear on the same step.
+        // Canonicalize both through ACTION_TO_TYPE so callers always see a
+        // valid step type — the `action` field is dropped going forward.
+        if (key === 'type' || !current.type) {
+          current.type = canonicalizeType(value);
+        }
       } else if (key === 'condition') {
         current.condition = value;
       } else if (key === 'on_true' || key === 'onTrue') {
@@ -507,7 +604,11 @@ export function parseWorkflowYaml(yaml: string): TaskDefinition[] {
         current.retry_delay = parseFloat(value) || 5;
       } else if (key === 'disabled') {
         current.disabled = value.toLowerCase() === 'true';
-      } else if (key === 'assign' || key === 'template') {
+      } else if (key === 'assign') {
+        // Top-level assign: only. Nested `agent.template:` is captured
+        // separately by extractStepBlockData → data.template, so the two
+        // YAML keys preserve the AgentPicker (assign) vs persona (template)
+        // distinction across save/reload.
         current.assign = value;
       } else if (key === 'params' || key === 'parameters' || key === 'config') {
         inParams = true;
@@ -768,6 +869,13 @@ function extractStepBlockData(yaml: string): Map<string, Partial<TaskDefinition>
     const stepId = idMatch[1]!.replace(/^["']|["']$/g, '');
     const data: Partial<TaskDefinition> = {};
 
+    // Top-level `assign:` — AgentPicker pool-agent binding. Distinct from
+    // `agent.template:` (Architect persona binding) which is captured below.
+    // `assign` only appears at step top level per the schema, so a loose
+    // match is safe.
+    const assign = block.match(/^\s*assign:\s*(\S+)/m);
+    if (assign) data.assign = assign[1]!.replace(/^["']|["']$/g, '');
+
     // Agent block: agent_type, role, prompt, timeout
     if (block.match(/\bagent\s*:/m)) {
       const agentType = block.match(/agent_type:\s*(\S+)/);
@@ -777,7 +885,7 @@ function extractStepBlockData(yaml: string): Map<string, Partial<TaskDefinition>
       if (agentType) data.agent_type = agentType[1]!.replace(/["']/g, '') as 'claude' | 'codex';
       if (role) data.role = role[1]!.replace(/["']/g, '');
       if (timeout) data.timeout = parseInt(timeout[1]!);
-      if (template) data.assign = template[1]!.replace(/["']/g, '');
+      if (template) data.template = template[1]!.replace(/["']/g, '');
       // Extract prompt (may be multi-line with |)
       const promptMatch = block.match(/prompt:\s*\|?\s*\n([\s\S]*?)(?=\n\s{6}\w|\n\s{4}\w|\n\s{2}-|\n\w|$)/);
       if (promptMatch) {
@@ -788,6 +896,8 @@ function extractStepBlockData(yaml: string): Map<string, Partial<TaskDefinition>
       }
       const agentModel = block.match(/\bmodel:\s*(\S+)/);
       if (agentModel) data.model = agentModel[1]!.replace(/["']/g, '');
+      const auth = block.match(/^\s{6}auth:\s*(.+)$/m);
+      if (auth) data.auth = auth[1]!.trim().replace(/^["']|["']$/g, '');
     }
 
     // Parallel block: join, max_concurrency
@@ -846,6 +956,8 @@ function extractStepBlockData(yaml: string): Map<string, Partial<TaskDefinition>
       if (shellTimeout) data.shell_timeout = parseFloat(shellTimeout[1]!);
       const allowFail = block.match(/allow_failure:\s*(true|false)/i);
       if (allowFail) data.shell_allow_failure = allowFail[1]!.toLowerCase() === 'true';
+      const auth = block.match(/^\s{6}auth:\s*(.+)$/m);
+      if (auth) data.auth = auth[1]!.trim().replace(/^["']|["']$/g, '');
     }
 
     // Python block — script XOR code; args is a JSON object string
@@ -865,6 +977,8 @@ function extractStepBlockData(yaml: string): Map<string, Partial<TaskDefinition>
       if (pyTimeout) data.python_timeout = parseFloat(pyTimeout[1]!);
       const pyAllowFail = block.match(/allow_failure:\s*(true|false)/i);
       if (pyAllowFail) data.python_allow_failure = pyAllowFail[1]!.toLowerCase() === 'true';
+      const auth = block.match(/^\s{6}auth:\s*(.+)$/m);
+      if (auth) data.auth = auth[1]!.trim().replace(/^["']|["']$/g, '');
     }
 
     // Email block
@@ -904,6 +1018,39 @@ function extractStepBlockData(yaml: string): Map<string, Partial<TaskDefinition>
       if (dryRun) data.email_dry_run = dryRun[1]!.toLowerCase() === 'true';
       const emailTimeout = block.match(/timeout:\s*(\d+(?:\.\d+)?)/);
       if (emailTimeout) data.email_timeout = parseFloat(emailTimeout[1]!);
+      const auth = block.match(/^\s{6}auth:\s*(.+)$/m);
+      if (auth) data.auth = auth[1]!.trim().replace(/^["']|["']$/g, '');
+    }
+
+    // Image block
+    if (block.match(/type:\s*image/)) {
+      const promptBlock = block.match(/prompt:\s*\|\s*\n([\s\S]*?)(?=\n\s{6}\w|\n\s{4}\w|\n\s{2}-|\n\w|$)/);
+      if (promptBlock) {
+        data.image_prompt = promptBlock[1]!.split('\n').map(l => l.replace(/^\s{8}/, '')).join('\n').trim();
+      } else {
+        const inlinePrompt = block.match(/prompt:\s*["']?(.+?)["']?\s*$/m);
+        if (inlinePrompt) data.image_prompt = inlinePrompt[1]!.trim().replace(/^["']|["']$/g, '');
+      }
+      const imgCount = block.match(/^\s{6}count:\s*(\d+)/m);
+      if (imgCount) data.image_count = parseInt(imgCount[1]!);
+      const imgCanvas = block.match(/^\s{6}canvas:\s*(true|false)/im);
+      if (imgCanvas) data.image_canvas = imgCanvas[1]!.toLowerCase() === 'true';
+      const imgRegister = block.match(/register_artifact:\s*(true|false)/i);
+      if (imgRegister) data.image_register_artifact = imgRegister[1]!.toLowerCase() === 'true';
+      const imgSpace = block.match(/^\s{6}space:\s*(.+)/m);
+      if (imgSpace) data.image_space = imgSpace[1]!.trim().replace(/^["']|["']$/g, '');
+      const imgItemName = block.match(/item_name:\s*(.+)/);
+      if (imgItemName) data.image_item_name = imgItemName[1]!.trim().replace(/^["']|["']$/g, '');
+      const imgOutPath = block.match(/output_path:\s*(.+)/);
+      if (imgOutPath) data.image_output_path = imgOutPath[1]!.trim().replace(/^["']|["']$/g, '');
+      const imgOutPattern = block.match(/output_pattern:\s*(.+)/);
+      if (imgOutPattern) data.image_output_pattern = imgOutPattern[1]!.trim().replace(/^["']|["']$/g, '');
+      const imgSandbox = block.match(/sandbox:\s*(read-only|workspace-write|danger-full-access)/);
+      if (imgSandbox) data.image_sandbox = imgSandbox[1]!;
+      const imgCwd = block.match(/^\s{6}cwd:\s*(.+)/m);
+      if (imgCwd) data.image_cwd = imgCwd[1]!.trim().replace(/^["']|["']$/g, '');
+      const imgTimeout = block.match(/^\s{6}timeout:\s*(\d+(?:\.\d+)?)/m);
+      if (imgTimeout) data.image_timeout = parseFloat(imgTimeout[1]!);
     }
 
     // Output block
@@ -1020,6 +1167,8 @@ function extractStepBlockData(yaml: string): Map<string, Partial<TaskDefinition>
       if (a2aMsg) data.a2a_message = a2aMsg[1]!;
       const a2aTimeout = block.match(/timeout:\s*(\d+(?:\.\d+)?)/);
       if (a2aTimeout) data.a2a_timeout = parseFloat(a2aTimeout[1]!);
+      const auth = block.match(/^\s{6}auth:\s*(.+)$/m);
+      if (auth) data.auth = auth[1]!.trim().replace(/^["']|["']$/g, '');
     }
 
     // MapReduce block
@@ -1079,6 +1228,28 @@ function extractStepBlockData(yaml: string): Map<string, Partial<TaskDefinition>
       }
     }
 
+    // Tag step block — `tag_step:` with item_kref / tag / untag
+    const tagStepMatch = block.match(/^\s{4}tag_step:\s*\n((?:\s{5,}.*\n?)*)/m);
+    if (tagStepMatch) {
+      const tb = tagStepMatch[1]!;
+      const itemM = tb.match(/^\s+item_kref:\s*"?([^"\n]+)"?\s*$/m);
+      const tagM = tb.match(/^\s+tag:\s*"?([^"\n]+)"?\s*$/m);
+      const untagM = tb.match(/^\s+untag:\s*"?([^"\n]+)"?\s*$/m);
+      if (itemM) data.tag_item_kref = itemM[1]!.trim();
+      if (tagM) data.tag_value = tagM[1]!.trim();
+      if (untagM) data.tag_untag = untagM[1]!.trim();
+    }
+
+    // Deprecate step block — `deprecate_step:` with item_kref / reason
+    const deprecateStepMatch = block.match(/^\s{4}deprecate_step:\s*\n((?:\s{5,}.*\n?)*)/m);
+    if (deprecateStepMatch) {
+      const db = deprecateStepMatch[1]!;
+      const itemM = db.match(/^\s+item_kref:\s*"?([^"\n]+)"?\s*$/m);
+      const reasonM = db.match(/^\s+reason:\s*"?([^"\n]+)"?\s*$/m);
+      if (itemM) data.deprecate_item_kref = itemM[1]!.trim();
+      if (reasonM) data.deprecate_reason = reasonM[1]!.trim();
+    }
+
     // Resolve block — capture all lines indented deeper than `resolve:`
     // (accept any indent >=2 to handle both `- id:` list nesting styles)
     const resolveMatch = block.match(/^(\s{2,})resolve:\s*\n((?:\s{3,}.*\n?)*)/m);
@@ -1134,7 +1305,7 @@ function finalizeTask(partial: Partial<TaskDefinition>, paramCount: number): Tas
     id: partial.id!,
     name: partial.name || partial.id!,
     description: partial.description || '',
-    action: partial.action || 'task',
+    type: partial.type || 'agent',
     agent_hints: partial.agent_hints || [],
     skills: partial.skills || [],
     depends_on: partial.depends_on || [],
@@ -1153,6 +1324,11 @@ function finalizeTask(partial: Partial<TaskDefinition>, paramCount: number): Tas
     for_each_carry_forward: partial.for_each_carry_forward,
     for_each_fail_fast: partial.for_each_fail_fast,
     for_each_max_iterations: partial.for_each_max_iterations,
+    tag_item_kref: partial.tag_item_kref,
+    tag_value: partial.tag_value,
+    tag_untag: partial.tag_untag,
+    deprecate_item_kref: partial.deprecate_item_kref,
+    deprecate_reason: partial.deprecate_reason,
   };
 }
 
@@ -1161,13 +1337,13 @@ function finalizeTask(partial: Partial<TaskDefinition>, paramCount: number): Tas
 // ---------------------------------------------------------------------------
 
 export const GATE_EDGE_STYLES = {
-  true: { stroke: '#22c55e', strokeWidth: 2 },
-  false: { stroke: '#ef4444', strokeWidth: 2 },
-  default: { stroke: '#f97316', strokeWidth: 2 },
+  true: { stroke: 'var(--construct-status-success)', strokeWidth: 2 },
+  false: { stroke: 'var(--construct-status-danger)', strokeWidth: 2 },
+  default: { stroke: 'var(--construct-status-warning)', strokeWidth: 2 },
 } as const;
 
 export function tasksToFlow(tasks: TaskDefinition[]): { nodes: Node<TaskNodeData>[]; edges: Edge[] } {
-  const isGate = (t: TaskDefinition) => t.action === 'gate';
+  const isGate = (t: TaskDefinition) => t.type === 'conditional';
 
   const nodes: Node<TaskNodeData>[] = tasks.map((task, i) => ({
     id: task.id,
@@ -1185,11 +1361,12 @@ export function tasksToFlow(tasks: TaskDefinition[]): { nodes: Node<TaskNodeData
       taskId: task.id,
       name: task.name || task.id,
       description: task.description,
-      action: task.action,
+      type: task.type,
       agentHints: task.agent_hints,
       skills: task.skills,
       disabled: task.disabled ?? false,
       assign: task.assign || '',
+      template: task.template || '',
       paramCount: task.params ? Object.keys(task.params).length : 0,
       dependencyCount: task.depends_on.length,
       condition: task.condition || '',
@@ -1283,11 +1460,40 @@ export function tasksToFlow(tasks: TaskDefinition[]): { nodes: Node<TaskNodeData
       emailSmtpHost: task.email_smtp_host || '',
       emailDryRun: task.email_dry_run || false,
       emailTimeout: task.email_timeout || 30,
+      imagePrompt: task.image_prompt || '',
+      imageCount: task.image_count ?? 1,
+      imageCanvas: task.image_canvas !== false,
+      imageRegisterArtifact: task.image_register_artifact !== false,
+      imageSpace: task.image_space || '',
+      imageItemName: task.image_item_name || '',
+      imageOutputPath: task.image_output_path || '',
+      imageOutputPattern: task.image_output_pattern || '',
+      imageSandbox: task.image_sandbox || '',
+      imageCwd: task.image_cwd || '',
+      imageTimeout: task.image_timeout || 1200,
+      tagItemKref: task.tag_item_kref || '',
+      tagValue: task.tag_value || '',
+      tagUntag: task.tag_untag || '',
+      deprecateItemKref: task.deprecate_item_kref || '',
+      deprecateReason: task.deprecate_reason || '',
+      auth: task.auth || '',
     },
   }));
 
   const edges: Edge[] = [];
   const nodeIds = new Set(tasks.map((t) => t.id));
+
+  // Track edges already added so we never emit duplicates. Keyed on
+  // `${source}->${target}` so a single edge is never drawn twice even
+  // when multiple inference passes (depends_on, parallel.steps,
+  // ${ref.output} interpolation) all want to add it.
+  const seenEdges = new Set<string>();
+  const pushEdge = (edge: Edge): void => {
+    const key = `${edge.source}->${edge.target}`;
+    if (seenEdges.has(key)) return;
+    seenEdges.add(key);
+    edges.push(edge);
+  };
 
   // Build a map of parallel step → children for edge rewriting
   const parallelChildrenMap = new Map<string, string[]>();
@@ -1314,7 +1520,7 @@ export function tasksToFlow(tasks: TaskDefinition[]): { nodes: Node<TaskNodeData
       const children = parallelChildrenMap.get(dep);
       if (children) {
         for (const child of children) {
-          edges.push({
+          pushEdge({
             id: `${child}->${task.id}`,
             source: child,
             target: task.id,
@@ -1329,7 +1535,7 @@ export function tasksToFlow(tasks: TaskDefinition[]): { nodes: Node<TaskNodeData
       } else if (forEachChildrenMap.has(dep)) {
         const feChildren = forEachChildrenMap.get(dep)!;
         const lastChild = feChildren[feChildren.length - 1]!;
-        edges.push({
+        pushEdge({
           id: `${lastChild}->${task.id}`,
           source: lastChild,
           target: task.id,
@@ -1340,7 +1546,7 @@ export function tasksToFlow(tasks: TaskDefinition[]): { nodes: Node<TaskNodeData
           style: GATE_EDGE_STYLES.default,
         });
       } else if (nodeIds.has(dep)) {
-        edges.push({
+        pushEdge({
           id: `${dep}->${task.id}`,
           source: dep,
           target: task.id,
@@ -1357,7 +1563,7 @@ export function tasksToFlow(tasks: TaskDefinition[]): { nodes: Node<TaskNodeData
   // Add edges from parallel parent to its children (synthetic — visual only)
   for (const [parentId, children] of parallelChildrenMap) {
     for (const child of children) {
-      edges.push({
+      pushEdge({
         id: `par:${parentId}->${child}`,
         source: parentId,
         target: child,
@@ -1379,7 +1585,7 @@ export function tasksToFlow(tasks: TaskDefinition[]): { nodes: Node<TaskNodeData
       const child = children[ci]!;
       if (ci === 0) {
         // Parent → first child
-        edges.push({
+        pushEdge({
           id: `fe:${parentId}->${child}`,
           source: parentId,
           target: child,
@@ -1387,26 +1593,23 @@ export function tasksToFlow(tasks: TaskDefinition[]): { nodes: Node<TaskNodeData
           animated: true,
           selectable: true,
           interactionWidth: 20,
-          style: { stroke: '#10b981', strokeWidth: 2 },
+          style: { stroke: 'var(--construct-signal-live)', strokeWidth: 2 },
           data: { synthetic: true },
         });
       } else {
         // Chain: previous child → this child (unless already has depends_on edges)
         const prev = children[ci - 1]!;
-        const existingEdge = edges.find(e => e.source === prev && e.target === child);
-        if (!existingEdge) {
-          edges.push({
-            id: `fe:${prev}->${child}`,
-            source: prev,
-            target: child,
-            type: 'default',
-            animated: true,
-            selectable: true,
-            interactionWidth: 20,
-            style: { stroke: '#10b981', strokeWidth: 2 },
-            data: { synthetic: true },
-          });
-        }
+        pushEdge({
+          id: `fe:${prev}->${child}`,
+          source: prev,
+          target: child,
+          type: 'default',
+          animated: true,
+          selectable: true,
+          interactionWidth: 20,
+          style: { stroke: 'var(--construct-signal-live)', strokeWidth: 2 },
+          data: { synthetic: true },
+        });
       }
     }
   }
@@ -1415,7 +1618,7 @@ export function tasksToFlow(tasks: TaskDefinition[]): { nodes: Node<TaskNodeData
   for (const task of tasks) {
     if (!isGate(task)) continue;
     if (task.on_true && nodeIds.has(task.on_true)) {
-      edges.push({
+      pushEdge({
         id: `${task.id}->true->${task.on_true}`,
         source: task.id,
         sourceHandle: 'true',
@@ -1426,11 +1629,11 @@ export function tasksToFlow(tasks: TaskDefinition[]): { nodes: Node<TaskNodeData
         interactionWidth: 20,
         style: GATE_EDGE_STYLES.true,
         label: 'true',
-        labelStyle: { fill: '#22c55e', fontSize: 10, fontWeight: 600 },
+        labelStyle: { fill: 'var(--construct-status-success)', fontSize: 10, fontWeight: 600 },
       });
     }
     if (task.on_false && nodeIds.has(task.on_false)) {
-      edges.push({
+      pushEdge({
         id: `${task.id}->false->${task.on_false}`,
         source: task.id,
         sourceHandle: 'false',
@@ -1441,12 +1644,96 @@ export function tasksToFlow(tasks: TaskDefinition[]): { nodes: Node<TaskNodeData
         interactionWidth: 20,
         style: GATE_EDGE_STYLES.false,
         label: 'false',
-        labelStyle: { fill: '#ef4444', fontSize: 10, fontWeight: 600 },
+        labelStyle: { fill: 'var(--construct-status-danger)', fontSize: 10, fontWeight: 600 },
+      });
+    }
+  }
+
+  // Inferred dependency edges from `${step_id.<field>}` interpolations in
+  // text fields. Architect-generated YAML (and many hand-written workflows)
+  // express deps via prompt/template references rather than explicit
+  // depends_on. We mirror the depends_on direction (source = referenced
+  // step, target = referencing step) so the Set-based dedup naturally
+  // suppresses doubles when both depends_on and interpolation point at
+  // the same source. ${input.X} / ${trigger.X} / ${env.X} are skipped —
+  // those are workflow-scope references, not step references.
+  for (const task of tasks) {
+    const refs = collectStepRefs(task, nodeIds);
+    for (const ref of refs) {
+      if (ref === task.id) continue; // ignore self-references
+      pushEdge({
+        id: `ref:${ref}->${task.id}`,
+        source: ref,
+        target: task.id,
+        type: 'default',
+        animated: true,
+        selectable: true,
+        interactionWidth: 20,
+        style: GATE_EDGE_STYLES.default,
+        data: { inferred: 'interpolation' },
       });
     }
   }
 
   return { nodes, edges };
+}
+
+/** Text fields on a TaskDefinition that may contain `${step_id.<field>}`
+ *  interpolations referencing other steps. Limited to the obvious
+ *  text-bearing fields LLMs and humans write — we don't traverse params or
+ *  arbitrary nested dicts (those rarely carry inter-step refs and would
+ *  produce false positives from JSON-ish payloads). */
+const INTERPOLATION_TEXT_FIELDS: ReadonlyArray<keyof TaskDefinition> = [
+  'prompt',
+  'shell_command',
+  'python_code',
+  'python_args',
+  'python_script',
+  'email_body',
+  'email_body_html',
+  'email_subject',
+  'email_to',
+  'email_cc',
+  'email_bcc',
+  'image_prompt',
+  'output_template',
+  'condition',
+  'goto_condition',
+  'human_input_message',
+  'human_approval_message',
+  'notify_message',
+  'notify_title',
+  'group_chat_topic',
+  'supervisor_task',
+  'a2a_message',
+  'map_reduce_task',
+  'handoff_reason',
+];
+
+/** IDs that look like step refs but are actually workflow-scope sources. */
+const NON_STEP_REF_IDS = new Set(['input', 'trigger', 'env', 'inputs', 'outputs', 'context']);
+
+/** Match `${step_id}` and `${step_id.field}` (and `${step_id.field.subfield}`).
+ *  step_id matches the YAML id rule: starts with a letter or underscore,
+ *  then letters/digits/underscores/hyphens. We don't try to handle nested
+ *  expressions or pipes — LLMs use simple references. */
+const STEP_REF_REGEX = /\$\{([a-zA-Z_][a-zA-Z0-9_-]*)(?:\.[a-zA-Z_][a-zA-Z0-9_.-]*)?\}/g;
+
+function collectStepRefs(task: TaskDefinition, nodeIds: Set<string>): Set<string> {
+  const refs = new Set<string>();
+  for (const field of INTERPOLATION_TEXT_FIELDS) {
+    const value = task[field];
+    if (typeof value !== 'string' || !value) continue;
+    STEP_REF_REGEX.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = STEP_REF_REGEX.exec(value)) !== null) {
+      const id = m[1]!;
+      if (NON_STEP_REF_IDS.has(id)) continue;
+      if (!nodeIds.has(id)) continue;
+      refs.add(id);
+    }
+  }
+  return refs;
 }
 
 /** Legacy adapter for the read-only WorkflowGraph viewer */
@@ -1460,7 +1747,7 @@ export function stepsToFlow(steps: TaskDefinition[]): { nodes: Node<StepNodeData
     data: {
       label: step.id,
       stepId: step.id,
-      action: step.action,
+      type: step.type,
       agent: step.agent_hints?.[0] || '',
       paramCount: step.params ? Object.keys(step.params).length : 0,
       dependencyCount: step.depends_on.length,
@@ -1479,9 +1766,9 @@ export function stepsToFlow(steps: TaskDefinition[]): { nodes: Node<StepNodeData
           target: step.id,
           type: 'default',
           animated: true,
-          style: { stroke: '#f97316', strokeWidth: 2 },
+          style: { stroke: 'var(--construct-status-warning)', strokeWidth: 2 },
           label: 'depends on',
-          labelStyle: { fill: '#f97316', fontSize: 10 },
+          labelStyle: { fill: 'var(--construct-status-warning)', fontSize: 10 },
         });
       }
     }
@@ -1504,7 +1791,7 @@ export function flowToTasks(nodes: Node<TaskNodeData>[], edges: Edge[]): TaskDef
   const parallelChildren = new Map<string, string[]>();
 
   const parallelNodeIds = new Set(
-    nodes.filter((n) => n.data.action === 'parallel').map((n) => n.id),
+    nodes.filter((n) => n.data.type === 'parallel').map((n) => n.id),
   );
   const nodeIdToTaskId = new Map(nodes.map((n) => [n.id, n.data.taskId]));
 
@@ -1536,17 +1823,16 @@ export function flowToTasks(nodes: Node<TaskNodeData>[], edges: Edge[]): TaskDef
 
   return nodes.map((node) => {
     const d = node.data;
-    const action = d.action;
-    const st = ACTION_TO_TYPE[action] || 'agent';
+    const st = d.type || 'agent';
     const base: TaskDefinition = {
       id: d.taskId,
       name: d.name,
       description: d.description,
-      action,
+      type: st,
       agent_hints: d.agentHints,
       skills: d.skills,
       depends_on: depsMap.get(node.id) || [],
-      condition: (action === 'gate' || st === 'conditional') ? d.condition : undefined,
+      condition: st === 'conditional' ? d.condition : undefined,
       on_true: trueBranch.get(node.id),
       on_false: falseBranch.get(node.id),
       channel: st === 'human_input' && d.channel
@@ -1560,6 +1846,10 @@ export function flowToTasks(nodes: Node<TaskNodeData>[], edges: Edge[]): TaskDef
       retry: d.retry > 0 ? d.retry : undefined,
       retry_delay: d.retryDelay !== 5 ? d.retryDelay : undefined,
       disabled: d.disabled === true ? true : undefined,
+      // Auth profile binding only emitted on the step types that consume it.
+      auth: ['agent', 'shell', 'python', 'email', 'a2a'].includes(st) && d.auth
+        ? d.auth
+        : undefined,
     };
     // Pass through executor-specific fields
     if (st === 'agent') {
@@ -1568,9 +1858,10 @@ export function flowToTasks(nodes: Node<TaskNodeData>[], edges: Edge[]): TaskDef
       if (d.prompt) base.prompt = d.prompt;
       if (d.timeout && d.timeout !== 300) base.timeout = d.timeout;
       if (d.assign) base.assign = d.assign;
+      if (d.template) base.template = d.template;
       if (d.model) base.model = d.model;
     }
-    if (action === 'parallel') {
+    if (st === 'parallel') {
       base.parallel_join = (d.parallelJoin || 'all') as TaskDefinition['parallel_join'];
       base.parallel_max_concurrency = d.parallelMaxConcurrency || 5;
       const childrenFromEdges = parallelChildren.get(node.id);
@@ -1578,12 +1869,12 @@ export function flowToTasks(nodes: Node<TaskNodeData>[], edges: Edge[]): TaskDef
         base.parallel_steps = childrenFromEdges;
       }
     }
-    if (action === 'goto') {
+    if (st === 'goto') {
       if (d.gotoTarget) base.goto_target = d.gotoTarget;
       if (d.gotoMaxIterations) base.goto_max_iterations = d.gotoMaxIterations;
       if (d.gotoCondition) base.goto_condition = d.gotoCondition;
     }
-    if (action === 'group_chat') {
+    if (st === 'group_chat') {
       if (d.groupChatTopic) base.group_chat_topic = d.groupChatTopic;
       if (d.groupChatParticipants.length > 0) base.group_chat_participants = d.groupChatParticipants;
       if (d.groupChatMaxRounds) base.group_chat_max_rounds = d.groupChatMaxRounds;
@@ -1591,25 +1882,25 @@ export function flowToTasks(nodes: Node<TaskNodeData>[], edges: Edge[]): TaskDef
       if (d.groupChatStrategy !== 'moderator_selected') base.group_chat_strategy = d.groupChatStrategy;
       if (d.groupChatTimeout !== 120) base.group_chat_timeout = d.groupChatTimeout;
     }
-    if (action === 'supervisor') {
+    if (st === 'supervisor') {
       if (d.supervisorTask) base.supervisor_task = d.supervisorTask;
       if (d.supervisorMaxIterations) base.supervisor_max_iterations = d.supervisorMaxIterations;
       if (d.supervisorType !== 'claude') base.supervisor_type = d.supervisorType;
       if (d.supervisorTimeout !== 300) base.supervisor_timeout = d.supervisorTimeout;
     }
-    if (action === 'shell') {
+    if (st === 'shell') {
       if (d.shellCommand) base.shell_command = d.shellCommand;
       if (d.shellTimeout && d.shellTimeout !== 60) base.shell_timeout = d.shellTimeout;
       if (d.shellAllowFailure) base.shell_allow_failure = true;
     }
-    if (action === 'python') {
+    if (st === 'python') {
       if (d.pythonScript) base.python_script = d.pythonScript;
       if (d.pythonCode) base.python_code = d.pythonCode;
       if (d.pythonArgs) base.python_args = d.pythonArgs;
       if (d.pythonTimeout && d.pythonTimeout !== 60) base.python_timeout = d.pythonTimeout;
       if (d.pythonAllowFailure) base.python_allow_failure = true;
     }
-    if (action === 'email') {
+    if (st === 'email') {
       if (d.emailTo) base.email_to = d.emailTo;
       if (d.emailSubject) base.email_subject = d.emailSubject;
       if (d.emailBody) base.email_body = d.emailBody;
@@ -1625,7 +1916,20 @@ export function flowToTasks(nodes: Node<TaskNodeData>[], edges: Edge[]): TaskDef
       if (d.emailDryRun) base.email_dry_run = true;
       if (d.emailTimeout && d.emailTimeout !== 30) base.email_timeout = d.emailTimeout;
     }
-    if (action === 'output') {
+    if (st === 'image') {
+      if (d.imagePrompt) base.image_prompt = d.imagePrompt;
+      if (d.imageCount && d.imageCount !== 1) base.image_count = d.imageCount;
+      if (d.imageCanvas === false) base.image_canvas = false;
+      if (d.imageRegisterArtifact === false) base.image_register_artifact = false;
+      if (d.imageSpace) base.image_space = d.imageSpace;
+      if (d.imageItemName) base.image_item_name = d.imageItemName;
+      if (d.imageOutputPath) base.image_output_path = d.imageOutputPath;
+      if (d.imageOutputPattern) base.image_output_pattern = d.imageOutputPattern;
+      if (d.imageSandbox) base.image_sandbox = d.imageSandbox;
+      if (d.imageCwd) base.image_cwd = d.imageCwd;
+      if (d.imageTimeout && d.imageTimeout !== 1200) base.image_timeout = d.imageTimeout;
+    }
+    if (st === 'output') {
       if (d.outputFormat) base.output_format = d.outputFormat;
       if (d.outputTemplate) base.output_template = d.outputTemplate;
       if (d.entityName) base.entity_name = d.entityName;
@@ -1634,7 +1938,7 @@ export function flowToTasks(nodes: Node<TaskNodeData>[], edges: Edge[]): TaskDef
       if (d.entitySpace) base.entity_space = d.entitySpace;
       if (Object.keys(d.entityMetadata).length > 0) base.entity_metadata = d.entityMetadata;
     }
-    if (action === 'handoff') {
+    if (st === 'handoff') {
       if (d.handoffFrom) base.handoff_from = d.handoffFrom;
       if (d.handoffTo) base.handoff_to = d.handoffTo as 'claude' | 'codex';
       if (d.handoffReason) base.handoff_reason = d.handoffReason;
@@ -1665,7 +1969,7 @@ export function flowToTasks(nodes: Node<TaskNodeData>[], edges: Edge[]): TaskDef
       if (d.mapReduceConcurrency !== 3) base.map_reduce_concurrency = d.mapReduceConcurrency;
       if (d.mapReduceTimeout !== 300) base.map_reduce_timeout = d.mapReduceTimeout;
     }
-    if (action === 'resolve') {
+    if (st === 'resolve') {
       if (d.resolveKind) base.resolve_kind = d.resolveKind;
       if (d.resolveTag) base.resolve_tag = d.resolveTag;
       if (d.resolveNamePattern) base.resolve_name_pattern = d.resolveNamePattern;
@@ -1674,7 +1978,7 @@ export function flowToTasks(nodes: Node<TaskNodeData>[], edges: Edge[]): TaskDef
       if (d.resolveFields?.length) base.resolve_fields = d.resolveFields;
       if (d.resolveFailIfMissing === false) base.resolve_fail_if_missing = false;
     }
-    if (action === 'for_each') {
+    if (st === 'for_each') {
       if (d.forEachSteps.length > 0) base.for_each_steps = d.forEachSteps;
       if (d.forEachRange) base.for_each_range = d.forEachRange;
       if (d.forEachItems.length > 0) base.for_each_items = d.forEachItems;
@@ -1683,25 +1987,18 @@ export function flowToTasks(nodes: Node<TaskNodeData>[], edges: Edge[]): TaskDef
       if (!d.forEachFailFast) base.for_each_fail_fast = false;
       if (d.forEachMaxIterations && d.forEachMaxIterations !== 20) base.for_each_max_iterations = d.forEachMaxIterations;
     }
+    if (st === 'tag') {
+      if (d.tagItemKref) base.tag_item_kref = d.tagItemKref;
+      if (d.tagValue) base.tag_value = d.tagValue;
+      if (d.tagUntag) base.tag_untag = d.tagUntag;
+    }
+    if (st === 'deprecate') {
+      if (d.deprecateItemKref) base.deprecate_item_kref = d.deprecateItemKref;
+      if (d.deprecateReason) base.deprecate_reason = d.deprecateReason;
+    }
     return base;
   });
 }
-
-/** Map editor action to executor step type */
-export const ACTION_TO_TYPE: Record<string, string> = {
-  research: 'agent', code: 'agent', review: 'agent', deploy: 'agent',
-  test: 'agent', build: 'agent', notify: 'notify', summarize: 'agent',
-  task: 'agent', approve: 'human_approval', gate: 'conditional',
-  human_input: 'human_input',
-  // Executor types map to themselves
-  agent: 'agent', parallel: 'parallel', shell: 'shell', goto: 'goto',
-  output: 'output', conditional: 'conditional', group_chat: 'group_chat',
-  supervisor: 'supervisor', map_reduce: 'map_reduce', handoff: 'handoff',
-  a2a: 'a2a', resolve: 'resolve', for_each: 'for_each',
-  human_approval: 'human_approval',
-  // New step types — see operator_mcp/workflow/schema.py
-  python: 'python', email: 'email',
-};
 
 export function tasksToYaml(tasks: TaskDefinition[], meta?: Partial<WorkflowMeta>): string {
   const lines: string[] = [];
@@ -1767,17 +2064,17 @@ export function tasksToYaml(tasks: TaskDefinition[], meta?: Partial<WorkflowMeta
     if (task.name && task.name !== task.id) {
       lines.push(`    name: ${yamlEscape(task.name)}`);
     }
-    // Emit executor-compatible type field
-    const stepType = ACTION_TO_TYPE[task.action] || 'agent';
+    // Canonical step type — `action:` is no longer emitted (legacy YAML
+    // with `action:` is still parsed and migrated to `type` on load).
+    const stepType = task.type || 'agent';
     lines.push(`    type: ${stepType}`);
-    lines.push(`    action: ${task.action}`);
     if (task.description) {
       lines.push(`    description: ${yamlEscape(task.description)}`);
     }
     if (task.retry && task.retry > 0) lines.push(`    retry: ${task.retry}`);
     if (task.retry_delay && task.retry_delay !== 5) lines.push(`    retry_delay: ${task.retry_delay}`);
     if (task.disabled === true) lines.push(`    disabled: true`);
-    if (task.action === 'gate' && task.condition) {
+    if (stepType === 'conditional' && task.condition) {
       lines.push(`    condition: ${yamlEscape(task.condition)}`);
     }
     if (task.on_true) {
@@ -1786,10 +2083,10 @@ export function tasksToYaml(tasks: TaskDefinition[], meta?: Partial<WorkflowMeta
     if (task.on_false) {
       lines.push(`    on_false: ${task.on_false}`);
     }
-    if (task.action === 'human_input' && task.channel) {
+    if (stepType === 'human_input' && task.channel) {
       lines.push(`    channel: ${task.channel}`);
     }
-    if (task.action === 'notify' && task.channels && task.channels.length > 0) {
+    if (stepType === 'notify' && task.channels && task.channels.length > 0) {
       lines.push(`    notify:`);
       lines.push(`      channels: [${dedupChannels(task.channels).join(', ')}]`);
       const notifyMessage = task.notify_message || '';
@@ -1805,11 +2102,15 @@ export function tasksToYaml(tasks: TaskDefinition[], meta?: Partial<WorkflowMeta
       if (notifyTitle) lines.push(`      title: ${yamlEscape(notifyTitle)}`);
     }
     // Executor-specific nested blocks
-    if (stepType === 'agent' && (task.agent_type || task.role || task.prompt || task.assign)) {
+    if (stepType === 'agent' && (task.agent_type || task.role || task.prompt || task.template || task.auth)) {
       lines.push(`    agent:`);
       if (task.agent_type) lines.push(`      agent_type: ${task.agent_type}`);
       if (task.role) lines.push(`      role: ${task.role}`);
-      if (task.assign) lines.push(`      template: ${task.assign}`);
+      // Persona binding ONLY from task.template (set by Architect's persona
+      // discovery or hand-edited YAML). task.assign — the AgentPicker pool-agent
+      // binding — emits separately as a top-level `assign:` key below so the
+      // round-trip preserves the AgentPicker (green chip) vs Persona distinction.
+      if (task.template) lines.push(`      template: ${task.template}`);
       if (task.prompt) {
         if (task.prompt.includes('\n')) {
           lines.push(`      prompt: |`);
@@ -1822,6 +2123,7 @@ export function tasksToYaml(tasks: TaskDefinition[], meta?: Partial<WorkflowMeta
       }
       if (task.timeout && task.timeout !== 300) lines.push(`      timeout: ${task.timeout}`);
       if (task.model) lines.push(`      model: ${task.model}`);
+      if (task.auth) lines.push(`      auth: ${yamlEscape(task.auth)}`);
     }
     if (stepType === 'parallel') {
       lines.push(`    parallel:`);
@@ -1860,6 +2162,7 @@ export function tasksToYaml(tasks: TaskDefinition[], meta?: Partial<WorkflowMeta
       if (task.shell_command) lines.push(`      command: ${yamlEscape(task.shell_command)}`);
       if (task.shell_timeout && task.shell_timeout !== 60) lines.push(`      timeout: ${task.shell_timeout}`);
       if (task.shell_allow_failure) lines.push(`      allow_failure: true`);
+      if (task.auth) lines.push(`      auth: ${yamlEscape(task.auth)}`);
     }
     if (stepType === 'python') {
       lines.push(`    python:`);
@@ -1875,6 +2178,7 @@ export function tasksToYaml(tasks: TaskDefinition[], meta?: Partial<WorkflowMeta
       if (task.python_args) lines.push(`      args: ${task.python_args}`);
       if (task.python_timeout && task.python_timeout !== 60) lines.push(`      timeout: ${task.python_timeout}`);
       if (task.python_allow_failure) lines.push(`      allow_failure: true`);
+      if (task.auth) lines.push(`      auth: ${yamlEscape(task.auth)}`);
     }
     if (stepType === 'email') {
       lines.push(`    email:`);
@@ -1908,6 +2212,28 @@ export function tasksToYaml(tasks: TaskDefinition[], meta?: Partial<WorkflowMeta
       if (task.email_smtp_host) lines.push(`      smtp_host: ${yamlEscape(task.email_smtp_host)}`);
       if (task.email_dry_run) lines.push(`      dry_run: true`);
       if (task.email_timeout && task.email_timeout !== 30) lines.push(`      timeout: ${task.email_timeout}`);
+      if (task.auth) lines.push(`      auth: ${yamlEscape(task.auth)}`);
+    }
+    if (stepType === 'image') {
+      lines.push(`    image:`);
+      if (task.image_prompt) {
+        if (task.image_prompt.includes('\n')) {
+          lines.push(`      prompt: |`);
+          for (const pl of task.image_prompt.split('\n')) lines.push(`        ${pl}`);
+        } else {
+          lines.push(`      prompt: ${yamlEscape(task.image_prompt)}`);
+        }
+      }
+      if (task.image_count && task.image_count !== 1) lines.push(`      count: ${task.image_count}`);
+      if (task.image_canvas === false) lines.push(`      canvas: false`);
+      if (task.image_register_artifact === false) lines.push(`      register_artifact: false`);
+      if (task.image_space) lines.push(`      space: ${yamlEscape(task.image_space)}`);
+      if (task.image_item_name) lines.push(`      item_name: ${yamlEscape(task.image_item_name)}`);
+      if (task.image_output_path) lines.push(`      output_path: ${yamlEscape(task.image_output_path)}`);
+      if (task.image_output_pattern) lines.push(`      output_pattern: ${yamlEscape(task.image_output_pattern)}`);
+      if (task.image_sandbox) lines.push(`      sandbox: ${task.image_sandbox}`);
+      if (task.image_cwd) lines.push(`      cwd: ${yamlEscape(task.image_cwd)}`);
+      if (task.image_timeout && task.image_timeout !== 1200) lines.push(`      timeout: ${task.image_timeout}`);
     }
     if (stepType === 'output') {
       lines.push(`    output:`);
@@ -1978,6 +2304,7 @@ export function tasksToYaml(tasks: TaskDefinition[], meta?: Partial<WorkflowMeta
       if (task.a2a_skill_id) lines.push(`      skill_id: ${task.a2a_skill_id}`);
       if (task.a2a_message) lines.push(`      message: ${yamlEscape(task.a2a_message)}`);
       if (task.a2a_timeout && task.a2a_timeout !== 300) lines.push(`      timeout: ${task.a2a_timeout}`);
+      if (task.auth) lines.push(`      auth: ${yamlEscape(task.auth)}`);
     }
     if (stepType === 'map_reduce') {
       lines.push(`    map_reduce:`);
@@ -2016,13 +2343,27 @@ export function tasksToYaml(tasks: TaskDefinition[], meta?: Partial<WorkflowMeta
       if (task.for_each_fail_fast === false) lines.push(`      fail_fast: false`);
       if (task.for_each_max_iterations && task.for_each_max_iterations !== 20) lines.push(`      max_iterations: ${task.for_each_max_iterations}`);
     }
+    if (stepType === 'tag') {
+      lines.push(`    tag_step:`);
+      if (task.tag_item_kref) lines.push(`      item_kref: ${yamlEscape(task.tag_item_kref)}`);
+      if (task.tag_value) lines.push(`      tag: ${yamlEscape(task.tag_value)}`);
+      if (task.tag_untag) lines.push(`      untag: ${yamlEscape(task.tag_untag)}`);
+    }
+    if (stepType === 'deprecate') {
+      lines.push(`    deprecate_step:`);
+      if (task.deprecate_item_kref) lines.push(`      item_kref: ${yamlEscape(task.deprecate_item_kref)}`);
+      if (task.deprecate_reason) lines.push(`      reason: ${yamlEscape(task.deprecate_reason)}`);
+    }
     if (task.agent_hints.length > 0) {
       lines.push(`    agent_hints: [${task.agent_hints.join(', ')}]`);
     }
     if (task.skills.length > 0) {
       lines.push(`    skills: [${task.skills.join(', ')}]`);
     }
-    if (task.assign && stepType !== 'agent') {
+    // Top-level `assign:` is the AgentPicker's pool-agent binding. It applies
+    // to agent steps too — emitted alongside `agent.template:` so the two
+    // round-trip independently.
+    if (task.assign) {
       lines.push(`    assign: ${task.assign}`);
     }
     if (task.depends_on.length > 0) {

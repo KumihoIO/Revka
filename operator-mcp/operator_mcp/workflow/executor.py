@@ -23,6 +23,7 @@ from typing import Any
 from .._log import _log
 from ..agent_subprocess import compose_agent_prompt
 from ..failure_classification import classified_error, VALIDATION_ERROR
+from .auth_resolver import AuthResolveError, resolve_auth_profile
 from .schema import (
     JoinStrategy,
     StepDef,
@@ -36,6 +37,7 @@ from .schema import (
     ShellStepConfig,
     PythonStepConfig,
     EmailStepConfig,
+    ImageStepConfig,
     A2AStepConfig,
     GotoStepConfig,
     OutputStepConfig,
@@ -347,6 +349,24 @@ async def _exec_agent(step: StepDef, state: WorkflowState, cwd: str) -> StepResu
     include_memory = cfg.tools in ("all", "memory")
     include_operator = cfg.tools == "all"
 
+    # Auth profile binding: surfaced to the agent via the get_auth_token MCP
+    # tool, NOT pre-injected into the system prompt or any agent context.
+    # We propagate the profile id (and the gateway service token) via env
+    # so subagent_mcp.get_auth_token can resolve the credential when (and
+    # only when) the agent actually calls the tool.
+    agent_env_extra: dict[str, str] = {}
+    if cfg.auth:
+        agent_env_extra["CONSTRUCT_AUTH_PROFILE_ID"] = cfg.auth
+        # Forward the local service token if the operator-mcp process has
+        # access to one — keeps the agent subprocess isolated from the file.
+        try:
+            from .auth_resolver import _service_token  # type: ignore[attr-defined]
+            tok = _service_token()
+            if tok:
+                agent_env_extra["CONSTRUCT_SERVICE_TOKEN"] = tok
+        except Exception:  # noqa: BLE001
+            pass
+
     agent, output = await _spawn_and_wait(
         cfg.agent_type, f"wf-{state.run_id[:8]}-{step.id}",
         cwd, full_prompt,
@@ -354,6 +374,7 @@ async def _exec_agent(step: StepDef, state: WorkflowState, cwd: str) -> StepResu
         max_turns=cfg.max_turns,
         include_memory=include_memory,
         include_operator=include_operator,
+        env_extra=agent_env_extra or None,
     )
 
     agent_output, files = _get_agent_output(agent.id)
@@ -476,15 +497,54 @@ async def _exec_agent(step: StepDef, state: WorkflowState, cwd: str) -> StepResu
     return result
 
 
+async def _resolve_step_auth(
+    step: StepDef,
+    auth: str | None,
+) -> tuple[dict[str, Any] | None, StepResult | None]:
+    """Resolve a step's optional auth profile.
+
+    Returns ``(resolved, None)`` on success (or when no auth was bound),
+    or ``(None, StepResult(failed))`` with structured ``auth_resolve_failed``
+    error if the profile is missing/expired/unreachable.
+    """
+    if not auth:
+        return None, None
+    try:
+        resolved = await resolve_auth_profile(auth)
+        return resolved, None
+    except AuthResolveError as exc:
+        return None, StepResult(
+            step_id=step.id,
+            status="failed",
+            error=f"auth_resolve_failed: {exc.code} — {exc}",
+            output_data={
+                "auth_resolve_failed": True,
+                "auth_resolve_code": exc.code,
+            },
+        )
+
+
 async def _exec_shell(step: StepDef, state: WorkflowState, cwd: str) -> StepResult:
     """Execute a shell command step."""
     cfg: ShellStepConfig = step.shell  # type: ignore
     command = interpolate(cfg.command, state)
 
+    auth_resolved, auth_err = await _resolve_step_auth(step, cfg.auth)
+    if auth_err is not None:
+        return auth_err
+
+    # Inherit current env, then layer the auth token on top so the subprocess
+    # sees it without us having to know everything that was already set.
+    subproc_env = os.environ.copy()
+    if auth_resolved:
+        subproc_env["CONSTRUCT_AUTH_TOKEN"] = auth_resolved["token"]
+        subproc_env["CONSTRUCT_AUTH_KIND"] = auth_resolved.get("kind", "token")
+
     try:
         proc = await asyncio.create_subprocess_shell(
             command,
             cwd=cwd,
+            env=subproc_env,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -610,10 +670,22 @@ async def _exec_python(step: StepDef, state: WorkflowState, cwd: str) -> StepRes
     else:
         cmd = [python_exe, "-c", cfg.code or ""]
 
+    # Auth profile binding: resolved at runtime; passed to the subprocess via
+    # env vars so the script can read os.environ["CONSTRUCT_AUTH_TOKEN"]
+    # without the credential ever appearing in YAML, args, or stdin.
+    auth_resolved, auth_err = await _resolve_step_auth(step, cfg.auth)
+    if auth_err is not None:
+        return auth_err
+    subproc_env = os.environ.copy()
+    if auth_resolved:
+        subproc_env["CONSTRUCT_AUTH_TOKEN"] = auth_resolved["token"]
+        subproc_env["CONSTRUCT_AUTH_KIND"] = auth_resolved.get("kind", "token")
+
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             cwd=cwd,
+            env=subproc_env,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -764,6 +836,10 @@ async def _exec_email(step: StepDef, state: WorkflowState) -> StepResult:
     """
     cfg: EmailStepConfig = step.email  # type: ignore
 
+    auth_resolved, auth_err = await _resolve_step_auth(step, cfg.auth)
+    if auth_err is not None:
+        return auth_err
+
     # Interpolate every user-provided string field. We can't run the whole
     # config through interpolate at once (it has list/bool fields), so each
     # template-bearing string is interpolated individually.
@@ -834,9 +910,13 @@ async def _exec_email(step: StepDef, state: WorkflowState) -> StepResult:
     smtp_username = cfg.smtp_username or file_cfg.get("username", "")
     from_address = cfg.from_address or file_cfg.get("from_address", smtp_username)
 
-    # Password resolution: env override (per-step) → config.toml. Stored
-    # password leaves config.toml; env override is the more secure path.
-    if cfg.smtp_password_env:
+    # Password resolution order: bound auth profile (decrypted at runtime)
+    # → env override (per-step) → config.toml. The auth profile path is the
+    # most secure — the SMTP password never lives on disk in plaintext or in
+    # the workflow YAML.
+    if auth_resolved:
+        smtp_password = auth_resolved["token"]
+    elif cfg.smtp_password_env:
         smtp_password = os.environ.get(cfg.smtp_password_env, "")
     else:
         smtp_password = file_cfg.get("password", "")
@@ -915,10 +995,14 @@ async def _exec_email(step: StepDef, state: WorkflowState) -> StepResult:
             error=f"Email send timed out after {cfg.timeout}s",
         )
     except Exception as exc:
+        # Don't echo the raw exception to step output — smtplib can include
+        # server-returned text in some edge cases. Log the full repr for
+        # operator inspection; surface a generic message to the workflow.
+        _log(f"SMTP send: {exc!r}")
         return StepResult(
             step_id=step.id,
             status="failed",
-            error=f"SMTP send failed: {exc}"[:2000],
+            error="SMTP send failed (see logs)",
         )
 
     output_data["sent"] = True
@@ -927,6 +1011,143 @@ async def _exec_email(step: StepDef, state: WorkflowState) -> StepResult:
         status="completed",
         output=f"Sent '{subject}' to {to_list}",
         output_data=output_data,
+    )
+
+
+async def _exec_image(step: StepDef, state: WorkflowState, cwd: str) -> StepResult:
+    """Execute an 'image' step — call generate_image_codex directly.
+
+    Bypasses the agent layer entirely. Plain ``codex`` agent steps don't
+    have access to the ``generate_image_codex`` MCP tool (the subagent
+    MCP server intentionally excludes operator-tier tools), which is why
+    prose-prompting an agent to "generate an image and show on canvas"
+    silently produces no canvas frame and no Kumiho artifact. Calling
+    the tool directly removes the LLM round-trip and the
+    "agent-decides-whether-to-call-the-tool" failure mode.
+    """
+    cfg: ImageStepConfig = step.image  # type: ignore
+
+    prompt = interpolate(cfg.prompt, state)
+    if not prompt.strip():
+        return StepResult(
+            step_id=step.id,
+            status="failed",
+            error="image step requires a non-empty prompt after interpolation",
+        )
+
+    # Default the filename to the step id so authors don't have to
+    # repeat themselves. The tool then derives item_name from this stem.
+    output_path = (cfg.output_path or "").strip()
+    if not output_path:
+        output_path = f"{step.id}.png"
+
+    # Default item_name from the step id when register_artifact=true and
+    # the author didn't pin one. Without this, two image steps in the
+    # same workflow could collide on the default-derived item name from
+    # output_path alone if they happen to share a stem.
+    item_name = cfg.item_name
+    if cfg.register_artifact and not item_name:
+        item_name = step.id
+
+    args: dict[str, Any] = {
+        "prompt": prompt,
+        "output_path": output_path,
+        "count": cfg.count,
+        "register_artifact": cfg.register_artifact,
+        "canvas": cfg.canvas,
+    }
+    if cfg.cwd:
+        args["cwd"] = interpolate(cfg.cwd, state)
+    elif cwd:
+        args["cwd"] = cwd
+    if cfg.output_pattern:
+        args["output_pattern"] = cfg.output_pattern
+    if cfg.space:
+        args["space"] = cfg.space
+    if item_name:
+        args["item_name"] = item_name
+    if cfg.sandbox:
+        args["sandbox"] = cfg.sandbox
+
+    try:
+        from ..gateway_client import ConstructGatewayClient
+        from ..tool_handlers import codex_image
+    except Exception as exc:  # noqa: BLE001
+        return StepResult(
+            step_id=step.id,
+            status="failed",
+            error=f"image step dependencies unavailable: {exc}",
+        )
+
+    gw = ConstructGatewayClient()
+    try:
+        response = await asyncio.wait_for(
+            codex_image.tool_generate_image_codex(args, gw),
+            timeout=cfg.timeout,
+        )
+    except asyncio.TimeoutError:
+        return StepResult(
+            step_id=step.id,
+            status="failed",
+            error=f"image step timed out after {cfg.timeout}s",
+        )
+    except Exception as exc:  # noqa: BLE001
+        return StepResult(
+            step_id=step.id,
+            status="failed",
+            error=f"image step failed: {exc}",
+        )
+
+    if not isinstance(response, dict):
+        return StepResult(
+            step_id=step.id,
+            status="failed",
+            error=f"image tool returned unexpected payload type: {type(response).__name__}",
+        )
+
+    files = response.get("files") or []
+    urls = response.get("urls") or []
+    artifact = response.get("artifact") if isinstance(response.get("artifact"), dict) else {}
+    canvas_info = response.get("canvas") if isinstance(response.get("canvas"), dict) else {}
+
+    output_data: dict[str, Any] = {
+        "files": files,
+        "urls": urls,
+        "requested": response.get("requested", cfg.count),
+        "generated": response.get("generated", len(files)),
+    }
+    if artifact:
+        output_data["item_kref"] = artifact.get("item_kref", "")
+        output_data["revision_kref"] = artifact.get("revision_kref", "")
+        output_data["artifact_krefs"] = artifact.get("artifact_krefs", [])
+    if canvas_info:
+        output_data["canvas_id"] = canvas_info.get("canvas_id", "")
+        output_data["canvas_frame_id"] = canvas_info.get("frame_id", "")
+
+    err = response.get("error")
+    if err and not files:
+        # Hard failure — no PNG produced.
+        return StepResult(
+            step_id=step.id,
+            status="failed",
+            output=err,
+            output_data=output_data,
+            error=err,
+            files_touched=files,
+        )
+
+    summary_parts = [f"generated {len(files)}/{cfg.count} image(s)"]
+    if canvas_info.get("frame_id"):
+        summary_parts.append(f"canvas={canvas_info['frame_id']}")
+    if artifact.get("revision_kref"):
+        summary_parts.append(f"kref={artifact['revision_kref']}")
+
+    return StepResult(
+        step_id=step.id,
+        status="completed",
+        output="; ".join(summary_parts),
+        output_data=output_data,
+        files_touched=list(files),
     )
 
 
@@ -1447,6 +1668,11 @@ async def _exec_a2a(step: StepDef, state: WorkflowState) -> StepResult:
     cfg: A2AStepConfig = step.a2a  # type: ignore
     message = interpolate(cfg.message, state)
 
+    auth_resolved, auth_err = await _resolve_step_auth(step, cfg.auth)
+    if auth_err is not None:
+        return auth_err
+    auth_token = auth_resolved["token"] if auth_resolved else None
+
     try:
         from ..a2a.a2a_client import get_client, A2AClientError
         client = get_client(timeout=cfg.timeout)
@@ -1455,6 +1681,7 @@ async def _exec_a2a(step: StepDef, state: WorkflowState) -> StepResult:
             cfg.url,
             message=message,
             skill_id=cfg.skill_id,
+            auth_token=auth_token,
         )
 
         task_id = task.get("id", "")
@@ -1707,6 +1934,15 @@ def dry_run_workflow(wf: WorkflowDef, inputs: dict[str, Any]) -> dict[str, Any]:
                 entry["subject_preview"] = cfg.subject[:80]
                 entry["track_clicks"] = cfg.track_clicks
                 entry["dry_run"] = cfg.dry_run
+
+        elif step.type == StepType.IMAGE:
+            cfg = step.image
+            if cfg:
+                entry["prompt_preview"] = cfg.prompt[:80]
+                entry["count"] = cfg.count
+                entry["canvas"] = bool(cfg.canvas)
+                entry["register_artifact"] = cfg.register_artifact
+                entry["timeout"] = cfg.timeout
 
         elif step.type == StepType.PARALLEL:
             cfg = step.parallel
@@ -2300,6 +2536,8 @@ async def _dispatch_step(
             return await _exec_python(step, state, cwd)
         elif step.type == StepType.EMAIL:
             return await _exec_email(step, state)
+        elif step.type == StepType.IMAGE:
+            return await _exec_image(step, state, cwd)
         elif step.type == StepType.OUTPUT:
             return await _exec_output(step, state)
         elif step.type == StepType.A2A:

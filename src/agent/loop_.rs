@@ -591,7 +591,7 @@ fn extract_xml_pairs(input: &str) -> Vec<(&str, &str)> {
 
 /// Parse XML-style tool calls in `<tool_call>` bodies.
 /// Supports both nested argument tags and JSON argument payloads:
-/// - `<memory_recall><query>...</query></memory_recall>`
+/// - `<web_search_tool><query>...</query></web_search_tool>`
 /// - `<shell>{"command":"pwd"}</shell>`
 fn parse_xml_tool_calls(xml_content: &str) -> Option<Vec<ParsedToolCall>> {
     let mut calls = Vec::new();
@@ -1098,10 +1098,12 @@ fn map_tool_name_alias(tool_name: &str) -> &str {
         "fileread" | "file_read" | "readfile" | "read_file" | "file" => "file_read",
         "filewrite" | "file_write" | "writefile" | "write_file" => "file_write",
         "filelist" | "file_list" | "listfiles" | "list_files" => "file_list",
-        // Memory variations
-        "memoryrecall" | "memory_recall" | "recall" | "memrecall" => "memory_recall",
-        "memorystore" | "memory_store" | "store" | "memstore" => "memory_store",
-        "memoryforget" | "memory_forget" | "forget" | "memforget" => "memory_forget",
+        // Audit row 11: `memory_recall` / `memory_store` / `memory_forget`
+        // aliases removed — there is no native `impl Tool` for them so
+        // normalising LLM-emitted variants to those bare names just produces
+        // a guaranteed dispatch failure. Memory recall/persistence is via
+        // the Kumiho MCP tools (`kumiho_memory_*`), already namespaced and
+        // unambiguous, so no aliasing is needed.
         // HTTP variations
         "http_request" | "http" | "fetch" | "curl" | "wget" => "http_request",
         _ => tool_name,
@@ -1194,11 +1196,11 @@ fn default_param_for_tool(tool: &str) -> &'static str {
         "file_read" | "fileread" | "readfile" | "read_file" | "file" | "file_write"
         | "filewrite" | "writefile" | "write_file" | "file_edit" | "fileedit" | "editfile"
         | "edit_file" | "file_list" | "filelist" | "listfiles" | "list_files" => "path",
-        // Memory recall/forget and web search tools all default to "query"
-        "memory_recall" | "memoryrecall" | "recall" | "memrecall" | "memory_forget"
-        | "memoryforget" | "forget" | "memforget" | "web_search_tool" | "web_search"
-        | "websearch" | "search" => "query",
-        "memory_store" | "memorystore" | "store" | "memstore" => "content",
+        // Web search tools default to "query".  Audit row 11: bare
+        // `memory_*` names are no longer normalised here because they have
+        // no native `impl Tool` to dispatch to; falling through to the
+        // "input" default is harmless and keeps the function honest.
+        "web_search_tool" | "web_search" | "websearch" | "search" => "query",
         // HTTP and browser tools default to "url"
         "http_request" | "http" | "fetch" | "curl" | "wget" | "browser_open" | "browser" => "url",
         _ => "input",
@@ -3742,6 +3744,7 @@ pub async fn run(
     let mut activated_handle: Option<
         std::sync::Arc<std::sync::Mutex<crate::tools::ActivatedToolSet>>,
     > = None;
+    let mut kumiho_advanced = false;
     if config.mcp.enabled && !config.mcp.servers.is_empty() {
         tracing::info!(
             "Initializing MCP client — {} server(s) configured",
@@ -3750,6 +3753,13 @@ pub async fn run(
         match crate::tools::McpRegistry::connect_all(&config.mcp.servers).await {
             Ok(registry) => {
                 let registry = std::sync::Arc::new(registry);
+                // Registry-based probe for the high-level Kumiho memory
+                // reflexes (engage / reflect / recall / consolidate /
+                // dream_state). Drives lite-vs-full bootstrap selection.
+                kumiho_advanced = crate::agent::kumiho::registry_has_advanced_kumiho_tools(
+                    &registry.tool_names(),
+                );
+                crate::agent::kumiho::warn_if_kumiho_advanced_missing(&config, kumiho_advanced);
                 if config.mcp.deferred_loading {
                     // Hybrid path: eagerly load essential tools, defer the rest.
                     //
@@ -3812,8 +3822,12 @@ pub async fn run(
                         registry.server_count(),
                         is_local_provider,
                     );
+                    let server_instructions = registry.server_instructions().await;
                     deferred_section =
-                        crate::tools::mcp_deferred::build_deferred_tools_section(&deferred_set);
+                        crate::tools::mcp_deferred::build_deferred_tools_section_with_instructions(
+                            &deferred_set,
+                            &server_instructions,
+                        );
                     let activated = std::sync::Arc::new(std::sync::Mutex::new(
                         crate::tools::ActivatedToolSet::new(),
                     ));
@@ -3923,6 +3937,10 @@ pub async fn run(
     // so the LLM can invoke them via native function calling, not just XML prompts.
     tools::register_skill_tools(&mut tools_registry, &skills, security.clone());
 
+    // Audit row 11: bare `memory_*` tool names are intentionally not listed
+    // here — there is no native `impl Tool` for them and the bootstrap
+    // prompt teaches the model to use the kumiho-namespaced reflexes
+    // (kumiho_memory_engage / reflect / store / retrieve) instead.
     let mut tool_descs: Vec<(&str, &str)> = vec![
         (
             "shell",
@@ -3935,18 +3953,6 @@ pub async fn run(
         (
             "file_write",
             "Write file contents. Use when: applying focused edits, scaffolding files, updating docs/code. Don't use when: side effects are unclear or file ownership is uncertain.",
-        ),
-        (
-            "memory_store",
-            "Save to memory. Use when: preserving durable preferences, decisions, key context. Don't use when: information is transient/noisy/sensitive without need.",
-        ),
-        (
-            "memory_recall",
-            "Search memory. Use when: retrieving prior decisions, user preferences, historical context. Don't use when: answer is already in current context.",
-        ),
-        (
-            "memory_forget",
-            "Delete a memory entry. Use when: memory is incorrect/stale or explicitly requested for removal. Don't use when: impact is uncertain.",
         ),
     ];
     if matches!(
@@ -4046,7 +4052,7 @@ pub async fn run(
         None
     };
     let native_tools = provider.supports_native_tools();
-    let mut system_prompt = crate::channels::build_system_prompt_with_mode_and_autonomy(
+    let mut system_prompt = crate::channels::assemble_channel_system_prompt(
         &config.workspace_dir,
         &model_name,
         &tool_descs,
@@ -4071,8 +4077,16 @@ pub async fn run(
         system_prompt.push_str(&deferred_section);
     }
 
-    // Append Kumiho memory session-bootstrap instructions
-    crate::agent::kumiho::append_kumiho_bootstrap(&mut system_prompt, &config, false);
+    // Append Kumiho memory session-bootstrap instructions. The `advanced`
+    // flag was set above from the live MCP registry probe — full variant
+    // when the high-level reflexes are registered, lite otherwise.
+    // See coherence audit row 1 + 13.
+    crate::agent::kumiho::append_kumiho_bootstrap(
+        &mut system_prompt,
+        &config,
+        false,
+        kumiho_advanced,
+    );
 
     // Append Operator orchestration instructions
     crate::agent::operator::append_operator_prompt(&mut system_prompt, &config, false, &model_name);
@@ -4757,6 +4771,7 @@ pub async fn process_message(
     let mut activated_handle_pm: Option<
         std::sync::Arc<std::sync::Mutex<crate::tools::ActivatedToolSet>>,
     > = None;
+    let mut kumiho_advanced = false;
     if config.mcp.enabled && !config.mcp.servers.is_empty() {
         tracing::info!(
             "Initializing MCP client — {} server(s) configured",
@@ -4765,6 +4780,10 @@ pub async fn process_message(
         match crate::tools::McpRegistry::connect_all(&config.mcp.servers).await {
             Ok(registry) => {
                 let registry = std::sync::Arc::new(registry);
+                kumiho_advanced = crate::agent::kumiho::registry_has_advanced_kumiho_tools(
+                    &registry.tool_names(),
+                );
+                crate::agent::kumiho::warn_if_kumiho_advanced_missing(&config, kumiho_advanced);
                 if config.mcp.deferred_loading {
                     // Hybrid: eagerly load operator tools, defer the rest.
                     let operator_prefix =
@@ -4812,8 +4831,12 @@ pub async fn process_message(
                         deferred_set.len(),
                         registry.server_count()
                     );
+                    let server_instructions = registry.server_instructions().await;
                     deferred_section =
-                        crate::tools::mcp_deferred::build_deferred_tools_section(&deferred_set);
+                        crate::tools::mcp_deferred::build_deferred_tools_section_with_instructions(
+                            &deferred_set,
+                            &server_instructions,
+                        );
                     let activated = std::sync::Arc::new(std::sync::Mutex::new(
                         crate::tools::ActivatedToolSet::new(),
                     ));
@@ -4899,13 +4922,12 @@ pub async fn process_message(
     // Register skill-defined tools as callable tool specs (process_message path).
     tools::register_skill_tools(&mut tools_registry, &skills, security.clone());
 
+    // Audit row 11: see comment in `run_tool_call_loop` for why `memory_*`
+    // are intentionally excluded.
     let mut tool_descs: Vec<(&str, &str)> = vec![
         ("shell", "Execute terminal commands."),
         ("file_read", "Read file contents."),
         ("file_write", "Write file contents."),
-        ("memory_store", "Save to memory."),
-        ("memory_recall", "Search memory."),
-        ("memory_forget", "Delete a memory entry."),
         (
             "model_routing_config",
             "Configure default model, scenario routing, and delegate agents.",
@@ -4971,7 +4993,7 @@ pub async fn process_message(
         None
     };
     let native_tools = provider.supports_native_tools();
-    let mut system_prompt = crate::channels::build_system_prompt_with_mode_and_autonomy(
+    let mut system_prompt = crate::channels::assemble_channel_system_prompt(
         &config.workspace_dir,
         &model_name,
         &tool_descs,
@@ -4992,8 +5014,14 @@ pub async fn process_message(
         system_prompt.push_str(&deferred_section);
     }
 
-    // Append Kumiho memory session-bootstrap instructions
-    crate::agent::kumiho::append_kumiho_bootstrap(&mut system_prompt, &config, false);
+    // Append Kumiho memory session-bootstrap instructions (lite vs. full
+    // variant chosen by the live MCP registry probe set above).
+    crate::agent::kumiho::append_kumiho_bootstrap(
+        &mut system_prompt,
+        &config,
+        false,
+        kumiho_advanced,
+    );
 
     // Append Operator orchestration instructions
     crate::agent::operator::append_operator_prompt(&mut system_prompt, &config, false, &model_name);
@@ -9160,11 +9188,39 @@ Let me check the result."#;
     }
 
     #[test]
-    fn parse_glm_shortened_body_memory_recall() {
-        // memory_recall>some query — default param is "query"
-        let call = parse_glm_shortened_body("memory_recall>recent meetings").unwrap();
-        assert_eq!(call.name, "memory_recall");
+    fn parse_glm_shortened_body_web_search_default_param_is_query() {
+        // tool_name>value — for query-style tools the default param is "query".
+        let call = parse_glm_shortened_body("web_search_tool>recent meetings").unwrap();
+        assert_eq!(call.name, "web_search_tool");
         assert_eq!(call.arguments["query"], "recent meetings");
+    }
+
+    #[test]
+    fn legacy_memory_aliases_no_longer_normalised() {
+        // Audit row 11: the alias mapper used to convert variants like
+        // "memorystore" / "store" / "memrecall" into canonical bare names
+        // (`memory_store` / `memory_recall` / `memory_forget`).  Those
+        // canonical names have no native `impl Tool`, so normalising to
+        // them was misleading — dispatch fails either way.  After the
+        // scrub these *variant* spellings must pass through unchanged so
+        // that nothing in the pipeline pretends a memory_* tool exists.
+        for variant in &[
+            "memorystore",
+            "memoryrecall",
+            "memoryforget",
+            "memrecall",
+            "memstore",
+            "memforget",
+            "store",
+            "recall",
+            "forget",
+        ] {
+            let mapped = map_tool_name_alias(variant);
+            assert!(
+                !matches!(mapped, "memory_store" | "memory_recall" | "memory_forget"),
+                "variant '{variant}' must not be rewritten to a phantom memory_* name (got '{mapped}')"
+            );
+        }
     }
 
     #[test]
@@ -9180,13 +9236,15 @@ Let me check the result."#;
     fn map_tool_name_alias_direct_coverage() {
         assert_eq!(map_tool_name_alias("bash"), "shell");
         assert_eq!(map_tool_name_alias("filelist"), "file_list");
-        assert_eq!(map_tool_name_alias("memorystore"), "memory_store");
-        assert_eq!(map_tool_name_alias("memoryforget"), "memory_forget");
         assert_eq!(map_tool_name_alias("http"), "http_request");
         assert_eq!(
             map_tool_name_alias("totally_unknown_tool"),
             "totally_unknown_tool"
         );
+        // Audit row 11: `memory_*` aliases removed.  These names now pass
+        // through unchanged so dispatch fails loudly instead of misrouting.
+        assert_eq!(map_tool_name_alias("memorystore"), "memorystore");
+        assert_eq!(map_tool_name_alias("memoryforget"), "memoryforget");
     }
 
     #[test]
@@ -9194,14 +9252,16 @@ Let me check the result."#;
         assert_eq!(default_param_for_tool("shell"), "command");
         assert_eq!(default_param_for_tool("bash"), "command");
         assert_eq!(default_param_for_tool("file_read"), "path");
-        assert_eq!(default_param_for_tool("memory_recall"), "query");
-        assert_eq!(default_param_for_tool("memory_store"), "content");
         assert_eq!(default_param_for_tool("web_search_tool"), "query");
         assert_eq!(default_param_for_tool("web_search"), "query");
         assert_eq!(default_param_for_tool("search"), "query");
         assert_eq!(default_param_for_tool("http_request"), "url");
         assert_eq!(default_param_for_tool("browser_open"), "url");
         assert_eq!(default_param_for_tool("unknown_tool"), "input");
+        // Audit row 11: bare `memory_*` names no longer have a default param
+        // mapping; they fall through to "input" along with everything else.
+        assert_eq!(default_param_for_tool("memory_recall"), "input");
+        assert_eq!(default_param_for_tool("memory_store"), "input");
     }
 
     #[test]

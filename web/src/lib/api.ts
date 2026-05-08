@@ -31,9 +31,17 @@ import type {
   WorkflowRunDetail,
   WorkflowDashboard,
   MemoryGraphResponse,
+  AuthProfileSummary,
+  RevisionOperation,
+  ReviseWorkflowResponse,
+  RevisionListResponse,
 } from '../types/api';
 import { clearToken, getToken, setToken } from './auth';
 import { apiOrigin, basePath } from './basePath';
+import {
+  EDITOR_SESSION_HEADER,
+  getEditorSessionId,
+} from '../construct/components/workflows/sessionId';
 
 // ---------------------------------------------------------------------------
 // Base fetch wrapper
@@ -522,6 +530,40 @@ export async function deleteAgent(kref: string): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Auth profiles (workflow step credential dropdown)
+// ---------------------------------------------------------------------------
+
+/** Metadata-only listing — the gateway never returns token bytes here. */
+export async function fetchAuthProfiles(): Promise<AuthProfileSummary[]> {
+  const data = await apiFetch<{ profiles: AuthProfileSummary[] }>('/api/auth/profiles');
+  return data.profiles ?? [];
+}
+
+export interface CreateAuthProfileRequest {
+  provider: string;
+  profile_name: string;
+  /** Raw bearer / API key. Encrypted on the gateway before persist. */
+  token: string;
+  account_id?: string;
+  /** "token" by default; OAuth flows must go through /config. */
+  kind?: 'token' | 'api_key';
+}
+
+/** POST a new static-token auth profile. Returns metadata only — the
+ *  response never includes the token bytes. */
+export async function createAuthProfile(
+  body: CreateAuthProfileRequest,
+): Promise<AuthProfileSummary> {
+  return apiFetch<AuthProfileSummary | { profile: AuthProfileSummary }>(
+    '/api/auth/profiles',
+    {
+      method: 'POST',
+      body: JSON.stringify(body),
+    },
+  ).then((data) => unwrapField(data, 'profile'));
+}
+
+// ---------------------------------------------------------------------------
 // Skills
 // ---------------------------------------------------------------------------
 
@@ -670,6 +712,7 @@ export async function createWorkflow(workflow: WorkflowCreateRequest): Promise<W
   return apiFetch<WorkflowDefinition | { workflow: WorkflowDefinition }>('/api/workflows', {
     method: 'POST',
     body: JSON.stringify(workflow),
+    headers: { [EDITOR_SESSION_HEADER]: getEditorSessionId() },
   }).then((data) => unwrapField(data, 'workflow'));
 }
 
@@ -678,6 +721,7 @@ export async function updateWorkflow(workflow: WorkflowUpdateRequest): Promise<W
   return apiFetch<WorkflowDefinition | { workflow: WorkflowDefinition }>(`/api/workflows/${path}`, {
     method: 'PUT',
     body: JSON.stringify(workflow),
+    headers: { [EDITOR_SESSION_HEADER]: getEditorSessionId() },
   }).then((data) => unwrapField(data, 'workflow'));
 }
 
@@ -761,6 +805,90 @@ export async function runWorkflow(
   if (cwd) body.cwd = cwd;
   return apiFetch<{ status: string; workflow: string; run_id: string }>(
     `/api/workflows/run/${encodeURIComponent(name)}`,
+    {
+      method: 'POST',
+      body: JSON.stringify(body),
+    },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Architect (workflow revision)
+// ---------------------------------------------------------------------------
+
+/** POST /api/architect/revise — gateway forwards to operator-mcp's
+ *  `revise_workflow` MCP tool. The Architect chat panel doesn't call this
+ *  directly in Stage B.1 (the Operator does it via tool-call inside the
+ *  agent loop), but the wrapper is here so Stage B.2's revision-history
+ *  strip + revert path can consume it without re-deriving the contract. */
+export async function reviseWorkflow(body: {
+  workflow_kref: string;
+  operations: RevisionOperation[];
+  rationale?: string;
+}): Promise<ReviseWorkflowResponse> {
+  return apiFetch<ReviseWorkflowResponse>('/api/architect/revise', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+/** GET /api/architect/revisions?workflow_kref=... — list Kumiho revisions
+ *  for a workflow item. Returns a thin summary (kref, number, created_at,
+ *  tags, metadata). Used by the editor's revision history strip. */
+export async function listRevisions(
+  workflowKref: string,
+): Promise<RevisionListResponse> {
+  const params = new URLSearchParams({ workflow_kref: workflowKref });
+  return apiFetch<RevisionListResponse>(`/api/architect/revisions?${params}`);
+}
+
+/** POST /api/architect/republish — re-tag the chosen revision as
+ *  `published`. The gateway emits `workflow.revision.republished` on
+ *  success, which the editor's SSE subscription auto-applies. */
+export async function republishRevision(
+  revisionKref: string,
+): Promise<{ ok: boolean; revision_kref: string }> {
+  return apiFetch<{ ok: boolean; revision_kref: string }>(
+    '/api/architect/republish',
+    {
+      method: 'POST',
+      body: JSON.stringify({ revision_kref: revisionKref }),
+    },
+  );
+}
+
+export interface ArchitectValidatorError {
+  message?: string;
+  path?: string;
+  step_id?: string;
+  field?: string;
+  severity?: string;
+}
+
+export interface ArchitectValidateYamlResponse {
+  valid: boolean;
+  yaml: string;
+  summary: string;
+  errors: ArchitectValidatorError[];
+  warnings: ArchitectValidatorError[];
+  added_step_ids: string[];
+  modified_step_ids: string[];
+  removed_step_ids: string[];
+}
+
+/** POST /api/architect/validate_yaml — routes a YAML proposal through the
+ *  same `propose_workflow_yaml` Operator tool the LLM uses. Used by the
+ *  editor's chat-fallback path when Architect dumps YAML in chat instead
+ *  of calling the tool. The endpoint is auth-gated (require_auth), so the
+ *  raw fetch call previously used here returned 401; this helper threads
+ *  the bearer token via apiFetch. */
+export async function validateArchitectYaml(body: {
+  yaml: string;
+  base_yaml?: string;
+  intent_summary?: string;
+}): Promise<ArchitectValidateYamlResponse> {
+  return apiFetch<ArchitectValidateYamlResponse>(
+    '/api/architect/validate_yaml',
     {
       method: 'POST',
       body: JSON.stringify(body),

@@ -87,7 +87,7 @@ fn set_cached(workflows: &[WorkflowResponse], include_deprecated: bool) {
     });
 }
 
-fn invalidate_cache() {
+pub(super) fn invalidate_cache() {
     if let Some(lock) = WORKFLOW_CACHE.get() {
         let mut cache = lock.lock();
         // Mark as expired but keep stale data for fallback on API errors
@@ -1132,6 +1132,43 @@ fn validation_error_response(
     )
 }
 
+/// Broadcast a `workflow.revision.published` event to all SSE subscribers.
+///
+/// Echoes the optional `X-Construct-Session` request header back as
+/// `originating_session` so the editor can suppress events it itself caused.
+/// Failures on the broadcast channel are non-fatal (subscriber lag).
+fn broadcast_revision_published(
+    state: &AppState,
+    headers: &HeaderMap,
+    workflow_kref: &str,
+    rev: &RevisionResponse,
+    name: &str,
+) {
+    let originating_session = headers
+        .get("x-construct-session")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
+    let published_at = rev
+        .created_at
+        .clone()
+        .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
+
+    let payload = serde_json::json!({
+        "type": "workflow.revision.published",
+        "workflow_kref": workflow_kref,
+        "revision_kref": rev.kref,
+        "revision_number": rev.number,
+        "name": name,
+        "published_at": published_at,
+        "originating_session": originating_session,
+    });
+
+    if let Err(err) = state.event_tx.send(payload) {
+        tracing::debug!("workflow.revision.published broadcast skipped: {err}");
+    }
+}
+
 /// POST /api/workflows
 pub async fn handle_create_workflow(
     State(state): State<AppState>,
@@ -1193,6 +1230,8 @@ pub async fn handle_create_workflow(
     invalidate_cache();
     sync_cron_for_workflow(&state, &body.name, &body.definition);
 
+    broadcast_revision_published(&state, &headers, &item.kref, &rev, &body.name);
+
     let workflow = to_workflow_response(&item, Some(&rev));
     (
         StatusCode::CREATED,
@@ -1249,6 +1288,8 @@ pub async fn handle_update_workflow(
 
     invalidate_cache();
     sync_cron_for_workflow(&state, &body.name, &body.definition);
+
+    broadcast_revision_published(&state, &headers, &kref, &rev, &body.name);
 
     let item = items.iter().find(|i| i.kref == kref);
     match item {
@@ -1432,6 +1473,116 @@ pub async fn handle_run_workflow(
             if let Ok(rev) = client.create_revision(&item.kref, metadata).await {
                 let _ = client.tag_revision(&rev.kref, "pending").await;
             }
+
+            // Direct invocation: kick the operator's run_workflow tool now so
+            // the workflow starts within seconds instead of waiting up to 30s
+            // for the run-request poller to pick the item up.  The Kumiho
+            // `pending` item above remains as the durable record — if this
+            // direct call fails (e.g. operator-mcp transport dropped), the
+            // event listener / poller will still find it.
+            //
+            // tool_run_workflow itself detaches execution into a background
+            // asyncio task and returns immediately, so the call should be
+            // fast on success.  We still tokio::spawn it as fire-and-forget
+            // because we don't want to hold the HTTP handler open at all.
+            if let Some(registry) = state.mcp_registry.clone() {
+                let tool_name = format!(
+                    "{}__run_workflow",
+                    crate::agent::operator::OPERATOR_SERVER_NAME
+                );
+                let mut tool_args = serde_json::Map::new();
+                tool_args.insert(
+                    "workflow".to_string(),
+                    serde_json::Value::String(name.clone()),
+                );
+                tool_args.insert("inputs".to_string(), inputs.clone());
+                tool_args.insert(
+                    "cwd".to_string(),
+                    serde_json::Value::String(
+                        body.as_ref()
+                            .and_then(|b| b.cwd.clone())
+                            .unwrap_or_default(),
+                    ),
+                );
+                tool_args.insert(
+                    "run_id".to_string(),
+                    serde_json::Value::String(run_id.clone()),
+                );
+                let tool_args_val = serde_json::Value::Object(tool_args);
+                let run_id_for_log = run_id.clone();
+                let workflow_name_for_log = name.clone();
+                tokio::spawn(async move {
+                    let fut = registry.call_tool(&tool_name, tool_args_val);
+                    match tokio::time::timeout(std::time::Duration::from_secs(30), fut).await {
+                        Ok(Ok(payload)) => {
+                            // Distinguish a real "started" from a classified-error payload.
+                            // tool_run_workflow returns Ok at the MCP transport level even on
+                            // validation failures (missing_cwd, not_found, etc.) — the inner
+                            // result dict carries the diagnosis. Without this check we'd log
+                            // "direct dispatch ok" while the workflow never started.
+                            let inner = serde_json::from_str::<serde_json::Value>(&payload)
+                                .ok()
+                                .and_then(|outer| {
+                                    outer
+                                        .get("content")
+                                        .and_then(|c| c.get(0))
+                                        .and_then(|c0| c0.get("text"))
+                                        .and_then(|t| t.as_str())
+                                        .and_then(|s| {
+                                            serde_json::from_str::<serde_json::Value>(s).ok()
+                                        })
+                                });
+                            let inner_status = inner
+                                .as_ref()
+                                .and_then(|i| i.get("status"))
+                                .and_then(|s| s.as_str())
+                                .unwrap_or("");
+                            let inner_error = inner
+                                .as_ref()
+                                .and_then(|i| i.get("error"))
+                                .and_then(|s| s.as_str());
+                            if inner_status == "started" {
+                                tracing::info!(
+                                    "run_workflow direct dispatch started: workflow={} run_id={}",
+                                    workflow_name_for_log,
+                                    run_id_for_log
+                                );
+                            } else if let Some(err) = inner_error {
+                                tracing::warn!(
+                                    "run_workflow direct dispatch returned error (Kumiho pending item will be picked up by listener/poller): workflow={} run_id={} err={err}",
+                                    workflow_name_for_log,
+                                    run_id_for_log
+                                );
+                            } else {
+                                tracing::debug!(
+                                    "run_workflow direct dispatch returned unexpected payload (listener/poller will handle): workflow={} run_id={}",
+                                    workflow_name_for_log,
+                                    run_id_for_log
+                                );
+                            }
+                        }
+                        Ok(Err(e)) => {
+                            tracing::warn!(
+                                "run_workflow direct dispatch failed (Kumiho pending item will be picked up by listener/poller): workflow={} run_id={} err={e:#}",
+                                workflow_name_for_log,
+                                run_id_for_log
+                            );
+                        }
+                        Err(_) => {
+                            tracing::warn!(
+                                "run_workflow direct dispatch timed out after 30s (Kumiho pending item will be picked up by listener/poller): workflow={} run_id={}",
+                                workflow_name_for_log,
+                                run_id_for_log
+                            );
+                        }
+                    }
+                });
+            } else {
+                tracing::debug!(
+                    "run_workflow: MCP registry not available — relying on event listener / poller for run_id={run_id}"
+                );
+            }
+
             (
                 StatusCode::OK,
                 Json(serde_json::json!({

@@ -347,7 +347,7 @@ mod tests {
     fn supervised_config() -> AutonomyConfig {
         AutonomyConfig {
             level: AutonomyLevel::Supervised,
-            auto_approve: vec!["file_read".into(), "memory_recall".into()],
+            auto_approve: vec!["file_read".into(), "weather".into()],
             always_ask: vec!["shell".into()],
             ..AutonomyConfig::default()
         }
@@ -366,7 +366,7 @@ mod tests {
     fn auto_approve_tools_skip_prompt() {
         let mgr = ApprovalManager::from_config(&supervised_config());
         assert!(!mgr.needs_approval("file_read"));
-        assert!(!mgr.needs_approval("memory_recall"));
+        assert!(!mgr.needs_approval("weather"));
     }
 
     #[test]
@@ -629,9 +629,9 @@ mod tests {
     #[test]
     fn non_interactive_auto_approve_tools_skip_approval() {
         let mgr = ApprovalManager::for_non_interactive(&supervised_config());
-        // auto_approve tools (file_read, memory_recall) should not need approval.
+        // auto_approve tools (file_read, weather) should not need approval.
         assert!(!mgr.needs_approval("file_read"));
-        assert!(!mgr.needs_approval("memory_recall"));
+        assert!(!mgr.needs_approval("weather"));
     }
 
     #[test]

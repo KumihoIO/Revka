@@ -1287,6 +1287,116 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
+            name="generate_image_codex",
+            description=(
+                "Generate one or more PNG images via the OpenAI Codex CLI's "
+                "built-in `image_generation` tool. Up to 5 in parallel "
+                "(asyncio.gather over independent codex sessions); for more, "
+                "call the tool repeatedly in batches. Optionally pushes a "
+                "gallery frame to the Live Canvas and registers each PNG as "
+                "a Kumiho artifact under <harness>/<space>. Requires the "
+                "`codex` CLI installed and authenticated via ChatGPT OAuth "
+                "(0.128+ recommended for the latest image_generation feature; "
+                "earlier versions may work if image_generation is enabled). "
+                "RESPONSE NOTE: when you compose your own HTML/canvas output "
+                "referencing the generated images, use the `urls` array (each "
+                "entry is a signed `/workspace/...` URL the dashboard can "
+                "load), NOT the `files` array (those are absolute filesystem "
+                "paths the browser sandbox can't read). CANVAS PICK-ONE: if "
+                "`canvas: true` is passed, this tool already pushes a working "
+                "canvas frame — do NOT also call `render_canvas` for the same "
+                "image (you'll get duplicate frames). For custom styling, set "
+                "`canvas: false` and call `render_canvas` yourself with "
+                "`urls[0]`."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "prompt": {
+                        "type": "string",
+                        "description": "Natural-language description of the image to generate.",
+                    },
+                    "output_path": {
+                        "type": "string",
+                        "description": (
+                            "Target PNG path. Relative to `cwd` unless absolute. "
+                            "When `count > 1` and `output_pattern` is unset, "
+                            "the path is expanded as `<stem>-N.<ext>` per image."
+                        ),
+                    },
+                    "cwd": {
+                        "type": "string",
+                        "description": "Working directory for codex (default: ~/.construct/workspace).",
+                    },
+                    "count": {
+                        "type": "integer",
+                        "description": "Number of images to generate in parallel (1..5, default 1).",
+                        "minimum": 1,
+                        "maximum": 5,
+                        "default": 1,
+                    },
+                    "output_pattern": {
+                        "type": "string",
+                        "description": (
+                            "Filename template with `{n}` placeholder when count > 1, "
+                            "e.g. `logo-{n}.png`. Overrides the default `<stem>-N` derivation."
+                        ),
+                    },
+                    "canvas": {
+                        "oneOf": [{"type": "boolean"}, {"type": "string"}],
+                        "description": (
+                            "If true, push a gallery frame to the default Live Canvas. "
+                            "If a string, use that canvas_id. Default: false."
+                        ),
+                        "default": False,
+                    },
+                    "register_artifact": {
+                        "type": "boolean",
+                        "description": (
+                            "Create a Kumiho item + revision under <harness>/<space> and "
+                            "attach each generated PNG as an artifact. The on-disk path "
+                            "mirrors the kref hierarchy: "
+                            "`~/.construct/workspace/<harness>/<space>/<item>.<kind>/r<N>/<filename>`. "
+                            "When false, falls back to `<cwd>/<output_path>`. Default: true."
+                        ),
+                        "default": True,
+                    },
+                    "space": {
+                        "type": "string",
+                        "description": (
+                            "Kumiho space (relative to the harness project) where the item "
+                            "is created. Multi-segment paths supported, e.g. "
+                            "`Marketing/Logos`. Default: `Images`."
+                        ),
+                        "default": "Images",
+                    },
+                    "item_name": {
+                        "type": "string",
+                        "description": (
+                            "Optional name for the Kumiho item. Defaults to the output "
+                            "filename stem (with the auto-appended `-N` suffix stripped)."
+                        ),
+                    },
+                    "sandbox": {
+                        "type": "string",
+                        "enum": ["read-only", "workspace-write", "danger-full-access"],
+                        "description": (
+                            "codex `--sandbox` mode. When unset, the tool picks the "
+                            "right default for the local install: `workspace-write` "
+                            "on macOS/Linux and admin-installed Windows, "
+                            "`danger-full-access` on Windows per-user npm installs "
+                            "(`%APPDATA%\\\\npm\\\\codex.CMD`) whose sandbox helper "
+                            "can't spawn child processes (`CreateProcessAsUserW "
+                            "failed: 5`) — without that, codex's image skill won't "
+                            "load and no PNG is produced. Pin a value only if you "
+                            "need to override the auto-default."
+                        ),
+                    },
+                },
+                "required": ["prompt", "output_path"],
+            },
+        ),
+        Tool(
             name="list_nodes",
             description="List connected remote nodes and their capabilities. Nodes connect via WebSocket and advertise tools (e.g. camera.snap, shell.exec).",
             inputSchema={
@@ -1673,6 +1783,71 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
+            name="revise_workflow",
+            description=(
+                "Apply a list of structured operations (add_step / edit_step / "
+                "delete_step / reorder / wire / unwire / insert_into_parallel / "
+                "extract_from_parallel / rename_step) to a workflow's current "
+                "revision and emit a new Kumiho revision tagged 'published'. "
+                "Returns success, the new revision kref, applied_count, and a "
+                "list of SkippedItem entries with typed reasons (step_not_found, "
+                "duplicate_id, reference_broken, cycle_detected, validation_failed, "
+                "…) so the LLM can repair instead of re-prompt blind. Kumiho is "
+                "revision-native — there is no in-place edit; every change "
+                "produces a new immutable revision."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "workflow_kref": {
+                        "type": "string",
+                        "description": "kref of the workflow item, e.g. kref://Construct/Workflows/foo.workflow.",
+                    },
+                    "operations": {
+                        "type": "array",
+                        "description": "Ordered list of revision ops. Each item: {op, step_id?, new_id?, step_def?, target_step_id?, parallel_id?, position?, position_after?}.",
+                        "items": {"type": "object"},
+                    },
+                    "rationale": {
+                        "type": "string",
+                        "description": "Optional human-readable rationale stored on the new revision as a tag.",
+                    },
+                },
+                "required": ["workflow_kref", "operations"],
+            },
+        ),
+        Tool(
+            name="propose_workflow_yaml",
+            description=(
+                "Architect-only: validate a proposed workflow YAML and echo "
+                "it back with a structured response. NEVER persists to disk "
+                "or Kumiho — the editor frontend pipes the YAML into the "
+                "editor's in-memory definition state and the user decides "
+                "when to Save. Returns {yaml, summary, valid, errors, "
+                "warnings, added_step_ids, modified_step_ids, "
+                "removed_step_ids}. When base_yaml is provided, computes a "
+                "step-ID diff so the caller can render added/changed steps."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "proposed_yaml": {
+                        "type": "string",
+                        "description": "The complete proposed workflow YAML.",
+                    },
+                    "intent_summary": {
+                        "type": "string",
+                        "description": "One-line description of what the user asked for.",
+                    },
+                    "base_yaml": {
+                        "type": "string",
+                        "description": "Current editor YAML if extending; omit or empty for a fresh workflow.",
+                    },
+                },
+                "required": ["proposed_yaml"],
+            },
+        ),
+        Tool(
             name="create_workflow",
             description="Create a new workflow definition and save as YAML to ~/.construct/workflows/.",
             inputSchema={
@@ -1859,6 +2034,28 @@ async def list_tools() -> list[Tool]:
                     "cwd": {
                         "type": "string",
                         "description": "Project directory for workflow discovery.",
+                    },
+                },
+            },
+        ),
+        Tool(
+            name="get_workflow_metadata",
+            description=(
+                "Return the editor-relevant primitives a workflow can use: step types "
+                "(with config-field schemas + example YAML), pool agents, auth profiles, "
+                "skills, and channels. Use before proposing a workflow revision so step "
+                "types, agent slugs, and skill IDs are grounded in what's available."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "include": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Categories to return. Default: all of "
+                            "['step_types', 'agents', 'auth_profiles', 'skills', 'channels']."
+                        ),
                     },
                 },
             },
@@ -2452,6 +2649,12 @@ async def _dispatch(name: str, args: dict[str, Any]) -> dict[str, Any]:
     if name == "validate_workflow":
         from .tool_handlers.workflows import tool_validate_workflow
         return await tool_validate_workflow(args)
+    if name == "revise_workflow":
+        from .tool_handlers.workflow_revisions import tool_revise_workflow
+        return await tool_revise_workflow(args)
+    if name == "propose_workflow_yaml":
+        from .tool_handlers.architect_propose import tool_propose_workflow_yaml
+        return await tool_propose_workflow_yaml(args)
     if name == "create_workflow":
         from .tool_handlers.workflows import tool_create_workflow
         return await tool_create_workflow(args)
@@ -2499,6 +2702,9 @@ async def _dispatch(name: str, args: dict[str, Any]) -> dict[str, Any]:
         else:
             return {"valid": False, "errors": [{"message": "workflow or workflow_def required"}]}
         return dry_run_workflow(wf, inputs)
+    if name == "get_workflow_metadata":
+        from .tool_handlers.workflow_discovery import tool_get_workflow_metadata
+        return await tool_get_workflow_metadata(args)
     if name == "system_dashboard":
         from .tool_handlers.dashboard import tool_system_dashboard
         return await tool_system_dashboard(args)
@@ -2628,6 +2834,11 @@ async def _dispatch(name: str, args: dict[str, Any]) -> dict[str, Any]:
         return await canvas.tool_render_canvas(args, CONSTRUCT_GW)
     if name == "clear_canvas":
         return await canvas.tool_clear_canvas(args, CONSTRUCT_GW)
+
+    # -- Codex image generation --
+    if name == "generate_image_codex":
+        from .tool_handlers import codex_image
+        return await codex_image.tool_generate_image_codex(args, CONSTRUCT_GW)
 
     # -- Nodes --
     if name == "list_nodes":

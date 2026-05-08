@@ -33,7 +33,7 @@ function WorkflowNode({
   selected?: boolean;
 }) {
   const ref = useNodeAutoSize(id);
-  const accent = data.runInfo ? workflowStatusTone(data.runInfo.status) : workflowActionTone(data.action);
+  const accent = data.runInfo ? workflowStatusTone(data.runInfo.status) : workflowActionTone(data.type);
   const operationalAccent = data.failing
     ? 'var(--construct-status-danger)'
     : data.blocked
@@ -48,7 +48,7 @@ function WorkflowNode({
       className="rounded-[14px] border px-4 py-3 shadow-sm flex flex-col"
       title={[
         data.name || data.taskId,
-        `Action: ${data.action}`,
+        `Type: ${data.type}`,
         data.runInfo?.status ? `Status: ${data.runInfo.status}` : null,
         data.runInfo?.agent_type ? `Agent: ${data.runInfo.agent_type}${data.runInfo.role ? ` / ${data.runInfo.role}` : ''}` : null,
         data.blocked ? 'Blocked by upstream failure' : null,
@@ -90,7 +90,7 @@ function WorkflowNode({
               className="rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em]"
               style={{ background: 'color-mix(in srgb, var(--construct-bg-elevated) 85%, transparent)', color: operationalAccent }}
             >
-              {data.action}
+              {data.type}
             </span>
             {data.runInfo ? (
               <span

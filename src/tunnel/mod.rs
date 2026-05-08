@@ -74,8 +74,14 @@ pub(crate) async fn kill_shared(proc: &SharedProcess) -> Result<()> {
 // ── Factory ──────────────────────────────────────────────────────
 
 /// Create a tunnel from config. Returns `None` for provider "none".
+///
+/// Provider matching is **case-insensitive** so existing configs that use
+/// PascalCase (`"CloudFlare"`, `"Tailscale"`, etc.) keep working without a
+/// migration. Only the canonical lowercase forms are documented; the
+/// normalization is purely a backwards-compatibility shim.
 pub fn create_tunnel(config: &TunnelConfig) -> Result<Option<Box<dyn Tunnel>>> {
-    match config.provider.as_str() {
+    let provider_normalized = config.provider.to_ascii_lowercase();
+    match provider_normalized.as_str() {
         "none" | "" => Ok(None),
 
         "cloudflare" => {
@@ -148,8 +154,9 @@ pub fn create_tunnel(config: &TunnelConfig) -> Result<Option<Box<dyn Tunnel>>> {
             ))))
         }
 
-        other => bail!(
-            "Unknown tunnel provider: \"{other}\". Valid: none, cloudflare, tailscale, ngrok, openvpn, pinggy, custom"
+        _ => bail!(
+            "Unknown tunnel provider: \"{}\". Valid (case-insensitive): none, cloudflare, tailscale, ngrok, openvpn, pinggy, custom",
+            config.provider
         ),
     }
 }
@@ -200,6 +207,36 @@ mod tests {
             ..TunnelConfig::default()
         };
         assert_tunnel_err(&cfg, "Unknown tunnel provider");
+    }
+
+    #[test]
+    fn factory_provider_match_is_case_insensitive() {
+        // Pre-existing configs may use PascalCase ("CloudFlare", "Tailscale",
+        // etc.) — those should still parse to the canonical provider.
+        for variant in ["CloudFlare", "CLOUDFLARE", "Cloudflare", "cloudFLARE"] {
+            let cfg = TunnelConfig {
+                provider: variant.into(),
+                cloudflare: Some(CloudflareTunnelConfig {
+                    token: "test-token".into(),
+                }),
+                ..TunnelConfig::default()
+            };
+            let t = create_tunnel(&cfg).unwrap();
+            assert!(
+                t.is_some(),
+                "expected case-insensitive match for variant \"{variant}\""
+            );
+        }
+
+        // "NONE" / "None" / "none" all collapse to the no-tunnel branch.
+        for variant in ["NONE", "None", "none"] {
+            let cfg = TunnelConfig {
+                provider: variant.into(),
+                ..TunnelConfig::default()
+            };
+            let t = create_tunnel(&cfg).unwrap();
+            assert!(t.is_none(), "expected None for variant \"{variant}\"");
+        }
     }
 
     #[test]

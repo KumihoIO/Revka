@@ -241,6 +241,28 @@
   grid-template-columns: minmax(0, 1fr);
 }
 .construct-skills-grid > :nth-child(3) { grid-column: 1 / -1; }
+
+/* Mobile: stack panels naturally and let the page scroll. The desktop
+   layout puts each panel in its own flex-1 column with internal
+   overflow-y-auto, but on a narrow viewport that squashes all three
+   stacked panels into ~150px tall slivers and clips the cards. Override
+   the inner-flex behavior so panels grow to fit their content and the
+   document body scrolls instead. */
+@media (max-width: 1023px) {
+  .construct-skills-grid,
+  .construct-skills-grid > div {
+    flex: none;
+    min-height: 0;
+  }
+  .construct-skills-grid [class*="overflow-y-auto"] {
+    /* Cap inner scroll at a reasonable mobile-tall height instead of
+       0 (squashed flex-1 with no parent height). 60vh keeps the panel
+       big enough that 4-5 cards fit without scrolling, and short
+       enough that the next panel is visible by scrolling the page. */
+    max-height: 60vh;
+  }
+}
+
 @media (min-width: 1024px) {
   .construct-skills-grid { grid-template-columns: 20rem minmax(0, 1fr); }
   .construct-skills-grid > :nth-child(3) { grid-column: 1 / -1; }
@@ -248,6 +270,38 @@
 @media (min-width: 1440px) {
   .construct-skills-grid { grid-template-columns: 20rem minmax(0, 1.15fr) minmax(18rem, 0.85fr); }
   .construct-skills-grid > :nth-child(3) { grid-column: auto; }
+}
+
+/* Asset browser row layout — desktop renders the full 4-column table
+   (NAME / KIND / AUTHOR / CREATED). At narrow widths (< 768px) the
+   AUTHOR column collides with NAME and CREATED so we collapse to a
+   stacked layout: name + relative time on row 1, kind chip on row 2,
+   author hidden entirely (it's almost always a UUID-style string that
+   adds noise without helping scanning on a phone). */
+.construct-assets-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 5.5rem 12rem 5.5rem;
+  align-items: center;
+  column-gap: 0.75rem;
+}
+
+@media (max-width: 767px) {
+  .construct-assets-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    row-gap: 0.25rem;
+  }
+  .construct-assets-row > .construct-assets-author {
+    display: none;
+  }
+  .construct-assets-row > .construct-assets-kind {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+  .construct-assets-row > .construct-assets-created {
+    grid-row: 1;
+    grid-column: 2;
+    text-align: right;
+  }
 }
 
 .construct-table thead th {

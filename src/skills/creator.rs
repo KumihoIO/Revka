@@ -514,7 +514,7 @@ mod tests {
     #[test]
     fn toml_generation_no_command_arg() {
         let calls = vec![ToolCallRecord {
-            name: "memory_store".into(),
+            name: "kumiho_memory_store".into(),
             args: serde_json::json!({"key": "foo", "value": "bar"}),
         }];
         let toml_str = SkillCreator::generate_skill_toml("memory-op", "Store to memory", &calls);
@@ -523,7 +523,7 @@ mod tests {
         // When no "command" arg exists, falls back to tool name.
         assert_eq!(
             tools[0].get("command").and_then(toml::Value::as_str),
-            Some("memory_store")
+            Some("kumiho_memory_store")
         );
     }
 

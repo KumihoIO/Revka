@@ -2,30 +2,53 @@ import { Handle, Position, type NodeTypes } from '@xyflow/react';
 import type { StepNodeData } from './yamlSync';
 
 // ---------------------------------------------------------------------------
-// Action → color mapping
+// Action → token mapping. Mirrors the convention in TaskNode.tsx so the
+// canvas adapts to the active Construct theme (and the Zion copper scope).
 // ---------------------------------------------------------------------------
 
-const ACTION_COLORS: Record<string, string> = {
-  code: 'var(--pc-accent)',
-  review: '#a855f7',
-  research: '#22c55e',
-  deploy: '#f97316',
-  test: '#06b6d4',
-  build: '#eab308',
-  notify: '#ec4899',
-  approve: '#8b5cf6',
-  summarize: '#14b8a6',
-  greet: '#60a5fa',
+type ActionTone = 'live' | 'network' | 'warning' | 'danger' | 'accent' | 'muted';
+
+const ACTION_TONES: Record<string, ActionTone> = {
+  code: 'accent',
+  review: 'network',
+  research: 'live',
+  deploy: 'warning',
+  test: 'network',
+  build: 'warning',
+  notify: 'network',
+  approve: 'network',
+  summarize: 'live',
+  greet: 'network',
 };
 
-const DEFAULT_ACTION_COLOR = '#6b7280';
-
-function getActionColor(action: string): string {
+function getActionTone(action: string): ActionTone {
   const key = action.toLowerCase().replace(/[^a-z]/g, '');
-  for (const [prefix, color] of Object.entries(ACTION_COLORS)) {
-    if (key.startsWith(prefix) || key.includes(prefix)) return color;
+  for (const [prefix, tone] of Object.entries(ACTION_TONES)) {
+    if (key.startsWith(prefix) || key.includes(prefix)) return tone;
   }
-  return DEFAULT_ACTION_COLOR;
+  return 'muted';
+}
+
+function toneColorVar(tone: ActionTone): string {
+  switch (tone) {
+    case 'live': return 'var(--construct-signal-live)';
+    case 'network': return 'var(--construct-signal-network)';
+    case 'warning': return 'var(--construct-status-warning)';
+    case 'danger': return 'var(--construct-status-danger)';
+    case 'accent': return 'var(--pc-accent)';
+    case 'muted': return 'var(--construct-text-faint)';
+  }
+}
+
+function toneSoftVar(tone: ActionTone): string {
+  switch (tone) {
+    case 'live': return 'color-mix(in srgb, var(--construct-signal-live) 16%, transparent)';
+    case 'network': return 'color-mix(in srgb, var(--construct-signal-network) 16%, transparent)';
+    case 'warning': return 'color-mix(in srgb, var(--construct-status-warning) 16%, transparent)';
+    case 'danger': return 'color-mix(in srgb, var(--construct-status-danger) 16%, transparent)';
+    case 'accent': return 'var(--pc-accent-glow)';
+    case 'muted': return 'color-mix(in srgb, var(--construct-text-faint) 16%, transparent)';
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -33,7 +56,9 @@ function getActionColor(action: string): string {
 // ---------------------------------------------------------------------------
 
 function StepNode({ data }: { data: StepNodeData }) {
-  const color = getActionColor(data.action);
+  const tone = getActionTone(data.type);
+  const color = toneColorVar(tone);
+  const soft = toneSoftVar(tone);
 
   return (
     <div
@@ -57,9 +82,9 @@ function StepNode({ data }: { data: StepNodeData }) {
       <div className="flex items-center gap-1.5 mt-1.5">
         <span
           className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider"
-          style={{ background: color + '22', color }}
+          style={{ background: soft, color }}
         >
-          {data.action}
+          {data.type}
         </span>
         {data.paramCount > 0 && (
           <span

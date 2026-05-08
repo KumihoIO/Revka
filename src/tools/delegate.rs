@@ -1020,7 +1020,7 @@ impl DelegateTool {
         let ctx = PromptContext {
             workspace_dir,
             model_name: &agent_config.model,
-            tools: sub_tools,
+            tools: crate::agent::prompt::PromptTools::Full(sub_tools),
             skills: &skills,
             skills_prompt_mode: crate::config::SkillsPromptInjectionMode::Full,
             skill_effectiveness: None,
@@ -1031,6 +1031,8 @@ impl DelegateTool {
             autonomy_level: crate::security::AutonomyLevel::default(),
             operator_enabled: false,
             kumiho_enabled: false,
+            kumiho_memory_advanced_available: false,
+            mode: crate::agent::prompt::BuilderMode::Daemon,
         };
 
         let builder = SystemPromptBuilder::default()

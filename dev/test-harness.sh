@@ -145,11 +145,11 @@ echo "=== Test 6: Tools List ==="
 
 TOOLS_RESP=$(curl -sf "$BASE_URL/api/tools" 2>&1) || true
 
-if echo "$TOOLS_RESP" | grep -qi "memory_store\|memory_recall"; then
-    pass "Memory tools registered (memory_store/memory_recall)"
+if echo "$TOOLS_RESP" | grep -qi "kumiho_memory_engage\|kumiho_memory_reflect\|kumiho_memory_store"; then
+    pass "Kumiho memory tools registered (kumiho_memory_*)"
 else
     info "Tools response: $(echo "$TOOLS_RESP" | head -c 300)"
-    skip "Could not verify memory tools in tools list"
+    skip "Could not verify kumiho memory tools in tools list"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════

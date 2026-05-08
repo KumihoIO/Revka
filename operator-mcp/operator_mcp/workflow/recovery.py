@@ -75,7 +75,7 @@ async def recover_interrupted_runs(sidecar: Any) -> list[str]:
     Returns:
         List of run_ids that were submitted for recovery.
     """
-    import fcntl
+    from .. import _fcntl_compat as fcntl
 
     # ---- Singleton lock ----
     try:
@@ -156,7 +156,7 @@ def _acquire_run_lock(run_id: str) -> Any:
     other operator processes (or subsequent restarts) don't try to
     recover the same run concurrently.
     """
-    import fcntl
+    from .. import _fcntl_compat as fcntl
     os.makedirs(_RUN_LOCK_DIR, exist_ok=True)
     lock_path = os.path.join(_RUN_LOCK_DIR, f"{run_id[:12]}.lock")
     try:
@@ -171,7 +171,7 @@ def _acquire_run_lock(run_id: str) -> Any:
 
 def _release_run_lock(fd: Any, run_id: str) -> None:
     """Release a per-run lock file."""
-    import fcntl
+    from .. import _fcntl_compat as fcntl
     try:
         fcntl.flock(fd, fcntl.LOCK_UN)
         fd.close()

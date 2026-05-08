@@ -163,12 +163,6 @@ function CollapsibleSection({
 }
 
 /* ------------------------------------------------------------------ */
-/*  Column grid template shared by header + rows                       */
-/* ------------------------------------------------------------------ */
-
-const TABLE_COLS = 'minmax(0,1fr) 5.5rem 12rem 5.5rem';
-
-/* ------------------------------------------------------------------ */
 /*  Main component                                                     */
 /* ------------------------------------------------------------------ */
 
@@ -508,19 +502,21 @@ export default function Assets() {
       >
         {/* ---- LEFT: Item table ---- */}
         <Panel className="flex flex-col overflow-hidden p-0">
-          {/* Table header */}
+          {/* Table header. On narrow viewports the only meaningful header
+              is NAME (kind chips and timestamps are self-describing inline),
+              so we hide the rest at mobile widths to avoid the squashed
+              "NAKINMED AUTHOR CREAT…" overlap from fixed-width labels. */}
           <div
-            className="grid shrink-0 items-center gap-3 border-b px-4 py-2.5"
+            className="construct-assets-row shrink-0 border-b px-4 py-2.5"
             style={{
-              gridTemplateColumns: TABLE_COLS,
               borderColor: 'var(--construct-border-soft)',
               color: 'var(--construct-text-faint)',
             }}
           >
             <span className="text-[11px] font-semibold uppercase tracking-[0.14em]">{t('assets.col.name')}</span>
-            <span className="text-[11px] font-semibold uppercase tracking-[0.14em]">{t('assets.col.kind')}</span>
-            <span className="text-[11px] font-semibold uppercase tracking-[0.14em]">{t('assets.col.author')}</span>
-            <span className="text-right text-[11px] font-semibold uppercase tracking-[0.14em]">{t('assets.col.created')}</span>
+            <span className="construct-assets-kind hidden text-[11px] font-semibold uppercase tracking-[0.14em] md:inline">{t('assets.col.kind')}</span>
+            <span className="construct-assets-author hidden text-[11px] font-semibold uppercase tracking-[0.14em] md:inline">{t('assets.col.author')}</span>
+            <span className="construct-assets-created hidden text-right text-[11px] font-semibold uppercase tracking-[0.14em] md:inline">{t('assets.col.created')}</span>
           </div>
 
           {/* Table body */}
@@ -542,9 +538,8 @@ export default function Assets() {
                       key={space.path}
                       type="button"
                       onClick={() => navigateToSpace(space)}
-                      className="grid w-full items-center gap-3 border-b px-4 py-2.5 text-left transition hover:brightness-125"
+                      className="construct-assets-row w-full border-b px-4 py-2.5 text-left transition hover:brightness-125"
                       style={{
-                        gridTemplateColumns: TABLE_COLS,
                         borderColor: 'var(--construct-border-soft)',
                         background: 'color-mix(in srgb, var(--construct-bg-elevated) 50%, transparent)',
                       }}
@@ -558,13 +553,13 @@ export default function Assets() {
                           {space.name}
                         </span>
                       </div>
-                      <span className="text-xs" style={{ color: 'var(--construct-text-faint)' }}>
+                      <span className="construct-assets-kind text-xs" style={{ color: 'var(--construct-text-faint)' }}>
                         {t('assets.folder')}
                       </span>
-                      <span className="truncate text-xs" style={{ color: 'var(--construct-text-faint)' }}>
+                      <span className="construct-assets-author truncate text-xs" style={{ color: 'var(--construct-text-faint)' }}>
                         --
                       </span>
-                      <span className="text-right text-xs" style={{ color: 'var(--construct-text-faint)' }}>
+                      <span className="construct-assets-created text-right text-xs" style={{ color: 'var(--construct-text-faint)' }}>
                         {formatTime(space.created_at)}
                       </span>
                     </button>
@@ -590,9 +585,8 @@ export default function Assets() {
                       key={item.kref}
                       type="button"
                       onClick={() => setSelectedItem(item)}
-                      className="grid w-full items-center gap-3 border-b px-4 py-2.5 text-left transition"
+                      className="construct-assets-row w-full border-b px-4 py-2.5 text-left transition"
                       style={{
-                        gridTemplateColumns: TABLE_COLS,
                         borderColor: 'var(--construct-border-soft)',
                         background: isActive
                           ? 'color-mix(in srgb, var(--construct-signal-live-soft) 80%, var(--construct-bg-panel))'
@@ -610,7 +604,7 @@ export default function Assets() {
                         </span>
                       </div>
                       <span
-                        className="inline-flex items-center justify-center rounded-full px-2 py-0.5 text-[10px] font-semibold capitalize"
+                        className="construct-assets-kind inline-flex items-center justify-center rounded-full px-2 py-0.5 text-[10px] font-semibold capitalize"
                         style={{
                           background: meta.bg,
                           color: meta.color,
@@ -620,12 +614,12 @@ export default function Assets() {
                         {item.kind}
                       </span>
                       <span
-                        className="truncate text-xs font-mono"
+                        className="construct-assets-author truncate text-xs font-mono"
                         style={{ color: 'var(--construct-text-faint)' }}
                       >
                         {item.author || '--'}
                       </span>
-                      <span className="text-right text-xs" style={{ color: 'var(--construct-text-faint)' }}>
+                      <span className="construct-assets-created text-right text-xs" style={{ color: 'var(--construct-text-faint)' }}>
                         {formatTime(item.created_at)}
                       </span>
                     </button>

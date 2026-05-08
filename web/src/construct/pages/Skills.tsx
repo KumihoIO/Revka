@@ -384,11 +384,11 @@ export default function Skills() {
                 marketplaceResults.map((skill) => (
                   <div key={skill.slug} className="rounded-[12px] border p-3" style={{ borderColor: 'var(--construct-border-soft)' }}>
                     <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <div className="text-sm font-semibold" style={{ color: 'var(--construct-text-primary)' }}>{skill.displayName || skill.name || skill.slug}</div>
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-sm font-semibold" style={{ color: 'var(--construct-text-primary)' }}>{skill.displayName || skill.name || skill.slug}</div>
                         <div className="mt-1 line-clamp-2 text-xs" style={{ color: 'var(--construct-text-secondary)' }}>{skill.description}</div>
                       </div>
-                      <button className="construct-button" onClick={() => handleInstall(skill.slug)}>{t('skills.install')}</button>
+                      <button className="construct-button shrink-0" onClick={() => handleInstall(skill.slug)}>{t('skills.install')}</button>
                     </div>
                   </div>
                 ))

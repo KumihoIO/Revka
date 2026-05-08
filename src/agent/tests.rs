@@ -1270,3 +1270,129 @@ async fn run_single_delegates_to_turn() {
         "Expected non-empty response from run_single"
     );
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 26. Architect runtime tool guard — strips persistence tools from the spec
+//     list when the user message carries the `<editor-state>` marker.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// When the user message carries the `<editor-state>` marker (Architect
+/// mode), the workflow persistence tools must be stripped from the spec
+/// list before the LLM sees them — so the LLM literally cannot call them.
+#[test]
+fn filter_tool_specs_for_architect_strips_denied_tools_when_marker_present() {
+    use crate::agent::agent::filter_tool_specs_for_architect;
+    use crate::tools::ToolSpec;
+
+    let mut specs = vec![
+        ToolSpec {
+            name: "construct-operator__create_workflow".into(),
+            description: "denied".into(),
+            parameters: serde_json::json!({}),
+        },
+        ToolSpec {
+            name: "construct-operator__save_workflow_preset".into(),
+            description: "denied".into(),
+            parameters: serde_json::json!({}),
+        },
+        ToolSpec {
+            name: "construct-operator__run_workflow".into(),
+            description: "denied".into(),
+            parameters: serde_json::json!({}),
+        },
+        ToolSpec {
+            name: "construct-operator__validate_workflow".into(),
+            description: "denied".into(),
+            parameters: serde_json::json!({}),
+        },
+        ToolSpec {
+            name: "construct-operator__dry_run_workflow".into(),
+            description: "denied".into(),
+            parameters: serde_json::json!({}),
+        },
+        ToolSpec {
+            name: "construct-operator__propose_workflow_yaml".into(),
+            description: "allowed".into(),
+            parameters: serde_json::json!({}),
+        },
+        ToolSpec {
+            name: "echo".into(),
+            description: "non-mcp tool, allowed".into(),
+            parameters: serde_json::json!({}),
+        },
+    ];
+
+    let architect_message = "<editor-state>\n  <workflow_name>foo</workflow_name>\n  <current_yaml>\n    name: foo\n  </current_yaml>\n</editor-state>\n\nadd a research step";
+    filter_tool_specs_for_architect(&mut specs, architect_message);
+
+    let names: Vec<&str> = specs.iter().map(|s| s.name.as_str()).collect();
+    assert!(
+        !names.contains(&"construct-operator__create_workflow"),
+        "create_workflow must be filtered out in Architect mode; got {names:?}"
+    );
+    assert!(
+        !names.contains(&"construct-operator__save_workflow_preset"),
+        "save_workflow_preset must be filtered out in Architect mode; got {names:?}"
+    );
+    assert!(
+        !names.contains(&"construct-operator__run_workflow"),
+        "run_workflow must be filtered out in Architect mode; got {names:?}"
+    );
+    assert!(
+        !names.contains(&"construct-operator__validate_workflow"),
+        "validate_workflow must be filtered out in Architect mode; got {names:?}"
+    );
+    assert!(
+        !names.contains(&"construct-operator__dry_run_workflow"),
+        "dry_run_workflow must be filtered out in Architect mode; got {names:?}"
+    );
+    assert!(
+        names.contains(&"construct-operator__propose_workflow_yaml"),
+        "propose_workflow_yaml must remain available; got {names:?}"
+    );
+    assert!(
+        names.contains(&"echo"),
+        "non-mcp tools must remain available; got {names:?}"
+    );
+}
+
+/// In a regular Operator chat (no `<editor-state>` marker), the persistence
+/// tools must remain in the spec list — the runtime guard must NOT trigger.
+#[test]
+fn filter_tool_specs_for_architect_is_noop_without_marker() {
+    use crate::agent::agent::filter_tool_specs_for_architect;
+    use crate::tools::ToolSpec;
+
+    let mut specs = vec![
+        ToolSpec {
+            name: "construct-operator__create_workflow".into(),
+            description: "still allowed".into(),
+            parameters: serde_json::json!({}),
+        },
+        ToolSpec {
+            name: "construct-operator__save_workflow_preset".into(),
+            description: "still allowed".into(),
+            parameters: serde_json::json!({}),
+        },
+        ToolSpec {
+            name: "construct-operator__propose_workflow_yaml".into(),
+            description: "still allowed".into(),
+            parameters: serde_json::json!({}),
+        },
+    ];
+    let original_len = specs.len();
+
+    let regular_message =
+        "create a workflow that researches a topic, codes the result, and reviews it";
+    filter_tool_specs_for_architect(&mut specs, regular_message);
+
+    assert_eq!(
+        specs.len(),
+        original_len,
+        "Regular Operator chats must not trigger the Architect tool guard"
+    );
+    let names: Vec<&str> = specs.iter().map(|s| s.name.as_str()).collect();
+    assert!(names.contains(&"construct-operator__create_workflow"));
+    assert!(names.contains(&"construct-operator__save_workflow_preset"));
+    assert!(names.contains(&"construct-operator__propose_workflow_yaml"));
+}

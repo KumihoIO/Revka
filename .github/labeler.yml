@@ -374,13 +374,6 @@
           - "src/tools/mcp_tool.rs"
           - "src/tools/mcp_transport.rs"
 
-"tool:memory":
-  - changed-files:
-      - any-glob-to-any-file:
-          - "src/tools/memory_forget.rs"
-          - "src/tools/memory_recall.rs"
-          - "src/tools/memory_store.rs"
-
 "tool:microsoft365":
   - changed-files:
       - any-glob-to-any-file:

@@ -39,7 +39,7 @@ construct agent --peripheral nucleo-f401re:/dev/ttyACM0  # Attach hardware
 - `-t <float>` — temperature (0.0–2.0)
 - `--peripheral <name>:<port>` — attach hardware peripheral
 
-The agent has access to 30+ tools gated by security policy: shell, file_read, file_write, file_edit, glob_search, content_search, memory_store, memory_recall, memory_forget, browser, http_request, web_fetch, web_search, cron, delegate, git, and more. Max tool iterations defaults to 10.
+The agent has access to 30+ tools gated by security policy: shell, file_read, file_write, file_edit, glob_search, content_search, browser, http_request, web_fetch, web_search, cron, delegate, git, and more. Memory persistence is provided via the Kumiho MCP (`kumiho_memory_engage`, `kumiho_memory_reflect`, `kumiho_memory_store`, …) and the Operator MCP (`construct-operator__memory_store`, `construct-operator__memory_search`). Max tool iterations defaults to 10.
 
 ---
 

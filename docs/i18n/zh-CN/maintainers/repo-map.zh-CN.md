@@ -101,7 +101,7 @@ construct/
 
 工具类别：
 - **文件/Shell**: `shell`、`file_read`、`file_write`、`file_edit`、`glob_search`、`content_search`
-- **内存**: `memory_store`、`memory_recall`、`memory_forget`
+- **内存**: 由 Kumiho-memory MCP 提供 — `kumiho_memory_engage`、`kumiho_memory_reflect`、`kumiho_memory_store`、`kumiho_memory_retrieve`、`kumiho_memory_consolidate`、`kumiho_memory_dream_state`。Operator MCP 也通过 `construct-operator__` 前缀提供 `memory_store` / `memory_search` 以兼容旧调用。
 - **Web**: `browser`、`browser_open`、`web_fetch`、`web_search_tool`、`http_request`
 - **调度**: `cron_add`、`cron_list`、`cron_remove`、`cron_update`、`cron_run`、`cron_runs`、`schedule`
 - **委托**: `delegate`（子代理生成）、`composio`（OAuth 集成）

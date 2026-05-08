@@ -55,7 +55,7 @@ export function SelectedTaskCard({ task, step, title = 'Selected Node', emptyTex
             {step ? <StatusPill status={step.status} /> : null}
           </div>
           <div className="text-xs uppercase tracking-[0.12em]" style={{ color: 'var(--construct-text-faint)' }}>
-            {task.action}
+            {task.type}
           </div>
           <p className="text-sm leading-6" style={{ color: 'var(--construct-text-secondary)' }}>
             {task.description || 'No description provided.'}

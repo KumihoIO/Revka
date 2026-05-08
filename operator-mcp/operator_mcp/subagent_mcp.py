@@ -255,6 +255,20 @@ async def list_tools() -> list[Tool]:
                 "properties": {},
             },
         ),
+        Tool(
+            name="get_auth_token",
+            description=(
+                "Return the decrypted credentials for this step's bound auth "
+                "profile. Use only when calling the external API; do not paste "
+                "into chat or logs. Returns { token, kind, provider, "
+                "profile_name, expires_at } on success, or { error, code } if "
+                "no profile is bound or the profile is missing/expired."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {},
+            },
+        ),
     ]
 
 
@@ -408,6 +422,33 @@ async def _dispatch(name: str, args: dict[str, Any]) -> dict[str, Any]:
     if name == "list_workflows":
         from operator_mcp.tool_handlers.workflows import tool_list_workflows
         return await tool_list_workflows(args)
+
+    if name == "get_auth_token":
+        # Resolves the auth profile id propagated via env. Token never lives
+        # in this process for longer than the resolve call.
+        profile_id = os.environ.get("CONSTRUCT_AUTH_PROFILE_ID", "").strip()
+        if not profile_id:
+            return {
+                "error": "no auth profile bound to this step",
+                "code": "auth_profile_not_bound",
+            }
+        try:
+            from operator_mcp.workflow.auth_resolver import (
+                AuthResolveError,
+                resolve_auth_profile,
+            )
+            resolved = await resolve_auth_profile(profile_id)
+        except AuthResolveError as exc:
+            return {"error": str(exc), "code": exc.code}
+        except Exception as exc:  # noqa: BLE001
+            return {"error": str(exc), "code": "auth_resolve_failed"}
+        return {
+            "token": resolved.get("token", ""),
+            "kind": resolved.get("kind", ""),
+            "provider": resolved.get("provider", ""),
+            "profile_name": resolved.get("profile_name", ""),
+            "expires_at": resolved.get("expires_at"),
+        }
 
     return {"error": f"Unknown tool: {name}"}
 

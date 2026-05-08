@@ -1,7 +1,10 @@
 import { Handle, Position, type NodeTypes } from '@xyflow/react';
 import type { TaskNodeData } from './yamlSync';
 
-const GATE_COLOR = '#eab308';
+const GATE_COLOR = 'var(--construct-status-warning)';
+const GATE_SOFT = 'color-mix(in srgb, var(--construct-status-warning) 16%, transparent)';
+const TRUE_COLOR = 'var(--construct-status-success)';
+const FALSE_COLOR = 'var(--construct-status-danger)';
 
 function GateNode({ data, selected }: { data: TaskNodeData; selected?: boolean }) {
   return (
@@ -10,14 +13,14 @@ function GateNode({ data, selected }: { data: TaskNodeData; selected?: boolean }
       style={{
         position: 'relative',
         background: selected
-          ? `linear-gradient(135deg, ${GATE_COLOR}30 0%, ${GATE_COLOR}18 40%, rgba(20,20,30,0.95) 100%)`
-          : `linear-gradient(135deg, ${GATE_COLOR}12 0%, rgba(30,30,40,0.98) 50%, rgba(20,20,30,0.95) 100%)`,
-        border: `2px solid ${selected ? GATE_COLOR : GATE_COLOR + '60'}`,
+          ? `linear-gradient(135deg, ${GATE_SOFT} 0%, ${GATE_SOFT} 40%, var(--construct-bg-panel-strong) 100%)`
+          : `linear-gradient(135deg, ${GATE_SOFT} 0%, var(--construct-bg-elevated) 50%, var(--construct-bg-surface) 100%)`,
+        border: `2px solid ${selected ? GATE_COLOR : 'var(--construct-border-strong)'}`,
         minWidth: 200,
         maxWidth: 260,
         boxShadow: selected
-          ? `0 0 20px ${GATE_COLOR}30, inset 0 1px 0 ${GATE_COLOR}20`
-          : `0 4px 12px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.04)`,
+          ? `0 0 20px ${GATE_SOFT}, inset 0 1px 0 ${GATE_SOFT}`
+          : `0 4px 12px rgba(0, 0, 0, 0.3), inset 0 1px 0 var(--construct-border-soft)`,
       }}
     >
       {/* Input handle */}
@@ -37,7 +40,10 @@ function GateNode({ data, selected }: { data: TaskNodeData; selected?: boolean }
             <path d="M8 1L15 8L8 15L1 8Z" />
           </svg>
         </div>
-        <div className="text-sm font-bold truncate" style={{ color: selected ? '#fff' : 'var(--pc-text-primary)' }}>
+        <div
+          className="text-sm font-bold truncate"
+          style={{ color: selected ? 'var(--construct-signal-selected)' : 'var(--pc-text-primary)' }}
+        >
           {data.name || data.taskId}
         </div>
       </div>
@@ -46,7 +52,7 @@ function GateNode({ data, selected }: { data: TaskNodeData; selected?: boolean }
       <div className="flex items-center gap-1.5 mt-1.5">
         <span
           className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider"
-          style={{ background: GATE_COLOR + '22', color: GATE_COLOR }}
+          style={{ background: GATE_SOFT, color: GATE_COLOR }}
         >
           if / else
         </span>
@@ -79,12 +85,12 @@ function GateNode({ data, selected }: { data: TaskNodeData; selected?: boolean }
       {/* Branch labels + handles */}
       <div className="flex items-center justify-between mt-2.5 -mx-1">
         <div className="flex items-center gap-1">
-          <div className="w-2.5 h-2.5 rounded-full" style={{ background: '#22c55e' }} />
-          <span className="text-[9px] font-semibold uppercase" style={{ color: '#22c55e' }}>true</span>
+          <div className="w-2.5 h-2.5 rounded-full" style={{ background: TRUE_COLOR }} />
+          <span className="text-[9px] font-semibold uppercase" style={{ color: TRUE_COLOR }}>true</span>
         </div>
         <div className="flex items-center gap-1">
-          <span className="text-[9px] font-semibold uppercase" style={{ color: '#ef4444' }}>false</span>
-          <div className="w-2.5 h-2.5 rounded-full" style={{ background: '#ef4444' }} />
+          <span className="text-[9px] font-semibold uppercase" style={{ color: FALSE_COLOR }}>false</span>
+          <div className="w-2.5 h-2.5 rounded-full" style={{ background: FALSE_COLOR }} />
         </div>
       </div>
 
@@ -93,7 +99,7 @@ function GateNode({ data, selected }: { data: TaskNodeData; selected?: boolean }
         type="source"
         position={Position.Bottom}
         id="true"
-        style={{ background: '#22c55e', width: 10, height: 10, left: '25%' }}
+        style={{ background: TRUE_COLOR, width: 10, height: 10, left: '25%' }}
       />
 
       {/* False handle (bottom-right) */}
@@ -101,7 +107,7 @@ function GateNode({ data, selected }: { data: TaskNodeData; selected?: boolean }
         type="source"
         position={Position.Bottom}
         id="false"
-        style={{ background: '#ef4444', width: 10, height: 10, left: '75%' }}
+        style={{ background: FALSE_COLOR, width: 10, height: 10, left: '75%' }}
       />
     </div>
   );

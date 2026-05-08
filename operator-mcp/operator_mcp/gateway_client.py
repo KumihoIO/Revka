@@ -13,15 +13,40 @@ except ImportError:
     _HAS_HTTPX = False
 
 
+def _read_service_token() -> str:
+    """Read the gateway service token.
+
+    Order: ``CONSTRUCT_SERVICE_TOKEN`` env override →
+    ``~/.construct/service-token`` (written by the Rust gateway at startup).
+    Returns empty string when neither source is available; the caller logs and
+    proceeds without auth (gateway will then 401, which is the correct signal).
+
+    Mirrors ``operator_mcp.workflow.auth_resolver._service_token``.
+    """
+    env_tok = os.environ.get("CONSTRUCT_SERVICE_TOKEN", "").strip()
+    if env_tok:
+        return env_tok
+    path = os.path.expanduser("~/.construct/service-token")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    except FileNotFoundError:
+        return ""
+    except OSError as exc:
+        _log(f"gateway_client: failed to read service token at {path}: {exc}")
+        return ""
+
+
 class ConstructGatewayClient:
     """Queries the Construct gateway REST API for cost/audit/governance data."""
 
     def __init__(self) -> None:
         self.gateway_url = os.environ.get("CONSTRUCT_GATEWAY_URL", "").rstrip("/")
-        self.gateway_token = os.environ.get("CONSTRUCT_GATEWAY_TOKEN", "")
+        self.service_token = _read_service_token()
         self._available = bool(self.gateway_url and _HAS_HTTPX)
         if self._available:
-            _log(f"Construct Gateway client enabled: {self.gateway_url}")
+            auth_state = "service-token" if self.service_token else "no token (calls will 401)"
+            _log(f"Construct Gateway client enabled: {self.gateway_url} ({auth_state})")
         else:
             missing = []
             if not _HAS_HTTPX:
@@ -32,8 +57,8 @@ class ConstructGatewayClient:
 
     def _headers(self) -> dict[str, str]:
         h: dict[str, str] = {"Accept": "application/json"}
-        if self.gateway_token:
-            h["Authorization"] = f"Bearer {self.gateway_token}"
+        if self.service_token:
+            h["X-Construct-Service-Token"] = self.service_token
         return h
 
     async def get_cost_summary(self) -> dict[str, Any] | None:
@@ -77,14 +102,22 @@ class ConstructGatewayClient:
         *,
         version: str = "1.0",
         tags: list[str] | None = None,
-    ) -> bool:
+    ) -> str | None:
         """Register a workflow definition with the gateway REST API.
 
         This syncs disk-saved workflows to Kumiho so the dashboard can see them.
-        Returns True if the workflow was registered successfully.
+        Returns the workflow item kref on success (e.g. ``kref://Construct/Workflows/foo.workflow``)
+        and ``None`` on any failure. Callers that only care about success/failure
+        can use ``bool(kref)`` — ``None`` is falsy, a non-empty kref is truthy.
+
+        Note: the Rust gateway endpoint creates a NEW revision and tags it
+        ``published`` on every call. To get the revision_kref the caller
+        should query Kumiho for the latest published revision of the returned
+        item kref (this client deliberately stays thin and avoids Kumiho SDK
+        coupling).
         """
         if not self._available:
-            return False
+            return None
         try:
             body: dict[str, Any] = {
                 "name": name,
@@ -101,13 +134,122 @@ class ConstructGatewayClient:
                     headers=self._headers(),
                 )
                 if resp.status_code in (200, 201):
-                    _log(f"Workflow '{name}' registered with gateway")
-                    return True
+                    try:
+                        data = resp.json()
+                    except Exception:
+                        data = {}
+                    item_kref = ""
+                    if isinstance(data, dict):
+                        wf = data.get("workflow") or {}
+                        if isinstance(wf, dict):
+                            item_kref = str(wf.get("kref", "") or "")
+                    _log(f"Workflow '{name}' registered with gateway (kref={item_kref or '?'})")
+                    return item_kref or None
                 _log(f"Gateway register_workflow {resp.status_code}: {resp.text[:200]}")
-                return False
+                return None
         except Exception as e:
             _log(f"Gateway register_workflow failed: {e}")
-            return False
+            return None
+
+    async def get_agents(self, include_deprecated: bool = False) -> list[dict[str, Any]] | None:
+        """List pool agents from the gateway.
+
+        Returns the ``agents`` array from ``GET /api/agents`` (each entry has
+        ``name``, ``item_name``, ``agent_type``, ``role``, ``expertise``,
+        ``identity``, etc.) or ``None`` if the gateway is unreachable.
+        """
+        if not self._available:
+            return None
+        try:
+            params = {
+                "include_deprecated": "true" if include_deprecated else "false",
+                "page": "1",
+                "per_page": "50",  # gateway caps per_page at 50
+            }
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(
+                    f"{self.gateway_url}/api/agents",
+                    params=params,
+                    headers=self._headers(),
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                return data.get("agents", []) if isinstance(data, dict) else []
+        except Exception as e:
+            _log(f"Gateway agents query failed: {e}")
+            return None
+
+    async def get_auth_profiles(self) -> list[dict[str, Any]] | None:
+        """List auth profile metadata from the gateway.
+
+        Returns metadata-only summaries (no token bytes) from
+        ``GET /api/auth/profiles``, or ``None`` if the gateway is
+        unreachable.
+        """
+        if not self._available:
+            return None
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(
+                    f"{self.gateway_url}/api/auth/profiles",
+                    headers=self._headers(),
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                return data.get("profiles", []) if isinstance(data, dict) else []
+        except Exception as e:
+            _log(f"Gateway auth-profiles query failed: {e}")
+            return None
+
+    async def get_skills(self, include_deprecated: bool = False) -> list[dict[str, Any]] | None:
+        """List skills from the gateway.
+
+        Returns the ``skills`` array from ``GET /api/skills`` (each entry has
+        ``name``, ``description``, etc.) or ``None`` if the gateway is
+        unreachable.
+        """
+        if not self._available:
+            return None
+        try:
+            params = {
+                "include_deprecated": "true" if include_deprecated else "false",
+                "page": "1",
+                "per_page": "50",
+            }
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(
+                    f"{self.gateway_url}/api/skills",
+                    params=params,
+                    headers=self._headers(),
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                return data.get("skills", []) if isinstance(data, dict) else []
+        except Exception as e:
+            _log(f"Gateway skills query failed: {e}")
+            return None
+
+    async def get_channels(self) -> list[dict[str, Any]] | None:
+        """List configured channels from the gateway.
+
+        Returns the ``channels`` array from ``GET /api/channels`` (each entry
+        has ``name``, ``type``/``kind``, etc.) or ``None`` if the gateway is
+        unreachable.
+        """
+        if not self._available:
+            return None
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(
+                    f"{self.gateway_url}/api/channels",
+                    headers=self._headers(),
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                return data.get("channels", []) if isinstance(data, dict) else []
+        except Exception as e:
+            _log(f"Gateway channels query failed: {e}")
+            return None
 
     async def push_channel_event(self, event: dict[str, Any]) -> bool:
         """Push a structured channel event to the gateway for broadcast.

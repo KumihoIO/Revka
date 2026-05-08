@@ -232,7 +232,7 @@ enum Commands {
         /// Model ID override (used in quick mode)
         #[arg(long)]
         model: Option<String>,
-        /// Memory backend (sqlite, lucid, markdown, none) - used in quick mode, default: sqlite
+        /// Memory backend (kumiho, none) - used in quick mode, default: kumiho
         #[arg(long)]
         memory: Option<String>,
 

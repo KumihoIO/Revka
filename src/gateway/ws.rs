@@ -425,6 +425,36 @@ async fn handle_socket(
     }
 }
 
+/// Extract a `<tag>...</tag>` block from `page` by name, returning the
+/// substring including both delimiters. Returns `None` when the open tag
+/// is missing or no matching close tag follows it.
+fn extract_xml_block(page: &str, tag: &str) -> Option<String> {
+    let open = format!("<{tag}>");
+    let close = format!("</{tag}>");
+    let start = page.find(&open)?;
+    let end = page[start..].find(&close)? + start + close.len();
+    Some(page[start..end].to_string())
+}
+
+/// Extract the Architect's `<editor-state>...</editor-state>` block from a
+/// `page_context` string, if present.  The Architect frontend embeds this
+/// block on every chat turn so the LLM sees the current YAML and the
+/// agent's runtime guard knows to hide workflow persistence tools.  Returns
+/// `None` for non-Architect chats (no marker present) or malformed input
+/// (open tag without a matching close tag).
+fn architect_editor_state_block(page: &str) -> Option<String> {
+    extract_xml_block(page, "editor-state")
+}
+
+/// Extract the Architect's `<architect-instructions>...</architect-instructions>`
+/// block from a `page_context` string, if present.  The Architect frontend
+/// embeds the system preface inside this block so it actually reaches the LLM
+/// (operator-role chat messages stay client-side and never travel the WS).
+/// Returns `None` when the block is absent.
+fn architect_instructions_block(page: &str) -> Option<String> {
+    extract_xml_block(page, "architect-instructions")
+}
+
 /// Build a context-aware system hint based on the dashboard page the user is viewing.
 ///
 /// Returns `None` for unknown pages or the main chat — only Agent Pool and
@@ -717,13 +747,16 @@ async fn process_chat_message(
         String::new()
     } else {
         let workspace_dir = state.config.lock().workspace_dir.clone();
+        // Uploads land in `<workspace>/attachments/<session_id>/...` keyed
+        // on the bare session UUID — strip the gateway's `gw_` prefix from
+        // `session_key` so the resolver looks in the right directory. The
+        // earlier `rsplit(':')` was a no-op against the `gw_<uuid>` format
+        // and silently dropped every attachment on the floor.
         let session_id = session_key
-            .rsplit(':')
-            .next()
-            .unwrap_or(session_key)
-            .to_string();
+            .strip_prefix(GW_SESSION_PREFIX)
+            .unwrap_or(session_key);
         let resolved =
-            super::api_attachments::resolve_for_session(&workspace_dir, &session_id, attachments)
+            super::api_attachments::resolve_for_session(&workspace_dir, session_id, attachments)
                 .await;
         build_attachment_prefix(&resolved).await
     };
@@ -736,6 +769,24 @@ async fn process_chat_message(
 
     let content_owned = if let Some(hint) = page_context.and_then(page_context_hint) {
         format!("{hint}{content_with_attachments}")
+    } else if let Some(architect_block) = page_context.and_then(architect_editor_state_block) {
+        // Architect mode: embed the editor-state block so (a) the LLM sees
+        // the editor's current YAML as documented in the Architect system
+        // preface, and (b) the agent loop's runtime tool guard can detect
+        // Architect mode via the `<editor-state>` substring and strip the
+        // workflow persistence tools from the spec list. Regular Operator
+        // chats never carry the marker, so this branch is a no-op for them.
+        //
+        // The Architect frontend also ships the system preface inside an
+        // `<architect-instructions>` block in the same page_context. We
+        // prepend it here so the LLM actually sees the rules on every turn
+        // — they used to be pushed via `appendSystemMessage`, but
+        // operator-role messages stay client-side and never travel the WS.
+        let instructions_block = page_context
+            .and_then(architect_instructions_block)
+            .map(|b| format!("{b}\n\n"))
+            .unwrap_or_default();
+        format!("{instructions_block}{architect_block}\n\n{content_with_attachments}")
     } else {
         content_with_attachments
     };
@@ -952,5 +1003,45 @@ mod tests {
             "construct.v1, bearer.zc_tok, other".parse().unwrap(),
         );
         assert_eq!(extract_ws_token(&headers, None), Some("zc_tok"));
+    }
+
+    #[test]
+    fn architect_editor_state_block_extracts_marker_from_page_context() {
+        // Mirrors what `web/src/construct/components/workflows/ArchitectPanel.tsx`
+        // sends as `page_context` on every Architect chat turn.
+        let page_context = "v2:workflow_editor:architect\n<editor-state>\n  <workflow_name>foo</workflow_name>\n  <current_yaml>\n    name: foo\n  </current_yaml>\n</editor-state>";
+        let block = architect_editor_state_block(page_context).expect("marker present");
+        assert!(block.starts_with("<editor-state>"));
+        assert!(block.ends_with("</editor-state>"));
+        assert!(block.contains("<workflow_name>foo</workflow_name>"));
+    }
+
+    #[test]
+    fn architect_editor_state_block_returns_none_for_regular_chats() {
+        assert!(architect_editor_state_block("agent_pool").is_none());
+        assert!(architect_editor_state_block("").is_none());
+        assert!(architect_editor_state_block("some random text").is_none());
+        // Open without close is malformed and must not match.
+        assert!(architect_editor_state_block("<editor-state>oops").is_none());
+    }
+
+    #[test]
+    fn architect_instructions_block_extracts_preface_from_page_context() {
+        // Mirrors the new `pageContext` envelope produced by `buildPageContext`
+        // — the preface is wrapped in `<architect-instructions>` alongside
+        // the existing `<editor-state>` block so it actually reaches the LLM.
+        let page_context = "v2:workflow_editor:architect\n<architect-instructions>\n  You are the Architect.\n  CRITICAL: ...\n</architect-instructions>\n<editor-state>\n  <workflow_name>foo</workflow_name>\n</editor-state>";
+        let block = architect_instructions_block(page_context).expect("marker present");
+        assert!(block.starts_with("<architect-instructions>"));
+        assert!(block.ends_with("</architect-instructions>"));
+        assert!(block.contains("You are the Architect."));
+    }
+
+    #[test]
+    fn architect_instructions_block_returns_none_when_absent() {
+        let page_context = "v2:workflow_editor:architect\n<editor-state>\n</editor-state>";
+        assert!(architect_instructions_block(page_context).is_none());
+        assert!(architect_instructions_block("").is_none());
+        assert!(architect_instructions_block("<architect-instructions>oops").is_none());
     }
 }

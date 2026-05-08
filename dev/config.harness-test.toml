@@ -30,4 +30,4 @@ purge_after_days = 30
 
 [autonomy]
 level = "supervised"
-auto_approve = ["file_read", "file_write", "file_edit", "memory_recall", "memory_store", "web_search_tool", "web_fetch", "calculator", "glob_search", "content_search", "image_info", "git_operations"]
+auto_approve = ["file_read", "file_write", "file_edit", "web_search_tool", "web_fetch", "calculator", "glob_search", "content_search", "image_info", "git_operations"]

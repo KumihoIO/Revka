@@ -215,6 +215,11 @@ mod tests {
     use super::*;
 
     fn test_mappings() -> Vec<RoleMapping> {
+        // Audit row 12: `memory_search` is a real Operator MCP tool.  Tools
+        // routed through MCP are dispatched at their prefixed name
+        // (`construct-operator__memory_search`) at runtime, but IAM policy
+        // matches on the bare name string, so listing it here is correct
+        // and continues to work for user policies.
         vec![
             RoleMapping {
                 nevis_role: "admin".into(),

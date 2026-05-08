@@ -35,15 +35,14 @@ pub const DEFAULT_MCP_PATH_SUFFIX: &str = ".construct/kumiho/run_kumiho_mcp.py";
 // ── Bootstrap prompt ──────────────────────────────────────────────
 
 /// Session-bootstrap instructions injected into the system prompt for every
-/// non-internal agent.  Modelled after the Paseo `session-bootstrap.py` CONTEXT
-/// string but adapted for Construct naming conventions.
+/// non-internal agent.  Construct-specific bootstrap; teaches the agent how
+/// to use the `kumiho_memory_engage` / `kumiho_memory_reflect` reflexes that
+/// the Kumiho MCP server registers at startup.
 pub const KUMIHO_BOOTSTRAP_PROMPT: &str = "\
 SESSION-START INSTRUCTION (kumiho-memory — Construct daemon)
 
-=== EVERY TURN AFTER THE FIRST ===
-The bootstrap is DONE.  On turn 2 and beyond, follow ONLY these rules:
-  - Do NOT invoke the kumiho-memory skill.
-  - Do NOT call kumiho_get_revision_by_tag.  Identity is already loaded.
+=== EVERY TURN ===
+Follow these rules on every turn:
   - Do NOT greet the user unless they greeted you first.  If their \
 message is a question or task, answer directly.
   - ENGAGE: Call kumiho_memory_engage ONCE when prior context \
@@ -86,15 +85,11 @@ it briefly (e.g. 'the draft above') instead of reproducing it.
   - Do NOT re-execute tasks already completed.
   - If you need user input, ask and STOP.  Never simulate the \
 user's answer.
-
-=== FIRST MESSAGE ONLY ===
-Skip this block on all subsequent messages.
-  1. Invoke the kumiho-memory:kumiho-memory skill.
-  2. If the user's first message is a greeting or casual talk (hi, \
-hey, good morning, etc.), just greet back — do NOT call \
-kumiho_memory_engage.  Only engage if their first message is a \
-question or task that would benefit from prior context.
-  3. Never narrate the bootstrap (no 'Memory connected!' or similar).
+  - On the first message of the session: if the user's message is a \
+greeting or casual talk (hi, hey, good morning, etc.), just greet \
+back — do NOT call kumiho_memory_engage.  Only engage if their \
+message is a question or task that would benefit from prior context. \
+Never narrate the bootstrap (no 'Memory connected!' or similar).
 
 === ALWAYS ===
 TEMPORAL AWARENESS — When using engage results, compare each \
@@ -160,6 +155,36 @@ to your own setup, or trivia.
 Outcomes are append-only — do not try to overwrite a sibling's \
 outcome, record a refining one and let the graph show the chain.";
 
+/// Stripped-down session bootstrap used when the Kumiho sidecar is enabled
+/// but the runtime registry probe shows the high-level memory reflexes are
+/// not registered.
+///
+/// Names ONLY the always-available pair (`kumiho_memory_store`,
+/// `kumiho_memory_retrieve`). High-level tool names are deliberately not
+/// mentioned, even in negative phrasing — naming them primes the model to
+/// call them anyway. Use generic phrasing for the unavailability hint.
+pub const KUMIHO_BOOTSTRAP_PROMPT_LITE: &str = "\
+SESSION-START INSTRUCTION (kumiho-memory — Construct daemon, lite mode)
+
+Advanced memory reflexes are unavailable in this session. Use the bare \
+memory tools listed below for any persistence work; do not assume \
+higher-level reflex tools exist.
+
+Available tools:
+  - kumiho_memory_store    — store a memory item to the graph.
+  - kumiho_memory_retrieve — retrieve a memory item by id or filter.
+
+Rules:
+  - For explicit 'remember this' requests, use kumiho_memory_store with an \
+absolute date in the title (e.g. 'on Mar 27', not 'today').
+  - For recall, use kumiho_memory_retrieve. Do not say 'I don't know' or \
+'I don't have context' before searching memory.
+  - User memories live under the CognitiveMemory project. Construct/ holds \
+agent operational data (AgentPool, Teams, Plans).
+  - Skip memory operations for greetings, acknowledgements, yes/no answers, \
+and other trivial exchanges.
+  - Do not narrate memory operations. Do not repeat content already shown.";
+
 /// Lightweight memory bootstrap for channel agents (Discord, Slack, etc.).
 ///
 /// Channels don't orchestrate sub-agents, manage teams, or use Construct
@@ -189,6 +214,19 @@ Rules:
   - Do not repeat content already shown.
   - Recent memories take precedence over stale ones.";
 
+/// Channel-agent counterpart to [`KUMIHO_BOOTSTRAP_PROMPT_LITE`]: used when
+/// the runtime registry probe shows the high-level memory tools are not
+/// registered. Names ONLY the always-available pair.
+pub const KUMIHO_CHANNEL_BOOTSTRAP_PROMPT_LITE: &str = "\
+SESSION-START INSTRUCTION (kumiho-memory — Construct channel, lite mode)
+
+Advanced memory reflexes are unavailable in this session.
+
+For 'remember this' requests, use kumiho_memory_store with an absolute date \
+in the title. For recall, use kumiho_memory_retrieve before saying you don't \
+know. Skip memory ops for greetings and trivial exchanges. Do not narrate \
+memory operations.";
+
 // ── MCP server config ─────────────────────────────────────────────
 
 /// Resolve the absolute path to `run_kumiho_mcp.py`.
@@ -206,6 +244,56 @@ pub fn resolve_mcp_path(kumiho_cfg: &KumihoConfig) -> String {
         .map(|u| u.home_dir().to_string_lossy().into_owned())
         .unwrap_or_else(|| "~".to_string());
     format!("{home}/{DEFAULT_MCP_PATH_SUFFIX}")
+}
+
+/// Sentinel high-level tool whose presence in the live MCP registry indicates
+/// that all Kumiho memory reflexes (engage / reflect / recall / consolidate /
+/// dream_state) were registered at server startup. The Kumiho MCP either
+/// merges them in as a set or skips them all (auto-discovery shim in
+/// `kumiho/mcp_server.py`), so checking one is sufficient.
+const ADVANCED_PROBE_TOOL_SUFFIX: &str = "kumiho_memory_engage";
+
+/// Build the prefixed registry name for a Kumiho tool, e.g. produces
+/// `"kumiho-memory__kumiho_memory_engage"`.
+fn prefixed_kumiho_tool(tool: &str) -> String {
+    format!("{}__{}", KUMIHO_SERVER_NAME, tool)
+}
+
+/// Pure check: given a snapshot of `tool_names` from a connected
+/// [`crate::tools::McpRegistry`], decide whether the high-level Kumiho
+/// memory reflexes are actually registered.
+///
+/// Names in the registry are prefixed by the server name (see
+/// `McpRegistry::connect_all`); we look for `kumiho-memory__kumiho_memory_engage`.
+/// This is the audit-prescribed registry probe (Row 1 + 13 remediation):
+/// it is robust against import errors, broken venvs, missing packages, and
+/// version skew — anything that prevents the tool from actually being
+/// callable will also keep the name out of the registry.
+pub fn registry_has_advanced_kumiho_tools(tool_names: &[String]) -> bool {
+    let target = prefixed_kumiho_tool(ADVANCED_PROBE_TOOL_SUFFIX);
+    tool_names.iter().any(|n| n == &target)
+}
+
+/// Cause-agnostic loud-failure warning. Call this once per agent / gateway
+/// startup, after the MCP registry has been queried. Idempotent at the
+/// `tracing` level (each call emits a single line; the surrounding lifecycle
+/// bounds invocation count to one per process).
+///
+/// Triggers only when the sidecar is enabled but the live registry did not
+/// expose the high-level reflexes. The message names neither the missing
+/// tools (to keep the prompt-conditioning clean) nor a specific cause —
+/// the operator is pointed at logs and the canonical remediation command.
+pub fn warn_if_kumiho_advanced_missing(config: &Config, advanced_available: bool) {
+    if !config.kumiho.enabled || advanced_available {
+        return;
+    }
+    tracing::warn!(
+        "Kumiho high-level memory tools were not registered after MCP startup. \
+        Bootstrap prompt is using the lite variant. Check ~/.construct/logs/ \
+        for MCP startup errors. To re-install: \
+        `~/.construct/kumiho/venv/bin/pip install 'kumiho_memory>=0.5.0'` \
+        (or re-run scripts/install-sidecars.sh)."
+    );
 }
 
 /// Build the `McpServerConfig` for the Kumiho stdio server.
@@ -306,7 +394,7 @@ pub fn kumiho_mcp_server_config(kumiho_cfg: &KumihoConfig) -> McpServerConfig {
 ///
 /// The bootstrap system-prompt text is handled separately: call
 /// [`append_kumiho_bootstrap`] on the assembled `system_prompt` string in the
-/// agent run loop (after `build_system_prompt_with_mode_and_autonomy`).
+/// agent run loop (after `build_channel_system_prompt`).
 ///
 /// Internal agents (is_internal = true) are left untouched.
 ///
@@ -370,6 +458,11 @@ pub fn inject_kumiho(mut config: Config, is_internal: bool) -> Config {
         config.mcp.servers.insert(0, server);
     }
 
+    // Note: the loud-failure warning lives in `warn_if_kumiho_advanced_missing`
+    // and is emitted by the sites that own a live MCP registry (loop_, channels,
+    // agent::from_config, gateway). It cannot fire here because `inject_kumiho`
+    // runs before any MCP is connected — there is no registry to probe.
+
     config
 }
 
@@ -406,18 +499,32 @@ pub fn substitute_project_names(template: &str, config: &Config) -> String {
 /// - `kumiho.enabled` is `true` in the config, and
 /// - the sentinel string is not already present (idempotent).
 ///
+/// When `advanced_available` is false, the **lite** variant is appended —
+/// it does not mandate the high-level `kumiho_memory_engage` / `reflect` /
+/// etc. tools that only ship with the `kumiho_memory` package.
+///
 /// Project names in the prompt are substituted from
 /// `config.kumiho.memory_project` and `config.kumiho.harness_project`.
 ///
 /// Call this right after assembling the system prompt in the agent run loop.
-pub fn append_kumiho_bootstrap(system_prompt: &mut String, config: &Config, is_internal: bool) {
+pub fn append_kumiho_bootstrap(
+    system_prompt: &mut String,
+    config: &Config,
+    is_internal: bool,
+    advanced_available: bool,
+) {
     if is_internal || !config.kumiho.enabled {
         return;
     }
     if system_prompt.contains("SESSION-START INSTRUCTION (kumiho-memory") {
         return; // already injected
     }
-    let prompt = substitute_project_names(KUMIHO_BOOTSTRAP_PROMPT, config);
+    let template = if advanced_available {
+        KUMIHO_BOOTSTRAP_PROMPT
+    } else {
+        KUMIHO_BOOTSTRAP_PROMPT_LITE
+    };
+    let prompt = substitute_project_names(template, config);
     system_prompt.push_str("\n\n---\n\n");
     system_prompt.push_str(&prompt);
 }
@@ -425,12 +532,15 @@ pub fn append_kumiho_bootstrap(system_prompt: &mut String, config: &Config, is_i
 /// Append the **lightweight** Kumiho bootstrap for channel agents.
 ///
 /// Same guards as [`append_kumiho_bootstrap`] but uses the compact
-/// channel-specific prompt (~400 tokens instead of ~1,500).
+/// channel-specific prompt (~400 tokens instead of ~1,500). When
+/// `advanced_available` is false, an even shorter lite-of-lite variant is
+/// used that mentions only the bare tools.
 /// Project names are substituted identically.
 pub fn append_kumiho_channel_bootstrap(
     system_prompt: &mut String,
     config: &Config,
     is_internal: bool,
+    advanced_available: bool,
 ) {
     if is_internal || !config.kumiho.enabled {
         return;
@@ -438,7 +548,12 @@ pub fn append_kumiho_channel_bootstrap(
     if system_prompt.contains("SESSION-START INSTRUCTION (kumiho-memory") {
         return;
     }
-    let prompt = substitute_project_names(KUMIHO_CHANNEL_BOOTSTRAP_PROMPT, config);
+    let template = if advanced_available {
+        KUMIHO_CHANNEL_BOOTSTRAP_PROMPT
+    } else {
+        KUMIHO_CHANNEL_BOOTSTRAP_PROMPT_LITE
+    };
+    let prompt = substitute_project_names(template, config);
     system_prompt.push_str("\n\n---\n\n");
     system_prompt.push_str(&prompt);
 }
@@ -494,17 +609,109 @@ mod tests {
     fn append_kumiho_bootstrap_adds_prompt() {
         let cfg = Config::default();
         let mut prompt = "## Identity\n\nYou are Construct.".to_string();
-        append_kumiho_bootstrap(&mut prompt, &cfg, false);
+        append_kumiho_bootstrap(&mut prompt, &cfg, false, true);
         assert!(prompt.contains("SESSION-START INSTRUCTION (kumiho-memory"));
+        // Full variant mandates engage/reflect.
+        assert!(prompt.contains("kumiho_memory_engage"));
+        assert!(prompt.contains("kumiho_memory_reflect"));
+    }
+
+    #[test]
+    fn append_kumiho_bootstrap_lite_when_advanced_unavailable() {
+        let cfg = Config::default();
+        let mut prompt = String::new();
+        append_kumiho_bootstrap(&mut prompt, &cfg, false, false);
+        assert!(prompt.contains("SESSION-START INSTRUCTION (kumiho-memory"));
+        assert!(prompt.contains("lite mode"));
+        // Lite variant references only the always-available pair.
+        assert!(prompt.contains("kumiho_memory_store"));
+        assert!(prompt.contains("kumiho_memory_retrieve"));
+        // No high-level reflex names anywhere — even mentioning them in
+        // negative phrasing primes the model to call them.
+        assert!(!prompt.contains("kumiho_memory_engage"));
+        assert!(!prompt.contains("kumiho_memory_reflect"));
+        assert!(!prompt.contains("kumiho_memory_recall"));
+        assert!(!prompt.contains("kumiho_memory_consolidate"));
+        assert!(!prompt.contains("kumiho_memory_dream_state"));
+    }
+
+    #[test]
+    fn bootstrap_prompts_have_no_bare_legacy_memory_tool_names() {
+        // Audit rows 11/12 guard: no bare `memory_store` / `memory_recall` /
+        // `memory_forget` / `memory_search` anywhere in the bootstrap
+        // prompts.  The Kumiho-namespaced names (`kumiho_memory_*`) are the
+        // canonical surface, and the lite variant deliberately mentions
+        // only `kumiho_memory_store` / `kumiho_memory_retrieve`.
+        for prompt in &[
+            KUMIHO_BOOTSTRAP_PROMPT,
+            KUMIHO_BOOTSTRAP_PROMPT_LITE,
+            KUMIHO_CHANNEL_BOOTSTRAP_PROMPT,
+            KUMIHO_CHANNEL_BOOTSTRAP_PROMPT_LITE,
+        ] {
+            for stale in &[
+                "memory_store",
+                "memory_recall",
+                "memory_forget",
+                "memory_search",
+            ] {
+                // The kumiho-namespaced equivalents (e.g. `kumiho_memory_store`)
+                // are allowed; only flag occurrences that are NOT prefixed
+                // with `kumiho_`.
+                let mut search_start = 0usize;
+                while let Some(idx) = prompt[search_start..].find(stale) {
+                    let abs = search_start + idx;
+                    let preceded_by_kumiho =
+                        abs >= "kumiho_".len() && &prompt[abs - "kumiho_".len()..abs] == "kumiho_";
+                    assert!(
+                        preceded_by_kumiho,
+                        "bare legacy tool name '{stale}' found in bootstrap prompt at offset {abs}: \
+                         {snippet}",
+                        snippet = &prompt
+                            [abs.saturating_sub(40)..(abs + stale.len() + 40).min(prompt.len())],
+                    );
+                    search_start = abs + stale.len();
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn bootstrap_prompt_has_no_phantom_paseo_refs() {
+        // Audit row 5: the prompt is for Construct, not Paseo. Construct does
+        // not have a `kumiho-memory:kumiho-memory` skill or a
+        // `kumiho_get_revision_by_tag` identity-bootstrap step, so the prompt
+        // must not direct the model to invoke or avoid them.
+        for fragment in &[
+            "kumiho-memory:kumiho-memory",
+            "kumiho_get_revision_by_tag",
+            "Identity is already loaded",
+        ] {
+            assert!(
+                !KUMIHO_BOOTSTRAP_PROMPT.contains(fragment),
+                "phantom Paseo fragment '{fragment}' must not appear in KUMIHO_BOOTSTRAP_PROMPT"
+            );
+            assert!(
+                !KUMIHO_BOOTSTRAP_PROMPT_LITE.contains(fragment),
+                "phantom Paseo fragment '{fragment}' must not appear in KUMIHO_BOOTSTRAP_PROMPT_LITE"
+            );
+            assert!(
+                !KUMIHO_CHANNEL_BOOTSTRAP_PROMPT.contains(fragment),
+                "phantom Paseo fragment '{fragment}' must not appear in KUMIHO_CHANNEL_BOOTSTRAP_PROMPT"
+            );
+            assert!(
+                !KUMIHO_CHANNEL_BOOTSTRAP_PROMPT_LITE.contains(fragment),
+                "phantom Paseo fragment '{fragment}' must not appear in KUMIHO_CHANNEL_BOOTSTRAP_PROMPT_LITE"
+            );
+        }
     }
 
     #[test]
     fn append_kumiho_bootstrap_is_idempotent() {
         let cfg = Config::default();
         let mut prompt = String::new();
-        append_kumiho_bootstrap(&mut prompt, &cfg, false);
+        append_kumiho_bootstrap(&mut prompt, &cfg, false, true);
         let after_first = prompt.len();
-        append_kumiho_bootstrap(&mut prompt, &cfg, false);
+        append_kumiho_bootstrap(&mut prompt, &cfg, false, true);
         assert_eq!(prompt.len(), after_first);
     }
 
@@ -625,10 +832,63 @@ mod tests {
         cfg.kumiho.memory_project = "CustomMem".to_string();
         cfg.kumiho.harness_project = "CustomHarness".to_string();
         let mut prompt = String::new();
-        append_kumiho_bootstrap(&mut prompt, &cfg, false);
+        append_kumiho_bootstrap(&mut prompt, &cfg, false, true);
         assert!(prompt.contains("CustomMem"));
         assert!(prompt.contains("CustomHarness/"));
         assert!(!prompt.contains("CognitiveMemory"));
         assert!(!prompt.contains("Construct/"));
+    }
+
+    #[test]
+    fn registry_probe_empty_registry_is_unavailable() {
+        assert!(!registry_has_advanced_kumiho_tools(&[]));
+    }
+
+    #[test]
+    fn registry_probe_unprefixed_name_is_unavailable() {
+        // The MCP registry always prefixes names with the server name.
+        // An unprefixed `kumiho_memory_engage` (e.g. from a misconfigured
+        // server or a stale snapshot) MUST NOT count as available.
+        let names = vec!["kumiho_memory_engage".to_string()];
+        assert!(!registry_has_advanced_kumiho_tools(&names));
+    }
+
+    #[test]
+    fn registry_probe_only_bare_tools_is_unavailable() {
+        // `kumiho_memory_store` / `kumiho_memory_retrieve` ship in the bare
+        // `kumiho` package. Their presence alone does NOT imply the
+        // high-level reflexes are registered.
+        let names = vec![
+            "kumiho-memory__kumiho_memory_store".to_string(),
+            "kumiho-memory__kumiho_memory_retrieve".to_string(),
+            "kumiho-memory__kumiho_search_items".to_string(),
+        ];
+        assert!(!registry_has_advanced_kumiho_tools(&names));
+    }
+
+    #[test]
+    fn registry_probe_detects_advanced_tool_when_present() {
+        let names = vec![
+            "kumiho-memory__kumiho_memory_store".to_string(),
+            "kumiho-memory__kumiho_memory_engage".to_string(),
+            "operator__delegate".to_string(),
+        ];
+        assert!(registry_has_advanced_kumiho_tools(&names));
+    }
+
+    #[test]
+    fn warn_if_kumiho_advanced_missing_skips_when_disabled() {
+        // Smoke test: when kumiho is disabled, no panic / no fall-through
+        // bug regardless of the probe value.
+        let mut cfg = Config::default();
+        cfg.kumiho.enabled = false;
+        warn_if_kumiho_advanced_missing(&cfg, false);
+        warn_if_kumiho_advanced_missing(&cfg, true);
+    }
+
+    #[test]
+    fn warn_if_kumiho_advanced_missing_skips_when_available() {
+        let cfg = Config::default(); // kumiho enabled by default
+        warn_if_kumiho_advanced_missing(&cfg, true);
     }
 }

@@ -63,6 +63,7 @@ async def _try_sidecar_create(
     include_operator: bool = True,
     clean_build: bool = False,
     node_env: str = "development",
+    env_extra: dict[str, str] | None = None,
 ) -> dict[str, Any] | None:
     """Try to create an agent via the sidecar. Returns None if unavailable.
 
@@ -133,6 +134,13 @@ async def _try_sidecar_create(
         config["env"] = build_sidecar_env_config(
             clean_build=clean_build, node_env=node_env,
         )
+
+    # Layer in extra env vars (e.g. CONSTRUCT_AUTH_PROFILE_ID for workflow
+    # auth-profile bindings) on top of any existing env config.
+    if env_extra:
+        existing = config.get("env") or {}
+        existing.update({k: str(v) for k, v in env_extra.items()})
+        config["env"] = existing
 
     result = await _sidecar_client.create_agent(config)
 

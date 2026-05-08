@@ -292,6 +292,7 @@ ctx-tz-us-pacific = US Pacific (America/Los_Angeles)
 ctx-tz-eu-london = Europe/London
 ctx-tz-eu-berlin = Europe/Berlin
 ctx-tz-asia-tokyo = Asia/Tokyo
+ctx-tz-asia-seoul = Asia/Seoul
 ctx-tz-utc = UTC
 ctx-tz-other = Other (enter manually)
 

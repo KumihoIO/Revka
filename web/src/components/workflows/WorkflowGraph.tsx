@@ -96,7 +96,11 @@ function WorkflowGraphInner({ definition, height = '400px', stepResults }: Workf
         {cycleWarning && (
           <span
             className="px-1.5 py-0.5 rounded-md text-[10px] font-medium"
-            style={{ background: 'rgba(239, 68, 68, 0.1)', color: '#f87171', border: '1px solid rgba(239, 68, 68, 0.25)' }}
+            style={{
+              background: 'color-mix(in srgb, var(--construct-status-danger) 16%, transparent)',
+              color: 'var(--construct-status-danger)',
+              border: '1px solid color-mix(in srgb, var(--construct-status-danger) 25%, transparent)',
+            }}
           >
             cycle detected
           </span>
@@ -132,10 +136,7 @@ function WorkflowGraphInner({ definition, height = '400px', stepResults }: Workf
           <MiniMap
             nodeColor={(node: Node<TaskNodeData>) => {
               const data = node.data as TaskNodeData;
-              if (data?.action === 'gate') return '#eab308';
-              if (data?.action?.includes('review')) return '#a855f7';
-              if (data?.action?.includes('deploy')) return '#f97316';
-              if (data?.action?.includes('test')) return '#06b6d4';
+              if (data?.type === 'conditional') return 'var(--construct-status-warning)';
               return 'var(--pc-accent)';
             }}
             style={{

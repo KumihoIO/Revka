@@ -59,7 +59,7 @@ fn gemini_convert_tools_returns_prompt_guided() {
 
     let provider = gemini_provider();
     let tools = vec![ToolSpec {
-        name: "memory_store".to_string(),
+        name: "kumiho_memory_store".to_string(),
         description: "Store a value in memory".to_string(),
         parameters: serde_json::json!({
             "type": "object",

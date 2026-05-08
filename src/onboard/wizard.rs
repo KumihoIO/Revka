@@ -3671,6 +3671,7 @@ fn setup_project_context() -> Result<ProjectContext> {
     let tz_eu_london = t!("ctx-tz-eu-london");
     let tz_eu_berlin = t!("ctx-tz-eu-berlin");
     let tz_asia_tokyo = t!("ctx-tz-asia-tokyo");
+    let tz_asia_seoul = t!("ctx-tz-asia-seoul");
     let tz_utc = t!("ctx-tz-utc");
     let tz_other = t!("ctx-tz-other");
     let tz_options = [
@@ -3681,6 +3682,7 @@ fn setup_project_context() -> Result<ProjectContext> {
         tz_eu_london.as_str(),
         tz_eu_berlin.as_str(),
         tz_asia_tokyo.as_str(),
+        tz_asia_seoul.as_str(),
         tz_utc.as_str(),
         tz_other.as_str(),
     ];
@@ -3694,6 +3696,7 @@ fn setup_project_context() -> Result<ProjectContext> {
         "Europe/London",
         "Europe/Berlin",
         "Asia/Tokyo",
+        "Asia/Seoul",
         "UTC",
         "", // Other — handled below
     ];
@@ -5901,27 +5904,28 @@ async fn scaffold_workspace(
     let memory_guidance = if memory_backend == "none" {
         "## Memory System\n\n\
          memory.backend = \"none\" — persistent memory is disabled.\n\
-         No daily notes or MEMORY.md will be created or injected.\n\
+         `MEMORY.md` will not be created or injected.\n\
          All context exists only within the current session.\n\n"
             .to_string()
     } else if memory_backend == "kumiho" {
         "## Memory System\n\n\
          memory.backend = \"kumiho\" — graph-native cognitive memory via Kumiho MCP.\n\n\
          Memory is provided by the **Kumiho MCP server** (auto-injected). Use these tools:\n\n\
-         - **`kumiho_memory_engage`** — retrieve relevant memories by query (call BEFORE responding)\n\
-         - **`kumiho_memory_reflect`** — save durable decisions, preferences, facts, and outcomes worth remembering\n\
-         - **`kumiho_memory_store`** — directly store a memory item\n\
-         - **`kumiho_memory_recall`** — directly recall memory items\n\n\
-         **Do NOT use** `memory_store` / `memory_recall` / `memory_forget` — those are disabled when Kumiho is active.\n\n\
+         - **`kumiho_memory_engage`** — canonical reflex for recall. Call BEFORE responding when prior context might matter; returns aggregated relevant memories in a single call.\n\
+         - **`kumiho_memory_reflect`** — canonical reflex for capture. Save durable decisions, preferences, facts, lessons, and outcomes worth remembering after a substantive turn.\n\
+         - **`kumiho_memory_store`** — low-level write of a single memory item. Prefer `reflect` for normal capture; use `store` only for explicit \"remember this\" requests with a hand-written title.\n\
+         - **`kumiho_memory_recall`** — low-level fuzzy lookup by query. Prefer `engage` for routine recall; use `recall` only when you already know exactly which item-kind / bundle to query.\n\n\
+         Default to `engage` + `reflect`. They are the canonical persistence API when Kumiho is active.\n\n\
+         `MEMORY.md` is a separate, free-form context file you (or the user) curate; it is auto-injected by the personality loader and complements — does not replace — the Kumiho graph.\n\n\
          Capture what matters: decisions, user preferences, project context, lessons learned.\n\
          Skip secrets unless explicitly asked to store them.\n\
          Memory persists across sessions — you don't wake up blank.\n\n"
             .to_string()
     } else {
         "## Memory System\n\n\
-         You wake up fresh each session. These files ARE your continuity:\n\n\
-         - **Daily notes:** `memory/YYYY-MM-DD.md` — raw logs (accessed via memory tools)\n\
-         - **Long-term:** `MEMORY.md` — curated memories (auto-injected in main session)\n\n\
+         memory.backend is set to a custom value — check `TOOLS.md` for what your backend exposes.\n\n\
+         - **`MEMORY.md`** — curated long-term context, auto-injected into the system prompt each session by the personality loader.\n\
+         - **Backend tools** — whatever your configured backend provides for save/recall.\n\n\
          Capture what matters. Decisions, context, things to remember.\n\
          Skip secrets unless asked to keep them.\n\n"
             .to_string()
@@ -5937,8 +5941,44 @@ async fn scaffold_workspace(
     } else {
         "1. Read `SOUL.md` — this is who you are\n\
          2. Read `USER.md` — this is who you're helping\n\
-         3. Use `memory_recall` for recent context (daily notes are on-demand)\n\
-         4. If in MAIN SESSION (direct chat): `MEMORY.md` is already injected\n\n"
+         3. `MEMORY.md` is auto-injected — re-read it before acting if needed\n\n"
+    };
+
+    let remember_advice = if memory_backend == "none" {
+        // No-memory-backend mode: scaffold doesn't create MEMORY.md, so don't
+        // direct the agent at it. Workspace files that ARE scaffolded
+        // (USER.md / AGENTS.md / TOOLS.md / SOUL.md) carry persistent context.
+        "### Write It Down — No Mental Notes!\n\
+         - When someone says \"remember this\" -> update `USER.md` (preferences/facts), `AGENTS.md` (operating instructions), or another scaffolded workspace file you'll re-read.\n\
+         - Mental notes don't survive session restarts. Files do.\n\
+         - When you learn a lesson -> update `AGENTS.md`, `TOOLS.md`, or the relevant skill.\n\n"
+    } else if memory_backend == "kumiho" {
+        "### Write It Down — Use the Right Surface\n\
+         - When someone says \"remember this\" -> call `kumiho_memory_reflect` so it sticks across sessions.\n\
+         - Memory persists in the Kumiho graph; you don't wake up blank.\n\
+         - For curated always-on context, edit `MEMORY.md`. For project conventions, edit `AGENTS.md`, `TOOLS.md`, or the relevant skill.\n\n"
+    } else {
+        "### Write It Down — No Mental Notes!\n\
+         - When someone says \"remember this\" -> use your backend's save tool, or update `MEMORY.md`.\n\
+         - Mental notes don't survive session restarts. Files and the memory backend do.\n\
+         - When you learn a lesson -> update `AGENTS.md`, `TOOLS.md`, or the relevant skill.\n\n"
+    };
+
+    let crash_recovery = if memory_backend == "kumiho" {
+        "## Crash Recovery\n\n\
+         - If a run stops unexpectedly, recover context before acting.\n\
+         - Re-read `MEMORY.md` and call `kumiho_memory_engage` to surface recent decisions before duplicating work.\n\
+         - Resume from the last confirmed step, not from scratch.\n\n"
+    } else if memory_backend == "none" {
+        "## Crash Recovery\n\n\
+         - If a run stops unexpectedly, recover context before acting.\n\
+         - Re-read workspace files (`SOUL.md`, `USER.md`, `AGENTS.md`) before duplicating work — there is no persistent memory.\n\
+         - Resume from the last confirmed step, not from scratch.\n\n"
+    } else {
+        "## Crash Recovery\n\n\
+         - If a run stops unexpectedly, recover context before acting.\n\
+         - Re-read `MEMORY.md` and use your memory backend to surface recent decisions before duplicating work.\n\
+         - Resume from the last confirmed step, not from scratch.\n\n"
     };
 
     let agents = format!(
@@ -5948,11 +5988,7 @@ async fn scaffold_workspace(
          {session_steps}\
          Don't ask permission. Just do it.\n\n\
          {memory_guidance}\
-         ### Write It Down — No Mental Notes!\n\
-         - Memory is limited — if you want to remember something, WRITE IT TO A FILE\n\
-         - \"Mental notes\" don't survive session restarts. Files do.\n\
-         - When someone says \"remember this\" -> update daily file or MEMORY.md\n\
-         - When you learn a lesson -> update AGENTS.md, TOOLS.md, or the relevant skill\n\n\
+         {remember_advice}\
          ## Safety\n\n\
          - Don't exfiltrate private data. Ever.\n\
          - Don't run destructive commands without asking.\n\
@@ -5967,10 +6003,7 @@ async fn scaffold_workspace(
          ## Tools & Skills\n\n\
          Skills are listed in the system prompt. Use `read_skill` when available, or `file_read` on a skill file, for full details.\n\
          Keep local notes (SSH hosts, device names, etc.) in `TOOLS.md`.\n\n\
-         ## Crash Recovery\n\n\
-         - If a run stops unexpectedly, recover context before acting.\n\
-         - Check `MEMORY.md` + latest `memory/*.md` notes to avoid duplicate work.\n\
-         - Resume from the last confirmed step, not from scratch.\n\n\
+         {crash_recovery}\
          ## Sub-task Scoping\n\n\
          - Break complex work into focused sub-tasks with clear success criteria.\n\
          - Keep sub-tasks small, verify each output, then merge results.\n\
@@ -6065,47 +6098,34 @@ async fn scaffold_workspace(
          - **file_write** — Write file contents\n\
            - Use when: applying focused edits, scaffolding files, or updating docs/code.\n\
            - Don't use when: unsure about side effects or when the file should remain user-owned.\n\
-         - **memory_store** — Save to memory\n\
-           - Use when: preserving durable preferences, decisions, or key context.\n\
-           - Don't use when: info is transient, noisy, or sensitive without explicit need.\n\
-         - **memory_recall** — Search memory\n\
+         - **kumiho_memory_engage** — Recall relevant prior context\n\
            - Use when: you need prior decisions, user preferences, or historical context.\n\
            - Don't use when: the answer is already in current files/conversation.\n\
-         - **memory_forget** — Delete a memory entry\n\
-           - Use when: memory is incorrect, stale, or explicitly requested to be removed.\n\
-           - Don't use when: uncertain about impact; verify before deleting.\n\n\
+         - **kumiho_memory_reflect** — Capture durable memories after a substantive turn\n\
+           - Use when: preserving decisions, preferences, lessons, or significant outcomes.\n\
+           - Don't use when: info is transient, noisy, or sensitive without explicit need.\n\
+         - **kumiho_memory_store** — Directly write a memory item to the graph\n\
+           - Use when: an explicit \"remember this\" request (an absolute date in the title).\n\
+           - Don't use when: a normal `kumiho_memory_reflect` will do.\n\n\
          ---\n\
          *Add whatever helps you do your job. This is your cheat sheet.*\n";
 
-    let bootstrap = format!(
-        "# BOOTSTRAP.md — Hello, World\n\n\
-         *You just woke up. Time to figure out who you are.*\n\n\
-         Your human's name is **{user}** (timezone: {tz}).\n\
-         They prefer: {comm_style}\n\n\
-         ## First Conversation\n\n\
-         Don't interrogate. Don't be robotic. Just... talk.\n\
-         Introduce yourself as {agent} and get to know each other.\n\n\
-         ## After You Know Each Other\n\n\
-         Update these files with what you learned:\n\
-         - `IDENTITY.md` — your name, vibe, emoji\n\
-         - `USER.md` — their preferences, work context\n\
-         - `SOUL.md` — boundaries and behavior\n\n\
-         ## When You're Done\n\n\
-         Delete this file. You don't need a bootstrap script anymore —\n\
-         you're you now.\n"
-    );
+    // BOOTSTRAP.md generation removed per audit row 3. The file's first-run
+    // ritual responsibilities are now handled by the runtime's Kumiho
+    // bootstrap prompt (see `KUMIHO_BOOTSTRAP_PROMPT` in `agent::kumiho`).
 
     let memory = "\
-         # MEMORY.md — Long-Term Memory\n\n\
-         *Your curated memories. The distilled essence, not raw logs.*\n\n\
+         # MEMORY.md — Long-Term Context\n\n\
+         *Curated, free-form context for your agent. You (the human) maintain this file —\n\
+         the personality loader auto-injects it into the system prompt each session.*\n\n\
          ## How This Works\n\
-         - Daily files (`memory/YYYY-MM-DD.md`) capture raw events (on-demand via tools)\n\
-         - This file captures what's WORTH KEEPING long-term\n\
-         - This file is auto-injected into your system prompt each session\n\
-         - Keep it concise — every character here costs tokens\n\n\
-         ## Security\n\
-         - ONLY loaded in main session (direct chat with your human)\n\
-         - NEVER loaded in group chats or shared contexts\n\n\
+         - This file is auto-injected into the system prompt verbatim by the personality loader.\n\
+         - Keep it concise — every character here costs tokens.\n\
+         - This is curated standing context, not a log. The agent's persistent memory store\n\
+           (when `memory.backend = \"kumiho\"`) lives in the Kumiho graph; `MEMORY.md`\n\
+           complements that store with always-on facts you want pinned to every prompt.\n\
+         - Anything worth remembering across sessions but cheaper as live recall belongs\n\
+           in the memory backend (e.g. via `kumiho_memory_reflect`), not here.\n\n\
          ---\n\n\
          ## Key Facts\n\
          (Add important facts about your human here)\n\n\
@@ -6123,7 +6143,6 @@ async fn scaffold_workspace(
         ("SOUL.md", soul),
         ("USER.md", user_md),
         ("TOOLS.md", tools.to_string()),
-        ("BOOTSTRAP.md", bootstrap),
     ];
     if memory_backend != "none" {
         files.push(("MEMORY.md", memory.to_string()));
@@ -6756,12 +6775,16 @@ mod tests {
             "SOUL.md",
             "USER.md",
             "TOOLS.md",
-            "BOOTSTRAP.md",
             "MEMORY.md",
         ];
         for f in &expected {
             assert!(tmp.path().join(f).exists(), "missing file: {f}");
         }
+        // BOOTSTRAP.md was deleted per audit row 3 — must NOT be generated.
+        assert!(
+            !tmp.path().join("BOOTSTRAP.md").exists(),
+            "BOOTSTRAP.md must not be scaffolded (audit row 3)"
+        );
     }
 
     #[tokio::test]
@@ -6797,14 +6820,6 @@ mod tests {
             user_md.contains("**Name:** Alice"),
             "USER.md should contain user name"
         );
-
-        let bootstrap = tokio::fs::read_to_string(tmp.path().join("BOOTSTRAP.md"))
-            .await
-            .unwrap();
-        assert!(
-            bootstrap.contains("**Alice**"),
-            "BOOTSTRAP.md should contain user name"
-        );
     }
 
     #[tokio::test]
@@ -6824,14 +6839,6 @@ mod tests {
         assert!(
             user_md.contains("**Timezone:** US/Pacific"),
             "USER.md should contain timezone"
-        );
-
-        let bootstrap = tokio::fs::read_to_string(tmp.path().join("BOOTSTRAP.md"))
-            .await
-            .unwrap();
-        assert!(
-            bootstrap.contains("US/Pacific"),
-            "BOOTSTRAP.md should contain timezone"
         );
     }
 
@@ -6877,14 +6884,6 @@ mod tests {
             heartbeat.contains("Crabby"),
             "HEARTBEAT.md should contain agent name"
         );
-
-        let bootstrap = tokio::fs::read_to_string(tmp.path().join("BOOTSTRAP.md"))
-            .await
-            .unwrap();
-        assert!(
-            bootstrap.contains("Introduce yourself as Crabby"),
-            "BOOTSTRAP.md should contain agent name"
-        );
     }
 
     #[tokio::test]
@@ -6912,14 +6911,6 @@ mod tests {
         assert!(
             user_md.contains("Be technical and detailed."),
             "USER.md should contain communication style"
-        );
-
-        let bootstrap = tokio::fs::read_to_string(tmp.path().join("BOOTSTRAP.md"))
-            .await
-            .unwrap();
-        assert!(
-            bootstrap.contains("Be technical and detailed."),
-            "BOOTSTRAP.md should contain communication style"
         );
     }
 
@@ -7046,7 +7037,6 @@ mod tests {
             "SOUL.md",
             "USER.md",
             "TOOLS.md",
-            "BOOTSTRAP.md",
             "MEMORY.md",
         ] {
             let content = tokio::fs::read_to_string(tmp.path().join(f)).await.unwrap();
@@ -7096,7 +7086,57 @@ mod tests {
         );
     }
 
-    // ── scaffold_workspace: TOOLS.md lists memory_forget ────────
+    // ── scaffold_workspace: no flat-file daily-memory fiction (audit row 8)
+
+    #[tokio::test]
+    async fn scaffold_templates_omit_flat_file_fiction() {
+        // The runtime never had a `memory/YYYY-MM-DD.md` daily-files mechanism,
+        // never gated MEMORY.md injection on session-mode (main vs. group),
+        // and never enforced "memory is limited — write to a file" framing.
+        // The wizard templates must not claim otherwise.
+        const FORBIDDEN: &[&str] = &[
+            "memory/YYYY-MM-DD.md",
+            "memory/*.md",
+            "daily file",
+            "daily files",
+            "daily note",
+            "daily notes",
+            "daily log",
+            "MAIN SESSION",
+            "NEVER loaded in group chats",
+            "Memory is limited",
+            "WRITE IT TO A FILE",
+        ];
+
+        for backend in &["kumiho", "none"] {
+            let tmp = TempDir::new().unwrap();
+            let ctx = ProjectContext::default();
+            scaffold_workspace(tmp.path(), &ctx, backend).await.unwrap();
+
+            let agents = tokio::fs::read_to_string(tmp.path().join("AGENTS.md"))
+                .await
+                .unwrap();
+            for phrase in FORBIDDEN {
+                assert!(
+                    !agents.contains(phrase),
+                    "AGENTS.md (backend={backend}) must not contain flat-file fiction: {phrase:?}"
+                );
+            }
+
+            let memory_path = tmp.path().join("MEMORY.md");
+            if memory_path.exists() {
+                let memory = tokio::fs::read_to_string(&memory_path).await.unwrap();
+                for phrase in FORBIDDEN {
+                    assert!(
+                        !memory.contains(phrase),
+                        "MEMORY.md (backend={backend}) must not contain flat-file fiction: {phrase:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    // ── scaffold_workspace: TOOLS.md lists built-in + kumiho-memory tools ──
 
     #[tokio::test]
     async fn tools_md_lists_all_builtin_tools() {
@@ -7113,13 +7153,19 @@ mod tests {
             "shell",
             "file_read",
             "file_write",
-            "memory_store",
-            "memory_recall",
-            "memory_forget",
+            "kumiho_memory_engage",
+            "kumiho_memory_reflect",
+            "kumiho_memory_store",
         ] {
+            assert!(tools.contains(tool), "TOOLS.md should list tool: {tool}");
+        }
+        // Audit row 11: bare `memory_*` tool names must not appear in TOOLS.md
+        // — they have no native impl in Construct and the bootstrap prompt
+        // teaches the model to use the kumiho-namespaced tools instead.
+        for stale in &["memory_recall", "memory_forget"] {
             assert!(
-                tools.contains(tool),
-                "TOOLS.md should list built-in tool: {tool}"
+                !tools.contains(stale),
+                "TOOLS.md must not advertise legacy bare tool '{stale}'"
             );
         }
         assert!(
@@ -7219,13 +7265,6 @@ mod tests {
             .await
             .unwrap();
         assert!(agents.contains("Claw Personal Assistant"));
-
-        let bootstrap = tokio::fs::read_to_string(tmp.path().join("BOOTSTRAP.md"))
-            .await
-            .unwrap();
-        assert!(bootstrap.contains("**Kave**"));
-        assert!(bootstrap.contains("US/Eastern"));
-        assert!(bootstrap.contains("Introduce yourself as Claw"));
 
         let heartbeat = tokio::fs::read_to_string(tmp.path().join("HEARTBEAT.md"))
             .await

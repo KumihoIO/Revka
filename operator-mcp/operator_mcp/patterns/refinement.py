@@ -292,8 +292,15 @@ async def _spawn_and_wait(
     max_turns: int = 200,
     include_memory: bool = True,
     include_operator: bool = True,
+    env_extra: dict[str, str] | None = None,
 ) -> tuple[ManagedAgent, str]:
-    """Spawn an agent, wait for completion, return (agent, output_text)."""
+    """Spawn an agent, wait for completion, return (agent, output_text).
+
+    ``env_extra`` is forwarded to the agent subprocess (CLI mode) and to
+    the sidecar create_agent config (sidecar mode). Used by workflow
+    auth-profile bindings to expose CONSTRUCT_AUTH_PROFILE_ID without
+    injecting it into the system prompt.
+    """
     from ..tool_handlers.agents import _try_sidecar_create, _event_consumer
 
     agent_id = str(uuid.uuid4())
@@ -318,6 +325,7 @@ async def _spawn_and_wait(
             max_turns=max_turns,
             include_memory=include_memory,
             include_operator=include_operator,
+            env_extra=env_extra,
         )
     if sidecar_info:
         agent.status = "running"
@@ -330,7 +338,7 @@ async def _spawn_and_wait(
     else:
         from ..operator_mcp import JOURNAL
         try:
-            await spawn_agent(agent, prompt, JOURNAL, model=model)
+            await spawn_agent(agent, prompt, JOURNAL, model=model, env_extra=env_extra)
         except Exception:
             agent.status = "error"
             return agent, agent.stderr_buffer[-2000:] if agent.stderr_buffer else "spawn failed"

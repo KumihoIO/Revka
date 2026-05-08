@@ -91,6 +91,35 @@ export default function Dashboard() {
     loadDashboard();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Audit-chain check is owned by Header at a 60s cadence; Dashboard has
+  // to refresh on the same beat or the trust badge here drifts out of
+  // sync with the one in the header. Polling just `verifyAuditChain` is
+  // cheap (one HEAD-equivalent on the audit log file); we don't reload
+  // the rest of the dashboard. Also refresh on window focus so coming
+  // back to a tab after a long idle catches up immediately.
+  useEffect(() => {
+    let cancelled = false;
+    const refreshAudit = () => {
+      verifyAuditChain()
+        .then((res) => {
+          if (!cancelled) setAudit(res);
+        })
+        .catch((err) => {
+          if (!cancelled) {
+            setAudit({ verified: false, error: err instanceof Error ? err.message : String(err) });
+          }
+        });
+    };
+    const id = window.setInterval(refreshAudit, 60_000);
+    const onFocus = () => refreshAudit();
+    window.addEventListener('focus', onFocus);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+      window.removeEventListener('focus', onFocus);
+    };
+  }, []);
+
   useEffect(() => {
     if (!shouldScrollToWorkspace || !selectedRun) return;
     workspaceRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -275,22 +304,15 @@ export default function Dashboard() {
         )}
       />
 
-      <div className="grid gap-4 grid-cols-1 lg:min-h-0 lg:flex-1 lg:grid-cols-[18rem_minmax(0,1fr)_20rem] lg:[grid-template-rows:minmax(0,1fr)]">
-        <div className="flex flex-col gap-4 lg:overflow-y-auto lg:min-h-0">
-          <CommandBandCard
-            selectedRunStatus={selectedRun?.status}
-            audit={audit}
-            provider={status?.provider}
-            model={status?.model}
-          />
-          <AgentRailCard
-            sessions={sessions}
-            channels={channels}
-            activeSessionCount={activeSessionCount}
-            activeChannelCount={activeChannelCount}
-          />
-        </div>
-
+      {/* Two-column layout — workflow workspace on the left, single
+          stacked rail on the right with the operator's reading order:
+          Risk → Agent → Command → Recent Runs. The rail is wider than
+          the previous 22rem (now 24rem) and is explicitly height-capped
+          via `max-h` so the inner overflow-y-auto reliably engages even
+          when the document body itself is scrollable — that was the
+          truncation bug in the earlier attempt: the rail just kept
+          extending below the viewport instead of giving us a scrollbar. */}
+      <div className="grid gap-4 grid-cols-1 lg:min-h-0 lg:flex-1 lg:grid-cols-[minmax(0,1fr)_24rem] lg:[grid-template-rows:minmax(0,1fr)]">
         <Panel className="flex flex-col p-5 lg:min-h-0">
           <div className="flex items-center justify-between gap-3">
             <div>
@@ -479,11 +501,34 @@ export default function Dashboard() {
           </div>
         </Panel>
 
-        <div className="flex flex-col gap-4 lg:overflow-y-auto lg:min-h-0">
+        {/* Right rail — single column, 4 cards, reading order is the
+            operator's posture sequence. Three things keep this stable:
+            (1) `lg:max-h-[calc(100vh-9rem)]` constrains rail height so
+            overflow-y-auto can engage. (2) `[&>*]:shrink-0` on direct
+            children — without it, flex-shrink defaults to 1 and the
+            cards get squeezed to fit the rail. Combined with
+            `.construct-panel { overflow: hidden }` (from theme.css),
+            squeezed cards silently clip their inner content (Risk Rail
+            losing Component health, Agent Rail losing session activity).
+            (3) The `pr-1` reserves space for the scrollbar so it
+            doesn't overlap card borders. */}
+        <div className="flex flex-col gap-4 lg:max-h-[calc(100vh-9rem)] lg:min-h-0 lg:overflow-y-auto lg:pr-1 [&>*]:shrink-0">
           <RiskRailCard
             audit={audit}
             cost={cost}
             degradedComponentCount={degradedComponentCount}
+          />
+          <AgentRailCard
+            sessions={sessions}
+            channels={channels}
+            activeSessionCount={activeSessionCount}
+            activeChannelCount={activeChannelCount}
+          />
+          <CommandBandCard
+            selectedRunStatus={selectedRun?.status}
+            audit={audit}
+            provider={status?.provider}
+            model={status?.model}
           />
           <RecentRunsRailCard
             runs={data?.recent_runs ?? []}

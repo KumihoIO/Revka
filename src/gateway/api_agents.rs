@@ -124,6 +124,10 @@ pub struct DeprecateBody {
 pub struct AgentResponse {
     pub kref: String,
     pub name: String,
+    /// Kumiho slug (e.g. "senior-rust-engineer") — the value workflow YAML's
+    /// `assign:` expects. Distinct from `name`, which is the human-readable
+    /// `display_name` (falling back to the slug when unset).
+    pub item_name: String,
     pub kind: String,
     pub deprecated: bool,
     pub created_at: Option<String>,
@@ -237,6 +241,7 @@ fn to_agent_response(item: &ItemResponse, rev: Option<&RevisionResponse>) -> Age
     AgentResponse {
         kref: item.kref.clone(),
         name: display_name,
+        item_name: item.item_name.clone(),
         kind: item.kind.clone(),
         deprecated: item.deprecated,
         created_at: item.created_at.clone(),
@@ -491,11 +496,14 @@ pub async fn handle_update_agent(
             Json(serde_json::json!({ "agent": agent })).into_response()
         }
         None => {
-            // Item was found (revision succeeded) but not in list — build a minimal response
+            // Item was found (revision succeeded) but not in list — build a minimal response.
+            // `item_name` is the slug (kref-safe identifier), not the human display
+            // name; mirror the create handler's slugify(body.name) here so this rare
+            // fallback path can't drop a "Pretty Name" string into a slug field.
             let fallback = ItemResponse {
                 kref: kref.clone(),
                 name: body.name.clone(),
-                item_name: body.name.clone(),
+                item_name: slugify(&body.name),
                 kind: "agent".to_string(),
                 deprecated: false,
                 created_at: None,

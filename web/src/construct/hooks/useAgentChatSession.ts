@@ -16,11 +16,30 @@ import type { ActivityEvent, ChatMessage } from '@/components/chat/types';
 import { operatorPhaseIcon, isTransientPhase, friendlyToolLabel } from '@/components/chat/chat-utils';
 import { copyToClipboard } from '@/construct/lib/clipboard';
 
+/** Tool-result event surfaced to consumers (e.g. ArchitectChatSurface
+ *  needs to react to `propose_workflow_yaml` results). The hook still
+ *  threads the same event into the activities feed for rendering — this
+ *  callback is purely a side-channel for consumers that need the raw
+ *  output. Fired once per `tool_result` WS message. */
+export interface ToolResultEvent {
+  /** Stable id minted at receive time, useful for de-dup in effects. */
+  id: string;
+  /** MCP tool name. */
+  name: string;
+  /** Raw `output` field from the WS message — typically a JSON string
+   *  but may be plain text. Consumers JSON.parse if they expect it. */
+  output: string;
+}
+
 interface UseAgentChatSessionOptions {
   sessionId: string;
   draftKey: string;
   pageContext?: string;
   onUserMessage?: (content: string) => void;
+  /** Fired once per `tool_result` WebSocket message. Lives alongside the
+   *  existing activity-feed integration; consumers that don't need raw
+   *  tool results can ignore it. */
+  onToolResult?: (event: ToolResultEvent) => void;
 }
 
 /** Server-issued attachment metadata plus an optional data-URL thumbnail
@@ -36,6 +55,7 @@ export function useAgentChatSession({
   draftKey,
   pageContext,
   onUserMessage,
+  onToolResult,
 }: UseAgentChatSessionOptions) {
   const { getDraft, setDraft, clearDraft: clearDraftStore } = useContext(DraftContext);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -67,6 +87,8 @@ export function useAgentChatSession({
   const activitiesRef = useRef<ActivityEvent[]>([]);
   const onUserMessageRef = useRef(onUserMessage);
   onUserMessageRef.current = onUserMessage;
+  const onToolResultRef = useRef(onToolResult);
+  onToolResultRef.current = onToolResult;
   const draftKeyRef = useRef(draftKey);
   draftKeyRef.current = draftKey;
 
@@ -270,6 +292,15 @@ export function useAgentChatSession({
             ];
             activitiesRef.current = nextActivities;
             setActivities(nextActivities);
+            // Side-channel for consumers that need the raw tool output
+            // (e.g. Architect's propose_workflow_yaml result → editor).
+            if (onToolResultRef.current && msg.name) {
+              onToolResultRef.current({
+                id: generateUUID(),
+                name: msg.name,
+                output: msg.output ?? '',
+              });
+            }
             break;
           }
 
@@ -413,6 +444,45 @@ export function useAgentChatSession({
     return true;
   }, [attachments, clearDraftStore, input, pageContext, uploadingCount]);
 
+  /** Send an arbitrary text turn without going through the textarea. Used
+   *  by slash commands like `/architect` whose handler synthesizes a
+   *  user-visible prompt rather than echoing the literal command. The
+   *  message bubble is rendered in scrollback exactly the same way
+   *  `handleSend` would render it. Attachments are NOT consumed — this
+   *  path is purely for synthetic, no-attachment turns. */
+  const submitMessage = useCallback(
+    (text: string): boolean => {
+      const trimmed = text.trim();
+      if (!trimmed || !wsRef.current?.connected) return false;
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: generateUUID(),
+          role: 'user',
+          content: trimmed,
+          timestamp: new Date(),
+        },
+      ]);
+
+      try {
+        wsRef.current.sendMessage(trimmed, pageContext, []);
+        onUserMessageRef.current?.(trimmed);
+        setTyping(true);
+        pendingContentRef.current = '';
+        pendingThinkingRef.current = '';
+        capturedThinkingRef.current = '';
+        activitiesRef.current = [];
+        setActivities([]);
+      } catch {
+        setError(t('agent.send_error'));
+        return false;
+      }
+      return true;
+    },
+    [pageContext],
+  );
+
   /** Upload a file to the session's attachment store and stage it for
    *  the next send. For images we also generate a client-side data URL
    *  preview so the chip strip can show a thumbnail. */
@@ -463,6 +533,39 @@ export function useAgentChatSession({
     e.target.style.height = `${Math.min(e.target.scrollHeight, 200)}px`;
   }, []);
 
+  /** Wipe all rendered messages + activity state without disturbing the
+   *  WebSocket session. Used by the `/clear` slash command. The session
+   *  is still alive and can receive further turns; this only clears what
+   *  the user sees. */
+  const clearMessages = useCallback(() => {
+    setMessages([]);
+    setActivities([]);
+    activitiesRef.current = [];
+    setStreamingContent('');
+    setStreamingThinking('');
+    pendingContentRef.current = '';
+    pendingThinkingRef.current = '';
+    capturedThinkingRef.current = '';
+    setTyping(false);
+    setError(null);
+  }, []);
+
+  /** Inject a synthetic operator-role message into the scrollback. Used
+   *  by `/help` and other client-side commands that want to surface
+   *  output inline rather than via a modal. */
+  const appendSystemMessage = useCallback((content: string) => {
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: generateUUID(),
+        role: 'operator',
+        content,
+        operatorPhase: 'completed',
+        timestamp: new Date(),
+      },
+    ]);
+  }, []);
+
   const copyMessage = useCallback(async (messageId: string, content: string) => {
     if (!(await copyToClipboard(content))) return;
     setCopiedId(messageId);
@@ -473,8 +576,10 @@ export function useAgentChatSession({
     activities,
     addAttachment,
     agentEvents,
+    appendSystemMessage,
     attachments,
     clearAttachments,
+    clearMessages,
     connected,
     copiedId,
     copyMessage,
@@ -488,6 +593,7 @@ export function useAgentChatSession({
     setInput,
     streamingContent,
     streamingThinking,
+    submitMessage,
     typing,
     uploadingCount,
   };

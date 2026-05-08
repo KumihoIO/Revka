@@ -559,7 +559,7 @@ Some conditions here.
 ## Steps
 
 1. **Check readings** — Read sensor data and confirm.
-   - tools: gpio_read, memory_store
+   - tools: gpio_read, kumiho_memory_store
 
 2. **Close valve** — Set GPIO pin 5 LOW.
    - tools: gpio_write, gpio_read
@@ -575,7 +575,10 @@ Some conditions here.
         assert_eq!(steps[0].number, 1);
         assert_eq!(steps[0].title, "Check readings");
         assert!(steps[0].body.contains("Read sensor data"));
-        assert_eq!(steps[0].suggested_tools, vec!["gpio_read", "memory_store"]);
+        assert_eq!(
+            steps[0].suggested_tools,
+            vec!["gpio_read", "kumiho_memory_store"]
+        );
         assert!(!steps[0].requires_confirmation);
 
         assert_eq!(steps[1].number, 2);

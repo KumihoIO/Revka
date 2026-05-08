@@ -293,6 +293,7 @@ ctx-tz-us-pacific = 미국 태평양 (America/Los_Angeles)
 ctx-tz-eu-london = 유럽/런던
 ctx-tz-eu-berlin = 유럽/베를린
 ctx-tz-asia-tokyo = 아시아/도쿄
+ctx-tz-asia-seoul = 아시아/서울
 ctx-tz-utc = UTC
 ctx-tz-other = 기타 (직접 입력)
 

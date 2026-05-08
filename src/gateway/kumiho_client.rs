@@ -573,6 +573,25 @@ impl KumihoClient {
             .map_err(|e| KumihoError::Decode(e.to_string()))
     }
 
+    /// List all revisions for an item, ordered by number.
+    ///
+    /// Backed by `GET /api/v1/revisions?item_kref=...` on Kumiho. Used by the
+    /// editor's revision-history strip (Architect feature).
+    pub async fn list_item_revisions(&self, item_kref: &str) -> Result<Vec<RevisionResponse>> {
+        let resp = self
+            .client
+            .get(self.url("/revisions"))
+            .header("X-Kumiho-Token", &self.service_token)
+            .query(&[("item_kref", item_kref)])
+            .send()
+            .await?;
+
+        let resp = self.check_response(resp).await?;
+        resp.json::<Vec<RevisionResponse>>()
+            .await
+            .map_err(|e| KumihoError::Decode(e.to_string()))
+    }
+
     /// Tag a revision (e.g. "published").
     pub async fn tag_revision(&self, revision_kref: &str, tag: &str) -> Result<()> {
         let resp = self

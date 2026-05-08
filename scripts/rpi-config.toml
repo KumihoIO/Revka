@@ -77,7 +77,6 @@ allow_sensitive_file_reads = false
 allow_sensitive_file_writes = false
 auto_approve = [
     "file_read",
-    "memory_recall",
 ]
 always_ask = []
 allowed_roots = []
@@ -95,8 +94,6 @@ non_cli_excluded_tools = [
     "cron_remove",
     "cron_update",
     "cron_run",
-    "memory_store",
-    "memory_forget",
     "proxy_config",
     "web_search_config",
     "web_access_config",
@@ -107,6 +104,9 @@ non_cli_excluded_tools = [
     "delegate",
     "screenshot",
     "image_info",
+    # Operator MCP-routed memory tools (under construct-operator__ prefix).
+    "construct-operator__memory_store",
+    "construct-operator__memory_search",
 ]
 non_cli_approval_approvers = []
 non_cli_natural_language_approval_mode = "direct"
@@ -142,7 +142,6 @@ gated_actions = [
     "file_write",
     "browser_open",
     "browser",
-    "memory_forget",
 ]
 gated_domains = []
 gated_domain_categories = []

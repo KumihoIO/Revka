@@ -104,8 +104,12 @@ if not exist "%KUMIHO_VENV%\Scripts\python.exe" (
 set "K_PY=%KUMIHO_VENV%\Scripts\python.exe"
 "%K_PY%" -m pip install --quiet --upgrade pip
 :: [mcp] extra pulls in mcp>=1.0.0 + httpx>=0.27.0, required by kumiho.mcp_server.
-"%K_PY%" -m pip install --quiet "kumiho[mcp]>=0.9.20"
-echo    [ok] kumiho[mcp] installed
+:: kumiho_memory (separate package) provides the high-level memory tools
+:: (engage/reflect/recall/consolidate/dream_state) that the Construct
+:: session-bootstrap prompt mandates. kumiho.mcp_server auto-merges them
+:: when the package is importable.
+"%K_PY%" -m pip install --quiet "kumiho[mcp]>=0.9.20" "kumiho_memory>=0.5.0"
+echo    [ok] kumiho[mcp] + kumiho_memory installed
 
 :: Write launcher if absent — do NOT overwrite user-authored launcher.
 if exist "%KUMIHO_LAUNCHER%" (

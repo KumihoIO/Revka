@@ -83,6 +83,7 @@ pub fn diagnose(config: &Config) -> Vec<DiagResult> {
     check_workspace(config, &mut items);
     check_daemon_state(config, &mut items);
     check_environment(&mut items);
+    check_sidecars(config, &mut items);
     check_cli_tools(&mut items);
 
     items.into_iter().map(DiagItem::into_result).collect()
@@ -909,6 +910,124 @@ fn check_environment(items: &mut Vec<DiagItem>) {
 
     // Optional tools
     check_command_available("curl", &["--version"], cat, items);
+}
+
+/// Check that the Kumiho sidecar venv has both `kumiho` and the
+/// `kumiho_memory` package installed.
+///
+/// This catches the upgrade gap where pre-PR-#115 installs have only the
+/// bare `kumiho` package but not the sibling `kumiho_memory` that ships the
+/// high-level memory reflexes (engage / reflect / recall / consolidate /
+/// dream_state).  When the latter is missing, the runtime falls back to the
+/// lite bootstrap prompt — usable, but the operator should know the gap
+/// exists and how to close it.  Audit row 1 + row 13.
+fn check_sidecars(config: &Config, items: &mut Vec<DiagItem>) {
+    let cat = "sidecars";
+
+    if !config.kumiho.enabled {
+        items.push(DiagItem::ok(cat, "kumiho disabled in config — skipped"));
+        return;
+    }
+
+    // Resolve the venv python: <dir(kumiho.mcp_path)>/venv/bin/python
+    // (Windows: venv/Scripts/python.exe).
+    let mcp_path = shellexpand::tilde(&config.kumiho.mcp_path).into_owned();
+    let venv_dir = std::path::Path::new(&mcp_path)
+        .parent()
+        .map(|p| p.join("venv"));
+    let Some(venv_dir) = venv_dir else {
+        items.push(DiagItem::error(
+            cat,
+            format!("could not resolve venv from kumiho.mcp_path: {mcp_path}"),
+        ));
+        return;
+    };
+    let python_exe = if cfg!(windows) {
+        venv_dir.join("Scripts").join("python.exe")
+    } else {
+        venv_dir.join("bin").join("python")
+    };
+
+    if !python_exe.exists() {
+        items.push(DiagItem::warn(
+            cat,
+            format!(
+                "kumiho venv python not found at {}. Run `scripts/install-sidecars.sh` (or the .bat / .ps1 equivalent on your platform).",
+                python_exe.display()
+            ),
+        ));
+        return;
+    }
+
+    // Check kumiho itself is importable. (If this fails the venv is broken.)
+    let kumiho_check = std::process::Command::new(&python_exe)
+        .args(["-c", "import kumiho; print(kumiho.__version__)"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output();
+
+    match kumiho_check {
+        Ok(out) if out.status.success() => {
+            let version = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            items.push(DiagItem::ok(
+                cat,
+                format!("kumiho {} importable in sidecar venv", version),
+            ));
+        }
+        Ok(out) => {
+            let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+            items.push(DiagItem::error(
+                cat,
+                format!("kumiho not importable in sidecar venv: {stderr}"),
+            ));
+            return;
+        }
+        Err(e) => {
+            items.push(DiagItem::error(
+                cat,
+                format!("could not run sidecar python: {e}"),
+            ));
+            return;
+        }
+    }
+
+    // Check kumiho_memory (high-level reflexes — engage / reflect / etc.).
+    let memory_check = std::process::Command::new(&python_exe)
+        .args(["-c", "import kumiho_memory; print(kumiho_memory.__version__ if hasattr(kumiho_memory, '__version__') else 'unknown')"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output();
+
+    match memory_check {
+        Ok(out) if out.status.success() => {
+            let version = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            items.push(DiagItem::ok(
+                cat,
+                format!(
+                    "kumiho_memory {} importable — high-level memory reflexes available",
+                    version
+                ),
+            ));
+        }
+        Ok(_) => {
+            // Most common case: kumiho is installed but kumiho_memory isn't —
+            // pre-PR-#115 install. Surface the exact remediation command so
+            // the user can copy-paste it.
+            items.push(DiagItem::warn(
+                cat,
+                format!(
+                    "kumiho_memory not installed in sidecar venv — runtime is using the lite bootstrap prompt. To enable advanced memory reflexes (engage / reflect / recall / consolidate / dream_state), run: `{} -m pip install 'kumiho_memory>=0.5.0'`",
+                    python_exe.display()
+                ),
+            ));
+        }
+        Err(e) => {
+            items.push(DiagItem::error(
+                cat,
+                format!("could not check kumiho_memory: {e}"),
+            ));
+        }
+    }
 }
 
 fn check_cli_tools(items: &mut Vec<DiagItem>) {

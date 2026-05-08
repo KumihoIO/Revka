@@ -1,75 +1,84 @@
 #!/usr/bin/env python3
-"""Bootstrap for Construct Operator MCP Server.
+"""Bootstrap launcher for the Construct Operator MCP Server.
 
-Uses the shared kumiho-memory venv so the operator doesn't maintain
-its own duplicate gRPC connection.  Installs operator-specific deps
-(mcp, httpx, claude-agent-sdk) into the shared venv on first run.
+Locates the per-component venv that scripts/install-sidecars.{sh,bat}
+provisions at ~/.construct/operator_mcp/venv and re-execs the package
+under it. If the venv is missing or its python interpreter is missing,
+exit with a clear instruction to run install-sidecars.
+
+Earlier versions of this script tried to share a venv with a Claude Code
+plugin under ~/.cache/kumiho-claude, and to install deps at runtime.
+That path was wrong on every supported platform: install-sidecars
+provisions a dedicated operator venv and installs all deps into it. The
+runtime install logic (and its lock and marker) was redundant and
+caused races + Windows DLL-lock failures. This file is now a thin
+locator + exec.
 """
+from __future__ import annotations
+
 import os
-import sys
-import subprocess
 import pathlib
+import sys
 
 SCRIPT_DIR = pathlib.Path(__file__).resolve().parent
-REQUIREMENTS = SCRIPT_DIR / "requirements.txt"
 
-# Shared venv — same one kumiho-memory MCP server uses.
-_XDG = os.getenv("XDG_CACHE_HOME", "").strip()
-SHARED_VENV = pathlib.Path(_XDG) / "kumiho-claude" if _XDG else pathlib.Path.home() / ".cache" / "kumiho-claude"
-VENV_DIR = SHARED_VENV / "venv"
-
-# Marker so we only pip-install operator deps once per requirements hash.
-OPERATOR_MARKER = SHARED_VENV / ".operator-deps-installed.txt"
-
-
-def _requirements_hash() -> str:
-    """Return the contents of requirements.txt for change detection."""
-    try:
-        return REQUIREMENTS.read_text(encoding="utf-8").strip()
-    except Exception:
-        return ""
+# Allow override via env var so embedded / non-standard installs can point
+# at a different venv. Default matches install-sidecars layout.
+_DEFAULT_OPERATOR_DIR = pathlib.Path.home() / ".construct" / "operator_mcp"
+OPERATOR_DIR = pathlib.Path(
+    os.environ.get("CONSTRUCT_OPERATOR_DIR") or str(_DEFAULT_OPERATOR_DIR)
+)
+VENV_DIR = OPERATOR_DIR / "venv"
 
 
-def ensure_deps():
-    python = VENV_DIR / "bin" / "python3"
+def _venv_python(venv_dir: pathlib.Path) -> pathlib.Path:
+    """Platform-aware path to the venv's Python interpreter."""
+    if sys.platform == "win32":
+        return venv_dir / "Scripts" / "python.exe"
+    return venv_dir / "bin" / "python3"
+
+
+def _bail(msg: str) -> "None":
+    sys.stderr.write(msg.rstrip() + "\n")
+    sys.stderr.write(
+        "\n[operator] Operator MCP not installed. Run:\n"
+        "    scripts\\install-sidecars.bat   (Windows)\n"
+        "    scripts/install-sidecars.sh     (macOS / Linux)\n"
+        "from the Construct repo root, then retry.\n"
+    )
+    sys.exit(1)
+
+
+def main() -> "None":
+    python = _venv_python(VENV_DIR)
     if not python.exists():
-        # Shared venv doesn't exist yet — the kumiho-memory runner
-        # normally creates it.  Create a minimal one here as fallback.
-        print("[operator] Creating shared venv...", file=sys.stderr)
-        import venv
-        venv.create(str(VENV_DIR), with_pip=True)
-        subprocess.run(
-            [str(python), "-m", "pip", "install", "-q", "--upgrade", "pip"],
-            stdout=sys.stderr, stderr=sys.stderr,
+        _bail(
+            f"[operator] Could not find Python interpreter at {python}. "
+            f"The operator-mcp venv at {VENV_DIR} either doesn't exist "
+            f"or is incomplete."
         )
 
-    current_hash = _requirements_hash()
-    marker_hash = ""
-    if OPERATOR_MARKER.exists():
-        try:
-            marker_hash = OPERATOR_MARKER.read_text(encoding="utf-8").strip()
-        except Exception:
-            pass
-
-    if marker_hash != current_hash:
-        print("[operator] Installing operator deps into shared venv...", file=sys.stderr)
-        subprocess.run(
-            [str(python), "-m", "pip", "install", "-q",
-             "--disable-pip-version-check", "-r", str(REQUIREMENTS)],
-            stdout=sys.stderr, stderr=sys.stderr, check=True,
-        )
-        OPERATOR_MARKER.write_text(current_hash, encoding="utf-8")
-
-    return str(python)
-
-
-def main():
-    python = ensure_deps()
-    # Run as package module so relative imports work
+    # The package source lives next to this launcher (install-sidecars
+    # mirrors the source tree to OPERATOR_DIR). PYTHONPATH points at the
+    # parent of `operator_mcp/` so `python -m operator_mcp` resolves.
     parent_dir = str(SCRIPT_DIR.parent)
     env = os.environ.copy()
     env["PYTHONPATH"] = parent_dir + (os.pathsep + env.get("PYTHONPATH", ""))
-    os.execve(python, [python, "-m", "operator_mcp"] + sys.argv[1:], env)
+
+    # IMPORTANT: switch cwd to the parent before exec'ing. install-sidecars
+    # flattens the package directly into OPERATOR_DIR (which contains both
+    # __init__.py AND operator_mcp.py). If Python's sys.path[0] is OPERATOR_DIR
+    # itself, `python -m operator_mcp` resolves to the inner module file
+    # instead of the package, and its relative imports fail with
+    # "attempted relative import with no known parent package". Setting
+    # cwd to the parent forces Python to resolve operator_mcp as a package.
+    os.chdir(parent_dir)
+
+    os.execve(
+        str(python),
+        [str(python), "-m", "operator_mcp"] + sys.argv[1:],
+        env,
+    )
 
 
 if __name__ == "__main__":

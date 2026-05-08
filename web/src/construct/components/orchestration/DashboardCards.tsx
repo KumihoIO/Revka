@@ -177,7 +177,12 @@ export function RecentRunsRailCard({ runs, onSelectRun, selectedRunId, footer }:
         <Activity className="h-4 w-4" style={{ color: 'var(--construct-signal-network)' }} />
         <span className="text-sm font-medium">Recent runs</span>
       </div>
-      <div className="mt-3 space-y-2">
+      {/* Cap the run-button list at ~24rem so the card stays a predictable
+          size even when 4 runs come back. Without this cap the card grew
+          to ~400px and overflowed the right rail's viewport allotment,
+          making the dashboard layout jitter as runs arrived. The list
+          scrolls internally once it overflows. */}
+      <div className="mt-3 max-h-[24rem] space-y-2 overflow-y-auto pr-1">
         {runs.slice(0, 4).map((run) => (
           <button
             key={run.run_id}

@@ -333,10 +333,44 @@ pub fn is_operator_seat_eager_tool(prefixed_name: &str) -> bool {
 /// Lists only tool names so the LLM knows what is available without
 /// consuming context window on full schemas. Includes an instruction
 /// block that tells the LLM to call `tool_search` to activate them.
+///
+/// Tools are grouped by their server prefix (`<server>__<tool>`). When
+/// `server_instructions` contains an entry for a server, it's rendered as a
+/// header so the LLM gets the server's domain hint (captured from the MCP
+/// `initialize` response). Without these hints the agent only routes to
+/// MCP tools when the user names the server explicitly.
 pub fn build_deferred_tools_section(deferred: &DeferredMcpToolSet) -> String {
+    build_deferred_tools_section_with_instructions(deferred, &HashMap::new())
+}
+
+/// Same as [`build_deferred_tools_section`] but accepts per-server
+/// `instructions` strings. Each server's tools are listed under a header
+/// containing the instructions text. Servers without an instructions entry
+/// still get a header (just the server name).
+pub fn build_deferred_tools_section_with_instructions(
+    deferred: &DeferredMcpToolSet,
+    server_instructions: &HashMap<String, String>,
+) -> String {
     if deferred.is_empty() {
         return String::new();
     }
+
+    // Group stubs by server prefix (text before `__`). Preserve first-seen
+    // order so the section is stable across runs.
+    let mut groups: Vec<(String, Vec<&DeferredMcpToolStub>)> = Vec::new();
+    for stub in &deferred.stubs {
+        let server = stub
+            .prefixed_name
+            .split_once("__")
+            .map(|(s, _)| s.to_string())
+            .unwrap_or_else(|| "(unknown)".to_string());
+        if let Some(slot) = groups.iter_mut().find(|(s, _)| s == &server) {
+            slot.1.push(stub);
+        } else {
+            groups.push((server, vec![stub]));
+        }
+    }
+
     let mut out = String::new();
     out.push_str("## Deferred Tools\n\n");
     out.push_str(
@@ -346,14 +380,31 @@ pub fn build_deferred_tools_section(deferred: &DeferredMcpToolSet) -> String {
          exact tools or keywords to search. Once activated, the tools \
          become callable for the rest of the conversation.\n\n",
     );
-    out.push_str("<available-deferred-tools>\n");
-    for stub in &deferred.stubs {
-        out.push_str(&stub.prefixed_name);
-        out.push_str(" - ");
-        out.push_str(&stub.description);
+    out.push_str(
+        "When the user's request matches a server's domain (see headers \
+         below), reach for that server's tools via `tool_search` even if \
+         the user doesn't name the server explicitly.\n\n",
+    );
+
+    for (server, stubs) in &groups {
+        out.push_str("### ");
+        out.push_str(server);
         out.push('\n');
+        if let Some(instr) = server_instructions.get(server) {
+            out.push_str(instr);
+            if !instr.ends_with('\n') {
+                out.push('\n');
+            }
+        }
+        out.push_str("<available-deferred-tools>\n");
+        for stub in stubs {
+            out.push_str(&stub.prefixed_name);
+            out.push_str(" - ");
+            out.push_str(&stub.description);
+            out.push('\n');
+        }
+        out.push_str("</available-deferred-tools>\n\n");
     }
-    out.push_str("</available-deferred-tools>\n");
     out
 }
 
@@ -572,6 +623,70 @@ mod tests {
         assert!(
             section.contains("tool_search"),
             "section must mention tool_search for multi-server setups"
+        );
+    }
+
+    #[test]
+    fn build_deferred_section_groups_tools_by_server() {
+        let stubs = vec![
+            make_stub("opencrab__opencrab_query", "Query the ontology"),
+            make_stub("opencrab__opencrab_list_nodes", "List graph nodes"),
+            make_stub("kumiho-memory__kumiho_memory_engage", "Recall memory"),
+        ];
+        let set = DeferredMcpToolSet {
+            stubs,
+            registry: std::sync::Arc::new(
+                tokio::runtime::Runtime::new()
+                    .unwrap()
+                    .block_on(McpRegistry::connect_all(&[]))
+                    .unwrap(),
+            ),
+        };
+        let section = build_deferred_tools_section(&set);
+        // Per-server headers are present.
+        assert!(
+            section.contains("### opencrab"),
+            "expected per-server header for opencrab"
+        );
+        assert!(
+            section.contains("### kumiho-memory"),
+            "expected per-server header for kumiho-memory"
+        );
+        // The opencrab tools should appear under the opencrab header,
+        // before the kumiho-memory header.
+        let opencrab_pos = section.find("### opencrab").unwrap();
+        let kumiho_pos = section.find("### kumiho-memory").unwrap();
+        let query_pos = section.find("opencrab__opencrab_query").unwrap();
+        assert!(opencrab_pos < query_pos && query_pos < kumiho_pos);
+    }
+
+    #[test]
+    fn build_deferred_section_renders_server_instructions() {
+        let stubs = vec![make_stub("opencrab__opencrab_query", "Query the ontology")];
+        let set = DeferredMcpToolSet {
+            stubs,
+            registry: std::sync::Arc::new(
+                tokio::runtime::Runtime::new()
+                    .unwrap()
+                    .block_on(McpRegistry::connect_all(&[]))
+                    .unwrap(),
+            ),
+        };
+        let mut instructions: HashMap<String, String> = HashMap::new();
+        instructions.insert(
+            "opencrab".into(),
+            "Use OpenCrab tools to query, search, list, inspect, and ingest \
+             ontology knowledge."
+                .into(),
+        );
+        let section = build_deferred_tools_section_with_instructions(&set, &instructions);
+        assert!(
+            section.contains("Use OpenCrab tools to query"),
+            "server-supplied instructions must appear in the deferred section"
+        );
+        assert!(
+            section.contains("doesn't name the server explicitly"),
+            "section must instruct the LLM to route to servers by domain"
         );
     }
 

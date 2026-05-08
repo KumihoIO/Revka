@@ -2774,12 +2774,15 @@ mod tests {
     #[test]
     fn tool_call_function_name_falls_back_to_top_level_name() {
         let call: ToolCall = serde_json::from_value(serde_json::json!({
-            "name": "memory_recall",
+            "name": "kumiho_memory_engage",
             "arguments": "{\"query\":\"latest roadmap\"}"
         }))
         .unwrap();
 
-        assert_eq!(call.function_name().as_deref(), Some("memory_recall"));
+        assert_eq!(
+            call.function_name().as_deref(),
+            Some("kumiho_memory_engage")
+        );
     }
 
     #[test]
@@ -2802,13 +2805,16 @@ mod tests {
             "name": "ignored_name",
             "arguments": "{\"query\":\"ignored\"}",
             "function": {
-                "name": "memory_recall",
+                "name": "kumiho_memory_engage",
                 "arguments": "{\"query\":\"preferred\"}"
             }
         }))
         .unwrap();
 
-        assert_eq!(call.function_name().as_deref(), Some("memory_recall"));
+        assert_eq!(
+            call.function_name().as_deref(),
+            Some("kumiho_memory_engage")
+        );
         assert_eq!(
             call.function_arguments().as_deref(),
             Some("{\"query\":\"preferred\"}")

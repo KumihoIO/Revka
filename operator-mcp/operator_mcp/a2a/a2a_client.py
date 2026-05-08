@@ -123,6 +123,7 @@ class A2AClient:
         context_id: str | None = None,
         task_id: str | None = None,
         metadata: dict[str, Any] | None = None,
+        auth_token: str | None = None,
     ) -> dict[str, Any]:
         """Send a task to a remote A2A agent via message/send.
 
@@ -162,7 +163,7 @@ class A2AClient:
             "params": params,
         }
 
-        resp = await self._jsonrpc_call(client, endpoint_url, request)
+        resp = await self._jsonrpc_call(client, endpoint_url, request, auth_token=auth_token)
         return resp.get("result", resp)
 
     async def get_task(self, endpoint_url: str, task_id: str) -> dict[str, Any]:
@@ -236,15 +237,20 @@ class A2AClient:
         client: httpx.AsyncClient,
         url: str,
         request: dict[str, Any],
+        *,
+        auth_token: str | None = None,
     ) -> dict[str, Any]:
         """Make a JSON-RPC 2.0 call with retry."""
+        headers: dict[str, str] = {"Content-Type": "application/json"}
+        if auth_token:
+            headers["Authorization"] = f"Bearer {auth_token}"
         last_error = None
         for attempt in range(self._max_retries + 1):
             try:
                 resp = await client.post(
                     url,
                     json=request,
-                    headers={"Content-Type": "application/json"},
+                    headers=headers,
                 )
                 if resp.status_code == 200:
                     data = resp.json()

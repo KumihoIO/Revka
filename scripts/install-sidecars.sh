@@ -168,8 +168,16 @@ install_kumiho() {
   # Version pin matches operator-mcp/requirements.txt (kumiho>=0.9.20).
   # The [mcp] extra installs `mcp>=1.0.0` + `httpx>=0.27.0` — required for the
   # stdio server in kumiho.mcp_server.
-  run "'$kumiho_py' -m pip install --quiet 'kumiho[mcp]>=0.9.20'"
-  step_ok "kumiho[mcp] installed into venv"
+  #
+  # `kumiho_memory` (separate package) is required for the high-level memory
+  # tools mandated by the Construct session-bootstrap prompt:
+  # kumiho_memory_engage / reflect / recall / consolidate / dream_state. The
+  # bare `kumiho` package only exposes low-level CRUD + memory_store/retrieve;
+  # kumiho.mcp_server auto-discovers and merges in kumiho_memory's tools when
+  # the package is importable. Without this extra install, the prompt fires
+  # tool calls that don't exist.
+  run "'$kumiho_py' -m pip install --quiet 'kumiho[mcp]>=0.9.20' 'kumiho_memory>=0.5.0'"
+  step_ok "kumiho[mcp] + kumiho_memory installed into venv"
 
   # Write the launcher if missing. We do NOT overwrite a user-authored launcher.
   if [[ -f "$KUMIHO_LAUNCHER" ]]; then

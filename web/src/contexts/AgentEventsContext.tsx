@@ -108,7 +108,21 @@ export function AgentEventsProvider({ children }: { children: ReactNode }) {
 
     sse.connect();
 
+    // Force-reconnect when the tab becomes visible after being hidden, or
+    // when the browser regains network. Without this, a laptop coming
+    // out of sleep can sit on a dead socket waiting for the next
+    // exponential-backoff window (up to 30s) before retrying. The user
+    // perceives this as an "intermittent dashboard drop".
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') sse.reconnectNow();
+    };
+    const onOnline = () => sse.reconnectNow();
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('online', onOnline);
+
     return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('online', onOnline);
       sse.disconnect();
     };
   }, [pushEvent]);

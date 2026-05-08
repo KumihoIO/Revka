@@ -56,7 +56,7 @@ condition = "$.temperature_c >= 85"
 ## Steps
 
 1. **Analyze** — Read the `Payload:` section in this SOP context and determine severity.
-   - tools: memory_recall
+   - tools: kumiho_memory_engage
 
 2. **Notify** — Send an alert with site/device/severity summary.
    - tools: pushover
@@ -88,5 +88,5 @@ expression = "0 9 * * *"
    - tools: file_read
 
 2. **Summarize** — Produce concise incident and trend summary.
-   - tools: memory_store
+   - tools: kumiho_memory_store
 ```

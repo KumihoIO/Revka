@@ -1,138 +1,146 @@
 import { Handle, Position, type NodeTypes } from '@xyflow/react';
+import { Bot, Lock } from 'lucide-react';
 import type { TaskNodeData } from './yamlSync';
+import { emitOpenAgentPicker } from '@/construct/components/workflows/stepEvents';
 
-// Action → color mapping
-const ACTION_COLORS: Record<string, string> = {
-  code: 'var(--pc-accent)',
-  review: '#a855f7',
-  research: '#22c55e',
-  deploy: '#f97316',
-  test: '#06b6d4',
-  build: '#eab308',
-  notify: '#ec4899',
-  approve: '#8b5cf6',
-  summarize: '#14b8a6',
-  greet: '#60a5fa',
-  human_input: '#f59e0b',
-  task: '#6b7280',
+// Action → token mapping. Maps semantic intent to Construct CSS vars.
+// Categories:
+//   - "live"     → green/success/active work (research, deploy ops, build, completion)
+//   - "network"  → blue/info/communication (notify, group_chat, agents, messaging)
+//   - "warning"  → amber (gate, conditional, decision points)
+//   - "danger"   → red (failure, errors)
+//   - "accent"   → primary brand (code/edit operations)
+//   - "muted"    → neutral (shell, plumbing, generic task)
+type ActionTone = 'live' | 'network' | 'warning' | 'danger' | 'accent' | 'muted';
+
+const ACTION_TONES: Record<string, ActionTone> = {
+  code: 'accent',
+  review: 'network',
+  research: 'live',
+  deploy: 'warning',
+  test: 'network',
+  build: 'warning',
+  notify: 'network',
+  approve: 'network',
+  summarize: 'live',
+  greet: 'network',
+  human_input: 'warning',
+  task: 'muted',
   // Executor step types
-  agent: '#3b82f6',
-  parallel: '#8b5cf6',
-  shell: '#64748b',
-  goto: '#f59e0b',
-  output: '#14b8a6',
-  conditional: '#eab308',
-  group_chat: '#ec4899',
-  supervisor: '#f97316',
-  map_reduce: '#06b6d4',
-  handoff: '#a78bfa',
-  a2a: '#34d399',
-  resolve: '#818cf8',
-  for_each: '#10b981',
+  agent: 'network',
+  parallel: 'network',
+  shell: 'muted',
+  goto: 'warning',
+  output: 'live',
+  conditional: 'warning',
+  group_chat: 'network',
+  supervisor: 'warning',
+  map_reduce: 'network',
+  handoff: 'network',
+  a2a: 'live',
+  resolve: 'network',
+  for_each: 'live',
 };
 
-// Resolved colors for gradient (can't mix css vars in gradients reliably)
-const ACTION_RESOLVED: Record<string, string> = {
-  code: '#00b4d8',
-  review: '#a855f7',
-  research: '#22c55e',
-  deploy: '#f97316',
-  test: '#06b6d4',
-  build: '#eab308',
-  notify: '#ec4899',
-  approve: '#8b5cf6',
-  summarize: '#14b8a6',
-  greet: '#60a5fa',
-  human_input: '#f59e0b',
-  task: '#6b7280',
-  // Executor step types
-  agent: '#3b82f6',
-  parallel: '#8b5cf6',
-  shell: '#64748b',
-  goto: '#f59e0b',
-  output: '#14b8a6',
-  conditional: '#eab308',
-  group_chat: '#ec4899',
-  supervisor: '#f97316',
-  map_reduce: '#06b6d4',
-  handoff: '#a78bfa',
-  a2a: '#34d399',
-  resolve: '#818cf8',
-  for_each: '#10b981',
-};
-
-function getActionColor(action: string): string {
+function getActionTone(action: string): ActionTone {
   const key = action.toLowerCase().replace(/[^a-z]/g, '');
-  for (const [prefix, color] of Object.entries(ACTION_COLORS)) {
-    if (key.startsWith(prefix) || key.includes(prefix)) return color;
+  for (const [prefix, tone] of Object.entries(ACTION_TONES)) {
+    if (key.startsWith(prefix) || key.includes(prefix)) return tone;
   }
-  return '#6b7280';
+  return 'muted';
 }
 
-function getResolvedColor(action: string): string {
-  const key = action.toLowerCase().replace(/[^a-z]/g, '');
-  for (const [prefix, color] of Object.entries(ACTION_RESOLVED)) {
-    if (key.startsWith(prefix) || key.includes(prefix)) return color;
+/** CSS var for the solid line/fill color associated with a tone. */
+function toneColorVar(tone: ActionTone): string {
+  switch (tone) {
+    case 'live': return 'var(--construct-signal-live)';
+    case 'network': return 'var(--construct-signal-network)';
+    case 'warning': return 'var(--construct-status-warning)';
+    case 'danger': return 'var(--construct-status-danger)';
+    case 'accent': return 'var(--pc-accent)';
+    case 'muted': return 'var(--construct-status-idle)';
   }
-  return '#6b7280';
 }
 
-// Agent hint colors
-const HINT_COLORS: Record<string, string> = {
-  coder: 'var(--pc-accent)',
-  researcher: '#22c55e',
-  reviewer: '#a855f7',
+/** CSS var (or color-mix expression) for the soft tint matching the tone. */
+function toneSoftVar(tone: ActionTone): string {
+  switch (tone) {
+    case 'live': return 'var(--construct-signal-live-soft)';
+    case 'network': return 'var(--construct-signal-network-soft)';
+    case 'warning': return 'color-mix(in srgb, var(--construct-status-warning) 16%, transparent)';
+    case 'danger': return 'color-mix(in srgb, var(--construct-status-danger) 16%, transparent)';
+    case 'accent': return 'var(--pc-accent-glow)';
+    case 'muted': return 'color-mix(in srgb, var(--construct-status-idle) 16%, transparent)';
+  }
+}
+
+// Agent hint tones
+const HINT_TONES: Record<string, ActionTone> = {
+  coder: 'accent',
+  researcher: 'live',
+  reviewer: 'network',
 };
 
-// Run status colors
-const STATUS_COLORS: Record<string, string> = {
-  completed: '#22c55e',
-  running: '#eab308',
-  failed: '#ef4444',
-  pending: '#6b7280',
-  skipped: '#6b7280',
+// Run status → tone
+const STATUS_TONES: Record<string, ActionTone> = {
+  completed: 'live',
+  running: 'warning',
+  failed: 'danger',
+  pending: 'muted',
+  skipped: 'muted',
 };
 
-// Agent type badge colors
-const AGENT_TYPE_COLORS: Record<string, string> = {
-  claude: '#a855f7',
-  codex: '#f97316',
+// Agent type tones
+const AGENT_TYPE_TONES: Record<string, ActionTone> = {
+  claude: 'network',
+  codex: 'warning',
 };
 
-function TaskNode({ data, selected }: { data: TaskNodeData; selected?: boolean }) {
-  const color = getActionColor(data.action);
-  const resolved = getResolvedColor(data.action);
+function TaskNode({ id, data, selected }: { id: string; data: TaskNodeData; selected?: boolean }) {
+  const tone = getActionTone(data.type);
+  const color = toneColorVar(tone);
+  const soft = toneSoftVar(tone);
+  const isAgentStep = (data.type || 'agent') === 'agent';
+
+  const openAgentPicker = (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
+    const rect = event.currentTarget.getBoundingClientRect();
+    emitOpenAgentPicker({ taskId: id, anchorRect: rect });
+  };
 
   return (
     <div
-      className="px-4 py-3 rounded-xl shadow-lg transition-all"
+      className={`px-4 py-3 rounded-xl shadow-lg transition-all${data.justUpdated ? ' step-updated-pulse' : ''}`}
       style={{
         position: 'relative',
         background: selected
-          ? `linear-gradient(135deg, ${resolved}30 0%, ${resolved}18 40%, rgba(20,20,30,0.95) 100%)`
-          : `linear-gradient(135deg, ${resolved}12 0%, rgba(30,30,40,0.98) 50%, rgba(20,20,30,0.95) 100%)`,
-        border: `2px solid ${selected ? resolved : resolved + '60'}`,
+          ? `linear-gradient(135deg, ${soft} 0%, ${soft} 40%, var(--construct-bg-panel-strong) 100%)`
+          : `linear-gradient(135deg, ${soft} 0%, var(--construct-bg-elevated) 50%, var(--construct-bg-surface) 100%)`,
+        border: `2px solid ${selected ? color : 'var(--construct-border-strong)'}`,
         minWidth: 220,
         maxWidth: 280,
         boxShadow: selected
-          ? `0 0 20px ${resolved}30, inset 0 1px 0 ${resolved}20`
-          : `0 4px 12px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.04)`,
+          ? `0 0 20px ${soft}, inset 0 1px 0 ${soft}`
+          : `0 4px 12px rgba(0, 0, 0, 0.3), inset 0 1px 0 var(--construct-border-soft)`,
       }}
     >
       <Handle type="target" position={Position.Top} style={{ background: color, width: 10, height: 10 }} />
 
       {/* Task name */}
-      <div className="text-sm font-bold truncate" style={{ color: selected ? '#fff' : 'var(--pc-text-primary)' }}>
+      <div
+        className="text-sm font-bold truncate"
+        style={{ color: selected ? 'var(--construct-signal-selected)' : 'var(--pc-text-primary)' }}
+      >
         {data.name || data.taskId}
       </div>
 
-      {/* Action badge */}
+      {/* Type badge */}
       <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
         <span
           className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider"
-          style={{ background: color + '22', color }}
+          style={{ background: soft, color }}
         >
-          {data.action}
+          {data.type}
         </span>
         {data.paramCount > 0 && (
           <span
@@ -154,38 +162,122 @@ function TaskNode({ data, selected }: { data: TaskNodeData; selected?: boolean }
         </div>
       )}
 
-      {/* Assigned pool agent */}
+      {/* Assigned pool agent — clickable for agent steps to open AgentPicker */}
       {data.assign && !data.runInfo && (
-        <div
+        <button
+          type="button"
+          onClick={isAgentStep ? openAgentPicker : undefined}
+          onMouseDown={(e) => e.stopPropagation()}
           className="mt-1.5 px-2 py-0.5 rounded-md text-[10px] font-semibold truncate inline-flex items-center gap-1"
           style={{
-            background: 'rgba(99,102,241,0.12)',
-            color: '#818cf8',
-            border: '1px solid rgba(99,102,241,0.2)',
+            background: 'var(--construct-signal-network-soft)',
+            color: 'var(--construct-signal-network)',
+            border: '1px solid var(--construct-border-strong)',
             maxWidth: '100%',
+            cursor: isAgentStep ? 'pointer' : 'default',
+            font: 'inherit',
           }}
-          title={`Assigned: ${data.assign}`}
+          title={`Assigned: ${data.assign}${isAgentStep ? ' — click to change' : ''}`}
         >
           <span style={{ fontSize: '8px' }}>●</span>
           {data.assign}
-        </div>
+        </button>
       )}
+
+      {/* Persona pill — agent.template binding from Architect persona discovery
+          or hand-edited YAML. Distinct from the green "Assigned" button above
+          (set via AgentPicker side-panel) but still actionable. */}
+      {!data.assign && data.template && isAgentStep && !data.runInfo && (
+        <button
+          type="button"
+          onClick={openAgentPicker}
+          onMouseDown={(e) => e.stopPropagation()}
+          className="mt-1.5 px-2 py-0.5 rounded-md text-[10px] font-semibold truncate inline-flex items-center gap-1"
+          style={{
+            background: 'transparent',
+            color: 'var(--construct-text-secondary)',
+            border: '1px solid var(--construct-border-strong)',
+            maxWidth: '100%',
+            cursor: 'pointer',
+            font: 'inherit',
+          }}
+          title={`Pool persona "${data.template}" — click to change`}
+        >
+          <Bot size={10} />
+          Persona · {data.template}
+        </button>
+      )}
+
+      {/* Default-agent / unassigned pill — agent steps without a specific pool-agent binding.
+          When agent_type is set the workflow runs fine on the default agent of that kind, so we
+          show a neutral "Default · {Type}" chip rather than an alarming warning. The button still
+          opens the picker for users who want to bind a specific pool agent. */}
+      {!data.assign && !data.template && isAgentStep && !data.runInfo && (() => {
+        const agentTypeLabel = data.agentType
+          ? data.agentType.charAt(0).toUpperCase() + data.agentType.slice(1)
+          : '';
+        const isDefault = !!data.agentType;
+        return (
+          <button
+            type="button"
+            onClick={openAgentPicker}
+            onMouseDown={(e) => e.stopPropagation()}
+            className="mt-1.5 px-2 py-0.5 rounded-md text-[10px] font-medium truncate inline-flex items-center gap-1"
+            style={{
+              background: isDefault
+                ? 'transparent'
+                : 'color-mix(in srgb, var(--construct-status-warning) 16%, transparent)',
+              color: isDefault
+                ? 'var(--construct-text-muted)'
+                : 'var(--construct-status-warning)',
+              border: isDefault
+                ? '1px solid var(--construct-border-soft)'
+                : '1px solid var(--construct-status-warning)',
+              maxWidth: '100%',
+              cursor: 'pointer',
+              font: 'inherit',
+            }}
+            title={
+              isDefault
+                ? `Default ${data.agentType} agent — click to assign a specific pool agent`
+                : 'No pool agent assigned — click to choose'
+            }
+          >
+            <Bot size={10} />
+            {isDefault ? `Default · ${agentTypeLabel}` : 'Unassigned'}
+          </button>
+        );
+      })()}
 
       {/* Agent hints */}
       {data.agentHints.length > 0 && (
         <div className="flex gap-1 mt-1.5 flex-wrap">
-          {data.agentHints.map((hint) => (
-            <span
-              key={hint}
-              className="px-1.5 py-0.5 rounded text-[9px] font-medium"
-              style={{
-                background: (HINT_COLORS[hint] || '#6b7280') + '18',
-                color: HINT_COLORS[hint] || '#6b7280',
-              }}
-            >
-              {hint}
-            </span>
-          ))}
+          {data.agentHints.map((hint) => {
+            const hintTone = HINT_TONES[hint] || 'muted';
+            return (
+              <span
+                key={hint}
+                className="px-1.5 py-0.5 rounded text-[9px] font-medium"
+                style={{
+                  background: toneSoftVar(hintTone),
+                  color: toneColorVar(hintTone),
+                }}
+              >
+                {hint}
+              </span>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Auth profile binding — small lock icon when an encrypted credential is bound */}
+      {data.auth && (
+        <div
+          className="flex items-center gap-1 mt-1"
+          title={`Auth: ${data.auth}`}
+          style={{ color: 'var(--construct-text-faint)' }}
+        >
+          <Lock size={12} />
         </div>
       )}
 
@@ -219,51 +311,62 @@ function TaskNode({ data, selected }: { data: TaskNodeData; selected?: boolean }
 
       {/* Run info overlay — shown when viewing a workflow run */}
       {data.runInfo && (
-        <div className="mt-2 pt-2" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+        <div className="mt-2 pt-2" style={{ borderTop: '1px solid var(--construct-border-soft)' }}>
           <div className="flex items-center gap-1.5 flex-wrap">
             {/* Status badge */}
-            <span
-              className="px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wider"
-              style={{
-                background: (STATUS_COLORS[data.runInfo.status] || '#6b7280') + '22',
-                color: STATUS_COLORS[data.runInfo.status] || '#6b7280',
-              }}
-            >
-              {data.runInfo.status}
-            </span>
+            {(() => {
+              const statusTone = STATUS_TONES[data.runInfo.status] || 'muted';
+              return (
+                <span
+                  className="px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wider"
+                  style={{
+                    background: toneSoftVar(statusTone),
+                    color: toneColorVar(statusTone),
+                  }}
+                >
+                  {data.runInfo.status}
+                </span>
+              );
+            })()}
             {/* Agent type badge */}
-            {data.runInfo.agent_type && (
-              <span
-                className="px-1.5 py-0.5 rounded text-[9px] font-medium"
-                style={{
-                  background: (AGENT_TYPE_COLORS[data.runInfo.agent_type] || '#6b7280') + '18',
-                  color: AGENT_TYPE_COLORS[data.runInfo.agent_type] || '#6b7280',
-                }}
-              >
-                {data.runInfo.agent_type}
-              </span>
-            )}
+            {data.runInfo.agent_type && (() => {
+              const atTone = AGENT_TYPE_TONES[data.runInfo.agent_type] || 'muted';
+              return (
+                <span
+                  className="px-1.5 py-0.5 rounded text-[9px] font-medium"
+                  style={{
+                    background: toneSoftVar(atTone),
+                    color: toneColorVar(atTone),
+                  }}
+                >
+                  {data.runInfo!.agent_type}
+                </span>
+              );
+            })()}
             {/* Role badge */}
-            {data.runInfo.role && (
-              <span
-                className="px-1.5 py-0.5 rounded text-[9px] font-medium"
-                style={{
-                  background: (HINT_COLORS[data.runInfo.role] || '#6b7280') + '18',
-                  color: HINT_COLORS[data.runInfo.role] || '#6b7280',
-                }}
-              >
-                {data.runInfo.role}
-              </span>
-            )}
+            {data.runInfo.role && (() => {
+              const roleTone = HINT_TONES[data.runInfo.role] || 'muted';
+              return (
+                <span
+                  className="px-1.5 py-0.5 rounded text-[9px] font-medium"
+                  style={{
+                    background: toneSoftVar(roleTone),
+                    color: toneColorVar(roleTone),
+                  }}
+                >
+                  {data.runInfo!.role}
+                </span>
+              );
+            })()}
           </div>
           {/* Pool agent (assigned template) — prominent badge */}
           {data.runInfo.template_name && (
             <div
               className="mt-1.5 px-2 py-0.5 rounded-md text-[10px] font-semibold truncate inline-flex items-center gap-1"
               style={{
-                background: 'rgba(99,102,241,0.15)',
-                color: '#818cf8',
-                border: '1px solid rgba(99,102,241,0.25)',
+                background: 'var(--construct-signal-network-soft)',
+                color: 'var(--construct-signal-network)',
+                border: '1px solid var(--construct-border-strong)',
                 maxWidth: '100%',
               }}
               title={`Pool Agent: ${data.runInfo.template_name}`}
@@ -291,21 +394,24 @@ function TaskNode({ data, selected }: { data: TaskNodeData; selected?: boolean }
                   className="px-1.5 py-0.5 rounded text-[8px] font-medium inline-flex items-center gap-0.5"
                   style={{
                     background: data.runInfo!.status === 'running'
-                      ? 'rgba(34,211,238,0.18)'
+                      ? 'var(--construct-signal-network-soft)'
                       : data.runInfo!.status === 'completed'
-                        ? 'rgba(52,211,153,0.15)'
+                        ? 'var(--construct-signal-live-soft)'
                         : 'var(--pc-accent-glow)',
                     color: data.runInfo!.status === 'running'
-                      ? '#22d3ee'
+                      ? 'var(--construct-signal-network)'
                       : data.runInfo!.status === 'completed'
-                        ? '#34d399'
+                        ? 'var(--construct-signal-live)'
                         : 'var(--pc-accent-light)',
                   }}
                 >
                   {data.runInfo!.status === 'running' && (
                     <span
                       className="inline-block h-1 w-1 rounded-full"
-                      style={{ background: '#22d3ee', animation: 'pulse-dot 1.5s ease-in-out infinite' }}
+                      style={{
+                        background: 'var(--construct-signal-network)',
+                        animation: 'pulse-dot 1.5s ease-in-out infinite',
+                      }}
                     />
                   )}
                   {data.runInfo!.status === 'completed' && (
@@ -337,9 +443,9 @@ function TaskNode({ data, selected }: { data: TaskNodeData; selected?: boolean }
               <span
                 className="text-[9px] font-medium"
                 style={{
-                  color: data.runInfo.trust_score >= 0.8 ? '#34d399'
-                    : data.runInfo.trust_score >= 0.5 ? '#eab308'
-                    : '#f87171',
+                  color: data.runInfo.trust_score >= 0.8 ? 'var(--construct-status-success)'
+                    : data.runInfo.trust_score >= 0.5 ? 'var(--construct-status-warning)'
+                    : 'var(--construct-status-danger)',
                 }}
               >
                 trust {(data.runInfo.trust_score * 100).toFixed(0)}%

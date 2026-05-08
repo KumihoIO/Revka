@@ -153,6 +153,8 @@ Notes:
 
 - Mutating schedule/cron actions require `cron.enabled = true`.
 - Shell command payloads for schedule creation (`create` / `add` / `once`) are validated by security command policy before job persistence.
+- **Timezone semantics** — `cron add` accepts an IANA timezone via `--tz` (e.g. `--tz America/Los_Angeles`, `--tz Asia/Seoul`, `--tz UTC`). When `--tz` is omitted the default is **UTC** — the cron expression is interpreted against UTC wall-clock, not the daemon host's local timezone. The runtime validates `--tz` strings against the IANA tz database via `chrono-tz`; non-IANA values are rejected at job-add time. Cron round-trip semantics (per-job `tz`) are exercised by `src/cron/types.rs::tests::cron_with_tz_*`.
+- `add-at` / `add-every` / `once` do **not** accept `--tz`. `add-at` takes an RFC 3339 timestamp (which embeds its own offset); `add-every` and `once` schedule from the moment of registration and are timezone-agnostic by construction.
 
 ### `models`
 

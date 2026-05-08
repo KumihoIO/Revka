@@ -413,12 +413,12 @@ flowchart TB
 flowchart TB
     subgraph Frontend[Memory Frontends]
         AutoSave[Auto-save hooks<br/>user_msg, assistant_resp]
-        StoreTool[memory_store tool]
-        RecallTool[memory_recall tool]
-        ForgetTool[memory_forget tool]
-        GetTool[memory_get tool]
-        ListTool[memory_list tool]
-        CountTool[memory_count tool]
+        EngageTool[kumiho_memory_engage<br/>via Kumiho MCP]
+        ReflectTool[kumiho_memory_reflect<br/>via Kumiho MCP]
+        StoreTool[kumiho_memory_store<br/>via Kumiho MCP]
+        RetrieveTool[kumiho_memory_retrieve<br/>via Kumiho MCP]
+        OperatorStore[construct-operator__memory_store<br/>via Operator MCP]
+        OperatorSearch[construct-operator__memory_search<br/>via Operator MCP]
     end
 
     subgraph Backends[Memory Backends]

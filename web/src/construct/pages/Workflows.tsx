@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useT } from '@/construct/hooks/useT';
 import { parseWorkflowYaml, type TaskDefinition } from '@/components/workflows/yamlSync';
-import WorkflowEditor from '@/components/workflows/WorkflowEditor';
+import WorkflowEditor from '@/construct/components/workflows/WorkflowEditor';
 import type { WorkflowCreateRequest, WorkflowDefinition, WorkflowRunDetail, WorkflowRunSummary, WorkflowUpdateRequest } from '@/types/api';
 import { ApiError, createWorkflow, deleteWorkflow, fetchWorkflowRun, fetchWorkflowRuns, fetchWorkflows, runWorkflow, toggleWorkflowDeprecation, updateWorkflow } from '@/lib/api';
 import {
@@ -144,15 +144,31 @@ export default function Workflows() {
     let cancelled = false;
     let attempts = 0;
     let timer: ReturnType<typeof setTimeout> | null = null;
+    const TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled']);
+    const POLL_INTERVAL_MS = 4000;
+    const scheduleNext = (delay: number) => {
+      timer = setTimeout(poll, delay);
+    };
     const poll = () => {
       fetchWorkflowRun(selectedRunId)
-        .then((run) => { if (!cancelled) setSelectedRun(run); })
+        .then((run) => {
+          if (cancelled) return;
+          setSelectedRun(run);
+          // Keep polling while the run is still in flight. Treat any
+          // unrecognized status as terminal so we don't loop forever.
+          if (run.status === 'running' || run.status === 'pending') {
+            scheduleNext(POLL_INTERVAL_MS);
+          } else if (!TERMINAL_STATUSES.has(run.status)) {
+            // Unknown status — stop polling defensively.
+            return;
+          }
+        })
         .catch((err) => {
           if (cancelled) return;
           const msg = err instanceof Error ? err.message : String(err);
           if (attempts < 6 && /not found|404/i.test(msg)) {
             attempts += 1;
-            timer = setTimeout(poll, 1500);
+            scheduleNext(1500);
             return;
           }
           setError(msg);
@@ -237,7 +253,7 @@ export default function Workflows() {
 
   /* ---- CRUD handlers ---- */
 
-  const handleSaveWorkflow = async (values: WorkflowFormValues) => {
+  const handleSaveWorkflow = async (values: WorkflowFormValues): Promise<void> => {
     setSaving(true);
     setError(null);
     try {
@@ -272,6 +288,11 @@ export default function Workflows() {
       const message = formatWorkflowError(err, t('workflows.save_failure'));
       setError(message);
       setNotice({ tone: 'error', message });
+      // Re-throw so the editor (rendered as a fixed-overlay above the page-
+      // level notice) can surface the message inline. Without this, clicks on
+      // Save appear to do nothing because the page notice is hidden behind
+      // the editor.
+      throw new Error(message);
     } finally {
       setSaving(false);
     }

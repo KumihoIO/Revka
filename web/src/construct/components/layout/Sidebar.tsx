@@ -48,7 +48,7 @@ export default function Sidebar({ mobileOpen = false, onCloseMobile }: SidebarPr
         />
       ) : null}
       <aside
-        className={`construct-sidebar fixed inset-y-0 left-0 z-50 flex flex-col border-r transition-transform duration-200 lg:static lg:z-auto lg:flex lg:h-screen lg:flex-shrink-0 lg:translate-x-0 lg:overflow-hidden ${mobileOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}
+        className={`construct-sidebar fixed inset-y-0 left-0 z-50 flex flex-col overflow-hidden border-r transition-transform duration-200 lg:static lg:z-auto lg:flex lg:h-screen lg:flex-shrink-0 lg:translate-x-0 ${mobileOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}
         style={{
           borderColor: 'var(--construct-border-soft)',
           background: 'var(--construct-bg-shell)',
@@ -106,7 +106,7 @@ export default function Sidebar({ mobileOpen = false, onCloseMobile }: SidebarPr
       )}
 
       <nav
-        className="construct-sidebar-scroll mt-5 lg:min-h-0 lg:flex-1 lg:overflow-y-auto"
+        className="construct-sidebar-scroll mt-5 min-h-0 flex-1 overflow-y-auto"
         style={{ paddingRight: collapsed ? 0 : '0.25rem' }}
       >
         <div className={collapsed ? 'space-y-4' : 'space-y-5'}>

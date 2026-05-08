@@ -140,7 +140,7 @@ Conventions Construct relies on:
 | Space | Purpose |
 |---|---|
 | `Construct/AgentPool` | Per-agent state — identity, expertise, tone, allowed tools. |
-| `Construct/Plans/<project>` | Plans the conductor decomposed for a project. |
+| `Construct/Plans/<project>` | Plans the Operator decomposed for a project. |
 | `Construct/Sessions` | Active and historical chat sessions. |
 | `Construct/Goals` | Long-running goals an agent is working toward. |
 | `Construct/AgentTrust` | Per-agent trust scores and recent outcome buffer. |

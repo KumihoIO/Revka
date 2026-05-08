@@ -12,6 +12,7 @@ Structure:
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from datetime import datetime, timezone
@@ -203,6 +204,58 @@ async def persist_workflow_run(
 # Publish a workflow output as a Kumiho entity (triggers event listeners)
 # ---------------------------------------------------------------------------
 
+async def _ensure_space_path(space_path: str) -> None:
+    """Ensure every level of a (possibly nested) Kumiho space path exists.
+
+    The SDK's ``ensure_space(project, space)`` only handles a single space
+    directly under a project. For deeper paths like ``/A/B/C/D`` we have to
+    walk the path and create each segment with the correct ``parent_path``
+    so that ``create_item`` doesn't 404 with "Space not found".
+    """
+    parts = space_path.strip("/").split("/")
+    if not parts or not parts[0]:
+        return
+
+    from ..operator_mcp import KUMIHO_SDK
+    project = parts[0]
+
+    if len(parts) == 1:
+        # Path is just "/project" — nothing to create beyond the project.
+        # ensure_space requires a space name; default to WorkflowOutputs to
+        # match the legacy behaviour of this function.
+        await KUMIHO_SDK.ensure_space(project, "WorkflowOutputs")
+        return
+
+    # First segment under the project: ensure_space already creates
+    # both the project and the root-level space idempotently.
+    await KUMIHO_SDK.ensure_space(project, parts[1])
+
+    if len(parts) == 2:
+        return
+
+    # Deeper segments need parent_path plumbed through tool_create_space,
+    # which the SDK's ensure_space wrapper does not expose.
+    try:
+        from kumiho.mcp_server import tool_create_space
+    except ImportError:
+        _log(
+            "workflow_memory: kumiho.mcp_server.tool_create_space unavailable; "
+            f"cannot ensure nested segments of {space_path!r}"
+        )
+        return
+
+    for i in range(2, len(parts)):
+        parent_path = "/" + "/".join(parts[:i])
+        segment = parts[i]
+
+        def _create(p=project, s=segment, pp=parent_path) -> None:
+            r = tool_create_space(p, s, parent_path=pp)
+            if "error" in r and "already exists" not in r["error"].lower():
+                _log(f"workflow_memory: create_space({pp}/{s}) warning: {r['error']}")
+
+        await asyncio.to_thread(_create)
+
+
 async def publish_workflow_entity(
     *,
     entity_name: str,
@@ -236,12 +289,11 @@ async def publish_workflow_entity(
             return None
 
         space_path = entity_space or f"/{_project()}/WorkflowOutputs"
-        # Ensure the space exists (ensure_space handles project creation internally)
-        parts = space_path.strip("/").split("/")
-        if len(parts) >= 2:
-            await KUMIHO_SDK.ensure_space(parts[0], parts[1])
-        elif len(parts) == 1:
-            await KUMIHO_SDK.ensure_space(parts[0], "WorkflowOutputs")
+        # Walk the full space path and ensure every segment exists. The SDK's
+        # ensure_space only creates a single space directly under a project,
+        # so deeper paths used to fail at create_item below with NOT_FOUND.
+        _log(f"workflow_memory: ensuring space {space_path} for entity {entity_name}")
+        await _ensure_space_path(space_path)
 
         # Merge source tracking with user-defined entity metadata
         item_meta: dict[str, str] = {
@@ -252,13 +304,30 @@ async def publish_workflow_entity(
         if entity_metadata:
             item_meta.update(entity_metadata)
 
-        # Create the item
-        item = await KUMIHO_SDK.create_item(
-            space_path,
-            entity_name,
-            kind=entity_kind,
-            metadata=item_meta,
-        )
+        # Create the item. Retry once on NOT_FOUND to absorb the rare race
+        # where the gRPC backend hasn't yet replicated the space we just
+        # ensured above.
+        async def _do_create() -> dict[str, Any]:
+            return await KUMIHO_SDK.create_item(
+                space_path,
+                entity_name,
+                kind=entity_kind,
+                metadata=item_meta,
+            )
+
+        try:
+            item = await _do_create()
+        except RuntimeError as exc:
+            msg = str(exc).lower()
+            if "not found" in msg or "not_found" in msg:
+                _log(
+                    f"workflow_memory: create_item NOT_FOUND for {space_path}; "
+                    "re-ensuring space and retrying once"
+                )
+                await _ensure_space_path(space_path)
+                item = await _do_create()
+            else:
+                raise
         item_kref = item.get("kref", "") if isinstance(item, dict) else getattr(item, "kref", "")
         if not item_kref:
             _log(f"workflow_memory: entity creation returned no kref for {entity_name}")

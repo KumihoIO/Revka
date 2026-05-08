@@ -162,10 +162,21 @@ body {
   opacity: 0.9;
 }
 
-/* Focus ring */
+/* Focus ring — applies to interactive controls without their own focus
+   feedback (buttons, links, custom widgets). Text inputs get their own
+   visual cue via the blinking caret + composer chrome, so we exclude
+   them here to avoid the cyan halo around every chat textarea/input
+   that overrides Tailwind's `outline-none` on load order. */
 :focus-visible {
   outline: 2px solid var(--pc-accent-dim);
   outline-offset: 2px;
+}
+
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+[contenteditable="true"]:focus-visible {
+  outline: none;
 }
 
 :focus:not(:focus-visible) {

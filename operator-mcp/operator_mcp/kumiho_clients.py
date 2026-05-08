@@ -109,13 +109,11 @@ class KumihoSDKClient:
     async def list_items(self, space_path: str, include_deprecated: bool = False) -> list[dict[str, Any]]:
         def _call():
             clean_path = space_path.lstrip("/")
-            _log(f"list_items: context_filter={clean_path!r}")
             r = tool_search_items(context_filter=clean_path, name_filter="", kind_filter="")
             if "error" in r:
                 _log(f"list_items error: {r['error']}")
                 return []
             items = r.get("items", [])
-            _log(f"list_items: got {len(items)} items from {clean_path!r}")
             if not include_deprecated:
                 items = [i for i in items if not i.get("deprecated")]
             return items

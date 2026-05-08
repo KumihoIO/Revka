@@ -170,7 +170,7 @@ message_timeout_scale_max = 8
 | `method` | `totp` | OTP method (`totp`, `pairing`, `cli-prompt`) |
 | `token_ttl_secs` | `30` | TOTP time-step window in seconds |
 | `cache_valid_secs` | `300` | Cache window for recently validated OTP codes |
-| `gated_actions` | `["shell","file_write","browser_open","browser","memory_forget"]` | Tool actions protected by OTP |
+| `gated_actions` | `["shell","file_write","browser_open","browser"]` | Tool actions protected by OTP |
 | `gated_domains` | `[]` | Explicit domain patterns requiring OTP (`*.example.com`, `login.example.com`) |
 | `gated_domain_categories` | `[]` | Domain preset categories (`banking`, `medical`, `government`, `identity_providers`) |
 
@@ -472,6 +472,93 @@ set `path_prefix` to that sub-path (e.g. `"/construct"`). All gateway
 routes will be served under this prefix. The value must start with `/`
 and must not end with `/`.
 
+## `[tunnel]`
+
+Optional public tunnel for the gateway. Construct ships built-in
+adapters that wrap external tunnel binaries — they spawn the binary
+as a managed subprocess once the gateway is listening, watch its
+output for the public URL, and stop it on daemon shutdown.
+
+| Key | Default | Purpose |
+|---|---|---|
+| `provider` | `"none"` | Tunnel provider: `"none"`, `"cloudflare"`, `"tailscale"`, `"ngrok"`, `"openvpn"`, `"pinggy"`, or `"custom"`. Case-insensitive. |
+
+When `provider != "none"`, the matching `[tunnel.<provider>]` sub-section
+must be present (validated at startup; the daemon refuses to come up
+if the provider's required fields are missing).
+
+If you already run a tunnel binary externally (e.g. `cloudflared` under
+`launchd` or `systemd`) keep `provider = "none"` so Construct does not
+spawn a duplicate.
+
+### `[tunnel.cloudflare]`
+
+Required when `provider = "cloudflare"`. Construct runs
+`cloudflared tunnel --no-autoupdate run --token <TOKEN> --url
+http://localhost:<port>` and parses the public URL from the binary's
+stderr.
+
+| Key | Default | Purpose |
+|---|---|---|
+| `token` | _(required)_ | Cloudflare Tunnel token from the Zero Trust dashboard |
+
+```toml
+[tunnel]
+provider = "cloudflare"
+
+[tunnel.cloudflare]
+token = "eyJhIjoiMTI..."
+```
+
+### `[tunnel.tailscale]`
+
+Optional when `provider = "tailscale"`. Defaults to Tailscale Serve
+(tailnet-only); set `funnel = true` for public Tailscale Funnel.
+
+| Key | Default | Purpose |
+|---|---|---|
+| `funnel` | `false` | `true` for public Funnel; `false` for tailnet-only Serve |
+| `hostname` | _(none)_ | Optional hostname override |
+
+### `[tunnel.ngrok]`
+
+Required when `provider = "ngrok"`.
+
+| Key | Default | Purpose |
+|---|---|---|
+| `auth_token` | _(required)_ | ngrok account auth token |
+| `domain` | _(none)_ | Optional reserved custom domain |
+
+### `[tunnel.openvpn]`
+
+Required when `provider = "openvpn"`.
+
+| Key | Default | Purpose |
+|---|---|---|
+| `config_file` | _(required)_ | Path to `.ovpn` configuration file |
+| `auth_file` | _(none)_ | Optional path to `--auth-user-pass` credentials file |
+| `advertise_address` | _(none)_ | Address advertised once VPN is up (e.g. `"10.8.0.2:42617"`); falls back to `local_host:local_port` if omitted |
+| `connect_timeout_secs` | `30` | Connection timeout (must be > 0) |
+
+### `[tunnel.pinggy]`
+
+Required when `provider = "pinggy"`.
+
+| Key | Default | Purpose |
+|---|---|---|
+| `token` | _(required)_ | Pinggy access token |
+| `region` | _(none)_ | Optional region override |
+
+### `[tunnel.custom]`
+
+Required when `provider = "custom"` — bring-your-own tunnel binary.
+
+| Key | Default | Purpose |
+|---|---|---|
+| `start_command` | _(required)_ | Shell command Construct runs to launch the tunnel; supports `{host}` and `{port}` placeholders |
+| `health_url` | _(none)_ | Optional URL Construct probes to confirm the tunnel is up |
+| `url_pattern` | _(none)_ | Regex extracted from the binary's stderr to pull the public URL (capture group 1 is the URL) |
+
 ## `[autonomy]`
 
 | Key | Default | Purpose |
@@ -483,8 +570,8 @@ and must not end with `/`.
 | `allowed_roots` | `[]` | additional roots allowed outside workspace after canonicalization |
 | `max_actions_per_hour` | `20` | per-policy action budget |
 | `max_cost_per_day_cents` | `500` | per-policy spend guardrail |
-| `require_approval_for_medium_risk` | `true` | approval gate for medium-risk commands |
-| `block_high_risk_commands` | `true` | hard block for high-risk commands |
+| `require_approval_for_medium_risk` | `true` | approval gate for medium-risk commands (see [Command Risk Classification](../../security/command-risk-classification.md)) |
+| `block_high_risk_commands` | `true` | hard block for high-risk commands (see [Command Risk Classification](../../security/command-risk-classification.md)) |
 | `auto_approve` | `[]` | tool operations always auto-approved |
 | `always_ask` | `[]` | tool operations that always require approval |
 
@@ -814,7 +901,8 @@ every non-internal agent.
 |---|---|---|
 | `enabled` | `true` | Enable Operator injection for non-internal agents |
 | `mcp_path` | `~/.construct/operator_mcp/run_operator_mcp.py` | Absolute path to the MCP runner script |
-| `max_tool_iterations` | (operator override) | Override `agent.max_tool_iterations` for operator-enabled sessions (operator tasks are multi-step by nature) |
+| `max_tool_iterations` | `80` | Override `agent.max_tool_iterations` for operator-enabled sessions (operator tasks are multi-step by nature) |
+| `tool_timeout_secs` | `600` | Per-tool timeout for the auto-injected operator MCP server. Some operator tools are inherently slow (codex image generation, workflow execution, dry-run, bulk recall); the runtime's global default (180 s) is too tight. Capped at `600` (the runtime's `MAX_TOOL_TIMEOUT_SECS`); higher values are silently truncated. Set to `0` to fall back to the global default. |
 
 Notes:
 

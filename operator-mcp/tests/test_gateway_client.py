@@ -33,21 +33,26 @@ class TestGatewayClientInit:
             gw = ConstructGatewayClient()
             assert gw.gateway_url == "http://localhost:8080"
 
-    def test_headers_with_token(self):
+    def test_headers_with_service_token(self):
         with patch.dict("os.environ", {
             "CONSTRUCT_GATEWAY_URL": "http://localhost:8080",
-            "CONSTRUCT_GATEWAY_TOKEN": "my-token",
-        }), patch("operator_mcp.gateway_client._HAS_HTTPX", True):
+            "CONSTRUCT_SERVICE_TOKEN": "svc-token",
+        }, clear=True), patch("operator_mcp.gateway_client._HAS_HTTPX", True):
             gw = ConstructGatewayClient()
             headers = gw._headers()
-            assert headers["Authorization"] == "Bearer my-token"
+            assert headers["X-Construct-Service-Token"] == "svc-token"
             assert headers["Accept"] == "application/json"
+            assert "Authorization" not in headers
 
     def test_headers_without_token(self):
-        with patch.dict("os.environ", {"CONSTRUCT_GATEWAY_URL": "http://localhost:8080"}, clear=True), \
-             patch("operator_mcp.gateway_client._HAS_HTTPX", True):
+        with patch.dict("os.environ", {
+            "CONSTRUCT_GATEWAY_URL": "http://localhost:8080",
+        }, clear=True), \
+             patch("operator_mcp.gateway_client._HAS_HTTPX", True), \
+             patch("operator_mcp.gateway_client._read_service_token", return_value=""):
             gw = ConstructGatewayClient()
             headers = gw._headers()
+            assert "X-Construct-Service-Token" not in headers
             assert "Authorization" not in headers
 
 

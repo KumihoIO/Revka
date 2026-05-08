@@ -101,7 +101,7 @@ Channels: `telegram` (4.6k), `discord`, `slack`, `whatsapp`, `whatsapp_web`, `ma
 
 Tool categories:
 - **File/Shell**: `shell`, `file_read`, `file_write`, `file_edit`, `glob_search`, `content_search`
-- **Memory**: `memory_store`, `memory_recall`, `memory_forget`
+- **Memory**: provided by the Kumiho-memory MCP — `kumiho_memory_engage`, `kumiho_memory_reflect`, `kumiho_memory_store`, `kumiho_memory_retrieve`, `kumiho_memory_consolidate`, `kumiho_memory_dream_state`. The Operator MCP also exposes `memory_store` / `memory_search` under the `construct-operator__` prefix for legacy callers.
 - **Web**: `browser`, `browser_open`, `web_fetch`, `web_search_tool`, `http_request`
 - **Scheduling**: `cron_add`, `cron_list`, `cron_remove`, `cron_update`, `cron_run`, `cron_runs`, `schedule`
 - **Delegation**: `delegate` (sub-agent spawning), `composio` (OAuth integrations)

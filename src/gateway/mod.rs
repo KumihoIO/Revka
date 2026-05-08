@@ -9,8 +9,10 @@
 
 pub mod api;
 pub mod api_agents;
+pub mod api_architect;
 pub mod api_artifact_body;
 pub mod api_attachments;
+pub mod api_auth_profiles;
 pub mod api_clawhub;
 pub mod api_kumiho_proxy;
 pub mod api_mcp;
@@ -33,6 +35,7 @@ pub mod nodes;
 pub mod session_queue;
 pub mod sse;
 pub mod static_files;
+pub mod workspace_assets;
 // portable-pty needs `openpty` from libutil which Android's NDK does not
 // reliably link.  The websocket terminal isn't a meaningful surface on a
 // phone runtime anyway, so we drop the module + its route on Android.
@@ -61,7 +64,7 @@ use anyhow::{Context, Result};
 use axum::{
     Router,
     body::Bytes,
-    extract::{ConnectInfo, Query, State},
+    extract::{ConnectInfo, DefaultBodyLimit, Query, State},
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Json},
     routing::{delete, get, post, put},
@@ -342,6 +345,49 @@ fn normalize_max_keys(configured: usize, fallback: usize) -> usize {
     }
 }
 
+/// Generate (once) and persist the gateway's service token to disk.
+///
+/// The file lives at `<state_dir>/service-token` with mode 0600 on POSIX.
+/// The operator-mcp runtime reads it back to authenticate calls into
+/// `/api/auth/profiles/{id}/resolve` from the same machine.
+fn ensure_service_token(state_dir: &std::path::Path) -> std::io::Result<String> {
+    use std::io::{Read, Write};
+    let path = state_dir.join("service-token");
+    if let Ok(mut f) = std::fs::File::open(&path) {
+        let mut buf = String::new();
+        f.read_to_string(&mut buf)?;
+        let trimmed = buf.trim().to_string();
+        if !trimmed.is_empty() {
+            return Ok(trimmed);
+        }
+    }
+    if !state_dir.exists() {
+        std::fs::create_dir_all(state_dir)?;
+    }
+    // 32 bytes of randomness, hex-encoded — same shape as our other
+    // shared-secret tokens so log greppers find them consistently.
+    let bytes: [u8; 32] = rand::random();
+    let token = bytes.iter().fold(String::with_capacity(64), |mut s, b| {
+        use std::fmt::Write as _;
+        let _ = write!(s, "{:02x}", b);
+        s
+    });
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(&path)?;
+    f.write_all(token.as_bytes())?;
+    drop(f);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let perms = std::fs::Permissions::from_mode(0o600);
+        let _ = std::fs::set_permissions(&path, perms);
+    }
+    Ok(token)
+}
+
 /// Shared state for all axum handlers
 #[derive(Clone)]
 pub struct AppState {
@@ -408,6 +454,14 @@ pub struct AppState {
     /// MCP server failed to bind — proxy handlers should then return 503.
     /// Populated after MCP server bind in [`run_gateway`].
     pub mcp_local_url: Option<Arc<str>>,
+    /// Encrypted credential store for workflow-step auth-profile dropdown.
+    /// `None` in test mocks. See [`crate::auth::profiles::AuthProfilesStore`].
+    pub auth_profiles: Option<Arc<crate::auth::profiles::AuthProfilesStore>>,
+    /// Service token for internal-only endpoints (e.g. auth-profile resolve).
+    /// Empty string disables those endpoints. Generated at gateway startup
+    /// and persisted to `<state_dir>/service-token` so the operator-mcp
+    /// runtime can read it back without IPC.
+    pub service_token: Arc<str>,
 }
 
 /// Run the HTTP gateway using axum with proper HTTP/1.1 compliance.
@@ -529,6 +583,15 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
             Ok(registry) => {
                 let registry = std::sync::Arc::new(registry);
                 mcp_registry_shared = Some(std::sync::Arc::clone(&registry));
+                // Registry-based probe + loud-failure warning for the
+                // high-level Kumiho memory reflexes (coherence audit row 1+13).
+                // Gateway agents built via Agent::from_config run their own
+                // probe; this fires the warning once at gateway startup so
+                // operators see it even before the first agent run.
+                let kumiho_advanced = crate::agent::kumiho::registry_has_advanced_kumiho_tools(
+                    &registry.tool_names(),
+                );
+                crate::agent::kumiho::warn_if_kumiho_advanced_missing(&config, kumiho_advanced);
                 if gateway_mcp_config.deferred_loading {
                     let operator_prefix =
                         format!("{}__", crate::agent::operator::OPERATOR_SERVER_NAME);
@@ -909,6 +972,34 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
         None
     };
 
+    // ── Encrypted credential store for workflow auth-profile dropdown ────
+    //
+    // Surfaces the existing AuthProfilesStore (~/.construct/auth-profiles.json,
+    // ChaCha20-Poly1305 via SecretStore) over GET /api/auth/profiles. The
+    // resolve endpoint is gated by a service token that lives next to the
+    // store on disk — this lets the operator-mcp runtime read it back with
+    // file-permissions auth instead of going through bearer-pairing.
+    let auth_profiles_store: Option<Arc<crate::auth::profiles::AuthProfilesStore>> = {
+        let state_dir = crate::auth::state_dir_from_config(&config);
+        Some(Arc::new(crate::auth::profiles::AuthProfilesStore::new(
+            &state_dir,
+            config.secrets.encrypt,
+        )))
+    };
+    let service_token: Arc<str> = {
+        let state_dir = crate::auth::state_dir_from_config(&config);
+        match ensure_service_token(&state_dir) {
+            Ok(t) => Arc::<str>::from(t),
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "service token init failed — auth-profile resolve endpoint will be disabled"
+                );
+                Arc::<str>::from("")
+            }
+        }
+    };
+
     // ── Build RuntimeHandles for the in-process MCP server ──────────────
     //
     // The MCP task needs live handles so the tools the standalone binary
@@ -1041,6 +1132,8 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
         approval_registry: approval_registry::global(),
         // Populated after the in-process MCP server binds (see below).
         mcp_local_url: None,
+        auth_profiles: auth_profiles_store,
+        service_token,
         #[cfg(feature = "webauthn")]
         webauthn: if config.security.webauthn.enabled {
             let secret_store = Arc::new(crate::security::SecretStore::new(
@@ -1453,6 +1546,17 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
             post(api_attachments::handle_upload),
         )
         .with_state(state.clone())
+        // Order matters here. Axum applies a default 2 MiB body limit on
+        // every route via its built-in `DefaultBodyLimit` extractor —
+        // `RequestBodyLimitLayer` only sets a *maximum*, it can't override
+        // axum's lower default. We have to explicitly disable the
+        // default limit and then let our 25 MiB layer apply on top.
+        // Without `DefaultBodyLimit::disable()` here, multipart uploads
+        // larger than 2 MiB get rejected with HTTP 413 even though the
+        // RequestBodyLimitLayer says 25 MiB. Layers stack outer-to-inner
+        // so this layer is added BEFORE the body-limit layer, meaning
+        // the disable runs closer to the handler.
+        .layer(DefaultBodyLimit::disable())
         .layer(RequestBodyLimitLayer::new(ATTACHMENT_MAX_BODY))
         .layer(TimeoutLayer::with_status_code(
             StatusCode::REQUEST_TIMEOUT,
@@ -1544,6 +1648,16 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
         .route("/api/agents", get(api_agents::handle_list_agents).post(api_agents::handle_create_agent))
         .route("/api/agents/deprecate", post(api_agents::handle_deprecate_agent))
         .route("/api/agents/{*kref}", put(api_agents::handle_update_agent).delete(api_agents::handle_delete_agent))
+        // ── Auth profiles (workflow step credential dropdown) ──
+        // GET — bearer-auth, metadata only (token bytes never returned).
+        // POST {id}/resolve — service-token-only, used by the operator-mcp
+        // runtime to decrypt at step-execution time.
+        .route(
+            "/api/auth/profiles",
+            get(api_auth_profiles::handle_list_auth_profiles)
+                .post(api_auth_profiles::handle_create_auth_profile),
+        )
+        .route("/api/auth/profiles/{id}/resolve", post(api_auth_profiles::handle_resolve_auth_profile))
         // ── Skill management API (proxied to Kumiho FastAPI) ──
         .route("/api/skills", get(api_skills::handle_list_skills).post(api_skills::handle_create_skill))
         .route("/api/skills/deprecate", post(api_skills::handle_deprecate_skill))
@@ -1552,6 +1666,11 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
         .route("/api/teams", get(api_teams::handle_list_teams).post(api_teams::handle_create_team))
         .route("/api/teams/deprecate", post(api_teams::handle_deprecate_team))
         .route("/api/teams/{*kref}", get(api_teams::handle_get_team).put(api_teams::handle_update_team).delete(api_teams::handle_delete_team))
+        // ── Architect: workflow revision via Operator (P2) ──
+        .route("/api/architect/revise", post(api_architect::handle_architect_revise))
+        .route("/api/architect/validate_yaml", post(api_architect::handle_architect_validate_yaml))
+        .route("/api/architect/revisions", get(api_architect::handle_list_workflow_revisions))
+        .route("/api/architect/republish", post(api_architect::handle_republish_revision))
         // ── Workflow management API (proxied to Kumiho FastAPI) ──
         .route("/api/workflows", get(api_workflows::handle_list_workflows).post(api_workflows::handle_create_workflow))
         .route("/api/workflows/deprecate", post(api_workflows::handle_deprecate_workflow))
@@ -1654,6 +1773,12 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
         .route("/ws/mcp/events", get(ws_mcp_events::handle_ws_mcp_events))
         // ── Static assets (web dashboard) ──
         .route("/_app/{*path}", get(static_files::handle_static))
+        // ── Workspace assets (HMAC-signed; serves files under
+        //    config.workspace_dir so canvas/HTML can `<img src=…>` them) ──
+        .route(
+            "/workspace/{*path}",
+            get(workspace_assets::handle_workspace_asset),
+        )
         // ── Config PUT with larger body limit ──
         .merge(config_put_router)
         // ── SPA fallback: non-API GET requests serve index.html ──
@@ -3063,6 +3188,8 @@ mod tests {
             mcp_registry: None,
             approval_registry: approval_registry::global(),
             mcp_local_url: None,
+            auth_profiles: None,
+            service_token: Arc::<str>::from(""),
             #[cfg(feature = "webauthn")]
             webauthn: None,
         };
@@ -3135,6 +3262,8 @@ mod tests {
             mcp_registry: None,
             approval_registry: approval_registry::global(),
             mcp_local_url: None,
+            auth_profiles: None,
+            service_token: Arc::<str>::from(""),
             #[cfg(feature = "webauthn")]
             webauthn: None,
         };
@@ -3552,6 +3681,8 @@ mod tests {
             mcp_registry: None,
             approval_registry: approval_registry::global(),
             mcp_local_url: None,
+            auth_profiles: None,
+            service_token: Arc::<str>::from(""),
             #[cfg(feature = "webauthn")]
             webauthn: None,
         };
@@ -3634,6 +3765,8 @@ mod tests {
             mcp_registry: None,
             approval_registry: approval_registry::global(),
             mcp_local_url: None,
+            auth_profiles: None,
+            service_token: Arc::<str>::from(""),
             #[cfg(feature = "webauthn")]
             webauthn: None,
         };
@@ -3728,6 +3861,8 @@ mod tests {
             mcp_registry: None,
             approval_registry: approval_registry::global(),
             mcp_local_url: None,
+            auth_profiles: None,
+            service_token: Arc::<str>::from(""),
             #[cfg(feature = "webauthn")]
             webauthn: None,
         };
@@ -3794,6 +3929,8 @@ mod tests {
             mcp_registry: None,
             approval_registry: approval_registry::global(),
             mcp_local_url: None,
+            auth_profiles: None,
+            service_token: Arc::<str>::from(""),
             #[cfg(feature = "webauthn")]
             webauthn: None,
         };
@@ -3865,6 +4002,8 @@ mod tests {
             mcp_registry: None,
             approval_registry: approval_registry::global(),
             mcp_local_url: None,
+            auth_profiles: None,
+            service_token: Arc::<str>::from(""),
             #[cfg(feature = "webauthn")]
             webauthn: None,
         };
@@ -3941,6 +4080,8 @@ mod tests {
             mcp_registry: None,
             approval_registry: approval_registry::global(),
             mcp_local_url: None,
+            auth_profiles: None,
+            service_token: Arc::<str>::from(""),
             #[cfg(feature = "webauthn")]
             webauthn: None,
         };
@@ -4014,6 +4155,8 @@ mod tests {
             mcp_registry: None,
             approval_registry: approval_registry::global(),
             mcp_local_url: None,
+            auth_profiles: None,
+            service_token: Arc::<str>::from(""),
             #[cfg(feature = "webauthn")]
             webauthn: None,
         };

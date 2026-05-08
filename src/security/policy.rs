@@ -1537,7 +1537,7 @@ mod tests {
     fn enforce_tool_operation_read_allowed_in_readonly_mode() {
         let p = readonly_policy();
         assert!(
-            p.enforce_tool_operation(ToolOperation::Read, "memory_recall")
+            p.enforce_tool_operation(ToolOperation::Read, "file_read")
                 .is_ok()
         );
     }
@@ -1546,7 +1546,7 @@ mod tests {
     fn enforce_tool_operation_act_blocked_in_readonly_mode() {
         let p = readonly_policy();
         let err = p
-            .enforce_tool_operation(ToolOperation::Act, "memory_store")
+            .enforce_tool_operation(ToolOperation::Act, "shell")
             .unwrap_err();
         assert!(err.contains("read-only mode"));
     }
@@ -1558,7 +1558,7 @@ mod tests {
             ..default_policy()
         };
         let err = p
-            .enforce_tool_operation(ToolOperation::Act, "memory_store")
+            .enforce_tool_operation(ToolOperation::Act, "shell")
             .unwrap_err();
         assert!(err.contains("Rate limit exceeded"));
     }

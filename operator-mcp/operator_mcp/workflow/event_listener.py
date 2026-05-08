@@ -50,6 +50,10 @@ def _log(msg: str) -> None:
     _logger.info(msg)
 
 
+def _debug(msg: str) -> None:
+    _logger.debug(msg)
+
+
 # ---------------------------------------------------------------------------
 # TriggerRule (lightweight dataclass — one per TriggerDef registration)
 # ---------------------------------------------------------------------------
@@ -200,7 +204,7 @@ class WorkflowEventListener:
             return
 
         # Singleton lock — only one event listener across all operator processes
-        import fcntl
+        from .. import _fcntl_compat as fcntl
         try:
             self._listener_lock_fd = open(self._LISTENER_LOCK_PATH, "w")
             fcntl.flock(self._listener_lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -309,7 +313,7 @@ class WorkflowEventListener:
         Returns ``True`` if the lock was acquired (stream consumed),
         ``False`` if another process held the lock.
         """
-        import fcntl
+        from .. import _fcntl_compat as fcntl
         import kumiho  # type: ignore[import-untyped]
 
         # Acquire exclusive lock — if another process holds it, exit quietly
@@ -418,12 +422,15 @@ class WorkflowEventListener:
                 )
                 return
 
-            _log(f"Event received: kind={kind} tag={tag} name={name} space={space}")
+            _debug(f"Event received: kind={kind} tag={tag} name={name} space={space}")
 
             # -- 4. Match against registry ---------------------------------
+            # Non-matching events are the common case (every workflow run
+            # emits running/completed events that aren't entity triggers).
+            # Log at DEBUG so the daemon log isn't dominated by them.
             matches = self._registry.match(kind, tag, name, space)
             if not matches:
-                _log(f"Event skipped: no trigger match for kind={kind} tag={tag}")
+                _debug(f"Event skipped: no trigger match for kind={kind} tag={tag}")
                 return
 
             # -- 5. Read entity metadata -----------------------------------
@@ -481,6 +488,15 @@ class WorkflowEventListener:
         Called from the synchronous thread executor, so we use
         :meth:`loop.call_soon_threadsafe` to bridge into async land.
         """
+        # Defensive guard: the captured loop may have closed (e.g. operator-mcp
+        # shutting down) while this thread is still iterating events.  Skip
+        # rather than raising "Event loop is closed".
+        if self._loop is None or self._loop.is_closed():
+            _log(
+                f"event_listener: loop closed, skipping launch of "
+                f"'{rule.workflow_name}'"
+            )
+            return
         try:
             self._loop.call_soon_threadsafe(
                 lambda r=rule, ctx=trigger_ctx: asyncio.ensure_future(
@@ -512,8 +528,19 @@ class WorkflowEventListener:
         run_id = item_metadata.get("run_id", "")
         if run_id and run_id in self._claimed_runs:
             return
-        if run_id:
-            self._claimed_runs.add(run_id)
+
+        # Defensive guard: if the captured loop is gone (e.g. operator-mcp
+        # shutting down) the schedule will raise "Event loop is closed".
+        # Skip without claiming so the durable Kumiho `pending` item is left
+        # for the next operator-mcp's recovery / poller.
+        if self._loop is None or self._loop.is_closed():
+            _log(
+                f"event_listener: loop closed, skipping schedule for "
+                f"run_id {run_id[:8] if run_id else '?'} — "
+                f"Kumiho pending item remains for recovery"
+            )
+            return
+
         try:
             self._loop.call_soon_threadsafe(  # type: ignore[union-attr]
                 lambda kref=item_kref, meta=item_metadata: asyncio.ensure_future(
@@ -523,6 +550,13 @@ class WorkflowEventListener:
         except Exception as exc:
             self._errors += 1
             _log(f"Failed to schedule cron run request: {exc}")
+            return
+
+        # Only claim the run AFTER we've successfully scheduled it.  If the
+        # schedule raises, the pending Kumiho item remains visible to the
+        # next operator-mcp via the run-request poller.
+        if run_id:
+            self._claimed_runs.add(run_id)
 
     async def _async_run_request(
         self,
@@ -675,7 +709,7 @@ class WorkflowEventListener:
         processes, and a persistent seen-set to survive restarts.
         """
         import sys as _sys
-        import fcntl
+        from .. import _fcntl_compat as fcntl
 
         # Acquire exclusive lock — if another process holds it, exit quietly
         lock_fd = None
@@ -740,7 +774,7 @@ class WorkflowEventListener:
                     await asyncio.sleep(10)
         finally:
             try:
-                import fcntl as _fcntl
+                from .. import _fcntl_compat as _fcntl
                 _fcntl.flock(lock_fd, _fcntl.LOCK_UN)
                 lock_fd.close()
             except Exception:

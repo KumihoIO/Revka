@@ -1093,10 +1093,28 @@ pub struct OperatorConfig {
     /// Default: 80.
     #[serde(default = "default_operator_max_tool_iterations")]
     pub max_tool_iterations: usize,
+
+    /// Tool-call timeout in seconds for the auto-injected
+    /// `construct-operator` MCP server.
+    ///
+    /// Some operator tools are inherently slow: codex image generation
+    /// (typically 80–110 s/image with significant variance), workflow
+    /// execution, dry-run, and bulk recall. The runtime's global default
+    /// at `tools/mcp_client.rs` (180 s) is too tight for these. Bump for
+    /// environments with slow ChatGPT plans or large workflows; lower
+    /// for fast-fail dev loops. Capped at 600 (the runtime
+    /// `MAX_TOOL_TIMEOUT_SECS`); higher values are silently truncated.
+    /// Default: 600.
+    #[serde(default = "default_operator_tool_timeout_secs")]
+    pub tool_timeout_secs: u64,
 }
 
 fn default_operator_max_tool_iterations() -> usize {
     80
+}
+
+fn default_operator_tool_timeout_secs() -> u64 {
+    600
 }
 
 impl Default for OperatorConfig {
@@ -1105,6 +1123,7 @@ impl Default for OperatorConfig {
             enabled: default_true(),
             mcp_path: String::new(),
             max_tool_iterations: default_operator_max_tool_iterations(),
+            tool_timeout_secs: default_operator_tool_timeout_secs(),
         }
     }
 }
@@ -5290,9 +5309,15 @@ pub struct AutonomyConfig {
 }
 
 fn default_auto_approve() -> Vec<String> {
+    // Audit row 11: `memory_recall` removed from the default — Construct
+    // has no native `impl Tool` of that name, so listing it here just
+    // produced a stale entry. Existing user configs that still reference
+    // it continue to load (the merge logic preserves user entries) and
+    // `warn_on_legacy_memory_tool_names` emits a deprecation warning at
+    // daemon startup pointing operators at the canonical `kumiho_memory_*`
+    // replacements.
     vec![
         "file_read".into(),
-        "memory_recall".into(),
         "web_search_tool".into(),
         "web_fetch".into(),
         "calculator".into(),
@@ -5316,6 +5341,65 @@ impl AutonomyConfig {
             if !self.auto_approve.iter().any(|existing| existing == &entry) {
                 self.auto_approve.push(entry);
             }
+        }
+    }
+}
+
+/// Audit row 11/12: emit a one-line `tracing::warn!` per legacy bare
+/// `memory_*` tool name found in the user's config. These names previously
+/// appeared in default `auto_approve` / `gated_actions` lists but have no
+/// native `impl Tool` in Construct — recall and persistence are now handled
+/// by the Kumiho-memory MCP. The warning is advisory only; the daemon
+/// continues to load and run the config.
+pub fn warn_on_legacy_memory_tool_names(config: &Config) {
+    // (legacy bare name, replacement guidance)
+    const LEGACY: &[(&str, &str)] = &[
+        (
+            "memory_recall",
+            "use `kumiho_memory_engage` (Kumiho MCP) for recall",
+        ),
+        (
+            "memory_forget",
+            "no direct replacement; use `kumiho_deprecate_item` via the Kumiho MCP if you need to retract a memory",
+        ),
+        (
+            "memory_store",
+            "use `kumiho_memory_store` (Kumiho MCP) or `construct-operator__memory_store` (Operator MCP)",
+        ),
+        (
+            "memory_search",
+            "use `kumiho_memory_engage` (Kumiho MCP) or `construct-operator__memory_search` (Operator MCP)",
+        ),
+    ];
+
+    let auto_approve = &config.autonomy.auto_approve;
+    let always_ask = &config.autonomy.always_ask;
+    let gated = &config.security.otp.gated_actions;
+
+    for (name, hint) in LEGACY {
+        let in_auto_approve = auto_approve.iter().any(|t| t == name);
+        let in_always_ask = always_ask.iter().any(|t| t == name);
+        let in_gated = gated.iter().any(|t| t == name);
+        if in_auto_approve || in_always_ask || in_gated {
+            let mut where_seen: Vec<&str> = Vec::new();
+            if in_auto_approve {
+                where_seen.push("autonomy.auto_approve");
+            }
+            if in_always_ask {
+                where_seen.push("autonomy.always_ask");
+            }
+            if in_gated {
+                where_seen.push("security.otp.gated_actions");
+            }
+            tracing::warn!(
+                "Config references legacy tool name '{name}' in {fields}. \
+                 Construct has no native tool of that name — {hint}. \
+                 The entry is harmless (no tool resolves to it) but should be \
+                 removed to avoid confusion. See docs/audit-row-5-10-11-12-scrub-inventory.md.",
+                name = name,
+                fields = where_seen.join(", "),
+                hint = hint,
+            );
         }
     }
 }
@@ -7252,12 +7336,14 @@ fn default_otp_challenge_max_attempts() -> u32 {
 }
 
 fn default_otp_gated_actions() -> Vec<String> {
+    // Audit row 11: `memory_forget` removed — there is no native tool of
+    // that name in Construct, so gating it here was a no-op that confused
+    // operators reading the config.
     vec![
         "shell".to_string(),
         "file_write".to_string(),
         "browser_open".to_string(),
         "browser".to_string(),
-        "memory_forget".to_string(),
     ]
 }
 
@@ -8879,19 +8965,30 @@ impl Config {
             // `auto_approve` in the approval decision (see approval/mod.rs).
             config.autonomy.ensure_default_auto_approve();
 
+            // Audit row 11/12: warn (once per stale name) if the user still
+            // lists legacy bare `memory_*` tool names in their permission
+            // surfaces. The daemon never crashes on a valid-yesterday
+            // config — the warning is advisory.
+            warn_on_legacy_memory_tool_names(&config);
+
             // Detect unknown top-level config keys by comparing the raw
-            // TOML table keys against what Config actually deserializes.
-            // This replaces the previous serde_ignored-based approach which
-            // had false-positive issues with #[serde(default)] nested structs.
+            // TOML table keys against the JSON schema for `Config`.
+            //
+            // Earlier versions built the known-key set from a default `Config`
+            // round-tripped through TOML, but any field marked
+            // `#[serde(skip_serializing_if = "Option::is_none")]` is dropped
+            // when its default is `None` — so legitimate top-level keys like
+            // `language` were warned about as unknown. The JSON schema from
+            // `schemars` reflects every declared field regardless of default.
             if let Ok(raw) = contents.parse::<toml::Table>() {
-                // Build the set of known top-level keys from a default Config
-                // serialization round-trip.  This is computed once and cached.
                 static KNOWN_KEYS: OnceLock<Vec<String>> = OnceLock::new();
                 let known = KNOWN_KEYS.get_or_init(|| {
-                    toml::to_string(&Config::default())
+                    let schema = schemars::schema_for!(Config);
+                    serde_json::to_value(&schema)
                         .ok()
-                        .and_then(|s| s.parse::<toml::Table>().ok())
-                        .map(|t| t.keys().cloned().collect())
+                        .and_then(|v| v.get("properties").cloned())
+                        .and_then(|props| props.as_object().cloned())
+                        .map(|obj| obj.keys().cloned().collect())
                         .unwrap_or_default()
                 });
                 for key in raw.keys() {
@@ -10926,6 +11023,45 @@ mod tests {
     use tokio_stream::StreamExt;
     use tokio_stream::wrappers::ReadDirStream;
 
+    // ── Audit row 11/12: legacy memory_* tool name deprecation ────
+
+    #[test]
+    async fn warn_on_legacy_memory_tool_names_does_not_panic_on_clean_config() {
+        let cfg = Config::default();
+        // Default config should not contain any legacy bare names.
+        for stale in &[
+            "memory_recall",
+            "memory_forget",
+            "memory_store",
+            "memory_search",
+        ] {
+            assert!(
+                !cfg.autonomy.auto_approve.iter().any(|t| t == stale),
+                "default auto_approve must not list legacy '{stale}'"
+            );
+            assert!(
+                !cfg.security.otp.gated_actions.iter().any(|t| t == stale),
+                "default gated_actions must not list legacy '{stale}'"
+            );
+        }
+        // Smoke test: function is safe to call on a clean config.
+        warn_on_legacy_memory_tool_names(&cfg);
+    }
+
+    #[test]
+    async fn warn_on_legacy_memory_tool_names_tolerates_stale_user_entry() {
+        // A user config that still references the legacy names from a
+        // pre-scrub install must continue to load — the warning is
+        // advisory, never fatal.
+        let mut cfg = Config::default();
+        cfg.autonomy.auto_approve.push("memory_recall".to_string());
+        cfg.security
+            .otp
+            .gated_actions
+            .push("memory_forget".to_string());
+        warn_on_legacy_memory_tool_names(&cfg);
+    }
+
     // ── Tilde expansion ───────────────────────────────────────
 
     #[test]
@@ -11469,7 +11605,7 @@ default_temperature = 0.7
 [autonomy]
 level = "full"
 max_actions_per_hour = 99
-auto_approve = ["file_read", "memory_recall", "http_request"]
+auto_approve = ["file_read", "kumiho_memory_engage", "http_request"]
 "#;
         let parsed = parse_test_config(raw);
         assert_eq!(
@@ -11517,13 +11653,7 @@ auto_approve = ["my_custom_tool", "another_tool"]
             "user-supplied tool must remain in auto_approve"
         );
         // Defaults are merged in
-        for default_tool in &[
-            "file_read",
-            "memory_recall",
-            "weather",
-            "calculator",
-            "web_fetch",
-        ] {
+        for default_tool in &["file_read", "weather", "calculator", "web_fetch"] {
             assert!(
                 parsed
                     .autonomy
@@ -15847,7 +15977,7 @@ allow_public_bind = true
 
 [autonomy]
 level = "supervised"
-auto_approve = ["file_read", "file_write", "file_edit", "memory_recall", "memory_store", "web_search_tool", "web_fetch", "calculator", "glob_search", "content_search", "image_info", "weather", "git_operations"]
+auto_approve = ["file_read", "file_write", "file_edit", "web_search_tool", "web_fetch", "calculator", "glob_search", "content_search", "image_info", "weather", "git_operations"]
 "#;
 
     #[test]
@@ -15861,8 +15991,6 @@ auto_approve = ["file_read", "file_write", "file_edit", "memory_recall", "memory
             "file_read",
             "file_write",
             "file_edit",
-            "memory_recall",
-            "memory_store",
             "web_search_tool",
             "web_fetch",
             "calculator",
@@ -15875,6 +16003,15 @@ auto_approve = ["file_read", "file_write", "file_edit", "memory_recall", "memory
             assert!(
                 auto.iter().any(|t| t == tool),
                 "Docker config auto_approve missing expected tool: {tool}"
+            );
+        }
+        // Audit row 11: legacy bare `memory_*` names must not be baked into
+        // the Docker default — they had no native impl, so listing them
+        // just produced confusing dead entries.
+        for stale in &["memory_recall", "memory_store", "memory_forget"] {
+            assert!(
+                !auto.iter().any(|t| t == stale),
+                "Docker config auto_approve must not list legacy '{stale}'"
             );
         }
     }

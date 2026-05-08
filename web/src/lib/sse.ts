@@ -49,7 +49,9 @@ export class SSEClient {
     this.currentDelay = this.reconnectDelay;
   }
 
-  /** Start consuming the event stream. */
+  /** Start consuming the event stream. Backoff resets only on a
+   *  SUCCESSFUL response (line below) — a repeated connect failure must
+   *  retain its exponential delay so we don't hammer a downed server. */
   connect(): void {
     this.intentionallyClosed = false;
     this.clearReconnectTimer();
@@ -87,6 +89,22 @@ export class SSEClient {
         this.onError?.(err instanceof Error ? err : new Error(String(err)));
         this.scheduleReconnect();
       });
+  }
+
+  /** Force-reconnect immediately, ignoring the current backoff. Used by
+   *  callers that have external knowledge the network state changed
+   *  (e.g. tab became visible, browser came online). Resets the backoff
+   *  delay so the next failure starts the exponential ramp from 1s
+   *  again — appropriate because the trigger means conditions have
+   *  almost certainly changed since the last failure. */
+  reconnectNow(): void {
+    this.clearReconnectTimer();
+    if (this.controller) {
+      this.controller.abort();
+      this.controller = null;
+    }
+    this.currentDelay = this.reconnectDelay;
+    this.connect();
   }
 
   /** Stop consuming events without auto-reconnecting. */

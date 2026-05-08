@@ -170,7 +170,7 @@ message_timeout_scale_max = 8
 | `method` | `totp` | OTP 방식 (`totp`, `pairing`, `cli-prompt`) |
 | `token_ttl_secs` | `30` | TOTP 시간 윈도우(초) |
 | `cache_valid_secs` | `300` | 최근 검증된 OTP 코드의 캐시 윈도우 |
-| `gated_actions` | `["shell","file_write","browser_open","browser","memory_forget"]` | OTP로 보호되는 도구 액션 |
+| `gated_actions` | `["shell","file_write","browser_open","browser"]` | OTP로 보호되는 도구 액션 |
 | `gated_domains` | `[]` | OTP가 필요한 명시적 도메인 패턴 (`*.example.com`, `login.example.com`) |
 | `gated_domain_categories` | `[]` | 도메인 프리셋 카테고리 (`banking`, `medical`, `government`, `identity_providers`) |
 

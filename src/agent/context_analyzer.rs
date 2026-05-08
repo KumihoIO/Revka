@@ -52,7 +52,10 @@ fn tools_for_keyword(keyword: &str) -> &'static [&'static str] {
             &["file_read", "file_write", "file_edit", "glob_search"]
         }
         "shell" | "command" | "run" | "execute" | "install" | "build" => &["shell"],
-        "memory" | "remember" | "recall" | "store" | "forget" => &["memory_store", "memory_recall"],
+        "memory" | "remember" | "recall" | "store" | "forget" => {
+            // Audit row 11: suggest the canonical Kumiho-namespaced reflexes.
+            &["kumiho_memory_engage", "kumiho_memory_reflect"]
+        }
         "search" | "find" | "grep" | "look" => {
             &["content_search", "glob_search", "web_search_tool"]
         }
@@ -124,12 +127,12 @@ mod tests {
         assert!(
             signals
                 .suggested_tools
-                .contains(&"memory_store".to_string())
+                .contains(&"kumiho_memory_engage".to_string())
         );
         assert!(
             signals
                 .suggested_tools
-                .contains(&"memory_recall".to_string())
+                .contains(&"kumiho_memory_reflect".to_string())
         );
     }
 

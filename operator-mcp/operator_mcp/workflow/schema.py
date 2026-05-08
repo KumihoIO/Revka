@@ -30,6 +30,7 @@ class StepType(str, Enum):
     SHELL = "shell"
     PYTHON = "python"
     EMAIL = "email"
+    IMAGE = "image"
     CONDITIONAL = "conditional"
     PARALLEL = "parallel"
     GOTO = "goto"
@@ -90,6 +91,11 @@ class AgentStepConfig(BaseModel):
     tools: Literal["all", "memory", "none"] = "none"  # MCP tool injection level
     output_fields: list[str] = Field(default_factory=list)  # Expected structured fields in ```json block
     quality_check: QualityCheckConfig | None = None
+    # Auth profile binding (encrypted credential, resolved at runtime via the
+    # gateway's auth-profiles resolve endpoint). Format: "<provider>:<profile_name>".
+    # Agent steps see this only via the get_auth_token MCP tool — never injected
+    # into the system prompt or any other context.
+    auth: str | None = None
 
 
 class ShellStepConfig(BaseModel):
@@ -97,6 +103,10 @@ class ShellStepConfig(BaseModel):
     command: str
     timeout: float = 60.0
     allow_failure: bool = False  # If True, non-zero exit doesn't fail the workflow
+    # Auth profile binding — resolved at runtime; the decrypted token is passed
+    # to the subprocess via the CONSTRUCT_AUTH_TOKEN env var (kind in
+    # CONSTRUCT_AUTH_KIND). Format: "<provider>:<profile_name>".
+    auth: str | None = None
 
 
 class EmailStepConfig(BaseModel):
@@ -149,6 +159,36 @@ class EmailStepConfig(BaseModel):
 
     timeout: float = 30.0
     dry_run: bool = False  # Render & return without sending — for previews
+    # Auth profile binding — when set, the decrypted token overrides
+    # smtp_password for this step only. Format: "<provider>:<profile_name>".
+    auth: str | None = None
+
+
+class ImageStepConfig(BaseModel):
+    """Config for 'image' step type — generate image(s) via codex CLI and
+    register them as Kumiho artifacts + push to Live Canvas.
+
+    First-class wrapper around the ``generate_image_codex`` operator-MCP
+    tool. Plain ``agent`` steps don't have access to that tool (the
+    subagent MCP intentionally excludes operator-tier tools to keep the
+    surface area small), so workflows that need a deterministic image
+    artifact pipeline use this step type instead of prose-prompting a
+    ``codex`` agent and hoping it calls the right tool.
+
+    Defaults are tuned for the common case (one PNG, push to canvas,
+    register a Construct/Images artifact).
+    """
+    prompt: str
+    output_path: str = ""              # filename only when register_artifact=true; relative-to-cwd path otherwise
+    cwd: str | None = None             # default: ~/.construct/workspace
+    count: int = Field(default=1, ge=1, le=5)
+    output_pattern: str | None = None  # template with {n} when count > 1
+    canvas: bool | str = True          # bool, or canvas_id string; canvas push is the point
+    register_artifact: bool = True
+    space: str | None = None           # default "Images" relative to harness; multi-segment OK
+    item_name: str | None = None       # default: derived from output_path stem
+    sandbox: Literal["read-only", "workspace-write", "danger-full-access"] | None = None
+    timeout: float = 1200.0            # 20 min — codex image gen is slow; matches the operator-MCP tool_timeout default
 
 
 class PythonStepConfig(BaseModel):
@@ -192,6 +232,9 @@ class PythonStepConfig(BaseModel):
     # Useful if a script needs deps the operator-mcp venv lacks — point it
     # at a project-local venv instead.
     python: str | None = None
+    # Auth profile binding — resolved at runtime; decrypted token passed via
+    # CONSTRUCT_AUTH_TOKEN env var. Format: "<provider>:<profile_name>".
+    auth: str | None = None
 
     @model_validator(mode="after")
     def _exactly_one_source(self) -> "PythonStepConfig":
@@ -216,9 +259,20 @@ class ConditionalStepConfig(BaseModel):
 
 class ParallelStepConfig(BaseModel):
     """Config for 'parallel' step type."""
-    steps: list[str]  # Step IDs to run in parallel
+    steps: list[str] = Field(..., description="IDs of steps to execute in parallel.")
     join: JoinStrategy = JoinStrategy.ALL
     max_concurrency: int = Field(default=5, ge=1, le=10)
+
+    @field_validator("steps")
+    @classmethod
+    def steps_must_be_non_empty(cls, v: list[str]) -> list[str]:
+        if not v:
+            raise ValueError(
+                "parallel.steps must list at least one step ID. "
+                "If you don't need explicit grouping, drop the parallel wrapper "
+                "entirely — sibling steps without depends_on run in parallel naturally."
+            )
+        return v
 
 
 class GotoStepConfig(BaseModel):
@@ -350,6 +404,10 @@ class A2AStepConfig(BaseModel):
     skill_id: str | None = None
     message: str = ""
     timeout: float = 300.0
+    # Auth profile binding — resolved at runtime; decrypted token added to
+    # outbound A2A request as `Authorization: Bearer <token>`. Format:
+    # "<provider>:<profile_name>".
+    auth: str | None = None
 
 
 # -- Orchestration pattern configs -----------------------------------------
@@ -440,6 +498,7 @@ class StepDef(BaseModel):
     shell: ShellStepConfig | None = None
     python: PythonStepConfig | None = None
     email: EmailStepConfig | None = None
+    image: ImageStepConfig | None = None
     conditional: ConditionalStepConfig | None = None
     parallel: ParallelStepConfig | None = None
     goto: GotoStepConfig | None = None
@@ -481,6 +540,8 @@ class StepDef(BaseModel):
             self.python.timeout = t
         if self.email is not None:
             self.email.timeout = t
+        if self.image is not None:
+            self.image.timeout = t
         if self.a2a is not None:
             self.a2a.timeout = t
         if self.group_chat is not None:

@@ -56,7 +56,7 @@ condition = \"$.temperature_c >= 85\"
 ## 步骤
 
 1. **分析** — 读取此 SOP 上下文中的 `Payload:` 部分并确定严重程度。
-   - 工具：memory_recall
+   - 工具：kumiho_memory_engage
 
 2. **通知** — 发送包含站点/设备/严重程度摘要的告警。
    - 工具：pushover
@@ -88,5 +88,5 @@ expression = \"0 9 * * *\"
    - 工具：file_read
 
 2. **总结** — 生成简洁的事件和趋势摘要。
-   - 工具：memory_store
+   - 工具：kumiho_memory_store
 ```
