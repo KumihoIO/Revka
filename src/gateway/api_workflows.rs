@@ -1512,12 +1512,50 @@ pub async fn handle_run_workflow(
                 tokio::spawn(async move {
                     let fut = registry.call_tool(&tool_name, tool_args_val);
                     match tokio::time::timeout(std::time::Duration::from_secs(30), fut).await {
-                        Ok(Ok(_)) => {
-                            tracing::info!(
-                                "run_workflow direct dispatch ok: workflow={} run_id={}",
-                                workflow_name_for_log,
-                                run_id_for_log
-                            );
+                        Ok(Ok(payload)) => {
+                            // Distinguish a real "started" from a classified-error payload.
+                            // tool_run_workflow returns Ok at the MCP transport level even on
+                            // validation failures (missing_cwd, not_found, etc.) — the inner
+                            // result dict carries the diagnosis. Without this check we'd log
+                            // "direct dispatch ok" while the workflow never started.
+                            let inner = serde_json::from_str::<serde_json::Value>(&payload)
+                                .ok()
+                                .and_then(|outer| {
+                                    outer
+                                        .get("content")
+                                        .and_then(|c| c.get(0))
+                                        .and_then(|c0| c0.get("text"))
+                                        .and_then(|t| t.as_str())
+                                        .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+                                });
+                            let inner_status = inner
+                                .as_ref()
+                                .and_then(|i| i.get("status"))
+                                .and_then(|s| s.as_str())
+                                .unwrap_or("");
+                            let inner_error = inner
+                                .as_ref()
+                                .and_then(|i| i.get("error"))
+                                .and_then(|s| s.as_str());
+                            if inner_status == "started" {
+                                tracing::info!(
+                                    "run_workflow direct dispatch started: workflow={} run_id={}",
+                                    workflow_name_for_log,
+                                    run_id_for_log
+                                );
+                            } else if let Some(err) = inner_error {
+                                tracing::warn!(
+                                    "run_workflow direct dispatch returned error (Kumiho pending item will be picked up by listener/poller): workflow={} run_id={} err={err}",
+                                    workflow_name_for_log,
+                                    run_id_for_log
+                                );
+                            } else {
+                                tracing::debug!(
+                                    "run_workflow direct dispatch returned unexpected payload (listener/poller will handle): workflow={} run_id={}",
+                                    workflow_name_for_log,
+                                    run_id_for_log
+                                );
+                            }
                         }
                         Ok(Err(e)) => {
                             tracing::warn!(
