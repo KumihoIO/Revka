@@ -86,6 +86,26 @@ async def test_codex_not_on_path_returns_clear_error(fake_gw, tmp_path):
     assert "codex CLI not found" in out.get("error", "")
 
 
+def test_run_subprocess_sync_redirects_stdin_to_devnull():
+    """Regression: codex (or its codex.CMD shim) inherits stdin from the
+    MCP server's JSON-RPC pipe and blocks reading from it forever. The
+    sync wrapper must explicitly pass `stdin=subprocess.DEVNULL` so the
+    child sees EOF and never reads phantom input.
+
+    Symptom of the bug: codex spawns, sits at <0.1s CPU, generate_image_codex
+    hangs forever. Confirmed by the user on Windows + MCP stdio transport.
+    """
+    import inspect
+
+    src = inspect.getsource(ci._run_subprocess_sync)
+    # The wrapper must pass DEVNULL to subprocess.run.
+    assert "subprocess.DEVNULL" in src, (
+        "_run_subprocess_sync must redirect stdin to DEVNULL — "
+        "otherwise codex blocks reading the inherited MCP JSON-RPC pipe "
+        "on Windows."
+    )
+
+
 def test_subprocess_path_uses_to_thread_not_asyncio_create_subprocess():
     """Regression: on Windows in MCP context, asyncio.create_subprocess_exec
     hangs indefinitely. The implementation must route through
