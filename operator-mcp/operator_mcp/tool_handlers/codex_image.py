@@ -94,10 +94,21 @@ def _run_subprocess_sync(
     machinery while standalone scripts work fine. Pushing the blocking
     `subprocess.run` into a thread pool worker via `asyncio.to_thread`
     sidesteps the proactor entirely and runs reliably across platforms.
+
+    Why ``stdin=subprocess.DEVNULL``? When the operator MCP server is
+    spawned via stdio transport (the normal case), its stdin is the
+    JSON-RPC pipe from the MCP client. Without explicit redirection,
+    child processes inherit that stdin — codex (or its ``codex.CMD``
+    cmd-shell shim on Windows) blocks reading from the JSON-RPC stream
+    waiting for input that's meant for MCP, and never finishes. Symptom:
+    codex spawns, sits at <0.1s CPU, and the tool call hangs forever.
+    DEVNULL guarantees the child sees EOF immediately and never blocks
+    on a phantom stdin read.
     """
     proc = subprocess.run(
         cmd,
         capture_output=True,
+        stdin=subprocess.DEVNULL,
         timeout=timeout,
         check=False,
     )
