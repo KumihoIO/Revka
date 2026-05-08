@@ -1499,7 +1499,9 @@ pub async fn handle_run_workflow(
                 tool_args.insert(
                     "cwd".to_string(),
                     serde_json::Value::String(
-                        body.as_ref().and_then(|b| b.cwd.clone()).unwrap_or_default(),
+                        body.as_ref()
+                            .and_then(|b| b.cwd.clone())
+                            .unwrap_or_default(),
                     ),
                 );
                 tool_args.insert(
@@ -1526,7 +1528,9 @@ pub async fn handle_run_workflow(
                                         .and_then(|c| c.get(0))
                                         .and_then(|c0| c0.get("text"))
                                         .and_then(|t| t.as_str())
-                                        .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+                                        .and_then(|s| {
+                                            serde_json::from_str::<serde_json::Value>(s).ok()
+                                        })
                                 });
                             let inner_status = inner
                                 .as_ref()
