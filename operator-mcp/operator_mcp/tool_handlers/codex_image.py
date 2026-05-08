@@ -348,12 +348,18 @@ async def _push_to_canvas(
     paths: list[Path],
     canvas_id: str,
     gw: ConstructGatewayClient,
+    workspace_dir: Path,
 ) -> dict[str, Any]:
     """Build an HTML gallery of the generated images and push to Live Canvas.
 
-    Inlines each image as a base64 data URI so the canvas frame is
-    self-contained and doesn't depend on the dashboard being able to
-    read local files.
+    Each image is referenced via a HMAC-signed ``/workspace/<rel>`` URL
+    minted from the gateway's service-token (see ``workspace_assets``).
+    The signed URL works in sandboxed iframes (no auth header needed)
+    and stays small in the canvas payload — base64-inlined images would
+    push the canvas-frame size up to ~2 MB per image.
+
+    Falls back to base64 inline if a path can't be expressed as a
+    workspace-relative URL (i.e. the file lives outside ``workspace_dir``).
     """
     if not gw._available:
         return {"error": "Construct gateway not available — canvas push skipped"}
@@ -363,18 +369,26 @@ async def _push_to_canvas(
     except ImportError:
         return {"error": "httpx not installed — canvas push skipped"}
 
+    from .. import workspace_assets
+
     figures: list[str] = []
     for p in paths:
         if not p.exists():
             continue
-        try:
-            data = base64.b64encode(p.read_bytes()).decode("ascii")
-        except Exception as exc:
-            _log(f"canvas: failed to read {p}: {exc}")
-            continue
+        url = workspace_assets.workspace_url_for_path(p, workspace_dir)
+        if url:
+            src = url
+        else:
+            # Fallback: inline as base64 when the file isn't under workspace_dir.
+            try:
+                data = base64.b64encode(p.read_bytes()).decode("ascii")
+            except Exception as exc:
+                _log(f"canvas: failed to read {p}: {exc}")
+                continue
+            src = f"data:image/png;base64,{data}"
         figures.append(
             '<figure style="margin:0 0 1rem 0">'
-            f'<img src="data:image/png;base64,{data}" '
+            f'<img src="{src}" '
             'style="max-width:100%;height:auto;border-radius:8px;'
             'box-shadow:0 4px 16px rgba(0,0,0,0.4)"/>'
             '<figcaption style="font-size:0.85rem;color:#888;margin-top:0.25rem">'
@@ -732,9 +746,22 @@ async def tool_generate_image_codex(
 
     success_paths = [Path(r["path"]) for r in successes]
 
+    # Mint signed workspace URLs for files under the workspace root so the
+    # agent can compose its own canvas/HTML output and have the `<img>`
+    # tags actually load. Falls through to None for files outside
+    # workspace_dir (e.g. user passed an absolute output_path elsewhere).
+    workspace_dir = _WORKSPACE_ROOT
+    from .. import workspace_assets
+
+    response["urls"] = [
+        workspace_assets.workspace_url_for_path(p, workspace_dir) for p in success_paths
+    ]
+
     if canvas_arg:
         canvas_id = canvas_arg if isinstance(canvas_arg, str) else "default"
-        response["canvas"] = await _push_to_canvas(success_paths, canvas_id, gw)
+        response["canvas"] = await _push_to_canvas(
+            success_paths, canvas_id, gw, workspace_dir
+        )
 
     if rev_meta is not None:
         artifact_krefs = await _attach_artifacts(rev_meta, success_paths)
