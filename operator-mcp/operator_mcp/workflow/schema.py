@@ -30,6 +30,7 @@ class StepType(str, Enum):
     SHELL = "shell"
     PYTHON = "python"
     EMAIL = "email"
+    IMAGE = "image"
     CONDITIONAL = "conditional"
     PARALLEL = "parallel"
     GOTO = "goto"
@@ -161,6 +162,33 @@ class EmailStepConfig(BaseModel):
     # Auth profile binding — when set, the decrypted token overrides
     # smtp_password for this step only. Format: "<provider>:<profile_name>".
     auth: str | None = None
+
+
+class ImageStepConfig(BaseModel):
+    """Config for 'image' step type — generate image(s) via codex CLI and
+    register them as Kumiho artifacts + push to Live Canvas.
+
+    First-class wrapper around the ``generate_image_codex`` operator-MCP
+    tool. Plain ``agent`` steps don't have access to that tool (the
+    subagent MCP intentionally excludes operator-tier tools to keep the
+    surface area small), so workflows that need a deterministic image
+    artifact pipeline use this step type instead of prose-prompting a
+    ``codex`` agent and hoping it calls the right tool.
+
+    Defaults are tuned for the common case (one PNG, push to canvas,
+    register a Construct/Images artifact).
+    """
+    prompt: str
+    output_path: str = ""              # filename only when register_artifact=true; relative-to-cwd path otherwise
+    cwd: str | None = None             # default: ~/.construct/workspace
+    count: int = Field(default=1, ge=1, le=5)
+    output_pattern: str | None = None  # template with {n} when count > 1
+    canvas: bool | str = True          # bool, or canvas_id string; canvas push is the point
+    register_artifact: bool = True
+    space: str | None = None           # default "Images" relative to harness; multi-segment OK
+    item_name: str | None = None       # default: derived from output_path stem
+    sandbox: Literal["read-only", "workspace-write", "danger-full-access"] | None = None
+    timeout: float = 1200.0            # 20 min — codex image gen is slow; matches the operator-MCP tool_timeout default
 
 
 class PythonStepConfig(BaseModel):
@@ -470,6 +498,7 @@ class StepDef(BaseModel):
     shell: ShellStepConfig | None = None
     python: PythonStepConfig | None = None
     email: EmailStepConfig | None = None
+    image: ImageStepConfig | None = None
     conditional: ConditionalStepConfig | None = None
     parallel: ParallelStepConfig | None = None
     goto: GotoStepConfig | None = None
@@ -511,6 +540,8 @@ class StepDef(BaseModel):
             self.python.timeout = t
         if self.email is not None:
             self.email.timeout = t
+        if self.image is not None:
+            self.image.timeout = t
         if self.a2a is not None:
             self.a2a.timeout = t
         if self.group_chat is not None:
