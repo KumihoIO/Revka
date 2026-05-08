@@ -37,6 +37,7 @@ from .schema import (
     ShellStepConfig,
     PythonStepConfig,
     EmailStepConfig,
+    ImageStepConfig,
     A2AStepConfig,
     GotoStepConfig,
     OutputStepConfig,
@@ -1013,6 +1014,143 @@ async def _exec_email(step: StepDef, state: WorkflowState) -> StepResult:
     )
 
 
+async def _exec_image(step: StepDef, state: WorkflowState, cwd: str) -> StepResult:
+    """Execute an 'image' step — call generate_image_codex directly.
+
+    Bypasses the agent layer entirely. Plain ``codex`` agent steps don't
+    have access to the ``generate_image_codex`` MCP tool (the subagent
+    MCP server intentionally excludes operator-tier tools), which is why
+    prose-prompting an agent to "generate an image and show on canvas"
+    silently produces no canvas frame and no Kumiho artifact. Calling
+    the tool directly removes the LLM round-trip and the
+    "agent-decides-whether-to-call-the-tool" failure mode.
+    """
+    cfg: ImageStepConfig = step.image  # type: ignore
+
+    prompt = interpolate(cfg.prompt, state)
+    if not prompt.strip():
+        return StepResult(
+            step_id=step.id,
+            status="failed",
+            error="image step requires a non-empty prompt after interpolation",
+        )
+
+    # Default the filename to the step id so authors don't have to
+    # repeat themselves. The tool then derives item_name from this stem.
+    output_path = (cfg.output_path or "").strip()
+    if not output_path:
+        output_path = f"{step.id}.png"
+
+    # Default item_name from the step id when register_artifact=true and
+    # the author didn't pin one. Without this, two image steps in the
+    # same workflow could collide on the default-derived item name from
+    # output_path alone if they happen to share a stem.
+    item_name = cfg.item_name
+    if cfg.register_artifact and not item_name:
+        item_name = step.id
+
+    args: dict[str, Any] = {
+        "prompt": prompt,
+        "output_path": output_path,
+        "count": cfg.count,
+        "register_artifact": cfg.register_artifact,
+        "canvas": cfg.canvas,
+    }
+    if cfg.cwd:
+        args["cwd"] = interpolate(cfg.cwd, state)
+    elif cwd:
+        args["cwd"] = cwd
+    if cfg.output_pattern:
+        args["output_pattern"] = cfg.output_pattern
+    if cfg.space:
+        args["space"] = cfg.space
+    if item_name:
+        args["item_name"] = item_name
+    if cfg.sandbox:
+        args["sandbox"] = cfg.sandbox
+
+    try:
+        from ..gateway_client import ConstructGatewayClient
+        from ..tool_handlers import codex_image
+    except Exception as exc:  # noqa: BLE001
+        return StepResult(
+            step_id=step.id,
+            status="failed",
+            error=f"image step dependencies unavailable: {exc}",
+        )
+
+    gw = ConstructGatewayClient()
+    try:
+        response = await asyncio.wait_for(
+            codex_image.tool_generate_image_codex(args, gw),
+            timeout=cfg.timeout,
+        )
+    except asyncio.TimeoutError:
+        return StepResult(
+            step_id=step.id,
+            status="failed",
+            error=f"image step timed out after {cfg.timeout}s",
+        )
+    except Exception as exc:  # noqa: BLE001
+        return StepResult(
+            step_id=step.id,
+            status="failed",
+            error=f"image step failed: {exc}",
+        )
+
+    if not isinstance(response, dict):
+        return StepResult(
+            step_id=step.id,
+            status="failed",
+            error=f"image tool returned unexpected payload type: {type(response).__name__}",
+        )
+
+    files = response.get("files") or []
+    urls = response.get("urls") or []
+    artifact = response.get("artifact") if isinstance(response.get("artifact"), dict) else {}
+    canvas_info = response.get("canvas") if isinstance(response.get("canvas"), dict) else {}
+
+    output_data: dict[str, Any] = {
+        "files": files,
+        "urls": urls,
+        "requested": response.get("requested", cfg.count),
+        "generated": response.get("generated", len(files)),
+    }
+    if artifact:
+        output_data["item_kref"] = artifact.get("item_kref", "")
+        output_data["revision_kref"] = artifact.get("revision_kref", "")
+        output_data["artifact_krefs"] = artifact.get("artifact_krefs", [])
+    if canvas_info:
+        output_data["canvas_id"] = canvas_info.get("canvas_id", "")
+        output_data["canvas_frame_id"] = canvas_info.get("frame_id", "")
+
+    err = response.get("error")
+    if err and not files:
+        # Hard failure — no PNG produced.
+        return StepResult(
+            step_id=step.id,
+            status="failed",
+            output=err,
+            output_data=output_data,
+            error=err,
+            files_touched=files,
+        )
+
+    summary_parts = [f"generated {len(files)}/{cfg.count} image(s)"]
+    if canvas_info.get("frame_id"):
+        summary_parts.append(f"canvas={canvas_info['frame_id']}")
+    if artifact.get("revision_kref"):
+        summary_parts.append(f"kref={artifact['revision_kref']}")
+
+    return StepResult(
+        step_id=step.id,
+        status="completed",
+        output="; ".join(summary_parts),
+        output_data=output_data,
+        files_touched=list(files),
+    )
+
+
 async def _exec_output(step: StepDef, state: WorkflowState) -> StepResult:
     """Execute an output step — render template with interpolation."""
     cfg: OutputStepConfig = step.output  # type: ignore
@@ -1797,6 +1935,15 @@ def dry_run_workflow(wf: WorkflowDef, inputs: dict[str, Any]) -> dict[str, Any]:
                 entry["track_clicks"] = cfg.track_clicks
                 entry["dry_run"] = cfg.dry_run
 
+        elif step.type == StepType.IMAGE:
+            cfg = step.image
+            if cfg:
+                entry["prompt_preview"] = cfg.prompt[:80]
+                entry["count"] = cfg.count
+                entry["canvas"] = bool(cfg.canvas)
+                entry["register_artifact"] = cfg.register_artifact
+                entry["timeout"] = cfg.timeout
+
         elif step.type == StepType.PARALLEL:
             cfg = step.parallel
             if cfg:
@@ -2389,6 +2536,8 @@ async def _dispatch_step(
             return await _exec_python(step, state, cwd)
         elif step.type == StepType.EMAIL:
             return await _exec_email(step, state)
+        elif step.type == StepType.IMAGE:
+            return await _exec_image(step, state, cwd)
         elif step.type == StepType.OUTPUT:
             return await _exec_output(step, state)
         elif step.type == StepType.A2A:
