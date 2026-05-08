@@ -81,6 +81,57 @@ def _resolve_codex_executable() -> str | None:
     return None
 
 
+def _is_per_user_npm_install(executable: str) -> bool:
+    """Heuristic: does ``executable`` look like a per-user npm Windows install?
+
+    npm's per-user global install puts shims under ``%APPDATA%\\npm`` (or
+    ``%LOCALAPPDATA%\\npm``). Codex's Windows sandbox helper relies on
+    ``CreateProcessAsUserW`` which requires ``SE_ASSIGNPRIMARYTOKEN_NAME`` —
+    a privilege that **per-user** installs don't get. As a result the
+    sandbox helper fails on these installs (``CreateProcessAsUserW failed: 5``),
+    blocking codex from loading its internal ``imagegen`` SKILL.md and
+    silently making image generation impossible under the default sandbox.
+
+    Admin-installed codex (``%ProgramFiles%\\nodejs\\``, system npm prefix)
+    has the privilege and works correctly. The detection here lets us pick
+    a safer default sandbox automatically — see ``_default_sandbox()``.
+    """
+    if sys.platform != "win32" or not executable:
+        return False
+    # Normalize to backslash form so comparison works regardless of how
+    # the path got into the env (forward-slash mixed paths happen).
+    exe_lower = executable.lower().replace("/", "\\")
+    for env_var in ("APPDATA", "LOCALAPPDATA"):
+        root = os.environ.get(env_var)
+        if not root:
+            continue
+        npm_dir = (root + "\\npm").lower().replace("/", "\\")
+        if exe_lower.startswith(npm_dir + "\\") or exe_lower == npm_dir:
+            return True
+    return False
+
+
+def _default_sandbox(executable: str | None = None) -> str:
+    """Pick the right ``--sandbox`` mode for the current install.
+
+    macOS / Linux / Windows-with-admin-codex → ``workspace-write`` (safer:
+    codex still operates in a confined workspace).
+
+    Windows per-user npm install → ``danger-full-access``: the sandbox
+    helper needs admin-only privileges and can't run there. Without this
+    auto-fallback the tool would either pay a ~60 s probe-and-recover tax
+    on every first call, or silently produce no PNG on the user's first
+    attempt (codex hallucinates a "saved" reply when its imagegen skill
+    can't load). Users with healthy installs can still pin
+    ``workspace-write`` explicitly via the ``sandbox`` parameter.
+    """
+    if executable is None:
+        executable = _resolve_codex_executable() or ""
+    if _is_per_user_npm_install(executable):
+        return "danger-full-access"
+    return "workspace-write"
+
+
 def _run_subprocess_sync(
     cmd: list[str], timeout: float | None = None
 ) -> tuple[int, bytes, bytes]:
@@ -554,7 +605,10 @@ async def tool_generate_image_codex(
       ``Images``. Multi-segment paths like ``Marketing/Logos`` supported.
     * ``item_name`` — optional override for the Kumiho item name; defaults
       to the bare filename stem of ``output_path``.
-    * ``sandbox`` — codex ``--sandbox`` mode (default ``workspace-write``).
+    * ``sandbox`` — codex ``--sandbox`` mode. When omitted, defaults to
+      ``workspace-write`` on macOS/Linux/admin-installed Windows, and
+      ``danger-full-access`` on Windows per-user npm installs whose
+      sandbox helper can't spawn child processes (see ``_default_sandbox``).
     """
     prompt = (args.get("prompt") or "").strip()
     output_path = (args.get("output_path") or "").strip()
@@ -570,12 +624,19 @@ async def tool_generate_image_codex(
         register = bool(register)
     item_name = args.get("item_name")
     space = args.get("space")
-    sandbox = args.get("sandbox") or "workspace-write"
-    if sandbox not in {"read-only", "workspace-write", "danger-full-access"}:
+    # If the caller pinned a sandbox, validate it now. If not, defer the
+    # auto-default until after `_check_codex_available` so we can pass the
+    # actually-resolved codex path to `_default_sandbox()`.
+    sandbox_arg = args.get("sandbox")
+    if sandbox_arg and sandbox_arg not in {
+        "read-only",
+        "workspace-write",
+        "danger-full-access",
+    }:
         return {
             "error": (
                 f"sandbox must be one of read-only / workspace-write / "
-                f"danger-full-access (got {sandbox!r})"
+                f"danger-full-access (got {sandbox_arg!r})"
             )
         }
 
@@ -596,6 +657,10 @@ async def tool_generate_image_codex(
         return {"error": avail.get("error", "codex unavailable")}
 
     codex_exe = avail.get("executable")
+    # Auto-default for the sandbox now that we know which codex install we're
+    # talking to. Per-user npm Windows installs can't run codex's sandbox
+    # helper and need `danger-full-access` to load the imagegen skill.
+    sandbox = sandbox_arg if sandbox_arg else _default_sandbox(codex_exe)
 
     # Path resolution: when `register_artifact` is on, lay the file out at
     # the kref-mirroring path so the on-disk hierarchy matches Kumiho's
