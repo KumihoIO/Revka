@@ -35,6 +35,7 @@ pub mod nodes;
 pub mod session_queue;
 pub mod sse;
 pub mod static_files;
+pub mod workspace_assets;
 // portable-pty needs `openpty` from libutil which Android's NDK does not
 // reliably link.  The websocket terminal isn't a meaningful surface on a
 // phone runtime anyway, so we drop the module + its route on Android.
@@ -1772,6 +1773,12 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
         .route("/ws/mcp/events", get(ws_mcp_events::handle_ws_mcp_events))
         // ── Static assets (web dashboard) ──
         .route("/_app/{*path}", get(static_files::handle_static))
+        // ── Workspace assets (HMAC-signed; serves files under
+        //    config.workspace_dir so canvas/HTML can `<img src=…>` them) ──
+        .route(
+            "/workspace/{*path}",
+            get(workspace_assets::handle_workspace_asset),
+        )
         // ── Config PUT with larger body limit ──
         .merge(config_put_router)
         // ── SPA fallback: non-API GET requests serve index.html ──

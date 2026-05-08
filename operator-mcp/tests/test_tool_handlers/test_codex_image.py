@@ -367,7 +367,7 @@ async def test_happy_path_single_image_with_canvas_and_artifact(fake_gw, tmp_pat
         output_path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
         return {"ok": True, "path": str(output_path), "size": output_path.stat().st_size}
 
-    async def _fake_canvas(paths, canvas_id, gw):
+    async def _fake_canvas(paths, canvas_id, gw, workspace_dir):
         return {"canvas_id": canvas_id, "frame_id": "frame-1", "image_count": len(paths)}
 
     fake_artifact_kref = "kref://Construct/Images/fox.image?r=1#a1"

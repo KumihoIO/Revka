@@ -1297,7 +1297,14 @@ async def list_tools() -> list[Tool]:
                 "a Kumiho artifact under <harness>/<space>. Requires the "
                 "`codex` CLI installed and authenticated via ChatGPT OAuth "
                 "(0.128+ recommended for the latest image_generation feature; "
-                "earlier versions may work if image_generation is enabled)."
+                "earlier versions may work if image_generation is enabled). "
+                "RESPONSE NOTE: when you compose your own HTML/canvas output "
+                "referencing the generated images, use the `urls` array (each "
+                "entry is a signed `/workspace/...` URL the dashboard can "
+                "load), NOT the `files` array (those are absolute filesystem "
+                "paths the browser sandbox can't read). If `canvas: true` is "
+                "passed, the tool already pushes a working canvas frame — "
+                "you only need to compose your own when adding custom styling."
             ),
             inputSchema={
                 "type": "object",
