@@ -146,6 +146,14 @@ pub struct Agent {
     /// `<available_skills>` block.  Built once at daemon startup and
     /// shared across all agent constructions.
     skill_effectiveness: Option<Arc<crate::skills::EffectivenessCache>>,
+    /// Pre-rendered "Deferred Tools" prompt section listing MCP tools
+    /// (e.g. user-added servers like OpenCrab) that are not eagerly
+    /// loaded but are discoverable via `tool_search`. Each server's
+    /// tools are grouped under its `instructions` header so the agent
+    /// can route to the right server by domain even if the user doesn't
+    /// name it explicitly. Empty when no deferred MCP tools are
+    /// configured. Appended to the system prompt by `build_system_prompt`.
+    mcp_deferred_section: String,
 }
 
 pub struct AgentBuilder {
@@ -179,6 +187,7 @@ pub struct AgentBuilder {
     kumiho_memory_advanced_available: bool,
     operator_enabled: bool,
     skill_effectiveness: Option<Arc<crate::skills::EffectivenessCache>>,
+    mcp_deferred_section: String,
 }
 
 impl AgentBuilder {
@@ -214,6 +223,7 @@ impl AgentBuilder {
             kumiho_memory_advanced_available: false,
             operator_enabled: false,
             skill_effectiveness: None,
+            mcp_deferred_section: String::new(),
         }
     }
 
@@ -389,6 +399,13 @@ impl AgentBuilder {
         self
     }
 
+    /// Set the pre-rendered "Deferred Tools" prompt section. Empty string is
+    /// equivalent to unset. See `Agent::mcp_deferred_section`.
+    pub fn mcp_deferred_section(mut self, section: String) -> Self {
+        self.mcp_deferred_section = section;
+        self
+    }
+
     pub fn build(self) -> Result<Agent> {
         let mut tools = self
             .tools
@@ -450,6 +467,7 @@ impl AgentBuilder {
             kumiho_memory_advanced_available: self.kumiho_memory_advanced_available,
             operator_enabled: self.operator_enabled,
             skill_effectiveness: self.skill_effectiveness,
+            mcp_deferred_section: self.mcp_deferred_section,
         })
     }
 }
@@ -555,6 +573,7 @@ impl Agent {
         // path also has access to MCP tools.
         let mut activated_tools: Option<Arc<std::sync::Mutex<tools::ActivatedToolSet>>> = None;
         let mut kumiho_advanced = false;
+        let mut deferred_section_for_prompt = String::new();
         if config.mcp.enabled && !config.mcp.servers.is_empty() {
             tracing::info!(
                 "Initializing MCP client — {} server(s) configured",
@@ -609,6 +628,17 @@ impl Agent {
                             deferred_set.len(),
                             registry.server_count()
                         );
+                        // Build the deferred-tools section now so it can be
+                        // injected into the system prompt by `build_system_prompt`.
+                        // Without this the agent has `tool_search` available
+                        // but no idea which servers/tools to search for —
+                        // user-added MCP servers like OpenCrab are invisible.
+                        let server_instructions = registry.server_instructions().await;
+                        deferred_section_for_prompt =
+                            crate::tools::mcp_deferred::build_deferred_tools_section_with_instructions(
+                                &deferred_set,
+                                &server_instructions,
+                            );
                         let activated =
                             Arc::new(std::sync::Mutex::new(tools::ActivatedToolSet::new()));
                         activated_tools = Some(Arc::clone(&activated));
@@ -733,6 +763,7 @@ impl Agent {
             .kumiho_enabled(config.kumiho.enabled)
             .kumiho_memory_advanced_available(kumiho_advanced)
             .operator_enabled(config.operator.enabled)
+            .mcp_deferred_section(deferred_section_for_prompt)
             .build()
     }
 
@@ -785,7 +816,19 @@ impl Agent {
             kumiho_memory_advanced_available: self.kumiho_memory_advanced_available,
             mode: crate::agent::prompt::BuilderMode::Daemon,
         };
-        self.prompt_builder.build(&ctx)
+        let mut prompt = self.prompt_builder.build(&ctx)?;
+        // Append the deferred-tools section listing MCP tools the agent
+        // can `tool_search` for. Without this the dashboard agent never
+        // sees that user-added MCP servers (e.g. OpenCrab) exist or what
+        // they're for, even though `tool_search` would surface them.
+        if !self.mcp_deferred_section.is_empty() {
+            if !prompt.ends_with('\n') {
+                prompt.push('\n');
+            }
+            prompt.push('\n');
+            prompt.push_str(&self.mcp_deferred_section);
+        }
+        Ok(prompt)
     }
 
     async fn execute_tool_call(&self, call: &ParsedToolCall) -> ToolExecutionResult {
