@@ -604,6 +604,86 @@ fn uninstall_linux(config: &Config, init_system: InitSystem) -> Result<()> {
     Ok(())
 }
 
+/// Build the PATH the daemon process should see on Unix.
+///
+/// Why this is necessary: every Unix init system the daemon runs under
+/// (launchd on macOS, systemd user units on Linux, OpenRC on Alpine)
+/// starts services with a minimal default PATH that does NOT include
+/// the user-bin dirs where most language-toolchain CLIs live. The
+/// daemon spawns external CLIs by name (`codex`, `claude`, `node`,
+/// `python3`) via subprocess, so without an explicit PATH override the
+/// spawn fails with `[Errno 2] No such file or directory: 'codex'`
+/// even though the user's interactive shell finds the binary fine.
+///
+/// Curated default covers `/usr/local/bin` (npm + Intel Homebrew),
+/// `/opt/homebrew/bin` (ARM Homebrew), `~/.cargo/bin` (Rust), and
+/// `~/.local/bin` (pipx / pip --user / Claude Code CLI), plus the
+/// minimal system bin/sbin set.
+///
+/// `include_user_dirs`:
+/// - **true** for launchd + systemd user units (daemon runs as the
+///   install user). Adds `$HOME`-rooted dirs and folds in the
+///   install-time `PATH` env so unusual setups (nvm, asdf, fnm, custom
+///   prefixes) keep working without hand-editing.
+/// - **false** for OpenRC's system `construct:construct` user where
+///   `$HOME` resolves to `/var/lib/construct` and the install user's
+///   PATH is irrelevant. Returns just the system-wide locations.
+fn build_unix_daemon_path(include_user_dirs: bool) -> String {
+    let mut path_dirs: Vec<String> = Vec::new();
+    if include_user_dirs {
+        if let Some(home) = std::env::var_os("HOME") {
+            let home_str = home.to_string_lossy().into_owned();
+            path_dirs.push(format!("{home_str}/.cargo/bin"));
+            path_dirs.push(format!("{home_str}/.local/bin"));
+        }
+    }
+    path_dirs.extend([
+        "/usr/local/bin".to_string(),
+        "/opt/homebrew/bin".to_string(),
+        "/usr/bin".to_string(),
+        "/bin".to_string(),
+        "/usr/local/sbin".to_string(),
+        "/usr/sbin".to_string(),
+        "/sbin".to_string(),
+    ]);
+    if include_user_dirs && let Ok(install_path) = std::env::var("PATH") {
+        for dir in install_path.split(':') {
+            if !dir.is_empty() && !path_dirs.iter().any(|d| d == dir) {
+                path_dirs.push(dir.to_string());
+            }
+        }
+    }
+    path_dirs.join(":")
+}
+
+/// Build the PATH for the Windows scheduled-task wrapper script.
+///
+/// On Windows codex (npm-installed) typically lives at
+/// `%APPDATA%\npm\codex.CMD` and cargo-installed CLIs at
+/// `%USERPROFILE%\.cargo\bin\*`. Scheduled tasks created via
+/// `schtasks /SC ONLOGON` (no `/RU`) inherit the user's interactive
+/// PATH, but we still snapshot install-time `PATH` and prepend the
+/// known npm/cargo dirs so the task is robust to PATH drift between
+/// install time and task-trigger time (e.g. user uninstalls Node and
+/// reinstalls into a different prefix).
+fn build_windows_daemon_path() -> String {
+    let mut path_dirs: Vec<String> = Vec::new();
+    if let Ok(profile) = std::env::var("USERPROFILE") {
+        path_dirs.push(format!(r"{profile}\.cargo\bin"));
+    }
+    if let Ok(appdata) = std::env::var("APPDATA") {
+        path_dirs.push(format!(r"{appdata}\npm"));
+    }
+    if let Ok(install_path) = std::env::var("PATH") {
+        for dir in install_path.split(';') {
+            if !dir.is_empty() && !path_dirs.iter().any(|d| d == dir) {
+                path_dirs.push(dir.to_string());
+            }
+        }
+    }
+    path_dirs.join(";")
+}
+
 /// Detect if the executable lives under a Homebrew prefix and return the
 /// corresponding `var/construct` directory.
 ///
@@ -678,44 +758,9 @@ fn install_macos(config: &Config) -> Result<()> {
     let stdout = logs_dir.join("daemon.stdout.log");
     let stderr = logs_dir.join("daemon.stderr.log");
 
-    // PATH for the daemon's launchd context.
-    //
-    // Why this is necessary: launchd's default PATH is just
-    // `/usr/bin:/bin:/usr/sbin:/sbin` (per `man launchd.plist`). The
-    // daemon spawns external CLIs by name (e.g. `codex`, `claude`,
-    // `node`, `python3`) via subprocess, and those commonly live under
-    // `/usr/local/bin` (npm + Intel Homebrew), `/opt/homebrew/bin` (ARM
-    // Homebrew), `~/.cargo/bin` (Rust), or `~/.local/bin` (pipx /
-    // pip --user). Without an explicit PATH override, the spawn fails
-    // with `[Errno 2] No such file or directory: 'codex'` even though
-    // the user's interactive shell finds the binary fine.
-    //
-    // We also fold in the install-time `PATH` env (whatever the user
-    // had when they ran `construct service install`) so unusual setups
-    // (nvm, asdf, fnm, custom prefixes) keep working without the user
-    // having to hand-edit the plist.
-    let mut path_dirs: Vec<String> = Vec::new();
-    if let Some(home) = std::env::var_os("HOME") {
-        let home_str = home.to_string_lossy().into_owned();
-        path_dirs.push(format!("{home_str}/.cargo/bin"));
-        path_dirs.push(format!("{home_str}/.local/bin"));
-    }
-    path_dirs.extend([
-        "/usr/local/bin".to_string(),
-        "/opt/homebrew/bin".to_string(),
-        "/usr/bin".to_string(),
-        "/bin".to_string(),
-        "/usr/sbin".to_string(),
-        "/sbin".to_string(),
-    ]);
-    if let Ok(install_path) = std::env::var("PATH") {
-        for dir in install_path.split(':') {
-            if !dir.is_empty() && !path_dirs.iter().any(|d| d == dir) {
-                path_dirs.push(dir.to_string());
-            }
-        }
-    }
-    let path_env = path_dirs.join(":");
+    // PATH for the daemon process — see build_unix_daemon_path() for
+    // why this is necessary on every Unix init system.
+    let path_env = build_unix_daemon_path(true);
 
     // EnvironmentVariables always carries PATH; under Homebrew it also
     // carries CONSTRUCT_CONFIG_DIR. WorkingDirectory is Homebrew-only
@@ -803,6 +848,7 @@ fn install_linux_systemd(config: &Config) -> Result<()> {
     }
 
     let exe = std::env::current_exe().context("Failed to resolve current executable")?;
+    let path_env = build_unix_daemon_path(true);
     let unit = format!(
         "[Unit]\n\
          Description=Construct daemon\n\
@@ -815,6 +861,12 @@ fn install_linux_systemd(config: &Config) -> Result<()> {
          RestartSec=3\n\
          # Ensure HOME is set so headless browsers can create profile/cache dirs.\n\
          Environment=HOME=%h\n\
+         # PATH override — systemd user services start with a minimal\n\
+         # default PATH (typically /usr/local/bin:/usr/bin:/bin:...) that\n\
+         # excludes ~/.cargo/bin, ~/.local/bin, and ~/.npm-global/bin.\n\
+         # Without this the daemon's subprocess spawns of codex/claude/etc\n\
+         # fail with [Errno 2] No such file or directory.\n\
+         Environment=\"PATH={path_env}\"\n\
          # Allow inheriting DISPLAY and XDG_RUNTIME_DIR from the user session\n\
          # so graphical/headless browsers can function correctly.\n\
          PassEnvironment=DISPLAY XDG_RUNTIME_DIR\n\
@@ -1207,6 +1259,11 @@ fn warn_if_binary_in_home(exe_path: &Path) {
 
 /// Generate OpenRC init script content (pure function for testability)
 fn generate_openrc_script(exe_path: &Path, config_dir: &Path) -> String {
+    // OpenRC's daemon runs as the system `construct:construct` user
+    // whose HOME is `/var/lib/construct`. The install user's `~/.cargo/bin`
+    // / `~/.local/bin` are not relevant here, so we ask for the
+    // system-only PATH set.
+    let path_env = build_unix_daemon_path(false);
     format!(
         r#"#!/sbin/openrc-run
 
@@ -1225,6 +1282,12 @@ error_log="/var/log/construct/error.log"
 # Provide HOME so headless browsers can create profile/cache directories.
 # Without this, Chromium/Firefox fail with sandbox or profile errors.
 export HOME="/var/lib/construct"
+
+# PATH override — the OpenRC system `construct` user starts with the
+# default supervised-process PATH which can be even narrower than the
+# user's interactive shell. Daemon subprocess spawns of codex/claude/etc
+# need /usr/local/bin and friends explicitly listed.
+export PATH="{path_env}"
 
 depend() {{
     need net
@@ -1384,11 +1447,19 @@ fn install_windows(config: &Config) -> Result<()> {
     let stdout_log = logs_dir.join("daemon.stdout.log");
     let stderr_log = logs_dir.join("daemon.stderr.log");
 
+    // PATH override — same root cause as the launchd/systemd/OpenRC
+    // fixes: scheduled-task wrappers can drift away from the user's
+    // current interactive PATH between install time and trigger time.
+    // Snapshot install-time PATH and prepend the npm-global / cargo
+    // dirs so codex/claude spawns work even if PATH later changes.
+    let path_env = build_windows_daemon_path();
+
     let wrapper_content = format!(
-        "@echo off\r\n\"{}\" daemon >>\"{}\" 2>>\"{}\"",
-        exe.display(),
-        stdout_log.display(),
-        stderr_log.display()
+        "@echo off\r\nset \"PATH={path}\"\r\n\"{exe}\" daemon >>\"{stdout}\" 2>>\"{stderr}\"",
+        path = path_env,
+        exe = exe.display(),
+        stdout = stdout_log.display(),
+        stderr = stderr_log.display(),
     );
     fs::write(&wrapper, &wrapper_content)?;
 
@@ -1652,6 +1723,94 @@ mod tests {
         assert!(
             unit.contains("PassEnvironment=DISPLAY XDG_RUNTIME_DIR"),
             "systemd unit must pass through display/runtime env vars"
+        );
+    }
+
+    #[test]
+    fn build_unix_daemon_path_with_user_dirs_contains_curated_defaults() {
+        // include_user_dirs=true → must carry the user-bin shortcuts
+        // (~/.cargo/bin, ~/.local/bin) plus the system-wide locations.
+        // Without these, daemon subprocess spawns of codex/claude fail
+        // with [Errno 2] No such file or directory even though the
+        // user's interactive shell finds them.
+        let path = build_unix_daemon_path(true);
+        assert!(
+            path.contains("/.cargo/bin"),
+            "missing ~/.cargo/bin in: {path}"
+        );
+        assert!(
+            path.contains("/.local/bin"),
+            "missing ~/.local/bin in: {path}"
+        );
+        assert!(
+            path.contains("/usr/local/bin"),
+            "missing /usr/local/bin in: {path}"
+        );
+        assert!(
+            path.contains("/opt/homebrew/bin"),
+            "missing /opt/homebrew/bin in: {path}"
+        );
+        assert!(path.contains("/usr/bin"), "missing /usr/bin in: {path}");
+    }
+
+    #[test]
+    fn build_unix_daemon_path_without_user_dirs_drops_home_paths() {
+        // include_user_dirs=false (OpenRC daemon runs as system user)
+        // → must NOT inject ~/.cargo/bin etc., since those resolve to
+        // the install user's home which the system `construct` user
+        // can't read.
+        let path = build_unix_daemon_path(false);
+        assert!(
+            !path.contains(".cargo/bin"),
+            "OpenRC PATH should not include ~/.cargo/bin: {path}"
+        );
+        assert!(
+            !path.contains(".local/bin"),
+            "OpenRC PATH should not include ~/.local/bin: {path}"
+        );
+        assert!(
+            path.contains("/usr/local/bin"),
+            "OpenRC PATH must still include /usr/local/bin: {path}"
+        );
+    }
+
+    #[test]
+    fn build_windows_daemon_path_uses_semicolon_and_npm_dir() {
+        // Windows variant — semicolon-separated. Even when the env vars
+        // aren't set on the test runner, the helper must produce a valid
+        // (possibly empty) string and not panic. When USERPROFILE/APPDATA
+        // are present, the npm + cargo bin shortcuts must be present.
+        let path = build_windows_daemon_path();
+        if std::env::var("APPDATA").is_ok() {
+            assert!(
+                path.contains(r"\npm"),
+                "Windows PATH should include %APPDATA%\\npm: {path}"
+            );
+        }
+        // No-op assertion to keep this test useful on non-Windows runners
+        // where USERPROFILE/APPDATA aren't typically set.
+        let _ = path;
+    }
+
+    #[test]
+    fn generate_openrc_script_sets_path_for_subprocess_spawns() {
+        use std::path::PathBuf;
+
+        let exe_path = PathBuf::from("/usr/local/bin/construct");
+        let script = generate_openrc_script(&exe_path, Path::new("/etc/construct"));
+
+        assert!(
+            script.contains("export PATH=\""),
+            "OpenRC script must export PATH so daemon-spawned codex/claude can be found"
+        );
+        assert!(
+            script.contains("/usr/local/bin"),
+            "OpenRC PATH must include /usr/local/bin"
+        );
+        // OpenRC daemon runs as system user — must not reference user-bin dirs.
+        assert!(
+            !script.contains(".cargo/bin"),
+            "OpenRC PATH must NOT reference user ~/.cargo/bin (different HOME)"
         );
     }
 
