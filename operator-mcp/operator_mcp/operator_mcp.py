@@ -1302,9 +1302,12 @@ async def list_tools() -> list[Tool]:
                 "referencing the generated images, use the `urls` array (each "
                 "entry is a signed `/workspace/...` URL the dashboard can "
                 "load), NOT the `files` array (those are absolute filesystem "
-                "paths the browser sandbox can't read). If `canvas: true` is "
-                "passed, the tool already pushes a working canvas frame — "
-                "you only need to compose your own when adding custom styling."
+                "paths the browser sandbox can't read). CANVAS PICK-ONE: if "
+                "`canvas: true` is passed, this tool already pushes a working "
+                "canvas frame — do NOT also call `render_canvas` for the same "
+                "image (you'll get duplicate frames). For custom styling, set "
+                "`canvas: false` and call `render_canvas` yourself with "
+                "`urls[0]`."
             ),
             inputSchema={
                 "type": "object",
