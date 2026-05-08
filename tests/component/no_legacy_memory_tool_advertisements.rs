@@ -74,6 +74,9 @@ const ALLOWLIST: &[&str] = &[
     "docs/audit-row-5-10-11-12-scrub-inventory.md",
     "docs/audit-row-5-10-11-12-scrub-review.md",
     "tests/component/no_legacy_memory_tool_advertisements.rs",
+    // The companion positive-guard contract test references this file
+    // by name in its docstring (`memory_store, etc.`).
+    "tests/component/kumiho_prompt_tool_contract.rs",
     // ── pre-existing review docs / audit notes (mention names in prose) ──
     "docs/p0-2-row1-13-review.md",
 ];
