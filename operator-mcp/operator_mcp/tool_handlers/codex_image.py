@@ -27,6 +27,7 @@ import asyncio
 import base64
 import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -80,6 +81,29 @@ def _resolve_codex_executable() -> str | None:
     return None
 
 
+def _run_subprocess_sync(
+    cmd: list[str], timeout: float | None = None
+) -> tuple[int, bytes, bytes]:
+    """Synchronous subprocess.run wrapper for use with `asyncio.to_thread`.
+
+    Why not `asyncio.create_subprocess_exec`? On Windows, when the operator
+    MCP server's anyio-based event loop is busy with concurrent tasks
+    (workflow_loader, event_listener, retry queue, …), an in-loop
+    `create_subprocess_exec` call can hang indefinitely waiting for IOCP
+    pump cycles that never come. The MCP context starves the subprocess
+    machinery while standalone scripts work fine. Pushing the blocking
+    `subprocess.run` into a thread pool worker via `asyncio.to_thread`
+    sidesteps the proactor entirely and runs reliably across platforms.
+    """
+    proc = subprocess.run(
+        cmd,
+        capture_output=True,
+        timeout=timeout,
+        check=False,
+    )
+    return proc.returncode, proc.stdout, proc.stderr
+
+
 async def _check_codex_available() -> dict[str, Any]:
     global _CODEX_AVAILABILITY
     if _CODEX_AVAILABILITY is not None:
@@ -98,14 +122,17 @@ async def _check_codex_available() -> dict[str, Any]:
         return _CODEX_AVAILABILITY
 
     try:
-        proc = await asyncio.create_subprocess_exec(
-            codex_path,
-            "login",
-            "status",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+        returncode, stdout, stderr = await asyncio.to_thread(
+            _run_subprocess_sync,
+            [codex_path, "login", "status"],
+            30.0,
         )
-        stdout, stderr = await proc.communicate()
+    except subprocess.TimeoutExpired:
+        _CODEX_AVAILABILITY = {
+            "ok": False,
+            "error": f"codex login status timed out after 30s (executable: {codex_path})",
+        }
+        return _CODEX_AVAILABILITY
     except Exception as exc:
         _CODEX_AVAILABILITY = {
             "ok": False,
@@ -220,22 +247,24 @@ async def _spawn_codex_image(
         log_path,
         _build_codex_prompt(prompt, output_path),
     ]
+    # Run via `asyncio.to_thread(subprocess.run, ...)` rather than
+    # `asyncio.create_subprocess_exec`. See `_run_subprocess_sync` for the
+    # rationale (Windows + MCP anyio loop hang). Each parallel codex spawn
+    # gets its own thread-pool worker, so `asyncio.gather` over N spawns
+    # still gives genuine parallelism.
     try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+        returncode, stdout, stderr = await asyncio.to_thread(
+            _run_subprocess_sync, cmd, None
         )
-        stdout, stderr = await proc.communicate()
     except Exception as exc:
         return {"ok": False, "path": str(output_path), "error": f"spawn failed: {exc}"}
 
-    if proc.returncode != 0:
+    if returncode != 0:
         tail = (stderr or b"").decode("utf-8", errors="replace")[:500]
         return {
             "ok": False,
             "path": str(output_path),
-            "error": f"codex exec exited {proc.returncode}: {tail}",
+            "error": f"codex exec exited {returncode}: {tail}",
         }
     if not output_path.exists() or output_path.stat().st_size == 0:
         return {

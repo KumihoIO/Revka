@@ -86,6 +86,47 @@ async def test_codex_not_on_path_returns_clear_error(fake_gw, tmp_path):
     assert "codex CLI not found" in out.get("error", "")
 
 
+def test_subprocess_path_uses_to_thread_not_asyncio_create_subprocess():
+    """Regression: on Windows in MCP context, asyncio.create_subprocess_exec
+    hangs indefinitely. The implementation must route through
+    `_run_subprocess_sync` (called via `asyncio.to_thread`) so subprocess
+    work happens in a thread-pool worker, not on the asyncio loop.
+    """
+    import inspect
+    import re
+
+    src = inspect.getsource(ci)
+    # Strip docstrings and comments — they're allowed to *mention*
+    # create_subprocess_exec for historical context. We only fail on
+    # actual invocations: `asyncio.create_subprocess_exec(`.
+    code_only_lines = []
+    in_triple = False
+    for line in src.splitlines():
+        stripped = line.strip()
+        triples = stripped.count('"""')
+        if triples % 2 == 1:
+            in_triple = not in_triple
+            continue
+        if in_triple:
+            continue
+        if stripped.startswith("#"):
+            continue
+        # Drop end-of-line comments.
+        if "#" in line:
+            line = line.split("#", 1)[0]
+        code_only_lines.append(line)
+    code_only = "\n".join(code_only_lines)
+
+    invocation = re.search(r"asyncio\.create_subprocess_exec\s*\(", code_only)
+    assert invocation is None, (
+        "codex_image.py must not call asyncio.create_subprocess_exec — "
+        "it hangs on Windows + anyio MCP loops. Use asyncio.to_thread + "
+        "_run_subprocess_sync instead."
+    )
+    assert "asyncio.to_thread" in code_only
+    assert "_run_subprocess_sync" in code_only
+
+
 def test_resolve_codex_executable_uses_shutil_which_when_available():
     with patch.object(ci.shutil, "which", return_value="/usr/local/bin/codex"):
         assert ci._resolve_codex_executable() == "/usr/local/bin/codex"
@@ -99,20 +140,12 @@ async def test_check_codex_available_accepts_login_marker_on_stderr():
     cleanly, but the login-marker scan only looked at stdout.
     """
 
-    class _FakeProc:
-        returncode = 0
-
-        async def communicate(self):
-            return (b"", b"Logged in using ChatGPT\n")
-
-    async def _fake_create_subprocess_exec(*args, **kwargs):
-        return _FakeProc()
+    def _fake_run(cmd, timeout=None):
+        return (0, b"", b"Logged in using ChatGPT\n")
 
     with patch.object(
         ci, "_resolve_codex_executable", return_value="/fake/codex.CMD"
-    ), patch.object(
-        ci.asyncio, "create_subprocess_exec", side_effect=_fake_create_subprocess_exec
-    ):
+    ), patch.object(ci, "_run_subprocess_sync", side_effect=_fake_run):
         result = await ci._check_codex_available()
     assert result == {"ok": True, "executable": "/fake/codex.CMD"}
 
@@ -120,20 +153,12 @@ async def test_check_codex_available_accepts_login_marker_on_stderr():
 async def test_check_codex_available_rejects_when_neither_stream_has_marker():
     """If neither stdout nor stderr mentions a login, fail with a clear hint."""
 
-    class _FakeProc:
-        returncode = 0
-
-        async def communicate(self):
-            return (b"Not logged in\n", b"")
-
-    async def _fake_create_subprocess_exec(*args, **kwargs):
-        return _FakeProc()
+    def _fake_run(cmd, timeout=None):
+        return (0, b"Not logged in\n", b"")
 
     with patch.object(
         ci, "_resolve_codex_executable", return_value="/fake/codex"
-    ), patch.object(
-        ci.asyncio, "create_subprocess_exec", side_effect=_fake_create_subprocess_exec
-    ):
+    ), patch.object(ci, "_run_subprocess_sync", side_effect=_fake_run):
         result = await ci._check_codex_available()
     assert result["ok"] is False
     assert "not authenticated" in result["error"]
