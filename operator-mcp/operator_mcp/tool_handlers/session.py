@@ -5,15 +5,11 @@ import json as _json
 from datetime import datetime, timezone
 from typing import Any
 
-try:
-    import httpx
-except ImportError:
-    httpx = None  # type: ignore
-
 from .._log import _log
 from ..construct_config import harness_project
 from ..journal import SessionJournal
 from ..kumiho_clients import KumihoAgentPoolClient
+from .memory import tool_memory_store_op
 
 
 async def tool_get_session_history(args: dict[str, Any], journal: SessionJournal) -> dict[str, Any]:
@@ -62,63 +58,59 @@ async def tool_archive_session(args: dict[str, Any], journal: SessionJournal, po
         else:
             agents_seen[aid]["final_status"] = entry.get("event", agents_seen[aid]["final_status"])
 
+    now = datetime.now(timezone.utc).isoformat()
+    metadata = {
+        "session_id": session_id,
+        "title": title,
+        "summary": summary,
+        "outcome": outcome,
+        "agent_count": len(agents_seen),
+        "agents": _json.dumps(list(agents_seen.values())),
+        "event_count": len(entries),
+        "archived_at": now,
+    }
+
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            headers = pool_client._headers()
-            api = pool_client.api_url
+        result = await tool_memory_store_op({
+            "project": harness_project(),
+            "space_path": "Sessions",
+            "memory_item_kind": "session",
+            "memory_type": "summary",
+            "title": title,
+            "summary": "",
+            "assistant_text": summary,
+            "user_text": "",
+            "tags": [],
+            "metadata": metadata,
+        })
 
-            _project = harness_project()
-            await client.post(f"{api}/api/v1/projects", json={"name": _project}, headers=headers)
-            await client.post(f"{api}/api/v1/spaces", json={"parent_path": f"/{_project}", "name": "Sessions"}, headers=headers)
+        if isinstance(result, dict) and result.get("error"):
+            _log(f"Session archive failed: {result['error']}")
+            return {"error": f"Failed to archive session: {result['error']}"}
 
-            now = datetime.now(timezone.utc).isoformat()
-            metadata = {
-                "session_id": session_id,
-                "title": title,
-                "summary": summary,
-                "outcome": outcome,
-                "agent_count": len(agents_seen),
-                "agents": _json.dumps(list(agents_seen.values())),
-                "event_count": len(entries),
-                "archived_at": now,
-            }
-
-            item_name = f"session-{session_id}-{title[:30].replace(' ', '-').lower()}"
-            resp = await client.post(
-                f"{api}/api/v1/items",
-                json={
-                    "space_path": f"/{_project}/Sessions",
-                    "item_name": item_name,
-                    "kind": "session",
-                    "metadata": metadata,
-                },
-                headers=headers,
+        kref = ""
+        if isinstance(result, dict):
+            kref = (
+                result.get("kref")
+                or result.get("item_kref")
+                or (result.get("item") or {}).get("kref")
+                or ""
             )
-            resp.raise_for_status()
-            item = resp.json()
-            kref = item.get("kref", "")
 
-            if kref:
-                await client.post(
-                    f"{api}/api/v1/revisions",
-                    json={"kref": kref, "metadata": metadata},
-                    headers=headers,
-                )
+        try:
+            journal.record(session_id, "archived", summary=title)
+        except Exception:
+            pass  # Non-critical — archive already persisted
 
-            try:
-                journal.record(session_id, "archived", summary=title)
-            except Exception:
-                pass  # Non-critical — archive already persisted
-
-            _log(f"Archived session '{session_id}' as '{item_name}'")
-            return {
-                "archived": True,
-                "session_id": session_id,
-                "kref": kref,
-                "title": title,
-                "outcome": outcome,
-                "agent_count": len(agents_seen),
-            }
+        _log(f"Archived session '{session_id}' (kref={kref})")
+        return {
+            "archived": True,
+            "session_id": session_id,
+            "kref": kref,
+            "title": title,
+            "outcome": outcome,
+            "agent_count": len(agents_seen),
+        }
     except Exception as e:
         _log(f"Session archive failed: {e}")
         return {"error": f"Failed to archive session: {e}"}
