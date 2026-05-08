@@ -140,3 +140,60 @@ async def test_no_persistence_imports() -> None:
     assert "gateway_client" not in src
     assert "kumiho_clients" not in src
     assert "save_workflow_yaml" not in src
+
+
+_VALID_IMAGE_STEP_YAML = """
+name: propose-image-test
+version: "1.0"
+description: image step Architect proposal
+steps:
+  - id: hero_shot
+    type: image
+    image:
+      prompt: |
+        Architectural panel of Seoul Station 2040.
+        Wide aerial shot, golden hour.
+      count: 1
+      canvas: true
+      register_artifact: true
+"""
+
+
+@pytest.mark.asyncio
+async def test_image_step_validates() -> None:
+    """Architect-proposed image-step YAML round-trips through validation.
+
+    Pins the public shape so a backend rename (e.g. dropping `canvas` or
+    renaming `register_artifact`) can't silently break Architect proposals.
+    """
+    result = await tool_propose_workflow_yaml({
+        "proposed_yaml": _VALID_IMAGE_STEP_YAML,
+        "intent_summary": "user asked for one image generated to canvas",
+    })
+    assert result["valid"] is True, result["errors"]
+    assert "type: image" in result["yaml"]
+
+
+@pytest.mark.asyncio
+async def test_image_step_metadata_advertised() -> None:
+    """get_workflow_metadata must list `image` so the Architect knows
+    it exists. Without this, the Architect falls back to a prose-prompted
+    `agent` step and produces no canvas frame / no artifact."""
+    from operator_mcp.tool_handlers.workflow_discovery import (
+        tool_get_workflow_metadata,
+    )
+
+    metadata = await tool_get_workflow_metadata({})
+    step_types = [s["type"] for s in metadata["step_types"]]
+    assert "image" in step_types, (
+        f"image step type missing from metadata; got {step_types}"
+    )
+    image_meta = next(s for s in metadata["step_types"] if s["type"] == "image")
+    # The description must steer the Architect toward `image` over `agent`
+    # for image-generation tasks.
+    assert "agent" in image_meta["description"].lower()
+    field_names = {f["name"] for f in image_meta["config_fields"]}
+    assert "prompt" in field_names
+    assert "canvas" in field_names
+    assert "register_artifact" in field_names
+    assert "type: image" in image_meta["example_yaml"]
