@@ -147,6 +147,105 @@ def test_subprocess_path_uses_to_thread_not_asyncio_create_subprocess():
     assert "_run_subprocess_sync" in code_only
 
 
+# --------- platform-aware sandbox default ---------------------------------
+
+
+def test_is_per_user_npm_install_detects_appdata_path(monkeypatch):
+    """Per-user npm Windows installs land under %APPDATA%\\npm — those are
+    the installs whose sandbox helper can't spawn children."""
+    monkeypatch.setenv("APPDATA", r"C:\Users\alice\AppData\Roaming")
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+    with patch.object(ci, "sys") as sys_mock:
+        sys_mock.platform = "win32"
+        assert ci._is_per_user_npm_install(
+            r"C:\Users\alice\AppData\Roaming\npm\codex.CMD"
+        )
+        # Case-insensitive match (Windows paths).
+        assert ci._is_per_user_npm_install(
+            r"c:\users\alice\appdata\roaming\NPM\Codex.cmd"
+        )
+
+
+def test_is_per_user_npm_install_rejects_system_install(monkeypatch):
+    """Admin-installed codex (Program Files / system npm) is NOT per-user."""
+    monkeypatch.setenv("APPDATA", r"C:\Users\alice\AppData\Roaming")
+    with patch.object(ci, "sys") as sys_mock:
+        sys_mock.platform = "win32"
+        assert not ci._is_per_user_npm_install(
+            r"C:\Program Files\nodejs\codex.cmd"
+        )
+        assert not ci._is_per_user_npm_install(r"C:\tools\codex.exe")
+
+
+def test_is_per_user_npm_install_returns_false_on_posix():
+    """The per-user helper concept is Windows-only."""
+    with patch.object(ci, "sys") as sys_mock:
+        sys_mock.platform = "linux"
+        assert not ci._is_per_user_npm_install("/home/alice/.npm-global/bin/codex")
+        sys_mock.platform = "darwin"
+        assert not ci._is_per_user_npm_install("/usr/local/bin/codex")
+
+
+def test_default_sandbox_picks_danger_for_per_user_windows(monkeypatch):
+    """Per-user Windows npm install → danger-full-access default."""
+    monkeypatch.setenv("APPDATA", r"C:\Users\alice\AppData\Roaming")
+    with patch.object(ci, "sys") as sys_mock:
+        sys_mock.platform = "win32"
+        assert (
+            ci._default_sandbox(r"C:\Users\alice\AppData\Roaming\npm\codex.CMD")
+            == "danger-full-access"
+        )
+
+
+def test_default_sandbox_keeps_workspace_write_for_admin_install(monkeypatch):
+    """Admin Windows install / macOS / Linux → workspace-write (safer)."""
+    monkeypatch.setenv("APPDATA", r"C:\Users\alice\AppData\Roaming")
+    with patch.object(ci, "sys") as sys_mock:
+        sys_mock.platform = "win32"
+        assert (
+            ci._default_sandbox(r"C:\Program Files\nodejs\codex.cmd")
+            == "workspace-write"
+        )
+        sys_mock.platform = "linux"
+        assert ci._default_sandbox("/usr/local/bin/codex") == "workspace-write"
+
+
+async def test_tool_uses_platform_default_when_sandbox_arg_omitted(
+    fake_gw, tmp_path, monkeypatch
+):
+    """End-to-end: per-user Windows install + no `sandbox` arg →
+    danger-full-access flows through to the spawn."""
+    target = tmp_path / "fox.png"
+    captured: dict[str, Any] = {}
+
+    async def _fake_spawn(prompt, output_path, cwd, codex_executable=None, sandbox="workspace-write"):
+        captured["sandbox"] = sandbox
+        output_path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
+        return {"ok": True, "path": str(output_path), "size": 100}
+
+    monkeypatch.setenv("APPDATA", r"C:\Users\alice\AppData\Roaming")
+    fake_codex = r"C:\Users\alice\AppData\Roaming\npm\codex.CMD"
+
+    with patch.object(
+        ci,
+        "_check_codex_available",
+        AsyncMock(return_value={"ok": True, "executable": fake_codex}),
+    ), patch.object(ci, "_spawn_codex_image", side_effect=_fake_spawn), patch.object(
+        ci, "sys"
+    ) as sys_mock:
+        sys_mock.platform = "win32"
+        await ci.tool_generate_image_codex(
+            {
+                "prompt": "fox",
+                "output_path": str(target),
+                "register_artifact": False,
+            },
+            fake_gw,
+        )
+
+    assert captured["sandbox"] == "danger-full-access"
+
+
 def test_resolve_codex_executable_uses_shutil_which_when_available():
     with patch.object(ci.shutil, "which", return_value="/usr/local/bin/codex"):
         assert ci._resolve_codex_executable() == "/usr/local/bin/codex"

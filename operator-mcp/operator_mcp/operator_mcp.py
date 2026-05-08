@@ -1371,15 +1371,16 @@ async def list_tools() -> list[Tool]:
                         "type": "string",
                         "enum": ["read-only", "workspace-write", "danger-full-access"],
                         "description": (
-                            "codex `--sandbox` mode. Default `workspace-write` works on "
-                            "macOS/Linux. On Windows installs where the codex sandbox "
-                            "helper isn't set up correctly (CreateProcessAsUserW failed: 5), "
-                            "use `danger-full-access` as a workaround — codex's image "
-                            "skill won't load otherwise and the model hallucinates a "
-                            "'saved' reply without generating a real PNG. The proper "
-                            "fix is to reinstall codex CLI as Administrator."
+                            "codex `--sandbox` mode. When unset, the tool picks the "
+                            "right default for the local install: `workspace-write` "
+                            "on macOS/Linux and admin-installed Windows, "
+                            "`danger-full-access` on Windows per-user npm installs "
+                            "(`%APPDATA%\\\\npm\\\\codex.CMD`) whose sandbox helper "
+                            "can't spawn child processes (`CreateProcessAsUserW "
+                            "failed: 5`) — without that, codex's image skill won't "
+                            "load and no PNG is produced. Pin a value only if you "
+                            "need to override the auto-default."
                         ),
-                        "default": "workspace-write",
                     },
                 },
                 "required": ["prompt", "output_path"],
