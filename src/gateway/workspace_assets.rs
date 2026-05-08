@@ -48,8 +48,7 @@ pub struct AssetQuery {
 }
 
 fn hmac_hex(rel_path: &str, exp: u64, secret: &[u8]) -> String {
-    let mut mac = HmacSha256::new_from_slice(secret)
-        .expect("HMAC-SHA256 accepts any key length");
+    let mut mac = HmacSha256::new_from_slice(secret).expect("HMAC-SHA256 accepts any key length");
     mac.update(rel_path.as_bytes());
     mac.update(b"\n");
     mac.update(exp.to_string().as_bytes());
@@ -160,10 +159,7 @@ pub async fn handle_workspace_asset(
                 StatusCode::OK,
                 [
                     (header::CONTENT_TYPE, mime),
-                    (
-                        header::CACHE_CONTROL,
-                        "private, max-age=300".to_string(),
-                    ),
+                    (header::CACHE_CONTROL, "private, max-age=300".to_string()),
                 ],
                 bytes,
             )
