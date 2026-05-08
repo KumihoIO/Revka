@@ -69,8 +69,22 @@ else:
         Locks/unlocks the first byte at file offset 0. `LOCK_SH` is
         mapped to an exclusive lock (msvcrt has no shared variant);
         all current call sites use `LOCK_EX` so this is benign.
+
+        msvcrt.locking operates at the *current* file position, not a
+        fixed byte. We always seek to 0 before calling so the locked
+        byte is consistent with the docstring guarantee — even when
+        the caller wrote a pid sentinel after acquire (the unlock
+        position would otherwise drift past byte 0 and fail).
         """
+        import os as _os
         fileno = _fileno(fd)
+        try:
+            _os.lseek(fileno, 0, _os.SEEK_SET)
+        except OSError:
+            # Non-seekable fd (rare; pipes, sockets). Fall through and
+            # let msvcrt.locking raise its own error if the op isn't
+            # supported.
+            pass
 
         if op & LOCK_UN:
             _msvcrt.locking(fileno, _msvcrt.LK_UNLCK, 1)
