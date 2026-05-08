@@ -29,6 +29,7 @@ from ..workflow.schema import (
     HandoffStepConfig,
     HumanApprovalConfig,
     HumanInputConfig,
+    ImageStepConfig,
     MapReduceStepConfig,
     NotifyStepConfig,
     OutputStepConfig,
@@ -51,6 +52,7 @@ _STEP_CONFIG_CLASS: dict[StepType, type[BaseModel]] = {
     StepType.SHELL: ShellStepConfig,
     StepType.PYTHON: PythonStepConfig,
     StepType.EMAIL: EmailStepConfig,
+    StepType.IMAGE: ImageStepConfig,
     StepType.CONDITIONAL: ConditionalStepConfig,
     StepType.PARALLEL: ParallelStepConfig,
     StepType.GOTO: GotoStepConfig,
@@ -74,6 +76,7 @@ _STEP_LABELS: dict[StepType, str] = {
     StepType.SHELL: "Shell",
     StepType.PYTHON: "Python",
     StepType.EMAIL: "Email",
+    StepType.IMAGE: "Image",
     StepType.CONDITIONAL: "Conditional",
     StepType.PARALLEL: "Parallel",
     StepType.GOTO: "Goto",
@@ -97,6 +100,15 @@ _STEP_DESCRIPTIONS: dict[StepType, str] = {
     StepType.SHELL: "Run a shell command.",
     StepType.PYTHON: "Invoke a Python script with JSON I/O.",
     StepType.EMAIL: "Send an outbound email via SMTP.",
+    StepType.IMAGE: (
+        "Generate image(s) via the codex CLI's image_generation tool, "
+        "push to the Live Canvas, and register a Kumiho artifact. "
+        "ALWAYS prefer this over a generic `agent` step for image-generation "
+        "tasks — agent steps cannot call generate_image_codex (it's an "
+        "operator-tier MCP tool excluded from subagents) and will only "
+        "describe what they would do without producing a canvas frame "
+        "or asset."
+    ),
     StepType.CONDITIONAL: "Branch based on expressions over prior step outputs.",
     StepType.PARALLEL: "Run multiple sub-steps concurrently with join strategies.",
     StepType.GOTO: "Jump to another step (loop support with max_iterations guard).",
@@ -144,6 +156,18 @@ _EXAMPLE_YAML: dict[StepType, str] = {
         "  to: \"a@b.com\"\n"
         "  subject: \"hi\"\n"
         "  body: \"hello\"\n"
+    ),
+    StepType.IMAGE: (
+        "id: hero_shot\n"
+        "type: image\n"
+        "image:\n"
+        "  prompt: |\n"
+        "    Architectural panel of Seoul Station 2040.\n"
+        "    Wide aerial shot, golden hour.\n"
+        "  count: 1\n"
+        "  canvas: true\n"
+        "  register_artifact: true\n"
+        "depends_on: [panel_design_plan]\n"
     ),
     StepType.CONDITIONAL: (
         "id: gate\n"
