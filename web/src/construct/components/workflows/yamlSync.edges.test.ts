@@ -312,3 +312,48 @@ steps:
     'assign must NOT leak into agent.template',
   );
 });
+
+test('image step round-trips prompt + flags through parse → flow → emit', () => {
+  // The `image` step type wraps generate_image_codex. Each side-panel
+  // field corresponds to a Pydantic ImageStepConfig field on the backend;
+  // if the keys drift, the run succeeds locally but the executor sees
+  // the wrong shape.
+  const yaml = `
+steps:
+  - id: hero_shot
+    type: image
+    image:
+      prompt: |
+        Architectural panel of Seoul Station 2040.
+        Wide aerial shot, golden hour lighting.
+      count: 2
+      canvas: false
+      register_artifact: false
+      space: Construct/Marketing/Logos
+      item_name: seoul-hero
+      output_pattern: panel-{n}.png
+      sandbox: workspace-write
+      timeout: 900
+`;
+  const tasks = parseWorkflowYaml(yaml);
+  assert.equal(tasks[0]!.type, 'image');
+  assert.match(tasks[0]!.image_prompt!, /Seoul Station 2040/);
+  assert.equal(tasks[0]!.image_count, 2);
+  assert.equal(tasks[0]!.image_canvas, false);
+  assert.equal(tasks[0]!.image_register_artifact, false);
+  assert.equal(tasks[0]!.image_space, 'Construct/Marketing/Logos');
+  assert.equal(tasks[0]!.image_item_name, 'seoul-hero');
+  assert.equal(tasks[0]!.image_output_pattern, 'panel-{n}.png');
+  assert.equal(tasks[0]!.image_sandbox, 'workspace-write');
+  assert.equal(tasks[0]!.image_timeout, 900);
+
+  const { nodes } = tasksToFlow(tasks);
+  const back = tasksToYaml(flowToTasks(nodes as Node<TaskNodeData>[], []));
+  assert.match(back, /type: image/);
+  assert.match(back, /prompt: \|/);
+  assert.match(back, /count: 2/);
+  assert.match(back, /canvas: false/);
+  assert.match(back, /register_artifact: false/);
+  assert.match(back, /sandbox: workspace-write/);
+  assert.match(back, /timeout: 900/);
+});

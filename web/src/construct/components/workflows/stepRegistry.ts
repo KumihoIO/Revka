@@ -24,6 +24,7 @@ import {
   Search,
   Send,
   Split,
+  Image,
   Tag,
   Terminal,
   Users,
@@ -109,6 +110,14 @@ export const STEP_TYPES: StepTypeDef[] = [
     icon: Mail,
     description: 'Send an outbound email via SMTP with optional click tracking.',
     searchTags: ['smtp', 'send', 'mail', 'message', 'outreach'],
+  },
+  {
+    type: 'image',
+    label: 'Image',
+    category: 'execution',
+    icon: Image,
+    description: 'Generate an image via codex and push it to canvas + Kumiho artifact.',
+    searchTags: ['codex', 'png', 'render', 'visual', 'canvas', 'artwork', 'illustration'],
   },
 
   // ── Control ────────────────────────────────────────────────────────────
