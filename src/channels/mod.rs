@@ -9762,10 +9762,19 @@ This is an example JSON object for profile settings."#;
         assert!(prompt.contains("**Style:** concise"));
         assert!(prompt.contains("**Formality Level:** casual"));
 
-        // Should NOT contain OpenClaw bootstrap file headers
-        assert!(!prompt.contains("### SOUL.md"));
-        assert!(!prompt.contains("### IDENTITY.md"));
-        assert!(!prompt.contains("[File not found"));
+        // Augments-not-replaces semantics (audit row 6 / refactor 842b7bc):
+        // AIEOS provides structured identity; workspace personality files
+        // still load alongside it. Channel mode emits per-file
+        // [File not found: …] markers for any PERSONALITY_FILES entry that
+        // doesn't exist on disk so the LLM doesn't blindly file_read them.
+        // The test workspace contains only the AIEOS JSON, so the missing
+        // markers are expected here — they're a positive signal of correct
+        // wiring, not noise.
+        assert!(
+            prompt.contains("[File not found: SOUL.md]"),
+            "channel mode should emit a missing-file marker when SOUL.md \
+             is absent, even with AIEOS configured (augments-not-replaces)"
+        );
     }
 
     #[test]
