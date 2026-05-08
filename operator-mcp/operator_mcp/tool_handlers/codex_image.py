@@ -507,13 +507,21 @@ async def _create_item_and_revision(
     """
     from ..operator_mcp import KUMIHO_SDK  # lazy: avoids import cycle
 
-    project, space_relative, top_space = _resolve_space(space)
+    project, space_relative, _top_space = _resolve_space(space)
     space_path = f"{project}/{space_relative}"
 
+    # Walk every segment of a (possibly nested) path so `create_item`
+    # doesn't 404 with "Space not found" on multi-segment spaces like
+    # `Images/UrbanDesign`. The SDK's bare `ensure_space(project, space)`
+    # only handles single-segment paths directly under the project; the
+    # workflow-memory helper plumbs `parent_path` through tool_create_space
+    # for deeper levels.
     try:
-        await KUMIHO_SDK.ensure_space(project, top_space)
+        from ..workflow.memory import _ensure_space_path
+
+        await _ensure_space_path(f"/{space_path}")
     except Exception as exc:
-        _log(f"codex_image: ensure_space warning: {exc}")
+        _log(f"codex_image: ensure_space_path warning: {exc}")
 
     try:
         item = await KUMIHO_SDK.create_item(
