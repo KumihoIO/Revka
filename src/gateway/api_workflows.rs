@@ -1473,6 +1473,74 @@ pub async fn handle_run_workflow(
             if let Ok(rev) = client.create_revision(&item.kref, metadata).await {
                 let _ = client.tag_revision(&rev.kref, "pending").await;
             }
+
+            // Direct invocation: kick the operator's run_workflow tool now so
+            // the workflow starts within seconds instead of waiting up to 30s
+            // for the run-request poller to pick the item up.  The Kumiho
+            // `pending` item above remains as the durable record — if this
+            // direct call fails (e.g. operator-mcp transport dropped), the
+            // event listener / poller will still find it.
+            //
+            // tool_run_workflow itself detaches execution into a background
+            // asyncio task and returns immediately, so the call should be
+            // fast on success.  We still tokio::spawn it as fire-and-forget
+            // because we don't want to hold the HTTP handler open at all.
+            if let Some(registry) = state.mcp_registry.clone() {
+                let tool_name = format!(
+                    "{}__run_workflow",
+                    crate::agent::operator::OPERATOR_SERVER_NAME
+                );
+                let mut tool_args = serde_json::Map::new();
+                tool_args.insert(
+                    "workflow".to_string(),
+                    serde_json::Value::String(name.clone()),
+                );
+                tool_args.insert("inputs".to_string(), inputs.clone());
+                tool_args.insert(
+                    "cwd".to_string(),
+                    serde_json::Value::String(
+                        body.as_ref().and_then(|b| b.cwd.clone()).unwrap_or_default(),
+                    ),
+                );
+                tool_args.insert(
+                    "run_id".to_string(),
+                    serde_json::Value::String(run_id.clone()),
+                );
+                let tool_args_val = serde_json::Value::Object(tool_args);
+                let run_id_for_log = run_id.clone();
+                let workflow_name_for_log = name.clone();
+                tokio::spawn(async move {
+                    let fut = registry.call_tool(&tool_name, tool_args_val);
+                    match tokio::time::timeout(std::time::Duration::from_secs(30), fut).await {
+                        Ok(Ok(_)) => {
+                            tracing::info!(
+                                "run_workflow direct dispatch ok: workflow={} run_id={}",
+                                workflow_name_for_log,
+                                run_id_for_log
+                            );
+                        }
+                        Ok(Err(e)) => {
+                            tracing::warn!(
+                                "run_workflow direct dispatch failed (Kumiho pending item will be picked up by listener/poller): workflow={} run_id={} err={e:#}",
+                                workflow_name_for_log,
+                                run_id_for_log
+                            );
+                        }
+                        Err(_) => {
+                            tracing::warn!(
+                                "run_workflow direct dispatch timed out after 30s (Kumiho pending item will be picked up by listener/poller): workflow={} run_id={}",
+                                workflow_name_for_log,
+                                run_id_for_log
+                            );
+                        }
+                    }
+                });
+            } else {
+                tracing::debug!(
+                    "run_workflow: MCP registry not available — relying on event listener / poller for run_id={run_id}"
+                );
+            }
+
             (
                 StatusCode::OK,
                 Json(serde_json::json!({

@@ -488,6 +488,15 @@ class WorkflowEventListener:
         Called from the synchronous thread executor, so we use
         :meth:`loop.call_soon_threadsafe` to bridge into async land.
         """
+        # Defensive guard: the captured loop may have closed (e.g. operator-mcp
+        # shutting down) while this thread is still iterating events.  Skip
+        # rather than raising "Event loop is closed".
+        if self._loop is None or self._loop.is_closed():
+            _log(
+                f"event_listener: loop closed, skipping launch of "
+                f"'{rule.workflow_name}'"
+            )
+            return
         try:
             self._loop.call_soon_threadsafe(
                 lambda r=rule, ctx=trigger_ctx: asyncio.ensure_future(
@@ -519,8 +528,19 @@ class WorkflowEventListener:
         run_id = item_metadata.get("run_id", "")
         if run_id and run_id in self._claimed_runs:
             return
-        if run_id:
-            self._claimed_runs.add(run_id)
+
+        # Defensive guard: if the captured loop is gone (e.g. operator-mcp
+        # shutting down) the schedule will raise "Event loop is closed".
+        # Skip without claiming so the durable Kumiho `pending` item is left
+        # for the next operator-mcp's recovery / poller.
+        if self._loop is None or self._loop.is_closed():
+            _log(
+                f"event_listener: loop closed, skipping schedule for "
+                f"run_id {run_id[:8] if run_id else '?'} — "
+                f"Kumiho pending item remains for recovery"
+            )
+            return
+
         try:
             self._loop.call_soon_threadsafe(  # type: ignore[union-attr]
                 lambda kref=item_kref, meta=item_metadata: asyncio.ensure_future(
@@ -530,6 +550,13 @@ class WorkflowEventListener:
         except Exception as exc:
             self._errors += 1
             _log(f"Failed to schedule cron run request: {exc}")
+            return
+
+        # Only claim the run AFTER we've successfully scheduled it.  If the
+        # schedule raises, the pending Kumiho item remains visible to the
+        # next operator-mcp via the run-request poller.
+        if run_id:
+            self._claimed_runs.add(run_id)
 
     async def _async_run_request(
         self,
