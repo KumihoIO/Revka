@@ -334,6 +334,16 @@ async fn handle_socket(
         }
     }
 
+    // Periodic Ping keepalive. macOS/browser/proxy stacks close idle TCP
+    // sockets aggressively; without server-initiated traffic the chat WS
+    // drops every few minutes and the client reconnects (spawning a fresh
+    // operator-mcp). Browsers auto-reply to server pings with pongs at the
+    // protocol level, so no client-side change is needed.
+    let mut ping_interval = tokio::time::interval(std::time::Duration::from_secs(30));
+    ping_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    // Skip the immediate first tick — interval fires once instantly otherwise.
+    ping_interval.tick().await;
+
     loop {
         tokio::select! {
             // ── Branch 1: incoming WebSocket message from the client ──
@@ -419,6 +429,13 @@ async fn handle_socket(
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                     _ => {} // Skip non-channel events and lag errors
+                }
+            }
+
+            // ── Branch 3: keepalive Ping ──
+            _ = ping_interval.tick() => {
+                if sender.send(Message::Ping(Vec::new().into())).await.is_err() {
+                    break;
                 }
             }
         }

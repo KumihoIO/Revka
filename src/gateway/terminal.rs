@@ -664,6 +664,14 @@ async fn handle_terminal_socket(socket: WebSocket, params: TerminalQuery) {
         }
     });
 
+    // Periodic Ping keepalive. Without it, an idle terminal (e.g. user
+    // reading output without typing) lets macOS/browser/proxy close the TCP
+    // socket, surfacing as `Connection reset without closing handshake` in
+    // logs. Browsers auto-pong at the protocol level.
+    let mut ping_interval = tokio::time::interval(std::time::Duration::from_secs(30));
+    ping_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    ping_interval.tick().await;
+
     // Main loop: bridge WebSocket <-> PTY
     loop {
         tokio::select! {
@@ -704,6 +712,12 @@ async fn handle_terminal_socket(socket: WebSocket, params: TerminalQuery) {
                         warn!(error = %e, "Terminal WebSocket error");
                         break;
                     }
+                }
+            }
+            // Keepalive Ping
+            _ = ping_interval.tick() => {
+                if ws_sender.send(Message::Ping(Vec::new().into())).await.is_err() {
+                    break;
                 }
             }
         }
