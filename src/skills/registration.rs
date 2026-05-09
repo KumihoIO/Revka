@@ -28,13 +28,18 @@
 //!
 //! 4. **Create item + revision + artifact + tag** in
 //!    `<memory_project>/Skills/`:
-//!      - `create_item(kind = "skilldef", item_name = slug)`
+//!      - `create_item(kind = SKILL_ITEM_KIND ("skill"), item_name = slug)`
 //!      - `create_revision(item_kref, metadata)` with manifest fields
 //!      - `create_artifact(revision_kref, name = "skill", location = "file://<abs>")`
 //!      - `tag_revision(revision_kref, "published")`
 //!
+//!    Items created prior to the kind rename use `kind = "skilldef"` and
+//!    remain readable via the lookup fallback (see
+//!    [`LEGACY_SKILL_ITEM_KIND`] and the search helpers in
+//!    `crate::gateway`).
+//!
 //! 5. **Rewrite `SKILL.toml`** with `[skill].kref =
-//!    "kref://<memory_project>/Skills/<slug>.skilldef?t=published"`.
+//!    "kref://<memory_project>/Skills/<slug>.skill?t=published"`.
 //!    The `?t=published` query is what makes the manifest write-once
 //!    across revisions: subsequent improvements that retag `published`
 //!    onto a new revision are picked up automatically without touching
@@ -55,8 +60,15 @@ use crate::gateway::kumiho_client::{KumihoClient, slugify};
 use crate::skills::{SkillContentMigration, SkillManifest, migrate_skill_toml_to_content_file};
 
 /// The kind used for skill items in Kumiho.  Matches the kref convention
-/// `kref://<memory_project>/Skills/<slug>.skilldef`.
-pub const SKILL_ITEM_KIND: &str = "skilldef";
+/// `kref://<memory_project>/Skills/<slug>.skill`.
+pub const SKILL_ITEM_KIND: &str = "skill";
+
+/// Legacy kind name. New skills are written with [`SKILL_ITEM_KIND`]
+/// (`"skill"`), but existing items may have been created under the prior
+/// `"skilldef"` kind. Lookup paths try the new kind first and fall back
+/// to this legacy value so older data stays reachable until an offline
+/// migration script renames it.
+pub const LEGACY_SKILL_ITEM_KIND: &str = "skilldef";
 
 /// Default tag for the current revision of a skill.
 pub const PUBLISHED_TAG: &str = "published";
@@ -705,7 +717,7 @@ mod tests {
         let kref = build_published_kref("CognitiveMemory", "code-review");
         assert_eq!(
             kref,
-            "kref://CognitiveMemory/Skills/code-review.skilldef?t=published"
+            "kref://CognitiveMemory/Skills/code-review.skill?t=published"
         );
     }
 
@@ -715,7 +727,7 @@ mod tests {
         let kref = build_published_kref("MyOrgMemory", "deploy-runner");
         assert_eq!(
             kref,
-            "kref://MyOrgMemory/Skills/deploy-runner.skilldef?t=published"
+            "kref://MyOrgMemory/Skills/deploy-runner.skill?t=published"
         );
     }
 
@@ -797,7 +809,7 @@ content_file = "contents/r1.md"
 
         write_kref_to_manifest(
             &manifest_path,
-            "kref://CognitiveMemory/Skills/round-trip.skilldef?t=published",
+            "kref://CognitiveMemory/Skills/round-trip.skill?t=published",
         )
         .unwrap();
 
@@ -807,7 +819,7 @@ content_file = "contents/r1.md"
         assert!(raw.contains("content_file = \"contents/r1.md\""));
         assert!(
             raw.contains(
-                "kref = \"kref://CognitiveMemory/Skills/round-trip.skilldef?t=published\""
+                "kref = \"kref://CognitiveMemory/Skills/round-trip.skill?t=published\""
             )
         );
     }
@@ -856,22 +868,22 @@ content_file = "contents/r1.md"
 
     #[test]
     fn parse_kref_tag_extracts_published() {
-        let (base, tag) = parse_kref_tag("kref://CognitiveMemory/Skills/foo.skilldef?t=published");
-        assert_eq!(base, "kref://CognitiveMemory/Skills/foo.skilldef");
+        let (base, tag) = parse_kref_tag("kref://CognitiveMemory/Skills/foo.skill?t=published");
+        assert_eq!(base, "kref://CognitiveMemory/Skills/foo.skill");
         assert_eq!(tag, Some("published"));
     }
 
     #[test]
     fn parse_kref_tag_extracts_arbitrary_tag() {
-        let (base, tag) = parse_kref_tag("kref://CognitiveMemory/Skills/foo.skilldef?t=stable");
-        assert_eq!(base, "kref://CognitiveMemory/Skills/foo.skilldef");
+        let (base, tag) = parse_kref_tag("kref://CognitiveMemory/Skills/foo.skill?t=stable");
+        assert_eq!(base, "kref://CognitiveMemory/Skills/foo.skill");
         assert_eq!(tag, Some("stable"));
     }
 
     #[test]
     fn parse_kref_tag_returns_none_when_query_absent() {
-        let (base, tag) = parse_kref_tag("kref://CognitiveMemory/Skills/foo.skilldef");
-        assert_eq!(base, "kref://CognitiveMemory/Skills/foo.skilldef");
+        let (base, tag) = parse_kref_tag("kref://CognitiveMemory/Skills/foo.skill");
+        assert_eq!(base, "kref://CognitiveMemory/Skills/foo.skill");
         assert_eq!(tag, None);
     }
 
@@ -880,16 +892,29 @@ content_file = "contents/r1.md"
         // Future-compatible: an `?r=3` revision selector with no `t=`
         // means no published tag — return None so the caller can pick
         // a sensible default rather than picking up `r=3` as the tag.
-        let (base, tag) = parse_kref_tag("kref://CognitiveMemory/Skills/foo.skilldef?r=3");
-        assert_eq!(base, "kref://CognitiveMemory/Skills/foo.skilldef");
+        let (base, tag) = parse_kref_tag("kref://CognitiveMemory/Skills/foo.skill?r=3");
+        assert_eq!(base, "kref://CognitiveMemory/Skills/foo.skill");
         assert_eq!(tag, None);
     }
 
     #[test]
     fn parse_kref_tag_finds_t_among_multiple_params() {
-        let (base, tag) = parse_kref_tag("kref://CognitiveMemory/Skills/foo.skilldef?r=3&t=stable");
-        assert_eq!(base, "kref://CognitiveMemory/Skills/foo.skilldef");
+        let (base, tag) = parse_kref_tag("kref://CognitiveMemory/Skills/foo.skill?r=3&t=stable");
+        assert_eq!(base, "kref://CognitiveMemory/Skills/foo.skill");
         assert_eq!(tag, Some("stable"));
+    }
+
+    #[test]
+    fn parse_kref_tag_handles_legacy_skilldef_suffix() {
+        // Legacy items created under the old `kind = "skilldef"` carry
+        // krefs with `.skilldef` in their item path.  parse_kref_tag is
+        // suffix-agnostic: the lookup fallback in
+        // `crate::gateway::kumiho_client::search_skills_with_legacy`
+        // relies on this so both old and new krefs round-trip cleanly.
+        let (base, tag) =
+            parse_kref_tag("kref://CognitiveMemory/Skills/foo.skilldef?t=published");
+        assert_eq!(base, "kref://CognitiveMemory/Skills/foo.skilldef");
+        assert_eq!(tag, Some("published"));
     }
 
     #[test]
@@ -980,7 +1005,7 @@ name = "moved"
 description = "x"
 version = "0.1.0"
 content_file = "contents/r1.md"
-kref = "kref://OldProject/Skills/moved.skilldef?t=published"
+kref = "kref://OldProject/Skills/moved.skill?t=published"
 "#,
         )
         .unwrap();
@@ -1016,7 +1041,7 @@ name = "ghost"
 description = "x"
 version = "0.1.0"
 content_file = "contents/r1.md"
-kref = "kref://CognitiveMemory/Skills/ghost.skilldef?t=published"
+kref = "kref://CognitiveMemory/Skills/ghost.skill?t=published"
 "#,
         )
         .unwrap();
@@ -1081,7 +1106,7 @@ name = "moved"
 description = "x"
 version = "0.1.0"
 content_file = "contents/r1.md"
-kref = "kref://OldProject/Skills/moved.skilldef?t=published"
+kref = "kref://OldProject/Skills/moved.skill?t=published"
 "#,
         )
         .unwrap();
@@ -1106,5 +1131,34 @@ kref = "kref://OldProject/Skills/moved.skilldef?t=published"
         // make a publish + rollback indistinguishable.
         assert_ne!(PUBLISHED_TAG, PREVIOUS_PUBLISHED_TAG);
         assert_eq!(PREVIOUS_PUBLISHED_TAG, "previous_published");
+    }
+
+    #[test]
+    fn skill_item_kind_is_skill_with_legacy_skilldef_distinct() {
+        // The kind rename invariant: writes go through `SKILL_ITEM_KIND`
+        // ("skill"), and lookup fallbacks key off `LEGACY_SKILL_ITEM_KIND`
+        // ("skilldef").  Asserting both values + their distinctness here
+        // guards the gateway's `search_items_with_legacy` helper from a
+        // refactor that accidentally collapses them back to a single
+        // value (which would silently lose the legacy-data fallback).
+        assert_eq!(SKILL_ITEM_KIND, "skill");
+        assert_eq!(LEGACY_SKILL_ITEM_KIND, "skilldef");
+        assert_ne!(SKILL_ITEM_KIND, LEGACY_SKILL_ITEM_KIND);
+    }
+
+    #[test]
+    fn build_published_kref_uses_new_skill_suffix() {
+        // The kref-format flip from `.skilldef` to `.skill`: writes must
+        // emit the new suffix.  Legacy data carrying the `.skilldef`
+        // suffix is reachable via the search fallback in
+        // `kumiho_client::search_skills` — see
+        // `parse_kref_tag_handles_legacy_skilldef_suffix` for the read
+        // side of that contract.
+        let kref = build_published_kref("CognitiveMemory", "demo");
+        assert!(kref.contains(".skill?"), "expected .skill suffix in {kref}");
+        assert!(
+            !kref.contains(".skilldef"),
+            "fresh kref must not include legacy suffix: {kref}"
+        );
     }
 }

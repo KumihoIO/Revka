@@ -104,7 +104,10 @@ pub(crate) struct SkillMeta {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) content_file: Option<String>,
     /// Optional Kumiho kref pointing at this skill's published revision,
-    /// e.g. `kref://CognitiveMemory/Skills/my-skill.skilldef?t=published`.
+    /// e.g. `kref://CognitiveMemory/Skills/my-skill.skill?t=published`.
+    /// Manifests written before the kind rename use a `.skilldef`
+    /// suffix; both forms remain readable (see
+    /// [`crate::skills::registration::LEGACY_SKILL_ITEM_KIND`]).
     /// Set by [`crate::skills::registration::register_skill_with_kumiho`]
     /// the first time a skill is installed; thereafter every install path
     /// (ClawHub, GitHub link, dashboard, creator.rs, daemon-startup scan)
@@ -1768,7 +1771,7 @@ pub fn handle_command(command: crate::SkillCommands, config: &crate::config::Con
             // Register the skill with Kumiho so it gets a versioned identity
             // (item + revision + artifact + published tag) and SKILL.toml is
             // rewritten with `[skill].kref = "kref://<memory_project>/Skills/
-            // <slug>.skilldef?t=published"`.  Best-effort — when Kumiho is
+            // <slug>.skill?t=published"`.  Best-effort — when Kumiho is
             // unreachable we log and continue; the daemon-startup scan in
             // src/gateway/mod.rs picks up unregistered skills on next start.
             register_after_install_best_effort(&installed_dir, config);

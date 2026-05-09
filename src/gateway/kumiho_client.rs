@@ -721,14 +721,77 @@ impl KumihoClient {
     }
 
     /// Search skills by query within the given project.
+    ///
+    /// Searches both the canonical [`crate::skills::registration::SKILL_ITEM_KIND`]
+    /// and the legacy [`crate::skills::registration::LEGACY_SKILL_ITEM_KIND`]
+    /// so items created before the kind rename remain discoverable.
+    /// Results from the two queries are unioned and de-duplicated by
+    /// `item.kref`; on a successful new-kind query, a failure on the
+    /// legacy query is logged + ignored (the new-kind results are still
+    /// returned).
     pub async fn search_skills(
         &self,
         query: &str,
         project: &str,
         include_deprecated: bool,
     ) -> Result<Vec<SearchResult>> {
-        self.search_items(query, project, "skill", include_deprecated)
+        self.search_items_with_legacy(
+            query,
+            project,
+            crate::skills::registration::SKILL_ITEM_KIND,
+            crate::skills::registration::LEGACY_SKILL_ITEM_KIND,
+            include_deprecated,
+        )
+        .await
+    }
+
+    /// Run two `search_items` queries (one per kind) and union the
+    /// results by `item.kref`.  On `legacy` failure we log + return the
+    /// `primary` results; `primary` failures bubble up as before.
+    ///
+    /// Used for the skill-kind transition (`skill` ↔ `skilldef`); kept
+    /// generic so the same shape can serve other kind renames.
+    pub async fn search_items_with_legacy(
+        &self,
+        query: &str,
+        context: &str,
+        primary: &str,
+        legacy: &str,
+        include_deprecated: bool,
+    ) -> Result<Vec<SearchResult>> {
+        let primary_results = self
+            .search_items(query, context, primary, include_deprecated)
+            .await?;
+        let legacy_results = match self
+            .search_items(query, context, legacy, include_deprecated)
             .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!(
+                    primary = primary,
+                    legacy = legacy,
+                    context = context,
+                    error = ?e,
+                    "search_items_with_legacy: legacy-kind query failed; \
+                     returning primary results only",
+                );
+                Vec::new()
+            }
+        };
+
+        let mut seen: std::collections::HashSet<String> =
+            std::collections::HashSet::with_capacity(
+                primary_results.len() + legacy_results.len(),
+            );
+        let mut merged: Vec<SearchResult> =
+            Vec::with_capacity(primary_results.len() + legacy_results.len());
+        for r in primary_results.into_iter().chain(legacy_results.into_iter()) {
+            if seen.insert(r.item.kref.clone()) {
+                merged.push(r);
+            }
+        }
+        Ok(merged)
     }
 
     /// Create a new skill item + first revision in the given project.
@@ -741,7 +804,12 @@ impl KumihoClient {
         self.ensure_space(project, "Skills").await.ok();
         let space_path = format!("/{project}/Skills");
         let item = self
-            .create_item(&space_path, name, "skill", HashMap::new())
+            .create_item(
+                &space_path,
+                name,
+                crate::skills::registration::SKILL_ITEM_KIND,
+                HashMap::new(),
+            )
             .await?;
         let revision = self.create_revision(&item.kref, metadata).await?;
         Ok((item, revision))
