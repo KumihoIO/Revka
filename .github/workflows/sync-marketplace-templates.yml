@@ -46,6 +46,15 @@ permissions:
 jobs:
   sync-coolify:
     name: PR to Coolify
+    # DISABLED 2026-05-08: Coolify upstream blocked the marketplace bot
+    # account, so `gh pr create --repo coollabsio/coolify` fails with
+    # `GraphQL: User is blocked (createPullRequest)` after the branch
+    # push to KumihoIO/coolify succeeds. Last failure: v2026.5.7 release
+    # run #25551688084 / job #75005351257. Re-enable only after the
+    # block is lifted and acceptable PR cadence is reconfirmed with
+    # Coolify maintainers. Job logic preserved below for that future
+    # restart — same pattern as the EasyPanel disable below.
+    if: false
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
