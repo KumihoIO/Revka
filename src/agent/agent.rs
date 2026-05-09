@@ -786,7 +786,21 @@ impl Agent {
         }
 
         if other_messages.len() > max {
-            let drop_count = other_messages.len() - max;
+            let mut drop_count = other_messages.len() - max;
+            // Anthropic requires every `tool_result` block be preceded by a matching
+            // `tool_use` block. If our cut would leave a `ToolResults` orphaned at
+            // the new front (because its paired `AssistantToolCalls` is in the
+            // dropped slice), advance the boundary forward until we land on a
+            // non-orphan message. We may drop a couple more messages than the
+            // configured target — preferable to a 400 from the provider.
+            while drop_count < other_messages.len()
+                && matches!(
+                    other_messages[drop_count],
+                    ConversationMessage::ToolResults(_)
+                )
+            {
+                drop_count += 1;
+            }
             other_messages.drain(0..drop_count);
         }
 
@@ -2236,6 +2250,152 @@ mod tests {
             matches!(&history[2], ConversationMessage::Chat(m) if m.role == "assistant" && m.content == "hi there")
         );
         assert_eq!(history.len(), 3);
+    }
+
+    /// Construct a minimal agent suitable for testing `trim_history` in isolation.
+    fn make_trim_test_agent(max: usize) -> Agent {
+        let provider = Box::new(MockProvider {
+            responses: Mutex::new(vec![]),
+        });
+
+        let memory_cfg = crate::config::MemoryConfig {
+            backend: "none".into(),
+            ..crate::config::MemoryConfig::default()
+        };
+        let mem: Arc<dyn Memory> = Arc::from(
+            crate::memory::create_memory(&memory_cfg, std::path::Path::new("/tmp"), None)
+                .expect("memory creation should succeed with valid config"),
+        );
+
+        let observer: Arc<dyn Observer> = Arc::from(crate::observability::NoopObserver {});
+        let mut agent = Agent::builder()
+            .provider(provider)
+            .tools(vec![Box::new(MockTool)])
+            .memory(mem)
+            .observer(observer)
+            .tool_dispatcher(Box::new(NativeToolDispatcher))
+            .workspace_dir(std::path::PathBuf::from("/tmp"))
+            .build()
+            .expect("agent builder should succeed with valid config");
+        agent.config.max_history_messages = max;
+        agent
+    }
+
+    fn chat_user(text: &str) -> ConversationMessage {
+        ConversationMessage::Chat(ChatMessage::user(text))
+    }
+
+    fn assistant_tool_calls(id: &str) -> ConversationMessage {
+        ConversationMessage::AssistantToolCalls {
+            text: None,
+            tool_calls: vec![crate::providers::ToolCall {
+                id: id.into(),
+                name: "echo".into(),
+                arguments: "{}".into(),
+            }],
+            reasoning_content: None,
+        }
+    }
+
+    fn tool_results(id: &str) -> ConversationMessage {
+        ConversationMessage::ToolResults(vec![crate::providers::ToolResultMessage {
+            tool_call_id: id.into(),
+            content: "ok".into(),
+        }])
+    }
+
+    #[test]
+    fn trim_history_no_tools_keeps_last_n() {
+        let mut agent = make_trim_test_agent(5);
+        for i in 0..10 {
+            agent.history.push(chat_user(&format!("u{i}")));
+        }
+        agent.trim_history();
+        assert_eq!(agent.history.len(), 5);
+        // First kept message should be u5 (dropped u0..u4).
+        assert!(
+            matches!(&agent.history[0], ConversationMessage::Chat(m) if m.content == "u5"),
+            "expected first kept message to be u5, got {:?}",
+            agent.history[0]
+        );
+    }
+
+    #[test]
+    fn trim_history_preserves_intact_tool_pair() {
+        // [Chat, Chat, Chat, AssistantToolCalls, ToolResults, Chat, Chat, Chat] max=5
+        // drop_count = 8 - 5 = 3, lands on AssistantToolCalls (kept) -> no advance.
+        let mut agent = make_trim_test_agent(5);
+        agent.history.push(chat_user("c0"));
+        agent.history.push(chat_user("c1"));
+        agent.history.push(chat_user("c2"));
+        agent.history.push(assistant_tool_calls("tc1"));
+        agent.history.push(tool_results("tc1"));
+        agent.history.push(chat_user("c3"));
+        agent.history.push(chat_user("c4"));
+        agent.history.push(chat_user("c5"));
+
+        agent.trim_history();
+
+        assert_eq!(agent.history.len(), 5);
+        assert!(matches!(
+            &agent.history[0],
+            ConversationMessage::AssistantToolCalls { .. }
+        ));
+        assert!(matches!(
+            &agent.history[1],
+            ConversationMessage::ToolResults(_)
+        ));
+    }
+
+    #[test]
+    fn trim_history_advances_past_orphan_tool_results() {
+        // [Chat, Chat, AssistantToolCalls, ToolResults, Chat, Chat, Chat, Chat, Chat, Chat] max=7
+        // drop_count = 10 - 7 = 3, lands on ToolResults (orphan) -> advance to 4 (Chat).
+        // Result: 6 messages, all trailing Chats.
+        let mut agent = make_trim_test_agent(7);
+        agent.history.push(chat_user("c0"));
+        agent.history.push(chat_user("c1"));
+        agent.history.push(assistant_tool_calls("tc1"));
+        agent.history.push(tool_results("tc1"));
+        for i in 0..6 {
+            agent.history.push(chat_user(&format!("t{i}")));
+        }
+
+        agent.trim_history();
+
+        assert_eq!(agent.history.len(), 6);
+        // First kept message must NOT be a ToolResults.
+        assert!(
+            !matches!(&agent.history[0], ConversationMessage::ToolResults(_)),
+            "first message after trim must not be an orphaned ToolResults"
+        );
+        assert!(
+            matches!(&agent.history[0], ConversationMessage::Chat(m) if m.content == "t0"),
+            "expected first kept message to be t0, got {:?}",
+            agent.history[0]
+        );
+    }
+
+    #[test]
+    fn trim_history_advances_past_consecutive_tool_results() {
+        // [Chat, AssistantToolCalls, ToolResults, ToolResults, Chat] max=2
+        // drop_count = 5 - 2 = 3, lands on ToolResults at idx 3 -> advance to 4 (Chat).
+        // We sacrifice the configured max=2 -> actual=1 to avoid orphan.
+        let mut agent = make_trim_test_agent(2);
+        agent.history.push(chat_user("c0"));
+        agent.history.push(assistant_tool_calls("tc1"));
+        agent.history.push(tool_results("tc1"));
+        agent.history.push(tool_results("tc1"));
+        agent.history.push(chat_user("c1"));
+
+        agent.trim_history();
+
+        assert_eq!(agent.history.len(), 1);
+        assert!(
+            matches!(&agent.history[0], ConversationMessage::Chat(m) if m.content == "c1"),
+            "expected only the trailing Chat to remain, got {:?}",
+            agent.history[0]
+        );
     }
 
     /// Mock provider that captures whether tool specs were passed to `stream_chat`
