@@ -71,9 +71,9 @@ Full tier matrix and per-feature limits at [kumiho.io/pricing](https://kumiho.io
 
 ## Web Dashboard & UI
 
-The embedded web frontend (`http://127.0.0.1:42617`) is a single pane over every layer of the stack — 18 routed views built with React, TypeScript, Tailwind CSS, and Vite, then baked into the Rust binary at compile time via `rust-embed`. One binary. One entry point. The whole signal.
+The embedded web frontend (`http://127.0.0.1:42617`) is a single pane over every layer of the stack — 18 app routes built with React, TypeScript, Tailwind CSS, and Vite, then baked into the Rust binary at compile time via `rust-embed`. The primary sidebar exposes 17 of them; `Workflow Runs` (`/runs`) is a routed page reached contextually from workflow and dashboard links rather than the sidebar itself. One binary. One entry point. The whole signal.
 
-The dashboard is organized into three sidebar sections (Orchestration, Operations, Inspection — see `web/src/construct/components/layout/construct-navigation.ts`).
+The dashboard's primary navigation is organized into three sidebar sections (Orchestration, Operations, Inspection — see `web/src/construct/components/layout/construct-navigation.ts`).
 
 ### Core Views — Orchestration
 
@@ -145,7 +145,7 @@ Backed by the same `/ws/chat` endpoint listed below, with auto-focus on open and
 
 ## The Operator (Workflow Orchestration)
 
-The **Operator** is Construct's hand on the controls — a Python MCP server that drives declarative YAML workflows through 17 step types and several advanced orchestration patterns. Agents run inside the Construct; the Operator sees the whole board.
+The **Operator** is Construct's hand on the controls — a Python MCP server that drives declarative YAML workflows through 20 step types and several advanced orchestration patterns. Agents run inside the Construct; the Operator sees the whole board.
 
 Workflows are stored as YAML artifacts attached to Kumiho revisions — every save creates a new revision, giving you full history, version-to-version diffs, and promotion tagging (e.g., `published`) without an external version control system. The on-disk YAMLs under `~/.construct/workflows/` use a two-tier layout: the base file (`name.yaml`) is your editable working copy, discovered by the filesystem scan, while each save freezes a snapshot as `name.r{N}.yaml` bound to revision N as an immutable artifact via `file://` URI. The `.r{N}` files are skipped by directory scans and reachable only through kref resolution — so running an older revision is just `kref://...#rN` → Kumiho looks up the artifact URI → loader reads that exact frozen YAML from disk. The revision graph is the source of truth; the disk layout is just where the artifact bytes happen to live. Multi-agent patterns like `supervisor`, `group_chat`, `map_reduce`, `handoff`, and `human_approval` are first-class step types, so a multi-agent pipeline reads end-to-end in one file without a Python interpreter in the loop. See [WORKFLOWS.md](WORKFLOWS.md) for the full DSL reference.
 
@@ -160,13 +160,16 @@ Canonical types from `StepType` in `operator-mcp/operator_mcp/workflow/schema.py
 |-----------|-------------|
 | `agent` | Spawn a Construct agent (claude/codex) with prompt, role, model, tools, timeout |
 | `shell` | Execute shell commands with timeout and failure handling |
-| `output` | Emit structured output (text/json/markdown) with template interpolation |
-| `a2a` | Send tasks to external A2A agents via JSON-RPC 2.0 |
+| `python` | Run a Python script or inline Python with JSON I/O |
+| `email` | Send outbound email via SMTP with optional click tracking and dry-run |
 | `conditional` | Branch based on expressions over prior step outputs |
 | `parallel` | Run sub-steps concurrently with join strategies (ALL, ANY, MAJORITY) |
 | `goto` | Loop construct with `max_iterations` guard |
 | `human_approval` | Pause for yes/no human confirmation (timeout configurable) |
 | `human_input` | Pause for freeform human response via dashboard/Slack/Discord |
+| `notify` | Push a fire-and-forget notification to one or more channels |
+| `output` | Emit structured output (text/json/markdown) with template interpolation |
+| `a2a` | Send tasks to external A2A agents via JSON-RPC 2.0 |
 | `map_reduce` | Fan-out to N parallel mapper agents, reducer synthesizes (2-10 concurrency) |
 | `supervisor` | Dynamic delegation: supervisor decomposes task, selects specialists iteratively |
 | `group_chat` | Moderated multi-agent discussion (round_robin or moderator_selected) |
@@ -176,7 +179,7 @@ Canonical types from `StepType` in `operator-mcp/operator_mcp/workflow/schema.py
 | `tag` | Tag a Kumiho revision from within a workflow |
 | `deprecate` | Deprecate a Kumiho item from within a workflow |
 
-Shortcut aliases like `type: notify` (equivalent to `agent` with `role: notifier`) are resolved during loading — see `_ACTION_ALIASES` in `workflow/schema.py`.
+Editor actions like `action: notify` are resolved during loading via `ACTION_DEFAULTS` in `workflow/schema.py`; `notify` itself is also a real `StepType`.
 
 ### Orchestration Patterns
 
@@ -237,7 +240,7 @@ This turns the graph into a reactive substrate: revising or tagging a Kumiho ite
 
 ## Agent Pool & Templates
 
-Reusable agent definitions stored in `~/.construct/agent_pool.json` and synced to Kumiho under `Construct/AgentPool/`.
+Reusable agent definitions stored in `~/.construct/operator_mcp/agent_pool.json` and synced to Kumiho under `Construct/AgentPool/`.
 
 ### Template Fields
 
@@ -545,7 +548,7 @@ See [`docs/reference/api/config-reference.md`](docs/reference/api/config-referen
 |-------|------------|
 | Runtime & Gateway | Rust (edition 2024), Axum + Tower, Hyper; embedded frontend via `rust-embed` |
 | Agent Loop | Rust (async/tokio, 14+ provider adapters: Anthropic, OpenAI, OpenAI-Codex, Bedrock, Azure OpenAI, Gemini, Gemini CLI, GLM, Copilot, Ollama, OpenRouter, Kilo CLI, Telnyx, Claude Code, plus reliable/router/compatible wrappers). Operator's own orchestration calls (decompose / reduce / critic / moderate) use a provider via API key or OAuth under `[operator]`; agents Operator spawns invoke the Claude Code / Codex CLI as subprocesses, inheriting the CLI's OAuth. |
-| Orchestration | Python 3.11+ Operator MCP server (17 step types, map-reduce / supervisor / group-chat / handoff / refinement patterns) |
+| Orchestration | Python 3.11+ Operator MCP server (20 step types, map-reduce / supervisor / group-chat / handoff / refinement patterns) |
 | Web Dashboard | React 19, TypeScript, Tailwind CSS 4, Vite 6, ReactFlow + react-force-graph-2d |
 | Memory Backend | Kumiho — graph-native, schemaless, version-controlled, typed-edge graph (control plane fronted by kumiho-FastAPI BFF; managed service or Enterprise self-host); Python SDKs at [github.com/KumihoIO/kumiho-SDKs](https://github.com/KumihoIO/kumiho-SDKs) — `kumiho` (graph) + `kumiho-memory` (AI cognitive memory) |
 | Local Storage | SQLite via `rusqlite` for cron store, pairing, heartbeat, channel sessions, WhatsApp cache (not for primary memory) |

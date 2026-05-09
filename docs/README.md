@@ -41,10 +41,10 @@ Localized hubs: [한국어](i18n/ko/README.md) · [Tiếng Việt](i18n/vi/READM
 ## What makes Construct, Construct
 
 - A **memory-native Rust agent runtime** — every session, plan, skill, and trust score lives in Kumiho's graph; nothing is forgotten.
-- **Single Rust binary** — the gateway, daemon, embedded React dashboard, and CLI compile to one executable (statically linked on musl Linux); the Operator MCP (Python) and Session Manager (Node.js) run as managed sidecars installed alongside it.
+- **Single Rust binary** — the gateway, daemon, embedded React dashboard, and CLI compile to one executable (statically linked on musl Linux); the Operator MCP (Python) installs as a managed sidecar alongside it, while the Session Manager (Node.js) remains opt-in via `construct install --sidecars-only --with-session-manager`.
 - **Declarative orchestration** — Operator drives multi-agent workflows defined in YAML.
 - **First-class hardware** — STM32, Arduino, ESP32, Pico, and Aardvark I²C/SPI peripherals all surface as agent tools.
-- **18-route Web UI** — `http://127.0.0.1:42617` covers Orchestration, Operations, and Inspection without leaving the browser.
+- **18-route Web UI** — `http://127.0.0.1:42617` covers Orchestration, Operations, and Inspection without leaving the browser; 17 routes live in the main sidebar, with `Workflow Runs` reached contextually.
 - **Trust scoring + ClawHub marketplace** — agents earn trust over runs and share skills via a content-addressed registry.
 
 ---

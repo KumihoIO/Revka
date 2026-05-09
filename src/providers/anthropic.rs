@@ -18,6 +18,16 @@ pub struct AnthropicProvider {
 
 const DEFAULT_ANTHROPIC_MAX_TOKENS: u32 = 4096;
 
+/// Models that deprecated the `temperature` parameter — sending it returns
+/// HTTP 400 from the Anthropic API. Match by model-name prefix so future
+/// patch releases (e.g. opus-4-7-20260601) are also covered.
+fn model_supports_temperature(model: &str) -> bool {
+    // Anthropic deprecated `temperature` starting with the Claude 4.7 series.
+    // Update this list as Anthropic rolls deprecation across model lines.
+    let no_temp_prefixes = ["claude-opus-4-7"];
+    !no_temp_prefixes.iter().any(|p| model.starts_with(p))
+}
+
 #[derive(Debug, Serialize)]
 struct ChatRequest {
     model: String,
@@ -25,7 +35,8 @@ struct ChatRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     system: Option<String>,
     messages: Vec<Message>,
-    temperature: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -54,7 +65,8 @@ struct NativeChatRequest<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     system: Option<SystemPrompt>,
     messages: Vec<NativeMessage>,
-    temperature: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tools: Option<Vec<NativeToolSpec<'a>>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -805,7 +817,11 @@ impl Provider for AnthropicProvider {
                     cache_control: None,
                 }],
             }],
-            temperature,
+            temperature: if model_supports_temperature(model) {
+                Some(temperature)
+            } else {
+                None
+            },
             tools: None,
             tool_choice: None,
             stream: None,
@@ -877,7 +893,11 @@ impl Provider for AnthropicProvider {
             max_tokens: self.max_tokens,
             system: system_prompt,
             messages,
-            temperature,
+            temperature: if model_supports_temperature(model) {
+                Some(temperature)
+            } else {
+                None
+            },
             tools: native_tools,
             tool_choice,
             stream: None,
@@ -1031,7 +1051,11 @@ impl Provider for AnthropicProvider {
             max_tokens: self.max_tokens,
             system: system_prompt,
             messages,
-            temperature,
+            temperature: if model_supports_temperature(model) {
+                Some(temperature)
+            } else {
+                None
+            },
             tools: native_tools,
             tool_choice,
             stream: Some(true),
@@ -1248,7 +1272,7 @@ mod tests {
                 role: "user".to_string(),
                 content: "hello".to_string(),
             }],
-            temperature: 0.7,
+            temperature: Some(0.7),
         };
         let json = serde_json::to_string(&req).unwrap();
         assert!(
@@ -1269,7 +1293,7 @@ mod tests {
                 role: "user".to_string(),
                 content: "hello".to_string(),
             }],
-            temperature: 0.7,
+            temperature: Some(0.7),
         };
         let json = serde_json::to_string(&req).unwrap();
         assert!(json.contains("\"system\":\"You are Construct\""));
@@ -1309,11 +1333,37 @@ mod tests {
                 max_tokens: 4096,
                 system: None,
                 messages: vec![],
-                temperature: temp,
+                temperature: Some(temp),
             };
             let json = serde_json::to_string(&req).unwrap();
             assert!(json.contains(&format!("{temp}")));
         }
+    }
+
+    #[test]
+    fn model_supports_temperature_helper() {
+        // Deprecated (4.7+) — must NOT send temperature
+        assert!(!model_supports_temperature("claude-opus-4-7"));
+        assert!(!model_supports_temperature("claude-opus-4-7-20260101"));
+        // Older models still accept temperature
+        assert!(model_supports_temperature("claude-opus-4-6"));
+        assert!(model_supports_temperature("claude-sonnet-4-6"));
+    }
+
+    #[test]
+    fn temperature_skipped_when_none() {
+        let req = ChatRequest {
+            model: "claude-opus-4-7".to_string(),
+            max_tokens: 4096,
+            system: None,
+            messages: vec![],
+            temperature: None,
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(
+            !json.contains("temperature"),
+            "temperature field should be skipped when None, got: {json}"
+        );
     }
 
     #[test]
@@ -1688,7 +1738,7 @@ mod tests {
                     cache_control: None,
                 }],
             }],
-            temperature: 0.7,
+            temperature: Some(0.7),
             tools: None,
             tool_choice: None,
             stream: None,

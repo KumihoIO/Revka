@@ -50,7 +50,6 @@ construct/
 ├── scripts/              # CI scripts, release automation, bootstrap
 ├── docs/                 # Documentation system (multilingual, runtime refs)
 ├── .github/              # CI workflows, PR templates, automation
-├── playground/           # (git-ignored) Docker dev workspace, auto-populated at runtime
 ├── Cargo.toml            # Workspace manifest
 ├── Dockerfile            # Container build
 ├── docker-compose.yml    # Service composition
@@ -146,12 +145,11 @@ Sandboxing: `bubblewrap.rs`, `firejail.rs`, `landlock.rs`, `docker.rs`, `detect.
 |---|---|---|
 | `observability/` | `traits.rs`, `mod.rs`, `log.rs`, `prometheus.rs`, `otel.rs`, `verbose.rs`, `noop.rs`, `multi.rs`, `runtime_trace.rs` | **Metrics and tracing.** `Observer` trait: `log_event()`. Composite observer (`multi.rs`) fans out to multiple backends. |
 
-### Skills & SkillForge
+### Skills
 
 | Module | Key Files | Role |
 |---|---|---|
 | `skills/` | `mod.rs` (1.5k), `audit.rs` | **User/community-authored capabilities.** Loaded from `~/.construct/workspace/skills/<name>/SKILL.md`. CLI: list, install, audit, remove. Optional community sync from open-skills repo. |
-| `skillforge/` | `scout.rs`, `evaluate.rs`, `integrate.rs`, `mod.rs` | **Skill discovery and evaluation.** Scouts for skills, evaluates quality/fitness, integrates into the runtime. |
 
 ### SOP (Standard Operating Procedures)
 
@@ -201,7 +199,7 @@ Sandboxing: `bubblewrap.rs`, `firejail.rs`, `landlock.rs`, `docker.rs`, `detect.
 | `web/` | Web UI frontend (Vite + TypeScript) |
 | `dev/` | Local development: Docker Compose, CI script (`ci.sh`), config template, sandbox configs |
 | `scripts/` | CI helpers, release automation, bootstrap, contributor tier computation |
-| `docs/` | Documentation system: multilingual (en/zh-CN/ja/ru/fr/vi), runtime references, operations runbooks, security proposals |
+| `docs/` | Documentation system: multilingual (en/ko/vi/zh-CN), runtime references, operations runbooks, security proposals |
 | `.github/` | CI workflows, PR templates, issue templates, automation |
 
 ---
