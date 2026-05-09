@@ -24,9 +24,7 @@ const DEFAULT_ANTHROPIC_MAX_TOKENS: u32 = 4096;
 fn model_supports_temperature(model: &str) -> bool {
     // Anthropic deprecated `temperature` starting with the Claude 4.7 series.
     // Update this list as Anthropic rolls deprecation across model lines.
-    let no_temp_prefixes = [
-        "claude-opus-4-7",
-    ];
+    let no_temp_prefixes = ["claude-opus-4-7"];
     !no_temp_prefixes.iter().any(|p| model.starts_with(p))
 }
 
