@@ -6,13 +6,16 @@ import {
   ChevronDown,
   ChevronUp,
   Code2,
+  Columns2,
   Copy,
   Loader2,
   MessageSquare,
   Paperclip,
   Plus,
+  Rows2,
   Send,
   Settings,
+  SplitSquareHorizontal,
   Terminal,
   X,
 } from 'lucide-react';
@@ -153,6 +156,26 @@ function ConfigPanel({
             step={5}
             value={config.panelHeightPercent}
             onChange={(e) => updateConfig({ panelHeightPercent: Number(e.target.value) })}
+            className="w-full accent-current"
+            style={{ color: 'var(--construct-signal-live)' }}
+          />
+        </div>
+
+        {/* Panel Opacity — lets the page underneath show through, useful
+            when chatting with Operator alongside a workflow editor or
+            canvas. Capped at 0.5 so the chat stays readable; 1.0 is the
+            default fully-opaque chrome. */}
+        <div>
+          <label className="mb-1 block font-semibold uppercase tracking-[0.1em]" style={{ color: 'var(--construct-text-faint)', fontSize: '10px' }}>
+            Panel Opacity — {Math.round(config.panelOpacity * 100)}%
+          </label>
+          <input
+            type="range"
+            min={0.5}
+            max={1.0}
+            step={0.05}
+            value={config.panelOpacity}
+            onChange={(e) => updateConfig({ panelOpacity: Number(e.target.value) })}
             className="w-full accent-current"
             style={{ color: 'var(--construct-signal-live)' }}
           />
@@ -876,6 +899,12 @@ export default function AssistantPanel() {
   const [showNewTabMenu, setShowNewTabMenu] = useState(false);
   const newTabBtnRef = useRef<HTMLButtonElement>(null);
   const [showConfig, setShowConfig] = useState(false);
+  // Split-pane state — when splitTabId is non-null and BOTH the active
+  // tab and the split tab are chats, the panel renders them side-by-side
+  // (vertical) or stacked (horizontal). Code/terminal tabs ignore the
+  // split and render normally; switching to one auto-closes the split.
+  const [splitTabId, setSplitTabId] = useState<string | null>(null);
+  const [splitDirection, setSplitDirection] = useState<'horizontal' | 'vertical'>('vertical');
 
   useEffect(() => {
     if (!open) return;
@@ -956,7 +985,46 @@ export default function AssistantPanel() {
       if (remaining.length === 0) return prev; // will be replaced by new tab
       return remaining[Math.min(idx, remaining.length - 1)]!.id;
     });
+    // Closing either side of an active split clears the split.
+    setSplitTabId((prev) => (prev === tabId ? null : prev));
   }, [tabs]);
+
+  // Split: spawn a fresh chat tab paired with the active tab. If a split
+  // is already active, the button just toggles direction (more useful
+  // than re-spawning yet another tab).
+  const splitChat = useCallback(() => {
+    if (splitTabId) {
+      setSplitDirection((d) => (d === 'vertical' ? 'horizontal' : 'vertical'));
+      return;
+    }
+    const id = generateUUID();
+    setTabs((prev) => {
+      const count = prev.filter((t) => t.type === 'chat').length;
+      const newTab: AssistantTab = {
+        id,
+        type: 'chat',
+        title: `Chat ${count + 1}`,
+        sessionId: generateUUID(),
+      };
+      return [...prev, newTab];
+    });
+    setSplitTabId(id);
+  }, [splitTabId]);
+
+  const closeSplit = useCallback(() => {
+    setSplitTabId(null);
+  }, []);
+
+  // Split is only meaningful when the active tab is a chat. Switching
+  // to a terminal/code tab implicitly hides the split (we keep the
+  // splitTabId so it restores when the user comes back), but the active
+  // chat must also exist as a chat for the split to render.
+  const activeTab = tabs.find((t) => t.id === activeTabId) ?? null;
+  const splitTab = splitTabId ? (tabs.find((t) => t.id === splitTabId) ?? null) : null;
+  const isSplitVisible =
+    activeTab?.type === 'chat' &&
+    splitTab?.type === 'chat' &&
+    activeTab.id !== splitTab.id;
 
   const panelHeight = `${config.panelHeightPercent}vh`;
 
@@ -975,7 +1043,10 @@ export default function AssistantPanel() {
         style={{
           height: open ? panelHeight : '0px',
           maxHeight: open ? '90vh' : '0px',
-          opacity: open ? 1 : 0,
+          // Multiply the open/closed opacity transition by the
+          // user-configured panelOpacity so the see-through setting
+          // applies once the panel has finished animating in.
+          opacity: open ? config.panelOpacity : 0,
           transform: open ? 'translateY(0)' : 'translateY(-0.75rem)',
           transition: 'height 300ms ease-out, max-height 300ms ease-out, opacity 200ms ease-out, transform 300ms ease-out',
           borderColor: open ? 'var(--construct-border-strong)' : 'transparent',
@@ -1067,6 +1138,45 @@ export default function AssistantPanel() {
           </div>
 
           <div className="flex shrink-0 items-center px-1">
+            {/* Split chat button — only shown when the active tab is a
+                chat. First click splits the active chat with a fresh
+                chat tab; subsequent clicks toggle the split direction
+                (vertical ↔ horizontal). The X next to it un-splits. */}
+            {activeTab?.type === 'chat' && (
+              <>
+                <button
+                  type="button"
+                  className="p-1.5 transition-colors hover:bg-white/5"
+                  onClick={splitChat}
+                  style={{
+                    color: isSplitVisible ? colors.primary : 'var(--construct-text-faint)',
+                  }}
+                  title={
+                    isSplitVisible
+                      ? `Switch split: ${splitDirection === 'vertical' ? 'side-by-side' : 'stacked'} → ${splitDirection === 'vertical' ? 'stacked' : 'side-by-side'}`
+                      : 'Split chat (new chat tab side-by-side)'
+                  }
+                >
+                  {isSplitVisible
+                    ? splitDirection === 'vertical'
+                      ? <Columns2 className="h-3.5 w-3.5" />
+                      : <Rows2 className="h-3.5 w-3.5" />
+                    : <SplitSquareHorizontal className="h-3.5 w-3.5" />}
+                </button>
+                {isSplitVisible && (
+                  <button
+                    type="button"
+                    className="p-1.5 transition-colors hover:bg-white/5"
+                    onClick={closeSplit}
+                    style={{ color: 'var(--construct-text-faint)' }}
+                    title="Close split"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </>
+            )}
+
             <button
               type="button"
               className="p-1.5 transition-colors hover:bg-white/5"
@@ -1127,21 +1237,73 @@ export default function AssistantPanel() {
                 to a terminal/code tab, and switching back would unmount
                 the pane mid-turn — losing every event between unmount
                 and remount, so the user sees a blank pane until the next
-                history fetch (i.e. the next tab swap). */}
-            {tabs.filter((t) => t.type === 'chat').map((tab) => (
-              <ChatPane
-                key={tab.id}
-                sessionId={tab.sessionId}
-                pageContext={tab.pageContextOverride ?? pageContext}
-                placeholder={placeholder}
-                config={config}
-                colors={colors}
-                visible={activeTabId === tab.id}
-                onAddTab={addTab}
-                onCloseActiveTab={() => closeTab(tab.id)}
-                onOpenNewTabMenu={() => setShowNewTabMenu(true)}
-              />
-            ))}
+                history fetch (i.e. the next tab swap).
+
+                When a split is active, the active and split chats are
+                wrapped in a flex container with the configured direction
+                (row = side-by-side, column = stacked). All other chat
+                tabs stay mounted underneath with display:none so their
+                state survives entering/leaving split mode. */}
+            {isSplitVisible ? (
+              <div
+                className="flex min-h-0 flex-1"
+                style={{
+                  flexDirection: splitDirection === 'vertical' ? 'row' : 'column',
+                }}
+              >
+                {tabs
+                  .filter((t) => t.type === 'chat')
+                  .map((tab) => {
+                    const isInSplit = tab.id === activeTabId || tab.id === splitTabId;
+                    return (
+                      <div
+                        key={tab.id}
+                        className="flex min-h-0 min-w-0"
+                        style={{
+                          flex: isInSplit ? '1 1 50%' : '0 0 0',
+                          // Splitter divider between the two visible
+                          // panes (only on the second one in the flow).
+                          borderLeft:
+                            isInSplit && splitDirection === 'vertical' && tab.id === splitTabId
+                              ? '1px solid var(--construct-border-soft)'
+                              : undefined,
+                          borderTop:
+                            isInSplit && splitDirection === 'horizontal' && tab.id === splitTabId
+                              ? '1px solid var(--construct-border-soft)'
+                              : undefined,
+                        }}
+                      >
+                        <ChatPane
+                          sessionId={tab.sessionId}
+                          pageContext={tab.pageContextOverride ?? pageContext}
+                          placeholder={placeholder}
+                          config={config}
+                          colors={colors}
+                          visible={isInSplit}
+                          onAddTab={addTab}
+                          onCloseActiveTab={() => closeTab(tab.id)}
+                          onOpenNewTabMenu={() => setShowNewTabMenu(true)}
+                        />
+                      </div>
+                    );
+                  })}
+              </div>
+            ) : (
+              tabs.filter((t) => t.type === 'chat').map((tab) => (
+                <ChatPane
+                  key={tab.id}
+                  sessionId={tab.sessionId}
+                  pageContext={tab.pageContextOverride ?? pageContext}
+                  placeholder={placeholder}
+                  config={config}
+                  colors={colors}
+                  visible={activeTabId === tab.id}
+                  onAddTab={addTab}
+                  onCloseActiveTab={() => closeTab(tab.id)}
+                  onOpenNewTabMenu={() => setShowNewTabMenu(true)}
+                />
+              ))
+            )}
           </div>
         )}
       </div>
