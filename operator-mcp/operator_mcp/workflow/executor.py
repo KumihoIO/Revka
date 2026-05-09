@@ -253,7 +253,15 @@ async def _resolve_skills_inline(skill_refs: list[str]) -> str:
         if not content:
             # Fallback: try as local skill name
             from ..skill_loader import load_skill
-            name = ref.rsplit("/", 1)[-1].replace(".skilldef", "").replace(".md", "")
+            # Strip both the canonical `.skill` suffix and the legacy
+            # `.skilldef` suffix so refs created before the kind rename
+            # still resolve to a local skill name.
+            name = (
+                ref.rsplit("/", 1)[-1]
+                .replace(".skilldef", "")
+                .replace(".skill", "")
+                .replace(".md", "")
+            )
             content = load_skill(name)
         if content:
             # Truncate very large skills to save tokens

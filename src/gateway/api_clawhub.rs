@@ -273,7 +273,12 @@ pub async fn handle_clawhub_install(
 
     let skill_space_path = format!("/{memory_project}/Skills");
     let item = match kumiho
-        .create_item(&skill_space_path, &slug, "skilldef", HashMap::new())
+        .create_item(
+            &skill_space_path,
+            &slug,
+            crate::skills::registration::SKILL_ITEM_KIND,
+            HashMap::new(),
+        )
         .await
     {
         Ok(item) => item,
