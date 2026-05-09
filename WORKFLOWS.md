@@ -21,7 +21,7 @@ YAML definition → Operator validates → Executor runs steps → Entities publ
 |----------|------|---------|
 | 3 (highest) | `.construct/workflows/` | Project-local overrides |
 | 2 | `~/.construct/workflows/` | User-global workflows |
-| 1 (lowest) | `operator/workflow/builtins/` | Shipped defaults |
+| 1 (lowest) | `operator_mcp/workflow/builtins/` | Shipped defaults |
 
 Later sources override earlier ones. The operator also checks **Kumiho**
 (`Construct/Workflows` space) as a final fallback when a workflow isn't found on disk.
@@ -130,6 +130,41 @@ The `action` field provides shorthand: `action: research` auto-sets
     command: "cd ${inputs.project_dir} && npm run build"
     timeout: 60
     allow_failure: false       # true = non-zero exit doesn't fail workflow
+```
+
+### `python` — Run a Python script or inline Python
+
+```yaml
+- id: transform
+  type: python
+  python:
+    script: "scripts/transform.py"   # Or use `code:` for inline Python
+    args:
+      topic: "${inputs.topic}"
+    timeout: 60
+```
+
+### `email` — Send outbound email via SMTP
+
+```yaml
+- id: outreach
+  type: email
+  email:
+    to: "user@example.com"
+    subject: "Construct report"
+    body: "${report.output}"
+    dry_run: true
+```
+
+### `notify` — Send a notification without pausing the workflow
+
+```yaml
+- id: heads_up
+  type: notify
+  notify:
+    channels: [dashboard, slack]
+    title: "Workflow update"
+    message: "Run ${run_id} completed."
 ```
 
 ### `resolve` — Deterministic Kumiho entity lookup (no LLM)
@@ -637,7 +672,7 @@ The `action` field maps editor-friendly names to step types and agent defaults:
 | `test` | agent | tester | codex |
 | `build` | agent | builder | codex |
 | `deploy` | agent | deployer | codex |
-| `notify` | agent | notifier | claude |
+| `notify` | notify | — | — |
 | `summarize` | agent | summarizer | claude |
 | `task` | agent | coder | claude |
 | `approve` | human_approval | — | — |
