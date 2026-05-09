@@ -2,15 +2,12 @@
 
 This reference is derived from the current CLI surface (`construct --help`).
 
-Last verified: **April 21, 2026**.
+Last verified: **May 8, 2026**.
 
 The `construct` binary also embeds the React/TypeScript web dashboard served by
 `construct gateway` / `construct daemon` at `http://127.0.0.1:42617`. Most
 operational surface is available in both CLI and dashboard; this document
 covers the CLI surface only.
-
-<!-- TODO screenshot: dashboard top-level commands menu/navigation -->
-![Dashboard top-level commands menu/navigation](../../assets/reference/commands-reference-01-dashboard-menu.png)
 
 ## Top-Level Commands
 
@@ -31,10 +28,12 @@ covers the CLI surface only.
 | `channel` | Manage channels and channel health checks |
 | `integrations` | Inspect integration details |
 | `skills` | List/install/remove/audit skills |
+| `workflows` | List or sync bundled workflow templates |
 | `migrate` | Import from external runtimes (currently OpenClaw) |
 | `auth` | Manage provider subscription authentication profiles (OAuth, token-based) |
 | `memory` | Manage agent memory entries (list, get, stats, clear) |
 | `config` | Export machine-readable config schema |
+| `install` | Install Construct sidecars and related components |
 | `update` | Check for and apply updates (6-phase pipeline with rollback) |
 | `self-test` | Run diagnostic self-tests to verify the installation |
 | `completions` | Generate shell completion scripts to stdout |
@@ -51,9 +50,9 @@ covers the CLI surface only.
 - `construct onboard --channels-only`
 - `construct onboard --force`
 - `construct onboard --reinit`
-- `construct onboard --api-key <KEY> --provider <ID> --memory <sqlite|lucid|markdown|none>`
-- `construct onboard --api-key <KEY> --provider <ID> --model <MODEL_ID> --memory <sqlite|lucid|markdown|none>`
-- `construct onboard --api-key <KEY> --provider <ID> --model <MODEL_ID> --memory <sqlite|lucid|markdown|none> --force`
+- `construct onboard --api-key <KEY> --provider <ID> --memory <kumiho|none>`
+- `construct onboard --api-key <KEY> --provider <ID> --model <MODEL_ID> --memory <kumiho|none>`
+- `construct onboard --api-key <KEY> --provider <ID> --model <MODEL_ID> --memory <kumiho|none> --force`
 
 `onboard` safety behavior:
 
@@ -88,9 +87,6 @@ Start the ACP (Agent Control Protocol) server for IDE and tool integration.
 - Streams agent reasoning, tool calls, and content in real-time as notifications
 - Default max sessions: 10
 - Default session timeout: 3600 seconds (1 hour)
-
-<!-- TODO screenshot: browser showing the embedded Construct dashboard served by the gateway at localhost:42617 -->
-![Browser showing the embedded Construct dashboard served by the gateway at localhost:42617](../../assets/reference/commands-reference-02-dashboard-browser.png)
 
 ### `gateway` / `daemon`
 
@@ -136,6 +132,7 @@ Notes:
 - `construct service stop`
 - `construct service restart`
 - `construct service status`
+- `construct service logs [-n <LINES>] [--follow]`
 - `construct service uninstall`
 
 ### `cron`
@@ -148,6 +145,7 @@ Notes:
 - `construct cron remove <id>`
 - `construct cron pause <id>`
 - `construct cron resume <id>`
+- `construct cron update <id> [--expression <EXPR>] [--tz <IANA_TZ>] [--command <CMD>]`
 
 Notes:
 
@@ -172,9 +170,6 @@ Notes:
 - `models set` writes `default_model` to `~/.construct/config.toml`.
 - `models status` prints the active model configuration and cache freshness.
 
-<!-- TODO screenshot: terminal showing formatted `construct doctor` diagnostics output -->
-![Terminal showing formatted construct doctor diagnostics output](../../assets/reference/commands-reference-03-doctor-output.png)
-
 ### `doctor`
 
 - `construct doctor`
@@ -192,6 +187,7 @@ Notes:
 - `construct channel bind-telegram <IDENTITY>`
 - `construct channel add <type> <json>`
 - `construct channel remove <name>`
+- `construct channel send <message> --channel-id <NAME> --recipient <TARGET>`
 
 Runtime in-chat commands (Telegram/Discord while channel server is running):
 
@@ -220,6 +216,7 @@ Channel runtime also watches `config.toml` and hot-applies updates to:
 - `construct skills audit <source_or_name>`
 - `construct skills install <source>`
 - `construct skills remove <name>`
+- `construct skills test [<name>] [--verbose]`
 
 `<source>` accepts git remotes (`https://...`, `http://...`, `ssh://...`, and `git@host:owner/repo.git`) or a local filesystem path.
 
@@ -232,6 +229,14 @@ Channel runtime also watches `config.toml` and hot-applies updates to:
 Use `skills audit` to manually validate a candidate skill directory (or an installed skill by name) before sharing it.
 
 Skill manifests (`SKILL.toml`) support `prompts` and `[[tools]]`; both are injected into the agent system prompt at runtime, so the model can follow skill instructions without manually reading skill files.
+
+### `workflows`
+
+- `construct workflows list`
+- `construct workflows sync [--force]`
+
+`sync` seeds the bundled workflow YAMLs into the active workspace under
+`operator_mcp/workflow/builtins/`.
 
 ### `migrate`
 
@@ -283,6 +288,22 @@ Notes:
 - `construct config schema`
 
 `config schema` prints a JSON Schema (draft 2020-12) for the full `config.toml` contract to stdout.
+
+### `install`
+
+- `construct install --sidecars-only`
+- `construct install --sidecars-only --skip-kumiho --skip-operator`
+- `construct install --sidecars-only --dry-run`
+- `construct install --sidecars-only --with-session-manager`
+- `construct install --sidecars-only --python <PYTHON>`
+- `construct install --sidecars-only --from-source <REPO_PATH>`
+
+Notes:
+
+- `--sidecars-only` is currently required; the broader repo installer still
+  lives outside this subcommand.
+- `--with-session-manager` is optional and changes the spawned-agent auth/cost
+  path because it uses the Claude Agent SDK.
 
 ### `completions`
 

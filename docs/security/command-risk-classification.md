@@ -82,8 +82,7 @@ should grow conservatively when new dangerous commands appear.
   commands are rejected before dispatch.
 - **Approve**: `[autonomy].require_approval_for_medium_risk` (default
   `true`) — Medium commands route through the approval queue
-  (see [`docs/security/approval-flows.md`](approval-flows.md) if it
-  exists; otherwise see `src/approval/`).
+  (see `src/approval/` for the current implementation).
 - **`level = "full"`**: skips the medium-risk approval step but still
   runs the High-risk block.
 

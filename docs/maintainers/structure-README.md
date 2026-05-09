@@ -1,87 +1,98 @@
 # Construct Docs Structure Map
 
-This page defines the documentation structure across three axes:
+This page describes the current documentation structure across three axes:
 
 1. Language
-2. Part (category)
-3. Function (document intent)
+2. Collection
+3. Function
 
-Last refreshed: **April 21, 2026**.
+Last refreshed: **May 8, 2026**.
 
 ## 1) By Language
 
 | Language | Entry point | Canonical tree | Notes |
 |---|---|---|---|
 | English | `docs/README.md` | `docs/` | Source-of-truth runtime behavior docs are authored in English first. |
-| Chinese (`zh-CN`) | `docs/i18n/zh-CN/README.md` | `docs/` localized hub + selected localized docs | Uses localized hub and shared category structure. |
-| Japanese (`ja`) | `docs/i18n/ja/README.md` | `docs/` localized hub + selected localized docs | Uses localized hub and shared category structure. |
-| Russian (`ru`) | `docs/i18n/ru/README.md` | `docs/` localized hub + selected localized docs | Uses localized hub and shared category structure. |
-| French (`fr`) | `docs/i18n/fr/README.md` | `docs/` localized hub + selected localized docs | Uses localized hub and shared category structure. |
-| Vietnamese (`vi`) | `docs/i18n/vi/README.md` | `docs/i18n/vi/` | Full Vietnamese tree is canonical under `docs/i18n/vi/`; `docs/vi/` and `docs/*.vi.md` are compatibility paths. |
+| Korean (`ko`) | `docs/i18n/ko/README.md` | `docs/i18n/ko/` | Partial localized tree aligned to the English hub and major guides. |
+| Vietnamese (`vi`) | `docs/i18n/vi/README.md` | `docs/i18n/vi/` | Broadest localized tree; many pages are direct localized copies of earlier English docs. |
+| Simplified Chinese (`zh-CN`) | `docs/i18n/zh-CN/README.md` | `docs/i18n/zh-CN/` | Localized hub plus selected translated collections. |
 
-## 2) By Part (Category)
+## 2) By Collection
 
 These directories are the primary navigation modules by product area.
 
-- `docs/getting-started/` for initial setup and first-run flows
-- `docs/reference/` for command/config/provider/channel reference indexes
-- `docs/operations/` for day-2 operations, deployment, and troubleshooting entry points
+- `docs/setup-guides/` for install, onboarding, and local setup flows
+- `docs/reference/` for CLI, API, config, and SOP reference material
+- `docs/ops/` for day-2 operations, deployment, and troubleshooting
 - `docs/security/` for security guidance and security-oriented navigation
 - `docs/hardware/` for board/peripheral implementation and hardware workflows
 - `docs/contributing/` for contribution and CI/review processes
-- `docs/project/` for project snapshots, planning context, and status-oriented docs
+- `docs/maintainers/` for repo maps, inventory, and maintenance-facing docs
 
-## 3) By Function (Document Intent)
+## 3) By Function
 
 Use this grouping to decide where new docs belong.
 
-### Runtime Contract (current behavior)
+### Runtime Contract
 
-- `docs/commands-reference.md`
-- `docs/providers-reference.md`
-- `docs/channels-reference.md`
-- `docs/config-reference.md`
-- `docs/operations-runbook.md`
-- `docs/troubleshooting.md`
-- `docs/one-click-bootstrap.md`
+- `docs/reference/cli/commands-reference.md`
+- `docs/reference/api/providers-reference.md`
+- `docs/reference/api/channels-reference.md`
+- `docs/reference/api/config-reference.md`
+- `docs/ops/operations-runbook.md`
+- `docs/ops/troubleshooting.md`
+- `docs/setup-guides/one-click-bootstrap.md`
+- `README.md`
+- `docs/README.md`
 
 ### Setup / Integration Guides
 
-- `docs/custom-providers.md`
-- `docs/zai-glm-setup.md`
+- `docs/setup-guides/*.md`
+- `docs/browser-setup.md`
+- `docs/aardvark-integration.md`
 - `docs/contributing/kumiho-memory-integration.md`
-- `docs/network-deployment.md`
-- `docs/matrix-e2ee-guide.md`
-- `docs/mattermost-setup.md`
-- `docs/nextcloud-talk-setup.md`
+- `docs/contributing/custom-providers.md`
+- `docs/contributing/extension-examples.md`
+- `docs/contributing/adding-boards-and-tools.md`
 
 ### Policy / Process
 
-- `docs/pr-workflow.md`
-- `docs/reviewer-playbook.md`
-- `docs/ci-map.md`
-- `docs/actions-source-policy.md`
+- `CONTRIBUTING.md`
+- `docs/contributing/pr-workflow.md`
+- `docs/contributing/reviewer-playbook.md`
+- `docs/contributing/pr-discipline.md`
+- `docs/contributing/ci-map.md`
+- `docs/contributing/actions-source-policy.md`
+- `docs/contributing/change-playbooks.md`
+- `docs/contributing/docs-contract.md`
 
-### Proposals / Roadmaps
+### Proposal / Roadmap
 
-- `docs/sandboxing.md`
-- `docs/resource-limits.md`
-- `docs/audit-logging.md`
-- `docs/agnostic-security.md`
-- `docs/frictionless-security.md`
-- `docs/security-roadmap.md`
+- `docs/security/sandboxing.md`
+- `docs/security/audit-logging.md`
+- `docs/security/agnostic-security.md`
+- `docs/security/frictionless-security.md`
+- `docs/security/security-roadmap.md`
+- `docs/ops/resource-limits.md`
+- `docs/architecture/adr-005-operator-liveness-and-rust-migration.md`
+- `docs/superpowers/specs/*.md`
 
-### Snapshots / Time-Bound Reports
+### Snapshot / Audit
 
-- `docs/project-triage-snapshot-2026-02-18.md`
+- `docs/coherence-audit-2026-05.md`
+- `docs/p0-2-row1-13-review.md`
+- `docs/p0-2-row6-review.md`
+- `docs/audit-row-*.md`
+- `docs/maintainers/project-triage-snapshot-2026-02-18.md`
 
 ### Assets / Templates
 
-- `docs/datasheets/`
-- `docs/doc-template.md`
+- `docs/assets/`
+- `docs/contributing/doc-template.md`
+- `docs/hardware/datasheets/`
 
-## Placement Rules (Quick)
+## Placement Rules
 
-- New runtime behavior docs must be linked from the appropriate category index and `docs/SUMMARY.md`.
-- Navigation changes must preserve locale parity across `docs/README*.md` and `docs/SUMMARY*.md`.
-- Vietnamese full localization lives in `docs/i18n/vi/`; compatibility files should point to canonical paths.
+- New runtime-behavior docs must be linked from the relevant collection index and `docs/SUMMARY.md`.
+- When docs move between collections, update `docs/README.md`, `docs/SUMMARY.md`, and `docs/maintainers/docs-inventory.md` in the same change.
+- Localized hubs should keep their entry-point links aligned with English, but localized deep-page coverage can lag and should be treated as best-effort unless explicitly marked current.
