@@ -796,6 +796,12 @@ class StepResult(BaseModel):
     step_id: str
     status: Literal["pending", "running", "completed", "failed", "skipped"] = "pending"
     output: str = ""
+    # input_data: the resolved/interpolated inputs at execution time, captured
+    # by each `_exec_*` handler so the run-view UI can render the actual values
+    # the step ran with (NOT the raw YAML config — that may contain ${...}
+    # references that haven't been resolved yet). Persisted alongside
+    # output_data so the dashboard can show full per-step detail.
+    input_data: dict[str, Any] = Field(default_factory=dict)
     output_data: dict[str, Any] = Field(default_factory=dict)
     error: str = ""
     agent_id: str | None = None

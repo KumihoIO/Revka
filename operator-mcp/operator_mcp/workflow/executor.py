@@ -907,8 +907,20 @@ async def _exec_shell(step: StepDef, state: WorkflowState, cwd: str) -> StepResu
     cfg: ShellStepConfig = step.shell  # type: ignore
     command = interpolate(cfg.command, state)
 
+    # Capture interpolated inputs for run-view UI BEFORE auth resolution so
+    # even an auth_resolve_failed result records what we tried to run.
+    # Command may contain interpolated secrets — _redact_for_persistence in
+    # memory.py masks obvious secret patterns at persist time.
+    input_data: dict[str, Any] = {
+        "command": command,
+        "timeout_secs": cfg.timeout,
+        "allow_failure": cfg.allow_failure,
+        "cwd": cwd,
+    }
+
     auth_resolved, auth_err = await _resolve_step_auth(step, cfg.auth)
     if auth_err is not None:
+        auth_err.input_data = input_data
         return auth_err
 
     # Inherit current env, then layer the auth token on top so the subprocess
@@ -929,8 +941,10 @@ async def _exec_shell(step: StepDef, state: WorkflowState, cwd: str) -> StepResu
         stdout, stderr = await asyncio.wait_for(
             proc.communicate(), timeout=cfg.timeout,
         )
-        output = stdout.decode("utf-8", errors="replace")[:4000]
-        err = stderr.decode("utf-8", errors="replace")[:2000]
+        stdout_raw = stdout.decode("utf-8", errors="replace")
+        stderr_raw = stderr.decode("utf-8", errors="replace")
+        output = stdout_raw[:4000]
+        err = stderr_raw[:2000]
 
         success = proc.returncode == 0 or cfg.allow_failure
         return StepResult(
@@ -938,19 +952,26 @@ async def _exec_shell(step: StepDef, state: WorkflowState, cwd: str) -> StepResu
             status="completed" if success else "failed",
             output=output,
             error=err if proc.returncode != 0 else "",
-            output_data={"exit_code": proc.returncode},
+            input_data=input_data,
+            output_data={
+                "exit_code": proc.returncode,
+                "stdout_truncated": len(stdout_raw) > 4000,
+                "stderr_truncated": len(stderr_raw) > 2000,
+            },
         )
     except asyncio.TimeoutError:
         return StepResult(
             step_id=step.id,
             status="failed",
             error=f"Shell command timed out after {cfg.timeout}s",
+            input_data=input_data,
         )
     except Exception as exc:
         return StepResult(
             step_id=step.id,
             status="failed",
             error=str(exc)[:2000],
+            input_data=input_data,
         )
 
 
@@ -1004,6 +1025,23 @@ async def _exec_python(step: StepDef, state: WorkflowState, cwd: str) -> StepRes
     """
     cfg: PythonStepConfig = step.python  # type: ignore
 
+    # Capture interpolated inputs for run-view UI. We don't store the full
+    # stdin context here — that's reconstructible from inputs + step_results.
+    interpolated_args = _interpolate_args(cfg.args, state)
+    code_preview = ""
+    code_length = 0
+    if cfg.code:
+        code_length = len(cfg.code)
+        code_preview = cfg.code[:500]
+    input_data: dict[str, Any] = {
+        "script_path": cfg.script or "",
+        "code_preview": code_preview,
+        "code_length": code_length,
+        "args": interpolated_args,
+        "timeout_secs": cfg.timeout,
+        "allow_failure": cfg.allow_failure,
+    }
+
     # Resolve script path. Order: explicit absolute → relative to workflow cwd
     # → bare name in builtins dir. Inline `code:` skips this entirely.
     script_path: str | None = None
@@ -1026,11 +1064,12 @@ async def _exec_python(step: StepDef, state: WorkflowState, cwd: str) -> StepRes
                         f"python step script not found: '{cfg.script}' "
                         f"(tried cwd={cwd_path}, builtins={builtin_path})"
                     ),
+                    input_data=input_data,
                 )
 
     # Build the JSON payload the script reads from stdin.
     payload = {
-        "args": _interpolate_args(cfg.args, state),
+        "args": interpolated_args,
         "context": {
             "inputs": state.inputs,
             "step_results": {
@@ -1053,6 +1092,7 @@ async def _exec_python(step: StepDef, state: WorkflowState, cwd: str) -> StepRes
     # without the credential ever appearing in YAML, args, or stdin.
     auth_resolved, auth_err = await _resolve_step_auth(step, cfg.auth)
     if auth_err is not None:
+        auth_err.input_data = input_data
         return auth_err
     subproc_env = os.environ.copy()
     if auth_resolved:
@@ -1082,6 +1122,7 @@ async def _exec_python(step: StepDef, state: WorkflowState, cwd: str) -> StepRes
                 step_id=step.id,
                 status="failed",
                 error=f"Python step timed out after {cfg.timeout}s",
+                input_data=input_data,
             )
 
         stdout_text = stdout.decode("utf-8", errors="replace")
@@ -1095,14 +1136,23 @@ async def _exec_python(step: StepDef, state: WorkflowState, cwd: str) -> StepRes
                 status="failed",
                 output=stdout_text[:4000],
                 error=(stderr_text[:2000] or f"exited with code {rc}"),
-                output_data={"exit_code": rc},
+                input_data=input_data,
+                output_data={
+                    "exit_code": rc,
+                    "stdout_truncated": len(stdout_text) > 4000,
+                    "stderr_truncated": len(stderr_text) > 2000,
+                },
             )
 
         # Parse stdout as JSON for output_data. A non-JSON stdout is allowed
         # (the script just printed something) — we keep it as raw output but
         # leave output_data minimal so downstream interpolation sees nothing
         # surprising.
-        output_data: dict[str, Any] = {"exit_code": rc}
+        output_data: dict[str, Any] = {
+            "exit_code": rc,
+            "stdout_truncated": len(stdout_text) > 4000,
+            "stderr_truncated": len(stderr_text) > 1000,
+        }
         stdout_stripped = stdout_text.strip()
         if stdout_stripped:
             try:
@@ -1120,6 +1170,7 @@ async def _exec_python(step: StepDef, state: WorkflowState, cwd: str) -> StepRes
             status="completed",
             output=stdout_text[:4000],
             error=stderr_text[:1000] if stderr_text else "",
+            input_data=input_data,
             output_data=output_data,
         )
     except Exception as exc:
@@ -1127,6 +1178,7 @@ async def _exec_python(step: StepDef, state: WorkflowState, cwd: str) -> StepRes
             step_id=step.id,
             status="failed",
             error=str(exc)[:2000],
+            input_data=input_data,
         )
 
 
@@ -1214,10 +1266,6 @@ async def _exec_email(step: StepDef, state: WorkflowState) -> StepResult:
     """
     cfg: EmailStepConfig = step.email  # type: ignore
 
-    auth_resolved, auth_err = await _resolve_step_auth(step, cfg.auth)
-    if auth_err is not None:
-        return auth_err
-
     # Interpolate every user-provided string field. We can't run the whole
     # config through interpolate at once (it has list/bool fields), so each
     # template-bearing string is interpolated individually.
@@ -1238,6 +1286,24 @@ async def _exec_email(step: StepDef, state: WorkflowState) -> StepResult:
     cc_list = [interpolate(addr, state) for addr in cfg.cc]
     bcc_list = [interpolate(addr, state) for addr in cfg.bcc]
 
+    # Capture interpolated inputs for run-view UI. body_preview is capped to
+    # avoid bloating Kumiho metadata for marketing emails with HTML payloads.
+    input_data: dict[str, Any] = {
+        "to": to_list,
+        "cc": cc_list,
+        "bcc": bcc_list,
+        "subject": subject,
+        "from": cfg.from_address or "",
+        "body_preview": (body or "")[:500],
+        "body_length": len(body or ""),
+        "dry_run": cfg.dry_run,
+    }
+
+    auth_resolved, auth_err = await _resolve_step_auth(step, cfg.auth)
+    if auth_err is not None:
+        auth_err.input_data = input_data
+        return auth_err
+
     # Click-tracking link rewrite — same encoded kref shared across body
     # and body_html. Avoids double-rewrites by gating on track_clicks +
     # track_kref both being present.
@@ -1247,6 +1313,7 @@ async def _exec_email(step: StepDef, state: WorkflowState) -> StepResult:
                 step_id=step.id,
                 status="failed",
                 error="track_clicks=true requires track_kref",
+                input_data=input_data,
             )
         try:
             from ..tracking import encode_kref, rewrite_links_with_tracker
@@ -1255,6 +1322,7 @@ async def _exec_email(step: StepDef, state: WorkflowState) -> StepResult:
                 step_id=step.id,
                 status="failed",
                 error=f"tracking module not available: {exc}",
+                input_data=input_data,
             )
         secret = os.environ.get(cfg.track_secret_env, "") or None
         encoded = encode_kref(track_kref, secret)
@@ -1267,6 +1335,7 @@ async def _exec_email(step: StepDef, state: WorkflowState) -> StepResult:
                     "track_clicks=true requires track_base_url or "
                     "GATEWAY_URL env var"
                 ),
+                input_data=input_data,
             )
         body = rewrite_links_with_tracker(body, encoded_kref=encoded, base_url=base)
         if body_html:
@@ -1328,10 +1397,12 @@ async def _exec_email(step: StepDef, state: WorkflowState) -> StepResult:
         # before any actually leave the building.
         output_data["dry_run"] = True
         output_data["rendered"] = rendered
+        output_data["delivered"] = False
         return StepResult(
             step_id=step.id,
             status="completed",
             output=f"DRY RUN: would send '{subject}' to {to_list}",
+            input_data=input_data,
             output_data=output_data,
         )
 
@@ -1343,6 +1414,7 @@ async def _exec_email(step: StepDef, state: WorkflowState) -> StepResult:
                 "no SMTP host configured — set [channels_config.email].smtp_host "
                 "in ~/.construct/config.toml or pass smtp_host on the step"
             ),
+            input_data=input_data,
         )
 
     # Send via stdlib smtplib in a thread (it's blocking). asyncio.to_thread
@@ -1371,6 +1443,8 @@ async def _exec_email(step: StepDef, state: WorkflowState) -> StepResult:
             step_id=step.id,
             status="failed",
             error=f"Email send timed out after {cfg.timeout}s",
+            input_data=input_data,
+            output_data={**output_data, "delivered": False},
         )
     except Exception as exc:
         # Don't echo the raw exception to step output — smtplib can include
@@ -1381,13 +1455,17 @@ async def _exec_email(step: StepDef, state: WorkflowState) -> StepResult:
             step_id=step.id,
             status="failed",
             error="SMTP send failed (see logs)",
+            input_data=input_data,
+            output_data={**output_data, "delivered": False},
         )
 
     output_data["sent"] = True
+    output_data["delivered"] = True
     return StepResult(
         step_id=step.id,
         status="completed",
         output=f"Sent '{subject}' to {to_list}",
+        input_data=input_data,
         output_data=output_data,
     )
 
@@ -1406,11 +1484,24 @@ async def _exec_image(step: StepDef, state: WorkflowState, cwd: str) -> StepResu
     cfg: ImageStepConfig = step.image  # type: ignore
 
     prompt = interpolate(cfg.prompt, state)
+
+    # Capture interpolated inputs for run-view UI. dry_run is included so the
+    # frontend can flag preview runs even though ImageStepConfig has no
+    # explicit dry_run field — the executor never dry-runs image steps today,
+    # so this always reads False but the field is reserved.
+    input_data: dict[str, Any] = {
+        "prompt": prompt,
+        "count": cfg.count,
+        "model": cfg.sandbox or "",  # ImageStepConfig has no model field; surface sandbox/policy hint instead
+        "dry_run": False,
+    }
+
     if not prompt.strip():
         return StepResult(
             step_id=step.id,
             status="failed",
             error="image step requires a non-empty prompt after interpolation",
+            input_data=input_data,
         )
 
     # Default the filename to the step id so authors don't have to
@@ -1468,12 +1559,14 @@ async def _exec_image(step: StepDef, state: WorkflowState, cwd: str) -> StepResu
             step_id=step.id,
             status="failed",
             error=f"image step timed out after {cfg.timeout}s",
+            input_data=input_data,
         )
     except Exception as exc:  # noqa: BLE001
         return StepResult(
             step_id=step.id,
             status="failed",
             error=f"image step failed: {exc}",
+            input_data=input_data,
         )
 
     if not isinstance(response, dict):
@@ -1481,6 +1574,7 @@ async def _exec_image(step: StepDef, state: WorkflowState, cwd: str) -> StepResu
             step_id=step.id,
             status="failed",
             error=f"image tool returned unexpected payload type: {type(response).__name__}",
+            input_data=input_data,
         )
 
     files = response.get("files") or []
@@ -1493,6 +1587,8 @@ async def _exec_image(step: StepDef, state: WorkflowState, cwd: str) -> StepResu
         "urls": urls,
         "requested": response.get("requested", cfg.count),
         "generated": response.get("generated", len(files)),
+        "images_generated": response.get("generated", len(files)),
+        "artifact_krefs": [],
     }
     if artifact:
         output_data["item_kref"] = artifact.get("item_kref", "")
@@ -1509,6 +1605,7 @@ async def _exec_image(step: StepDef, state: WorkflowState, cwd: str) -> StepResu
             step_id=step.id,
             status="failed",
             output=err,
+            input_data=input_data,
             output_data=output_data,
             error=err,
             files_touched=files,
@@ -1524,6 +1621,7 @@ async def _exec_image(step: StepDef, state: WorkflowState, cwd: str) -> StepResu
         step_id=step.id,
         status="completed",
         output="; ".join(summary_parts),
+        input_data=input_data,
         output_data=output_data,
         files_touched=list(files),
     )
@@ -1534,11 +1632,22 @@ async def _exec_output(step: StepDef, state: WorkflowState) -> StepResult:
     cfg: OutputStepConfig = step.output  # type: ignore
     rendered = interpolate(cfg.template, state)
 
+    input_data: dict[str, Any] = {
+        "format": cfg.format,
+        "template_preview": (cfg.template or "")[:500],
+        "template_length": len(cfg.template or ""),
+        "entity_kind": cfg.entity_kind or "",
+        "entity_tag": cfg.entity_tag,
+        "entity_space": cfg.entity_space or "",
+        "entity_name": interpolate(cfg.entity_name, state) if cfg.entity_name else "",
+    }
+
     result = StepResult(
         step_id=step.id,
         status="completed",
         output=rendered[:6000],
-        output_data={"format": cfg.format},
+        input_data=input_data,
+        output_data={"format": cfg.format, "entity_registered": False},
     )
 
     # Entity production — register output as a Kumiho entity
@@ -1580,6 +1689,7 @@ async def _exec_output(step: StepDef, state: WorkflowState) -> StepResult:
             result.output_data["entity_name"] = entity_name
             result.output_data["entity_kind"] = cfg.entity_kind
             result.output_data["entity_tag"] = cfg.entity_tag
+            result.output_data["entity_registered"] = True
 
     return result
 
@@ -1590,24 +1700,43 @@ async def _exec_resolve(step: StepDef, state: WorkflowState) -> StepResult:
     if not cfg.kind:
         return StepResult(step_id=step.id, status="failed", error="resolve step requires 'kind'")
 
+    # Capture interpolated query parameters for run-view UI.
+    resolved_kind = interpolate(cfg.kind, state)
+    resolved_tag = interpolate(cfg.tag, state)
+    resolved_name_pattern = interpolate(cfg.name_pattern, state) if cfg.name_pattern else ""
+    resolved_space = interpolate(cfg.space, state) if cfg.space else ""
+    input_data: dict[str, Any] = {
+        "kind": resolved_kind,
+        "tag": resolved_tag,
+        "name_pattern": resolved_name_pattern,
+        "space": resolved_space,
+        "mode": cfg.mode,
+        "fail_if_missing": cfg.fail_if_missing,
+    }
+
     try:
         from operator_mcp.workflow.memory import resolve_entity
         entity = await resolve_entity(
-            kind=interpolate(cfg.kind, state),
-            tag=interpolate(cfg.tag, state),
-            name_pattern=interpolate(cfg.name_pattern, state) if cfg.name_pattern else "",
-            space=interpolate(cfg.space, state) if cfg.space else "",
+            kind=resolved_kind,
+            tag=resolved_tag,
+            name_pattern=resolved_name_pattern,
+            space=resolved_space,
             mode=cfg.mode,
         )
     except Exception as exc:
         if cfg.fail_if_missing:
-            return StepResult(step_id=step.id, status="failed", error=f"resolve failed: {exc}")
+            return StepResult(
+                step_id=step.id, status="failed",
+                error=f"resolve failed: {exc}",
+                input_data=input_data,
+            )
         entity = None
 
     if entity is None and cfg.fail_if_missing:
         return StepResult(
             step_id=step.id, status="failed",
             error=f"No entity found for kind={cfg.kind!r} tag={cfg.tag!r}",
+            input_data=input_data,
         )
 
     output_data: dict[str, Any] = {}
@@ -1615,9 +1744,16 @@ async def _exec_resolve(step: StepDef, state: WorkflowState) -> StepResult:
         output_data["found"] = False
     elif cfg.mode == "latest":
         output_data["found"] = True
-        output_data["item_kref"] = entity.get("item_kref") or entity.get("kref", "")
+        matched_kref = entity.get("item_kref") or entity.get("kref", "")
+        matched_name = entity.get("name", "")
+        output_data["item_kref"] = matched_kref
         output_data["revision_kref"] = entity.get("kref", "")
-        output_data["name"] = entity.get("name", "")
+        output_data["name"] = matched_name
+        # Convenience fields for the run-view UI — denormalized so the
+        # frontend can render "matched: <name> (<kref>)" without poking at
+        # the rest of the metadata blob.
+        output_data["matched_kref"] = matched_kref
+        output_data["matched_name"] = matched_name
         # Extract metadata
         meta = entity.get("metadata", {})
         if cfg.fields:
@@ -1671,6 +1807,7 @@ async def _exec_resolve(step: StepDef, state: WorkflowState) -> StepResult:
         step_id=step.id,
         status="completed",
         output=summary,
+        input_data=input_data,
         output_data=output_data,
         action=step.action or "resolve",
     )
@@ -1688,6 +1825,12 @@ async def _exec_tag(step: StepDef, state: WorkflowState) -> StepResult:
     new_tag = interpolate(cfg.tag, state)
     old_tag = interpolate(cfg.untag, state) if cfg.untag else ""
 
+    input_data: dict[str, Any] = {
+        "kref": item_kref,
+        "tag": new_tag,
+        "previous_tag": old_tag,
+    }
+
     try:
         from operator_mcp.workflow.memory import tag_entity
         result = await tag_entity(
@@ -1696,13 +1839,23 @@ async def _exec_tag(step: StepDef, state: WorkflowState) -> StepResult:
             untag=old_tag,
         )
     except Exception as exc:
-        return StepResult(step_id=step.id, status="failed", error=f"tag failed: {exc}")
+        return StepResult(
+            step_id=step.id, status="failed",
+            error=f"tag failed: {exc}",
+            input_data=input_data,
+        )
+
+    output_data: dict[str, Any] = dict(result or {})
+    output_data["tagged"] = True
+    if old_tag:
+        output_data["previous_tag"] = old_tag
 
     return StepResult(
         step_id=step.id,
         status="completed",
         output=f"Tagged {item_kref}: {old_tag + ' → ' if old_tag else ''}{new_tag}",
-        output_data=result,
+        input_data=input_data,
+        output_data=output_data,
     )
 
 
@@ -1715,17 +1868,30 @@ async def _exec_deprecate(step: StepDef, state: WorkflowState) -> StepResult:
     item_kref = interpolate(cfg.item_kref, state)
     reason = interpolate(cfg.reason, state) if cfg.reason else ""
 
+    input_data: dict[str, Any] = {
+        "kref": item_kref,
+        "reason": reason,
+    }
+
     try:
         from operator_mcp.workflow.memory import deprecate_entity
         result = await deprecate_entity(item_kref=item_kref, reason=reason)
     except Exception as exc:
-        return StepResult(step_id=step.id, status="failed", error=f"deprecate failed: {exc}")
+        return StepResult(
+            step_id=step.id, status="failed",
+            error=f"deprecate failed: {exc}",
+            input_data=input_data,
+        )
+
+    output_data: dict[str, Any] = dict(result or {})
+    output_data["deprecated_at"] = datetime.now(timezone.utc).isoformat()
 
     return StepResult(
         step_id=step.id,
         status="completed",
         output=f"Deprecated {item_kref}" + (f" ({reason})" if reason else ""),
-        output_data=result,
+        input_data=input_data,
+        output_data=output_data,
     )
 
 
@@ -1796,8 +1962,22 @@ async def _exec_for_each(
     else:
         return StepResult(step_id=step.id, status="failed", error="for_each needs 'range' or 'items'")
 
+    # Build the run-view input_data once values are resolved. Items_preview
+    # is capped to 5 entries because for_each runs over potentially huge
+    # ranges (1..1000) and we don't want to persist the entire list.
+    base_input_data: dict[str, Any] = {
+        "variable": cfg.variable,
+        "items_count": len(values),
+        "items_preview": values[:5],
+    }
+
     if not values:
-        return StepResult(step_id=step.id, status="completed", output="for_each: 0 iterations (empty range)")
+        return StepResult(
+            step_id=step.id, status="completed",
+            output="for_each: 0 iterations (empty range)",
+            input_data=base_input_data,
+            output_data={"iterations_completed": 0, "completed": 0, "total": 0},
+        )
 
     # Safety cap
     if len(values) > cfg.max_iterations:
@@ -1967,7 +2147,13 @@ async def _exec_for_each(
                     step_id=step.id,
                     status="pending",
                     output=f"Paused at iteration {iter_num}/{total}, sub-step '{sub_id}'",
-                    output_data={"awaiting_approval": True, "paused_iteration": iter_num, "paused_sub_step": sub_id},
+                    input_data=base_input_data,
+                    output_data={
+                        "awaiting_approval": True,
+                        "paused_iteration": iter_num,
+                        "paused_sub_step": sub_id,
+                        "iterations_completed": completed_iterations,
+                    },
                 )
 
             if result.status == "failed":
@@ -2032,9 +2218,11 @@ async def _exec_for_each(
         step_id=step.id,
         status=status,
         output=summary,
+        input_data=base_input_data,
         output_data={
             "completed": completed_iterations,
             "total": total,
+            "iterations_completed": completed_iterations,
             "iterations": iteration_summaries,
         },
         error="" if status == "completed" else f"{total - completed_iterations} iteration(s) failed",
@@ -2682,6 +2870,12 @@ async def execute_workflow(
                     cfg_goto: GotoStepConfig = step.goto  # type: ignore
                     count = state.iteration_counts.get(control_step, 0) + 1
                     state.iteration_counts[control_step] = count
+                    # Update the StepResult input_data with the now-incremented
+                    # iteration count so the run-view reflects the iteration
+                    # this dispatch represents (1, 2, 3...) rather than the
+                    # pre-increment value captured inside _exec_goto.
+                    if isinstance(result.input_data, dict):
+                        result.input_data["current_iteration"] = count
                     if count <= cfg_goto.max_iterations:
                         should_goto = True
                         if cfg_goto.condition:
@@ -2925,7 +3119,7 @@ async def _dispatch_step(
         elif step.type == StepType.CONDITIONAL:
             return _exec_conditional(step, state)
         elif step.type == StepType.GOTO:
-            return StepResult(step_id=step.id, status="completed")
+            return _exec_goto(step, state)
         elif step.type == StepType.HUMAN_APPROVAL:
             return await _exec_human_approval(step, state)
         elif step.type == StepType.HUMAN_INPUT:
@@ -3027,6 +3221,29 @@ async def _exec_parallel(
 # Control flow helpers
 # ---------------------------------------------------------------------------
 
+def _exec_goto(step: StepDef, state: WorkflowState) -> StepResult:
+    """Capture goto step inputs for the run-view UI.
+
+    The actual jump still happens in the wave loop at executor.py:2847 —
+    this handler only records what the step is configured to do plus the
+    current iteration count so the dashboard can render a useful detail
+    panel ("goto refine, iteration 2/3") instead of "Step completed".
+    """
+    cfg: GotoStepConfig = step.goto or GotoStepConfig(target="")  # type: ignore
+    current_iter = state.iteration_counts.get(step.id, 0)
+    input_data: dict[str, Any] = {
+        "target": cfg.target,
+        "max_iterations": cfg.max_iterations,
+        "current_iteration": current_iter,
+        "condition": cfg.condition or "",
+    }
+    return StepResult(
+        step_id=step.id,
+        status="completed",
+        input_data=input_data,
+    )
+
+
 def _exec_conditional(step: StepDef, state: WorkflowState) -> StepResult:
     """Resolve which branch matches and emit its `value` (if any) as output.
 
@@ -3041,10 +3258,16 @@ def _exec_conditional(step: StepDef, state: WorkflowState) -> StepResult:
         return StepResult(step_id=step.id, status="completed")
 
     matched_goto: str | None = None
+    matched_idx: int = -1
+    matched_condition: str = ""
+    matched_value_expr: str | None = None
     output: str = ""
-    for branch in cfg.branches:
+    for idx, branch in enumerate(cfg.branches):
         if _eval_condition(branch.condition, state):
             matched_goto = branch.goto
+            matched_idx = idx
+            matched_condition = branch.condition
+            matched_value_expr = branch.value
             output = _eval_branch_value(branch.value, state)
             break
 
@@ -3056,11 +3279,22 @@ def _exec_conditional(step: StepDef, state: WorkflowState) -> StepResult:
     else:
         state.conditional_routes.pop(step.id, None)
 
+    input_data: dict[str, Any] = {
+        "branch_count": len(cfg.branches),
+        "matched_branch_index": matched_idx,
+        "matched_condition": matched_condition,
+        "matched_value_expr": matched_value_expr,
+    }
+    output_data: dict[str, Any] = {}
+    if matched_goto is not None:
+        output_data["matched_goto"] = matched_goto
+
     return StepResult(
         step_id=step.id,
         status="completed",
         output=output,
-        output_data={},
+        input_data=input_data,
+        output_data=output_data,
     )
 
 
@@ -3149,6 +3383,14 @@ async def _exec_notify(step: StepDef, state: WorkflowState) -> StepResult:
     title = interpolate(cfg.title, state)
     channels = cfg.channels or ["dashboard"]
 
+    input_data: dict[str, Any] = {
+        "title": title,
+        "message": message,
+        "channels": channels,
+    }
+    if cfg.channel_id:
+        input_data["channel_id"] = interpolate(cfg.channel_id, state)
+
     try:
         from ..gateway_client import ConstructGatewayClient
         gw = ConstructGatewayClient()
@@ -3175,6 +3417,7 @@ async def _exec_notify(step: StepDef, state: WorkflowState) -> StepResult:
         step_id=step.id,
         status="completed",
         output=message,
+        input_data=input_data,
         output_data={"channels": channels},
     )
 

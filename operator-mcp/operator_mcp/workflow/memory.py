@@ -15,11 +15,115 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 from datetime import datetime, timezone
 from typing import Any
 
 from .._log import _log
 from ..construct_config import harness_project
+
+
+# ---------------------------------------------------------------------------
+# Persistence sanitization
+# ---------------------------------------------------------------------------
+
+# Per-step persistence caps. The Kumiho metadata budget is the binding
+# constraint; we trade per-step detail for the ability to persist the whole
+# run. Values were picked to keep a 20-step run under ~300KB total metadata.
+_PER_STRING_CAP = 4000        # any single string field in input_data/output_data
+_PER_STEP_JSON_CAP = 16_000   # full serialized step entry, post-truncation
+
+# Patterns we mask before persistence. Conservative — better to over-mask
+# than leak. We match `key=value` and `key: value` where key looks like a
+# secret name, plus the special-case `Bearer <token>` form used in HTTP
+# Authorization headers. The actual secret value is replaced with "***"
+# so length inspection still works for debugging.
+_REDACT_KEY_RE = re.compile(
+    r"(?i)\b(password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|"
+    r"authorization|auth[_-]?token|client[_-]?secret|private[_-]?key)"
+    r"\s*[:=]\s*([^\s,&;'\"]+)"
+)
+# `Bearer <token>` — Authorization header convention. Also catches a few
+# variants that happen to use the same prefix syntax.
+_REDACT_BEARER_RE = re.compile(r"(?i)\b(bearer)\s+([A-Za-z0-9._\-+/=]+)")
+
+
+def _redact_for_persistence(value: Any) -> Any:
+    """Walk a JSON-able value and mask obvious secret patterns in strings.
+
+    Scope: defends against secrets that get interpolated into `command:`,
+    email bodies, or python args. Does NOT replace explicit auth-profile
+    binding (those tokens never enter input_data/output_data — they go
+    through env vars).
+    """
+    if isinstance(value, str):
+        # Apply Bearer first so the `authorization: Bearer xyz` form gets
+        # the token masked (not just the literal "Bearer" word). The
+        # subsequent key=value pass then redacts any leftover key:value
+        # pairs that didn't fit the Bearer shape.
+        out = _REDACT_BEARER_RE.sub(lambda m: f"{m.group(1)} ***", value)
+        out = _REDACT_KEY_RE.sub(lambda m: f"{m.group(1)}=***", out)
+        return out
+    if isinstance(value, dict):
+        return {k: _redact_for_persistence(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_redact_for_persistence(v) for v in value]
+    return value
+
+
+def _coerce_jsonable(value: Any) -> Any:
+    """Replace non-JSON-serializable values with their repr.
+
+    Belt-and-suspenders: input_data/output_data should already be plain
+    dict/list/str/int/float/bool/None, but external tool responses
+    occasionally leak in (datetime, bytes, custom classes).
+    """
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    if isinstance(value, dict):
+        return {str(k): _coerce_jsonable(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_coerce_jsonable(v) for v in value]
+    return repr(value)
+
+
+def _truncate_strings_in_place(value: Any, cap: int = _PER_STRING_CAP) -> tuple[Any, bool]:
+    """Recursively truncate any string longer than ``cap``.
+
+    Returns ``(new_value, truncated)`` — the second element is True if any
+    string was shortened, so the caller can mark the step entry as
+    truncated for downstream UI consumers.
+    """
+    truncated = False
+    if isinstance(value, str):
+        if len(value) > cap:
+            return value[:cap], True
+        return value, False
+    if isinstance(value, dict):
+        out = {}
+        for k, v in value.items():
+            new_v, t = _truncate_strings_in_place(v, cap)
+            truncated = truncated or t
+            out[k] = new_v
+        return out, truncated
+    if isinstance(value, list):
+        out_list = []
+        for v in value:
+            new_v, t = _truncate_strings_in_place(v, cap)
+            truncated = truncated or t
+            out_list.append(new_v)
+        return out_list, truncated
+    return value, False
+
+
+def _prepare_for_persistence(value: Any) -> tuple[Any, bool]:
+    """Run the full persistence pipeline: coerce → redact → truncate.
+
+    Returns ``(prepared_value, truncated_flag)``.
+    """
+    coerced = _coerce_jsonable(value)
+    redacted = _redact_for_persistence(coerced)
+    return _truncate_strings_in_place(redacted, _PER_STRING_CAP)
 
 
 # ---------------------------------------------------------------------------
@@ -104,7 +208,7 @@ async def persist_workflow_run(
         step_summary: dict[str, str] = {}
         all_files: list[str] = []
         for sid, sr in step_results.items():
-            entry: dict[str, str] = {
+            entry: dict[str, Any] = {
                 "status": sr.get("status", "unknown"),
             }
             if sr.get("agent_id"):
@@ -114,7 +218,7 @@ async def persist_workflow_run(
             if sr.get("role"):
                 entry["role"] = sr["role"]
             # Include template name and skills from output_data
-            od = sr.get("output_data", {})
+            od = sr.get("output_data", {}) or {}
             if od.get("template_name"):
                 entry["template_name"] = od["template_name"]
             if od.get("skills"):
@@ -134,6 +238,8 @@ async def persist_workflow_run(
             output = sr.get("output", "")
             if output:
                 entry["output_preview"] = output[:400]
+            if sr.get("error"):
+                entry["error"] = str(sr["error"])[:1000]
             # Include artifact path so recovery can read full output from disk
             if od.get("artifact_path"):
                 entry["artifact_path"] = od["artifact_path"]
@@ -141,7 +247,50 @@ async def persist_workflow_run(
             if files:
                 entry["files"] = json.dumps(files[:10])
                 all_files.extend(files[:20])
-            step_summary[sid] = json.dumps(entry)
+
+            # ALWAYS persist input_data + output_data for the run-view UI.
+            # Pre-process: coerce non-JSON values, redact obvious secrets,
+            # cap each individual string field. Then enforce a per-step
+            # JSON cap so a single rogue step can't blow the whole run's
+            # metadata budget.
+            id_data, id_trunc = _prepare_for_persistence(sr.get("input_data") or {})
+            od_data, od_trunc = _prepare_for_persistence(od)
+            entry["input_data"] = id_data
+            entry["output_data"] = od_data
+
+            entry_truncated = id_trunc or od_trunc
+            entry_json = json.dumps(entry, default=str)
+            if len(entry_json) > _PER_STEP_JSON_CAP:
+                # Step JSON still too large after per-string truncation.
+                # Drop the heaviest fields (artifact_content, transcript,
+                # rendered email body, raw entity dump) progressively until
+                # we fit. Mark _truncated so the UI shows a warning instead
+                # of pretending the data is complete.
+                entry_truncated = True
+                for heavy_key in (
+                    "artifact_content",
+                    "rendered",
+                    "entities",
+                    "metadata",
+                ):
+                    for blob in (entry["input_data"], entry["output_data"]):
+                        if isinstance(blob, dict) and heavy_key in blob:
+                            blob[heavy_key] = "[truncated]"
+                    entry_json = json.dumps(entry, default=str)
+                    if len(entry_json) <= _PER_STEP_JSON_CAP:
+                        break
+                # Last resort: hard-truncate the JSON. Drop a marker; the
+                # Rust gateway treats unparseable values as legacy entries
+                # so we keep the parseable shape by trimming the heaviest
+                # nested blobs to empty objects.
+                if len(entry_json) > _PER_STEP_JSON_CAP:
+                    entry["input_data"] = {"_truncated": True}
+                    entry["output_data"] = {"_truncated": True}
+                    entry_json = json.dumps(entry, default=str)
+            if entry_truncated:
+                entry["_truncated"] = True
+                entry_json = json.dumps(entry, default=str)
+            step_summary[sid] = entry_json
 
         # Count completed / failed / total for dashboard
         completed_count = sum(

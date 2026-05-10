@@ -147,7 +147,15 @@ class TestInlineCode:
 
         assert result.status == "completed"
         assert "plain text" in result.output
-        assert result.output_data == {"exit_code": 0}
+        # Non-JSON stdout still gives us exit_code + truncation flags.
+        # The flags now ride on every python step result so the run-view UI
+        # can show "stdout truncated" when output gets capped.
+        assert result.output_data["exit_code"] == 0
+        assert result.output_data["stdout_truncated"] is False
+        assert result.output_data["stderr_truncated"] is False
+        assert "result" not in result.output_data
+        # input_data should reflect the inline code path
+        assert "print('plain text, not json')" in result.input_data["code_preview"]
 
 
 # ── script path resolution ──────────────────────────────────────────
