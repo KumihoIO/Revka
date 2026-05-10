@@ -34,6 +34,8 @@ from operator_mcp.workflow.executor import (
     execute_workflow,
 )
 from operator_mcp.workflow.schema import (
+    ForEachStepConfig,
+    PythonStepConfig,
     ShellStepConfig,
     StepDef,
     StepType,
@@ -225,3 +227,124 @@ class TestShellSubprocessKill:
                 break
             await asyncio.sleep(0.05)
         assert not _pid_alive(pid), f"orphan subprocess {pid} still alive"
+
+
+# ── process-group kill (grandchildren cleanup) ─────────────────────────
+
+
+class TestShellProcessGroupKill:
+    @pytest.mark.asyncio
+    async def test_cancel_kills_backgrounded_grandchild(self, tmp_path) -> None:
+        """A shell command that backgrounds a child must have BOTH the parent
+        and the grandchild killed on cancel. Pre-fix, ``proc.kill()`` only
+        terminated the direct child and the backgrounded sleep was orphaned."""
+        if os.name != "posix":
+            pytest.skip("process-group semantics POSIX-only")
+
+        state = _state_for("rpgkill")
+        # Parent shell forks `sleep 60` to the background, prints the PID,
+        # then sleeps too. After cancel both must be gone.
+        sentinel = tmp_path / "child.pid"
+        cmd = (
+            f'sleep 60 & echo $! > {sentinel}; '
+            f'sleep 60'
+        )
+        step = StepDef(
+            id="bg",
+            type=StepType.SHELL,
+            shell=ShellStepConfig(command=cmd, timeout=30),
+        )
+
+        captured_parent_pid: dict[str, int] = {}
+
+        async def snapshot_parent_pid() -> None:
+            for _ in range(200):
+                await asyncio.sleep(0.02)
+                if state.running_processes:
+                    captured_parent_pid["pid"] = state.running_processes[0].pid
+                    return
+
+        async def trip_cancel_after_child_written() -> None:
+            # Wait until the shell has written the grandchild PID file.
+            for _ in range(200):
+                await asyncio.sleep(0.05)
+                if sentinel.exists() and sentinel.read_text().strip():
+                    state.cancel_requested = True
+                    return
+            state.cancel_requested = True  # fallback
+
+        asyncio.create_task(snapshot_parent_pid())
+        asyncio.create_task(trip_cancel_after_child_written())
+        result = await _exec_shell(step, state, str(tmp_path))
+        assert result.status == "failed"
+        assert "Cancelled" in result.error
+
+        parent_pid = captured_parent_pid.get("pid")
+        assert parent_pid is not None, "did not capture parent shell PID"
+        assert sentinel.exists(), "shell did not write child PID sentinel"
+        child_pid = int(sentinel.read_text().strip())
+
+        # Wait briefly for the OS to reap both processes.
+        for _ in range(50):
+            if not _pid_alive(parent_pid) and not _pid_alive(child_pid):
+                break
+            await asyncio.sleep(0.05)
+
+        # Verify BOTH are dead via os.kill(pid, 0) raising ProcessLookupError.
+        for pid, label in ((parent_pid, "parent"), (child_pid, "grandchild")):
+            with pytest.raises(ProcessLookupError):
+                os.kill(pid, 0)
+
+
+# ── for_each cancel between iterations ──────────────────────────────────
+
+
+class TestForEachCancelBetweenIterations:
+    @pytest.mark.asyncio
+    async def test_cancel_breaks_for_each_early(self, tmp_path) -> None:
+        """A for_each with 5 iterations of a fast shell sleep should observe
+        cancel between iterations, end early with iterations_completed
+        reflecting the partial progress, and the workflow should be CANCELLED."""
+        sub = StepDef(
+            id="tick",
+            type=StepType.SHELL,
+            shell=ShellStepConfig(command="sleep 0.5", timeout=5),
+        )
+        loop = StepDef(
+            id="loop",
+            type=StepType.FOR_EACH,
+            for_each=ForEachStepConfig(
+                range="1..5",
+                variable="i",
+                steps=["tick"],
+                fail_fast=True,
+            ),
+        )
+        wf = WorkflowDef(name="for-each-cancel", steps=[loop, sub], checkpoint=False)
+
+        async def trip_cancel_after_two_iters() -> None:
+            for _ in range(400):
+                await asyncio.sleep(0.05)
+                for s in ACTIVE_WORKFLOWS.values():
+                    if s.workflow_name != "for-each-cancel":
+                        continue
+                    done = sum(
+                        1 for k in s.step_results
+                        if k.startswith("tick__iter_")
+                        and s.step_results[k].status == "completed"
+                    )
+                    if done >= 2:
+                        s.cancel_requested = True
+                        return
+
+        asyncio.create_task(trip_cancel_after_two_iters())
+        final = await execute_workflow(wf, inputs={}, cwd=str(tmp_path))
+
+        assert final.status == WorkflowStatus.CANCELLED
+        loop_result = final.step_results.get("loop")
+        assert loop_result is not None, "for_each step result missing"
+        completed = loop_result.output_data.get("iterations_completed")
+        assert completed is not None
+        # Allow ±1 slack for scheduler timing.
+        assert 1 <= completed <= 3, f"unexpected iterations_completed={completed}"
+        assert loop_result.output_data.get("cancelled_after_iteration") == completed
