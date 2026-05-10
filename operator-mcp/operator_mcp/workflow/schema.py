@@ -250,6 +250,13 @@ class ConditionalBranch(BaseModel):
     """A single branch in a conditional step."""
     condition: str  # Expression: "${step_id.status} == 'completed'" or "default"
     goto: str       # Step ID to jump to
+    # Optional expression evaluated when this branch matches; result becomes
+    # the conditional step's `output` so downstream steps can read
+    # ``${gate.output}``. Evaluated by the same simpleeval-based evaluator as
+    # ``condition`` — supports literals (``"'approved'"``), step refs
+    # (``"review.status"``), arithmetic, and ternary
+    # (``"score > 0.8 ? 'go' : 'stop'"``).
+    value: str | None = None
 
 
 class ConditionalStepConfig(BaseModel):
@@ -738,3 +745,7 @@ class WorkflowState(BaseModel):
     # Empty strings mean "built-in / disk fallback" — name-matching is fine.
     workflow_item_kref: str = ""
     workflow_revision_kref: str = ""
+    # Side-channel cache for conditional-step matched gotos. Keyed by
+    # step id. Held off ``StepResult.output_data`` so the entry can't leak
+    # into the simpleeval names dict or ``${gate.output_data.*}`` lookups.
+    conditional_routes: dict[str, str] = Field(default_factory=dict)

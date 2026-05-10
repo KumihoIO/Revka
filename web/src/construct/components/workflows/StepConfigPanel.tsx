@@ -506,6 +506,31 @@ export default function StepConfigPanel({
                 style={monoInputStyle}
               />
               <p style={helperStyle()}>Wire the green (true) and red (false) handles to branch targets.</p>
+
+              {/* Optional branch values — emitted on the gate's `output` so
+                  downstream steps can read `${gate.output}`. Multi-branch
+                  workflows should edit YAML directly. */}
+              <label style={labelStyle}>True branch value (optional)</label>
+              <input
+                type="text"
+                value={data.onTrueValue || ''}
+                onChange={(e) => onUpdate(node.id, { onTrueValue: e.target.value })}
+                placeholder="e.g. 'approved' or review.output_data.score"
+                style={monoInputStyle}
+              />
+              <label style={labelStyle}>False branch value (optional)</label>
+              <input
+                type="text"
+                value={data.onFalseValue || ''}
+                onChange={(e) => onUpdate(node.id, { onFalseValue: e.target.value })}
+                placeholder="e.g. 'rejected'"
+                style={monoInputStyle}
+              />
+              <p style={helperStyle()}>
+                When the matching branch fires, this expression's result becomes the
+                gate's <code>output</code>. Same syntax as <code>condition</code> —
+                literals, name refs, ternary all work.
+              </p>
             </div>
           )}
 

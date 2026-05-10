@@ -4,3 +4,4 @@ pyyaml>=6.0
 kumiho>=0.9.20
 kumiho-memory>=0.5.2
 claude-agent-sdk>=0.1.50
+simpleeval>=1.0.3

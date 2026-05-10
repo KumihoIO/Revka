@@ -120,10 +120,13 @@ def _scan_step_for_refs(step: StepDef) -> set[str]:
         _scan_value(step.email.bcc)
         _scan_text(step.email.reply_to)
         _scan_text(step.email.track_kref)
-    # conditional — branch conditions are interpolated
+    # conditional — branch conditions and (optional) value expressions are
+    # interpolated. Both surfaces can reference upstream step results, so
+    # both feed the depends_on inference pass.
     if step.conditional is not None:
         for branch in step.conditional.branches:
             _scan_text(branch.condition)
+            _scan_text(branch.value)
     # goto
     if step.goto is not None:
         _scan_text(step.goto.condition)

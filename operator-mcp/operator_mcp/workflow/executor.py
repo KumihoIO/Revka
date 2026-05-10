@@ -143,6 +143,11 @@ def interpolate(template: str, state: WorkflowState) -> str:
             return ", ".join(sr.files_touched)
         if field.startswith("output_data."):
             key = field[len("output_data."):]
+            # Defense in depth: refuse dunder / leading-underscore lookups
+            # so agent-supplied JSON keys like `__class__` (or stray
+            # internal sentinels) can't be exfiltrated via interpolation.
+            if key.startswith("_"):
+                return match.group(0)
             return str(sr.output_data.get(key, ""))
         if field == "agent_id":
             return sr.agent_id or ""
@@ -191,38 +196,403 @@ def _cleanup_checkpoint(run_id: str) -> None:
 # ---------------------------------------------------------------------------
 # Condition evaluation
 # ---------------------------------------------------------------------------
+#
+# Backed by simpleeval — a sandboxed AST-walking evaluator that's safe by
+# default (no imports, no dunder access, configurable function/operator
+# allowlist). The wrapper below:
+#
+#   1. Translates workflow-language operators (`&&`, `||`, `?:`, `contains`)
+#      to Python equivalents simpleeval understands natively.
+#   2. Builds a `names` dict mirroring `${X.field}` interpolation so step
+#      results, inputs, trigger context, etc. are accessible as bare
+#      identifiers in the expression (e.g. `review.status == 'approved'`).
+#   3. Falls back to `interpolate()` for any leftover `${...}` references —
+#      preserves the legacy form for users who still write
+#      `${review.status} == 'approved'`.
+#   4. Treats parse / name-resolution failures as `False` and logs a warning
+#      so a misspelled identifier doesn't crash the workflow.
+
+# Identifier used by the contains-RHS bare-word quoting heuristic.
+_BARE_IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+# Word boundary `contains` for the token scanner.
+_CONTAINS_RE = re.compile(r"\bcontains\b")
+
+
+def _translate_outside_strings(expr: str, replacements: list[tuple[str, str]]) -> str:
+    """Apply literal substring replacements only to regions of ``expr``
+    that are NOT inside a quoted string literal.
+
+    Walks the expression character-by-character tracking ``'`` / ``"``
+    string state with backslash-escape handling. ``replacements`` is a list
+    of ``(needle, replacement)`` tuples applied in order at each position.
+    Naïve longest-match: each tuple is tried in the order given, so put
+    longer needles first if they share a prefix.
+    """
+    out: list[str] = []
+    i = 0
+    n = len(expr)
+    quote: str | None = None  # current open quote char, or None
+    while i < n:
+        ch = expr[i]
+        if quote is not None:
+            # Inside a string literal — copy verbatim, honoring backslash escapes
+            # so an escaped quote (e.g. `\'`) doesn't close the literal.
+            out.append(ch)
+            if ch == "\\" and i + 1 < n:
+                out.append(expr[i + 1])
+                i += 2
+                continue
+            if ch == quote:
+                quote = None
+            i += 1
+            continue
+        # Outside string — check for a quote opening first.
+        if ch == "'" or ch == '"':
+            quote = ch
+            out.append(ch)
+            i += 1
+            continue
+        # Try each replacement at this position.
+        matched = False
+        for needle, repl in replacements:
+            if expr.startswith(needle, i):
+                out.append(repl)
+                i += len(needle)
+                matched = True
+                break
+        if not matched:
+            out.append(ch)
+            i += 1
+    return "".join(out)
+
+
+def _split_top_level(expr: str, sep: str) -> tuple[str, str] | None:
+    """Find the first ``sep`` occurrence outside strings/parens/brackets.
+
+    Returns ``(lhs, rhs)`` with the separator stripped, or None if not
+    found. Used for ternary splitting where we need the top-level ``?``
+    and ``:`` not nested inside parens or string literals.
+    """
+    n = len(expr)
+    i = 0
+    quote: str | None = None
+    depth = 0
+    sep_len = len(sep)
+    while i < n:
+        ch = expr[i]
+        if quote is not None:
+            if ch == "\\" and i + 1 < n:
+                i += 2
+                continue
+            if ch == quote:
+                quote = None
+            i += 1
+            continue
+        if ch == "'" or ch == '"':
+            quote = ch
+            i += 1
+            continue
+        if ch in "([{":
+            depth += 1
+            i += 1
+            continue
+        if ch in ")]}":
+            depth -= 1
+            i += 1
+            continue
+        if depth == 0 and expr.startswith(sep, i):
+            return expr[:i], expr[i + sep_len:]
+        i += 1
+    return None
+
+
+def _preprocess_expr(expr: str) -> str:
+    """Translate workflow-language operators to Python operators.
+
+    `&&` → ` and `, `||` → ` or `, leading `!` → ` not `, ternary `? :` →
+    `if/else`. Idempotent for plain Python: a clean Python expression
+    survives the rewrite untouched (Python doesn't use `&&`/`||`/`?:`).
+    `contains` is handled via simpleeval's `in` operator at the names-dict
+    layer (so ``a contains b`` is rewritten to ``b in a`` here).
+
+    String literals are preserved verbatim — replacements happen only
+    outside quoted regions, so ``x == 'foo&&bar'`` keeps its literal.
+    """
+    # NOTE: `!` must be tried only when not followed by `=`. The token
+    # scanner only does literal matches, so we handle `!=` by putting it
+    # first as an identity replacement (consumes both chars before `!`
+    # alone gets a chance to fire).
+    replacements: list[tuple[str, str]] = [
+        ("&&", " and "),
+        ("||", " or "),
+        ("!=", "!="),       # identity — consume so the next rule skips it
+        ("!", " not "),
+        # `contains` handled separately below (needs word-boundary check).
+    ]
+    out = _translate_outside_strings(expr, replacements)
+
+    # ``a contains b`` → ``b in a`` (workflow-language sugar). Word-boundary
+    # match so ``contains_x`` identifiers aren't touched, and skipping any
+    # match inside a string literal. Method calls like ``foo.contains(bar)``
+    # still hit the regex but we guard by checking the char immediately
+    # before the match isn't ``.`` (attribute access).
+    out = _rewrite_contains_outside_strings(out)
+
+    # Ternary: ``cond ? a : b`` → ``(a) if (cond) else (b)``. Use top-level
+    # split to avoid matching `?`/`:` inside strings or parens.
+    q_split = _split_top_level(out, "?")
+    if q_split is not None:
+        cond, rest = q_split
+        c_split = _split_top_level(rest, ":")
+        if c_split is not None:
+            a, b = c_split
+            cond_s, a_s, b_s = cond.strip(), a.strip(), b.strip()
+            # Avoid matching nested ternaries (the second `?`); single-level.
+            if cond_s and a_s and b_s and "?" not in a_s:
+                out = f"({a_s}) if ({cond_s}) else ({b_s})"
+
+    return out
+
+
+def _rewrite_contains_outside_strings(expr: str) -> str:
+    """Rewrite ``LHS contains RHS`` → ``(RHS) in (LHS)`` when ``contains``
+    appears outside string literals AND isn't an attribute/method
+    (i.e. preceded by ``.``). ``foo.contains(bar)`` is left intact.
+
+    Splits on the first qualifying ``contains`` only — matches the prior
+    behavior. Bare-word RHS gets quoted to mimic the pre-simpleeval
+    evaluator's quote-stripping comparison.
+    """
+    n = len(expr)
+    i = 0
+    quote: str | None = None
+    while i < n:
+        ch = expr[i]
+        if quote is not None:
+            if ch == "\\" and i + 1 < n:
+                i += 2
+                continue
+            if ch == quote:
+                quote = None
+            i += 1
+            continue
+        if ch == "'" or ch == '"':
+            quote = ch
+            i += 1
+            continue
+        m = _CONTAINS_RE.match(expr, i)
+        if m:
+            # Reject method-call form: previous non-space char is `.`
+            j = i - 1
+            while j >= 0 and expr[j].isspace():
+                j -= 1
+            if j >= 0 and expr[j] == ".":
+                i = m.end()
+                continue
+            lhs = expr[:i].strip()
+            rhs = expr[m.end():].strip()
+            if _BARE_IDENT_RE.fullmatch(rhs):
+                rhs = repr(rhs)
+            return f"({rhs}) in ({lhs})"
+        i += 1
+    return expr
+
+
+def _safe_keys(d: dict[str, Any]) -> dict[str, Any]:
+    """Strip dunder / leading-underscore keys from a dict.
+
+    Defense in depth: even though simpleeval's DISALLOW_PREFIXES blocks
+    dunder *attribute* access, top-level name lookup and dict-key lookup
+    are not filtered. An agent JSON output containing ``__class__`` would
+    otherwise be reachable as ``step.output_data.__class__`` (via
+    EvalWithCompoundTypes' subscript access). We exclude any key that's
+    not a valid bare identifier without leading underscore.
+    """
+    return {k: v for k, v in d.items() if isinstance(k, str) and k and not k.startswith("_")}
+
+
+def _build_eval_names(state: WorkflowState) -> dict[str, Any]:
+    """Build a `names` dict for simpleeval mirroring interpolation namespaces.
+
+    EvalWithCompoundTypes resolves dotted access on dicts via attribute
+    syntax — `review.status` looks up `names['review']['status']`. This
+    means users can write expressions naturally without `${...}` syntax.
+
+    All sub-dicts are passed through ``_safe_keys`` so dunder/private
+    keys never become accessible via the evaluator.
+    """
+    names: dict[str, Any] = {
+        "inputs": _safe_keys(state.inputs),
+        "trigger": _safe_keys(state.trigger_context),
+        "run_id": state.run_id,
+    }
+
+    # Step results — flatten so `step.output`, `step.status`, and
+    # `step.output_data.field` all work via dotted access.
+    for sid, sr in state.step_results.items():
+        if sid.startswith("_"):
+            continue
+        names[sid] = {
+            "output": sr.output,
+            "status": sr.status,
+            "error": sr.error,
+            "files": list(sr.files_touched),
+            "output_data": _safe_keys(sr.output_data),
+            "agent_id": sr.agent_id or "",
+        }
+
+    # Loop / for_each / previous / rejection scopes — mirrors interpolate()
+    fe_ctx = state.inputs.get("__for_each__")
+    if isinstance(fe_ctx, dict):
+        names["for_each"] = _safe_keys(fe_ctx)
+    prev_map = state.inputs.get("__previous__")
+    if isinstance(prev_map, dict):
+        names["previous"] = _safe_keys(prev_map)
+    names["rejection"] = {
+        "feedback": state.inputs.get("__rejection_feedback__", ""),
+        "count": state.inputs.get("__rejection_count__", 0),
+    }
+    names["loop"] = {
+        "iteration": max(state.iteration_counts.values(), default=0),
+    }
+    # `env` intentionally NOT filtered — env vars commonly contain underscores
+    # but never dunders, and existing workflows reference ${env.VAR} freely.
+    names["env"] = dict(os.environ)
+    return names
+
+
+def _interpolate_for_expr(expr: str, state: WorkflowState) -> str:
+    """Like `interpolate` but quotes string substitutions for safe injection
+    into an expression context.
+
+    Legacy workflows wrote ``${review.status} == 'completed'`` expecting the
+    interpolator to spit out ``completed == 'completed'``. With simpleeval
+    that bare ``completed`` would be a NameNotDefined. Wrap each substituted
+    value: numeric / bool literals stay bare, everything else gets repr'd
+    (single-quoted, with embedded quotes escaped).
+    """
+    def _quote(value: str) -> str:
+        # Numeric literal? Leave bare so arithmetic comparisons work.
+        try:
+            float(value)
+            return value
+        except (ValueError, TypeError):
+            pass
+        if value in ("True", "False", "None"):
+            return value
+        # String literal — repr produces a Python-safe single-quoted form
+        # that simpleeval parses cleanly even when the value contains quotes.
+        return repr(value)
+
+    def _sub(match: re.Match) -> str:
+        # Reuse interpolate() to resolve a single ${...} expression by
+        # passing it through with no surrounding text.
+        resolved = interpolate(match.group(0), state)
+        # If interpolate returned the placeholder unchanged (unresolved
+        # reference), don't quote it — let simpleeval surface the error.
+        if resolved == match.group(0):
+            return resolved
+        return _quote(resolved)
+
+    return _VAR_RE.sub(_sub, expr)
+
+
+def _eval_expression(expr: str, state: WorkflowState) -> Any:
+    """Evaluate an expression and return the raw result.
+
+    Pipeline: preprocess workflow-syntax sugar → interpolate any leftover
+    ${...} (legacy form, with auto-quoting) → simpleeval. Used by both
+    `_eval_condition` and branch-value evaluation.
+    """
+    from simpleeval import (
+        EvalWithCompoundTypes,
+        FeatureNotAvailable,
+        FunctionNotDefined,
+        InvalidExpression,
+        NameNotDefined,
+    )
+
+    pre = _preprocess_expr(expr)
+    # Resolve any remaining ${...} via the legacy interpolator. New-style
+    # expressions don't need this; we keep it for backward compat with
+    # workflows that wrote `${review.status} == 'approved'`.
+    if "${" in pre:
+        pre = _interpolate_for_expr(pre, state)
+
+    names = _build_eval_names(state)
+    # Whitelisted safe functions for workflow expressions. Kept tiny on
+    # purpose — these handle the 99% case (case-insensitive matching,
+    # length checks, type coercion) without exposing arbitrary Python.
+    safe_functions: dict[str, Any] = {
+        "lower": lambda s: str(s).lower() if s is not None else "",
+        "upper": lambda s: str(s).upper() if s is not None else "",
+        "len": len,
+        "str": str,
+        "int": int,
+        "float": float,
+        "bool": bool,
+    }
+    evaluator = EvalWithCompoundTypes(names=names, functions=safe_functions)
+    # Cap exponentiation hard. simpleeval's module-level safe_power defaults
+    # to 4_000_000 which lets `2**3999999` chew CPU/RAM. Workflow conditionals
+    # never need huge exponents — 1000 is generous. We override the Pow
+    # operator on the evaluator instance so simpleeval.MAX_POWER stays
+    # untouched (other code paths importing simpleeval are unaffected).
+    import ast as _ast
+
+    def _bounded_power(a: Any, b: Any, _cap: int = 1000) -> Any:
+        if abs(a) > _cap or abs(b) > _cap:
+            raise InvalidExpression(
+                f"exponent {a}**{b} exceeds workflow safety cap ({_cap})"
+            )
+        return a ** b
+
+    evaluator.operators[_ast.Pow] = _bounded_power
+    try:
+        return evaluator.eval(pre)
+    except (
+        NameNotDefined,
+        InvalidExpression,
+        FunctionNotDefined,
+        FeatureNotAvailable,
+        SyntaxError,
+        TypeError,
+        ValueError,
+        AttributeError,
+        KeyError,
+        IndexError,
+    ) as exc:
+        _log(f"workflow: expression eval failed ({type(exc).__name__}): "
+             f"{expr!r} → {pre!r}: {exc}")
+        raise
+
 
 def _eval_condition(expr: str, state: WorkflowState) -> bool:
-    """Evaluate a simple condition expression.
-
-    Supports: == != > < >= <= contains
-    Example: "${review.status} == 'completed'"
-    """
+    """Evaluate a branch condition. Returns False on any failure (logged)."""
     if not expr or expr.strip().lower() == "default":
         return True
+    try:
+        return bool(_eval_expression(expr, state))
+    except Exception:
+        # _eval_expression already logged; swallow so the executor moves on
+        # to the next branch (typically a `default` fallback).
+        return False
 
-    resolved = interpolate(expr, state)
 
-    # Try simple comparisons
-    for op, fn in [
-        ("!=", lambda a, b: a.strip("'\"") != b.strip("'\"")),
-        ("==", lambda a, b: a.strip("'\"") == b.strip("'\"")),
-        (">=", lambda a, b: float(a) >= float(b)),
-        ("<=", lambda a, b: float(a) <= float(b)),
-        (">", lambda a, b: float(a) > float(b)),
-        ("<", lambda a, b: float(a) < float(b)),
-        ("contains", lambda a, b: b.strip("'\"") in a),
-    ]:
-        if op in resolved:
-            parts = resolved.split(op, 1)
-            if len(parts) == 2:
-                try:
-                    return fn(parts[0].strip(), parts[1].strip())
-                except (ValueError, TypeError):
-                    return False
-
-    # Truthy check
-    return bool(resolved and resolved.lower() not in ("", "false", "0", "none", "failed"))
+def _eval_branch_value(expr: str | None, state: WorkflowState) -> str:
+    """Evaluate a branch's `value` field, returning a string. Empty on
+    missing/failure (logged)."""
+    if not expr:
+        return ""
+    try:
+        result = _eval_expression(expr, state)
+    except Exception:
+        return ""
+    if result is None:
+        return ""
+    if isinstance(result, bool):
+        return "true" if result else "false"
+    return str(result)
 
 
 # ---------------------------------------------------------------------------
@@ -2553,7 +2923,7 @@ async def _dispatch_step(
         elif step.type == StepType.PARALLEL:
             return await _exec_parallel(step, state, cwd, wf)
         elif step.type == StepType.CONDITIONAL:
-            return StepResult(step_id=step.id, status="completed")
+            return _exec_conditional(step, state)
         elif step.type == StepType.GOTO:
             return StepResult(step_id=step.id, status="completed")
         elif step.type == StepType.HUMAN_APPROVAL:
@@ -2657,13 +3027,58 @@ async def _exec_parallel(
 # Control flow helpers
 # ---------------------------------------------------------------------------
 
+def _exec_conditional(step: StepDef, state: WorkflowState) -> StepResult:
+    """Resolve which branch matches and emit its `value` (if any) as output.
+
+    Branch resolution happens here so the matched goto + emitted value are
+    visible in the StepResult — downstream steps reading ``${gate.output}``
+    see the matched branch's value, and the wave loop reads the cached
+    goto from ``state.conditional_routes`` via _resolve_conditional.
+    """
+    from .schema import ConditionalStepConfig
+    cfg: ConditionalStepConfig = step.conditional  # type: ignore
+    if not cfg:
+        return StepResult(step_id=step.id, status="completed")
+
+    matched_goto: str | None = None
+    output: str = ""
+    for branch in cfg.branches:
+        if _eval_condition(branch.condition, state):
+            matched_goto = branch.goto
+            output = _eval_branch_value(branch.value, state)
+            break
+
+    # Cache the matched goto on the workflow state, NOT on output_data.
+    # Stashing it in output_data would expose it via ${gate.output_data.*}
+    # interpolation and as a name in the simpleeval evaluator.
+    if matched_goto is not None:
+        state.conditional_routes[step.id] = matched_goto
+    else:
+        state.conditional_routes.pop(step.id, None)
+
+    return StepResult(
+        step_id=step.id,
+        status="completed",
+        output=output,
+        output_data={},
+    )
+
+
 def _resolve_conditional(step: StepDef, state: WorkflowState) -> str | None:
-    """Evaluate conditional branches and return the goto target."""
+    """Return the goto target chosen by `_exec_conditional`.
+
+    Reads the cached match from ``state.conditional_routes`` so we don't
+    re-evaluate (which would also re-trigger any side-effecting access to
+    state). Falls back to fresh evaluation if the cache entry is missing.
+    """
+    cached = state.conditional_routes.get(step.id)
+    if isinstance(cached, str):
+        return cached
+
     from .schema import ConditionalStepConfig
     cfg: ConditionalStepConfig = step.conditional  # type: ignore
     if not cfg:
         return None
-
     for branch in cfg.branches:
         if _eval_condition(branch.condition, state):
             return branch.goto
