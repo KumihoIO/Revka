@@ -215,3 +215,159 @@ class TestRoundTripNormalization:
         assert result is not None
         assert fake_sdk.create_item_calls[-1] == "Construct/WorkflowOutputs/Github"
         assert fake_sdk.list_items_calls[-1] == "Construct/WorkflowOutputs/Github"
+
+
+# ---------------------------------------------------------------------------
+# name_pattern matching against base name (kind suffix tolerance)
+# ---------------------------------------------------------------------------
+
+def _seed_item(
+    sdk: _FakeKumihoSDK,
+    *,
+    space: str,
+    name: str,
+    kind: str,
+    tag: str = "published",
+) -> str:
+    """Insert an item with a Kumiho-stored ``<base>.<kind>`` name and a
+    revision tagged ``tag``. Returns the item kref."""
+    sdk._kref_counter += 1
+    item_kref = f"kref://item/{sdk._kref_counter}"
+    item = {"kref": item_kref, "name": name, "kind": kind, "metadata": {}}
+    sdk.items_by_space.setdefault(space, []).append(item)
+    sdk._kref_counter += 1
+    rev_kref = f"kref://rev/{sdk._kref_counter}"
+    sdk.revisions_by_kref[item_kref] = {"kref": rev_kref, "metadata": {}, "tag": tag}
+    return item_kref
+
+
+@pytest.mark.asyncio
+class TestNamePatternBaseNameMatching:
+    SPACE = "Construct/WorkflowOutputs/Github"
+
+    async def test_name_pattern_matches_base_name(self, fake_sdk):
+        # Kumiho stores names as <base>.<kind>. User passes the bare base
+        # name as name_pattern — must resolve.
+        _seed_item(
+            fake_sdk,
+            space=self.SPACE,
+            name="zeroclaw-repo.research",
+            kind="research",
+        )
+        result = await resolve_entity(
+            kind="research",
+            tag="published",
+            name_pattern="zeroclaw-repo",
+            space=self.SPACE,
+            mode="latest",
+        )
+        assert result is not None
+        assert result.get("name") == "zeroclaw-repo.research"
+
+    async def test_name_pattern_matches_full_name(self, fake_sdk):
+        # Backward compat: user who already knows the suffix and passes
+        # the full ``<base>.<kind>`` form must still resolve.
+        _seed_item(
+            fake_sdk,
+            space=self.SPACE,
+            name="zeroclaw-repo.research",
+            kind="research",
+        )
+        result = await resolve_entity(
+            kind="research",
+            tag="published",
+            name_pattern="zeroclaw-repo.research",
+            space=self.SPACE,
+            mode="latest",
+        )
+        assert result is not None
+        assert result.get("name") == "zeroclaw-repo.research"
+
+    async def test_name_pattern_glob_still_works(self, fake_sdk):
+        # A glob like ``zeroclaw-*`` against the base name must still match.
+        _seed_item(
+            fake_sdk,
+            space=self.SPACE,
+            name="zeroclaw-repo.research",
+            kind="research",
+        )
+        result = await resolve_entity(
+            kind="research",
+            tag="published",
+            name_pattern="zeroclaw-*",
+            space=self.SPACE,
+            mode="latest",
+        )
+        assert result is not None
+        assert result.get("name") == "zeroclaw-repo.research"
+
+    async def test_name_pattern_doesnt_overstrip(self, fake_sdk):
+        # An item whose name happens to end in ``.foo`` but whose kind is
+        # ``research`` (not ``foo``) must NOT have ``.foo`` stripped.
+        # The kind filter rejects it first; even if a user queried with
+        # the dotted form, the suffix-strip is conditional on the suffix
+        # equalling the item's own kind.
+        _seed_item(
+            fake_sdk,
+            space=self.SPACE,
+            name="something.notthekind",
+            kind="research",
+        )
+        # Querying with kind=research, name_pattern=something — would
+        # ONLY match if we wrongly stripped ``.notthekind`` off. We don't.
+        result = await resolve_entity(
+            kind="research",
+            tag="published",
+            name_pattern="something",
+            space=self.SPACE,
+            mode="latest",
+        )
+        assert result is None
+        # And querying for an item whose kind doesn't match is rejected
+        # by the kind filter before name matching even runs.
+        _seed_item(
+            fake_sdk,
+            space=self.SPACE,
+            name="zeroclaw-repo.foo",
+            kind="foo",
+        )
+        result = await resolve_entity(
+            kind="research",
+            tag="published",
+            name_pattern="zeroclaw-repo.foo",
+            space=self.SPACE,
+            mode="latest",
+        )
+        assert result is None
+
+    async def test_resolve_logs_diagnostics(self, fake_sdk, capsys):
+        _seed_item(
+            fake_sdk,
+            space=self.SPACE,
+            name="zeroclaw-repo.research",
+            kind="research",
+        )
+        await resolve_entity(
+            kind="research",
+            tag="published",
+            name_pattern="zeroclaw-repo",
+            space=self.SPACE,
+            mode="latest",
+        )
+        err = capsys.readouterr().err
+        assert "resolve_entity: list_items(" in err
+        assert "resolve_entity: kind=research" in err
+        assert "resolve_entity: name_pattern=" in err
+        assert "resolve_entity: matched zeroclaw-repo.research" in err
+
+        # And the NO MATCH path logs a clearly identifiable line.
+        result = await resolve_entity(
+            kind="research",
+            tag="published",
+            name_pattern="does-not-exist",
+            space=self.SPACE,
+            mode="latest",
+        )
+        assert result is None
+        err = capsys.readouterr().err
+        assert "resolve_entity: NO MATCH" in err
