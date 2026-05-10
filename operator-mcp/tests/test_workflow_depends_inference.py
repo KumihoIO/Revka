@@ -257,3 +257,79 @@ class TestDependsOnInference:
         assert ask is not None and tell is not None
         assert ask.depends_on == ["pick"]
         assert tell.depends_on == ["pick"]
+
+    def test_parallel_child_ref_on_parent_deps_suppressed(self):
+        """A parallel child that references a step already in the parallel
+        parent's depends_on must NOT get an inferred dep on it. The parent
+        gates the block; adding a cross-group edge would be rejected by the
+        validator."""
+        wf = load_workflow_from_dict(_wf([
+            {"id": "upstream", "type": "agent", "agent": {"prompt": "do U"}},
+            {
+                "id": "cluster",
+                "type": "parallel",
+                "depends_on": ["upstream"],
+                "parallel": {"steps": ["child"]},
+            },
+            {
+                "id": "child",
+                "type": "agent",
+                "agent": {"prompt": "use ${upstream.output}"},
+            },
+        ]))
+        child = wf.step_by_id("child")
+        assert child is not None
+        assert child.depends_on == []
+
+    def test_parallel_child_ref_not_on_parent_deps_inferred(self):
+        """If the parallel parent does NOT depend on the referenced step,
+        suppression does not apply and the inferrer adds the dep. The
+        downstream validator will reject this cross-group edge — that loud
+        failure is the desired semantics."""
+        wf = load_workflow_from_dict(_wf([
+            {"id": "upstream", "type": "agent", "agent": {"prompt": "do U"}},
+            {
+                "id": "cluster",
+                "type": "parallel",
+                "parallel": {"steps": ["child"]},
+            },
+            {
+                "id": "child",
+                "type": "agent",
+                "agent": {"prompt": "use ${upstream.output}"},
+            },
+        ]))
+        child = wf.step_by_id("child")
+        assert child is not None
+        assert child.depends_on == ["upstream"]
+
+    def test_nested_parallel_inner_child_ref_on_outer_deps_documents_gap(self):
+        """Documents the current limitation: suppression only checks the
+        IMMEDIATE parallel parent's depends_on, not transitively up the
+        nesting chain. If an inner-parallel child references a step that
+        only the OUTER parallel depends on, the inferrer still adds the dep
+        and the validator will then reject it. This test pins that behavior
+        to surface any future fix; it is documentation of the gap, not
+        desired behavior."""
+        wf = load_workflow_from_dict(_wf([
+            {"id": "upstream", "type": "agent", "agent": {"prompt": "do U"}},
+            {
+                "id": "outer_p",
+                "type": "parallel",
+                "depends_on": ["upstream"],
+                "parallel": {"steps": ["inner_p"]},
+            },
+            {
+                "id": "inner_p",
+                "type": "parallel",
+                "parallel": {"steps": ["child"]},
+            },
+            {
+                "id": "child",
+                "type": "agent",
+                "agent": {"prompt": "use ${upstream.output}"},
+            },
+        ]))
+        child = wf.step_by_id("child")
+        assert child is not None
+        assert child.depends_on == ["upstream"]
