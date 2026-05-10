@@ -1123,7 +1123,11 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
         shutdown_tx,
         node_registry,
         session_backend,
-        session_queue: Arc::new(session_queue::SessionActorQueue::new(8, 30, 600)),
+        session_queue: Arc::new(session_queue::SessionActorQueue::new(
+            8,
+            session_queue::session_lock_timeout_secs(),
+            600,
+        )),
         device_registry,
         pending_pairings,
         path_prefix: path_prefix.unwrap_or("").to_string(),
