@@ -230,6 +230,14 @@ export interface StepRunInfo {
   approval_message?: string;
   approve_keywords?: string[];
   reject_keywords?: string[];
+  /** Per-step interpolated inputs (PR #220), shape varies by step type. */
+  input_data?: Record<string, unknown>;
+  /** Per-step output blob (PR #220), shape varies by step type. */
+  output_data?: Record<string, unknown>;
+  /** Truncated preview of the step's primary text output. */
+  output_preview?: string;
+  /** Error message when the step failed. */
+  error?: string;
 }
 
 /** Infer agent_type and role from type + hints (mirrors Python ACTION_DEFAULTS).

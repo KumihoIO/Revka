@@ -679,9 +679,9 @@ export default function WorkflowRuns() {
                 runId={selectedRun.run_id}
                 stepId={pendingApprovalStep.step_id}
                 stepName={pendingApprovalStep.step_id}
-                message={pendingApprovalStep.output_data?.approval_message ?? ''}
-                approveKeywords={pendingApprovalStep.output_data?.approve_keywords}
-                rejectKeywords={pendingApprovalStep.output_data?.reject_keywords}
+                message={typeof pendingApprovalStep.output_data?.approval_message === 'string' ? pendingApprovalStep.output_data.approval_message : ''}
+                approveKeywords={Array.isArray(pendingApprovalStep.output_data?.approve_keywords) ? (pendingApprovalStep.output_data!.approve_keywords as unknown[]).map(String) : undefined}
+                rejectKeywords={Array.isArray(pendingApprovalStep.output_data?.reject_keywords) ? (pendingApprovalStep.output_data!.reject_keywords as unknown[]).map(String) : undefined}
                 onResolved={() => {
                   void fetchWorkflowRun(selectedRun.run_id).then(setSelectedRun).catch(() => {});
                   void load();
