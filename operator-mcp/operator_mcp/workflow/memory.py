@@ -17,7 +17,7 @@ import json
 import os
 import re
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Callable
 
 from .._log import _log
 from ..construct_config import harness_project
@@ -139,6 +139,34 @@ def _project() -> str:
 
 def _space_path() -> str:
     return f"/{_project()}/{_SPACE}"
+
+
+def _canonical_space(
+    path: str | None,
+    default: Callable[[], str] | None = None,
+) -> str:
+    """Normalize a user-supplied space path so write and read sides agree.
+
+    Output and resolve steps both accept space paths from YAML. The strings
+    looked identical to the user but reached Kumiho with different surface
+    forms (leading slash vs not, trailing slash, doubled separators), so
+    ``_exec_output`` would publish to one path and ``_exec_resolve`` would
+    miss it on lookup. This helper produces ONE canonical form used on both
+    sides.
+
+    Rules:
+      - Empty / None → ``default()`` if provided, else ``""``
+      - Strip leading / trailing ``/``
+      - Collapse repeated ``/`` to a single ``/``
+
+    The output is always slash-free at both ends — callers that need a
+    leading slash (e.g. for ``parent_path`` arguments to Kumiho) prepend it
+    themselves so the normalization point stays a single, predictable place.
+    """
+    if not path or not path.strip():
+        return default() if default is not None else ""
+    parts = [p for p in path.split("/") if p]
+    return "/".join(parts)
 
 
 # ---------------------------------------------------------------------------
@@ -437,7 +465,15 @@ async def publish_workflow_entity(
             _log(f"workflow_memory: Kumiho SDK not available, skipping entity publish for {entity_name}")
             return None
 
-        space_path = entity_space or f"/{_project()}/WorkflowOutputs"
+        # Canonicalize the user-supplied space path so the write side here
+        # matches the read side in `resolve_entity`. Without this, an output
+        # step writing ``Construct/WorkflowOutputs/Github`` and a resolve
+        # step reading ``/Construct/WorkflowOutputs/Github`` would publish
+        # and lookup at different paths.
+        space_path = _canonical_space(
+            entity_space,
+            default=lambda: f"{_project()}/WorkflowOutputs",
+        )
         # Walk the full space path and ensure every segment exists. The SDK's
         # ensure_space only creates a single space directly under a project,
         # so deeper paths used to fail at create_item below with NOT_FOUND.
@@ -544,8 +580,14 @@ async def resolve_entity(
     if not KUMIHO_SDK._available:
         raise RuntimeError("Kumiho SDK not available")
 
-    # Search for items matching the kind
-    context = space or f"{_project()}/WorkflowOutputs"
+    # Search for items matching the kind. Canonicalize the lookup path so
+    # ``space="/Construct/WorkflowOutputs/Github"`` and
+    # ``space="Construct/WorkflowOutputs/Github"`` resolve to the same
+    # context as the path used by `publish_workflow_entity`.
+    context = _canonical_space(
+        space,
+        default=lambda: f"{_project()}/WorkflowOutputs",
+    )
     items = await KUMIHO_SDK.list_items(context)
 
     # Filter by kind
