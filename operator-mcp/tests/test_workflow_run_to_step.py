@@ -6,20 +6,30 @@ Covers:
      NOT ``c``.
   2. Parallel: ``wrapper{x, y} → join`` with target=``x`` runs ``wrapper``
      then ``x``, not ``y`` or ``join``.
-  3. Diamond: ``a → b → d``, ``a → c → d``; target=``d`` runs all four.
-  4. Target is the first step (no ancestors) → only the target runs.
-  5. Unknown target step → ``tool_run_workflow`` returns ``unknown_target_step``
-     classified validation error.
-  6. ``goto`` whose target falls outside the closure logs and is skipped (no
-     exception, downstream step still runs).
+  3. Parallel-DOWNSTREAM: target downstream of a parallel runs ALL children
+     plus the target (no false-green from filtered-empty children).
+  4. for_each-INSIDE: target inside a for_each body pulls in the wrapper
+     and runs the target, nothing else.
+  5. Diamond: ``a → b → d``, ``a → c → d``; target=``d`` runs all four.
+  6. Target is the first step (no ancestors) → only the target runs.
+  7. Unknown target step → ``tool_run_workflow`` returns
+     ``unknown_target_step`` classified validation error AND
+     ``execute_workflow`` directly returns FAILED with that error message
+     (defence in depth — the gateway/poller path bypasses the tool).
+  8. ``goto`` whose target falls outside the closure logs and is skipped
+     (no exception, downstream step still runs).
+  9. Recovery: a paused run-to-here resumed from checkpoint honours the
+     persisted ``target_step_id`` (closure is re-derived).
+ 10. Schema: duplicate step ids are rejected at parse time.
 
 Each test uses ``shell`` steps that write a unique sentinel file so we can
-assert which steps did and did NOT execute. Sentinels are ordered with a
-counter file so we can also check execution ORDER for the linear-chain case.
+assert which steps did and did NOT execute. Hermetic fixtures monkeypatch
+the run-lock and checkpoint dirs into ``tmp_path`` so global state under
+``~/.construct`` never bleeds into a test run.
 """
 from __future__ import annotations
 
-import asyncio
+import os
 import uuid
 
 import pytest
@@ -31,13 +41,16 @@ from operator_mcp.workflow.executor import (
     execute_workflow,
 )
 from operator_mcp.workflow.schema import (
+    ForEachStepConfig,
     GotoStepConfig,
     JoinStrategy,
     ParallelStepConfig,
     ShellStepConfig,
     StepDef,
+    StepResult,
     StepType,
     WorkflowDef,
+    WorkflowState,
     WorkflowStatus,
 )
 
@@ -63,6 +76,30 @@ def _clear_active_workflows():
     ACTIVE_WORKFLOWS.clear()
     yield
     ACTIVE_WORKFLOWS.clear()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_workflow_state(monkeypatch, tmp_path):
+    """Hermetic file-state fixtures for every test in this module.
+
+    The executor and recovery modules reach into ``~/.construct`` for
+    per-run file locks and checkpoint files. On a developer machine with a
+    stale lock or pre-existing checkpoint, tests that share a run_id (or
+    that lock-claim a run_id from an earlier crash) fail before reaching
+    the feature assertions. Pin both dirs to a per-test ``tmp_path`` so
+    every test starts from clean slate.
+    """
+    from operator_mcp.workflow import executor, recovery
+
+    lock_dir = tmp_path / "workflow_locks"
+    ckpt_dir = tmp_path / "workflow_checkpoints"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr(executor, "_CHECKPOINT_DIR", str(ckpt_dir))
+    monkeypatch.setattr(recovery, "_CHECKPOINT_DIR", str(ckpt_dir))
+    monkeypatch.setattr(recovery, "_RUN_LOCK_DIR", str(lock_dir))
+    yield
 
 
 # ── compute_ancestor_closure unit tests ──────────────────────────────
@@ -100,6 +137,53 @@ class TestAncestorClosure:
         # included. wrapper appears because x is implicitly a descendant.
         assert compute_ancestor_closure(wf, "x") == {"wrapper", "x"}
 
+    def test_parallel_downstream_pulls_in_all_children(self) -> None:
+        # Target is DOWNSTREAM of a parallel — closure must include every
+        # child of the wrapper. Otherwise _exec_parallel filters cfg.steps to
+        # an empty list and the join falsely reports 0/0 success.
+        wf = WorkflowDef(
+            name="par-down",
+            steps=[
+                StepDef(
+                    id="wrapper",
+                    type=StepType.PARALLEL,
+                    parallel=ParallelStepConfig(steps=["x", "y"], join=JoinStrategy.ALL),
+                ),
+                _shell_step("x", "/tmp/x"),
+                _shell_step("y", "/tmp/y"),
+                _shell_step("consumer", "/tmp/c", depends_on=["wrapper"]),
+            ],
+            checkpoint=False,
+        )
+        assert compute_ancestor_closure(wf, "consumer") == {
+            "wrapper",
+            "x",
+            "y",
+            "consumer",
+        }
+
+    def test_for_each_body_pulls_in_wrapper(self) -> None:
+        wf = WorkflowDef(
+            name="fe",
+            steps=[
+                StepDef(
+                    id="loop",
+                    type=StepType.FOR_EACH,
+                    for_each=ForEachStepConfig(
+                        variable="i",
+                        items=["1", "2"],
+                        steps=["body"],
+                    ),
+                ),
+                _shell_step("body", "/tmp/body"),
+            ],
+            checkpoint=False,
+        )
+        # Targeting the body step must pull in the wrapper. Without this the
+        # main loop's _for_each_owned exclusion would leave remaining empty
+        # and the run would falsely report COMPLETED having executed nothing.
+        assert compute_ancestor_closure(wf, "body") == {"loop", "body"}
+
     def test_diamond_target_d(self) -> None:
         wf = WorkflowDef(
             name="diamond",
@@ -119,6 +203,8 @@ class TestAncestorClosure:
             steps=[_shell_step("a", "/tmp/a")],
             checkpoint=False,
         )
+        # Empty set signals "unknown" — execute_workflow now hard-fails
+        # before falling through to full-run mode.
         assert compute_ancestor_closure(wf, "nope") == set()
 
     def test_target_is_root_returns_just_target(self) -> None:
@@ -203,6 +289,89 @@ class TestRunToStepExecution:
         assert "join" not in state.step_results
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("join", [JoinStrategy.ALL, JoinStrategy.ANY])
+    async def test_parallel_downstream_target_runs_all_children(
+        self, tmp_path, join: JoinStrategy
+    ) -> None:
+        """Run-to-step on a step DOWNSTREAM of a parallel must execute every
+        parallel child, not skip them. The previous behaviour filtered
+        cfg.steps to an empty list (closure only contained
+        ``{wrapper, consumer}``), gave the join a 0/0 success, and reported
+        COMPLETED having executed nothing — a false-green. Both `all` and
+        `any` joins must behave consistently."""
+        sentinel_x = tmp_path / "x.touched"
+        sentinel_y = tmp_path / "y.touched"
+        sentinel_c = tmp_path / "c.touched"
+        wf = WorkflowDef(
+            name=f"parallel-down-{join.value}",
+            steps=[
+                StepDef(
+                    id="wrapper",
+                    type=StepType.PARALLEL,
+                    parallel=ParallelStepConfig(steps=["x", "y"], join=join),
+                ),
+                _shell_step("x", str(sentinel_x)),
+                _shell_step("y", str(sentinel_y)),
+                _shell_step("consumer", str(sentinel_c), depends_on=["wrapper"]),
+            ],
+            checkpoint=False,
+        )
+
+        state = await execute_workflow(
+            wf, inputs={}, cwd=str(tmp_path), target_step_id="consumer"
+        )
+
+        assert state.status == WorkflowStatus.COMPLETED, state.error
+        assert sentinel_x.exists(), "parallel child 'x' MUST run"
+        assert sentinel_y.exists(), "parallel child 'y' MUST run"
+        assert sentinel_c.exists(), "consumer MUST run"
+
+    @pytest.mark.asyncio
+    async def test_for_each_body_target_runs_wrapper_and_body(self, tmp_path) -> None:
+        """Targeting a step inside a for_each body: the wrapper must run
+        (driving its iterations) and the body step must run; nothing else.
+
+        The previous behaviour silently reported COMPLETED having executed
+        nothing — the main loop pre-removes for_each-owned children from
+        ``remaining`` and the closure ``{body}`` left ``remaining`` empty
+        before the wrapper ever dispatched. Closure now pulls in the
+        wrapper, so iterations actually run.
+        """
+        sentinel_outside = tmp_path / "outside.touched"
+        body_sentinel = tmp_path / "body.touched"
+        # The body step touches a single sentinel each iteration. We just
+        # need to verify that the for_each ran (any iteration touched the
+        # file) — the exact iteration count isn't the property under test.
+        wf = WorkflowDef(
+            name="fe-body-rt",
+            steps=[
+                _shell_step("outside", str(sentinel_outside)),
+                StepDef(
+                    id="loop",
+                    type=StepType.FOR_EACH,
+                    for_each=ForEachStepConfig(
+                        variable="i",
+                        items=["1", "2", "3"],
+                        steps=["body"],
+                    ),
+                ),
+                _shell_step("body", str(body_sentinel)),
+            ],
+            checkpoint=False,
+        )
+
+        state = await execute_workflow(
+            wf, inputs={}, cwd=str(tmp_path), target_step_id="body"
+        )
+
+        assert state.status == WorkflowStatus.COMPLETED, state.error
+        assert not sentinel_outside.exists(), "unrelated step must NOT run"
+        # Critical: body actually ran (the bug was that nothing ran).
+        assert body_sentinel.exists(), "for_each body 'body' MUST run"
+        # The for_each wrapper completed.
+        assert state.step_results["loop"].status == "completed"
+
+    @pytest.mark.asyncio
     async def test_diamond_target_d_runs_all_four(self, tmp_path) -> None:
         sentinel_a = tmp_path / "a.touched"
         sentinel_b = tmp_path / "b.touched"
@@ -254,13 +423,11 @@ class TestRunToStepExecution:
 
     @pytest.mark.asyncio
     async def test_unknown_target_returns_classified_validation_error(
-        self, tmp_path, monkeypatch
+        self, tmp_path
     ) -> None:
         """The MCP-tool layer must reject unknown target step ids with a
         classified ``unknown_target_step`` error rather than letting the
         executor silently no-op."""
-        # Build an inline workflow_def so tool_run_workflow can resolve it
-        # without hitting the loader / Kumiho.
         wf_dict = {
             "name": "unknown-target-rt",
             "steps": [
@@ -282,26 +449,45 @@ class TestRunToStepExecution:
                 "target_step_id": "does_not_exist",
             }
         )
-        # classified_error returns a dict with {error, error_code,
-        # error_category, retryable}. The keys are *prefixed* — see
-        # operator_mcp.failure_classification.classified_error.
         assert "error" in result, f"expected classified error, got {result}"
         assert result.get("error_code") == "unknown_target_step", result
         assert result.get("error_category") == "validation_error", result
 
     @pytest.mark.asyncio
+    async def test_unknown_target_in_executor_directly_fails_run(
+        self, tmp_path
+    ) -> None:
+        """Defence in depth — the gateway/poller path passes target_step_id
+        through Kumiho metadata and reaches execute_workflow without going
+        through tool_run_workflow's validation. The executor itself MUST
+        fail the run with ``unknown_target_step`` rather than silently
+        executing the entire workflow."""
+        sentinel_a = tmp_path / "a.touched"
+        sentinel_b = tmp_path / "b.touched"
+        wf = WorkflowDef(
+            name="executor-direct-unknown",
+            steps=[
+                _shell_step("a", str(sentinel_a)),
+                _shell_step("b", str(sentinel_b), depends_on=["a"]),
+            ],
+            checkpoint=False,
+        )
+
+        state = await execute_workflow(
+            wf, inputs={}, cwd=str(tmp_path), target_step_id="bogus"
+        )
+
+        assert state.status == WorkflowStatus.FAILED
+        assert "unknown_target_step" in state.error
+        # Critical: nothing should have actually run.
+        assert not sentinel_a.exists()
+        assert not sentinel_b.exists()
+
+    @pytest.mark.asyncio
     async def test_goto_target_outside_closure_is_skipped(self, tmp_path) -> None:
         """A goto step whose target is outside the run_to closure must NOT
-        re-trigger the loop (otherwise we'd re-run already-completed
-        ancestors or jump into territory we never planned to execute).
-        Downstream step inside the closure should still run."""
-        # Layout:
-        #   setup → loop_check (goto target=setup) → final
-        # Target = final. closure = {setup, loop_check, final}.
-        # goto.target = "setup" which IS in closure (since it's an ancestor).
-        # So we need a more nuanced layout where the goto target is OUTSIDE
-        # closure. Use: setup → branch (goto target=elsewhere) → final, with
-        # a side-step "elsewhere" not depended on by final.
+        re-trigger the loop. Downstream step inside the closure should still
+        run."""
         sentinel_setup = tmp_path / "setup.touched"
         sentinel_final = tmp_path / "final.touched"
         sentinel_else = tmp_path / "elsewhere.touched"
@@ -325,14 +511,90 @@ class TestRunToStepExecution:
             wf, inputs={}, cwd=str(tmp_path), target_step_id="final"
         )
 
-        # No exception, run completed cleanly.
         assert state.status == WorkflowStatus.COMPLETED, state.error
         assert sentinel_setup.exists()
         assert sentinel_final.exists(), "final must run after the goto no-op"
-        # `elsewhere` is OUTSIDE closure — it should never have executed,
-        # neither as a normal step nor via the goto jump.
         assert not sentinel_else.exists(), (
             "goto target outside closure must be skipped, not followed"
         )
-        # branch itself ran (it's an ancestor of final via depends_on).
         assert state.step_results["branch"].status == "completed"
+
+
+# ── Recovery / resume ────────────────────────────────────────────────
+
+
+class TestRunToStepRecovery:
+    @pytest.mark.asyncio
+    async def test_resume_honours_persisted_target_step_id(self, tmp_path) -> None:
+        """A run-to-here that pauses (or simulates a checkpoint+resume) must
+        preserve its scoping. Build a synthetic resume: pre-populate ``a``'s
+        result and call execute_workflow with resume_state — without target
+        propagation the resumed run would treat closure as empty (full run)
+        and execute ``c``."""
+        sentinel_a = tmp_path / "a.touched"
+        sentinel_b = tmp_path / "b.touched"
+        sentinel_c = tmp_path / "c.touched"
+        wf = WorkflowDef(
+            name="resume-rt",
+            steps=[
+                _shell_step("a", str(sentinel_a)),
+                _shell_step("b", str(sentinel_b), depends_on=["a"]),
+                _shell_step("c", str(sentinel_c), depends_on=["b"]),
+            ],
+            checkpoint=False,
+        )
+
+        # Simulate "a was already done before the pause", target was "b".
+        run_id = str(uuid.uuid4())
+        resumed_state = WorkflowState(
+            workflow_name=wf.name,
+            run_id=run_id,
+            status=WorkflowStatus.RUNNING,
+            inputs={},
+            step_results={
+                "a": StepResult(step_id="a", status="completed", output="ok"),
+            },
+            target_step_id="b",
+        )
+        # Touch the sentinel so we can verify ``a`` did NOT re-run.
+        sentinel_a.write_text("pre-existing")
+
+        final_state = await execute_workflow(
+            wf,
+            inputs={},
+            cwd=str(tmp_path),
+            run_id=run_id,
+            resume_state=resumed_state,
+        )
+
+        assert final_state.status == WorkflowStatus.COMPLETED, final_state.error
+        # 'b' must have run (the target).
+        assert sentinel_b.exists(), "target 'b' must have run on resume"
+        # 'c' is downstream of the target → out of closure → must NOT run.
+        assert not sentinel_c.exists(), "downstream 'c' must NOT run on resume"
+        assert "c" not in final_state.step_results
+        # target_step_id should still be persisted on the state.
+        assert final_state.target_step_id == "b"
+
+
+# ── Schema-level validation ──────────────────────────────────────────
+
+
+class TestSchemaValidation:
+    def test_duplicate_step_ids_rejected(self) -> None:
+        """Two steps sharing an id is always a bug — the frontend
+        ``new Map(tasks.map(...))`` keeps the last while the backend's
+        ``step_by_id`` returns the first, so closures disagree. Reject at
+        parse time."""
+        from pydantic import ValidationError as PydanticValidationError
+
+        with pytest.raises(PydanticValidationError) as exc_info:
+            WorkflowDef(
+                name="dup-ids",
+                steps=[
+                    _shell_step("a", "/tmp/a"),
+                    _shell_step("a", "/tmp/a2"),  # duplicate
+                ],
+                checkpoint=False,
+            )
+        assert "Duplicate step id" in str(exc_info.value)

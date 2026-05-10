@@ -513,3 +513,61 @@ steps:
   const closure = computeAncestorClosure(tasks, 'finish');
   assert.deepEqual(new Set(closure), new Set(['setup', 'refine', 'finish']));
 });
+
+test('run_to closure: target downstream of parallel pulls in ALL parallel children', () => {
+  // Codex finding: target=consumer would previously give closure
+  // ={wrapper, consumer}. _exec_parallel filtered cfg.steps against
+  // closure → empty list → join.all "0/0 success" false-green.
+  // Fix: when a wrapper is reached via an explicit consumer dependency,
+  // pull every child in.
+  const yaml = `
+steps:
+  - id: wrapper
+    type: parallel
+    parallel:
+      steps: [x, y]
+      join: all
+  - id: x
+    type: shell
+    shell:
+      command: "echo x"
+  - id: y
+    type: shell
+    shell:
+      command: "echo y"
+  - id: consumer
+    type: shell
+    depends_on: [wrapper]
+    shell:
+      command: "echo consumer"
+`;
+  const tasks = parseWorkflowYaml(yaml);
+  const closure = computeAncestorClosure(tasks, 'consumer');
+  assert.deepEqual(
+    new Set(closure),
+    new Set(['wrapper', 'x', 'y', 'consumer']),
+  );
+});
+
+test('run_to closure: target inside for_each body pulls in the wrapper', () => {
+  // Codex finding: target=body would previously give closure={body}.
+  // The main loop pre-removes for_each-owned steps from `remaining`, so
+  // remaining became empty → COMPLETED having executed nothing.
+  // Fix: a for_each child implicitly depends on its wrapper.
+  const yaml = `
+steps:
+  - id: loop
+    type: for_each
+    for_each:
+      variable: i
+      items: ["1", "2"]
+      steps: [body]
+  - id: body
+    type: shell
+    shell:
+      command: "echo body"
+`;
+  const tasks = parseWorkflowYaml(yaml);
+  const closure = computeAncestorClosure(tasks, 'body');
+  assert.deepEqual(new Set(closure), new Set(['loop', 'body']));
+});

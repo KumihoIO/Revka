@@ -1833,7 +1833,12 @@ function WorkflowEditorInner({
             dagContext={dagContext}
             onRunToHere={handleRunToHere}
             computeRunToHereClosure={computeRunToHereClosure}
-            runToHereDisabled={!workflow?.name && !name}
+            runToHereDisabled={(!workflow?.name && !name) || dirty}
+            runToHereDisabledReason={
+              dirty
+                ? 'Save your edits first — Run to here uses the saved revision.'
+                : undefined
+            }
           />
         ) : (
           <WorkflowSettingsPanel meta={workflowMeta} setMeta={setWorkflowMeta} />

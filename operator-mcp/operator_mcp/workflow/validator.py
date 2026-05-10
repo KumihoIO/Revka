@@ -57,12 +57,17 @@ class ValidationError:
 
 class ValidationResult:
     """Aggregate validation outcome."""
-    __slots__ = ("errors", "warnings", "execution_order")
+    __slots__ = ("errors", "warnings", "execution_order", "all_step_ids")
 
     def __init__(self) -> None:
         self.errors: list[ValidationError] = []
         self.warnings: list[ValidationError] = []
         self.execution_order: list[str] = []
+        # All step ids in definition order — superset of execution_order which
+        # excludes parallel/for_each-owned children. Surfaced so the gateway
+        # can validate caller-supplied target_step_id against the full step
+        # universe (including body steps inside parallel/for_each wrappers).
+        self.all_step_ids: list[str] = []
 
     @property
     def valid(self) -> bool:
@@ -80,6 +85,7 @@ class ValidationResult:
             "errors": [e.to_dict() for e in self.errors],
             "warnings": [w.to_dict() for w in self.warnings],
             "execution_order": self.execution_order,
+            "all_step_ids": self.all_step_ids,
         }
 
 
@@ -521,6 +527,10 @@ def validate_workflow(wf: WorkflowDef) -> ValidationResult:
     Returns a ValidationResult with errors, warnings, and execution order.
     """
     result = ValidationResult()
+    # Capture every step id (including parallel/for_each-owned children) for
+    # the gateway's run-to-step preflight. Done before any pass that could
+    # short-circuit on errors so the list is always populated.
+    result.all_step_ids = [s.id for s in wf.steps]
 
     # Pass 1: duplicate IDs
     valid_ids = _check_duplicate_ids(wf, result)

@@ -122,6 +122,9 @@ interface Props {
   /** Disable the "Run to here" button (e.g. while a run is in flight or
    *  the editor has unsaved changes). */
   runToHereDisabled?: boolean;
+  /** Tooltip / aria text explaining WHY the button is disabled — surfaced
+   *  on hover so users understand they need to save first. */
+  runToHereDisabledReason?: string;
   /** Compute the ancestor closure of a task id for the popover preview.
    *  The owner injects this so the panel doesn't need direct access to
    *  the task list. Returns ids in editor order, target last. */
@@ -138,6 +141,7 @@ export default function StepConfigPanel({
   dagContext,
   onRunToHere,
   runToHereDisabled = false,
+  runToHereDisabledReason,
   computeRunToHereClosure,
 }: Props) {
   const dagStepIds = dagContext?.stepIds ?? [];
@@ -350,7 +354,11 @@ export default function StepConfigPanel({
                 type="button"
                 onClick={() => setRunToHereOpen((v) => !v)}
                 disabled={runToHereDisabled}
-                title="Run every ancestor of this step plus the step itself, then stop"
+                title={
+                  runToHereDisabled && runToHereDisabledReason
+                    ? runToHereDisabledReason
+                    : 'Run every ancestor of this step plus the step itself, then stop'
+                }
                 style={{
                   display: 'inline-flex',
                   alignItems: 'center',

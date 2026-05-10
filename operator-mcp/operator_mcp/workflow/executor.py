@@ -2078,14 +2078,16 @@ async def _exec_for_each(
     if not cfg:
         return StepResult(step_id=step.id, status="failed", error="for_each config missing")
 
-    # Run-to-step: a partial loop body is meaningless. If any body step is
-    # outside the closure, skip the whole for_each (matches the design call:
-    # we never run a fragmentary iteration).
+    # Run-to-step: ``compute_ancestor_closure`` pulls every body step into
+    # scope when the wrapper is in scope, so this guard is normally a no-op.
+    # Keep it as a defensive check: if closure construction has been bypassed
+    # and partial bodies leak in, we'd rather skip the loop than execute a
+    # fragmentary iteration.
     if state.run_to_closure:
         if not all(sub_id in state.run_to_closure for sub_id in cfg.steps):
             _log(
                 f"workflow: run_to skipping for_each '{step.id}' — "
-                f"body steps not all in closure"
+                f"body steps not all in closure (defensive)"
             )
             return StepResult(
                 step_id=step.id, status="skipped",
@@ -2864,27 +2866,47 @@ def _check_cost_guard(
 def compute_ancestor_closure(wf: WorkflowDef, target_step_id: str) -> set[str]:
     """Return the transitive ancestor closure of ``target_step_id`` (inclusive).
 
-    Walks ``depends_on`` edges via BFS. Treats ``parallel.steps`` as descendants
-    of the parallel wrapper — i.e. a parallel-child implicitly depends on its
-    wrapper, so reaching the child means we must also include the wrapper. This
-    matches the visual mental model in the editor: the wrapper "feeds" its
-    children.
+    Walks ``depends_on`` edges via BFS, applying these wrapper rules so a
+    "run to here" never silently no-ops or runs against a fragmentary state:
 
-    The returned set always includes ``target_step_id`` itself, even when the
-    target has no ancestors at all.
+      - **Parallel/for_each child → wrapper**: a body step implicitly depends
+        on its wrapper. Reaching the child pulls the wrapper in (and the
+        wrapper's own depends_on chain). Sibling children are NOT pulled in
+        — the user picked a single branch.
+      - **Downstream consumer → wrapper → all children**: when a step in
+        closure depends_on a wrapper directly (or via the implicit child
+        rule recursively), that wrapper's complete child list is pulled
+        in. Otherwise the join sees zero children and the run reports a
+        false-green "0 successful out of 0 expected" (target downstream of
+        a parallel scenario from the codex review).
+
+    Returns an empty set when the target id doesn't exist in ``wf`` — callers
+    must check this explicitly (``execute_workflow`` does and fails the run).
+
+    The returned set always includes ``target_step_id`` itself when the target
+    is valid, even when the target has no ancestors at all.
     """
     closure: set[str] = set()
     if not wf.step_by_id(target_step_id):
         return closure
 
-    # Build a reverse map: child_id -> set of parallel wrappers that own it.
-    # A parallel-child inherits the wrapper as an implicit ancestor for the
-    # purposes of run-to-step (see docstring).
-    parent_parallels: dict[str, set[str]] = {}
+    # Build reverse map: child_id -> wrappers that own it. Used for the
+    # implicit "child depends on wrapper" rule.
+    parent_wrappers: dict[str, set[str]] = {}
     for s in wf.steps:
         if s.type == StepType.PARALLEL and s.parallel:
             for child_id in s.parallel.steps:
-                parent_parallels.setdefault(child_id, set()).add(s.id)
+                parent_wrappers.setdefault(child_id, set()).add(s.id)
+        elif s.type == StepType.FOR_EACH and s.for_each:
+            for child_id in s.for_each.steps:
+                parent_wrappers.setdefault(child_id, set()).add(s.id)
+
+    # Track wrappers that were pulled in *because something explicitly
+    # depends_on them* (not just because we reached one of their children
+    # via the implicit child→wrapper rule). Only these wrappers expand
+    # their child list — a target that IS a wrapper child shouldn't drag
+    # in its siblings.
+    consumed_wrappers: set[str] = set()
 
     # BFS up the dependency DAG.
     queue: list[str] = [target_step_id]
@@ -2897,11 +2919,62 @@ def compute_ancestor_closure(wf: WorkflowDef, target_step_id: str) -> set[str]:
         if not step:
             continue
         for dep in step.depends_on:
+            dep_step = wf.step_by_id(dep)
+            if dep_step and dep_step.type in (StepType.PARALLEL, StepType.FOR_EACH):
+                # Reached this wrapper via an explicit consumer dependency
+                # — record so the post-pass expands its children.
+                consumed_wrappers.add(dep)
             if dep not in closure:
                 queue.append(dep)
-        for wrapper in parent_parallels.get(sid, ()):
+        for wrapper in parent_wrappers.get(sid, ()):
             if wrapper not in closure:
                 queue.append(wrapper)
+
+    # Post-pass: for each wrapper reached via an explicit consumer, pull in
+    # every body step. Re-feed through the BFS so any new ancestors of those
+    # children come along too.
+    expand_queue: list[str] = []
+    for wrapper_id in consumed_wrappers:
+        wstep = wf.step_by_id(wrapper_id)
+        if not wstep:
+            continue
+        if wstep.type == StepType.PARALLEL and wstep.parallel:
+            for child_id in wstep.parallel.steps:
+                if child_id not in closure:
+                    expand_queue.append(child_id)
+        elif wstep.type == StepType.FOR_EACH and wstep.for_each:
+            for child_id in wstep.for_each.steps:
+                if child_id not in closure:
+                    expand_queue.append(child_id)
+
+    while expand_queue:
+        sid = expand_queue.pop()
+        if sid in closure:
+            continue
+        closure.add(sid)
+        step = wf.step_by_id(sid)
+        if not step:
+            continue
+        for dep in step.depends_on:
+            dep_step = wf.step_by_id(dep)
+            if dep_step and dep_step.type in (StepType.PARALLEL, StepType.FOR_EACH):
+                # If a child has its own depends_on chain that goes through
+                # another wrapper, that wrapper too must expand fully.
+                if dep not in consumed_wrappers:
+                    consumed_wrappers.add(dep)
+                    if dep_step.type == StepType.PARALLEL and dep_step.parallel:
+                        for cid in dep_step.parallel.steps:
+                            if cid not in closure:
+                                expand_queue.append(cid)
+                    elif dep_step.type == StepType.FOR_EACH and dep_step.for_each:
+                        for cid in dep_step.for_each.steps:
+                            if cid not in closure:
+                                expand_queue.append(cid)
+            if dep not in closure:
+                expand_queue.append(dep)
+        for wrapper in parent_wrappers.get(sid, ()):
+            if wrapper not in closure:
+                expand_queue.append(wrapper)
     return closure
 
 
@@ -2953,6 +3026,23 @@ async def execute_workflow(
         )
         return state
 
+    # Run-to-step: hard-fail unknown target ids here so the executor never
+    # silently runs the entire workflow when the gateway/poller passes a
+    # stale or typo'd step id (an empty closure used to fall through to
+    # full-run mode — a "run 3 steps, burned 25" footgun).
+    effective_target_step_id: str | None = (
+        target_step_id if target_step_id else (resume_state.target_step_id if resume_state else None)
+    )
+    if effective_target_step_id and not wf.step_by_id(effective_target_step_id):
+        return WorkflowState(
+            workflow_name=wf.name,
+            run_id=run_id or str(uuid.uuid4()),
+            status=WorkflowStatus.FAILED,
+            error=f"unknown_target_step: '{effective_target_step_id}'",
+            workflow_item_kref=workflow_item_kref,
+            workflow_revision_kref=workflow_revision_kref,
+        )
+
     # Propagate the workflow-level default_timeout to any step config that
     # has a `timeout` field but didn't set one explicitly. Without this the
     # workflow-level setting is dead config and per-step timeouts silently
@@ -2986,6 +3076,13 @@ async def execute_workflow(
             state.workflow_item_kref = workflow_item_kref
         if not state.workflow_revision_kref and workflow_revision_kref:
             state.workflow_revision_kref = workflow_revision_kref
+        # If the caller passed an explicit target_step_id (e.g. recovery
+        # propagating the persisted value), refresh state so the closure is
+        # rebuilt from it. Otherwise fall back to whatever the persisted
+        # state recorded — the persisted value IS the source of truth across
+        # resume.
+        if target_step_id:
+            state.target_step_id = target_step_id
     else:
         # Merge declared input defaults with caller-provided values.
         # Caller values win; defaults fill in anything not explicitly passed.
@@ -3002,6 +3099,7 @@ async def execute_workflow(
             trigger_context=trigger_context or {},
             workflow_item_kref=workflow_item_kref,
             workflow_revision_kref=workflow_revision_kref,
+            target_step_id=target_step_id or None,
         )
 
     # Claim a per-run file lock BEFORE registering in ACTIVE_WORKFLOWS.
@@ -3067,11 +3165,18 @@ async def execute_workflow(
         # state.run_to_closure so step handlers (parallel, for_each) can read
         # it without having to thread an extra parameter through every
         # dispatch path.
+        #
+        # Source of truth is ``state.target_step_id`` (persisted across
+        # checkpoint+resume). The kwarg-passed ``target_step_id`` was already
+        # written into state above; reading from state here means a recovered
+        # run honours its original target even when the resumed
+        # ``execute_workflow`` call doesn't repeat the kwarg.
         run_to_closure: set[str] = set()
-        if target_step_id:
-            run_to_closure = compute_ancestor_closure(wf, target_step_id)
+        active_target = state.target_step_id
+        if active_target:
+            run_to_closure = compute_ancestor_closure(wf, active_target)
             _log(
-                f"workflow: run_to target='{target_step_id}' "
+                f"workflow: run_to target='{active_target}' "
                 f"closure={sorted(run_to_closure)}"
             )
         state.run_to_closure = run_to_closure
@@ -3335,11 +3440,11 @@ async def execute_workflow(
             # completed. We don't walk descendants in this mode — the run is
             # done. Place this BEFORE the post-wave checkpoint so the next
             # wave never starts spinning up steps we don't intend to run.
-            if target_step_id and target_step_id in state.step_results:
-                tgt_result = state.step_results[target_step_id]
+            if active_target and active_target in state.step_results:
+                tgt_result = state.step_results[active_target]
                 if tgt_result.status in ("completed", "skipped"):
                     _log(
-                        f"workflow: run_to target '{target_step_id}' reached "
+                        f"workflow: run_to target '{active_target}' reached "
                         f"({tgt_result.status}); terminating"
                     )
                     remaining.clear()
@@ -3545,9 +3650,21 @@ async def _exec_parallel(
     # aren't ancestors of the target should NOT run when the user picks one
     # branch via "run to here". The join is computed against the filtered
     # set so a `join: all` parallel with one selected child still passes.
+    #
+    # If ALL listed children are in the closure (typical for a target
+    # downstream of the parallel — compute_ancestor_closure pulls them all
+    # back in), don't filter at all. Filtering an empty subset would give us
+    # an empty `sub_ids` and the join would falsely report "0/0 success".
     if state.run_to_closure:
-        sub_ids = [s for s in cfg.steps if s in state.run_to_closure]
-        if len(sub_ids) != len(cfg.steps):
+        in_closure = [s for s in cfg.steps if s in state.run_to_closure]
+        if len(in_closure) == len(cfg.steps) or not in_closure:
+            # Either everything is in scope (run normally) or nothing is
+            # (would mean the parallel itself isn't in closure — but the
+            # main loop wouldn't have dispatched us in that case). Either
+            # way, run the canonical list.
+            sub_ids = list(cfg.steps)
+        else:
+            sub_ids = in_closure
             _log(
                 f"workflow: run_to parallel '{step.id}' filtered "
                 f"{len(cfg.steps) - len(sub_ids)} non-closure children"
