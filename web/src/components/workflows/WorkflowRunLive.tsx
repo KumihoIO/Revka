@@ -32,6 +32,7 @@ import { fetchWorkflowRun, fetchAgentActivity, cancelWorkflowRun, ApiError } fro
 import type { AgentActivity, AgentToolCall } from '@/lib/api';
 import GroupChatTranscript from './GroupChatTranscript';
 import ApprovalPanel from './ApprovalPanel';
+import StepDetailPanel from './StepDetailPanel';
 
 // ---------------------------------------------------------------------------
 // Props
@@ -225,12 +226,16 @@ function RunLogToolCard({ entry }: { entry: AgentToolCall }) {
 function StepEventPanel({
   runId,
   stepId,
+  stepType,
   events,
   stepInfo,
   onClose,
 }: {
   runId: string;
   stepId: string;
+  /** Canonical step type from the YAML — drives the per-type detail panel
+   *  for non-agent steps. Empty string falls back to a generic JSON view. */
+  stepType: string;
   events: AgentChannelEvent[];
   stepInfo?: StepRunInfo;
   onClose: () => void;
@@ -415,35 +420,14 @@ function StepEventPanel({
             rejectKeywords={stepInfo.reject_keywords}
           />
         ) : !agentId ? (
-          /* Non-agent step (output, notify, shell) — no WS events, show REST status */
-          <div className="flex flex-col gap-3">
-            <div
-              className="rounded-lg border px-3 py-2"
-              style={{ borderColor: 'var(--pc-border)', background: 'var(--pc-bg-elevated)' }}
-            >
-              <div className="flex items-center gap-2 text-[11px]">
-                {status === 'completed' ? (
-                  <CheckCircle2 className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--construct-status-success)' }} />
-                ) : status === 'failed' ? (
-                  <AlertTriangle className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--construct-status-danger)' }} />
-                ) : status === 'running' ? (
-                  <Activity className="h-3.5 w-3.5 shrink-0 animate-spin" style={{ color: 'var(--construct-signal-live)' }} />
-                ) : (
-                  <Clock className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--pc-text-muted)' }} />
-                )}
-                <span className="font-medium" style={{ color: statusColor }}>
-                  {status === 'pending' ? 'Waiting for dependencies...'
-                    : status === 'running' ? 'Executing...'
-                    : status === 'completed' ? 'Step completed'
-                    : status === 'failed' ? 'Step failed'
-                    : `Status: ${status}`}
-                </span>
-              </div>
-            </div>
-            <div className="text-[10px]" style={{ color: 'var(--pc-text-faint)' }}>
-              This step runs without an agent — no tool call detail available.
-            </div>
-          </div>
+          /* Non-agent step (resolve, shell, output, notify, ...) — render
+           * the per-step-type detail panel built on input_data/output_data
+           * captured by the executor. Replaces the legacy "no tool detail
+           * available" dead end. */
+          <StepDetailPanel
+            stepType={stepType}
+            stepInfo={stepInfo ?? { status: status as StepRunInfo['status'] }}
+          />
         ) : activeTab === 'tools' ? (
           activityLoading ? (
             <div className="flex items-center justify-center h-32" style={{ color: 'var(--pc-text-muted)' }}>
@@ -713,6 +697,18 @@ export default function WorkflowRunLive({
           if (detail.steps && detail.steps.length > 0) {
             const results: Record<string, StepRunInfo> = {};
             for (const step of detail.steps) {
+              // PR #220 changed `output_data` to a generic Record<string, unknown>
+              // so the run-view UI can type-switch per step kind. The legacy
+              // approval-shape access path still works because the wire format
+              // is identical — `awaiting_approval` / `approve_keywords` /
+              // `reject_keywords` live at the same top-level keys.
+              const od = step.output_data as Record<string, unknown> | undefined;
+              const approveKw = Array.isArray(od?.approve_keywords)
+                ? (od!.approve_keywords as unknown[]).map(String)
+                : undefined;
+              const rejectKw = Array.isArray(od?.reject_keywords)
+                ? (od!.reject_keywords as unknown[]).map(String)
+                : undefined;
               results[step.step_id] = {
                 status: (step.status as StepRunInfo['status']) || 'pending',
                 agent_id: step.agent_id || undefined,
@@ -721,10 +717,14 @@ export default function WorkflowRunLive({
                 template_name: step.template_name || undefined,
                 skills: step.skills?.length ? step.skills : undefined,
                 transcript: step.transcript?.length ? step.transcript : undefined,
-                awaiting_approval: step.output_data?.awaiting_approval || undefined,
-                approval_message: step.output_data?.approval_message || undefined,
-                approve_keywords: step.output_data?.approve_keywords?.length ? step.output_data.approve_keywords : undefined,
-                reject_keywords: step.output_data?.reject_keywords?.length ? step.output_data.reject_keywords : undefined,
+                awaiting_approval: typeof od?.awaiting_approval === 'boolean' ? (od.awaiting_approval as boolean) : undefined,
+                approval_message: typeof od?.approval_message === 'string' ? (od.approval_message as string) : undefined,
+                approve_keywords: approveKw && approveKw.length > 0 ? approveKw : undefined,
+                reject_keywords: rejectKw && rejectKw.length > 0 ? rejectKw : undefined,
+                input_data: step.input_data || undefined,
+                output_data: step.output_data || undefined,
+                output_preview: step.output_preview || undefined,
+                error: step.error || undefined,
               };
             }
             setInitialStepResults(results);
@@ -891,6 +891,21 @@ export default function WorkflowRunLive({
     return Math.max(yamlCount, apiCount);
   }, [definition, stepResults]);
 
+  // Step-id → canonical step type, derived from the YAML definition. The
+  // run-view detail panel switches on this to pick the right per-type
+  // sub-renderer (resolve, shell, output, ...).
+  const stepTypes = useMemo(() => {
+    const map: Record<string, string> = {};
+    try {
+      for (const t of parseWorkflowYaml(definition)) {
+        map[t.id] = (t.type || '').toLowerCase();
+      }
+    } catch {
+      /* parse errors fall through to empty map → generic JSON view */
+    }
+    return map;
+  }, [definition]);
+
   return (
     <div className="flex flex-col h-full animate-fade-in">
       {/* Top bar */}
@@ -943,6 +958,7 @@ export default function WorkflowRunLive({
           <StepEventPanel
             runId={runId}
             stepId={selectedStep}
+            stepType={stepTypes[selectedStep] ?? ''}
             events={selectedStepEvents}
             stepInfo={stepResults[selectedStep]}
             onClose={() => setSelectedStep(null)}
