@@ -114,6 +114,76 @@ export default function WorkflowEditor(props: WorkflowEditorProps) {
 }
 
 // ---------------------------------------------------------------------------
+// Edge auto-insert helpers
+// ---------------------------------------------------------------------------
+
+// Map step type → the TaskNodeData field that holds the user-facing primary
+// text (the prompt / command / template / message). When the user wires an
+// edge into one of these step types we auto-append `${source.output}` so the
+// canvas action implies the matching `${ref}` interpolation in the target's
+// text — without this, the edge alone yields a `depends_on` that PR #182's
+// validator rejects as unused. Step types not in this map (parallel, goto,
+// tag, deprecate, human_approval, human_input, for_each, …) have no obvious
+// text field; the edge alone is enough.
+const STEP_PRIMARY_TEXT_FIELD: Record<string, keyof TaskNodeData> = {
+  agent: 'prompt',
+  shell: 'shellCommand',
+  output: 'outputTemplate',
+  conditional: 'condition',
+  notify: 'notifyMessage',
+  email: 'emailBody',
+  python: 'pythonCode',
+};
+
+// All TaskNodeData text fields that may carry `${step.<field>}` references —
+// mirrors INTERPOLATION_TEXT_FIELDS in yamlSync.ts (camelCase here, snake in
+// the TaskDefinition shape). Used to detect whether the target already
+// references the source so we don't pollute with a duplicate.
+const TASK_INTERPOLATION_FIELDS: ReadonlyArray<keyof TaskNodeData> = [
+  'prompt',
+  'shellCommand',
+  'pythonCode',
+  'pythonArgs',
+  'pythonScript',
+  'emailBody',
+  'emailBodyHtml',
+  'emailSubject',
+  'emailTo',
+  'emailCc',
+  'emailBcc',
+  'imagePrompt',
+  'outputTemplate',
+  'condition',
+  'gotoCondition',
+  'humanInputMessage',
+  'humanApprovalMessage',
+  'notifyMessage',
+  'notifyTitle',
+  'groupChatTopic',
+  'supervisorTask',
+  'a2aMessage',
+  'mapReduceTask',
+  'handoffReason',
+];
+
+// Same shape as yamlSync's STEP_REF_REGEX. Inlined so we don't import a
+// non-exported regex (and so this stays a frontend-only change).
+const EDITOR_STEP_REF_REGEX = /\$\{([a-zA-Z_][a-zA-Z0-9_-]*)(?:\.[a-zA-Z_][a-zA-Z0-9_.-]*)?\}/g;
+
+function targetAlreadyReferencesSource(data: TaskNodeData, sourceId: string): boolean {
+  for (const field of TASK_INTERPOLATION_FIELDS) {
+    const value = data[field];
+    if (typeof value !== 'string' || !value) continue;
+    EDITOR_STEP_REF_REGEX.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = EDITOR_STEP_REF_REGEX.exec(value)) !== null) {
+      if (m[1] === sourceId) return true;
+    }
+  }
+  return false;
+}
+
+// ---------------------------------------------------------------------------
 // Time helpers
 // ---------------------------------------------------------------------------
 
@@ -685,15 +755,35 @@ function WorkflowEditorInner({
           : {}),
       };
       setEdges((eds) => [...eds, newEdge]);
-      if (!isBranch) {
-        setNodes((nds) =>
-          nds.map((n) =>
-            n.id === connection.target
-              ? { ...n, data: { ...n.data, dependencyCount: (n.data as TaskNodeData).dependencyCount + 1 } }
-              : n,
-          ),
-        );
-      }
+
+      // Auto-insert `${source.output}` into the target's primary text field so
+      // the wired edge implies the matching interpolation. Skip when source ===
+      // target (self-loop), when the edge is a conditional branch (true/false
+      // handles route control flow, not data), when the target type has no
+      // primary text field, or when the target already references this source
+      // somewhere.
+      const sourceId = connection.source;
+      const targetId = connection.target;
+      setNodes((nds) =>
+        nds.map((n) => {
+          if (n.id !== targetId) return n;
+          const data = n.data as TaskNodeData;
+          let nextData: TaskNodeData = data;
+          if (!isBranch) {
+            nextData = { ...nextData, dependencyCount: nextData.dependencyCount + 1 };
+          }
+          if (sourceId !== targetId && !isBranch) {
+            const primaryField = STEP_PRIMARY_TEXT_FIELD[nextData.type];
+            if (primaryField && !targetAlreadyReferencesSource(nextData, sourceId)) {
+              const current = (nextData[primaryField] as string | undefined) ?? '';
+              const ref = `\${${sourceId}.output}`;
+              const updated = current.length === 0 ? ref : `${current}\n\n${ref}`;
+              nextData = { ...nextData, [primaryField]: updated };
+            }
+          }
+          return nextData === data ? n : { ...n, data: nextData };
+        }),
+      );
     },
     [edges, setEdges, setNodes],
   );
