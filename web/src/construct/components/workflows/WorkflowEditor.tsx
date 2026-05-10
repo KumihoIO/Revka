@@ -1028,8 +1028,11 @@ function WorkflowEditorInner({
       taskIdCounter.current = tasks.length;
       setShowAdvanced(false);
       setError(null);
-    } catch {
-      setError('Failed to parse YAML. Check syntax.');
+    } catch (err) {
+      // js-yaml throws on malformed YAML — surface the parser's message so
+      // users can fix indentation / quoting issues without opening devtools.
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(`Invalid YAML: ${msg}`);
     }
   }, [yamlText, setNodes, setEdges]);
 
