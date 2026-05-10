@@ -589,16 +589,42 @@ async def resolve_entity(
         default=lambda: f"{_project()}/WorkflowOutputs",
     )
     items = await KUMIHO_SDK.list_items(context)
+    _log(f"resolve_entity: list_items({context}) → {len(items)} items")
 
     # Filter by kind
     matched = [it for it in items if it.get("kind") == kind]
+    _log(f"resolve_entity: kind={kind} → {len(matched)} items")
 
-    # Filter by name pattern if provided
+    # Filter by name pattern if provided. Kumiho stores item names as
+    # ``<base>.<kind>`` internally, so a user pattern like
+    # ``zeroclaw-repo`` (kind ``research``) wouldn't match the stored
+    # ``zeroclaw-repo.research`` under raw fnmatch. We strip the
+    # ``.<kind>`` suffix (only when it matches the item's own kind, to
+    # avoid eating arbitrary trailing-dot segments) before matching, and
+    # also accept the raw stored name for users who include the suffix.
     if name_pattern:
         import fnmatch
-        matched = [it for it in matched if fnmatch.fnmatch(it.get("name", ""), name_pattern)]
+
+        def _base_name(it: dict[str, Any]) -> str:
+            name = it.get("name", "")
+            it_kind = it.get("kind", "")
+            suffix = f".{it_kind}"
+            if it_kind and name.endswith(suffix):
+                return name[: -len(suffix)]
+            return name
+
+        matched = [
+            it for it in matched
+            if fnmatch.fnmatch(_base_name(it), name_pattern)
+            or fnmatch.fnmatch(it.get("name", ""), name_pattern)
+        ]
+        _log(f"resolve_entity: name_pattern={name_pattern!r} → {len(matched)} items")
 
     if not matched:
+        _log(
+            f"resolve_entity: NO MATCH — kind={kind} tag={tag} "
+            f"name_pattern={name_pattern!r} space={context}"
+        )
         return None
 
     if mode == "latest":
@@ -623,7 +649,20 @@ async def resolve_entity(
                     if k not in rev_meta:
                         rev_meta[k] = v
                 rev["metadata"] = rev_meta
+                _log(
+                    f"resolve_entity: matched {item.get('name')} "
+                    f"kref={item_kref} (rev tag={tag!r})"
+                )
                 return rev
+            else:
+                _log(
+                    f"resolve_entity: item {item.get('name')} kref={item_kref} "
+                    f"has no revision tagged {tag!r}"
+                )
+        _log(
+            f"resolve_entity: NO MATCH — kind={kind} tag={tag} "
+            f"name_pattern={name_pattern!r} space={context}"
+        )
         return None
     else:  # all
         results = []
