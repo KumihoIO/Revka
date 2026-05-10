@@ -222,6 +222,8 @@ function defaultNodeData(id: string, overrides?: Partial<TaskNodeData>): TaskNod
     paramCount: 0,
     dependencyCount: 0,
     condition: '',
+    onTrueValue: '',
+    onFalseValue: '',
     channel: '',
     channels: [],
     agentType: '',
