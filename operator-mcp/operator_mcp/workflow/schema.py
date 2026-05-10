@@ -590,6 +590,87 @@ class StepDef(BaseModel):
 
         return data
 
+    @model_validator(mode="before")
+    @classmethod
+    def bridge_legacy_conditional(cls, data: Any) -> Any:
+        """Translate legacy flat conditional syntax to canonical
+        ``conditional.branches``.
+
+        The frontend editor (and many hand-written workflows) emit::
+
+            type: conditional
+            condition: "${X.status} == 'completed'"
+            on_true: step_a
+            on_false: step_b
+
+        but the executor + validator only consume the nested form::
+
+            type: conditional
+            conditional:
+              branches:
+                - {condition: "...", goto: step_a}
+                - {condition: "default", goto: step_b}
+
+        Run before field-type validation so the dict-shaped flat fields
+        become a populated ``ConditionalStepConfig`` and the legacy keys
+        are dropped (they are not declared on ``StepDef`` and would be
+        ignored, but we drop them explicitly to keep ``model_dump`` clean
+        and avoid surprising future strict-mode rejections).
+
+        No-op when ``conditional.branches`` is already provided — caller
+        already gave canonical form, so we silently drop a stray top-level
+        ``condition`` (mixed input) and leave branches alone.
+        """
+        if not isinstance(data, dict):
+            return data
+        # Only relevant for conditional steps. Be tolerant about how the
+        # type is spelled (StepType.CONDITIONAL or the literal string).
+        raw_type = data.get("type", "")
+        type_str = raw_type.value if isinstance(raw_type, StepType) else str(raw_type)
+        if type_str != StepType.CONDITIONAL.value:
+            return data
+
+        existing = data.get("conditional")
+        # Already canonical form — drop legacy top-level keys and bail.
+        if isinstance(existing, dict) and existing.get("branches"):
+            for k in ("condition", "on_true", "on_false",
+                      "on_true_value", "on_false_value"):
+                data.pop(k, None)
+            return data
+
+        def _clean(v: Any) -> str:
+            return v.strip() if isinstance(v, str) else ""
+
+        cond = _clean(data.get("condition"))
+        on_true = _clean(data.get("on_true"))
+        on_false = _clean(data.get("on_false"))
+        on_true_value = data.get("on_true_value")
+        on_false_value = data.get("on_false_value")
+
+        # Need a condition AND at least one target to translate. Otherwise
+        # leave untouched so the validator can emit its clearer "missing
+        # config / missing branches" error.
+        if not cond or (not on_true and not on_false):
+            return data
+
+        branches: list[dict[str, Any]] = []
+        if on_true:
+            branch_t: dict[str, Any] = {"condition": cond, "goto": on_true}
+            if isinstance(on_true_value, str) and on_true_value:
+                branch_t["value"] = on_true_value
+            branches.append(branch_t)
+        if on_false:
+            branch_f: dict[str, Any] = {"condition": "default", "goto": on_false}
+            if isinstance(on_false_value, str) and on_false_value:
+                branch_f["value"] = on_false_value
+            branches.append(branch_f)
+
+        data["conditional"] = {"branches": branches}
+        for k in ("condition", "on_true", "on_false",
+                  "on_true_value", "on_false_value"):
+            data.pop(k, None)
+        return data
+
     @field_validator("name", mode="before")
     @classmethod
     def default_name(cls, v: str, info: Any) -> str:
