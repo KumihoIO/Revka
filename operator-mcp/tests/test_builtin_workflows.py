@@ -7,6 +7,7 @@ validation.
 """
 from __future__ import annotations
 
+import glob
 import os
 
 import pytest
@@ -140,3 +141,26 @@ class TestSmokeTestAllSteps:
                 assert step.human_approval.timeout <= 30, (
                     f"human_approval '{step.id}' timeout too long for smoke"
                 )
+
+
+# ---------------------------------------------------------------------------
+# Regression: every shipped built-in workflow must validate cleanly.
+# Catches schema drift breaking any *.yaml under builtins (e.g. PR #216
+# missed quantum-soul-production-room.yaml — this test would have caught it).
+# ---------------------------------------------------------------------------
+
+_ALL_BUILTIN_YAMLS = sorted(glob.glob(os.path.join(_BUILTINS_DIR, "*.yaml")))
+
+
+@pytest.mark.parametrize(
+    "yaml_path",
+    _ALL_BUILTIN_YAMLS,
+    ids=lambda p: os.path.basename(p),
+)
+def test_builtin_workflow_validates(yaml_path: str) -> None:
+    wf = load_workflow_from_yaml(yaml_path)
+    result = validate_workflow(wf)
+    assert result.valid, (
+        f"{os.path.basename(yaml_path)} failed validation: "
+        f"errors={result.errors} warnings={result.warnings}"
+    )

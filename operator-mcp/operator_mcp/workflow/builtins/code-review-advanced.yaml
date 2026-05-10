@@ -76,7 +76,6 @@ steps:
   - id: fix_issues
     name: "Fix identified issues"
     type: agent
-    depends_on: [parallel_review]
     agent:
       agent_type: codex
       role: coder
