@@ -217,7 +217,7 @@ ${run_id}                — 워크플로우 실행 ID
 
 ## Agent Pool 및 템플릿
 
-재사용 가능한 에이전트 정의는 `~/.construct/agent_pool.json`에 저장되며 `Construct/AgentPool/`하위에 Kumiho로 동기화됩니다.
+재사용 가능한 에이전트 정의는 `~/.construct/operator_mcp/agent_pool.json`에 저장되며 `Construct/AgentPool/`하위에 Kumiho로 동기화됩니다.
 
 ### 템플릿 필드
 
@@ -519,7 +519,7 @@ mcp_path = "~/.construct/operator_mcp/run_operator_mcp.py"
 | 런타임 및 게이트웨이 | Rust (edition 2024), Axum + Tower, Hyper, `rust-embed`를 통한 임베디드 프론트엔드 |
 | 에이전트 루프 | Rust (async/tokio, 14개 이상의 프로바이더 어댑터: Anthropic, OpenAI, OpenAI-Codex, Bedrock, Azure OpenAI, Gemini, Gemini CLI, GLM, Copilot, Ollama, OpenRouter, Kilo CLI, Telnyx, Claude Code, 그리고 reliable/router/compatible 래퍼) |
 | 오케스트레이션 | Python 3.10+ Operator MCP 서버 (17개 스텝 타입, map-reduce / supervisor / group-chat / handoff / refinement 패턴) |
-| Web Dashboard | React 18, TypeScript, Tailwind CSS, Vite, ReactFlow + react-force-graph-2d |
+| Web Dashboard | React 19, TypeScript, Tailwind CSS 4, Vite 6, ReactFlow + react-force-graph-2d |
 | 메모리 백엔드 | Kumiho (그래프 네이티브, Neo4j + FastAPI)가 유일한 영속 저장소, Qdrant/lucid 벡터 헬퍼는 선택 사항 |
 | 로컬 저장소 | cron 저장, pairing, 하트비트, 채널 세션, WhatsApp 캐시를 위한 `rusqlite` 기반 SQLite (기본 메모리용이 아님) |
 | 데스크톱 앱 | `construct desktop`으로 실행되는 `apps/tauri` 하위의 Tauri 컴패니언(시스템 트레이 / 메뉴바) |

@@ -9,6 +9,10 @@ export interface AssistantConfig {
   fontSize: number;
   cursorBlink: boolean;
   panelHeightPercent: number;
+  /** Whole-panel opacity, 0.5–1.0. Below 1.0 the page underneath shows
+   *  through, useful when chatting with Operator alongside a workflow
+   *  editor or canvas. */
+  panelOpacity: number;
 }
 
 export interface SchemeColors {
@@ -85,6 +89,7 @@ const DEFAULT_CONFIG: AssistantConfig = {
   fontSize: 13,
   cursorBlink: true,
   panelHeightPercent: 60,
+  panelOpacity: 1.0,
 };
 
 function loadConfig(): AssistantConfig {
