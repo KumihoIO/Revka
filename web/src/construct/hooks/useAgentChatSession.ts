@@ -161,9 +161,26 @@ export function useAgentChatSession({
         setError(null);
       };
 
+      // Reset all in-flight turn state when the socket drops. Without this,
+      // a mid-turn disconnect strands the UI: the "Operator is responding…"
+      // pill stays visible, the send button stays disabled, and any partial
+      // streaming/activity state persists until the user reloads or runs
+      // `/clear`. Mirror what `done`/`error` handlers reset.
+      const resetInFlightState = () => {
+        setTyping(false);
+        pendingContentRef.current = '';
+        pendingThinkingRef.current = '';
+        capturedThinkingRef.current = '';
+        setStreamingContent('');
+        setStreamingThinking('');
+        activitiesRef.current = [];
+        setActivities([]);
+      };
+
       ws.onClose = (ev: CloseEvent) => {
         if (cancelled) return;
         setConnected(false);
+        resetInFlightState();
         if (ev.code !== 1000 && ev.code !== 1001) {
           setError(`Connection closed unexpectedly (code: ${ev.code}). Please check your configuration.`);
         }
@@ -171,6 +188,7 @@ export function useAgentChatSession({
 
       ws.onError = () => {
         if (cancelled) return;
+        resetInFlightState();
         setError(t('agent.connection_error'));
       };
 

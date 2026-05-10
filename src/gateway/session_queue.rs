@@ -13,6 +13,36 @@ use std::time::Duration;
 use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
 use tokio::time::Instant;
 
+/// Default per-session lock acquisition timeout in seconds. Set high (5 min)
+/// because Operator turns can run long — web search, sub-agent delegation,
+/// and workflow building routinely take minutes. Override via the
+/// `CONSTRUCT_GATEWAY_SESSION_LOCK_TIMEOUT_SECS` env var.
+pub const SESSION_LOCK_TIMEOUT_SECS_DEFAULT: u64 = 300;
+
+/// Read the per-session lock timeout from
+/// `CONSTRUCT_GATEWAY_SESSION_LOCK_TIMEOUT_SECS` at runtime, falling back to
+/// [`SESSION_LOCK_TIMEOUT_SECS_DEFAULT`]. Invalid (non-numeric or zero)
+/// values log a warning and use the default.
+pub fn session_lock_timeout_secs() -> u64 {
+    const VAR: &str = "CONSTRUCT_GATEWAY_SESSION_LOCK_TIMEOUT_SECS";
+    match std::env::var(VAR) {
+        Ok(raw) => match raw.parse::<u64>() {
+            Ok(n) if n > 0 => n,
+            _ => {
+                tracing::warn!(
+                    target: "gateway",
+                    env_var = VAR,
+                    value = %raw,
+                    default = SESSION_LOCK_TIMEOUT_SECS_DEFAULT,
+                    "invalid session lock timeout — falling back to default"
+                );
+                SESSION_LOCK_TIMEOUT_SECS_DEFAULT
+            }
+        },
+        Err(_) => SESSION_LOCK_TIMEOUT_SECS_DEFAULT,
+    }
+}
+
 /// Per-session serialization queue.
 pub struct SessionActorQueue {
     slots: Mutex<HashMap<String, Arc<SessionSlot>>>,
@@ -44,8 +74,12 @@ impl Drop for SessionGuard {
 pub enum SessionQueueError {
     /// Too many requests queued for this session.
     QueueFull { session_id: String, depth: usize },
-    /// Timed out waiting for the session lock.
-    Timeout { session_id: String },
+    /// Timed out waiting for the session lock. The `timeout_secs` is included
+    /// in the user-facing message so operators know which knob they hit.
+    Timeout {
+        session_id: String,
+        timeout_secs: u64,
+    },
 }
 
 impl std::fmt::Display for SessionQueueError {
@@ -57,8 +91,11 @@ impl std::fmt::Display for SessionQueueError {
                     "Session {session_id} queue full ({depth} pending requests)"
                 )
             }
-            Self::Timeout { session_id } => {
-                write!(f, "Timed out waiting for session {session_id}")
+            Self::Timeout { timeout_secs, .. } => {
+                write!(
+                    f,
+                    "Previous message is still being processed — please wait, or retry once it completes (timeout: {timeout_secs}s)"
+                )
             }
         }
     }
@@ -118,6 +155,7 @@ impl SessionActorQueue {
                 slot.pending.fetch_sub(1, Ordering::Relaxed);
                 Err(SessionQueueError::Timeout {
                     session_id: session_id.to_string(),
+                    timeout_secs: self.lock_timeout.as_secs(),
                 })
             }
         }
@@ -210,6 +248,20 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn timeout_error_message_mentions_timeout_value() {
+        let queue = SessionActorQueue::new(8, 1, 600);
+        let _guard = queue.acquire("s1").await.unwrap();
+        let msg = match queue.acquire("s1").await {
+            Err(e) => e.to_string(),
+            Ok(_) => panic!("expected timeout error"),
+        };
+        // No leaked session id; includes timeout value and guidance.
+        assert!(!msg.contains("s1"), "session id leaked: {msg}");
+        assert!(msg.contains("timeout: 1s"), "missing timeout value: {msg}");
+        assert!(msg.contains("still being processed"), "missing guidance: {msg}");
+    }
+
+    #[tokio::test]
     async fn idle_eviction() {
         let queue = SessionActorQueue::new(8, 5, 0); // 0s TTL
         {
@@ -218,6 +270,27 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(10)).await;
         let evicted = queue.evict_idle().await;
         assert_eq!(evicted, 1);
+    }
+
+    #[test]
+    fn lock_timeout_env_override_and_default() {
+        // Single test owns the env var to avoid racing other tests in
+        // parallel cargo runs. Covers: unset → default, valid → parsed,
+        // invalid string → default, zero → default.
+        // SAFETY: test-only, env var is namespaced and used only here.
+        unsafe { std::env::remove_var("CONSTRUCT_GATEWAY_SESSION_LOCK_TIMEOUT_SECS") };
+        assert_eq!(session_lock_timeout_secs(), SESSION_LOCK_TIMEOUT_SECS_DEFAULT);
+
+        unsafe { std::env::set_var("CONSTRUCT_GATEWAY_SESSION_LOCK_TIMEOUT_SECS", "120") };
+        assert_eq!(session_lock_timeout_secs(), 120);
+
+        unsafe { std::env::set_var("CONSTRUCT_GATEWAY_SESSION_LOCK_TIMEOUT_SECS", "not-a-number") };
+        assert_eq!(session_lock_timeout_secs(), SESSION_LOCK_TIMEOUT_SECS_DEFAULT);
+
+        unsafe { std::env::set_var("CONSTRUCT_GATEWAY_SESSION_LOCK_TIMEOUT_SECS", "0") };
+        assert_eq!(session_lock_timeout_secs(), SESSION_LOCK_TIMEOUT_SECS_DEFAULT);
+
+        unsafe { std::env::remove_var("CONSTRUCT_GATEWAY_SESSION_LOCK_TIMEOUT_SECS") };
     }
 
     #[tokio::test]

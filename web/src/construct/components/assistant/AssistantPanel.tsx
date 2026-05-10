@@ -699,11 +699,15 @@ function ChatPane({
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
                 if (runSlashFromInput()) return;
+                // Block send while a turn is in flight — gateway would
+                // reject the second turn with SESSION_BUSY otherwise.
+                // Slash commands still run because they're client-side.
+                if (typing) return;
                 handleSend();
               }
             }}
             onPaste={onPaste}
-            placeholder={connected ? 'message…' : 'connecting…'}
+            placeholder={connected ? (typing ? 'Operator is responding…' : 'message…') : 'connecting…'}
             disabled={!connected}
             // `focus-visible:outline-none` overrides the global `:focus-visible`
             // ring set in index.css (2px accent outline) — without it Tailwind's
@@ -725,22 +729,28 @@ function ChatPane({
           <button
             type="button"
             onClick={() => handleSend()}
-            disabled={!connected || (!input.trim() && attachments.length === 0) || uploadingCount > 0}
-            aria-label="Send message"
-            title={connected ? 'Send (Enter)' : 'Disconnected'}
+            disabled={!connected || (!input.trim() && attachments.length === 0) || uploadingCount > 0 || typing}
+            aria-label={typing ? 'Operator is responding' : 'Send message'}
+            title={
+              !connected
+                ? 'Disconnected'
+                : typing
+                  ? 'Operator is responding…'
+                  : 'Send (Enter)'
+            }
             className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded transition-all hover:bg-white/5 focus:outline-none focus-visible:ring-2 focus-visible:ring-current disabled:cursor-not-allowed disabled:opacity-30"
             style={{
               color:
-                (input.trim() || attachments.length > 0) && connected && uploadingCount === 0
+                (input.trim() || attachments.length > 0) && connected && uploadingCount === 0 && !typing
                   ? colors.primary
                   : 'var(--construct-text-faint)',
               textShadow:
-                (input.trim() || attachments.length > 0) && connected && uploadingCount === 0
+                (input.trim() || attachments.length > 0) && connected && uploadingCount === 0 && !typing
                   ? colors.glow
                   : 'none',
             }}
           >
-            <Send className="h-3.5 w-3.5" />
+            {typing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
           </button>
         </div>
 
@@ -768,6 +778,18 @@ function ChatPane({
             />
             {connected ? 'live' : 'offline'}
           </span>
+          {/* In-flight notice — sits between the live/offline indicator
+              and the pageContext crumb. Clarifies why the send button is
+              disabled while the previous turn is still streaming. */}
+          {typing && (
+            <span
+              className="flex shrink-0 items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.12em]"
+              style={{ color: colors.primary, textShadow: colors.glow }}
+            >
+              <Loader2 className="h-3 w-3 animate-spin" />
+              Operator is responding…
+            </span>
+          )}
           <span
             className="min-w-0 flex-1 truncate text-[10px]"
             style={{ color: 'var(--construct-text-faint)' }}
