@@ -1257,6 +1257,48 @@ function extractStepBlockData(yaml: string): Map<string, Partial<TaskDefinition>
       if (reasonM) data.deprecate_reason = reasonM[1]!.trim();
     }
 
+    // Conditional block — canonical form: `conditional: { branches: [...] }`.
+    // Maps the first branch's condition/goto/value into legacy flat fields
+    // (condition / on_true / on_true_value); maps the default branch into
+    // on_false / on_false_value. Anything beyond two branches is dropped on
+    // the editor side — the editor's gate node has only true/false handles.
+    if (block.match(/type:\s*conditional/)) {
+      const condBlockMatch = block.match(/^\s{4}conditional:\s*\n((?:\s{5,}.*\n?)*)/m);
+      if (condBlockMatch) {
+        const cb = condBlockMatch[1]!;
+        // Split on `- condition:` markers under branches:
+        const branchSection = cb.match(/^\s+branches:\s*\n((?:\s+.*\n?)*)/m);
+        if (branchSection) {
+          const bs = branchSection[1]!;
+          // Each branch starts with `- condition: ...` then has goto/value lines
+          const branchChunks = bs.split(/(?=^\s*-\s*condition:)/m).filter(c => c.trim());
+          let trueAssigned = false;
+          let falseAssigned = false;
+          for (const chunk of branchChunks) {
+            const cMatch = chunk.match(/-\s*condition:\s*"?([^"\n]+?)"?\s*$/m);
+            const gMatch = chunk.match(/^\s+goto:\s*"?([^"\n]+?)"?\s*$/m);
+            const vMatch = chunk.match(/^\s+value:\s*"?([^"\n]+?)"?\s*$/m);
+            if (!cMatch || !gMatch) continue;
+            const cText = cMatch[1]!.trim();
+            const gText = gMatch[1]!.trim();
+            const vText = vMatch ? vMatch[1]!.trim() : '';
+            if (cText === 'default') {
+              if (!falseAssigned) {
+                data.on_false = gText;
+                if (vText) data.on_false_value = vText;
+                falseAssigned = true;
+              }
+            } else if (!trueAssigned) {
+              data.condition = cText;
+              data.on_true = gText;
+              if (vText) data.on_true_value = vText;
+              trueAssigned = true;
+            }
+          }
+        }
+      }
+    }
+
     // Resolve block — capture all lines indented deeper than `resolve:` (5+ spaces)
     const resolveMatch = block.match(/^\s{4}resolve:\s*\n((?:\s{5,}.*\n?)*)/m);
     if (resolveMatch) {
@@ -2086,20 +2128,32 @@ export function tasksToYaml(tasks: TaskDefinition[], meta?: Partial<WorkflowMeta
     if (task.retry && task.retry > 0) lines.push(`    retry: ${task.retry}`);
     if (task.retry_delay && task.retry_delay !== 5) lines.push(`    retry_delay: ${task.retry_delay}`);
     if (task.disabled === true) lines.push(`    disabled: true`);
-    if (stepType === 'conditional' && task.condition) {
-      lines.push(`    condition: ${yamlEscape(task.condition)}`);
-    }
-    if (task.on_true) {
-      lines.push(`    on_true: ${task.on_true}`);
-    }
-    if (task.on_false) {
-      lines.push(`    on_false: ${task.on_false}`);
-    }
-    if (stepType === 'conditional' && task.on_true_value) {
-      lines.push(`    on_true_value: ${yamlEscape(task.on_true_value)}`);
-    }
-    if (stepType === 'conditional' && task.on_false_value) {
-      lines.push(`    on_false_value: ${yamlEscape(task.on_false_value)}`);
+    // Conditional steps emit canonical `conditional.branches` form.
+    // Legacy flat `condition`/`on_true`/`on_false` keys are no longer
+    // emitted — the backend bridges them on load for forward compat,
+    // but new saves must round-trip canonical so the YAML lines up
+    // with what the validator + executor consume directly.
+    if (stepType === 'conditional') {
+      const branches: string[] = [];
+      if (task.on_true && task.condition) {
+        branches.push(`      - condition: ${yamlEscape(task.condition)}`);
+        branches.push(`        goto: ${task.on_true}`);
+        if (task.on_true_value) {
+          branches.push(`        value: ${yamlEscape(task.on_true_value)}`);
+        }
+      }
+      if (task.on_false) {
+        branches.push(`      - condition: "default"`);
+        branches.push(`        goto: ${task.on_false}`);
+        if (task.on_false_value) {
+          branches.push(`        value: ${yamlEscape(task.on_false_value)}`);
+        }
+      }
+      if (branches.length > 0) {
+        lines.push(`    conditional:`);
+        lines.push(`      branches:`);
+        lines.push(...branches);
+      }
     }
     if (stepType === 'human_input' && task.channel) {
       lines.push(`    channel: ${task.channel}`);
