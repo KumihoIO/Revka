@@ -208,18 +208,6 @@ pub struct TranscriptEntry {
     pub round: u32,
 }
 
-#[derive(Serialize, Clone, Default)]
-pub struct ApprovalOutputData {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub awaiting_approval: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub approval_message: Option<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub approve_keywords: Vec<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub reject_keywords: Vec<String>,
-}
-
 #[derive(Serialize, Clone)]
 pub struct WorkflowStepDetail {
     pub step_id: String,
@@ -235,13 +223,28 @@ pub struct WorkflowStepDetail {
     #[serde(skip_serializing_if = "String::is_empty")]
     pub output_preview: String,
     #[serde(skip_serializing_if = "String::is_empty")]
+    pub error: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
     pub artifact_path: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub skills: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub transcript: Vec<TranscriptEntry>,
+    // Generic input/output blobs the run-view UI renders for any step type.
+    // Stored as raw JSON Values so each step type can shape them differently
+    // — a `shell` step has `command`/`exit_code`, a `resolve` step has
+    // `kind`/`tag`/`matched_kref`, etc. The frontend type-switches on the
+    // step's type to decide which keys to show.
+    //
+    // The existing approval-shape UI continues to work because the JSON
+    // wire format is identical: a `human_approval` step's output_data still
+    // carries `awaiting_approval` / `approve_keywords` / `reject_keywords`
+    // at the top level — they just used to be filtered through the
+    // ApprovalOutputData struct (now removed in favour of raw Value).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub output_data: Option<ApprovalOutputData>,
+    pub input_data: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_data: Option<serde_json::Value>,
 }
 
 #[derive(Serialize, Clone)]
@@ -535,40 +538,23 @@ fn extract_steps_from_metadata(meta: &HashMap<String, String>) -> Vec<WorkflowSt
                             .collect::<Vec<_>>()
                     })
                     .unwrap_or_default();
-                // Decode output_data for approval steps
-                let output_data = parsed.get("output_data").and_then(|v| {
-                    // output_data may be a JSON string or an embedded object
-                    let obj = if let Some(s) = v.as_str() {
-                        serde_json::from_str::<serde_json::Value>(s).ok()
-                    } else {
-                        Some(v.clone())
-                    };
-                    obj.map(|o| ApprovalOutputData {
-                        awaiting_approval: o.get("awaiting_approval").and_then(|v| v.as_bool()),
-                        approval_message: o
-                            .get("approval_message")
-                            .and_then(|v| v.as_str())
-                            .map(String::from),
-                        approve_keywords: o
-                            .get("approve_keywords")
-                            .and_then(|v| v.as_array())
-                            .map(|arr| {
-                                arr.iter()
-                                    .filter_map(|s| s.as_str().map(String::from))
-                                    .collect()
-                            })
-                            .unwrap_or_default(),
-                        reject_keywords: o
-                            .get("reject_keywords")
-                            .and_then(|v| v.as_array())
-                            .map(|arr| {
-                                arr.iter()
-                                    .filter_map(|s| s.as_str().map(String::from))
-                                    .collect()
-                            })
-                            .unwrap_or_default(),
+                // Generic input/output blobs — exposed as raw JSON for any
+                // step type. Persistence may write these as either embedded
+                // objects (current) or JSON strings (legacy / size-capped),
+                // so we accept both.
+                let decode_blob = |key: &str| -> Option<serde_json::Value> {
+                    parsed.get(key).and_then(|v| {
+                        if let Some(s) = v.as_str() {
+                            serde_json::from_str::<serde_json::Value>(s).ok()
+                        } else if v.is_object() || v.is_array() {
+                            Some(v.clone())
+                        } else {
+                            None
+                        }
                     })
-                });
+                };
+                let input_data_raw = decode_blob("input_data");
+                let output_data_raw = decode_blob("output_data");
                 steps.push(WorkflowStepDetail {
                     step_id: step_id.to_string(),
                     status: parsed
@@ -601,6 +587,11 @@ fn extract_steps_from_metadata(meta: &HashMap<String, String>) -> Vec<WorkflowSt
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string(),
+                    error: parsed
+                        .get("error")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
                     artifact_path: parsed
                         .get("artifact_path")
                         .and_then(|v| v.as_str())
@@ -608,7 +599,8 @@ fn extract_steps_from_metadata(meta: &HashMap<String, String>) -> Vec<WorkflowSt
                         .to_string(),
                     skills,
                     transcript,
-                    output_data,
+                    input_data: input_data_raw,
+                    output_data: output_data_raw,
                 });
             } else if value.contains(r#""status""#) {
                 // Truncated JSON fallback: extract status with simple string search
@@ -626,9 +618,11 @@ fn extract_steps_from_metadata(meta: &HashMap<String, String>) -> Vec<WorkflowSt
                     role: String::new(),
                     template_name: String::new(),
                     output_preview: String::new(),
+                    error: String::new(),
                     artifact_path: String::new(),
                     skills: Vec::new(),
                     transcript: Vec::new(),
+                    input_data: None,
                     output_data: None,
                 });
             }
