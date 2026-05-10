@@ -3692,6 +3692,9 @@ async def _exec_parallel(
 
     # Apply join strategy — total reflects the filtered set so a
     # run-to-step partial parallel doesn't always fail `join: all`.
+    # ParallelStepConfig.steps rejects duplicate child refs at parse time,
+    # so `total == len(set(sub_ids))` is guaranteed and the dict-keyed
+    # `results` map can never under-count.
     completed = [r for r in results.values() if r.status == "completed"]
     total = len(sub_ids)
 

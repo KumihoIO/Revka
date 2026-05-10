@@ -279,6 +279,20 @@ class ParallelStepConfig(BaseModel):
                 "If you don't need explicit grouping, drop the parallel wrapper "
                 "entirely — sibling steps without depends_on run in parallel naturally."
             )
+        # Duplicate child refs corrupt _exec_parallel accounting: results is a
+        # dict keyed by step_id, so two refs to the same id produce one entry
+        # while `total = len(cfg.steps)` counts both — giving a false-fail
+        # `completed: 1, total: 2`. Reject at parse time.
+        counts: dict[str, int] = {}
+        for sid in v:
+            counts[sid] = counts.get(sid, 0) + 1
+        dups = [(sid, n) for sid, n in counts.items() if n > 1]
+        if dups:
+            sid, n = dups[0]
+            raise ValueError(
+                f"parallel.steps must not contain duplicate child references: "
+                f"'{sid}' appears {n} times"
+            )
         return v
 
 
@@ -403,6 +417,24 @@ class ForEachStepConfig(BaseModel):
     carry_forward: bool = True               # Make previous iteration outputs available
     fail_fast: bool = True                   # Stop on first iteration failure
     max_iterations: int = Field(default=20, ge=1, le=50)  # Safety cap
+
+    @field_validator("steps")
+    @classmethod
+    def steps_must_be_unique(cls, v: list[str]) -> list[str]:
+        # Same accounting hazard as ParallelStepConfig: duplicate child refs
+        # would write to the same `<step_id>__iter_<N>` keys twice and the
+        # second write clobbers the first. Reject at parse time.
+        counts: dict[str, int] = {}
+        for sid in v:
+            counts[sid] = counts.get(sid, 0) + 1
+        dups = [(sid, n) for sid, n in counts.items() if n > 1]
+        if dups:
+            sid, n = dups[0]
+            raise ValueError(
+                f"for_each.steps must not contain duplicate child references: "
+                f"'{sid}' appears {n} times"
+            )
+        return v
 
 
 class A2AStepConfig(BaseModel):

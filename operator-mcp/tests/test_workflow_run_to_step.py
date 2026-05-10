@@ -598,3 +598,27 @@ class TestSchemaValidation:
                 checkpoint=False,
             )
         assert "Duplicate step id" in str(exc_info.value)
+
+    def test_parallel_duplicate_child_refs_rejected(self) -> None:
+        """``parallel.steps: [x, x]`` is always a bug — _exec_parallel keys
+        results by step_id (so two refs collapse to one entry) but counts
+        ``total = len(cfg.steps)``, producing a false-fail
+        ``completed: 1, total: 2``. Reject at parse time."""
+        from pydantic import ValidationError as PydanticValidationError
+
+        with pytest.raises(PydanticValidationError) as exc_info:
+            ParallelStepConfig(steps=["x", "x"], join=JoinStrategy.ALL)
+        msg = str(exc_info.value)
+        assert "duplicate" in msg
+        assert "'x'" in msg
+
+    def test_for_each_duplicate_child_refs_rejected(self) -> None:
+        """Same hazard as parallel: ``<step_id>__iter_<N>`` keys collide
+        when the same child id is listed twice. Reject at parse time."""
+        from pydantic import ValidationError as PydanticValidationError
+
+        with pytest.raises(PydanticValidationError) as exc_info:
+            ForEachStepConfig(items=["a", "b"], steps=["x", "x"])
+        msg = str(exc_info.value)
+        assert "duplicate" in msg
+        assert "'x'" in msg
