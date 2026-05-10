@@ -412,7 +412,79 @@ def _safe_keys(d: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in d.items() if isinstance(k, str) and k and not k.startswith("_")}
 
 
-def _build_eval_names(state: WorkflowState) -> dict[str, Any]:
+def _sanitize_hyphenated_refs(expr: str, alias_map: dict[str, str]) -> str:
+    """Replace hyphenated step-ID references with their underscored aliases.
+
+    Step IDs like ``zeroclaw-resolve`` are not valid Python identifiers, so
+    simpleeval's AST parser reads ``zeroclaw-resolve.output`` as
+    ``zeroclaw - resolve.output`` (subtraction), which raises NameNotDefined
+    and silently fails the conditional. We pre-rewrite those bare references
+    to their underscored form (``zeroclaw_resolve.output``) and register the
+    same data under both keys in the names dict.
+
+    Only rewrites OUTSIDE string literals — a quoted ``'zeroclaw-resolve'``
+    is a literal, not a name reference, and must be preserved verbatim.
+
+    The match boundary requires the next non-whitespace char to be a dot,
+    operator, or end-of-string so that prefixes like ``zeroclaw-resolve-x``
+    aren't accidentally rewritten (we only want bare references).
+    """
+    if not alias_map:
+        return expr
+
+    # Sort by length desc so longer hyphenated IDs match before shorter
+    # prefixes (e.g. ``foo-bar-baz`` before ``foo-bar``).
+    items = sorted(alias_map.items(), key=lambda kv: -len(kv[0]))
+
+    # Allowed trailing chars after a step-ID reference.
+    _TRAIL = set(".,)]}?:!=<>+-*/ \t\n")
+
+    out: list[str] = []
+    i = 0
+    n = len(expr)
+    quote: str | None = None
+    while i < n:
+        ch = expr[i]
+        if quote is not None:
+            out.append(ch)
+            if ch == "\\" and i + 1 < n:
+                out.append(expr[i + 1])
+                i += 2
+                continue
+            if ch == quote:
+                quote = None
+            i += 1
+            continue
+        if ch == "'" or ch == '"':
+            quote = ch
+            out.append(ch)
+            i += 1
+            continue
+        matched = False
+        for needle, repl in items:
+            if not expr.startswith(needle, i):
+                continue
+            # Left boundary: previous char must not be an identifier char or
+            # ``.`` (so ``foo.zeroclaw-resolve`` doesn't rewrite — though that
+            # shape isn't currently produced anywhere, the guard is cheap).
+            prev_ok = i == 0 or not (expr[i - 1].isalnum() or expr[i - 1] in "_.")
+            if not prev_ok:
+                continue
+            # Right boundary: next char (if any) must be a delimiter/operator.
+            j = i + len(needle)
+            if j < n and expr[j] not in _TRAIL:
+                continue
+            out.append(repl)
+            i = j
+            matched = True
+            break
+        if not matched:
+            out.append(ch)
+            i += 1
+    return "".join(out)
+
+
+def _build_eval_names(state: WorkflowState) -> tuple[dict[str, Any], dict[str, str]]:
     """Build a `names` dict for simpleeval mirroring interpolation namespaces.
 
     EvalWithCompoundTypes resolves dotted access on dicts via attribute
@@ -421,6 +493,11 @@ def _build_eval_names(state: WorkflowState) -> dict[str, Any]:
 
     All sub-dicts are passed through ``_safe_keys`` so dunder/private
     keys never become accessible via the evaluator.
+
+    Returns ``(names, alias_map)`` where ``alias_map`` maps hyphenated step
+    IDs to their underscored aliases (e.g. ``zeroclaw-resolve`` →
+    ``zeroclaw_resolve``). The alias is registered as an additional key in
+    ``names`` so expressions using either form resolve to the same data.
     """
     names: dict[str, Any] = {
         "inputs": _safe_keys(state.inputs),
@@ -430,10 +507,11 @@ def _build_eval_names(state: WorkflowState) -> dict[str, Any]:
 
     # Step results — flatten so `step.output`, `step.status`, and
     # `step.output_data.field` all work via dotted access.
+    alias_map: dict[str, str] = {}
     for sid, sr in state.step_results.items():
         if sid.startswith("_"):
             continue
-        names[sid] = {
+        entry = {
             "output": sr.output,
             "status": sr.status,
             "error": sr.error,
@@ -441,6 +519,16 @@ def _build_eval_names(state: WorkflowState) -> dict[str, Any]:
             "output_data": _safe_keys(sr.output_data),
             "agent_id": sr.agent_id or "",
         }
+        names[sid] = entry
+        # Hyphenated IDs aren't valid Python identifiers; AST parses
+        # ``a-b.field`` as ``a - b.field`` (subtraction). Register an
+        # underscored alias so post-rewrite expressions can resolve.
+        if "-" in sid:
+            alias = sid.replace("-", "_")
+            alias_map[sid] = alias
+            # Use setdefault so an existing user-defined ``a_b`` step never
+            # gets shadowed by a synthetic alias from ``a-b``.
+            names.setdefault(alias, entry)
 
     # Loop / for_each / previous / rejection scopes — mirrors interpolate()
     fe_ctx = state.inputs.get("__for_each__")
@@ -459,7 +547,7 @@ def _build_eval_names(state: WorkflowState) -> dict[str, Any]:
     # `env` intentionally NOT filtered — env vars commonly contain underscores
     # but never dunders, and existing workflows reference ${env.VAR} freely.
     names["env"] = dict(os.environ)
-    return names
+    return names, alias_map
 
 
 def _interpolate_for_expr(expr: str, state: WorkflowState) -> str:
@@ -520,7 +608,13 @@ def _eval_expression(expr: str, state: WorkflowState) -> Any:
     if "${" in pre:
         pre = _interpolate_for_expr(pre, state)
 
-    names = _build_eval_names(state)
+    names, alias_map = _build_eval_names(state)
+    # Hyphenated step IDs (e.g. ``zeroclaw-resolve``) aren't valid Python
+    # identifiers; AST parses them as subtraction. Rewrite bare references
+    # to their underscored aliases (``zeroclaw_resolve``) — `_build_eval_names`
+    # already registered the same data under both keys.
+    if alias_map:
+        pre = _sanitize_hyphenated_refs(pre, alias_map)
     # Whitelisted safe functions for workflow expressions. Kept tiny on
     # purpose — these handle the 99% case (case-insensitive matching,
     # length checks, type coercion) without exposing arbitrary Python.

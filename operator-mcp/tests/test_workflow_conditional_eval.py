@@ -561,3 +561,72 @@ class TestMaxPowerCap:
     def test_safe_exponent_works(self, state):
         # Within the cap — works fine.
         assert _eval_condition("2 ** 10 == 1024", state) is True
+
+
+# ---------------------------------------------------------------------------
+# Regression: hyphenated step IDs in expressions
+#
+# Step IDs like ``zeroclaw-resolve`` are not valid Python identifiers. AST
+# parses ``zeroclaw-resolve.output`` as ``zeroclaw - resolve.output`` —
+# subtraction with two undefined names — and the prior code silently swallowed
+# the NameError, making EVERY conditional that referenced a hyphenated step ID
+# fall through to the default branch. The fix registers an underscored alias
+# in the names dict and rewrites bare references to use it.
+# ---------------------------------------------------------------------------
+
+class TestHyphenatedStepIds:
+    @pytest.fixture
+    def hyphen_state(self) -> WorkflowState:
+        s = WorkflowState(workflow_name="t", run_id="r")
+        s.step_results["zeroclaw-resolve"] = StepResult(
+            step_id="zeroclaw-resolve",
+            status="completed",
+            output="ok",
+            output_data={"found": True, "matched_kref": "kref://x/y/z"},
+        )
+        s.step_results["openclaw_resolve"] = StepResult(
+            step_id="openclaw_resolve",
+            status="completed",
+            output="ok",
+            output_data={"found": True},
+        )
+        s.step_results["x"] = StepResult(step_id="x", status="completed", output="x-val")
+        return s
+
+    def test_hyphenated_step_id_dotted_access_works(self, hyphen_state):
+        assert _eval_condition(
+            "zeroclaw-resolve.output_data.found == True", hyphen_state
+        ) is True
+
+    def test_hyphenated_step_id_in_value_expr(self, hyphen_state):
+        # `value:` expressions go through _eval_branch_value → _eval_expression.
+        out = _eval_branch_value(
+            "zeroclaw-resolve.output_data.matched_kref", hyphen_state
+        )
+        assert out == "kref://x/y/z"
+
+    def test_hyphenated_id_inside_string_literal_preserved(self, hyphen_state):
+        # The literal ``'zeroclaw-resolve'`` is a string, not a name reference.
+        # Sanitization must NOT touch it (otherwise ``x.output == 'zeroclaw_resolve'``
+        # would never match the actual step name).
+        hyphen_state.step_results["x"] = StepResult(
+            step_id="x", status="completed", output="zeroclaw-resolve"
+        )
+        assert _eval_condition("x.output == 'zeroclaw-resolve'", hyphen_state) is True
+        assert _eval_condition("x.output == 'zeroclaw_resolve'", hyphen_state) is False
+
+    def test_underscored_step_id_still_works_unchanged(self, hyphen_state):
+        # Non-hyphenated IDs remain untouched by the rewrite.
+        assert _eval_condition(
+            "openclaw_resolve.output_data.found == True", hyphen_state
+        ) is True
+
+    def test_mixed_hyphen_and_underscore_in_compound_expression(self, hyphen_state):
+        # Both forms in one expression. Note: _preprocess_expr translates
+        # ``AND`` to ``and`` only via the lowercase ``&&`` path; this test
+        # uses Python-form ``and`` (which already works) to keep it focused
+        # on the hyphen-sanitization guarantee.
+        assert _eval_condition(
+            "zeroclaw-resolve.output_data.found and openclaw_resolve.output_data.found",
+            hyphen_state,
+        ) is True
