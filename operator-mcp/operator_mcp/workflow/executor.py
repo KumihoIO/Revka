@@ -2078,6 +2078,20 @@ async def _exec_for_each(
     if not cfg:
         return StepResult(step_id=step.id, status="failed", error="for_each config missing")
 
+    # Run-to-step: a partial loop body is meaningless. If any body step is
+    # outside the closure, skip the whole for_each (matches the design call:
+    # we never run a fragmentary iteration).
+    if state.run_to_closure:
+        if not all(sub_id in state.run_to_closure for sub_id in cfg.steps):
+            _log(
+                f"workflow: run_to skipping for_each '{step.id}' — "
+                f"body steps not all in closure"
+            )
+            return StepResult(
+                step_id=step.id, status="skipped",
+                error="for_each skipped: run-to-step closure excludes body",
+            )
+
     # Resolve iteration values from range or items list.
     # If range resolves to an empty string, fall through to items.
     values: list[str] = []
@@ -2844,6 +2858,54 @@ def _check_cost_guard(
 
 
 # ---------------------------------------------------------------------------
+# Run-to-step ancestor closure
+# ---------------------------------------------------------------------------
+
+def compute_ancestor_closure(wf: WorkflowDef, target_step_id: str) -> set[str]:
+    """Return the transitive ancestor closure of ``target_step_id`` (inclusive).
+
+    Walks ``depends_on`` edges via BFS. Treats ``parallel.steps`` as descendants
+    of the parallel wrapper — i.e. a parallel-child implicitly depends on its
+    wrapper, so reaching the child means we must also include the wrapper. This
+    matches the visual mental model in the editor: the wrapper "feeds" its
+    children.
+
+    The returned set always includes ``target_step_id`` itself, even when the
+    target has no ancestors at all.
+    """
+    closure: set[str] = set()
+    if not wf.step_by_id(target_step_id):
+        return closure
+
+    # Build a reverse map: child_id -> set of parallel wrappers that own it.
+    # A parallel-child inherits the wrapper as an implicit ancestor for the
+    # purposes of run-to-step (see docstring).
+    parent_parallels: dict[str, set[str]] = {}
+    for s in wf.steps:
+        if s.type == StepType.PARALLEL and s.parallel:
+            for child_id in s.parallel.steps:
+                parent_parallels.setdefault(child_id, set()).add(s.id)
+
+    # BFS up the dependency DAG.
+    queue: list[str] = [target_step_id]
+    while queue:
+        sid = queue.pop()
+        if sid in closure:
+            continue
+        closure.add(sid)
+        step = wf.step_by_id(sid)
+        if not step:
+            continue
+        for dep in step.depends_on:
+            if dep not in closure:
+                queue.append(dep)
+        for wrapper in parent_parallels.get(sid, ()):
+            if wrapper not in closure:
+                queue.append(wrapper)
+    return closure
+
+
+# ---------------------------------------------------------------------------
 # Main executor
 # ---------------------------------------------------------------------------
 
@@ -2858,6 +2920,7 @@ async def execute_workflow(
     trigger_context: dict[str, str] | None = None,
     workflow_item_kref: str = "",
     workflow_revision_kref: str = "",
+    target_step_id: str | None = None,
 ) -> WorkflowState:
     """Execute a workflow definition.
 
@@ -2868,6 +2931,11 @@ async def execute_workflow(
         run_id: Optional run ID (generated if not provided).
         resume_state: Optional state to resume from checkpoint.
         max_cost_usd: Optional cost cap — abort if session cost exceeds this.
+        target_step_id: Optional step id for the "run to here" feature. When
+            set, only steps in the transitive ancestor closure of this step
+            (plus the step itself) are executed; the loop terminates as soon
+            as the target completes — descendants are not run, all ancestors
+            re-run fresh.
 
     Returns:
         Final WorkflowState with all step results.
@@ -2994,8 +3062,24 @@ async def execute_workflow(
                     if sub_step and sub_step.type == StepType.PARALLEL and sub_step.parallel:
                         _for_each_owned.update(sub_step.parallel.steps)
 
+        # Run-to-step closure — set of step ids permitted to run when the
+        # caller pinned a target. Empty means "no restriction". Mirrored onto
+        # state.run_to_closure so step handlers (parallel, for_each) can read
+        # it without having to thread an extra parameter through every
+        # dispatch path.
+        run_to_closure: set[str] = set()
+        if target_step_id:
+            run_to_closure = compute_ancestor_closure(wf, target_step_id)
+            _log(
+                f"workflow: run_to target='{target_step_id}' "
+                f"closure={sorted(run_to_closure)}"
+            )
+        state.run_to_closure = run_to_closure
+
         # Collect all step IDs into a set for tracking
         remaining = set(execution_order) - _for_each_owned
+        if run_to_closure:
+            remaining &= run_to_closure
 
         while remaining:
             # Time guard
@@ -3044,8 +3128,12 @@ async def execute_workflow(
                 if not step:
                     remaining.discard(step_id)
                     continue
+                # In run-to-step mode, deps that are excluded from the
+                # closure are treated as already-satisfied (they aren't going
+                # to run, so don't block their dependents).
                 deps_ok = all(
-                    state.step_results.get(dep, StepResult(step_id=dep)).status == "completed"
+                    (run_to_closure and dep not in run_to_closure)
+                    or state.step_results.get(dep, StepResult(step_id=dep)).status == "completed"
                     for dep in step.depends_on
                 )
                 if deps_ok:
@@ -3087,6 +3175,21 @@ async def execute_workflow(
                     next_step = _resolve_conditional(step, state)
                     if next_step == "end":
                         break
+                    # Run-to-step: log when every branch points outside the
+                    # closure. The conditional's match still records onto
+                    # state.conditional_routes for downstream interpolation,
+                    # but no goto-style jump happens here so this is purely
+                    # diagnostic.
+                    if (
+                        run_to_closure
+                        and isinstance(next_step, str)
+                        and next_step not in run_to_closure
+                        and next_step != "end"
+                    ):
+                        _log(
+                            f"workflow: run_to conditional '{control_step}' "
+                            f"matched goto='{next_step}' outside closure (no-op)"
+                        )
 
                 elif step.type == StepType.GOTO:
                     cfg_goto: GotoStepConfig = step.goto  # type: ignore
@@ -3102,6 +3205,21 @@ async def execute_workflow(
                         should_goto = True
                         if cfg_goto.condition:
                             should_goto = _eval_condition(cfg_goto.condition, state)
+                        # Run-to-step mode: if the goto target is outside the
+                        # closure, treat the jump as a no-op (a partial loop
+                        # back-edge would either re-run already-completed
+                        # ancestors or jump into territory we never planned
+                        # to execute). Log so the user can debug.
+                        if (
+                            should_goto
+                            and run_to_closure
+                            and cfg_goto.target not in run_to_closure
+                        ):
+                            _log(
+                                f"workflow: run_to skipping goto '{control_step}' -> "
+                                f"'{cfg_goto.target}' (target outside closure)"
+                            )
+                            should_goto = False
                         if should_goto and cfg_goto.target in execution_order:
                             target_idx = execution_order.index(cfg_goto.target)
                             for clear_idx in range(target_idx, len(execution_order)):
@@ -3212,6 +3330,19 @@ async def execute_workflow(
                         state.status = WorkflowStatus.FAILED
                         state.error = f"Step '{failed_step}' failed: {fr.error[:500]}"
                     break
+
+            # Run-to-step: stop the loop as soon as the pinned target has
+            # completed. We don't walk descendants in this mode — the run is
+            # done. Place this BEFORE the post-wave checkpoint so the next
+            # wave never starts spinning up steps we don't intend to run.
+            if target_step_id and target_step_id in state.step_results:
+                tgt_result = state.step_results[target_step_id]
+                if tgt_result.status in ("completed", "skipped"):
+                    _log(
+                        f"workflow: run_to target '{target_step_id}' reached "
+                        f"({tgt_result.status}); terminating"
+                    )
+                    remaining.clear()
 
             # Checkpoint + incremental persist after each wave
             if wf.checkpoint:
@@ -3410,6 +3541,20 @@ async def _exec_parallel(
     from .schema import ParallelStepConfig
     cfg: ParallelStepConfig = step.parallel  # type: ignore
 
+    # Run-to-step: skip children outside the closure. Sibling children that
+    # aren't ancestors of the target should NOT run when the user picks one
+    # branch via "run to here". The join is computed against the filtered
+    # set so a `join: all` parallel with one selected child still passes.
+    if state.run_to_closure:
+        sub_ids = [s for s in cfg.steps if s in state.run_to_closure]
+        if len(sub_ids) != len(cfg.steps):
+            _log(
+                f"workflow: run_to parallel '{step.id}' filtered "
+                f"{len(cfg.steps) - len(sub_ids)} non-closure children"
+            )
+    else:
+        sub_ids = list(cfg.steps)
+
     semaphore = asyncio.Semaphore(cfg.max_concurrency)
     results: dict[str, StepResult] = {}
 
@@ -3425,12 +3570,13 @@ async def _exec_parallel(
             results[sub_id] = r
             state.step_results[sub_id] = r
 
-    tasks = [asyncio.create_task(run_sub(sid)) for sid in cfg.steps]
+    tasks = [asyncio.create_task(run_sub(sid)) for sid in sub_ids]
     await asyncio.gather(*tasks, return_exceptions=True)
 
-    # Apply join strategy
+    # Apply join strategy — total reflects the filtered set so a
+    # run-to-step partial parallel doesn't always fail `join: all`.
     completed = [r for r in results.values() if r.status == "completed"]
-    total = len(cfg.steps)
+    total = len(sub_ids)
 
     if cfg.join == JoinStrategy.ALL:
         success = len(completed) == total

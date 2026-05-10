@@ -1831,6 +1831,60 @@ export function stepsToFlow(steps: TaskDefinition[]): { nodes: Node<StepNodeData
 }
 
 // ---------------------------------------------------------------------------
+// Run-to-step ancestor closure (preview helper)
+// ---------------------------------------------------------------------------
+
+/**
+ * Compute the transitive ancestor closure of `targetId` (inclusive) over a
+ * task list. Used by the StepConfigPanel "Run to here" popover to preview
+ * which steps would execute. The backend re-derives this authoritatively
+ * before scheduling so a stale frontend list cannot mis-target the run.
+ *
+ * Walks `depends_on` edges via BFS. Treats `parallel.steps` as descendants
+ * of the parallel wrapper — i.e. selecting a parallel child also pulls in
+ * the wrapper. Mirrors `compute_ancestor_closure` in operator-mcp's
+ * executor.py; keep them in sync when the rules change.
+ *
+ * Returns the closure ordered by tasks-list position so the popover lists
+ * steps in their editor order.
+ */
+export function computeAncestorClosure(tasks: TaskDefinition[], targetId: string): string[] {
+  const byId = new Map(tasks.map((t) => [t.id, t]));
+  if (!byId.has(targetId)) return [];
+
+  const parentParallels = new Map<string, Set<string>>();
+  for (const t of tasks) {
+    if (t.type === 'parallel' && t.parallel_steps) {
+      for (const child of t.parallel_steps) {
+        if (!parentParallels.has(child)) parentParallels.set(child, new Set());
+        parentParallels.get(child)!.add(t.id);
+      }
+    }
+  }
+
+  const closure = new Set<string>();
+  const queue: string[] = [targetId];
+  while (queue.length > 0) {
+    const sid = queue.pop()!;
+    if (closure.has(sid)) continue;
+    closure.add(sid);
+    const step = byId.get(sid);
+    if (!step) continue;
+    for (const dep of step.depends_on) {
+      if (!closure.has(dep) && byId.has(dep)) queue.push(dep);
+    }
+    const wrappers = parentParallels.get(sid);
+    if (wrappers) {
+      for (const w of wrappers) {
+        if (!closure.has(w)) queue.push(w);
+      }
+    }
+  }
+
+  return tasks.filter((t) => closure.has(t.id)).map((t) => t.id);
+}
+
+// ---------------------------------------------------------------------------
 // React Flow graph → YAML (serialize)
 // ---------------------------------------------------------------------------
 

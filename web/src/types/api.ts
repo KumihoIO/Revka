@@ -651,3 +651,15 @@ export interface AuthProfileSummary {
   updated_at: string;
 }
 
+/** POST /api/workflows/run/{name} body. Mirrors `RunWorkflowBody` in
+ *  `src/gateway/api_workflows.rs`. The gateway forwards `target_step_id`
+ *  to operator-mcp's `run_workflow` tool so the executor can run the
+ *  ancestor closure of a chosen step ("run to here"). */
+export interface RunWorkflowRequest {
+  inputs?: Record<string, unknown>;
+  cwd?: string;
+  /** Optional: when set, only the transitive ancestor closure of this
+   *  step (plus the step itself) executes. */
+  target_step_id?: string;
+}
+

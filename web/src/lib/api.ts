@@ -827,9 +827,11 @@ export async function runWorkflow(
   name: string,
   inputs?: Record<string, unknown>,
   cwd?: string,
+  options?: { targetStepId?: string },
 ): Promise<{ status: string; workflow: string; run_id: string }> {
   const body: Record<string, unknown> = { inputs: inputs ?? {} };
   if (cwd) body.cwd = cwd;
+  if (options?.targetStepId) body.target_step_id = options.targetStepId;
   return apiFetch<{ status: string; workflow: string; run_id: string }>(
     `/api/workflows/run/${encodeURIComponent(name)}`,
     {

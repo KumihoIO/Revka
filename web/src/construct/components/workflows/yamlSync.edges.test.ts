@@ -16,7 +16,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { flowToTasks, parseWorkflowYaml, tasksToFlow, tasksToYaml } from './yamlSync';
+import {
+  computeAncestorClosure,
+  flowToTasks,
+  parseWorkflowYaml,
+  tasksToFlow,
+  tasksToYaml,
+} from './yamlSync';
 import type { TaskNodeData } from './yamlSync';
 import type { Node } from '@xyflow/react';
 
@@ -356,4 +362,154 @@ steps:
   assert.match(back, /register_artifact: false/);
   assert.match(back, /sandbox: workspace-write/);
   assert.match(back, /timeout: 900/);
+});
+
+// ---------------------------------------------------------------------------
+// Run-to-step ancestor closure preview
+// ---------------------------------------------------------------------------
+//
+// Mirrors the six backend test scenarios in
+// operator-mcp/tests/test_workflow_run_to_step.py. The frontend helper is a
+// best-effort preview — the backend re-derives the closure authoritatively
+// before scheduling — but the two implementations should agree on shape so
+// the popover never lies to the user.
+
+test('run_to closure: linear chain a→b→c with target b includes a,b only', () => {
+  const yaml = `
+steps:
+  - id: a
+    type: shell
+    shell:
+      command: "echo a"
+  - id: b
+    type: shell
+    depends_on: [a]
+    shell:
+      command: "echo b"
+  - id: c
+    type: shell
+    depends_on: [b]
+    shell:
+      command: "echo c"
+`;
+  const tasks = parseWorkflowYaml(yaml);
+  const closure = computeAncestorClosure(tasks, 'b');
+  assert.deepEqual(closure, ['a', 'b']);
+});
+
+test('run_to closure: parallel wrapper{x,y}→join, target x includes wrapper+x only', () => {
+  // Mirrors the backend: target x pulls in its parallel wrapper but NOT
+  // sibling y or downstream join.
+  const yaml = `
+steps:
+  - id: wrapper
+    type: parallel
+    parallel:
+      steps: [x, y]
+      join: all
+  - id: x
+    type: shell
+    shell:
+      command: "echo x"
+  - id: y
+    type: shell
+    shell:
+      command: "echo y"
+  - id: join
+    type: shell
+    depends_on: [wrapper]
+    shell:
+      command: "echo join"
+`;
+  const tasks = parseWorkflowYaml(yaml);
+  const closure = computeAncestorClosure(tasks, 'x');
+  assert.deepEqual(new Set(closure), new Set(['wrapper', 'x']));
+  assert.ok(!closure.includes('y'), 'sibling y must not appear');
+  assert.ok(!closure.includes('join'), 'downstream join must not appear');
+});
+
+test('run_to closure: diamond a→b→d, a→c→d, target d includes all four', () => {
+  const yaml = `
+steps:
+  - id: a
+    type: shell
+    shell:
+      command: "echo a"
+  - id: b
+    type: shell
+    depends_on: [a]
+    shell:
+      command: "echo b"
+  - id: c
+    type: shell
+    depends_on: [a]
+    shell:
+      command: "echo c"
+  - id: d
+    type: shell
+    depends_on: [b, c]
+    shell:
+      command: "echo d"
+`;
+  const tasks = parseWorkflowYaml(yaml);
+  const closure = computeAncestorClosure(tasks, 'd');
+  assert.deepEqual(new Set(closure), new Set(['a', 'b', 'c', 'd']));
+});
+
+test('run_to closure: target is the first step (no ancestors) returns just the target', () => {
+  const yaml = `
+steps:
+  - id: only_root
+    type: shell
+    shell:
+      command: "echo solo"
+  - id: downstream
+    type: shell
+    depends_on: [only_root]
+    shell:
+      command: "echo downstream"
+`;
+  const tasks = parseWorkflowYaml(yaml);
+  const closure = computeAncestorClosure(tasks, 'only_root');
+  assert.deepEqual(closure, ['only_root']);
+});
+
+test('run_to closure: unknown target id returns empty list (UI shows disabled state)', () => {
+  const yaml = `
+steps:
+  - id: a
+    type: shell
+    shell:
+      command: "echo a"
+`;
+  const tasks = parseWorkflowYaml(yaml);
+  const closure = computeAncestorClosure(tasks, 'nonexistent');
+  assert.deepEqual(closure, []);
+});
+
+test('run_to closure: goto step in chain is included as ancestor when target is downstream', () => {
+  // The backend skips the goto's JUMP when the goto's target is outside
+  // closure, but the goto step itself remains in the closure if it's an
+  // ancestor of the run-to-here target. The preview reflects the same.
+  const yaml = `
+steps:
+  - id: setup
+    type: shell
+    shell:
+      command: "echo setup"
+  - id: refine
+    type: goto
+    depends_on: [setup]
+    goto:
+      target: setup
+      max_iterations: 3
+  - id: finish
+    type: shell
+    depends_on: [refine]
+    shell:
+      command: "echo finish"
+`;
+  const tasks = parseWorkflowYaml(yaml);
+  const closure = computeAncestorClosure(tasks, 'finish');
+  assert.deepEqual(new Set(closure), new Set(['setup', 'refine', 'finish']));
 });

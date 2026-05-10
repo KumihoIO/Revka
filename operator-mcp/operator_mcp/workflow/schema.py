@@ -851,3 +851,10 @@ class WorkflowState(BaseModel):
     # their parent run. Excluded from persistence: Process objects are
     # not serializable and only meaningful within the running executor.
     running_processes: list[Any] = Field(default_factory=list, exclude=True)
+    # Run-to-step closure — set by the executor when ``target_step_id`` is
+    # passed to ``execute_workflow``. Step handlers (currently
+    # ``_exec_parallel``, ``_exec_for_each``) consult this to skip non-closure
+    # children. Empty set means "no restriction" (normal full run). Excluded
+    # from persistence: it's a transient input to the running executor, not
+    # part of the durable run record.
+    run_to_closure: set[str] = Field(default_factory=set, exclude=True)

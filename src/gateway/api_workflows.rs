@@ -141,6 +141,12 @@ pub struct RunWorkflowBody {
     pub inputs: serde_json::Value,
     #[serde(default)]
     pub cwd: Option<String>,
+    /// Optional "run to here" target step id. When present, the operator
+    /// runs only the transitive ancestor closure of this step (plus the
+    /// step itself) and stops. Unknown ids are surfaced as a classified
+    /// validation error from the operator-mcp tool call.
+    #[serde(default)]
+    pub target_step_id: Option<String>,
 }
 
 // ── Response types ──────────────────────────────────────────────────────
@@ -1408,6 +1414,10 @@ pub async fn handle_run_workflow(
         .map(|b| b.inputs.clone())
         .unwrap_or(serde_json::Value::Object(Default::default()));
     let cwd = body.as_ref().and_then(|b| b.cwd.clone());
+    let target_step_id = body
+        .as_ref()
+        .and_then(|b| b.target_step_id.clone())
+        .filter(|s| !s.is_empty());
 
     // Pre-dispatch validation: resolve the named workflow (from builtins/Kumiho)
     // and run the schema validator. Blocks silent failures where a malformed
@@ -1451,6 +1461,9 @@ pub async fn handle_run_workflow(
     metadata.insert("cwd".to_string(), cwd.unwrap_or_default());
     metadata.insert("trigger_source".to_string(), "api".to_string());
     metadata.insert("requested_at".to_string(), now);
+    if let Some(ref tsid) = target_step_id {
+        metadata.insert("target_step_id".to_string(), tsid.clone());
+    }
 
     let item_name = format!("run-{}", &run_id[..run_id.len().min(12)]);
 
@@ -1502,6 +1515,12 @@ pub async fn handle_run_workflow(
                     "run_id".to_string(),
                     serde_json::Value::String(run_id.clone()),
                 );
+                if let Some(ref tsid) = target_step_id {
+                    tool_args.insert(
+                        "target_step_id".to_string(),
+                        serde_json::Value::String(tsid.clone()),
+                    );
+                }
                 let tool_args_val = serde_json::Value::Object(tool_args);
                 let run_id_for_log = run_id.clone();
                 let workflow_name_for_log = name.clone();
