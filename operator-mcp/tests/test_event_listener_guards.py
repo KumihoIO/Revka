@@ -22,6 +22,25 @@ def _make_listener() -> WorkflowEventListener:
     return WorkflowEventListener(TriggerRegistry(), cwd="/tmp")
 
 
+@pytest.fixture(autouse=True)
+def _isolate_claimed_runs_persistence(tmp_path, monkeypatch):
+    """`_handle_run_request` now writes to `_CLAIMED_RUNS_PATH` whenever
+    a run is claimed. That path defaults to `~/.construct/event_listener_claimed_runs.json`
+    — running the test suite would silently overwrite production dedup
+    state. Redirect to tmp_path for every test, and reset the class-level
+    in-memory state so tests don't bleed into each other."""
+    monkeypatch.setattr(
+        WorkflowEventListener,
+        "_CLAIMED_RUNS_PATH",
+        str(tmp_path / "claimed_runs.json"),
+    )
+    WorkflowEventListener._claimed_runs.clear()
+    WorkflowEventListener._claimed_runs_loaded = False
+    yield
+    WorkflowEventListener._claimed_runs.clear()
+    WorkflowEventListener._claimed_runs_loaded = False
+
+
 def test_handle_run_request_skips_when_loop_closed():
     """Closed loop ⇒ skip without claiming run_id."""
     listener = _make_listener()
@@ -137,20 +156,10 @@ def test_handle_run_request_does_not_claim_on_schedule_exception(monkeypatch):
 # These tests pin the three fixes.
 
 
-def _reset_class_dedup_state(tmp_path):
-    """Class-level `_claimed_runs` set + `_claimed_runs_loaded` flag
-    persist across tests inside a single pytest process. Reset to a
-    known-empty state and redirect persistence to `tmp_path`."""
-    WorkflowEventListener._claimed_runs.clear()
-    WorkflowEventListener._claimed_runs_loaded = False
-    WorkflowEventListener._CLAIMED_RUNS_PATH = str(tmp_path / "claimed_runs.json")
-
-
 def test_claimed_runs_persist_across_simulated_restart(tmp_path):
     """First listener claims a run_id; a fresh listener instance with
     the dedup-loaded flag reset (simulating a restart) observes the
     same run_id as already-claimed."""
-    _reset_class_dedup_state(tmp_path)
     first = _make_listener()
 
     loop = asyncio.new_event_loop()
@@ -180,7 +189,6 @@ def test_claimed_runs_persist_across_simulated_restart(tmp_path):
 def test_load_claimed_runs_caps_at_10k(tmp_path):
     """File grows unbounded over months otherwise. Newest entries kept."""
     import json
-    _reset_class_dedup_state(tmp_path)
     huge = [f"run-{i}" for i in range(10_500)]
     with open(WorkflowEventListener._CLAIMED_RUNS_PATH, "w") as f:
         json.dump(huge, f)
@@ -200,7 +208,6 @@ async def test_async_run_request_skips_when_latest_status_is_completed(
     """The must-fix guard: a stream-replayed `tag=pending` event whose
     item's latest revision already has `status=completed` must NOT
     re-execute the workflow."""
-    _reset_class_dedup_state(tmp_path)
     listener = _make_listener()
 
     class FakeSDK:
@@ -246,7 +253,6 @@ async def test_async_run_request_proceeds_when_latest_status_is_pending(
     """Inverse guard — a legitimate pending request must still launch.
     Pinning this so a future over-eager guard doesn't break the run-
     request feature entirely."""
-    _reset_class_dedup_state(tmp_path)
     listener = _make_listener()
 
     class FakeSDK:
