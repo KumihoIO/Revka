@@ -191,38 +191,210 @@ def _cleanup_checkpoint(run_id: str) -> None:
 # ---------------------------------------------------------------------------
 # Condition evaluation
 # ---------------------------------------------------------------------------
+#
+# Backed by simpleeval — a sandboxed AST-walking evaluator that's safe by
+# default (no imports, no dunder access, configurable function/operator
+# allowlist). The wrapper below:
+#
+#   1. Translates workflow-language operators (`&&`, `||`, `?:`, `contains`)
+#      to Python equivalents simpleeval understands natively.
+#   2. Builds a `names` dict mirroring `${X.field}` interpolation so step
+#      results, inputs, trigger context, etc. are accessible as bare
+#      identifiers in the expression (e.g. `review.status == 'approved'`).
+#   3. Falls back to `interpolate()` for any leftover `${...}` references —
+#      preserves the legacy form for users who still write
+#      `${review.status} == 'approved'`.
+#   4. Treats parse / name-resolution failures as `False` and logs a warning
+#      so a misspelled identifier doesn't crash the workflow.
+
+# Compile-time RE for `&&` / `||` / `!` / `? :` rewriting. These run before
+# interpolation (which may inject string literals containing the same chars).
+_AND_RE = re.compile(r"&&")
+_OR_RE = re.compile(r"\|\|")
+# Match `!` (logical not) — anywhere `!` appears that isn't followed by `=`.
+# Excludes `!=`. Allows `!flag`, `! flag`, `!(expr)`.
+_NOT_RE = re.compile(r"!(?!=)")
+# Ternary: `cond ? a : b` → `(a) if (cond) else (b)`. Single nesting level —
+# users with nested ternaries should use Python form directly. Greedy on the
+# arms keeps top-level matching correct for the common single-level case.
+_TERNARY_RE = re.compile(r"^(.*?)\?(.*?):(.*)$", re.DOTALL)
+
+
+def _preprocess_expr(expr: str) -> str:
+    """Translate workflow-language operators to Python operators.
+
+    `&&` → ` and `, `||` → ` or `, leading `!` → ` not `, ternary `? :` →
+    `if/else`. Idempotent for plain Python: a clean Python expression
+    survives the rewrite untouched (Python doesn't use `&&`/`||`/`?:`).
+    `contains` is handled via simpleeval's `in` operator at the names-dict
+    layer (so ``a contains b`` is rewritten to ``b in a`` here).
+    """
+    out = expr
+    out = _AND_RE.sub(" and ", out)
+    out = _OR_RE.sub(" or ", out)
+    out = _NOT_RE.sub(" not ", out)
+
+    # ``a contains b`` → ``b in a`` (workflow-language sugar). Word-boundary
+    # match so ``contains_x`` identifiers aren't touched. Legacy YAML often
+    # writes the RHS as a bare word (``${X.output} contains APPROVED``); if
+    # the RHS parses as a single bare identifier we quote it so it's treated
+    # as a string literal — matches the pre-simpleeval evaluator's behavior
+    # where both sides had quotes stripped before comparison.
+    contains_match = re.search(r"^(.*?)\bcontains\b(.*)$", out, re.DOTALL)
+    if contains_match:
+        lhs = contains_match.group(1).strip()
+        rhs = contains_match.group(2).strip()
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", rhs):
+            rhs = repr(rhs)
+        out = f"({rhs}) in ({lhs})"
+
+    # Ternary: scan once and rewrite. Skip if the `?` appears inside a
+    # quoted literal or doesn't have a matching `:` — best-effort.
+    ternary_match = _TERNARY_RE.match(out)
+    if ternary_match and "?" not in ternary_match.group(2):
+        # Heuristic: avoid clobbering Python-form expressions that happen to
+        # contain `:` (e.g. a slice). If the input is a plain Python ternary
+        # already (`x if cond else y`), the regex won't match (no `?`).
+        cond = ternary_match.group(1).strip()
+        a = ternary_match.group(2).strip()
+        b = ternary_match.group(3).strip()
+        if cond and a and b:
+            out = f"({a}) if ({cond}) else ({b})"
+
+    return out
+
+
+def _build_eval_names(state: WorkflowState) -> dict[str, Any]:
+    """Build a `names` dict for simpleeval mirroring interpolation namespaces.
+
+    EvalWithCompoundTypes resolves dotted access on dicts via attribute
+    syntax — `review.status` looks up `names['review']['status']`. This
+    means users can write expressions naturally without `${...}` syntax.
+    """
+    names: dict[str, Any] = {
+        "inputs": dict(state.inputs),
+        "trigger": dict(state.trigger_context),
+        "run_id": state.run_id,
+    }
+
+    # Step results — flatten so `step.output`, `step.status`, and
+    # `step.output_data.field` all work via dotted access.
+    for sid, sr in state.step_results.items():
+        names[sid] = {
+            "output": sr.output,
+            "status": sr.status,
+            "error": sr.error,
+            "files": list(sr.files_touched),
+            "output_data": dict(sr.output_data),
+            "agent_id": sr.agent_id or "",
+        }
+
+    # Loop / for_each / previous / rejection scopes — mirrors interpolate()
+    fe_ctx = state.inputs.get("__for_each__")
+    if isinstance(fe_ctx, dict):
+        names["for_each"] = dict(fe_ctx)
+    prev_map = state.inputs.get("__previous__")
+    if isinstance(prev_map, dict):
+        names["previous"] = prev_map
+    names["rejection"] = {
+        "feedback": state.inputs.get("__rejection_feedback__", ""),
+        "count": state.inputs.get("__rejection_count__", 0),
+    }
+    names["loop"] = {
+        "iteration": max(state.iteration_counts.values(), default=0),
+    }
+    names["env"] = dict(os.environ)
+    return names
+
+
+def _interpolate_for_expr(expr: str, state: WorkflowState) -> str:
+    """Like `interpolate` but quotes string substitutions for safe injection
+    into an expression context.
+
+    Legacy workflows wrote ``${review.status} == 'completed'`` expecting the
+    interpolator to spit out ``completed == 'completed'``. With simpleeval
+    that bare ``completed`` would be a NameNotDefined. Wrap each substituted
+    value: numeric / bool literals stay bare, everything else gets repr'd
+    (single-quoted, with embedded quotes escaped).
+    """
+    def _quote(value: str) -> str:
+        # Numeric literal? Leave bare so arithmetic comparisons work.
+        try:
+            float(value)
+            return value
+        except (ValueError, TypeError):
+            pass
+        if value in ("True", "False", "None"):
+            return value
+        # String literal — repr produces a Python-safe single-quoted form
+        # that simpleeval parses cleanly even when the value contains quotes.
+        return repr(value)
+
+    def _sub(match: re.Match) -> str:
+        # Reuse interpolate() to resolve a single ${...} expression by
+        # passing it through with no surrounding text.
+        resolved = interpolate(match.group(0), state)
+        # If interpolate returned the placeholder unchanged (unresolved
+        # reference), don't quote it — let simpleeval surface the error.
+        if resolved == match.group(0):
+            return resolved
+        return _quote(resolved)
+
+    return _VAR_RE.sub(_sub, expr)
+
+
+def _eval_expression(expr: str, state: WorkflowState) -> Any:
+    """Evaluate an expression and return the raw result.
+
+    Pipeline: preprocess workflow-syntax sugar → interpolate any leftover
+    ${...} (legacy form, with auto-quoting) → simpleeval. Used by both
+    `_eval_condition` and branch-value evaluation.
+    """
+    from simpleeval import EvalWithCompoundTypes, InvalidExpression, NameNotDefined
+
+    pre = _preprocess_expr(expr)
+    # Resolve any remaining ${...} via the legacy interpolator. New-style
+    # expressions don't need this; we keep it for backward compat with
+    # workflows that wrote `${review.status} == 'approved'`.
+    if "${" in pre:
+        pre = _interpolate_for_expr(pre, state)
+
+    names = _build_eval_names(state)
+    evaluator = EvalWithCompoundTypes(names=names)
+    try:
+        return evaluator.eval(pre)
+    except (NameNotDefined, InvalidExpression, SyntaxError, TypeError, ValueError) as exc:
+        _log(f"workflow: expression eval failed ({type(exc).__name__}): "
+             f"{expr!r} → {pre!r}: {exc}")
+        raise
+
 
 def _eval_condition(expr: str, state: WorkflowState) -> bool:
-    """Evaluate a simple condition expression.
-
-    Supports: == != > < >= <= contains
-    Example: "${review.status} == 'completed'"
-    """
+    """Evaluate a branch condition. Returns False on any failure (logged)."""
     if not expr or expr.strip().lower() == "default":
         return True
+    try:
+        return bool(_eval_expression(expr, state))
+    except Exception:
+        # _eval_expression already logged; swallow so the executor moves on
+        # to the next branch (typically a `default` fallback).
+        return False
 
-    resolved = interpolate(expr, state)
 
-    # Try simple comparisons
-    for op, fn in [
-        ("!=", lambda a, b: a.strip("'\"") != b.strip("'\"")),
-        ("==", lambda a, b: a.strip("'\"") == b.strip("'\"")),
-        (">=", lambda a, b: float(a) >= float(b)),
-        ("<=", lambda a, b: float(a) <= float(b)),
-        (">", lambda a, b: float(a) > float(b)),
-        ("<", lambda a, b: float(a) < float(b)),
-        ("contains", lambda a, b: b.strip("'\"") in a),
-    ]:
-        if op in resolved:
-            parts = resolved.split(op, 1)
-            if len(parts) == 2:
-                try:
-                    return fn(parts[0].strip(), parts[1].strip())
-                except (ValueError, TypeError):
-                    return False
-
-    # Truthy check
-    return bool(resolved and resolved.lower() not in ("", "false", "0", "none", "failed"))
+def _eval_branch_value(expr: str | None, state: WorkflowState) -> str:
+    """Evaluate a branch's `value` field, returning a string. Empty on
+    missing/failure (logged)."""
+    if not expr:
+        return ""
+    try:
+        result = _eval_expression(expr, state)
+    except Exception:
+        return ""
+    if result is None:
+        return ""
+    if isinstance(result, bool):
+        return "true" if result else "false"
+    return str(result)
 
 
 # ---------------------------------------------------------------------------
@@ -2553,7 +2725,7 @@ async def _dispatch_step(
         elif step.type == StepType.PARALLEL:
             return await _exec_parallel(step, state, cwd, wf)
         elif step.type == StepType.CONDITIONAL:
-            return StepResult(step_id=step.id, status="completed")
+            return _exec_conditional(step, state)
         elif step.type == StepType.GOTO:
             return StepResult(step_id=step.id, status="completed")
         elif step.type == StepType.HUMAN_APPROVAL:
@@ -2657,13 +2829,56 @@ async def _exec_parallel(
 # Control flow helpers
 # ---------------------------------------------------------------------------
 
+def _exec_conditional(step: StepDef, state: WorkflowState) -> StepResult:
+    """Resolve which branch matches and emit its `value` (if any) as output.
+
+    Branch resolution happens here so the matched goto + emitted value are
+    visible in the StepResult — downstream steps reading ``${gate.output}``
+    see the matched branch's value, and the wave loop reads the cached
+    goto from ``output_data['__matched_goto__']`` via _resolve_conditional.
+    """
+    from .schema import ConditionalStepConfig
+    cfg: ConditionalStepConfig = step.conditional  # type: ignore
+    if not cfg:
+        return StepResult(step_id=step.id, status="completed")
+
+    matched_goto: str | None = None
+    output: str = ""
+    for branch in cfg.branches:
+        if _eval_condition(branch.condition, state):
+            matched_goto = branch.goto
+            output = _eval_branch_value(branch.value, state)
+            break
+
+    output_data: dict[str, Any] = {}
+    if matched_goto is not None:
+        output_data["__matched_goto__"] = matched_goto
+
+    return StepResult(
+        step_id=step.id,
+        status="completed",
+        output=output,
+        output_data=output_data,
+    )
+
+
 def _resolve_conditional(step: StepDef, state: WorkflowState) -> str | None:
-    """Evaluate conditional branches and return the goto target."""
+    """Return the goto target chosen by `_exec_conditional`.
+
+    Reads the cached match from the step's StepResult so we don't
+    re-evaluate (which would also re-trigger any side-effecting access to
+    state). Falls back to fresh evaluation if the result is missing.
+    """
+    sr = state.step_results.get(step.id)
+    if sr is not None:
+        cached = sr.output_data.get("__matched_goto__")
+        if isinstance(cached, str):
+            return cached
+
     from .schema import ConditionalStepConfig
     cfg: ConditionalStepConfig = step.conditional  # type: ignore
     if not cfg:
         return None
-
     for branch in cfg.branches:
         if _eval_condition(branch.condition, state):
             return branch.goto

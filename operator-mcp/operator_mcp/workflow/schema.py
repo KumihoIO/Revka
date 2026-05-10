@@ -250,6 +250,13 @@ class ConditionalBranch(BaseModel):
     """A single branch in a conditional step."""
     condition: str  # Expression: "${step_id.status} == 'completed'" or "default"
     goto: str       # Step ID to jump to
+    # Optional expression evaluated when this branch matches; result becomes
+    # the conditional step's `output` so downstream steps can read
+    # ``${gate.output}``. Evaluated by the same simpleeval-based evaluator as
+    # ``condition`` — supports literals (``"'approved'"``), step refs
+    # (``"review.status"``), arithmetic, and ternary
+    # (``"score > 0.8 ? 'go' : 'stop'"``).
+    value: str | None = None
 
 
 class ConditionalStepConfig(BaseModel):

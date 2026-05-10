@@ -48,6 +48,13 @@ export interface TaskDefinition {
   condition?: string;
   on_true?: string;
   on_false?: string;
+  /** Optional value expressions for the true/false branches. When the gate
+   *  matches a branch, the runtime evaluates this expression with the same
+   *  simpleeval-based evaluator used for `condition` and emits the result
+   *  on the conditional step's `output` — downstream steps reading
+   *  `${gate.output}` see the matched branch's value. */
+  on_true_value?: string;
+  on_false_value?: string;
   /** Human-input channel */
   channel?: 'dashboard' | 'slack' | 'discord';
   /** Notify channels (multi-select) */
@@ -274,6 +281,12 @@ export interface TaskNodeData {
   dependencyCount: number;
   /** Gate-only: condition expression */
   condition: string;
+  /** Gate-only: optional value expression emitted on `output` when the
+   *  true branch matches. See TaskDefinition.on_true_value. */
+  onTrueValue: string;
+  /** Gate-only: optional value expression emitted on `output` when the
+   *  false branch matches. See TaskDefinition.on_false_value. */
+  onFalseValue: string;
   /** Human-input channel */
   channel: string;
   /** Notify channels (multi-select) */
@@ -560,6 +573,10 @@ export function parseWorkflowYaml(yaml: string): TaskDefinition[] {
         current.on_true = value;
       } else if (key === 'on_false' || key === 'onFalse') {
         current.on_false = value;
+      } else if (key === 'on_true_value' || key === 'onTrueValue') {
+        current.on_true_value = value;
+      } else if (key === 'on_false_value' || key === 'onFalseValue') {
+        current.on_false_value = value;
       } else if (key === 'channel') {
         current.channel = value as TaskDefinition['channel'];
       } else if (key === 'agent_hints' || key === 'agentHints') {
@@ -1314,6 +1331,8 @@ function finalizeTask(partial: Partial<TaskDefinition>, paramCount: number): Tas
     condition: partial.condition,
     on_true: partial.on_true,
     on_false: partial.on_false,
+    on_true_value: partial.on_true_value,
+    on_false_value: partial.on_false_value,
     channel: partial.channel,
     channels: partial.channels,
     parallel_steps: partial.parallel_steps,
@@ -1370,6 +1389,8 @@ export function tasksToFlow(tasks: TaskDefinition[]): { nodes: Node<TaskNodeData
       paramCount: task.params ? Object.keys(task.params).length : 0,
       dependencyCount: task.depends_on.length,
       condition: task.condition || '',
+      onTrueValue: task.on_true_value || '',
+      onFalseValue: task.on_false_value || '',
       channel: task.channel || '',
       channels: task.channels || [],
       agentType: task.agent_type || '',
@@ -1835,6 +1856,8 @@ export function flowToTasks(nodes: Node<TaskNodeData>[], edges: Edge[]): TaskDef
       condition: st === 'conditional' ? d.condition : undefined,
       on_true: trueBranch.get(node.id),
       on_false: falseBranch.get(node.id),
+      on_true_value: st === 'conditional' && d.onTrueValue ? d.onTrueValue : undefined,
+      on_false_value: st === 'conditional' && d.onFalseValue ? d.onFalseValue : undefined,
       channel: st === 'human_input' && d.channel
         ? d.channel as TaskDefinition['channel']
         : undefined,
@@ -2082,6 +2105,12 @@ export function tasksToYaml(tasks: TaskDefinition[], meta?: Partial<WorkflowMeta
     }
     if (task.on_false) {
       lines.push(`    on_false: ${task.on_false}`);
+    }
+    if (stepType === 'conditional' && task.on_true_value) {
+      lines.push(`    on_true_value: ${yamlEscape(task.on_true_value)}`);
+    }
+    if (stepType === 'conditional' && task.on_false_value) {
+      lines.push(`    on_false_value: ${yamlEscape(task.on_false_value)}`);
     }
     if (stepType === 'human_input' && task.channel) {
       lines.push(`    channel: ${task.channel}`);
