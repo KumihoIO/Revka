@@ -836,3 +836,18 @@ class WorkflowState(BaseModel):
     # step id. Held off ``StepResult.output_data`` so the entry can't leak
     # into the simpleeval names dict or ``${gate.output_data.*}`` lookups.
     conditional_routes: dict[str, str] = Field(default_factory=dict)
+
+    # Cancel signal — set by the cancel_workflow MCP tool. Distinct from
+    # ``status: CANCELLED`` (the OUTCOME): ``cancel_requested`` is the
+    # SIGNAL the executor reads at step boundaries / inside long-running
+    # subprocess polls, then transitions the run to CANCELLED cleanly.
+    # Excluded from persistence/checkpoint dumps because it's a transient
+    # in-memory signal — once observed and the status flips to CANCELLED,
+    # the flag's job is done.
+    cancel_requested: bool = Field(default=False, exclude=True)
+    # Live subprocess handles for the run, registered by step handlers
+    # (_exec_shell, _exec_python). When cancel fires, the executor walks
+    # this list and kills each process so subprocesses don't outlive
+    # their parent run. Excluded from persistence: Process objects are
+    # not serializable and only meaningful within the running executor.
+    running_processes: list[Any] = Field(default_factory=list, exclude=True)

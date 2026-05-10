@@ -277,6 +277,15 @@ async def tool_list_workflows(args: dict[str, Any]) -> dict[str, Any]:
 async def tool_cancel_workflow(args: dict[str, Any]) -> dict[str, Any]:
     """Cancel a running workflow.
 
+    Sets ``state.cancel_requested = True`` — the executor's main loop and
+    long-running step handlers (shell/python polls) read this flag at the
+    next checkpoint, kill any owned subprocesses, and transition the run
+    to ``WorkflowStatus.CANCELLED`` cleanly.
+
+    Idempotent: calling on an already-cancelled or finished run returns a
+    success-shaped response with ``cancelled=false`` and a reason, never
+    an error.
+
     Args:
         run_id: The workflow run ID (required).
     """
@@ -289,24 +298,36 @@ async def tool_cancel_workflow(args: dict[str, Any]) -> dict[str, Any]:
 
     state = ACTIVE_WORKFLOWS.get(run_id)
     if not state:
-        return classified_error(
-            f"Workflow run '{run_id}' not found or not active",
-            code="not_found", category=VALIDATION_ERROR,
-        )
-
-    if state.status not in (WorkflowStatus.RUNNING, WorkflowStatus.PAUSED):
+        # Idempotent: not in active registry → either never existed or already
+        # finished. Return a success-shaped response so the gateway can map
+        # this to a 404 without classifying as an error.
         return {
+            "cancelled": False,
             "run_id": run_id,
-            "status": state.status.value,
-            "message": f"Workflow already in terminal state: {state.status.value}",
+            "reason": "not_found_or_already_finished",
         }
 
-    state.status = WorkflowStatus.CANCELLED
-    _log(f"tool_cancel_workflow: cancelled run={run_id[:8]}")
+    if state.status in (
+        WorkflowStatus.COMPLETED,
+        WorkflowStatus.FAILED,
+        WorkflowStatus.CANCELLED,
+    ):
+        return {
+            "cancelled": False,
+            "run_id": run_id,
+            "status": state.status.value,
+            "reason": "already_terminal",
+        }
+
+    # Idempotent: if cancel was already requested but the executor hasn't
+    # processed it yet, just confirm.
+    state.cancel_requested = True
+    _log(f"tool_cancel_workflow: cancel_requested set for run={run_id[:8]} (status={state.status.value})")
 
     return {
+        "cancelled": True,
         "run_id": run_id,
-        "status": "cancelled",
+        "status": state.status.value,
         "steps_completed": sum(1 for r in state.step_results.values() if r.status == "completed"),
     }
 

@@ -2107,6 +2107,101 @@ pub struct RetryWorkflowBody {
     pub cwd: Option<String>,
 }
 
+/// POST /api/workflows/runs/{run_id}/cancel
+///
+/// Body: empty.
+///
+/// Cancels a running workflow. Sets the executor's `cancel_requested` flag
+/// via the `cancel_workflow` MCP tool — the executor reads this at the next
+/// step boundary, kills any in-flight subprocesses (shell/python steps),
+/// and transitions the run to `cancelled` cleanly.
+///
+/// Returns:
+///   - 200 with `{cancelled: true, run_id, status, ...}` for active runs.
+///   - 404 with `{cancelled: false, reason: "not_found_or_already_finished"}`
+///     when the run isn't in the active registry.
+///   - 409 when the run is already in a terminal state.
+pub async fn handle_cancel_workflow_run(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(run_id): Path<String>,
+) -> impl IntoResponse {
+    if let Err(e) = require_auth(&state, &headers) {
+        return e.into_response();
+    }
+
+    let tool_name = format!(
+        "{}__cancel_workflow",
+        crate::agent::operator::OPERATOR_SERVER_NAME
+    );
+    let mut tool_args = serde_json::Map::new();
+    tool_args.insert(
+        "run_id".to_string(),
+        serde_json::Value::String(run_id.clone()),
+    );
+
+    let mcp_result = if let Some(ref registry) = state.mcp_registry {
+        let mcp_future = registry.call_tool(&tool_name, serde_json::Value::Object(tool_args));
+        match tokio::time::timeout(std::time::Duration::from_secs(10), mcp_future).await {
+            Ok(Ok(result_str)) => Ok(result_str),
+            Ok(Err(e)) => Err(format!("operator tool call failed: {e:#}")),
+            Err(_) => Err("operator tool call timed out (10s)".to_string()),
+        }
+    } else {
+        Err("MCP registry not available — operator not connected".to_string())
+    };
+
+    match mcp_result {
+        Ok(result_str) => {
+            let payload = serde_json::from_str::<serde_json::Value>(&result_str)
+                .unwrap_or_else(|_| serde_json::json!({"raw": result_str}));
+
+            let status_code = cancel_status_for(&payload);
+            if status_code == StatusCode::OK {
+                let _ = state.event_tx.send(serde_json::json!({
+                    "type": "workflow_cancel",
+                    "run_id": run_id,
+                    "timestamp": chrono::Utc::now().to_rfc3339(),
+                }));
+            }
+            (status_code, Json(payload)).into_response()
+        }
+        Err(e) => {
+            tracing::warn!("cancel_workflow_run: failed for run_id={run_id}: {e}");
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({ "error": format!("Failed to cancel workflow: {e}") })),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// Map a `cancel_workflow` MCP-tool result to the gateway's HTTP status code.
+///
+///   - `cancelled=true`                                  → 200 OK
+///   - `reason=not_found_or_already_finished`            → 404
+///   - `reason=already_terminal`                         → 409
+///   - anything else (e.g. classified_error)             → 400
+fn cancel_status_for(payload: &serde_json::Value) -> StatusCode {
+    let cancelled = payload
+        .get("cancelled")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    if cancelled {
+        return StatusCode::OK;
+    }
+    let reason = payload
+        .get("reason")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    match reason {
+        "not_found_or_already_finished" => StatusCode::NOT_FOUND,
+        "already_terminal" => StatusCode::CONFLICT,
+        _ => StatusCode::BAD_REQUEST,
+    }
+}
+
 /// GET /api/workflows/agent-activity/{agent_id}
 ///
 /// Reads the RunLog JSONL file for an agent and returns structured activity data.
@@ -2364,4 +2459,57 @@ pub async fn handle_workflow_dashboard(
     };
 
     Json(serde_json::json!({ "dashboard": dashboard })).into_response()
+}
+
+#[cfg(test)]
+mod cancel_tests {
+    //! Tests for the `POST /api/workflows/runs/{run_id}/cancel` response-shape
+    //! mapping. We don't exercise the full handler (it requires a real
+    //! `AppState` with an MCP registry) — instead we test the pure mapping
+    //! function `cancel_status_for`, which is what determines the 200/404/409
+    //! semantics. The MCP tool's behavior is tested in the operator-mcp
+    //! Python suite (`tests/test_workflow_cancel.py`).
+    use super::cancel_status_for;
+    use axum::http::StatusCode;
+    use serde_json::json;
+
+    #[test]
+    fn cancelled_true_returns_200_for_active_run() {
+        let payload = json!({
+            "cancelled": true,
+            "run_id": "abc123",
+            "status": "running",
+            "steps_completed": 1,
+        });
+        assert_eq!(cancel_status_for(&payload), StatusCode::OK);
+    }
+
+    #[test]
+    fn unknown_run_returns_404() {
+        let payload = json!({
+            "cancelled": false,
+            "run_id": "nope",
+            "reason": "not_found_or_already_finished",
+        });
+        assert_eq!(cancel_status_for(&payload), StatusCode::NOT_FOUND);
+    }
+
+    #[test]
+    fn terminal_state_returns_409() {
+        let payload = json!({
+            "cancelled": false,
+            "run_id": "done123",
+            "status": "completed",
+            "reason": "already_terminal",
+        });
+        assert_eq!(cancel_status_for(&payload), StatusCode::CONFLICT);
+    }
+
+    #[test]
+    fn unrecognized_payload_returns_400() {
+        // Operator's classified_error path (missing_run_id etc.) — generic
+        // bad-request fallback, never silently 200.
+        let payload = json!({"error": "missing run_id", "code": "missing_run_id"});
+        assert_eq!(cancel_status_for(&payload), StatusCode::BAD_REQUEST);
+    }
 }

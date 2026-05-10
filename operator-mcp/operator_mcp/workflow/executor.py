@@ -15,6 +15,7 @@ import asyncio
 import json
 import os
 import re
+import signal
 import time
 import uuid
 from datetime import datetime, timezone
@@ -902,8 +903,91 @@ async def _resolve_step_auth(
         )
 
 
+def _proc_alive(proc: Any) -> bool:
+    """Return True if the subprocess is still running (best-effort)."""
+    if proc is None:
+        return False
+    try:
+        return proc.returncode is None  # asyncio.subprocess.Process
+    except AttributeError:
+        try:
+            return proc.poll() is None  # subprocess.Popen
+        except Exception:
+            return False
+
+
+def _kill_proc(proc: Any) -> None:
+    """Best-effort kill of a subprocess and its entire process group.
+
+    On POSIX, child processes are spawned with ``start_new_session=True``
+    so they become process-group leaders. We send SIGTERM to the group,
+    wait briefly, then escalate to SIGKILL — this catches grandchildren
+    spawned by patterns like ``bash -c "long & other"`` that ``proc.kill()``
+    would otherwise leak.
+
+    On Windows, process groups don't translate cleanly; fall back to
+    ``proc.kill()`` (the existing single-child kill).
+    """
+    if proc is None:
+        return
+    if not _proc_alive(proc):
+        return
+
+    if os.name == "posix":
+        try:
+            pgid = os.getpgid(proc.pid)
+        except (ProcessLookupError, OSError):
+            # Already exited or unable to query — best-effort proc.kill below.
+            pgid = None
+        if pgid is not None:
+            try:
+                os.killpg(pgid, signal.SIGTERM)
+            except (ProcessLookupError, OSError):
+                pass
+            # Brief grace period for graceful exit, then escalate.
+            deadline = time.monotonic() + 0.5
+            while time.monotonic() < deadline:
+                if not _proc_alive(proc):
+                    return
+                time.sleep(0.05)
+            try:
+                os.killpg(pgid, signal.SIGKILL)
+            except (ProcessLookupError, OSError):
+                pass
+            return
+
+    # Windows fallback (or POSIX path where pgid lookup failed).
+    try:
+        if hasattr(proc, "kill"):
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
+        elif hasattr(proc, "poll") and proc.poll() is None:
+            proc.kill()
+    except Exception:
+        pass
+
+
+def _track_proc(state: WorkflowState, proc: Any) -> None:
+    state.running_processes.append(proc)
+
+
+def _untrack_proc(state: WorkflowState, proc: Any) -> None:
+    try:
+        state.running_processes.remove(proc)
+    except ValueError:
+        pass
+
+
 async def _exec_shell(step: StepDef, state: WorkflowState, cwd: str) -> StepResult:
-    """Execute a shell command step."""
+    """Execute a shell command step.
+
+    Cooperative cancellation: while the subprocess runs, polls
+    ``state.cancel_requested`` every 250ms and kills the process if set.
+    Also kills the subprocess on timeout (previous versions left it
+    orphaned).
+    """
     cfg: ShellStepConfig = step.shell  # type: ignore
     command = interpolate(cfg.command, state)
 
@@ -930,6 +1014,7 @@ async def _exec_shell(step: StepDef, state: WorkflowState, cwd: str) -> StepResu
         subproc_env["CONSTRUCT_AUTH_TOKEN"] = auth_resolved["token"]
         subproc_env["CONSTRUCT_AUTH_KIND"] = auth_resolved.get("kind", "token")
 
+    proc = None
     try:
         proc = await asyncio.create_subprocess_shell(
             command,
@@ -937,10 +1022,57 @@ async def _exec_shell(step: StepDef, state: WorkflowState, cwd: str) -> StepResu
             env=subproc_env,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            # New session so the child becomes a process-group leader;
+            # _kill_proc kills the whole group on cancel/timeout to avoid
+            # leaking grandchildren spawned by patterns like
+            # ``bash -c "long & other"``.
+            start_new_session=(os.name == "posix"),
         )
-        stdout, stderr = await asyncio.wait_for(
-            proc.communicate(), timeout=cfg.timeout,
-        )
+        _track_proc(state, proc)
+
+        # Run communicate() but poll the cancel flag every 250ms so a
+        # mid-step cancel kills the subprocess promptly.
+        comm_task = asyncio.create_task(proc.communicate())
+        deadline = time.monotonic() + cfg.timeout
+        cancelled_mid_step = False
+        timed_out = False
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                timed_out = True
+                break
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    asyncio.shield(comm_task),
+                    timeout=min(0.25, remaining),
+                )
+                break
+            except asyncio.TimeoutError:
+                if state.cancel_requested:
+                    cancelled_mid_step = True
+                    break
+                continue
+
+        if cancelled_mid_step or timed_out:
+            _kill_proc(proc)
+            try:
+                await asyncio.wait_for(comm_task, timeout=2.0)
+            except (asyncio.TimeoutError, Exception):
+                pass
+            if cancelled_mid_step:
+                return StepResult(
+                    step_id=step.id,
+                    status="failed",
+                    error="Cancelled by user",
+                    input_data=input_data,
+                )
+            return StepResult(
+                step_id=step.id,
+                status="failed",
+                error=f"Shell command timed out after {cfg.timeout}s",
+                input_data=input_data,
+            )
+
         stdout_raw = stdout.decode("utf-8", errors="replace")
         stderr_raw = stderr.decode("utf-8", errors="replace")
         output = stdout_raw[:4000]
@@ -959,20 +1091,16 @@ async def _exec_shell(step: StepDef, state: WorkflowState, cwd: str) -> StepResu
                 "stderr_truncated": len(stderr_raw) > 2000,
             },
         )
-    except asyncio.TimeoutError:
-        return StepResult(
-            step_id=step.id,
-            status="failed",
-            error=f"Shell command timed out after {cfg.timeout}s",
-            input_data=input_data,
-        )
     except Exception as exc:
+        _kill_proc(proc)
         return StepResult(
             step_id=step.id,
             status="failed",
             error=str(exc)[:2000],
             input_data=input_data,
         )
+    finally:
+        _untrack_proc(state, proc)
 
 
 # ---------------------------------------------------------------------------
@@ -1099,6 +1227,7 @@ async def _exec_python(step: StepDef, state: WorkflowState, cwd: str) -> StepRes
         subproc_env["CONSTRUCT_AUTH_TOKEN"] = auth_resolved["token"]
         subproc_env["CONSTRUCT_AUTH_KIND"] = auth_resolved.get("kind", "token")
 
+    proc = None
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -1107,17 +1236,48 @@ async def _exec_python(step: StepDef, state: WorkflowState, cwd: str) -> StepRes
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            # New session so the child becomes a process-group leader;
+            # _kill_proc kills the whole group on cancel/timeout to avoid
+            # leaking grandchildren spawned by user code (e.g. subprocess.Popen).
+            start_new_session=(os.name == "posix"),
         )
-        try:
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(input=json.dumps(payload).encode("utf-8")),
-                timeout=cfg.timeout,
-            )
-        except asyncio.TimeoutError:
+        _track_proc(state, proc)
+        # Poll cancel flag every 250ms while waiting for the subprocess.
+        comm_task = asyncio.create_task(
+            proc.communicate(input=json.dumps(payload).encode("utf-8"))
+        )
+        deadline = time.monotonic() + cfg.timeout
+        cancelled_mid_step = False
+        timed_out = False
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                timed_out = True
+                break
             try:
-                proc.kill()
-            except ProcessLookupError:
+                stdout, stderr = await asyncio.wait_for(
+                    asyncio.shield(comm_task),
+                    timeout=min(0.25, remaining),
+                )
+                break
+            except asyncio.TimeoutError:
+                if state.cancel_requested:
+                    cancelled_mid_step = True
+                    break
+                continue
+        if cancelled_mid_step or timed_out:
+            _kill_proc(proc)
+            try:
+                await asyncio.wait_for(comm_task, timeout=2.0)
+            except (asyncio.TimeoutError, Exception):
                 pass
+            if cancelled_mid_step:
+                return StepResult(
+                    step_id=step.id,
+                    status="failed",
+                    error="Cancelled by user",
+                    input_data=input_data,
+                )
             return StepResult(
                 step_id=step.id,
                 status="failed",
@@ -1174,12 +1334,15 @@ async def _exec_python(step: StepDef, state: WorkflowState, cwd: str) -> StepRes
             output_data=output_data,
         )
     except Exception as exc:
+        _kill_proc(proc)
         return StepResult(
             step_id=step.id,
             status="failed",
             error=str(exc)[:2000],
             input_data=input_data,
         )
+    finally:
+        _untrack_proc(state, proc)
 
 
 # ---------------------------------------------------------------------------
@@ -2017,9 +2180,23 @@ async def _exec_for_each(
     iteration_summaries: list[str] = []
     previous_results: dict[str, dict] = {}  # step_id -> result dict from prior iteration
     completed_iterations = 0
+    cancelled_mid_loop = False
 
     for idx, value in enumerate(values):
         iter_num = idx + 1
+
+        # Cooperative cancel between iterations. Without this check, a long
+        # for_each over agent-only sub-steps wouldn't notice cancel until the
+        # entire loop returned. Partial results in state.step_results are
+        # preserved (we just break, not clear).
+        if state.cancel_requested:
+            cancelled_mid_loop = True
+            _log(
+                f"for_each '{step.id}': cancel observed before iteration "
+                f"{iter_num}/{total}; breaking with {completed_iterations} "
+                f"completed"
+            )
+            break
 
         # If resuming, skip fully completed iterations
         if resume_iter and iter_num < resume_iter:
@@ -2162,6 +2339,19 @@ async def _exec_for_each(
                 break
 
         if iteration_failed:
+            # If cancel landed mid-iteration (e.g. main loop killed our shell
+            # subprocess after cancel_requested flipped), treat as cancel
+            # rather than a real failure so output_data flags partial completion.
+            if state.cancel_requested:
+                cancelled_mid_loop = True
+                iteration_summaries.append(
+                    f"iter {iter_num} ({cfg.variable}={value}): CANCELLED"
+                )
+                _log(
+                    f"for_each '{step.id}': cancel observed during iteration "
+                    f"{iter_num}; breaking with {completed_iterations} completed"
+                )
+                break
             iteration_summaries.append(f"iter {iter_num} ({cfg.variable}={value}): FAILED")
             if cfg.fail_fast:
                 break
@@ -2208,24 +2398,41 @@ async def _exec_for_each(
         state.inputs.pop("__previous__", None)
 
     summary = (
-        f"for_each '{step.id}': {completed_iterations}/{total} iterations completed\n"
+        f"for_each '{step.id}': {completed_iterations}/{total} iterations completed"
+        + (" (cancelled)" if cancelled_mid_loop else "")
+        + "\n"
         + "\n".join(iteration_summaries)
     )
     _log(summary)
 
-    status = "completed" if completed_iterations == total else "failed"
+    if cancelled_mid_loop:
+        status = "failed"
+    else:
+        status = "completed" if completed_iterations == total else "failed"
+
+    output_data: dict[str, Any] = {
+        "completed": completed_iterations,
+        "total": total,
+        "iterations_completed": completed_iterations,
+        "iterations": iteration_summaries,
+    }
+    if cancelled_mid_loop:
+        output_data["cancelled_after_iteration"] = completed_iterations
+
+    if cancelled_mid_loop:
+        error = "Cancelled by user"
+    elif status == "completed":
+        error = ""
+    else:
+        error = f"{total - completed_iterations} iteration(s) failed"
+
     return StepResult(
         step_id=step.id,
         status=status,
         output=summary,
         input_data=base_input_data,
-        output_data={
-            "completed": completed_iterations,
-            "total": total,
-            "iterations_completed": completed_iterations,
-            "iterations": iteration_summaries,
-        },
-        error="" if status == "completed" else f"{total - completed_iterations} iteration(s) failed",
+        output_data=output_data,
+        error=error,
     )
 
 
@@ -2805,8 +3012,23 @@ async def execute_workflow(
                 state.error = f"Cost guard (mid-run): {cost_err}"
                 break
 
-            # Cancellation check
-            if state.status == WorkflowStatus.CANCELLED:
+            # Cancellation check — react to either an externally-set
+            # CANCELLED status (legacy direct flip) or a cancel_requested
+            # signal from the cancel_workflow MCP tool. The signal path is
+            # the canonical one: the executor processes it cleanly, kills
+            # any owned subprocesses, and transitions to CANCELLED.
+            if state.cancel_requested or state.status == WorkflowStatus.CANCELLED:
+                if state.cancel_requested:
+                    _log(f"workflow: cancel_requested observed for run={state.run_id[:8]}")
+                state.status = WorkflowStatus.CANCELLED
+                if not state.error:
+                    state.error = "Cancelled by user"
+                # Kill any subprocesses owned by this run (shell/python steps).
+                # Step handlers also poll cancel_requested independently, but
+                # the explicit kill here covers any handler that hasn't yet
+                # noticed (e.g. parallel batch where one step finishes fast).
+                for p in list(state.running_processes):
+                    _kill_proc(p)
                 break
 
             # Find all ready steps: deps satisfied and not yet completed
@@ -2910,8 +3132,18 @@ async def execute_workflow(
                 if result.status == "failed" and step.type not in (
                     StepType.CONDITIONAL, StepType.GOTO, StepType.OUTPUT
                 ):
-                    state.status = WorkflowStatus.FAILED
-                    state.error = f"Step '{control_step}' failed: {result.error[:500]}"
+                    # If the failure was the cooperative cancel signal,
+                    # transition to CANCELLED rather than FAILED. The
+                    # main-loop top-of-iteration check handles this on the
+                    # next pass too, but we'd already break out as FAILED
+                    # without this guard.
+                    if state.cancel_requested:
+                        state.status = WorkflowStatus.CANCELLED
+                        if not state.error:
+                            state.error = "Cancelled by user"
+                    else:
+                        state.status = WorkflowStatus.FAILED
+                        state.error = f"Step '{control_step}' failed: {result.error[:500]}"
                     break
 
             else:
@@ -2967,9 +3199,18 @@ async def execute_workflow(
                             failed_step = sid
 
                 if failed_step:
-                    fr = state.step_results[failed_step]
-                    state.status = WorkflowStatus.FAILED
-                    state.error = f"Step '{failed_step}' failed: {fr.error[:500]}"
+                    # Mid-step cancel: parallel step handlers return
+                    # status="failed" with "Cancelled by user". Don't let
+                    # that mask the cancel — surface the correct terminal
+                    # state.
+                    if state.cancel_requested:
+                        state.status = WorkflowStatus.CANCELLED
+                        if not state.error:
+                            state.error = "Cancelled by user"
+                    else:
+                        fr = state.step_results[failed_step]
+                        state.status = WorkflowStatus.FAILED
+                        state.error = f"Step '{failed_step}' failed: {fr.error[:500]}"
                     break
 
             # Checkpoint + incremental persist after each wave
