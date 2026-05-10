@@ -21,13 +21,14 @@ import {
   Activity,
   ChevronDown,
   ChevronRight,
+  StopCircle,
 } from 'lucide-react';
 import type { StepRunInfo } from './yamlSync';
 import { parseWorkflowYaml, inferAgentFromTask } from './yamlSync';
 import type { AgentChannelEvent, WsMessage } from '@/types/api';
 import { WebSocketClient } from '@/lib/ws';
 import { generateUUID } from '@/lib/uuid';
-import { fetchWorkflowRun, fetchAgentActivity } from '@/lib/api';
+import { fetchWorkflowRun, fetchAgentActivity, cancelWorkflowRun, ApiError } from '@/lib/api';
 import type { AgentActivity, AgentToolCall } from '@/lib/api';
 import GroupChatTranscript from './GroupChatTranscript';
 import ApprovalPanel from './ApprovalPanel';
@@ -510,55 +511,111 @@ function RunStatusBar({
   totalSteps,
   runStatus,
   elapsed,
+  cancelState,
+  cancelMessage,
+  onCancel,
 }: {
   stepResults: Record<string, StepRunInfo>;
   totalSteps: number;
   runStatus?: string;
   elapsed: string;
+  cancelState: 'idle' | 'cancelling' | 'cancelled' | 'error';
+  cancelMessage: string | null;
+  onCancel: () => void;
 }) {
   const completed = Object.values(stepResults).filter((s) => s.status === 'completed').length;
   const running = Object.values(stepResults).filter((s) => s.status === 'running').length;
   const failed = Object.values(stepResults).filter((s) => s.status === 'failed').length;
 
-  const statusColor = runStatus === 'completed' ? 'var(--construct-status-success)'
-    : runStatus === 'failed' ? 'var(--construct-status-danger)'
-    : runStatus === 'running' ? 'var(--construct-signal-live)'
+  // Effective status label — when the user has clicked Stop and we're
+  // waiting for the WS event, surface "cancelling…" instead of "running".
+  const effectiveStatus = cancelState === 'cancelling' ? 'cancelling' : (runStatus || 'unknown');
+
+  const statusColor = effectiveStatus === 'completed' ? 'var(--construct-status-success)'
+    : effectiveStatus === 'failed' ? 'var(--construct-status-danger)'
+    : effectiveStatus === 'cancelled' ? 'var(--construct-status-warning)'
+    : effectiveStatus === 'cancelling' ? 'var(--construct-status-warning)'
+    : effectiveStatus === 'running' ? 'var(--construct-signal-live)'
     : 'var(--pc-text-muted)';
+
+  // Show Stop only while actively running and not already cancelling.
+  const canCancel = runStatus === 'running' && cancelState === 'idle';
 
   return (
     <div
-      className="flex items-center gap-4 px-4 py-2.5 border-b text-xs"
+      className="flex flex-col gap-1 px-4 py-2.5 border-b text-xs"
       style={{ borderColor: 'var(--pc-border)', background: 'var(--pc-bg-surface)' }}
     >
-      {/* Status badge */}
-      <span
-        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-semibold uppercase tracking-wider"
-        style={{ background: `color-mix(in srgb, ${statusColor} 15%, transparent)`, color: statusColor }}
-      >
+      <div className="flex items-center gap-4">
+        {/* Status badge */}
         <span
-          className="h-1.5 w-1.5 rounded-full"
-          style={{
-            background: statusColor,
-            animation: runStatus === 'running' ? 'pulse-dot 1.5s ease-in-out infinite' : 'none',
-          }}
-        />
-        {runStatus || 'unknown'}
-      </span>
+          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-semibold uppercase tracking-wider"
+          style={{ background: `color-mix(in srgb, ${statusColor} 15%, transparent)`, color: statusColor }}
+        >
+          <span
+            className="h-1.5 w-1.5 rounded-full"
+            style={{
+              background: statusColor,
+              animation:
+                effectiveStatus === 'running' || effectiveStatus === 'cancelling'
+                  ? 'pulse-dot 1.5s ease-in-out infinite'
+                  : 'none',
+            }}
+          />
+          {effectiveStatus}
+        </span>
 
-      {/* Step counts */}
-      <div className="flex items-center gap-3" style={{ color: 'var(--pc-text-muted)' }}>
-        {completed > 0 && <span style={{ color: 'var(--construct-status-success)' }}>{completed} done</span>}
-        {running > 0 && <span style={{ color: 'var(--construct-signal-live)' }}>{running} running</span>}
-        {failed > 0 && <span style={{ color: 'var(--construct-status-danger)' }}>{failed} failed</span>}
-        <span>{Object.keys(stepResults).length}/{totalSteps} steps</span>
+        {/* Step counts */}
+        <div className="flex items-center gap-3" style={{ color: 'var(--pc-text-muted)' }}>
+          {completed > 0 && <span style={{ color: 'var(--construct-status-success)' }}>{completed} done</span>}
+          {running > 0 && <span style={{ color: 'var(--construct-signal-live)' }}>{running} running</span>}
+          {failed > 0 && <span style={{ color: 'var(--construct-status-danger)' }}>{failed} failed</span>}
+          <span>{Object.keys(stepResults).length}/{totalSteps} steps</span>
+        </div>
+
+        {/* Stop button — only shown while actively running */}
+        {canCancel && (
+          <button
+            onClick={onCancel}
+            className="ml-auto inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-[10px] font-semibold uppercase tracking-wider transition-colors hover:bg-[var(--pc-hover)]"
+            style={{
+              borderColor: 'var(--construct-status-danger)',
+              color: 'var(--construct-status-danger)',
+              background: 'transparent',
+            }}
+            title="Cancel this workflow run"
+            aria-label="Stop workflow run"
+          >
+            <StopCircle className="h-3 w-3" />
+            Stop
+          </button>
+        )}
+
+        {/* Elapsed */}
+        {elapsed && (
+          <span
+            className={`flex items-center gap-1 ${canCancel ? '' : 'ml-auto'}`}
+            style={{ color: 'var(--pc-text-faint)' }}
+          >
+            <Clock className="h-3 w-3" />
+            {elapsed}
+          </span>
+        )}
       </div>
 
-      {/* Elapsed */}
-      {elapsed && (
-        <span className="flex items-center gap-1 ml-auto" style={{ color: 'var(--pc-text-faint)' }}>
-          <Clock className="h-3 w-3" />
-          {elapsed}
-        </span>
+      {/* Inline cancel feedback (errors / status notes). 404/409 land here. */}
+      {cancelMessage && (
+        <div
+          className="text-[10px]"
+          style={{
+            color:
+              cancelState === 'error'
+                ? 'var(--construct-status-danger)'
+                : 'var(--pc-text-muted)',
+          }}
+        >
+          {cancelMessage}
+        </div>
       )}
     </div>
   );
@@ -583,6 +640,44 @@ export default function WorkflowRunLive({
   const [elapsed, setElapsed] = useState('');
   const wsRef = useRef<WebSocketClient | null>(null);
   const [initialStepResults, setInitialStepResults] = useState<Record<string, StepRunInfo>>({});
+  // Cancel state: 'idle' | 'cancelling' (POST in flight + waiting for WS) |
+  // 'cancelled' (run terminal) | 'error' (POST failed)
+  const [cancelState, setCancelState] = useState<'idle' | 'cancelling' | 'cancelled' | 'error'>('idle');
+  const [cancelMessage, setCancelMessage] = useState<string | null>(null);
+
+  const handleCancel = useCallback(async () => {
+    if (cancelState !== 'idle') return;
+    setCancelState('cancelling');
+    setCancelMessage('Cancelling — waiting for executor to stop running steps…');
+    try {
+      const res = await cancelWorkflowRun(runId);
+      if (res.cancelled) {
+        // Optimistic UI: actual transition to 'cancelled' is driven by the
+        // run-status poll once the executor processes the cancel.
+        setCancelMessage('Cancel signal sent. Stopping subprocesses…');
+      } else {
+        // Should be rare — server handles 404/409 via thrown errors below.
+        setCancelState('error');
+        setCancelMessage(`Cancel rejected: ${res.reason || 'unknown reason'}`);
+      }
+    } catch (e) {
+      if (e instanceof ApiError) {
+        if (e.status === 404) {
+          setCancelState('error');
+          setCancelMessage('Run already finished — cannot cancel.');
+        } else if (e.status === 409) {
+          setCancelState('error');
+          setCancelMessage('Run already in a terminal state.');
+        } else {
+          setCancelState('error');
+          setCancelMessage(`Cancel failed: ${e.message}`);
+        }
+      } else {
+        setCancelState('error');
+        setCancelMessage(`Cancel failed: ${(e as Error).message ?? 'unknown error'}`);
+      }
+    }
+  }, [cancelState, runId]);
 
   // Elapsed timer
   useEffect(() => {
@@ -605,7 +700,7 @@ export default function WorkflowRunLive({
     let cancelled = false;
     let hasFetchedOnce = false;
 
-    const isTerminal = (s: string) => s === 'completed' || s === 'failed';
+    const isTerminal = (s: string) => s === 'completed' || s === 'failed' || s === 'cancelled';
 
     const poll = () => {
       // Always allow the first fetch (even if already terminal — need step data).
@@ -634,8 +729,15 @@ export default function WorkflowRunLive({
             }
             setInitialStepResults(results);
           }
-          // Don't setRunStatus from REST — let step-inference derive it
-          // from step results so "running" always takes priority over "failed".
+          // We deliberately don't setRunStatus from REST for normal
+          // running/failed/completed transitions (step-inference handles
+          // those, and "running" must beat "failed" while parallel branches
+          // are still in flight). EXCEPT for "cancelled": once the executor
+          // honors a cancel, no more step events fire so step-inference
+          // can't see it. Surface the terminal state here.
+          if (detail.status === 'cancelled') {
+            setRunStatus('cancelled');
+          }
         })
         .catch(() => {
           hasFetchedOnce = true; // don't block polling on fetch failure
@@ -749,7 +851,9 @@ export default function WorkflowRunLive({
   // Infer run status from step results.  Running takes priority over failed
   // so that parallel workflows don't show "failed" while other branches are
   // still executing.  Only show "failed" when nothing is still running.
+  // Skip inference once the run is cancelled — REST poll has the truth.
   useEffect(() => {
+    if (runStatus === 'cancelled') return;
     const steps = Object.values(stepResults);
     if (steps.length === 0) return;
     const hasRunning = steps.some((s) => s.status === 'running');
@@ -758,7 +862,16 @@ export default function WorkflowRunLive({
     if (allDone && steps.length > 0) setRunStatus('completed');
     else if (hasRunning) setRunStatus('running');
     else if (hasFailed && !hasRunning) setRunStatus('failed');
-  }, [stepResults]);
+  }, [stepResults, runStatus]);
+
+  // Once the run reaches the cancelled terminal state, snap cancel UI
+  // out of "cancelling…" so the bar doesn't pulse forever.
+  useEffect(() => {
+    if (runStatus === 'cancelled' && cancelState === 'cancelling') {
+      setCancelState('cancelled');
+      setCancelMessage(null);
+    }
+  }, [runStatus, cancelState]);
 
   // Events for selected step
   const selectedStepEvents = useMemo(() => {
@@ -807,6 +920,9 @@ export default function WorkflowRunLive({
         totalSteps={totalSteps}
         runStatus={runStatus}
         elapsed={elapsed}
+        cancelState={cancelState}
+        cancelMessage={cancelMessage}
+        onCancel={handleCancel}
       />
 
       {/* Main content: Graph + optional side panel */}

@@ -796,6 +796,33 @@ export async function retryWorkflowRun(
   );
 }
 
+export interface CancelWorkflowRunResponse {
+  cancelled: boolean;
+  run_id?: string;
+  status?: string;
+  reason?: string;
+  steps_completed?: number;
+}
+
+/**
+ * Cancel a running workflow. The gateway maps the cancel signal to HTTP
+ * status codes:
+ *   - 200 → run cancelled (cancelled=true)
+ *   - 404 → run not found / already finished
+ *   - 409 → run is already in a terminal state
+ *
+ * Both 404 and 409 throw via apiFetch; callers catch and inspect via the
+ * thrown Error's message to render an inline notice.
+ */
+export async function cancelWorkflowRun(
+  runId: string,
+): Promise<CancelWorkflowRunResponse> {
+  return apiFetch<CancelWorkflowRunResponse>(
+    `/api/workflows/runs/${encodeURIComponent(runId)}/cancel`,
+    { method: 'POST', body: JSON.stringify({}) },
+  );
+}
+
 export async function runWorkflow(
   name: string,
   inputs?: Record<string, unknown>,

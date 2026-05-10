@@ -1685,6 +1685,7 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
         .route("/api/workflows/runs/{run_id}", get(api_workflows::handle_get_workflow_run).delete(api_workflows::handle_delete_workflow_run))
         .route("/api/workflows/runs/{run_id}/approve", post(api_workflows::handle_approve_workflow_run))
         .route("/api/workflows/runs/{run_id}/retry", post(api_workflows::handle_retry_workflow_run))
+        .route("/api/workflows/runs/{run_id}/cancel", post(api_workflows::handle_cancel_workflow_run))
         .route("/api/workflows/agent-activity/{agent_id}", get(api_workflows::handle_agent_activity))
         .route("/api/workflows/dashboard", get(api_workflows::handle_workflow_dashboard))
         // ── ClawHub marketplace API ──
