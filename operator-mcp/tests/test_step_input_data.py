@@ -431,14 +431,15 @@ class TestPersistRoundTrip:
         from operator_mcp.workflow.memory import (
             _PER_STEP_JSON_CAP,
             _prepare_for_persistence,
+            _redact_for_persistence,
         )
         entry: dict[str, Any] = {"status": sr.get("status", "unknown")}
         od = sr.get("output_data", {}) or {}
         output = sr.get("output", "")
         if output:
-            entry["output_preview"] = output[:400]
+            entry["output_preview"] = _redact_for_persistence(str(output))[:400]
         if sr.get("error"):
-            entry["error"] = str(sr["error"])[:1000]
+            entry["error"] = _redact_for_persistence(str(sr["error"]))[:1000]
         id_data, _ = _prepare_for_persistence(sr.get("input_data") or {})
         od_data, _ = _prepare_for_persistence(od)
         entry["input_data"] = id_data
@@ -469,6 +470,30 @@ class TestPersistRoundTrip:
         s = self._build_step_entry(sr)
         assert "SECRET123" not in s
         assert "***" in s
+
+    def test_secret_redacted_in_persisted_error(self):
+        sr = {
+            "status": "failed",
+            "error": "Failed: --api-key=secret123",
+            "input_data": {},
+            "output_data": {},
+        }
+        s = self._build_step_entry(sr)
+        parsed = json.loads(s)
+        assert "secret123" not in parsed["error"]
+        assert "***" in parsed["error"]
+
+    def test_secret_redacted_in_persisted_output_preview(self):
+        sr = {
+            "status": "completed",
+            "output": "ok, token=hunter2 returned",
+            "input_data": {},
+            "output_data": {},
+        }
+        s = self._build_step_entry(sr)
+        parsed = json.loads(s)
+        assert "hunter2" not in parsed["output_preview"]
+        assert "***" in parsed["output_preview"]
 
     def test_huge_string_truncated_in_persisted_output(self):
         sr = {

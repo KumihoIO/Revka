@@ -237,9 +237,9 @@ async def persist_workflow_run(
             # Budget: ~400 chars for preview, ~100 for other fields + JSON overhead.
             output = sr.get("output", "")
             if output:
-                entry["output_preview"] = output[:400]
+                entry["output_preview"] = _redact_for_persistence(str(output))[:400]
             if sr.get("error"):
-                entry["error"] = str(sr["error"])[:1000]
+                entry["error"] = _redact_for_persistence(str(sr["error"]))[:1000]
             # Include artifact path so recovery can read full output from disk
             if od.get("artifact_path"):
                 entry["artifact_path"] = od["artifact_path"]
