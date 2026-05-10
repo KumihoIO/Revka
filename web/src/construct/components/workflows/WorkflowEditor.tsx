@@ -758,8 +758,10 @@ function WorkflowEditorInner({
 
       // Auto-insert `${source.output}` into the target's primary text field so
       // the wired edge implies the matching interpolation. Skip when source ===
-      // target (self-loop), when the target type has no primary text field,
-      // or when the target already references this source somewhere.
+      // target (self-loop), when the edge is a conditional branch (true/false
+      // handles route control flow, not data), when the target type has no
+      // primary text field, or when the target already references this source
+      // somewhere.
       const sourceId = connection.source;
       const targetId = connection.target;
       setNodes((nds) =>
@@ -770,7 +772,7 @@ function WorkflowEditorInner({
           if (!isBranch) {
             nextData = { ...nextData, dependencyCount: nextData.dependencyCount + 1 };
           }
-          if (sourceId !== targetId) {
+          if (sourceId !== targetId && !isBranch) {
             const primaryField = STEP_PRIMARY_TEXT_FIELD[nextData.type];
             if (primaryField && !targetAlreadyReferencesSource(nextData, sourceId)) {
               const current = (nextData[primaryField] as string | undefined) ?? '';
