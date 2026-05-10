@@ -272,7 +272,11 @@ class TestExecConditional:
         )
         result = _exec_conditional(step, state)
         assert result.status == "completed"
-        assert result.output_data["__matched_goto__"] == "done"
+        # Matched goto is stashed on workflow state, NOT on output_data —
+        # keeps the sentinel out of ${gate.output_data.*} interpolation
+        # and out of the simpleeval names dict.
+        assert state.conditional_routes["gate"] == "done"
+        assert "__matched_goto__" not in result.output_data
         assert result.output == ""  # no value set
 
         state.step_results["gate"] = result
@@ -293,7 +297,7 @@ class TestExecConditional:
         )
         result = _exec_conditional(step, state)
         assert result.output == "approved"
-        assert result.output_data["__matched_goto__"] == "done"
+        assert state.conditional_routes["gate"] == "done"
 
     def test_value_with_ternary(self, state):
         step = StepDef(
@@ -324,7 +328,7 @@ class TestExecConditional:
             ]),
         )
         result = _exec_conditional(step, state)
-        assert result.output_data["__matched_goto__"] == "summary"
+        assert state.conditional_routes["check_verdict"] == "summary"
 
     def test_resolve_falls_back_when_no_cached_match(self, state):
         # If the StepResult is absent (e.g. someone calls _resolve_conditional
@@ -353,3 +357,207 @@ class TestSchema:
         # With value
         b2 = ConditionalBranch(condition="x", goto="y", value="'hi'")
         assert b2.value == "'hi'"
+
+
+# ---------------------------------------------------------------------------
+# Regression: string-literal contamination in _preprocess_expr
+# ---------------------------------------------------------------------------
+
+class TestStringLiteralPreservation:
+    """``_preprocess_expr`` must not rewrite operators that appear inside
+    quoted string literals — only operators in code position.
+    """
+
+    def test_double_amp_inside_single_quotes(self):
+        out = _preprocess_expr("x == 'foo&&bar'")
+        assert "'foo&&bar'" in out
+        assert "foo and bar" not in out
+
+    def test_double_pipe_inside_single_quotes(self):
+        out = _preprocess_expr("x == 'a||b'")
+        assert "'a||b'" in out
+        assert "a or b" not in out
+
+    def test_bang_inside_single_quotes(self):
+        out = _preprocess_expr("y == 'hello!'")
+        assert "'hello!'" in out
+        assert "not hello" not in out
+
+    def test_contains_inside_single_quotes(self):
+        # `contains` inside a string literal must not split the expression.
+        out = _preprocess_expr("x == 'this contains stuff'")
+        assert "'this contains stuff'" in out
+        # No `in` rewrite — the original `==` stays put.
+        assert out.startswith("x ==") or "x ==" in out
+
+    def test_method_call_contains_not_munged(self):
+        # `foo.contains(bar)` is a method-style call — preprocessor must
+        # leave it intact (no LHS-RHS split).
+        out = _preprocess_expr("foo.contains(bar)")
+        assert "foo.contains(bar)" in out
+
+    def test_double_quotes_also_preserved(self):
+        out = _preprocess_expr('x == "foo&&bar"')
+        assert '"foo&&bar"' in out
+
+    def test_escaped_quote_inside_string(self):
+        # \' inside a single-quoted string must NOT close the literal.
+        out = _preprocess_expr(r"x == 'it\'s && fine'")
+        # Inside the literal `&&` stays put.
+        assert "&&" in out
+
+    def test_eval_string_literal_with_amp(self, state):
+        # End-to-end: a literal RHS containing `&&` survives intact.
+        state.step_results["x"] = StepResult(step_id="x", status="completed", output="foo&&bar")
+        assert _eval_condition("x.output == 'foo&&bar'", state) is True
+
+    def test_eval_string_literal_with_bang(self, state):
+        state.step_results["y"] = StepResult(step_id="y", status="completed", output="hello!")
+        assert _eval_condition("y.output == 'hello!'", state) is True
+
+    def test_eval_string_literal_with_contains_word(self, state):
+        # The literal contains the word `contains` — must not parse-error.
+        state.step_results["z"] = StepResult(
+            step_id="z", status="completed", output="this contains stuff"
+        )
+        assert _eval_condition("z.output == 'this contains stuff'", state) is True
+
+
+# ---------------------------------------------------------------------------
+# Regression: dunder/sentinel leak protection
+# ---------------------------------------------------------------------------
+
+class TestDunderLeakProtection:
+    """Dunder-prefixed and leading-underscore keys must NEVER be reachable
+    via simpleeval names lookup or ${...} interpolation. Defense in depth
+    so a malicious agent JSON output can't exfiltrate Python internals.
+    """
+
+    def test_dunder_key_not_in_eval_names(self, state):
+        # An agent step put `__class__` into output_data (perhaps via JSON
+        # extraction). It must NOT be reachable as `step.output_data.__class__`.
+        state.step_results["evil"] = StepResult(
+            step_id="evil",
+            status="completed",
+            output="",
+            output_data={"__class__": "pwn", "safe_field": "ok"},
+        )
+        # safe_field works
+        assert _eval_condition("evil.output_data.safe_field == 'ok'", state) is True
+        # __class__ is not reachable — eval fails, _eval_condition returns False
+        assert _eval_condition("evil.output_data.__class__ == 'pwn'", state) is False
+
+    def test_dunder_key_not_in_interpolation(self, state):
+        from operator_mcp.workflow.executor import interpolate
+
+        state.step_results["evil"] = StepResult(
+            step_id="evil",
+            status="completed",
+            output="",
+            output_data={"__class__": "pwn", "ok": "yes"},
+        )
+        # Safe key resolves
+        assert interpolate("${evil.output_data.ok}", state) == "yes"
+        # Dunder key does NOT — placeholder is left unresolved.
+        out = interpolate("${evil.output_data.__class__}", state)
+        assert "pwn" not in out
+        assert "${evil.output_data.__class__}" == out
+
+    def test_matched_goto_not_leaked_via_output_data(self, state):
+        # Run a conditional and confirm the matched-goto sentinel does NOT
+        # appear in StepResult.output_data (it now lives in state.conditional_routes).
+        step = StepDef(
+            id="gate",
+            type=StepType.CONDITIONAL,
+            conditional=ConditionalStepConfig(branches=[
+                ConditionalBranch(condition="default", goto="next"),
+            ]),
+        )
+        result = _exec_conditional(step, state)
+        assert "__matched_goto__" not in result.output_data
+        assert state.conditional_routes["gate"] == "next"
+        # And it must not be reachable via interpolation.
+        from operator_mcp.workflow.executor import interpolate
+        state.step_results["gate"] = result
+        out = interpolate("${gate.output_data.__matched_goto__}", state)
+        assert "next" not in out
+
+
+# ---------------------------------------------------------------------------
+# Regression: lower()/upper() registered as safe functions
+# ---------------------------------------------------------------------------
+
+class TestSafeFunctions:
+    def test_lower_function(self, state):
+        state.step_results["r"] = StepResult(
+            step_id="r", status="completed", output="Approved"
+        )
+        assert _eval_condition("'approve' in lower(r.output)", state) is True
+
+    def test_upper_function(self, state):
+        state.step_results["r"] = StepResult(
+            step_id="r", status="completed", output="approved"
+        )
+        assert _eval_condition("'APPROVE' in upper(r.output)", state) is True
+
+
+# ---------------------------------------------------------------------------
+# Regression: quantum-soul-production-room approval gate
+# ---------------------------------------------------------------------------
+
+class TestQuantumSoulApprovalGate:
+    """The quantum-soul YAML's approval_gate now uses conditional.branches
+    with `lower()` for case-insensitive matching. Verify both branches.
+    """
+
+    def _gate_step(self) -> StepDef:
+        return StepDef(
+            id="approval_gate",
+            type=StepType.CONDITIONAL,
+            conditional=ConditionalStepConfig(branches=[
+                ConditionalBranch(
+                    condition="'approve' in lower(review_approval.output)",
+                    goto="publish_episode",
+                ),
+                ConditionalBranch(condition="default", goto="revision_producer"),
+            ]),
+        )
+
+    def test_approved_routes_to_publish(self):
+        s = WorkflowState(workflow_name="qs", run_id="r")
+        s.step_results["review_approval"] = StepResult(
+            step_id="review_approval", status="completed", output="Approved"
+        )
+        _exec_conditional(self._gate_step(), s)
+        assert s.conditional_routes["approval_gate"] == "publish_episode"
+
+    def test_rejected_routes_to_revision(self):
+        s = WorkflowState(workflow_name="qs", run_id="r")
+        s.step_results["review_approval"] = StepResult(
+            step_id="review_approval", status="completed", output="rejected, please redo"
+        )
+        _exec_conditional(self._gate_step(), s)
+        assert s.conditional_routes["approval_gate"] == "revision_producer"
+
+    def test_lowercase_approve_routes_to_publish(self):
+        s = WorkflowState(workflow_name="qs", run_id="r")
+        s.step_results["review_approval"] = StepResult(
+            step_id="review_approval", status="completed", output="approve this episode"
+        )
+        _exec_conditional(self._gate_step(), s)
+        assert s.conditional_routes["approval_gate"] == "publish_episode"
+
+
+# ---------------------------------------------------------------------------
+# Regression: MAX_POWER cap
+# ---------------------------------------------------------------------------
+
+class TestMaxPowerCap:
+    def test_huge_exponent_blocked(self, state):
+        # 2**100000 would normally chew CPU/RAM. Our evaluator caps MAX_POWER
+        # at 1000, so simpleeval raises and _eval_condition returns False.
+        assert _eval_condition("2 ** 100000 > 0", state) is False
+
+    def test_safe_exponent_works(self, state):
+        # Within the cap — works fine.
+        assert _eval_condition("2 ** 10 == 1024", state) is True

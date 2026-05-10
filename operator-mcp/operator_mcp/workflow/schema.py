@@ -745,3 +745,7 @@ class WorkflowState(BaseModel):
     # Empty strings mean "built-in / disk fallback" — name-matching is fine.
     workflow_item_kref: str = ""
     workflow_revision_kref: str = ""
+    # Side-channel cache for conditional-step matched gotos. Keyed by
+    # step id. Held off ``StepResult.output_data`` so the entry can't leak
+    # into the simpleeval names dict or ``${gate.output_data.*}`` lookups.
+    conditional_routes: dict[str, str] = Field(default_factory=dict)

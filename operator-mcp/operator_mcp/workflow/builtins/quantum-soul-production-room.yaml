@@ -415,9 +415,12 @@ steps:
     type: conditional
     description: Route to publish (approved) or revision (rejected with notes).
     depends_on: [review_approval]
-    condition: "'approve' in '${review_approval.output}'.lower()"
-    on_true: publish_episode
-    on_false: revision_producer
+    conditional:
+      branches:
+        - condition: "'approve' in lower(review_approval.output)"
+          goto: publish_episode
+        - condition: "default"
+          goto: revision_producer
 
   - id: publish_episode
     name: Publish Episode
