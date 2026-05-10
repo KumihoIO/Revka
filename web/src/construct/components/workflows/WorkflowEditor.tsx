@@ -49,6 +49,7 @@ import { taskNodeTypes } from '@/components/workflows/TaskNode';
 import { gateNodeTypes } from '@/components/workflows/GateNode';
 import {
   GATE_EDGE_STYLES,
+  computeAncestorClosure,
   flowToTasks,
   parseWorkflowMeta,
   parseWorkflowYaml,
@@ -79,7 +80,7 @@ import {
   useWorkflowEvents,
   type WorkflowRevisionPublishedEvent,
 } from './useWorkflowEvents';
-import { fetchWorkflowByRevisionKref } from '@/lib/api';
+import { fetchWorkflowByRevisionKref, runWorkflow } from '@/lib/api';
 import '@/construct/styles/editor-chrome.css';
 
 const allNodeTypes = { ...taskNodeTypes, ...gateNodeTypes };
@@ -1247,6 +1248,33 @@ function WorkflowEditorInner({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showAdvanced]);
 
+  // ── Run-to-here ─────────────────────────────────────────────────────────
+  // Closure preview is best-effort — backend re-derives authoritatively.
+  const computeRunToHereClosure = useCallback(
+    (taskId: string) => {
+      const tasks = flowToTasks(nodes as Node<TaskNodeData>[], edges);
+      return computeAncestorClosure(tasks, taskId);
+    },
+    [nodes, edges],
+  );
+
+  const handleRunToHere = useCallback(
+    async (taskId: string) => {
+      const wfName = workflow?.name ?? name;
+      if (!wfName) {
+        setError('Save the workflow before using "Run to here".');
+        return;
+      }
+      try {
+        await runWorkflow(wfName, undefined, undefined, { targetStepId: taskId });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Run-to-here failed.';
+        setError(msg);
+      }
+    },
+    [workflow?.name, name],
+  );
+
   // ── Render ──────────────────────────────────────────────────────────────
   const isEmpty = nodes.length === 0;
   const cycleDetected = hasCycle(nodes, edges);
@@ -1806,6 +1834,14 @@ function WorkflowEditorInner({
               setPaletteOpen(true);
             }}
             dagContext={dagContext}
+            onRunToHere={handleRunToHere}
+            computeRunToHereClosure={computeRunToHereClosure}
+            runToHereDisabled={(!workflow?.name && !name) || dirty}
+            runToHereDisabledReason={
+              dirty
+                ? 'Save your edits first — Run to here uses the saved revision.'
+                : undefined
+            }
           />
         ) : (
           <WorkflowSettingsPanel meta={workflowMeta} setMeta={setWorkflowMeta} />

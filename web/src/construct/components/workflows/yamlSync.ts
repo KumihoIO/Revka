@@ -1507,6 +1507,134 @@ export function stepsToFlow(steps: TaskDefinition[]): { nodes: Node<StepNodeData
 }
 
 // ---------------------------------------------------------------------------
+// Run-to-step ancestor closure (preview helper)
+// ---------------------------------------------------------------------------
+
+/**
+ * Compute the transitive ancestor closure of `targetId` (inclusive) over a
+ * task list. Used by the StepConfigPanel "Run to here" popover to preview
+ * which steps would execute. The backend re-derives this authoritatively
+ * before scheduling so a stale frontend list cannot mis-target the run.
+ *
+ * Walks `depends_on` edges via BFS. Treats `parallel.steps` as descendants
+ * of the parallel wrapper — i.e. selecting a parallel child also pulls in
+ * the wrapper. Mirrors `compute_ancestor_closure` in operator-mcp's
+ * executor.py; keep them in sync when the rules change.
+ *
+ * Returns the closure in topological-ish order: each step appears AFTER its
+ * ancestors so the popover lists the run order naturally. The target is
+ * always last.
+ */
+export function computeAncestorClosure(tasks: TaskDefinition[], targetId: string): string[] {
+  const byId = new Map(tasks.map((t) => [t.id, t]));
+  if (!byId.has(targetId)) return [];
+
+  // Reverse map: child_id -> wrapper(s) that own it (parallel + for_each).
+  const parentWrappers = new Map<string, Set<string>>();
+  for (const t of tasks) {
+    if (t.type === 'parallel' && t.parallel_steps) {
+      for (const child of t.parallel_steps) {
+        if (!parentWrappers.has(child)) parentWrappers.set(child, new Set());
+        parentWrappers.get(child)!.add(t.id);
+      }
+    }
+    if (t.type === 'for_each' && t.for_each_steps) {
+      for (const child of t.for_each_steps) {
+        if (!parentWrappers.has(child)) parentWrappers.set(child, new Set());
+        parentWrappers.get(child)!.add(t.id);
+      }
+    }
+  }
+
+  // Track wrappers reached via explicit depends_on (a downstream consumer)
+  // vs only via the implicit child→wrapper rule. Only consumed wrappers
+  // expand their full child list; otherwise targeting one child of a
+  // parallel would silently drag in all siblings.
+  const consumedWrappers = new Set<string>();
+
+  // BFS up.
+  const closure = new Set<string>();
+  const queue: string[] = [targetId];
+  while (queue.length > 0) {
+    const sid = queue.pop()!;
+    if (closure.has(sid)) continue;
+    closure.add(sid);
+    const step = byId.get(sid);
+    if (!step) continue;
+    for (const dep of step.depends_on) {
+      const depStep = byId.get(dep);
+      if (depStep && (depStep.type === 'parallel' || depStep.type === 'for_each')) {
+        consumedWrappers.add(dep);
+      }
+      if (!closure.has(dep) && byId.has(dep)) queue.push(dep);
+    }
+    const wrappers = parentWrappers.get(sid);
+    if (wrappers) {
+      for (const w of wrappers) {
+        if (!closure.has(w)) queue.push(w);
+      }
+    }
+  }
+
+  // Post-pass: pull every child of consumed wrappers into closure. Mirrors
+  // operator-mcp executor.compute_ancestor_closure — without this, a target
+  // downstream of a parallel falsely runs zero children (false-green).
+  const expandQueue: string[] = [];
+  for (const wid of consumedWrappers) {
+    const w = byId.get(wid);
+    if (!w) continue;
+    if (w.type === 'parallel' && w.parallel_steps) {
+      for (const cid of w.parallel_steps) {
+        if (!closure.has(cid)) expandQueue.push(cid);
+      }
+    }
+    if (w.type === 'for_each' && w.for_each_steps) {
+      for (const cid of w.for_each_steps) {
+        if (!closure.has(cid)) expandQueue.push(cid);
+      }
+    }
+  }
+
+  while (expandQueue.length > 0) {
+    const sid = expandQueue.pop()!;
+    if (closure.has(sid)) continue;
+    closure.add(sid);
+    const step = byId.get(sid);
+    if (!step) continue;
+    for (const dep of step.depends_on) {
+      const depStep = byId.get(dep);
+      if (depStep && (depStep.type === 'parallel' || depStep.type === 'for_each')) {
+        if (!consumedWrappers.has(dep)) {
+          consumedWrappers.add(dep);
+          if (depStep.type === 'parallel' && depStep.parallel_steps) {
+            for (const cid of depStep.parallel_steps) {
+              if (!closure.has(cid)) expandQueue.push(cid);
+            }
+          }
+          if (depStep.type === 'for_each' && depStep.for_each_steps) {
+            for (const cid of depStep.for_each_steps) {
+              if (!closure.has(cid)) expandQueue.push(cid);
+            }
+          }
+        }
+      }
+      if (!closure.has(dep) && byId.has(dep)) expandQueue.push(dep);
+    }
+    const wrappers = parentWrappers.get(sid);
+    if (wrappers) {
+      for (const w of wrappers) {
+        if (!closure.has(w)) expandQueue.push(w);
+      }
+    }
+  }
+
+  // Order by tasks-list position so the popover renders predictably. Task
+  // list order is roughly definition order; not strictly topo, but for the
+  // typical author flow it's the order users see in the editor.
+  return tasks.filter((t) => closure.has(t.id)).map((t) => t.id);
+}
+
+// ---------------------------------------------------------------------------
 // React Flow graph → YAML (serialize)
 // ---------------------------------------------------------------------------
 

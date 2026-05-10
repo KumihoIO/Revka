@@ -43,6 +43,10 @@ async def tool_run_workflow(args: dict[str, Any]) -> dict[str, Any]:
         inputs: Dict of input parameters for the workflow.
         cwd: Working directory for agent/shell steps (required).
         run_id: Optional run ID (generated if omitted).
+        target_step_id: Optional step id for "run to here" — when set, only
+            the transitive ancestor closure of this step (plus the step
+            itself) is executed. Unknown ids return a classified
+            `unknown_target_step` validation error.
     """
     from ..workflow.loader import load_workflow_from_dict
     from ..workflow.executor import execute_workflow
@@ -52,6 +56,7 @@ async def tool_run_workflow(args: dict[str, Any]) -> dict[str, Any]:
     inputs = args.get("inputs", {})
     cwd = args.get("cwd", "")
     run_id = args.get("run_id", str(uuid.uuid4()))
+    target_step_id = args.get("target_step_id") or None
 
     # Empty cwd → fall back to the user's home directory. Mirrors what the
     # event listener does at `_async_run_request` (metadata.cwd or self._cwd).
@@ -105,6 +110,15 @@ async def tool_run_workflow(args: dict[str, Any]) -> dict[str, Any]:
         if inp.name not in inputs and inp.default is not None:
             inputs[inp.name] = inp.default
 
+    # Run-to-step: confirm the target id exists. Done after wf is loaded so
+    # we can surface a clean classified error rather than letting the
+    # executor silently no-op.
+    if target_step_id and not wf.step_by_id(target_step_id):
+        return classified_error(
+            f"Unknown target step id: '{target_step_id}'",
+            code="unknown_target_step", category=VALIDATION_ERROR,
+        )
+
     # Cost guard
     max_cost_usd = args.get("max_cost_usd")
 
@@ -118,6 +132,7 @@ async def tool_run_workflow(args: dict[str, Any]) -> dict[str, Any]:
                 wf, inputs, cwd, run_id=run_id, max_cost_usd=max_cost_usd,
                 workflow_item_kref=workflow_item_kref,
                 workflow_revision_kref=workflow_revision_kref,
+                target_step_id=target_step_id,
             )
             _log(f"tool_run_workflow: background run={run_id[:8]} finished")
         except Exception as exc:

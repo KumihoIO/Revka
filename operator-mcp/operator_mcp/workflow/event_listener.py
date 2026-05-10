@@ -623,6 +623,7 @@ class WorkflowEventListener:
         inputs_str = metadata.get("inputs", "{}")
         cwd = metadata.get("cwd", "") or self._cwd
         run_id = metadata.get("run_id", "") or str(uuid.uuid4())
+        target_step_id = metadata.get("target_step_id", "") or None
 
         if not workflow_name:
             _log("event_listener: run request missing workflow_name, skipping")
@@ -711,6 +712,7 @@ class WorkflowEventListener:
                 trigger_context={"trigger_source": "cron", "run_request_kref": item_kref},
                 workflow_item_kref=wf_item_kref,
                 workflow_revision_kref=wf_rev_kref,
+                target_step_id=target_step_id,
             )
             self._workflows_triggered += 1
             _log(

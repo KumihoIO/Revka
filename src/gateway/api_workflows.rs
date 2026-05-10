@@ -141,6 +141,12 @@ pub struct RunWorkflowBody {
     pub inputs: serde_json::Value,
     #[serde(default)]
     pub cwd: Option<String>,
+    /// Optional "run to here" target step id. When present, the operator
+    /// runs only the transitive ancestor closure of this step (plus the
+    /// step itself) and stops. Unknown ids are surfaced as a classified
+    /// validation error from the operator-mcp tool call.
+    #[serde(default)]
+    pub target_step_id: Option<String>,
 }
 
 // ── Response types ──────────────────────────────────────────────────────
@@ -1041,13 +1047,16 @@ pub async fn handle_list_workflows(
 /// Result of calling the operator's `validate_workflow` MCP tool.
 ///
 /// Mirrors the Python-side `ValidationResult.to_dict()` shape:
-/// `{ valid: bool, errors: [...], warnings: [...] }`. Unwraps the MCP
-/// `content[0].text` envelope.
+/// `{ valid: bool, errors: [...], warnings: [...], all_step_ids: [...] }`.
+/// `all_step_ids` is the superset of every step id (including parallel /
+/// for_each body steps) — used to validate caller-supplied
+/// ``target_step_id`` for run-to-step.
 #[derive(Debug)]
 struct ValidationOutcome {
     valid: bool,
     errors: Vec<serde_json::Value>,
     warnings: Vec<serde_json::Value>,
+    all_step_ids: Vec<String>,
 }
 
 /// Call the operator's `validate_workflow` tool via MCP. Returns a structured
@@ -1102,11 +1111,21 @@ async fn validate_via_operator(
         .and_then(|v| v.as_array())
         .cloned()
         .unwrap_or_default();
+    let all_step_ids = inner
+        .get("all_step_ids")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
 
     Ok(ValidationOutcome {
         valid,
         errors,
         warnings,
+        all_step_ids,
     })
 }
 
@@ -1408,6 +1427,10 @@ pub async fn handle_run_workflow(
         .map(|b| b.inputs.clone())
         .unwrap_or(serde_json::Value::Object(Default::default()));
     let cwd = body.as_ref().and_then(|b| b.cwd.clone());
+    let target_step_id = body
+        .as_ref()
+        .and_then(|b| b.target_step_id.clone())
+        .filter(|s| !s.is_empty());
 
     // Pre-dispatch validation: resolve the named workflow (from builtins/Kumiho)
     // and run the schema validator. Blocks silent failures where a malformed
@@ -1420,14 +1443,45 @@ pub async fn handle_run_workflow(
     if let Some(ref c) = cwd {
         v_args.insert("cwd".to_string(), serde_json::Value::String(c.clone()));
     }
-    match validate_via_operator(&state, v_args).await {
+    // Validation also returns the workflow's ``all_step_ids`` (superset
+    // including parallel/for_each body steps). Use that to check
+    // ``target_step_id`` BEFORE we touch Kumiho — without this preflight, a
+    // typo'd id would create a pending run-request item that the listener
+    // later picks up and (per the executor's older behaviour) silently
+    // executes the entire workflow.
+    let all_step_ids: Vec<String> = match validate_via_operator(&state, v_args).await {
         Ok(outcome) if !outcome.valid => {
             return validation_error_response(&outcome, "cannot dispatch invalid workflow")
                 .into_response();
         }
-        Ok(_) => {}
+        Ok(outcome) => outcome.all_step_ids,
         Err(e) => {
             tracing::warn!("run_workflow: validation skipped (infra error): {e}");
+            Vec::new()
+        }
+    };
+
+    if let Some(ref tsid) = target_step_id {
+        // Only check when validation actually returned step ids — otherwise
+        // we'd 400 every call when validate_via_operator hits an infra
+        // error. Operator-side hard validation in execute_workflow is the
+        // backstop.
+        if !all_step_ids.is_empty() && !all_step_ids.iter().any(|s| s == tsid) {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": format!("unknown_target_step: '{tsid}'"),
+                    "error_code": "unknown_target_step",
+                    "valid": false,
+                    "errors": [{
+                        "message": format!(
+                            "target_step_id '{tsid}' is not a step in workflow '{name}'"
+                        ),
+                        "severity": "error",
+                    }],
+                })),
+            )
+                .into_response();
         }
     }
 
@@ -1451,6 +1505,9 @@ pub async fn handle_run_workflow(
     metadata.insert("cwd".to_string(), cwd.unwrap_or_default());
     metadata.insert("trigger_source".to_string(), "api".to_string());
     metadata.insert("requested_at".to_string(), now);
+    if let Some(ref tsid) = target_step_id {
+        metadata.insert("target_step_id".to_string(), tsid.clone());
+    }
 
     let item_name = format!("run-{}", &run_id[..run_id.len().min(12)]);
 
@@ -1502,6 +1559,12 @@ pub async fn handle_run_workflow(
                     "run_id".to_string(),
                     serde_json::Value::String(run_id.clone()),
                 );
+                if let Some(ref tsid) = target_step_id {
+                    tool_args.insert(
+                        "target_step_id".to_string(),
+                        serde_json::Value::String(tsid.clone()),
+                    );
+                }
                 let tool_args_val = serde_json::Value::Object(tool_args);
                 let run_id_for_log = run_id.clone();
                 let workflow_name_for_log = name.clone();

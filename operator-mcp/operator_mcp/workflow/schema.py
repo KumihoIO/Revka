@@ -279,6 +279,20 @@ class ParallelStepConfig(BaseModel):
                 "If you don't need explicit grouping, drop the parallel wrapper "
                 "entirely — sibling steps without depends_on run in parallel naturally."
             )
+        # Duplicate child refs corrupt _exec_parallel accounting: results is a
+        # dict keyed by step_id, so two refs to the same id produce one entry
+        # while `total = len(cfg.steps)` counts both — giving a false-fail
+        # `completed: 1, total: 2`. Reject at parse time.
+        counts: dict[str, int] = {}
+        for sid in v:
+            counts[sid] = counts.get(sid, 0) + 1
+        dups = [(sid, n) for sid, n in counts.items() if n > 1]
+        if dups:
+            sid, n = dups[0]
+            raise ValueError(
+                f"parallel.steps must not contain duplicate child references: "
+                f"'{sid}' appears {n} times"
+            )
         return v
 
 
@@ -403,6 +417,24 @@ class ForEachStepConfig(BaseModel):
     carry_forward: bool = True               # Make previous iteration outputs available
     fail_fast: bool = True                   # Stop on first iteration failure
     max_iterations: int = Field(default=20, ge=1, le=50)  # Safety cap
+
+    @field_validator("steps")
+    @classmethod
+    def steps_must_be_unique(cls, v: list[str]) -> list[str]:
+        # Same accounting hazard as ParallelStepConfig: duplicate child refs
+        # would write to the same `<step_id>__iter_<N>` keys twice and the
+        # second write clobbers the first. Reject at parse time.
+        counts: dict[str, int] = {}
+        for sid in v:
+            counts[sid] = counts.get(sid, 0) + 1
+        dups = [(sid, n) for sid, n in counts.items() if n > 1]
+        if dups:
+            sid, n = dups[0]
+            raise ValueError(
+                f"for_each.steps must not contain duplicate child references: "
+                f"'{sid}' appears {n} times"
+            )
+        return v
 
 
 class A2AStepConfig(BaseModel):
@@ -773,6 +805,24 @@ class WorkflowDef(BaseModel):
     def at_least_one_step(cls, v: list[StepDef]) -> list[StepDef]:
         if not v:
             raise ValueError("Workflow must have at least one step")
+        # Duplicate step ids are always a bug: ``step_by_id`` returns the
+        # first match while the frontend's `new Map(...)` round-trip keeps
+        # the last, so the closure preview can disagree with the executor.
+        # Reject at parse time rather than papering over it everywhere
+        # downstream.
+        seen: dict[str, int] = {}
+        duplicates: list[str] = []
+        for s in v:
+            if s.id in seen:
+                if s.id not in duplicates:
+                    duplicates.append(s.id)
+            else:
+                seen[s.id] = 1
+        if duplicates:
+            raise ValueError(
+                f"Duplicate step id(s): {', '.join(sorted(duplicates))}. "
+                f"Each step.id must be unique within a workflow."
+            )
         return v
 
     def step_by_id(self, step_id: str) -> StepDef | None:
@@ -851,3 +901,14 @@ class WorkflowState(BaseModel):
     # their parent run. Excluded from persistence: Process objects are
     # not serializable and only meaningful within the running executor.
     running_processes: list[Any] = Field(default_factory=list, exclude=True)
+    # Run-to-step closure — set by the executor when ``target_step_id`` is
+    # passed to ``execute_workflow``. Step handlers (currently
+    # ``_exec_parallel``, ``_exec_for_each``) consult this to skip non-closure
+    # children. Empty set means "no restriction" (normal full run). Excluded
+    # from persistence: it's a transient input to the running executor and is
+    # always re-derived from ``target_step_id`` on resume.
+    run_to_closure: set[str] = Field(default_factory=set, exclude=True)
+    # Persisted run-to-step target. Closure is derived from this so a paused
+    # run-to-here resumed from checkpoint honours the same scoping it started
+    # with. ``None`` means "no scoping" (normal full run).
+    target_step_id: str | None = None

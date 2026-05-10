@@ -322,6 +322,23 @@ async def _recover_one_run(
             _log(f"recovery: pre-resume persist failed (non-fatal): {exc}")
 
     # Phase G: Build WorkflowState and launch resume
+    # Carry forward the run-to-step target so a paused run-to-here resumes
+    # with the same scoping. The closure is derived from this on every
+    # execute_workflow entry, so we don't persist the closure itself.
+    persisted_target_step_id = metadata.get("target_step_id", "") or None
+    # Local checkpoint may have a more authoritative copy if the executor
+    # already reached at least one wave (the WorkflowState was dumped with
+    # ``target_step_id`` set). Prefer it over the run-request metadata.
+    checkpoint_path = os.path.join(_CHECKPOINT_DIR, f"{run_id}.json")
+    if os.path.exists(checkpoint_path):
+        try:
+            with open(checkpoint_path) as f:
+                cp_data = json.load(f)
+            if cp_data.get("target_step_id"):
+                persisted_target_step_id = cp_data["target_step_id"]
+        except Exception:
+            pass
+
     state = WorkflowState(
         workflow_name=workflow_name,
         run_id=run_id,
@@ -331,6 +348,7 @@ async def _recover_one_run(
         started_at=metadata.get("started_at", ""),
         workflow_item_kref=resume_item_kref,
         workflow_revision_kref=resume_rev_kref,
+        target_step_id=persisted_target_step_id,
     )
 
     # Launch execute_workflow as a background task.
@@ -346,6 +364,7 @@ async def _recover_one_run(
                 wf, inputs, cwd, run_id=run_id, resume_state=state,
                 workflow_item_kref=resume_item_kref,
                 workflow_revision_kref=resume_rev_kref,
+                target_step_id=persisted_target_step_id,
             )
             _log(f"recovery: run={run_id[:8]} finished with status={final_state.status.value}")
         except Exception as exc:

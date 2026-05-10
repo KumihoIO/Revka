@@ -7,7 +7,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link2, Link2Off, Loader2, Lock, Search, Sparkles, Trash2, X } from 'lucide-react';
+import { Crosshair, Link2, Link2Off, Loader2, Lock, Search, Sparkles, Trash2, X } from 'lucide-react';
 import type { Node } from '@xyflow/react';
 import { type TaskNodeData } from '@/components/workflows/yamlSync';
 import type { SkillDefinition } from '@/types/api';
@@ -114,6 +114,21 @@ interface Props {
   onChangeType: () => void;
   /** Available references for ${...} autocomplete in expression textareas. */
   dagContext?: DagContext;
+  /** "Run to here" — launch a partial workflow run that executes the
+   *  selected step's ancestor closure (plus the step itself). Owner is
+   *  responsible for hitting the runWorkflow API and setting `targetStepId`.
+   *  Receives the closure as the editor sees it for the popover preview. */
+  onRunToHere?: (taskId: string, closureTaskIds: string[]) => void;
+  /** Disable the "Run to here" button (e.g. while a run is in flight or
+   *  the editor has unsaved changes). */
+  runToHereDisabled?: boolean;
+  /** Tooltip / aria text explaining WHY the button is disabled — surfaced
+   *  on hover so users understand they need to save first. */
+  runToHereDisabledReason?: string;
+  /** Compute the ancestor closure of a task id for the popover preview.
+   *  The owner injects this so the panel doesn't need direct access to
+   *  the task list. Returns ids in editor order, target last. */
+  computeRunToHereClosure?: (taskId: string) => string[];
 }
 
 export default function StepConfigPanel({
@@ -124,6 +139,10 @@ export default function StepConfigPanel({
   onDelete,
   onChangeType,
   dagContext,
+  onRunToHere,
+  runToHereDisabled = false,
+  runToHereDisabledReason,
+  computeRunToHereClosure,
 }: Props) {
   const dagStepIds = dagContext?.stepIds ?? [];
   const dagInputs = dagContext?.workflowInputs ?? [];
@@ -290,6 +309,28 @@ export default function StepConfigPanel({
     [node.id, data.channels, onUpdate],
   );
 
+  // ── Run-to-here popover ────────────────────────────────────────────────
+  // Opens a confirmation popover listing the ancestor closure that would
+  // execute. Closure preview is purely best-effort — the backend
+  // re-derives it authoritatively before scheduling.
+  const [runToHereOpen, setRunToHereOpen] = useState(false);
+  const runToHereClosureIds = useMemo<string[]>(
+    () =>
+      runToHereOpen && computeRunToHereClosure ? computeRunToHereClosure(data.taskId) : [],
+    [runToHereOpen, computeRunToHereClosure, data.taskId],
+  );
+  // Reset whenever the user picks a different node so a stale popover
+  // can't fire against the wrong target.
+  useEffect(() => {
+    setRunToHereOpen(false);
+  }, [node.id]);
+
+  const handleRunToHereConfirm = useCallback(() => {
+    if (!onRunToHere) return;
+    onRunToHere(data.taskId, runToHereClosureIds);
+    setRunToHereOpen(false);
+  }, [onRunToHere, data.taskId, runToHereClosureIds]);
+
   const TypeIcon = typeDef?.icon;
 
   return (
@@ -303,29 +344,151 @@ export default function StepConfigPanel({
             justifyContent: 'space-between',
             padding: '14px 16px',
             borderBottom: '1px solid var(--construct-border-soft)',
+            position: 'relative',
           }}
         >
           <div className="construct-kicker">Step Details</div>
-          <button
-            type="button"
-            onClick={() => onDelete(node.id)}
-            title="Delete step"
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 4,
-              padding: '4px 8px',
-              borderRadius: 8,
-              border: '1px solid var(--construct-border-soft)',
-              background: 'transparent',
-              color: 'var(--construct-status-danger)',
-              fontSize: 11,
-              cursor: 'pointer',
-            }}
-          >
-            <Trash2 size={12} />
-            Delete
-          </button>
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            {onRunToHere ? (
+              <button
+                type="button"
+                onClick={() => setRunToHereOpen((v) => !v)}
+                disabled={runToHereDisabled}
+                title={
+                  runToHereDisabled && runToHereDisabledReason
+                    ? runToHereDisabledReason
+                    : 'Run every ancestor of this step plus the step itself, then stop'
+                }
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 4,
+                  padding: '4px 8px',
+                  borderRadius: 8,
+                  border: '1px solid var(--construct-border-soft)',
+                  background: 'transparent',
+                  color: runToHereDisabled
+                    ? 'var(--pc-text-faint)'
+                    : 'var(--construct-status-success)',
+                  fontSize: 11,
+                  cursor: runToHereDisabled ? 'not-allowed' : 'pointer',
+                  opacity: runToHereDisabled ? 0.6 : 1,
+                }}
+              >
+                <Crosshair size={12} />
+                Run to here
+              </button>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => onDelete(node.id)}
+              title="Delete step"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 4,
+                padding: '4px 8px',
+                borderRadius: 8,
+                border: '1px solid var(--construct-border-soft)',
+                background: 'transparent',
+                color: 'var(--construct-status-danger)',
+                fontSize: 11,
+                cursor: 'pointer',
+              }}
+            >
+              <Trash2 size={12} />
+              Delete
+            </button>
+          </div>
+          {runToHereOpen && onRunToHere ? (
+            <div
+              role="dialog"
+              aria-label="Run to here confirmation"
+              style={{
+                position: 'absolute',
+                top: 'calc(100% + 4px)',
+                right: 12,
+                zIndex: 50,
+                width: 280,
+                padding: 12,
+                borderRadius: 10,
+                border: '1px solid var(--construct-border-soft)',
+                background: 'var(--pc-bg-base)',
+                boxShadow: '0 8px 24px rgba(0, 0, 0, 0.25)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 10,
+              }}
+            >
+              <div style={{ fontSize: 11, color: 'var(--pc-text-primary)' }}>
+                {runToHereClosureIds.length <= 1
+                  ? 'Just this one step will run.'
+                  : `This will run ${runToHereClosureIds.length} steps in order:`}
+              </div>
+              {runToHereClosureIds.length > 1 ? (
+                <ol
+                  style={{
+                    margin: 0,
+                    padding: '0 0 0 18px',
+                    fontSize: 11,
+                    color: 'var(--pc-text-faint)',
+                    maxHeight: 160,
+                    overflowY: 'auto',
+                    fontFamily: 'var(--pc-font-mono, ui-monospace, monospace)',
+                  }}
+                >
+                  {runToHereClosureIds.map((sid) => (
+                    <li
+                      key={sid}
+                      style={{
+                        color:
+                          sid === data.taskId
+                            ? 'var(--construct-status-success)'
+                            : 'var(--pc-text-faint)',
+                        fontWeight: sid === data.taskId ? 600 : 400,
+                      }}
+                    >
+                      {sid}
+                      {sid === data.taskId ? '  ← target' : ''}
+                    </li>
+                  ))}
+                </ol>
+              ) : null}
+              <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                <button
+                  type="button"
+                  onClick={() => setRunToHereOpen(false)}
+                  style={{
+                    padding: '4px 10px',
+                    borderRadius: 6,
+                    border: '1px solid var(--construct-border-soft)',
+                    background: 'transparent',
+                    color: 'var(--pc-text-primary)',
+                    fontSize: 11,
+                    cursor: 'pointer',
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleRunToHereConfirm}
+                  style={{
+                    padding: '4px 10px',
+                    borderRadius: 6,
+                    border: '1px solid var(--construct-status-success)',
+                    background: 'var(--construct-status-success)',
+                    color: 'var(--pc-bg-base)',
+                    fontSize: 11,
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                  }}
+                >
+                  Run
+                </button>
+              </div>
+            </div>
+          ) : null}
         </div>
 
         <div style={{ overflowY: 'auto', padding: 16, display: 'flex', flexDirection: 'column', gap: 14 }}>
