@@ -316,6 +316,57 @@ pub async fn handle_create_auth_profile(
     (StatusCode::CREATED, Json(summary)).into_response()
 }
 
+// ── Delete handler ──────────────────────────────────────────────────────
+
+/// `DELETE /api/auth/profiles/{id}` — bearer-auth, removes a stored profile.
+///
+/// 204 on successful delete, 404 if the profile id doesn't exist. The
+/// underlying `AuthProfilesStore::remove_profile` is idempotent on cleared
+/// active references — no separate purge call needed.
+pub async fn handle_delete_auth_profile(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    if let Err(e) = require_auth(&state, &headers) {
+        return e.into_response();
+    }
+
+    let Some(store) = state.auth_profiles.as_ref() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({
+                "error": "auth profile store not configured",
+                "code": "auth_store_unavailable"
+            })),
+        )
+            .into_response();
+    };
+
+    match store.remove_profile(&id).await {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "error": format!("auth profile not found: {id}"),
+                "code": "auth_profile_not_found"
+            })),
+        )
+            .into_response(),
+        Err(err) => {
+            tracing::warn!(error = %err, "auth-profile delete failed");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": "Failed to delete auth profile",
+                    "code": "auth_store_delete_failed"
+                })),
+            )
+                .into_response()
+        }
+    }
+}
+
 // ── Resolve handler ─────────────────────────────────────────────────────
 
 fn require_service_token(

@@ -10,9 +10,10 @@
  */
 
 import { Command } from 'cmdk';
-import { Lock, Search, AlertTriangle } from 'lucide-react';
+import { Lock, Search, AlertTriangle, Trash2 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { ApiError, deleteAuthProfile } from '@/lib/api';
 import type { AuthProfileSummary } from '@/types/api';
 import { useAuthProfiles } from './useAuthProfiles';
 import { providerLabel } from './providerLabels';
@@ -30,6 +31,11 @@ interface Props {
   onSelect: (id: string | null) => void;
   /** Bounding rect of the trigger element. */
   anchorRect?: DOMRect | null;
+  /** Optional provider slug (e.g. ``manus``) to filter the picker list AND
+   *  pre-fill in the New-auth-profile modal. When set, the picker only
+   *  shows profiles whose provider matches and the modal opens with the
+   *  provider field pre-populated. */
+  providerFilter?: string;
 }
 
 const POPOVER_WIDTH = 360;
@@ -89,6 +95,7 @@ export default function AuthProfilePicker({
   value,
   onSelect,
   anchorRect,
+  providerFilter,
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const { profiles, loading, refresh } = useAuthProfiles();
@@ -119,16 +126,20 @@ export default function AuthProfilePicker({
     return centeredStyle();
   }, [anchorRect]);
 
-  // Group profiles by provider for the cmdk Group sections.
+  // Group profiles by provider for the cmdk Group sections. When the
+  // caller supplies a providerFilter we narrow to that provider only —
+  // step types like Manus are single-provider and shouldn't show e.g.
+  // Slack/GitHub profiles alongside the relevant ones.
   const grouped = useMemo(() => {
     const byProvider = new Map<string, AuthProfileSummary[]>();
     for (const p of profiles) {
+      if (providerFilter && p.provider !== providerFilter) continue;
       const list = byProvider.get(p.provider) ?? [];
       list.push(p);
       byProvider.set(p.provider, list);
     }
     return Array.from(byProvider.entries()).sort((a, b) => a[0].localeCompare(b[0]));
-  }, [profiles]);
+  }, [profiles, providerFilter]);
 
   if (!open) return null;
   if (typeof document === 'undefined') return null;
@@ -136,6 +147,32 @@ export default function AuthProfilePicker({
   const handlePick = (id: string | null) => {
     onSelect(id);
     onOpenChange(false);
+  };
+
+  // Per-row delete: call DELETE /api/auth/profiles/{id} then refresh the
+  // cache. Browser-native confirm() keeps the picker minimal — a custom
+  // confirm UI would be a bigger surface change than the delete button
+  // itself, and the action is destructive enough to justify the prompt.
+  const handleDelete = async (p: AuthProfileSummary) => {
+    const ok = window.confirm(
+      `Delete auth profile "${p.provider}:${p.profile_name}"? ` +
+        `Workflow steps bound to this profile will fail until rebound.`,
+    );
+    if (!ok) return;
+    try {
+      await deleteAuthProfile(p.id);
+      // If the deleted profile was the current selection, clear it.
+      if (value === p.id) onSelect(null);
+      await refresh();
+    } catch (err) {
+      const msg =
+        err instanceof ApiError
+          ? err.message.replace(/^API \d+: /, '')
+          : err instanceof Error
+            ? err.message
+            : 'Delete failed';
+      window.alert(`Failed to delete auth profile: ${msg}`);
+    }
   };
 
   const content = (
@@ -231,8 +268,23 @@ export default function AuthProfilePicker({
                   const isSelected = value === p.id;
                   const chip = expiryChip(p);
                   return (
-                    <Command.Item
+                    <div
                       key={p.id}
+                      style={{ position: 'relative' }}
+                      onPointerEnter={(e) => {
+                        const btn = (e.currentTarget as HTMLElement).querySelector<HTMLElement>(
+                          '[data-auth-row-delete]',
+                        );
+                        if (btn) btn.style.opacity = '1';
+                      }}
+                      onPointerLeave={(e) => {
+                        const btn = (e.currentTarget as HTMLElement).querySelector<HTMLElement>(
+                          '[data-auth-row-delete]',
+                        );
+                        if (btn) btn.style.opacity = '0';
+                      }}
+                    >
+                    <Command.Item
                       value={`${p.provider} ${p.profile_name} ${p.id} ${p.account_id ?? ''}`}
                       keywords={[p.kind, p.provider, p.account_id ?? '']}
                       onSelect={() => handlePick(p.id)}
@@ -251,6 +303,7 @@ export default function AuthProfilePicker({
                           alignItems: 'center',
                           gap: 10,
                           padding: '8px 10px',
+                          paddingRight: 34,
                           borderRadius: 8,
                           cursor: 'pointer',
                           color: 'var(--construct-text-primary)',
@@ -355,6 +408,40 @@ export default function AuthProfilePicker({
                         )}
                       </button>
                     </Command.Item>
+                    {/*
+                      Per-row delete affordance — sibling of the cmdk Item
+                      button so the click never bubbles into cmdk's
+                      "select" path. Reveal on hover; hidden by default to
+                      avoid noise.
+                    */}
+                    <button
+                      type="button"
+                      data-auth-row-delete
+                      title="Delete auth profile"
+                      aria-label={`Delete ${p.provider}:${p.profile_name}`}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        void handleDelete(p);
+                      }}
+                      style={{
+                        position: 'absolute',
+                        top: '50%',
+                        right: 8,
+                        transform: 'translateY(-50%)',
+                        opacity: 0,
+                        transition: 'opacity 80ms ease',
+                        background: 'transparent',
+                        border: 0,
+                        padding: 4,
+                        borderRadius: 6,
+                        cursor: 'pointer',
+                        color: 'var(--construct-status-danger)',
+                      }}
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                    </div>
                   );
                 })}
               </Command.Group>
@@ -452,6 +539,7 @@ export default function AuthProfilePicker({
       <NewAuthProfileModal
         open={createOpen}
         onClose={() => setCreateOpen(false)}
+        defaultProvider={providerFilter}
         onCreated={async (id) => {
           await refresh();
           setCreateOpen(false);

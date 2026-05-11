@@ -1941,13 +1941,44 @@ async def _exec_output(step: StepDef, state: WorkflowState) -> StepResult:
             run_id=state.run_id,
             step_id=step.id,
         )
-        if entity_result:
-            result.output_data["entity_kref"] = entity_result["item_kref"]
-            result.output_data["entity_revision_kref"] = entity_result["revision_kref"]
-            result.output_data["entity_name"] = entity_name
-            result.output_data["entity_kind"] = cfg.entity_kind
-            result.output_data["entity_tag"] = cfg.entity_tag
-            result.output_data["entity_registered"] = True
+        if not entity_result:
+            result.status = "failed"
+            result.error = "failed to publish output entity"
+            result.output_data["entity_error"] = result.error
+            return result
+
+        result.output_data["entity_kref"] = entity_result["item_kref"]
+        result.output_data["entity_revision_kref"] = entity_result["revision_kref"]
+        result.output_data["entity_name"] = entity_name
+        result.output_data["entity_kind"] = cfg.entity_kind
+        result.output_data["entity_tag"] = cfg.entity_tag
+        result.output_data["entity_registered"] = True
+        result.output_data["entity_tag_applied"] = bool(
+            entity_result.get("tag_applied", False)
+        )
+        result.output_data["entity_artifact_attached"] = bool(
+            entity_result.get("artifact_attached", False)
+        )
+        if entity_result.get("artifact_path"):
+            result.output_data["artifact_path"] = entity_result["artifact_path"]
+        if entity_result.get("artifact_kref"):
+            result.output_data["entity_artifact_kref"] = entity_result["artifact_kref"]
+        if entity_result.get("artifact_error"):
+            result.output_data["entity_artifact_error"] = entity_result["artifact_error"]
+        if entity_result.get("tag_error"):
+            result.output_data["entity_tag_error"] = entity_result["tag_error"]
+        if not result.output_data["entity_artifact_attached"]:
+            result.status = "failed"
+            result.error = (
+                result.output_data.get("entity_artifact_error")
+                or "failed to attach output artifact to entity revision"
+            )
+        elif not result.output_data["entity_tag_applied"]:
+            result.status = "failed"
+            result.error = (
+                result.output_data.get("entity_tag_error")
+                or f"failed to tag output entity revision as {cfg.entity_tag}"
+            )
 
     return result
 
@@ -2650,16 +2681,54 @@ async def _exec_manus(step: StepDef, state: WorkflowState) -> StepResult:
     mc = manus_config()
 
     api_key_env = mc.get("api_key_env", "MANUS_API_KEY")
-    api_key = os.environ.get(api_key_env, "")
-    if not api_key:
-        return StepResult(
-            step_id=step.id,
-            status="failed",
-            error=(
-                f"{api_key_env} env var not set — set it or configure "
-                f"[manus].api_key_env in ~/.construct/config.toml"
-            ),
-        )
+    api_key = ""
+    # When credentials_ref is set, the gateway resolves the encrypted token
+    # at execution time; otherwise fall back to the env var. The resolved
+    # token is NEVER written to input_data, output_data, logs, or errors —
+    # only the env-var name (when used) and the profile id (when used) are
+    # recorded for the run-view UI.
+    if cfg.credentials_ref:
+        try:
+            resolved = await resolve_auth_profile(cfg.credentials_ref)
+            api_key = str(resolved.get("token") or "")
+        except AuthResolveError as exc:
+            return StepResult(
+                step_id=step.id,
+                status="failed",
+                error=(
+                    f"auth_resolve_failed: {exc.code} — "
+                    f"{_manus_sanitize(str(exc))}"
+                ),
+                output_data={
+                    "auth_resolve_failed": True,
+                    "auth_resolve_code": exc.code,
+                },
+            )
+        if not api_key:
+            return StepResult(
+                step_id=step.id,
+                status="failed",
+                error=(
+                    f"auth profile '{cfg.credentials_ref}' resolved to an "
+                    f"empty token"
+                ),
+                output_data={
+                    "auth_resolve_failed": True,
+                    "auth_resolve_code": "auth_profile_empty",
+                },
+            )
+    else:
+        api_key = os.environ.get(api_key_env, "")
+        if not api_key:
+            return StepResult(
+                step_id=step.id,
+                status="failed",
+                error=(
+                    f"{api_key_env} env var not set — set it, bind a "
+                    f"credentials_ref, or configure [manus].api_key_env "
+                    f"in ~/.construct/config.toml"
+                ),
+            )
 
     base_url = (mc.get("base_url") or "https://api.manus.ai").rstrip("/")
     default_profile = mc.get("default_agent_profile") or "manus-1.6"
@@ -2688,6 +2757,9 @@ async def _exec_manus(step: StepDef, state: WorkflowState) -> StepResult:
         "locale": cfg.locale or "",
         "project_id": cfg.project_id or "",
         "api_key_env": api_key_env,
+        # The profile id (NOT the resolved token) so the run-view shows
+        # which credential was used. Empty string when env-var fallback.
+        "credentials_ref": cfg.credentials_ref or "",
     }
 
     # Build the create-task request body. Manus accepts a minimal

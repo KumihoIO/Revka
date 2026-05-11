@@ -343,6 +343,7 @@ function defaultNodeData(id: string, overrides?: Partial<TaskNodeData>): TaskNod
     manusTimeoutSeconds: 600,
     manusPollIntervalSeconds: 5,
     manusAllowFailure: false,
+    manusCredentialsRef: '',
     ...overrides,
   };
 }

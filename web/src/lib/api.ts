@@ -563,6 +563,14 @@ export async function createAuthProfile(
   ).then((data) => unwrapField(data, 'profile'));
 }
 
+/** DELETE a stored auth profile by id. 204 on success, throws ApiError(404)
+ *  if the id doesn't exist. */
+export async function deleteAuthProfile(id: string): Promise<void> {
+  return apiFetch<void>(`/api/auth/profiles/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Skills
 // ---------------------------------------------------------------------------

@@ -473,6 +473,14 @@ class ManusStepConfig(BaseModel):
     timeout_seconds: int | None = None
     poll_interval_seconds: int | None = None
     allow_failure: bool = False
+    # Auth profile binding — an ``AuthProfile.id`` (e.g. ``manus:work``) from
+    # Kumiho's auth-profiles store. When set, the runtime resolves the bound
+    # token via the gateway's ``POST /api/auth/profiles/{id}/resolve``
+    # endpoint at execution time and sends it as the ``x-manus-api-key``
+    # header. When unset, the runtime falls back to the env var configured in
+    # ``[manus].api_key_env`` (default ``MANUS_API_KEY``). Never the token
+    # bytes themselves — only the profile id, which is safe to commit in YAML.
+    credentials_ref: str | None = None
 
 
 class A2AStepConfig(BaseModel):
