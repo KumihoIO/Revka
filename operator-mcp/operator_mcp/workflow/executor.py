@@ -3595,6 +3595,135 @@ def compute_ancestor_closure(wf: WorkflowDef, target_step_id: str) -> set[str]:
 
 
 # ---------------------------------------------------------------------------
+# Conditional branch-closure gating
+# ---------------------------------------------------------------------------
+#
+# A conditional step's matched-branch goto routes the executor but does NOT
+# suppress execution of steps on the non-matched branches. PR #170's
+# auto-derived ``depends_on`` (from ``${X.output}`` interpolation) means
+# downstream steps on the loser branches still see their direct dependency
+# (the conditional itself) as ``completed`` and become scheduler-eligible.
+#
+# The fix gates "exclusive non-matched" steps lazily at scheduling time:
+# steps reachable transitively (via ``depends_on``) only from a non-matched
+# goto target — i.e. NOT also reachable from the matched goto target and
+# NOT reachable via some other path that doesn't transit the conditional —
+# are marked ``skipped`` when the scheduler picks them up.
+
+
+def _build_forward_deps_map(wf: WorkflowDef) -> dict[str, set[str]]:
+    """Invert ``depends_on`` edges into a step_id -> set(downstream step_ids) map.
+
+    Pure DAG view of ``wf``: the parallel/for_each wrapper expansion that
+    ``compute_ancestor_closure`` does is intentionally NOT replicated here.
+    Branch-closure gating only cares about explicit ``depends_on`` edges
+    because that is what makes a non-matched downstream step scheduler-
+    eligible in the first place — the bug we are patching.
+    """
+    forward: dict[str, set[str]] = {}
+    for s in wf.steps:
+        for dep in s.depends_on:
+            forward.setdefault(dep, set()).add(s.id)
+    return forward
+
+
+def _forward_closure(node: str, forward: dict[str, set[str]]) -> set[str]:
+    """BFS the forward-deps map from ``node``, excluding ``node`` itself."""
+    out: set[str] = set()
+    queue: list[str] = [node]
+    while queue:
+        cur = queue.pop()
+        for nxt in forward.get(cur, ()):
+            if nxt not in out:
+                out.add(nxt)
+                queue.append(nxt)
+    return out
+
+
+def _is_reachable_outside_conditional(
+    step_id: str,
+    cond_id: str,
+    wf: WorkflowDef,
+) -> bool:
+    """Return True if ``step_id`` has a depends_on ancestor that doesn't
+    transit through ``cond_id``.
+
+    Walks the ancestor DAG upward. If we reach any root (step with no
+    ``depends_on``) other than via ``cond_id``, the step has an external
+    source and must not be gated. Implementation: BFS up depends_on edges,
+    blocking traversal through ``cond_id``. If the BFS finds any step that
+    has no depends_on at all (a true root), or that has at least one dep
+    we never reach, then there's an external source.
+
+    Concretely: a step is "reachable outside" iff there exists some root
+    ancestor reachable WITHOUT passing through cond_id.
+    """
+    visited: set[str] = set()
+    queue: list[str] = [step_id]
+    while queue:
+        sid = queue.pop()
+        if sid in visited:
+            continue
+        visited.add(sid)
+        step = wf.step_by_id(sid)
+        if not step:
+            continue
+        # A root step (no depends_on) that we reached without going through
+        # cond_id means there's an external path: this step (or an ancestor
+        # of it) starts independent of cond_id.
+        if not step.depends_on and sid != cond_id:
+            return True
+        for dep in step.depends_on:
+            if dep == cond_id:
+                # Path through the conditional — does NOT count as external.
+                continue
+            if dep not in visited:
+                queue.append(dep)
+    return False
+
+
+def _is_step_gated_by_conditional(
+    step_id: str,
+    state: WorkflowState,
+    wf: WorkflowDef,
+    forward: dict[str, set[str]],
+) -> bool:
+    """True iff ``step_id`` is reachable only via a non-matched conditional branch."""
+    for cond_id, info in state.conditional_branch_results.items():
+        matched_target = info.get("matched_goto")
+        non_matched_targets = info.get("non_matched_gotos") or []
+        if not non_matched_targets:
+            continue
+
+        # Forward closure of non-matched targets (each target plus everything
+        # downstream of it).
+        non_matched_closure: set[str] = set()
+        for tgt in non_matched_targets:
+            non_matched_closure.add(tgt)
+            non_matched_closure.update(_forward_closure(tgt, forward))
+
+        if step_id not in non_matched_closure:
+            continue
+
+        # Rescue 1: a step also in the matched branch's closure is not gated
+        # (the matched path supplies it).
+        if matched_target:
+            matched_closure: set[str] = {matched_target}
+            matched_closure.update(_forward_closure(matched_target, forward))
+            if step_id in matched_closure:
+                continue
+
+        # Rescue 2: a step reachable from outside this conditional's downstream
+        # subgraph is not gated (some other path will satisfy it).
+        if _is_reachable_outside_conditional(step_id, cond_id, wf):
+            continue
+
+        return True
+
+    return False
+
+
+# ---------------------------------------------------------------------------
 # Main executor
 # ---------------------------------------------------------------------------
 
@@ -3801,6 +3930,11 @@ async def execute_workflow(
         if run_to_closure:
             remaining &= run_to_closure
 
+        # Pre-build the forward-deps map once. ``wf.steps`` is immutable for
+        # the duration of this run, so the inverted edge set is stable and
+        # can be reused across scheduler iterations.
+        forward_deps = _build_forward_deps_map(wf)
+
         while remaining:
             # Time guard
             elapsed = time.monotonic() - start_time
@@ -3856,8 +3990,26 @@ async def execute_workflow(
                     or state.step_results.get(dep, StepResult(step_id=dep)).status == "completed"
                     for dep in step.depends_on
                 )
-                if deps_ok:
-                    ready.append(step_id)
+                if not deps_ok:
+                    continue
+                # Conditional branch-closure gating: a step reachable only via
+                # a non-matched branch's goto target must be skipped, even
+                # though its direct depends_on (the conditional itself) is
+                # ``completed``. Performed lazily here (rather than eagerly
+                # when the conditional fires) because a step downstream of
+                # multiple conditionals needs to consider all of them and
+                # because some upstreams may not have fired yet.
+                if _is_step_gated_by_conditional(
+                    step_id, state, wf, forward_deps
+                ):
+                    state.step_results[step_id] = StepResult(
+                        step_id=step_id,
+                        status="skipped",
+                        error="Skipped: conditional branch not matched",
+                    )
+                    remaining.discard(step_id)
+                    continue
+                ready.append(step_id)
 
             if not ready:
                 # No steps are ready but some remain — deps can't be satisfied
@@ -4402,6 +4554,20 @@ def _exec_conditional(step: StepDef, state: WorkflowState) -> StepResult:
         state.conditional_routes[step.id] = matched_goto
     else:
         state.conditional_routes.pop(step.id, None)
+
+    # Record the full branch routing decision so the scheduler can gate
+    # steps reachable only from non-matched branches' goto targets. The
+    # bare matched_goto in state.conditional_routes drives the executor
+    # jump; this richer record drives suppression of the loser sub-DAGs.
+    non_matched_gotos = [
+        b.goto for i, b in enumerate(cfg.branches)
+        if i != matched_idx and b.goto
+    ]
+    state.conditional_branch_results[step.id] = {
+        "matched_branch_index": matched_idx,
+        "matched_goto": matched_goto,
+        "non_matched_gotos": non_matched_gotos,
+    }
 
     input_data: dict[str, Any] = {
         "branch_count": len(cfg.branches),
