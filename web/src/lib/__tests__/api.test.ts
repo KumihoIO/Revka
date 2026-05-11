@@ -12,6 +12,12 @@
  * Run: npx tsx --test src/lib/__tests__/api.test.ts
  */
 
+// Side-effect import installs window/localStorage shims and a tsx loader
+// hook that lets `../api` (which pulls in `basePath.ts`) load in Node.
+// Must remain the FIRST import; ESM evaluates side-effect imports in
+// declaration order.
+import './setup.mjs';
+
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -98,4 +104,45 @@ test('isHtmlErrorBody detects content-type and body shapes', () => {
   assert.equal(isHtmlErrorBody('{"ok":true}', 'text/html; charset=utf-8'), true);
   assert.equal(isHtmlErrorBody('{"error":"x"}', 'application/json'), false);
   assert.equal(isHtmlErrorBody('plain', null), false);
+});
+
+test('renameSession calls PUT /api/sessions/{id} with name body + Bearer auth', async () => {
+  // Capture fetch and dynamically import `../api` (so the loader hook in
+  // setup.mjs has had a chance to patch basePath.ts).
+  let captured: { url: string; init: RequestInit } | null = null;
+  const originalFetch = (globalThis as any).fetch;
+  (globalThis as any).fetch = async (url: string, init: RequestInit) => {
+    captured = { url, init };
+    return {
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      headers: { get: () => 'application/json' },
+      text: async () => '',
+      json: async () => ({ session_id: 'sess-1', name: 'My Chat' }),
+    };
+  };
+
+  try {
+    const { renameSession } = await import('../api');
+    const { setToken, clearToken } = await import('../auth');
+    setToken('test-token-abc');
+
+    const result = await renameSession('sess-1', 'My Chat');
+    assert.deepEqual(result, { session_id: 'sess-1', name: 'My Chat' });
+
+    assert.ok(captured, 'fetch was not called');
+    const cap = captured as { url: string; init: RequestInit };
+    assert.match(cap.url, /\/api\/sessions\/sess-1$/);
+    assert.equal(cap.init.method, 'PUT');
+    assert.equal(cap.init.body, JSON.stringify({ name: 'My Chat' }));
+
+    const headers = cap.init.headers as Headers;
+    assert.equal(headers.get('Authorization'), 'Bearer test-token-abc');
+    assert.equal(headers.get('Content-Type'), 'application/json');
+
+    clearToken();
+  } finally {
+    (globalThis as any).fetch = originalFetch;
+  }
 });

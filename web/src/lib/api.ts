@@ -414,6 +414,17 @@ export function deleteSession(id: string): Promise<{ deleted: boolean; session_i
   );
 }
 
+/** Rename an operator chat session. Persists across daemon restarts. */
+export function renameSession(id: string, name: string): Promise<{ session_id: string; name: string }> {
+  return apiFetch<{ session_id: string; name: string }>(
+    `/api/sessions/${encodeURIComponent(id)}`,
+    {
+      method: 'PUT',
+      body: JSON.stringify({ name }),
+    },
+  );
+}
+
 /** Server response from `POST /api/sessions/{id}/attachments`. */
 export interface AttachmentUploadResponse {
   file_id: string;
