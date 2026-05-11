@@ -9,6 +9,7 @@ use base64::Engine as _;
 use futures_util::stream::{self, StreamExt};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 
 pub struct AnthropicProvider {
     credential: Option<String>,
@@ -22,10 +23,76 @@ const DEFAULT_ANTHROPIC_MAX_TOKENS: u32 = 4096;
 /// HTTP 400 from the Anthropic API. Match by model-name prefix so future
 /// patch releases (e.g. opus-4-7-20260601) are also covered.
 fn model_supports_temperature(model: &str) -> bool {
+    let model = model.rsplit('/').next().unwrap_or(model);
     // Anthropic deprecated `temperature` starting with the Claude 4.7 series.
     // Update this list as Anthropic rolls deprecation across model lines.
     let no_temp_prefixes = ["claude-opus-4-7"];
     !no_temp_prefixes.iter().any(|p| model.starts_with(p))
+}
+
+fn sniff_image_media_type(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Some("image/png")
+    } else if bytes.starts_with(b"\xff\xd8\xff") {
+        Some("image/jpeg")
+    } else if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        Some("image/gif")
+    } else if bytes.len() >= 12 && bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WEBP" {
+        Some("image/webp")
+    } else {
+        None
+    }
+}
+
+fn decode_base64_header(data: &str) -> Option<Vec<u8>> {
+    let compact: String = data
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .take(96)
+        .collect();
+    if compact.is_empty() {
+        return None;
+    }
+    let mut padded = compact;
+    while padded.len() % 4 != 0 {
+        padded.push('=');
+    }
+    base64::engine::general_purpose::STANDARD
+        .decode(padded)
+        .ok()
+}
+
+fn image_media_type_from_data_uri(header: &str, data: &str) -> String {
+    let declared = header
+        .split(';')
+        .next()
+        .filter(|mime| mime.starts_with("image/"))
+        .unwrap_or("image/jpeg");
+    decode_base64_header(data)
+        .as_deref()
+        .and_then(sniff_image_media_type)
+        .unwrap_or(declared)
+        .to_string()
+}
+
+fn image_media_type_from_path(path: &std::path::Path, bytes: &[u8]) -> String {
+    if let Some(sniffed) = sniff_image_media_type(bytes) {
+        return sniffed.to_string();
+    }
+
+    match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("jpg")
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "png" => "image/png",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        _ => "image/jpeg",
+    }
+    .to_string()
 }
 
 #[derive(Debug, Serialize)]
@@ -363,6 +430,82 @@ impl AnthropicProvider {
         })
     }
 
+    fn native_tool_use_ids(message: &NativeMessage) -> HashSet<String> {
+        if message.role != "assistant" {
+            return HashSet::new();
+        }
+        message
+            .content
+            .iter()
+            .filter_map(|block| match block {
+                NativeContentOut::ToolUse { id, .. } if !id.is_empty() => Some(id.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn push_or_merge_native_message(messages: &mut Vec<NativeMessage>, mut message: NativeMessage) {
+        if message.content.is_empty() {
+            return;
+        }
+        if let Some(last) = messages.last_mut() {
+            if last.role == message.role {
+                last.content.append(&mut message.content);
+                return;
+            }
+        }
+        messages.push(message);
+    }
+
+    fn sanitize_tool_result_pairs(messages: Vec<NativeMessage>) -> Vec<NativeMessage> {
+        let mut sanitized = Vec::with_capacity(messages.len());
+        let mut previous_assistant_tool_ids = HashSet::new();
+
+        for mut message in messages {
+            match message.role.as_str() {
+                "assistant" => {
+                    Self::push_or_merge_native_message(&mut sanitized, message);
+                    previous_assistant_tool_ids = sanitized
+                        .last()
+                        .map(Self::native_tool_use_ids)
+                        .unwrap_or_default();
+                }
+                "user" => {
+                    let can_contain_tool_results =
+                        sanitized.last().is_some_and(|m| m.role == "assistant");
+                    let allowed_tool_ids = if can_contain_tool_results {
+                        previous_assistant_tool_ids.clone()
+                    } else {
+                        HashSet::new()
+                    };
+
+                    let mut content = Vec::with_capacity(message.content.len());
+                    for block in message.content.drain(..) {
+                        match block {
+                            NativeContentOut::ToolResult { tool_use_id, .. }
+                                if !allowed_tool_ids.contains(&tool_use_id) =>
+                            {
+                                tracing::warn!(
+                                    tool_use_id,
+                                    "Dropping orphaned Anthropic tool_result before provider request"
+                                );
+                            }
+                            other => content.push(other),
+                        }
+                    }
+                    message.content = content;
+                    if !message.content.is_empty() {
+                        Self::push_or_merge_native_message(&mut sanitized, message);
+                    }
+                    previous_assistant_tool_ids.clear();
+                }
+                _ => Self::push_or_merge_native_message(&mut sanitized, message),
+            }
+        }
+
+        sanitized
+    }
+
     fn convert_messages(messages: &[ChatMessage]) -> (Option<SystemPrompt>, Vec<NativeMessage>) {
         let mut system_text = None;
         let mut native_messages = Vec::new();
@@ -431,30 +574,20 @@ impl AnthropicProvider {
                             // Data URI format: data:image/jpeg;base64,/9j/4AAQ...
                             if let Some(comma) = img_ref.find(',') {
                                 let header = &img_ref[5..comma];
-                                let mime =
-                                    header.split(';').next().unwrap_or("image/jpeg").to_string();
                                 let b64 = img_ref[comma + 1..].trim().to_string();
+                                let mime = image_media_type_from_data_uri(header, &b64);
                                 (mime, b64)
                             } else {
                                 continue;
                             }
                         } else if std::path::Path::new(img_ref.trim()).exists() {
                             // Local file path
-                            match std::fs::read(img_ref.trim()) {
+                            let path = std::path::Path::new(img_ref.trim());
+                            match std::fs::read(path) {
                                 Ok(bytes) => {
                                     let b64 =
                                         base64::engine::general_purpose::STANDARD.encode(&bytes);
-                                    let ext = std::path::Path::new(img_ref.trim())
-                                        .extension()
-                                        .and_then(|e| e.to_str())
-                                        .unwrap_or("jpg");
-                                    let mime = match ext {
-                                        "png" => "image/png",
-                                        "gif" => "image/gif",
-                                        "webp" => "image/webp",
-                                        _ => "image/jpeg",
-                                    }
-                                    .to_string();
+                                    let mime = image_media_type_from_path(path, &bytes);
                                     (mime, b64)
                                 }
                                 Err(_) => continue,
@@ -512,6 +645,8 @@ impl AnthropicProvider {
                 cache_control: Some(CacheControl::ephemeral()),
             }])
         });
+
+        let native_messages = Self::sanitize_tool_result_pairs(native_messages);
 
         (system_prompt, native_messages)
     }
@@ -1345,6 +1480,7 @@ mod tests {
         // Deprecated (4.7+) — must NOT send temperature
         assert!(!model_supports_temperature("claude-opus-4-7"));
         assert!(!model_supports_temperature("claude-opus-4-7-20260101"));
+        assert!(!model_supports_temperature("anthropic/claude-opus-4-7"));
         // Older models still accept temperature
         assert!(model_supports_temperature("claude-opus-4-6"));
         assert!(model_supports_temperature("claude-sonnet-4-6"));
@@ -2026,6 +2162,24 @@ mod tests {
     }
 
     #[test]
+    fn convert_messages_sniffs_image_media_type_from_data_uri_bytes() {
+        let png_data = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
+        let messages = vec![ChatMessage {
+            role: "user".to_string(),
+            content: format!("[IMAGE:data:image/jpeg;base64,{png_data}]"),
+        }];
+
+        let (_, native_msgs) = AnthropicProvider::convert_messages(&messages);
+
+        match &native_msgs[0].content[0] {
+            NativeContentOut::Image { source } => {
+                assert_eq!(source.media_type, "image/png");
+            }
+            _ => panic!("Expected Image content block"),
+        }
+    }
+
+    #[test]
     fn convert_messages_without_image_marker() {
         let messages = vec![ChatMessage {
             role: "user".to_string(),
@@ -2128,6 +2282,70 @@ mod tests {
             native_msgs[2].content.len(),
             2,
             "Expected 2 tool_result blocks in merged message"
+        );
+    }
+
+    #[test]
+    fn convert_messages_drops_orphaned_tool_result() {
+        let messages = vec![
+            ChatMessage {
+                role: "tool".to_string(),
+                content: serde_json::json!({
+                    "tool_call_id": "toolu_orphan",
+                    "content": "old output"
+                })
+                .to_string(),
+            },
+            ChatMessage {
+                role: "user".to_string(),
+                content: "Continue".to_string(),
+            },
+        ];
+
+        let (_system, native_msgs) = AnthropicProvider::convert_messages(&messages);
+
+        assert_eq!(native_msgs.len(), 1);
+        assert_eq!(native_msgs[0].role, "user");
+        assert!(
+            native_msgs[0]
+                .content
+                .iter()
+                .all(|block| !matches!(block, NativeContentOut::ToolResult { .. }))
+        );
+    }
+
+    #[test]
+    fn convert_messages_drops_mismatched_tool_result_after_assistant() {
+        let messages = vec![
+            ChatMessage {
+                role: "assistant".to_string(),
+                content: serde_json::json!({
+                    "content": "",
+                    "tool_calls": [
+                        {"id": "toolu_expected", "name": "shell", "arguments": "{\"command\":\"pwd\"}"}
+                    ]
+                })
+                .to_string(),
+            },
+            ChatMessage {
+                role: "tool".to_string(),
+                content: serde_json::json!({
+                    "tool_call_id": "toolu_missing",
+                    "content": "/tmp"
+                })
+                .to_string(),
+            },
+        ];
+
+        let (_system, native_msgs) = AnthropicProvider::convert_messages(&messages);
+
+        assert_eq!(native_msgs.len(), 1);
+        assert_eq!(native_msgs[0].role, "assistant");
+        assert!(
+            native_msgs[0]
+                .content
+                .iter()
+                .any(|block| matches!(block, NativeContentOut::ToolUse { .. }))
         );
     }
 
