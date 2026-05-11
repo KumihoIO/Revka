@@ -848,10 +848,15 @@ fn format_macos_plist(
         hard = DAEMON_NOFILE_HARD,
     );
 
+    // Raw string (r#"..."#) — backslash is literal, so use bare `"` for
+    // XML attribute quotes. Before this fix, the generated plist contained
+    // `version=\"1.0\"` (5 characters) instead of `version="1.0"` (3 chars),
+    // which is not valid XML. launchd happens to tolerate it on macOS but
+    // `xmllint` and any third-party plist consumer would reject the file.
     format!(
-        r#"<?xml version=\"1.0\" encoding=\"UTF-8\"?>
-<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">
-<plist version=\"1.0\">
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
 <dict>
   <key>Label</key>
   <string>{label}</string>
