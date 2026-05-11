@@ -244,6 +244,75 @@ class TestOutput:
         assert len(result.input_data["template_preview"]) == 500
         assert result.input_data["template_length"] == 1000
 
+    async def test_entity_output_surfaces_attached_artifact(self):
+        cfg = OutputStepConfig(
+            format="markdown",
+            template="# ${inputs.title}",
+            entity_name="report-${inputs.title}",
+            entity_kind="report",
+        )
+        step = StepDef(id="publish", type=StepType.OUTPUT, output=cfg)
+
+        async def fake_publish_workflow_entity(**kwargs):
+            assert kwargs["content"] == "# Q1"
+            assert kwargs["content_format"] == "markdown"
+            return {
+                "item_kref": "kref://Construct/WorkflowOutputs/report.report",
+                "revision_kref": "kref://Construct/WorkflowOutputs/report.report?r=7",
+                "artifact_path": "/tmp/publish.md",
+                "artifact_kref": "kref://Construct/WorkflowOutputs/report.report?r=7#a1",
+                "artifact_attached": True,
+                "artifact_error": "",
+                "tag_applied": True,
+                "tag_error": "",
+            }
+
+        with patch(
+            "operator_mcp.workflow.memory.publish_workflow_entity",
+            fake_publish_workflow_entity,
+        ):
+            result = await _exec_output(step, _state(inputs={"title": "Q1"}))
+
+        assert result.status == "completed"
+        assert result.output_data["entity_registered"] is True
+        assert result.output_data["entity_artifact_attached"] is True
+        assert result.output_data["artifact_path"] == "/tmp/publish.md"
+        assert result.output_data["entity_artifact_kref"].endswith("#a1")
+
+    async def test_entity_output_fails_when_artifact_attach_fails(self):
+        cfg = OutputStepConfig(
+            format="markdown",
+            template="# report",
+            entity_name="report",
+            entity_kind="report",
+        )
+        step = StepDef(id="publish", type=StepType.OUTPUT, output=cfg)
+
+        async def fake_publish_workflow_entity(**_kwargs):
+            return {
+                "item_kref": "kref://Construct/WorkflowOutputs/report.report",
+                "revision_kref": "kref://Construct/WorkflowOutputs/report.report?r=7",
+                "artifact_path": "/tmp/publish.md",
+                "artifact_kref": "",
+                "artifact_attached": False,
+                "artifact_error": "revision already published",
+                "tag_applied": False,
+                "tag_error": "artifact attach failed; refusing to tag revision",
+            }
+
+        with patch(
+            "operator_mcp.workflow.memory.publish_workflow_entity",
+            fake_publish_workflow_entity,
+        ):
+            result = await _exec_output(step, _state())
+
+        assert result.status == "failed"
+        assert result.error == "revision already published"
+        assert result.output_data["entity_registered"] is True
+        assert result.output_data["entity_artifact_attached"] is False
+        assert result.output_data["entity_tag_applied"] is False
+        assert result.output_data["entity_tag_error"].startswith("artifact attach failed")
+
 
 # ── _exec_notify ───────────────────────────────────────────────────
 

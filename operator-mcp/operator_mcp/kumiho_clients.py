@@ -336,7 +336,9 @@ class KumihoSDKClient:
     async def tag_revision(self, revision_kref: str, tag: str) -> None:
         """Apply a tag to a specific revision."""
         def _call():
-            tool_tag_revision(revision_kref, tag)
+            r = tool_tag_revision(revision_kref, tag)
+            if isinstance(r, dict) and "error" in r:
+                raise RuntimeError(r["error"])
         await asyncio.to_thread(_call)
 
     async def untag_revision(self, revision_kref: str, tag: str) -> None:
