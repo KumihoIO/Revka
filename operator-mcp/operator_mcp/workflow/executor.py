@@ -2877,6 +2877,7 @@ async def _exec_manus(step: StepDef, state: WorkflowState) -> StepResult:
             event_count = 0
             final_status_event: dict[str, Any] | None = None
             structured_event: dict[str, Any] | None = None
+            error_message_event: dict[str, Any] | None = None
             assistant_messages: list[dict[str, Any]] = []
             all_events: list[dict[str, Any]] = []
 
@@ -2937,7 +2938,7 @@ async def _exec_manus(step: StepDef, state: WorkflowState) -> StepResult:
                 try:
                     poll = await client.get(
                         f"{base_url}/v2/task.listMessages",
-                        params={"task_id": task_id, "order": "asc", "limit": 50},
+                        params={"task_id": task_id, "order": "asc", "limit": 200},
                         headers=headers,
                     )
                 except httpx.HTTPError as exc:
@@ -2965,24 +2966,46 @@ async def _exec_manus(step: StepDef, state: WorkflowState) -> StepResult:
                     await asyncio.sleep(poll_s)
                     continue
 
-                messages = payload.get("messages") or []
-                if isinstance(messages, list):
-                    event_count = len(messages)
-                    all_events = messages
-                    # Find latest agent_status + collect assistant messages.
-                    for ev in messages:
+                # Manus returns the event array under "data" (per spec); a
+                # few legacy envelopes used "messages" — accept both so this
+                # path is resilient to either.
+                events = payload.get("data")
+                if events is None:
+                    events = payload.get("messages") or []
+                if isinstance(events, list):
+                    event_count = len(events)
+                    all_events = events
+                    # Reset accumulators each poll so we always reflect the
+                    # latest full event window (order=asc, limit=200).
+                    final_status_event = None
+                    structured_event = None
+                    error_message_event = None
+                    assistant_messages = []
+                    for ev in events:
                         if not isinstance(ev, dict):
                             continue
                         ev_type = ev.get("type") or ""
                         if ev_type == "status_update":
-                            final_status_event = ev
-                            last_status = str(
-                                ev.get("agent_status") or last_status
-                            )
+                            su = ev.get("status_update")
+                            if isinstance(su, dict):
+                                final_status_event = ev
+                                status = su.get("agent_status")
+                                if isinstance(status, str):
+                                    last_status = status
                         elif ev_type == "assistant_message":
-                            assistant_messages.append(ev)
+                            am = ev.get("assistant_message")
+                            if isinstance(am, dict):
+                                # Store the inner dict so downstream readers
+                                # can treat it as a plain payload.
+                                assistant_messages.append(am)
                         elif ev_type == "structured_output_result":
-                            structured_event = ev
+                            sor = ev.get("structured_output_result")
+                            if isinstance(sor, dict):
+                                structured_event = sor
+                        elif ev_type == "error_message":
+                            em = ev.get("error_message")
+                            if isinstance(em, dict):
+                                error_message_event = em
 
                 # Throttled progress log: ~every 30s.
                 now = time.monotonic()
@@ -2993,7 +3016,10 @@ async def _exec_manus(step: StepDef, state: WorkflowState) -> StepResult:
                     )
                     last_log_at = now
 
-                if last_status in _MANUS_TERMINAL:
+                # An error_message event is also terminal — Manus has
+                # surfaced a task-side failure (e.g. rate_limited) that
+                # won't be followed by another status_update.
+                if last_status in _MANUS_TERMINAL or error_message_event is not None:
                     break
 
                 await asyncio.sleep(poll_s)
@@ -3035,14 +3061,31 @@ async def _exec_manus(step: StepDef, state: WorkflowState) -> StepResult:
                 else:
                     structured_error = str(structured_event.get("error") or "")
 
-            # Pull status detail + brief for the run-view UI.
+            # Pull status detail + brief for the run-view UI. Per the
+            # Manus spec these live under the inner ``status_update`` dict.
             status_detail = ""
             brief = ""
             description = ""
             if isinstance(final_status_event, dict):
-                status_detail = str(final_status_event.get("status_detail") or "")
-                brief = str(final_status_event.get("brief") or "")
-                description = str(final_status_event.get("description") or "")
+                su = final_status_event.get("status_update") or {}
+                if isinstance(su, dict):
+                    # status_detail may be a dict (when waiting) or string;
+                    # stringify defensively so the run-view never crashes.
+                    sd = su.get("status_detail")
+                    status_detail = "" if sd is None else (
+                        sd if isinstance(sd, str) else json.dumps(sd)[:500]
+                    )
+                    brief = str(su.get("brief") or "")
+                    description = str(su.get("description") or "")
+
+            # Manus surfaces task-side failures via error_message events.
+            # When present, capture the sanitized error_type + content so
+            # the step's StepResult.error carries actionable detail.
+            error_message_type = ""
+            error_message_content = ""
+            if isinstance(error_message_event, dict):
+                error_message_type = str(error_message_event.get("error_type") or "")
+                error_message_content = str(error_message_event.get("content") or "")
 
             output_data: dict[str, Any] = {
                 "task_id": task_id,
@@ -3061,8 +3104,17 @@ async def _exec_manus(step: StepDef, state: WorkflowState) -> StepResult:
                 output_data["structured_output"] = structured_value
             if structured_error:
                 output_data["structured_output_error"] = structured_error
+            if error_message_type or error_message_content:
+                output_data["error_message"] = {
+                    "error_type": error_message_type,
+                    "content": error_message_content,
+                }
 
-            terminal_ok = last_status == "stopped" and not structured_error
+            terminal_ok = (
+                last_status == "stopped"
+                and not structured_error
+                and error_message_event is None
+            )
             if terminal_ok:
                 output_text = assistant_text or json.dumps(
                     {"task_id": task_id, "final_state": last_status}
@@ -3077,14 +3129,20 @@ async def _exec_manus(step: StepDef, state: WorkflowState) -> StepResult:
                 )
 
             # Failure branch — distinguish "error" terminal from
-            # "stopped + structured_output_error". allow_failure converts
-            # the failure into a soft pass so the workflow continues.
+            # "stopped + structured_output_error" from Manus-emitted
+            # error_message events. allow_failure converts the failure
+            # into a soft pass so the workflow continues.
             err = (
                 f"manus task ended in state={last_status or 'unknown'} "
                 f"detail={_manus_sanitize(status_detail)}"
             )
             if structured_error:
                 err += f" | structured_output_error={_manus_sanitize(structured_error)}"
+            if error_message_event is not None:
+                err += (
+                    f" | error_message={_manus_sanitize(error_message_type)}: "
+                    f"{_manus_sanitize(error_message_content)}"
+                )
             if cfg.allow_failure:
                 return StepResult(
                     step_id=step.id,
