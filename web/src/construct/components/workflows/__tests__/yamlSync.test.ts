@@ -10,7 +10,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { parseWorkflowYaml, tasksToFlow, flowToTasks, tasksToYaml } from '../yamlSync';
+import { parseWorkflowYaml, tasksToFlow, flowToTasks, tasksToYaml, type TaskDefinition } from '../yamlSync';
 
 test('canonical conditional.branches populates flat fields + edges', () => {
   const yaml = `
@@ -525,6 +525,7 @@ steps:
 `;
   const tasks1 = parseWorkflowYaml(yaml);
   const t1 = tasks1[0]!;
+  assert.equal(t1.manus_register_enabled, true);
   assert.equal(t1.manus_register_entity_name, 'report-${inputs.topic}');
   assert.equal(t1.manus_register_entity_kind, 'research-report');
   assert.equal(t1.manus_register_entity_tag, 'ready');
@@ -536,6 +537,7 @@ steps:
   assert.ok(/register_output:/.test(yaml2), 'emitted YAML contains register_output block');
   const tasks2 = parseWorkflowYaml(yaml2);
   const t2 = tasks2[0]!;
+  assert.equal(t2.manus_register_enabled, true);
   assert.equal(t2.manus_register_entity_name, t1.manus_register_entity_name);
   assert.equal(t2.manus_register_entity_kind, t1.manus_register_entity_kind);
   assert.equal(t2.manus_register_entity_tag, t1.manus_register_entity_tag);
@@ -544,7 +546,7 @@ steps:
   assert.equal(t2.manus_register_content_source, t1.manus_register_content_source);
 });
 
-test('manus step register_output: omitted when entity_name/kind unset', () => {
+test('manus step register_output: omitted when register_output block absent in YAML', () => {
   // Without register_output in the YAML, the emitted YAML should not
   // contain a register_output block — even after a round-trip through tasks.
   const yaml = `
@@ -555,7 +557,69 @@ steps:
       prompt: "x"
 `;
   const tasks = parseWorkflowYaml(yaml);
+  // The canonical enabled flag should be unset when no block is present.
+  assert.notEqual(tasks[0]!.manus_register_enabled, true);
   const out = tasksToYaml(tasks);
   assert.ok(!/register_output/.test(out),
     'emitted YAML omits register_output when unconfigured');
+});
+
+test('manus step register_output: enabled flag round-trips through tasksToFlow / flowToTasks', () => {
+  // Mirrors the UI checkbox flow: parse → tasksToFlow → flowToTasks →
+  // tasksToYaml. The canonical `manus_register_enabled` flag must
+  // survive that round-trip so the editor's checkbox state is preserved.
+  const yaml = `
+steps:
+  - id: research
+    type: manus
+    manus:
+      prompt: "Investigate"
+      register_output:
+        entity_name: "report"
+        entity_kind: "research-report"
+`;
+  const tasks1 = parseWorkflowYaml(yaml);
+  const { nodes, edges } = tasksToFlow(tasks1);
+  // Node data carries the canonical UI flag.
+  const n = nodes[0]!;
+  assert.equal(n.data.manusRegisterEnabled, true);
+
+  const tasks2 = flowToTasks(nodes, edges);
+  assert.equal(tasks2[0]!.manus_register_enabled, true);
+  const yaml2 = tasksToYaml(tasks2);
+  assert.ok(/register_output:/.test(yaml2), 'enabled flag round-trip emits register_output block');
+});
+
+test('manus step register_output: enabled with empty entity_name/kind still emits block', () => {
+  // The checkbox is on but the user hasn't filled in entity_name/kind
+  // yet. The emit path should still emit the block (with empty strings)
+  // so the runtime fail-fasts at registration time with register_output_error
+  // — that's the right behavior so users see the error and know to fill
+  // in the fields rather than silently dropping the block.
+  const tasks: TaskDefinition[] = [{
+    id: 'r',
+    type: 'manus',
+    name: 'r',
+    description: '',
+    agent_hints: [],
+    skills: [],
+    depends_on: [],
+    inputs: [],
+    outputs: [],
+    on_complete: '',
+    on_fail: '',
+    timeout_minutes: 0,
+    retry_count: 0,
+    manus_prompt: 'x',
+    manus_register_enabled: true,
+    manus_register_entity_name: '',
+    manus_register_entity_kind: '',
+  } as unknown as TaskDefinition];
+  const out = tasksToYaml(tasks);
+  assert.ok(/register_output:/.test(out),
+    'emit block even when entity_name/kind are empty (runtime fail-fast)');
+  // yamlEscape('') returns '' so the lines render as `entity_name:` / `entity_kind:`
+  // — both keys are present so the runtime fail-fast path sees the empty values.
+  assert.ok(/entity_name:/.test(out), 'entity_name key present in block');
+  assert.ok(/entity_kind:/.test(out), 'entity_kind key present in block');
 });

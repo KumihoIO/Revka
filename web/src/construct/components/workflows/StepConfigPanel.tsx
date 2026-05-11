@@ -1915,34 +1915,16 @@ export default function StepConfigPanel({
                   as a Kumiho entity + downloads attachments to an
                   entity-anchored path. Toggle is off by default; flipping it
                   on reveals the per-field inputs that mirror the output-step
-                  Kumiho Entity panel. */}
+                  Kumiho Entity panel. Toggling off keeps the previously-entered
+                  values on the node so re-enabling restores user input. */}
               <div style={{ paddingTop: 8, borderTop: '1px solid var(--pc-border)' }}>
                 <Checkbox
-                  checked={Boolean(data.manusRegisterEntityName || data.manusRegisterEntityKind)}
-                  onChange={(v) => {
-                    if (v) {
-                      // Seed reasonable defaults so the inputs aren't empty.
-                      onUpdate(node.id, {
-                        manusRegisterEntityName: data.manusRegisterEntityName || '',
-                        manusRegisterEntityKind: data.manusRegisterEntityKind || '',
-                        manusRegisterEntityTag: data.manusRegisterEntityTag || 'published',
-                        manusRegisterAttachments: data.manusRegisterAttachments ?? true,
-                        manusRegisterContentSource: data.manusRegisterContentSource || 'message',
-                      });
-                    } else {
-                      // Clearing both name+kind suppresses register_output
-                      // emission in tasksToYaml — same condition as the
-                      // executor's "register_output configured" gate.
-                      onUpdate(node.id, {
-                        manusRegisterEntityName: '',
-                        manusRegisterEntityKind: '',
-                      });
-                    }
-                  }}
+                  checked={data.manusRegisterEnabled === true}
+                  onChange={(v) => onUpdate(node.id, { manusRegisterEnabled: v })}
                   label="Register output as Kumiho entity"
                 />
               </div>
-              {(data.manusRegisterEntityName || data.manusRegisterEntityKind) && (
+              {data.manusRegisterEnabled && (
                 <div style={{ paddingTop: 8 }}>
                   <div style={{ ...sectionTitleStyle, color: 'var(--pc-accent-light)', marginBottom: 8 }}>
                     Kumiho Entity
