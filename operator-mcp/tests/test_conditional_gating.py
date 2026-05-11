@@ -540,3 +540,205 @@ class TestReachableOutside:
             checkpoint=False,
         )
         assert _is_reachable_outside_conditional("target", "gate", wf) is False
+
+
+# ── persistence: gating survives checkpoint/resume ──────────────────────
+
+
+class TestResumePersistence:
+    @pytest.mark.asyncio
+    async def test_resume_after_conditional_preserves_gating(self, tmp_path):
+        """A run checkpointed after a conditional fired must resume with
+        the same branch-result gating in force — otherwise loser-branch
+        steps would re-become eligible on resume.
+
+        Regression guard for the ``exclude=True`` bug on
+        ``WorkflowState.conditional_branch_results``.
+        """
+        sentinel_matched = tmp_path / "matched.touched"
+        sentinel_loser = tmp_path / "loser.touched"
+
+        wf = WorkflowDef(
+            name="resume-gating",
+            steps=[
+                _cond_step(
+                    "gate",
+                    branches=[
+                        ConditionalBranch(condition="default", goto="matched", value="'go'"),
+                        ConditionalBranch(condition="default", goto="loser", value="'no'"),
+                    ],
+                ),
+                _shell_step("matched", str(sentinel_matched), depends_on=["gate"]),
+                _shell_step("loser", str(sentinel_loser), depends_on=["gate"]),
+            ],
+            checkpoint=False,
+        )
+
+        state = await execute_workflow(wf, inputs={}, cwd=str(tmp_path))
+        assert state.status == WorkflowStatus.COMPLETED, state.error
+        assert "gate" in state.conditional_branch_results
+
+        # Round-trip the state through serialization (the path a real
+        # checkpoint takes) and verify the gating field survives.
+        dumped_json = state.model_dump_json()
+        rehydrated = WorkflowState.model_validate_json(dumped_json)
+        assert "gate" in rehydrated.conditional_branch_results, (
+            "conditional_branch_results MUST persist across model_dump_json "
+            "round-trip (was excluded=True before the fix)"
+        )
+        info = rehydrated.conditional_branch_results["gate"]
+        assert info["matched_goto"] == "matched"
+        assert info["non_matched_gotos"] == ["loser"]
+
+        # Same check via model_dump/model_validate (the dict path).
+        rehydrated_dict = WorkflowState.model_validate(state.model_dump())
+        assert "gate" in rehydrated_dict.conditional_branch_results
+
+        # Verify scheduler-side gating logic still classifies the loser as
+        # gated against the rehydrated state — the practical continuation
+        # check, since the executor's resume path consults exactly this
+        # helper before running a step.
+        fwd = _build_forward_deps_map(wf)
+        assert _is_step_gated_by_conditional("loser", rehydrated, wf, fwd)
+        assert not _is_step_gated_by_conditional("matched", rehydrated, wf, fwd)
+
+    @pytest.mark.asyncio
+    async def test_mixed_found_and_not_found(self, tmp_path):
+        """User's workflow shape: 4 resolve+conditional pairs. 2 take the
+        ``found → draft_post`` branch; 2 take the ``not-found → research_N``
+        branch. The two research chains run; the two ``found`` ones gate
+        their research chains; ``draft_post`` runs after all upstreams."""
+        sentinels = {
+            name: tmp_path / f"{name}.touched"
+            for name in (
+                "research_1", "research_2", "research_3", "research_4",
+                "draft_post",
+            )
+        }
+
+        # found_map[i] is True → branch 1 matches (goto draft_post),
+        # False → branch 1 misses and default fires (goto research_i).
+        found_map = {1: True, 2: False, 3: True, 4: False}
+
+        steps: list[StepDef] = []
+        for i in range(1, 5):
+            # Per-pair resolve step (no-op shell).
+            steps.append(_shell_step(f"resolve_{i}", f"/tmp/resolve_{i}"))
+            # Conditional: first branch goes to draft_post when "found",
+            # default branch goes to the per-pair research step.
+            cond_first = "1 == 1" if found_map[i] else "1 == 2"
+            steps.append(_cond_step(
+                f"check_{i}",
+                branches=[
+                    ConditionalBranch(condition=cond_first, goto="draft_post", value="'cached'"),
+                    ConditionalBranch(condition="default", goto=f"research_{i}", value="'proceed'"),
+                ],
+                depends_on=[f"resolve_{i}"],
+            ))
+            steps.append(_shell_step(
+                f"research_{i}",
+                str(sentinels[f"research_{i}"]),
+                depends_on=[f"check_{i}"],
+            ))
+
+        # draft_post depends on every check_N so it runs after all routing.
+        steps.append(_shell_step(
+            "draft_post",
+            str(sentinels["draft_post"]),
+            depends_on=[f"check_{i}" for i in range(1, 5)],
+        ))
+
+        wf = WorkflowDef(name="mixed-found", steps=steps, checkpoint=False)
+        state = await execute_workflow(wf, inputs={}, cwd=str(tmp_path))
+
+        assert state.status == WorkflowStatus.COMPLETED, state.error
+        # research_1 / research_3 are gated (found → draft_post matched).
+        assert not sentinels["research_1"].exists()
+        assert not sentinels["research_3"].exists()
+        assert state.step_results["research_1"].status == "skipped"
+        assert state.step_results["research_3"].status == "skipped"
+        # research_2 / research_4 run (not-found → research_N matched).
+        assert sentinels["research_2"].exists()
+        assert sentinels["research_4"].exists()
+        # draft_post runs once.
+        assert sentinels["draft_post"].exists()
+        assert state.step_results["draft_post"].status == "completed"
+
+    @pytest.mark.asyncio
+    async def test_no_branch_matches_no_default(self, tmp_path):
+        """Conservative behavior: when matched_idx == -1 (no branch matched,
+        no default), all downstream branch targets get gated."""
+        sentinel_a = tmp_path / "a.touched"
+        sentinel_b = tmp_path / "b.touched"
+
+        wf = WorkflowDef(
+            name="no-match",
+            steps=[
+                _cond_step(
+                    "gate",
+                    branches=[
+                        ConditionalBranch(condition="1 == 2", goto="branch_a", value="'no'"),
+                        ConditionalBranch(condition="0 == 1", goto="branch_b", value="'no'"),
+                    ],
+                ),
+                _shell_step("branch_a", str(sentinel_a), depends_on=["gate"]),
+                _shell_step("branch_b", str(sentinel_b), depends_on=["gate"]),
+            ],
+            checkpoint=False,
+        )
+
+        state = await execute_workflow(wf, inputs={}, cwd=str(tmp_path))
+
+        assert state.status == WorkflowStatus.COMPLETED, state.error
+        info = state.conditional_branch_results["gate"]
+        assert info["matched_branch_index"] == -1
+        assert info["matched_goto"] is None
+        assert set(info["non_matched_gotos"]) == {"branch_a", "branch_b"}
+        assert not sentinel_a.exists()
+        assert not sentinel_b.exists()
+        assert state.step_results["branch_a"].status == "skipped"
+        assert state.step_results["branch_b"].status == "skipped"
+
+    @pytest.mark.asyncio
+    async def test_conditional_inside_for_each_doesnt_pollute_top_level(self, tmp_path):
+        """A conditional executed inside a for_each loop with gotos that
+        stay within the loop must not leak gating state that affects
+        top-level steps. Documents the namespace behavior as benign.
+        """
+        sentinel_inner_winner = tmp_path / "inner_winner.touched"
+        sentinel_inner_loser = tmp_path / "inner_loser.touched"
+        sentinel_top = tmp_path / "top.touched"
+
+        wf = WorkflowDef(
+            name="cond-in-foreach",
+            steps=[
+                StepDef(
+                    id="loop",
+                    type=StepType.FOR_EACH,
+                    for_each=ForEachStepConfig(
+                        variable="i",
+                        items=["1", "2"],
+                        steps=["inner_gate", "inner_winner", "inner_loser"],
+                    ),
+                ),
+                _cond_step(
+                    "inner_gate",
+                    branches=[
+                        ConditionalBranch(condition="default", goto="inner_winner", value="'go'"),
+                        ConditionalBranch(condition="default", goto="inner_loser", value="'no'"),
+                    ],
+                ),
+                _shell_step("inner_winner", str(sentinel_inner_winner)),
+                _shell_step("inner_loser", str(sentinel_inner_loser)),
+                # Top-level step is NOT downstream of the conditional.
+                _shell_step("top", str(sentinel_top), depends_on=["loop"]),
+            ],
+            checkpoint=False,
+        )
+
+        state = await execute_workflow(wf, inputs={}, cwd=str(tmp_path))
+
+        assert state.status == WorkflowStatus.COMPLETED, state.error
+        # Top-level step is unaffected by per-iteration conditional state.
+        assert sentinel_top.exists()
+        assert state.step_results["top"].status == "completed"

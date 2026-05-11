@@ -937,11 +937,11 @@ class WorkflowState(BaseModel):
     # the goto targets on every non-matched branch. Consumed by the scheduler
     # to gate steps that are downstream ONLY of a non-matched branch (so
     # auto-derived ``depends_on`` from interpolation doesn't force them to
-    # run). Excluded from persistence: rebuilt as conditionals fire on
-    # resume, and persisting the structure would lock in a stale routing
-    # decision against a possibly-edited workflow.
+    # run). Persisted so that a run checkpointed mid-flight after a
+    # conditional has fired resumes with the same gating still in force —
+    # otherwise loser-branch steps would execute on resume.
     conditional_branch_results: dict[str, dict[str, Any]] = Field(
-        default_factory=dict, exclude=True
+        default_factory=dict
     )
 
     # Cancel signal — set by the cancel_workflow MCP tool. Distinct from
