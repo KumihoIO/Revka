@@ -543,3 +543,193 @@ class TestKeyHandling:
         assert secret not in blob
         # input_data records the env-var NAME only.
         assert result.input_data.get("api_key_env") == "MANUS_API_KEY"
+
+
+# ---------------------------------------------------------------------------
+# 10. credentials_ref — resolves via gateway, overrides env, never leaks
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestCredentialsRef:
+    """Verify the ``credentials_ref`` field wires through the auth-profile
+    resolver instead of (or in addition to) the env-var fallback.
+
+    The resolver is patched directly so these tests stay hermetic — no
+    gateway/service-token plumbing is exercised here. Coverage for the HTTP
+    surface lives in ``test_auth_resolver.py``.
+    """
+
+    async def test_uses_credentials_ref_when_set(self, monkeypatch):
+        """When ``credentials_ref`` is set, the resolved token is sent as
+        the Manus auth header EVEN IF a different value sits in the env
+        var. Proves the credentials_ref path is authoritative."""
+        from operator_mcp import construct_config
+        monkeypatch.setattr(construct_config, "_cached_manus", None)
+        # The env var holds a value that MUST NOT win.
+        env_value = "env-var-value-should-be-ignored-aaaaaaaa"
+        resolved_token = "resolved-from-profile-bbbbbbbb"
+
+        fc = _FakeClient(
+            create_response=_FakeResp(200, {
+                "ok": True, "task_id": "task-cred",
+                "task_url": "u", "share_url": "s",
+            }),
+            poll_responses=[_FakeResp(200, {"ok": True, "messages": [
+                {"type": "assistant_message", "content": "done"},
+                {"type": "status_update", "agent_status": "stopped"},
+            ]})],
+        )
+
+        async def fake_resolver(profile_id):
+            assert profile_id == "manus:work"
+            return {
+                "token": resolved_token,
+                "kind": "token",
+                "provider": "manus",
+                "profile_name": "work",
+                "expires_at": None,
+            }
+
+        ctxs = _patch_manus(fake_client=fc, api_key=env_value)
+        import operator_mcp.workflow.executor as ex
+        try:
+            _enter_all(ctxs)
+            with patch.object(ex, "resolve_auth_profile", new=fake_resolver):
+                cfg = ManusStepConfig(
+                    prompt="x", credentials_ref="manus:work", **_FAST_CFG,
+                )
+                result = await _exec_manus(_step(cfg), _state())
+        finally:
+            _exit_all(ctxs)
+
+        assert result.status == "completed"
+        # The resolved token (NOT the env value) was used as the API key.
+        first = fc.calls[0]
+        assert first["headers"].get("x-manus-api-key") == resolved_token
+        assert first["headers"].get("x-manus-api-key") != env_value
+        # input_data records the profile id, not the token.
+        assert result.input_data.get("credentials_ref") == "manus:work"
+
+    async def test_falls_back_to_env_when_credentials_ref_absent(self, monkeypatch):
+        """No credentials_ref → env var fallback path is used and the
+        resolver is never called."""
+        from operator_mcp import construct_config
+        monkeypatch.setattr(construct_config, "_cached_manus", None)
+        env_key = "env-fallback-key-cccccccc"
+
+        fc = _FakeClient(
+            create_response=_FakeResp(200, {
+                "ok": True, "task_id": "task-env",
+                "task_url": "u", "share_url": "s",
+            }),
+            poll_responses=[_FakeResp(200, {"ok": True, "messages": [
+                {"type": "assistant_message", "content": "done"},
+                {"type": "status_update", "agent_status": "stopped"},
+            ]})],
+        )
+
+        resolver_calls = {"n": 0}
+
+        async def fake_resolver(_profile_id):
+            resolver_calls["n"] += 1
+            raise AssertionError("resolver must not be called when credentials_ref is absent")
+
+        ctxs = _patch_manus(fake_client=fc, api_key=env_key)
+        import operator_mcp.workflow.executor as ex
+        try:
+            _enter_all(ctxs)
+            with patch.object(ex, "resolve_auth_profile", new=fake_resolver):
+                cfg = ManusStepConfig(prompt="x", **_FAST_CFG)
+                result = await _exec_manus(_step(cfg), _state())
+        finally:
+            _exit_all(ctxs)
+
+        assert result.status == "completed"
+        assert resolver_calls["n"] == 0
+        first = fc.calls[0]
+        assert first["headers"].get("x-manus-api-key") == env_key
+        # input_data records the empty credentials_ref + the env-var name.
+        assert result.input_data.get("credentials_ref") == ""
+        assert result.input_data.get("api_key_env") == "MANUS_API_KEY"
+
+    async def test_failed_resolve_fails_step(self, monkeypatch):
+        """When the gateway returns 404 the step fails fast with a
+        sanitized error and no Manus task is created."""
+        from operator_mcp import construct_config
+        monkeypatch.setattr(construct_config, "_cached_manus", None)
+        from operator_mcp.workflow.auth_resolver import AuthResolveError
+
+        async def fake_resolver(_profile_id):
+            raise AuthResolveError(
+                "auth profile not found: manus:missing",
+                code="auth_profile_not_found",
+            )
+
+        # If the network is touched at all, the test should fail.
+        import operator_mcp.workflow.executor as ex
+        with patch("httpx.AsyncClient",
+                   side_effect=AssertionError("network touched after resolve fail")), \
+             patch.object(ex, "resolve_auth_profile", new=fake_resolver):
+            cfg = ManusStepConfig(
+                prompt="x", credentials_ref="manus:missing", **_FAST_CFG,
+            )
+            result = await _exec_manus(_step(cfg), _state())
+
+        assert result.status == "failed"
+        assert "auth_resolve_failed" in result.error
+        assert "auth_profile_not_found" in result.error
+        assert result.output_data.get("auth_resolve_failed") is True
+        assert result.output_data.get("auth_resolve_code") == "auth_profile_not_found"
+
+    async def test_resolved_token_never_logged(self, monkeypatch, caplog):
+        """Even with extensive logging captured, the resolved token must
+        not appear in caplog, the error message, input_data, or
+        output_data."""
+        from operator_mcp import construct_config
+        monkeypatch.setattr(construct_config, "_cached_manus", None)
+        secret = "RESOLVED-TOKEN-MUST-NOT-LEAK-zzzzzzzz12345"
+
+        async def fake_resolver(_profile_id):
+            return {
+                "token": secret,
+                "kind": "token",
+                "provider": "manus",
+                "profile_name": "work",
+                "expires_at": None,
+            }
+
+        # Force a Manus-side failure so the error path is exercised too.
+        fc = _FakeClient(
+            create_response=_FakeResp(500, {"error": "manus exploded"}),
+            poll_responses=[_FakeResp(200, {"ok": True, "messages": []})],
+        )
+
+        ctxs = _patch_manus(fake_client=fc, api_key="other")
+        import operator_mcp.workflow.executor as ex
+        try:
+            _enter_all(ctxs)
+            with patch.object(ex, "resolve_auth_profile", new=fake_resolver):
+                cfg = ManusStepConfig(
+                    prompt="x", credentials_ref="manus:work", **_FAST_CFG,
+                )
+                with caplog.at_level("DEBUG"):
+                    result = await _exec_manus(_step(cfg), _state())
+        finally:
+            _exit_all(ctxs)
+
+        # Step failed because Manus responded 500.
+        assert result.status == "failed"
+
+        # The resolved token must not appear in any reported field.
+        blob = json.dumps({
+            "error": result.error,
+            "input_data": result.input_data,
+            "output_data": result.output_data,
+        })
+        assert secret not in blob
+        # Nor in any log record formatted message.
+        for record in caplog.records:
+            assert secret not in record.getMessage()
+        # The credentials_ref id IS recorded — just not the token.
+        assert result.input_data.get("credentials_ref") == "manus:work"

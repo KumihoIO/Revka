@@ -1662,6 +1662,7 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
                 .post(api_auth_profiles::handle_create_auth_profile),
         )
         .route("/api/auth/profiles/{id}/resolve", post(api_auth_profiles::handle_resolve_auth_profile))
+        .route("/api/auth/profiles/{id}", delete(api_auth_profiles::handle_delete_auth_profile))
         // ── Skill management API (proxied to Kumiho FastAPI) ──
         .route("/api/skills", get(api_skills::handle_list_skills).post(api_skills::handle_create_skill))
         .route("/api/skills/deprecate", post(api_skills::handle_deprecate_skill))

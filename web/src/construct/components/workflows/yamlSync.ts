@@ -219,6 +219,14 @@ export interface TaskDefinition {
   manus_poll_interval_seconds?: number;
   manus_allow_failure?: boolean;
   /**
+   * Manus auth-profile id (e.g. ``manus:work``) — when set, the runtime
+   * resolves the bound token via the gateway's auth-profile resolve
+   * endpoint instead of reading the ``MANUS_API_KEY`` env var. Lives on
+   * the Manus step config as ``credentials_ref`` in YAML so workflows
+   * stay safe to commit (only the id is persisted; never the token).
+   */
+  manus_credentials_ref?: string;
+  /**
    * Encrypted auth-profile binding for agent / shell / python / email / a2a
    * steps. Format: `<provider>:<profile_name>`. Resolved at runtime via the
    * gateway's auth-profile resolve endpoint — token bytes never appear in
@@ -444,6 +452,7 @@ export interface TaskNodeData {
   manusTimeoutSeconds: number;
   manusPollIntervalSeconds: number;
   manusAllowFailure: boolean;
+  manusCredentialsRef: string;
   /** Encrypted auth-profile id (e.g. `gmail:work`) — resolved at runtime. */
   auth?: string;
   /** Run-mode overlay — populated when viewing a workflow run */
@@ -876,6 +885,7 @@ function parseStep(s: YAMLObj): TaskDefinition | null {
     t.manus_timeout_seconds = asNum(manus.timeout_seconds);
     t.manus_poll_interval_seconds = asNum(manus.poll_interval_seconds);
     t.manus_allow_failure = asBool(manus.allow_failure);
+    t.manus_credentials_ref = asStr(manus.credentials_ref);
   }
 
   // Conditional canonical form — `conditional.branches: [{condition, goto, value?}, ...]`.
@@ -1260,6 +1270,7 @@ export function tasksToFlow(tasks: TaskDefinition[]): { nodes: Node<TaskNodeData
       manusTimeoutSeconds: task.manus_timeout_seconds ?? 600,
       manusPollIntervalSeconds: task.manus_poll_interval_seconds ?? 5,
       manusAllowFailure: task.manus_allow_failure || false,
+      manusCredentialsRef: task.manus_credentials_ref || '',
       auth: task.auth || '',
     },
   }));
@@ -1884,6 +1895,7 @@ export function flowToTasks(nodes: Node<TaskNodeData>[], edges: Edge[]): TaskDef
       if (d.manusTimeoutSeconds && d.manusTimeoutSeconds !== 600) base.manus_timeout_seconds = d.manusTimeoutSeconds;
       if (d.manusPollIntervalSeconds && d.manusPollIntervalSeconds !== 5) base.manus_poll_interval_seconds = d.manusPollIntervalSeconds;
       if (d.manusAllowFailure) base.manus_allow_failure = true;
+      if (d.manusCredentialsRef) base.manus_credentials_ref = d.manusCredentialsRef;
     }
     return base;
   });
@@ -2304,6 +2316,7 @@ export function tasksToYaml(tasks: TaskDefinition[], meta?: Partial<WorkflowMeta
         lines.push(`      poll_interval_seconds: ${task.manus_poll_interval_seconds}`);
       }
       if (task.manus_allow_failure) lines.push(`      allow_failure: true`);
+      if (task.manus_credentials_ref) lines.push(`      credentials_ref: ${yamlEscape(task.manus_credentials_ref)}`);
     }
     if (task.agent_hints.length > 0) {
       lines.push(`    agent_hints: [${task.agent_hints.join(', ')}]`);

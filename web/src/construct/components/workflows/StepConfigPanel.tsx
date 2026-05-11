@@ -228,6 +228,13 @@ export default function StepConfigPanel({
   const [authPickerOpen, setAuthPickerOpen] = useState(false);
   const [authAnchorRect, setAuthAnchorRect] = useState<DOMRect | null>(null);
 
+  // Separate picker for the Manus step's ``credentials_ref`` field. Manus
+  // doesn't go through the generic ``data.auth`` channel — it has its own
+  // dedicated slot so the env-var fallback path stays explicit and the
+  // run-view records which credential was used.
+  const [manusPickerOpen, setManusPickerOpen] = useState(false);
+  const [manusAnchorRect, setManusAnchorRect] = useState<DOMRect | null>(null);
+
   // Reset the auth picker when the user clicks a different node — without
   // this, opening the picker on node A and then clicking node B before
   // selecting leaves the picker mounted with a stale anchor (same class as
@@ -235,11 +242,17 @@ export default function StepConfigPanel({
   useEffect(() => {
     setAuthPickerOpen(false);
     setAuthAnchorRect(null);
+    setManusPickerOpen(false);
+    setManusAnchorRect(null);
   }, [node.id]);
   const showAuthField = AUTH_ELIGIBLE_STEP_TYPES.has(stepType);
   const selectedAuthProfile = useMemo(
     () => authProfiles.find((p) => p.id === data.auth) ?? null,
     [authProfiles, data.auth],
+  );
+  const selectedManusProfile = useMemo(
+    () => authProfiles.find((p) => p.id === data.manusCredentialsRef) ?? null,
+    [authProfiles, data.manusCredentialsRef],
   );
 
   // Channels: load for human / notify steps
@@ -1834,6 +1847,67 @@ export default function StepConfigPanel({
                   checked={data.manusAllowFailure || false}
                   onChange={(v) => onUpdate(node.id, { manusAllowFailure: v })}
                   label="Allow failure (continue workflow on Manus error)"
+                />
+              </div>
+              {/* Credential binding — picks a stored Manus auth profile so
+                  the runtime resolves the API key at execution time instead
+                  of relying on the MANUS_API_KEY env var. */}
+              <div style={{ paddingTop: 8, borderTop: '1px solid var(--pc-border)' }}>
+                <label style={labelStyle}>Manus credential</label>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    setManusAnchorRect(e.currentTarget.getBoundingClientRect());
+                    setManusPickerOpen(true);
+                  }}
+                  style={{
+                    ...inputStyle,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    textAlign: 'left',
+                    cursor: 'pointer',
+                    color: data.manusCredentialsRef ? 'var(--pc-text-primary)' : 'var(--pc-text-faint)',
+                  }}
+                >
+                  <Lock size={12} style={{ color: 'var(--construct-text-faint)', flexShrink: 0 }} />
+                  <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {selectedManusProfile
+                      ? `${providerLabel(selectedManusProfile.provider)} · ${selectedManusProfile.profile_name}`
+                      : data.manusCredentialsRef || 'None — falls back to MANUS_API_KEY env var'}
+                  </span>
+                </button>
+                {data.manusCredentialsRef && (
+                  <button
+                    type="button"
+                    onClick={() => onUpdate(node.id, { manusCredentialsRef: '' })}
+                    style={{
+                      marginTop: 6,
+                      padding: '4px 10px',
+                      fontSize: 11,
+                      fontWeight: 600,
+                      borderRadius: 6,
+                      border: '1px solid var(--construct-status-warning)',
+                      background: 'color-mix(in srgb, var(--construct-status-warning) 14%, transparent)',
+                      color: 'var(--construct-status-warning)',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Clear
+                  </button>
+                )}
+                <p style={helperStyle()}>
+                  Optional. Encrypted Manus API key from the auth-profile store.
+                  When set, the runtime resolves it at execution time and skips
+                  the MANUS_API_KEY env var.
+                </p>
+                <AuthProfilePicker
+                  open={manusPickerOpen}
+                  onOpenChange={setManusPickerOpen}
+                  value={data.manusCredentialsRef}
+                  anchorRect={manusAnchorRect}
+                  providerFilter="manus"
+                  onSelect={(id) => onUpdate(node.id, { manusCredentialsRef: id ?? '' })}
                 />
               </div>
             </div>

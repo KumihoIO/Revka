@@ -466,3 +466,44 @@ steps:
   assert.equal(t2.manus_locale, undefined);
   assert.equal(t2.manus_allow_failure, undefined);
 });
+
+test('manus step with credentials_ref round-trips cleanly', () => {
+  const yaml = `
+steps:
+  - id: research
+    type: manus
+    manus:
+      prompt: "Find competitors"
+      credentials_ref: "manus:work"
+`;
+  const tasks1 = parseWorkflowYaml(yaml);
+  assert.equal(tasks1.length, 1);
+  assert.equal(tasks1[0]!.manus_credentials_ref, 'manus:work');
+
+  // Re-emit + re-parse — credentials_ref survives the round-trip.
+  const yaml2 = tasksToYaml(tasks1);
+  assert.ok(/credentials_ref:\s*['"]?manus:work['"]?/.test(yaml2),
+    'emitted YAML contains credentials_ref under the manus block');
+  const tasks2 = parseWorkflowYaml(yaml2);
+  assert.equal(tasks2[0]!.manus_credentials_ref, 'manus:work');
+});
+
+test('manus step without credentials_ref omits the field in emitted YAML', () => {
+  const yaml = `
+steps:
+  - id: research
+    type: manus
+    manus:
+      prompt: "Find competitors"
+`;
+  const tasks1 = parseWorkflowYaml(yaml);
+  assert.equal(tasks1[0]!.manus_credentials_ref, undefined);
+
+  // Emitted YAML must NOT contain a credentials_ref line — empty values
+  // should be skipped, not serialized as ``credentials_ref: ""``.
+  const yaml2 = tasksToYaml(tasks1);
+  assert.ok(!/credentials_ref/.test(yaml2),
+    'emitted YAML omits credentials_ref when unset');
+  const tasks2 = parseWorkflowYaml(yaml2);
+  assert.equal(tasks2[0]!.manus_credentials_ref, undefined);
+});

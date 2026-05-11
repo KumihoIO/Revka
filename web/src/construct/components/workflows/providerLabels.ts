@@ -24,6 +24,7 @@ export const PROVIDER_LABELS: Record<string, string> = {
   'gitlab': 'GitLab',
   'linear': 'Linear',
   'jira': 'Jira',
+  'manus': 'Manus',
 };
 
 export function providerLabel(p: string): string {

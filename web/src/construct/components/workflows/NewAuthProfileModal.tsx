@@ -22,6 +22,10 @@ interface Props {
   onClose: () => void;
   /** Called on successful POST with the new profile id (e.g. `openai:work`). */
   onCreated: (id: string) => void | Promise<void>;
+  /** Pre-fill the provider field. Used by the Manus step's credential
+   *  picker so the user doesn't have to retype "manus". The user can still
+   *  edit the field to anything else. */
+  defaultProvider?: string;
 }
 
 const MODAL_BACKDROP_Z = 9099;
@@ -53,7 +57,7 @@ const labelStyle: React.CSSProperties = {
   marginBottom: 6,
 };
 
-export default function NewAuthProfileModal({ open, onClose, onCreated }: Props) {
+export default function NewAuthProfileModal({ open, onClose, onCreated, defaultProvider }: Props) {
   const providerRef = useRef<HTMLInputElement>(null);
   const [provider, setProvider] = useState('');
   const [profileName, setProfileName] = useState('');
@@ -66,7 +70,7 @@ export default function NewAuthProfileModal({ open, onClose, onCreated }: Props)
 
   useEffect(() => {
     if (!open) return;
-    setProvider('');
+    setProvider(defaultProvider ?? '');
     setProfileName('');
     setProfileNameTouched(false);
     setToken('');
@@ -75,7 +79,7 @@ export default function NewAuthProfileModal({ open, onClose, onCreated }: Props)
     setSubmitting(false);
     setError(null);
     requestAnimationFrame(() => providerRef.current?.focus());
-  }, [open]);
+  }, [open, defaultProvider]);
 
   // Auto-default profile name to "default" once provider is set, until the
   // user explicitly edits it.
