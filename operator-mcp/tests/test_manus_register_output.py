@@ -151,15 +151,32 @@ def _make_attachment_url_client(
         return _FakeResp(404, None, text="not found")
 
     fc.get = get_router  # type: ignore[assignment]
+    _install_stream_router(fc, att_map)
     return fc
 
 
 class _BytesResp:
     """Like _FakeResp but exposes ``content`` (bytes) + raise_for_status
-    so the executor's attachment-download code path works."""
-    def __init__(self, status_code: int, content: bytes):
+    so the executor's attachment-download code path works.
+
+    Supports both the old blocking ``client.get(url)`` interface and the
+    streaming ``client.stream("GET", url)`` + ``aiter_bytes`` interface.
+    For streaming, chunks are derived from ``content`` (single chunk) or
+    from ``chunks`` if explicitly provided — useful for tests that need
+    the executor to see multiple chunks (e.g. size-cap enforcement)."""
+
+    def __init__(
+        self,
+        status_code: int,
+        content: bytes = b"",
+        *,
+        chunks: list[bytes] | None = None,
+    ):
         self.status_code = status_code
         self.content = content
+        self._chunks = chunks if chunks is not None else (
+            [content] if content else []
+        )
 
     def raise_for_status(self):
         if self.status_code >= 400:
@@ -167,6 +184,42 @@ class _BytesResp:
 
     def json(self):  # for safety — never called on attachment path
         return {}
+
+    # Streaming-context support: ``async with client.stream(...) as resp``.
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def aiter_bytes(self, chunk_size: int = 64 * 1024):
+        for c in self._chunks:
+            yield c
+
+
+def _install_stream_router(fc, att_map: dict):
+    """Attach a ``stream("GET", url)`` method to the fake client that
+    routes by URL to ``att_map``. Returns a non-async-context that yields
+    the matching _BytesResp (or a 404 _BytesResp). Matches the executor's
+    `async with client.stream(...) as resp` usage."""
+
+    class _StreamCtx:
+        def __init__(self, resp):
+            self._resp = resp
+
+        async def __aenter__(self):
+            return self._resp
+
+        async def __aexit__(self, *exc):
+            return False
+
+    def stream(method, url):
+        fc.calls.append({"method": "STREAM", "url": url, "params": None,
+                         "headers": {}})
+        resp = att_map.get(url) or _BytesResp(404, b"")
+        return _StreamCtx(resp)
+
+    fc.stream = stream  # type: ignore[assignment]
 
 
 # ---------------------------------------------------------------------------
@@ -810,3 +863,329 @@ async def test_path_uses_canonical_space(
     assert os.path.exists(os.path.join(expected_dir, "content.md"))
     # Publish call sees the canonicalized space too.
     assert publish_calls[0]["entity_space"] == "Construct/WorkflowOutputs/Github"
+
+
+# ---------------------------------------------------------------------------
+# 11. entity_name path traversal rejected (Fix 1: sanitizer + containment)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_entity_name_traversal_rejected(
+    monkeypatch, tmp_home, fake_kumiho_sdk,
+):
+    """A malicious entity_name like ``../../escape`` must not write outside
+    the artifacts root. Either the sanitizer strips it to empty (skip,
+    error recorded) or the containment check refuses. Either way: step
+    still completes, no Kumiho publish call, no escape on disk."""
+    from operator_mcp import construct_config
+    monkeypatch.setattr(construct_config, "_cached_manus", None)
+    fc = _make_attachment_url_client(poll_responses=[
+        _FakeResp(200, {"ok": True, "data": [
+            {"id": "e1", "type": "assistant_message",
+             "assistant_message": {"content": "evil"}},
+            {"id": "e2", "type": "status_update",
+             "status_update": {"agent_status": "stopped"}},
+        ]}),
+    ])
+
+    publish_calls = []
+    from operator_mcp.workflow import memory as wm
+    original_publish = wm.publish_workflow_entity
+
+    async def spy_publish(**kwargs):
+        publish_calls.append(kwargs)
+        return await original_publish(**kwargs)
+
+    monkeypatch.setattr(wm, "publish_workflow_entity", spy_publish)
+    monkeypatch.setattr(wm, "_ensure_space_path", AsyncMock(return_value=None))
+
+    ctxs = _patch_manus(fake_client=fc)
+    try:
+        _enter_all(ctxs)
+        cfg = ManusStepConfig(
+            prompt="x",
+            register_output=ManusRegisterOutputConfig(
+                entity_name="../../escape",
+                entity_kind="r-kind",
+            ),
+            **_FAST_CFG,
+        )
+        result = await _exec_manus(_step(cfg), _state())
+    finally:
+        _exit_all(ctxs)
+
+    # Step still completes — Manus task succeeded. Whatever happened next,
+    # the security invariant is: nothing written outside ~/.construct/artifacts/.
+    assert result.status == "completed"
+    home_real = os.path.realpath(tmp_home)
+    artifacts_root = os.path.join(home_real, ".construct/artifacts")
+    for root, _dirs, files in os.walk(home_real):
+        for f in files:
+            full = os.path.join(root, f)
+            assert full.startswith(artifacts_root), (
+                f"file escaped artifacts root: {full}"
+            )
+    # Either: (a) sanitizer salvaged a safe name and registration proceeded
+    # normally inside the artifacts root, OR (b) sanitization/containment
+    # rejected outright. Both satisfy the security goal. We assert ONE
+    # holds.
+    err = result.output_data.get("register_output_error", "")
+    rejected = ("invalid after sanitization" in err
+                or "would escape artifacts root" in err)
+    salvaged = result.output_data.get("registered_entity") is not None
+    assert rejected or salvaged, (
+        f"expected either rejection or salvaged registration; "
+        f"err={err!r}, registered={result.output_data.get('registered_entity')!r}"
+    )
+    if rejected:
+        assert publish_calls == []
+
+
+# ---------------------------------------------------------------------------
+# 12. attachment size cap aborts streaming download (Fix 2)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_attachment_size_cap_enforced(
+    monkeypatch, tmp_home, fake_kumiho_sdk,
+):
+    """Stream that yields more bytes than MAX_ATTACHMENT_BYTES is aborted —
+    partial file removed, entry recorded in attachments_failed. We patch
+    MAX_ATTACHMENT_BYTES to 1KB and have the fake yield 2KB so the test
+    finishes in milliseconds without allocating real megabytes."""
+    from operator_mcp import construct_config
+    monkeypatch.setattr(construct_config, "_cached_manus", None)
+    import operator_mcp.workflow.executor as ex
+    monkeypatch.setattr(ex, "MAX_ATTACHMENT_BYTES", 1024)
+
+    big_url = "https://manus.ai/files/big.bin"
+    # Two 1KB chunks = 2KB total; executor must abort after the second
+    # chunk pushes ``written`` past 1KB.
+    fc = _make_attachment_url_client(
+        poll_responses=[
+            _FakeResp(200, {"ok": True, "data": [
+                {"id": "e1", "type": "assistant_message",
+                 "assistant_message": {
+                    "content": "done",
+                    "attachments": [
+                        {"file_name": "big.bin", "url": big_url},
+                    ],
+                 }},
+                {"id": "e2", "type": "status_update",
+                 "status_update": {"agent_status": "stopped"}},
+            ]}),
+        ],
+        attachment_responses={
+            big_url: _BytesResp(200, chunks=[b"a" * 1024, b"b" * 1024]),
+        },
+    )
+
+    from operator_mcp.workflow import memory as wm
+    monkeypatch.setattr(wm, "_ensure_space_path", AsyncMock(return_value=None))
+
+    ctxs = _patch_manus(fake_client=fc)
+    try:
+        _enter_all(ctxs)
+        cfg = ManusStepConfig(
+            prompt="x",
+            register_output=ManusRegisterOutputConfig(
+                entity_name="report",
+                entity_kind="r-kind",
+            ),
+            **_FAST_CFG,
+        )
+        result = await _exec_manus(_step(cfg), _state())
+    finally:
+        _exit_all(ctxs)
+
+    assert result.status == "completed"
+    od = result.output_data
+    assert od["attachments_downloaded"] == []
+    assert len(od["attachments_failed"]) == 1
+    err = od["attachments_failed"][0]["error"]
+    assert "exceeds" in err and "1024" in err, f"unexpected error: {err!r}"
+    # Partial file must have been removed.
+    attachments_dir = os.path.join(
+        tmp_home,
+        ".construct/artifacts/Construct/WorkflowOutputs/r-kind/report/attachments",
+    )
+    if os.path.exists(attachments_dir):
+        leftover = os.listdir(attachments_dir)
+        assert leftover == [], f"partial file not cleaned up: {leftover}"
+
+
+# ---------------------------------------------------------------------------
+# 13. follow_redirects=True is set on the attachment download client (Fix 3)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_redirect_followed(
+    monkeypatch, tmp_home, fake_kumiho_sdk,
+):
+    """The attachment-download httpx client must be constructed with
+    ``follow_redirects=True`` — Manus CDN URLs often 302. We capture the
+    constructor kwargs and assert the flag is set."""
+    from operator_mcp import construct_config
+    monkeypatch.setattr(construct_config, "_cached_manus", None)
+    blob_url = "https://manus.ai/files/redirected.bin"
+    fc = _make_attachment_url_client(
+        poll_responses=[
+            _FakeResp(200, {"ok": True, "data": [
+                {"id": "e1", "type": "assistant_message",
+                 "assistant_message": {
+                    "content": "done",
+                    "attachments": [
+                        {"file_name": "blob.bin", "url": blob_url},
+                    ],
+                 }},
+                {"id": "e2", "type": "status_update",
+                 "status_update": {"agent_status": "stopped"}},
+            ]}),
+        ],
+        attachment_responses={blob_url: _BytesResp(200, b"FINAL-BYTES")},
+    )
+
+    # Spy the AsyncClient ctor (after _patch_manus's own patch returns the
+    # fc). Capture each kwargs dict.
+    import httpx
+    ctor_calls: list[dict] = []
+    original_async_client = httpx.AsyncClient
+
+    def spy_ctor(*args, **kwargs):
+        ctor_calls.append(dict(kwargs))
+        return fc
+
+    from operator_mcp.workflow import memory as wm
+    monkeypatch.setattr(wm, "_ensure_space_path", AsyncMock(return_value=None))
+
+    with patch("httpx.AsyncClient", side_effect=spy_ctor), \
+         patch.dict("os.environ", {"MANUS_API_KEY": "fake-test-key"}):
+        import operator_mcp.workflow.executor as ex
+        with patch.object(ex.asyncio, "sleep", new=lambda _s: None):
+            cfg = ManusStepConfig(
+                prompt="x",
+                register_output=ManusRegisterOutputConfig(
+                    entity_name="report",
+                    entity_kind="r-kind",
+                ),
+                **_FAST_CFG,
+            )
+            result = await _exec_manus(_step(cfg), _state())
+
+    assert result.status == "completed"
+    # The attachment download succeeded — confirms the stream path worked.
+    assert len(result.output_data["attachments_downloaded"]) == 1
+    # And at least one AsyncClient was built with follow_redirects=True
+    # (the attachment-download ctor; the poll ctor doesn't need it).
+    assert any(c.get("follow_redirects") is True for c in ctor_calls), (
+        f"no AsyncClient call had follow_redirects=True: {ctor_calls}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 14. publish raise → step completes with register_output_error (Fix 3)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_publish_raise_becomes_register_error(
+    monkeypatch, tmp_home, fake_kumiho_sdk,
+):
+    """When publish_workflow_entity raises, the step must still complete
+    and surface the error through output_data.register_output_error
+    instead of crashing the executor."""
+    from operator_mcp import construct_config
+    monkeypatch.setattr(construct_config, "_cached_manus", None)
+    fc = _make_attachment_url_client(poll_responses=[
+        _FakeResp(200, {"ok": True, "data": [
+            {"id": "e1", "type": "assistant_message",
+             "assistant_message": {"content": "ok"}},
+            {"id": "e2", "type": "status_update",
+             "status_update": {"agent_status": "stopped"}},
+        ]}),
+    ])
+
+    from operator_mcp.workflow import memory as wm
+
+    async def boom_publish(**kwargs):
+        raise RuntimeError("kumiho gateway down")
+
+    monkeypatch.setattr(wm, "publish_workflow_entity", boom_publish)
+    monkeypatch.setattr(wm, "_ensure_space_path", AsyncMock(return_value=None))
+
+    ctxs = _patch_manus(fake_client=fc)
+    try:
+        _enter_all(ctxs)
+        cfg = ManusStepConfig(
+            prompt="x",
+            register_output=ManusRegisterOutputConfig(
+                entity_name="report",
+                entity_kind="r-kind",
+            ),
+            **_FAST_CFG,
+        )
+        result = await _exec_manus(_step(cfg), _state())
+    finally:
+        _exit_all(ctxs)
+
+    assert result.status == "completed"
+    err = result.output_data.get("register_output_error", "")
+    assert "kumiho gateway down" in err
+
+
+# ---------------------------------------------------------------------------
+# 15. empty sanitized entity_name skips registration (Fix 1)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_empty_sanitized_entity_name_skips_registration(
+    monkeypatch, tmp_home, fake_kumiho_sdk,
+):
+    """An entity_name made entirely of traversal chars (``"...."``)
+    sanitizes to empty. The executor must skip registration, record an
+    error, and not crash."""
+    from operator_mcp import construct_config
+    monkeypatch.setattr(construct_config, "_cached_manus", None)
+    fc = _make_attachment_url_client(poll_responses=[
+        _FakeResp(200, {"ok": True, "data": [
+            {"id": "e1", "type": "assistant_message",
+             "assistant_message": {"content": "x"}},
+            {"id": "e2", "type": "status_update",
+             "status_update": {"agent_status": "stopped"}},
+        ]}),
+    ])
+
+    publish_calls = []
+    from operator_mcp.workflow import memory as wm
+    original_publish = wm.publish_workflow_entity
+
+    async def spy_publish(**kwargs):
+        publish_calls.append(kwargs)
+        return await original_publish(**kwargs)
+
+    monkeypatch.setattr(wm, "publish_workflow_entity", spy_publish)
+    monkeypatch.setattr(wm, "_ensure_space_path", AsyncMock(return_value=None))
+
+    ctxs = _patch_manus(fake_client=fc)
+    try:
+        _enter_all(ctxs)
+        cfg = ManusStepConfig(
+            prompt="x",
+            register_output=ManusRegisterOutputConfig(
+                entity_name="....",
+                entity_kind="r-kind",
+            ),
+            **_FAST_CFG,
+        )
+        result = await _exec_manus(_step(cfg), _state())
+    finally:
+        _exit_all(ctxs)
+
+    assert result.status == "completed"
+    err = result.output_data.get("register_output_error", "")
+    assert "invalid after sanitization" in err
+    assert publish_calls == []
