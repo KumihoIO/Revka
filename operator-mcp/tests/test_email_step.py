@@ -168,7 +168,7 @@ class TestRealSend:
         assert result.status == "failed"
         assert "SMTP host" in result.error
 
-    async def test_smtp_exception_surfaces_as_step_failure(self, smtp_config):
+    async def test_smtp_exception_surfaces_generic_step_failure(self, smtp_config):
         cfg = EmailStepConfig(to="x@example.com", subject="S", body="B")
         mock_smtp = MagicMock()
         mock_smtp.__enter__.return_value = mock_smtp
@@ -181,7 +181,7 @@ class TestRealSend:
             result = await _exec_email(_step(cfg), _make_state())
 
         assert result.status == "failed"
-        assert "connection refused" in result.error
+        assert result.error == "SMTP send failed (see logs)"
 
 
 # ── Click tracking ──────────────────────────────────────────────────

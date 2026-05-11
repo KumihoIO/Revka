@@ -3,6 +3,7 @@ import { NavLink } from 'react-router-dom';
 import { Boxes, ChevronsLeft, ChevronsRight } from 'lucide-react';
 import { v2NavSections } from './construct-navigation';
 import { appAssetPath } from '@/lib/basePath';
+import { CONSTRUCT_VERSION } from '@/lib/version';
 import { useT } from '@/construct/hooks/useT';
 
 const APP_ICON_SRC = appAssetPath('favicon-192.png');
@@ -165,6 +166,9 @@ export default function Sidebar({ mobileOpen = false, onCloseMobile }: SidebarPr
           <p className="mt-2 text-xs leading-5" style={{ color: 'var(--construct-text-secondary)' }}>
             {t('sidebar.shell_description')}
           </p>
+          <div className="mt-3 text-[11px] font-medium" style={{ color: 'var(--construct-text-faint)' }}>
+            v{CONSTRUCT_VERSION}
+          </div>
         </div>
       ) : null}
       </aside>

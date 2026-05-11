@@ -818,9 +818,7 @@ content_file = "contents/r1.md"
         assert!(raw.contains("version = \"0.4.2\""));
         assert!(raw.contains("content_file = \"contents/r1.md\""));
         assert!(
-            raw.contains(
-                "kref = \"kref://CognitiveMemory/Skills/round-trip.skill?t=published\""
-            )
+            raw.contains("kref = \"kref://CognitiveMemory/Skills/round-trip.skill?t=published\"")
         );
     }
 
@@ -911,8 +909,7 @@ content_file = "contents/r1.md"
         // suffix-agnostic: the lookup fallback in
         // `crate::gateway::kumiho_client::search_skills_with_legacy`
         // relies on this so both old and new krefs round-trip cleanly.
-        let (base, tag) =
-            parse_kref_tag("kref://CognitiveMemory/Skills/foo.skilldef?t=published");
+        let (base, tag) = parse_kref_tag("kref://CognitiveMemory/Skills/foo.skilldef?t=published");
         assert_eq!(base, "kref://CognitiveMemory/Skills/foo.skilldef");
         assert_eq!(tag, Some("published"));
     }

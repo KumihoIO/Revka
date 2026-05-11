@@ -1,6 +1,6 @@
 import { Handle, Position, type NodeTypes } from '@xyflow/react';
 import { Bot, Lock } from 'lucide-react';
-import type { TaskNodeData } from './yamlSync';
+import type { TaskNodeData } from '@/construct/components/workflows/yamlSync';
 import { emitOpenAgentPicker } from '@/construct/components/workflows/stepEvents';
 
 // Action → token mapping. Maps semantic intent to Construct CSS vars.

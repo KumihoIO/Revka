@@ -242,7 +242,7 @@ async fn handle_socket(
     let mut first_msg_fallback: Option<String> = None;
 
     // Wait up to 5 seconds for the first client frame.  Listen-only
-    // connections (e.g. WorkflowRunLive) may never send a message — the
+    // workflow run viewers may never send a message — the
     // timeout lets them fall through to the broadcast relay loop.
     match tokio::time::timeout(std::time::Duration::from_secs(5), receiver.next()).await {
         Ok(Some(first)) => {

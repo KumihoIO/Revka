@@ -258,7 +258,10 @@ mod tests {
         // No leaked session id; includes timeout value and guidance.
         assert!(!msg.contains("s1"), "session id leaked: {msg}");
         assert!(msg.contains("timeout: 1s"), "missing timeout value: {msg}");
-        assert!(msg.contains("still being processed"), "missing guidance: {msg}");
+        assert!(
+            msg.contains("still being processed"),
+            "missing guidance: {msg}"
+        );
     }
 
     #[tokio::test]
@@ -279,16 +282,30 @@ mod tests {
         // invalid string → default, zero → default.
         // SAFETY: test-only, env var is namespaced and used only here.
         unsafe { std::env::remove_var("CONSTRUCT_GATEWAY_SESSION_LOCK_TIMEOUT_SECS") };
-        assert_eq!(session_lock_timeout_secs(), SESSION_LOCK_TIMEOUT_SECS_DEFAULT);
+        assert_eq!(
+            session_lock_timeout_secs(),
+            SESSION_LOCK_TIMEOUT_SECS_DEFAULT
+        );
 
         unsafe { std::env::set_var("CONSTRUCT_GATEWAY_SESSION_LOCK_TIMEOUT_SECS", "120") };
         assert_eq!(session_lock_timeout_secs(), 120);
 
-        unsafe { std::env::set_var("CONSTRUCT_GATEWAY_SESSION_LOCK_TIMEOUT_SECS", "not-a-number") };
-        assert_eq!(session_lock_timeout_secs(), SESSION_LOCK_TIMEOUT_SECS_DEFAULT);
+        unsafe {
+            std::env::set_var(
+                "CONSTRUCT_GATEWAY_SESSION_LOCK_TIMEOUT_SECS",
+                "not-a-number",
+            )
+        };
+        assert_eq!(
+            session_lock_timeout_secs(),
+            SESSION_LOCK_TIMEOUT_SECS_DEFAULT
+        );
 
         unsafe { std::env::set_var("CONSTRUCT_GATEWAY_SESSION_LOCK_TIMEOUT_SECS", "0") };
-        assert_eq!(session_lock_timeout_secs(), SESSION_LOCK_TIMEOUT_SECS_DEFAULT);
+        assert_eq!(
+            session_lock_timeout_secs(),
+            SESSION_LOCK_TIMEOUT_SECS_DEFAULT
+        );
 
         unsafe { std::env::remove_var("CONSTRUCT_GATEWAY_SESSION_LOCK_TIMEOUT_SECS") };
     }

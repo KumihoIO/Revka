@@ -3199,14 +3199,13 @@ async def execute_workflow(
     # Claim a per-run file lock BEFORE registering in ACTIVE_WORKFLOWS.
     # This prevents duplicate execution across operator processes.
     _run_lock_fd = None
-    if not resume_state:  # recovery already holds its own lock
-        from .recovery import _acquire_run_lock
-        _run_lock_fd = _acquire_run_lock(state.run_id)
-        if _run_lock_fd is None:
-            _log(f"workflow: run={state.run_id[:8]} already claimed by another process, skipping")
-            state.status = WorkflowStatus.CANCELLED
-            state.error = "Duplicate execution prevented by run lock"
-            return state
+    from .recovery import _acquire_run_lock
+    _run_lock_fd = _acquire_run_lock(state.run_id)
+    if _run_lock_fd is None:
+        _log(f"workflow: run={state.run_id[:8]} already claimed by another process, skipping")
+        state.status = WorkflowStatus.CANCELLED
+        state.error = "Duplicate execution prevented by run lock"
+        return state
 
     ACTIVE_WORKFLOWS[state.run_id] = state
 

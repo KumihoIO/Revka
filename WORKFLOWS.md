@@ -56,6 +56,15 @@ steps:
 - **Cron**: Add a `triggers:` block — Construct auto-registers the schedule on save
 - **Event chain**: A previous workflow's output entity triggers this one automatically
 
+### 4. Dashboard editor and run controls
+
+The dashboard keeps workflow definitions and workflow run instances separate:
+
+- **Definition tab** (`/workflows`) edits, duplicates, deprecates, deletes, and starts workflow definitions.
+- **Runs tab** (`/workflows`, `/runs`) selects run instances and offers run-scoped controls only: stop an active run, retry a failed run, or delete the selected run record.
+- The YAML drawer is a graph editor surface. YAML text edits must be applied to the graph before Save; Save serializes the graph back to YAML and the gateway validates it before creating a Kumiho revision.
+- The run viewer pins a run to the workflow revision it executed when that revision is available, so later definition edits do not change the displayed run graph.
+
 ---
 
 ## Anatomy of a Workflow
@@ -655,8 +664,26 @@ checkpoint: true         # Default: true (set at workflow level)
 ```
 
 When enabled, the executor saves state to `~/.construct/workflow_checkpoints/{run_id}.json`
-after each step completes and on workflow pause (human approval). This allows
-resuming a workflow from where it left off after a crash or restart.
+after each step completes and on workflow pause (human approval). Checkpoints
+support explicit user actions such as approval resume and failed-run retry.
+Operator startup does **not** automatically resume interrupted workflow runs:
+stale in-progress runs are marked failed, and the user must press Retry to
+launch the retry path.
+
+### Run stop and delete
+
+Stopping a run sends `POST /api/workflows/runs/{run_id}/cancel` to the gateway,
+which forwards `cancel_workflow` to the Operator MCP server. The executor stops
+at the next boundary and kills owned shell/python subprocesses where possible.
+Deleting a run calls `DELETE /api/workflows/runs/{run_id}` and removes the
+WorkflowRuns Kumiho item plus best-effort local checkpoint/artifact files. It
+does not delete or deprecate the workflow definition.
+
+Definitions use separate endpoints:
+
+- `DELETE /api/workflows/{kref}` deletes a workflow definition.
+- `POST /api/workflows/deprecate` toggles definition availability.
+- Run stop, retry, and delete endpoints act only on a run instance.
 
 ---
 

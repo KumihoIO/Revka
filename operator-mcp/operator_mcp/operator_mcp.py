@@ -2942,15 +2942,15 @@ async def _background_init() -> None:
     if recovered:
         _log(f"Reconnected {len(recovered)} agent(s) from previous session")
 
-    # Recover interrupted workflow runs (must run after reconnect_agents
-    # so that surviving agents are in the AGENTS dict for output harvesting)
+    # Do not auto-resume interrupted workflow runs on restart. Mark stale runs
+    # failed so the user can explicitly choose Retry from the run page.
     try:
-        from .workflow.recovery import recover_interrupted_runs
-        recovered_wf = await recover_interrupted_runs(SIDECAR)
-        if recovered_wf:
-            _log(f"Recovery: submitted {len(recovered_wf)} workflow run(s) for resumption")
+        from .workflow.memory import mark_stale_runs
+        marked_stale = await mark_stale_runs()
+        if marked_stale:
+            _log(f"Workflow startup: marked {marked_stale} interrupted run(s) failed; retry is user-initiated")
     except Exception as exc:
-        _log(f"Recovery: failed (non-fatal): {exc}")
+        _log(f"Workflow stale-run scan failed (non-fatal): {exc}")
 
     # Start journal health monitor
     from .journal_health import get_journal_health_monitor

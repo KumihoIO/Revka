@@ -1,11 +1,11 @@
-import { ChevronDown, Pencil, Play, Plus, Power, RefreshCw, Trash2, Workflow } from 'lucide-react';
+import { ChevronDown, Pause, Pencil, Play, Plus, Power, RefreshCw, RotateCcw, Trash2, Workflow } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useT } from '@/construct/hooks/useT';
-import { parseWorkflowYaml, type TaskDefinition } from '@/components/workflows/yamlSync';
+import { parseWorkflowYaml, type TaskDefinition } from '@/construct/components/workflows/yamlSync';
 import WorkflowEditor from '@/construct/components/workflows/WorkflowEditor';
 import type { WorkflowCreateRequest, WorkflowDefinition, WorkflowRunDetail, WorkflowRunSummary, WorkflowUpdateRequest } from '@/types/api';
-import { ApiError, createWorkflow, deleteWorkflow, fetchWorkflowRun, fetchWorkflowRuns, fetchWorkflows, runWorkflow, toggleWorkflowDeprecation, updateWorkflow } from '@/lib/api';
+import { ApiError, cancelWorkflowRun, createWorkflow, deleteWorkflow, deleteWorkflowRun, fetchWorkflowByRevisionKref, fetchWorkflowRun, fetchWorkflowRuns, fetchWorkflows, retryWorkflowRun, runWorkflow, toggleWorkflowDeprecation, updateWorkflow } from '@/lib/api';
 import {
   RunSummaryCard,
   SelectedTaskCard,
@@ -32,11 +32,15 @@ export default function Workflows() {
   const [workspaceTab, setWorkspaceTab] = useState<'definition' | 'runs'>('definition');
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [selectedRun, setSelectedRun] = useState<WorkflowRunDetail | null>(null);
+  const [pinnedRunDefinition, setPinnedRunDefinition] = useState<WorkflowDefinition | null>(null);
   const [selectedTask, setSelectedTask] = useState<TaskDefinition | null>(null);
   const [editorMode, setEditorMode] = useState<'create' | 'edit' | 'duplicate' | null>(null);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [running, setRunning] = useState(false);
+  const [cancellingRun, setCancellingRun] = useState(false);
+  const [deletingRun, setDeletingRun] = useState(false);
+  const [retryingRun, setRetryingRun] = useState(false);
   const [notice, setNotice] = useState<{ tone: 'success' | 'error' | 'info'; message: string } | null>(null);
   const [workflowDropdownOpen, setWorkflowDropdownOpen] = useState(false);
   const [viewerArtifact, setViewerArtifact] = useState<KumihoArtifact | null>(null);
@@ -99,10 +103,14 @@ export default function Workflows() {
     return runs.filter((run) => run.workflow_name.toLowerCase() === selectedWorkflow.name.toLowerCase()).slice(0, 20);
   }, [runs, selectedWorkflow]);
 
+  const displayedWorkflowDefinition = workspaceTab === 'runs' && pinnedRunDefinition
+    ? pinnedRunDefinition
+    : selectedWorkflow;
+
   const selectedWorkflowTasks = useMemo(() => {
-    if (!selectedWorkflow) return [];
-    return selectedWorkflow.definition ? parseWorkflowYaml(selectedWorkflow.definition) : [];
-  }, [selectedWorkflow]);
+    if (!displayedWorkflowDefinition) return [];
+    return displayedWorkflowDefinition.definition ? parseWorkflowYaml(displayedWorkflowDefinition.definition) : [];
+  }, [displayedWorkflowDefinition]);
 
   useEffect(() => {
     const requestedNode = searchParams.get('node');
@@ -139,11 +147,14 @@ export default function Workflows() {
   useEffect(() => {
     if (!selectedRunId || workspaceTab !== 'runs') {
       setSelectedRun(null);
+      setPinnedRunDefinition(null);
       return;
     }
+    setPinnedRunDefinition(null);
     let cancelled = false;
     let attempts = 0;
     let timer: ReturnType<typeof setTimeout> | null = null;
+    let lastPinnedKref: string | null = null;
     const TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled']);
     const POLL_INTERVAL_MS = 4000;
     const scheduleNext = (delay: number) => {
@@ -154,6 +165,16 @@ export default function Workflows() {
         .then((run) => {
           if (cancelled) return;
           setSelectedRun(run);
+          if (run.workflow_revision_kref && run.workflow_revision_kref !== lastPinnedKref) {
+            lastPinnedKref = run.workflow_revision_kref;
+            fetchWorkflowByRevisionKref(run.workflow_revision_kref)
+              .then((definition) => {
+                if (!cancelled) setPinnedRunDefinition(definition);
+              })
+              .catch(() => {
+                if (!cancelled) setPinnedRunDefinition(null);
+              });
+          }
           // Keep polling while the run is still in flight. Treat any
           // unrecognized status as terminal so we don't loop forever.
           if (run.status === 'running' || run.status === 'pending') {
@@ -354,6 +375,59 @@ export default function Workflows() {
     }
   };
 
+  const handleRetryRun = async () => {
+    if (!selectedRun || retryingRun) return;
+    setRetryingRun(true);
+    try {
+      const runLabel = selectedRun.run_id.slice(0, 8);
+      await retryWorkflowRun(selectedRun.run_id);
+      setNotice({ tone: 'success', message: tpl('runs.toast.retry_started', { id: runLabel }) });
+      const fresh = await fetchWorkflowRun(selectedRun.run_id).catch(() => null);
+      if (fresh) setSelectedRun(fresh);
+      await load();
+    } catch (err) {
+      setNotice({ tone: 'error', message: err instanceof Error ? err.message : t('runs.err.retry') });
+    } finally {
+      setRetryingRun(false);
+    }
+  };
+
+  const handleCancelRun = async () => {
+    if (!selectedRun || cancellingRun) return;
+    setCancellingRun(true);
+    try {
+      const runLabel = selectedRun.run_id.slice(0, 8);
+      await cancelWorkflowRun(selectedRun.run_id);
+      setNotice({ tone: 'success', message: tpl('runs.toast.stop_requested', { id: runLabel }) });
+      const fresh = await fetchWorkflowRun(selectedRun.run_id).catch(() => null);
+      if (fresh) setSelectedRun(fresh);
+      await load();
+    } catch (err) {
+      setNotice({ tone: 'error', message: err instanceof Error ? err.message : t('runs.err.stop') });
+    } finally {
+      setCancellingRun(false);
+    }
+  };
+
+  const handleDeleteRun = async () => {
+    if (!selectedRun || deletingRun) return;
+    setDeletingRun(true);
+    try {
+      const runLabel = selectedRun.run_id.slice(0, 8);
+      await deleteWorkflowRun(selectedRun.run_id);
+      setSelectedTask(null);
+      setSelectedRun(null);
+      setSelectedRunId(null);
+      await load();
+      setNotice({ tone: 'success', message: tpl('runs.toast.deleted', { id: runLabel }) });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('runs.err.delete'));
+      setNotice({ tone: 'error', message: err instanceof Error ? err.message : t('runs.err.delete') });
+    } finally {
+      setDeletingRun(false);
+    }
+  };
+
   /* ---- Derived state for inspector visibility ---- */
 
   const showInspector = workspaceTab === 'runs' || !!selectedTask;
@@ -501,39 +575,76 @@ export default function Workflows() {
           ) : null}
 
           {/* Actions */}
-          <button
-            className="construct-button"
-            data-variant="primary"
-            onClick={handleRunWorkflow}
-            disabled={running || selectedWorkflow.deprecated}
-            title={t('common.execute')}
-          >
-            {running ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
-            <span className="text-xs">{t('common.execute')}</span>
-          </button>
-          <button
-            className="construct-button"
-            onClick={() => selectedWorkflow && setEditorMode(selectedWorkflow.source === 'builtin' ? 'duplicate' : 'edit')}
-            title={selectedWorkflow.source === 'builtin' ? t('common.duplicate') : t('common.edit')}
-          >
-            <Pencil className="h-3.5 w-3.5" />
-          </button>
-          <button
-            className="construct-button"
-            onClick={handleToggleDeprecation}
-            disabled={selectedWorkflow.source === 'builtin'}
-            title={selectedWorkflow.deprecated ? t('common.reenable') : t('common.deprecate')}
-          >
-            <Power className="h-3.5 w-3.5" />
-          </button>
-          <button
-            className="construct-button"
-            onClick={handleDeleteWorkflow}
-            disabled={selectedWorkflow.source === 'builtin' || deleting}
-            title={t('common.delete')}
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </button>
+          {workspaceTab === 'definition' ? (
+            <>
+              <button
+                className="construct-button"
+                data-variant="primary"
+                onClick={handleRunWorkflow}
+                disabled={running || selectedWorkflow.deprecated}
+                title={t('common.execute')}
+              >
+                {running ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+                <span className="text-xs">{t('common.execute')}</span>
+              </button>
+              <button
+                className="construct-button"
+                onClick={() => selectedWorkflow && setEditorMode(selectedWorkflow.source === 'builtin' ? 'duplicate' : 'edit')}
+                title={selectedWorkflow.source === 'builtin' ? t('common.duplicate') : t('common.edit')}
+              >
+                <Pencil className="h-3.5 w-3.5" />
+              </button>
+              <button
+                className="construct-button"
+                onClick={handleToggleDeprecation}
+                disabled={selectedWorkflow.source === 'builtin'}
+                title={selectedWorkflow.deprecated ? t('common.reenable') : t('common.deprecate')}
+              >
+                <Power className="h-3.5 w-3.5" />
+              </button>
+              <button
+                className="construct-button"
+                onClick={handleDeleteWorkflow}
+                disabled={selectedWorkflow.source === 'builtin' || deleting}
+                title={t('common.delete')}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </>
+          ) : (
+            <>
+              {selectedRun?.status === 'failed' ? (
+                <button
+                  className="construct-button"
+                  onClick={handleRetryRun}
+                  disabled={retryingRun}
+                  title={t('runs.action.retry_tooltip')}
+                >
+                  <RotateCcw className={`h-3.5 w-3.5 ${retryingRun ? 'animate-spin' : ''}`} />
+                  <span className="text-xs">{retryingRun ? t('runs.action.retrying') : t('runs.action.retry_failed')}</span>
+                </button>
+              ) : null}
+              {selectedRun && (selectedRun.status === 'running' || selectedRun.status === 'pending' || selectedRun.status === 'paused') ? (
+                <button
+                  className="construct-button"
+                  onClick={handleCancelRun}
+                  disabled={cancellingRun}
+                  title={t('runs.action.stop_tooltip')}
+                >
+                  {cancellingRun ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Pause className="h-3.5 w-3.5" />}
+                  <span className="text-xs">{cancellingRun ? t('runs.action.stopping') : t('runs.action.stop')}</span>
+                </button>
+              ) : null}
+              <button
+                className="construct-button"
+                onClick={handleDeleteRun}
+                disabled={!selectedRun || deletingRun}
+                title={t('runs.action.delete_tooltip')}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </>
+          )}
         </div>
       ) : null}
 
@@ -565,9 +676,9 @@ export default function Workflows() {
                 selectedTaskId={selectedTask?.id}
                 fill
               />
-            ) : selectedRun ? (
+            ) : selectedRun && displayedWorkflowDefinition?.definition ? (
               <WorkflowDagWorkspace
-                definition={selectedWorkflow.definition}
+                definition={displayedWorkflowDefinition.definition}
                 onSelectTask={setSelectedTask}
                 selectedTaskId={selectedTask?.id}
                 stepResults={selectedRunStepResults}

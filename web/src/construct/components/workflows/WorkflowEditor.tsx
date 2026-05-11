@@ -2,8 +2,8 @@
  * WorkflowEditor — P0 redesign on Construct dashboard tokens.
  *
  * Replaces the legacy `web/src/components/workflows/WorkflowEditor.tsx`.
- * Reuses the same data layer (yamlSync) so the YAML schema and the rest of
- * the dashboard (Dashboard, Workflows page DAG view) keep working.
+ * Reuses the construct workflow data layer (yamlSync) so the YAML schema and
+ * the rest of the dashboard (Dashboard, Workflows page DAG view) keep working.
  *
  * Surfaces:
  *   - Toolbar `+ Add Step` button → opens StepTypePalette
@@ -58,7 +58,7 @@ import {
   type InputDef,
   type TaskNodeData,
   type WorkflowMeta,
-} from '@/components/workflows/yamlSync';
+} from '@/construct/components/workflows/yamlSync';
 import { hasCycle, layoutNodes } from '@/components/teams/graphHelpers';
 
 import Panel from '@/construct/components/ui/Panel';
@@ -377,6 +377,7 @@ function WorkflowEditorInner({
   const [warning, setWarning] = useState<string | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [yamlText, setYamlText] = useState(workflow?.definition ?? '');
+  const [yamlDirty, setYamlDirty] = useState(false);
 
   const [workflowMeta, setWorkflowMeta] = useState<WorkflowMeta>({
     name: '',
@@ -1026,7 +1027,16 @@ function WorkflowEditorInner({
       const laidOut = layoutNodes(rawNodes, newEdges);
       setNodes(laidOut);
       setEdges(newEdges);
+      setName(meta.name || name);
+      setDescription(meta.description || description);
+      setTags(meta.tags);
       taskIdCounter.current = tasks.length;
+      setYamlText(tasksToYaml(tasks, {
+        ...meta,
+        name: meta.name || name,
+        description: meta.description || description,
+      }));
+      setYamlDirty(false);
       setShowAdvanced(false);
       setError(null);
     } catch (err) {
@@ -1035,12 +1045,13 @@ function WorkflowEditorInner({
       const msg = err instanceof Error ? err.message : String(err);
       setError(`Invalid YAML: ${msg}`);
     }
-  }, [yamlText, setNodes, setEdges]);
+  }, [yamlText, name, description, setNodes, setEdges]);
 
   // Open YAML drawer (used by EditorCommandList row + ⌘I shortcut).
   const openYamlPanel = useCallback(() => {
     const tasks = flowToTasks(nodes as Node<TaskNodeData>[], edges);
     setYamlText(tasksToYaml(tasks, { ...workflowMeta, name, description }));
+    setYamlDirty(false);
     setShowAdvanced(true);
   }, [nodes, edges, workflowMeta, name, description]);
   // Keep the ⌘I keydown effect's ref pointed at the latest closure.
@@ -1111,6 +1122,7 @@ function WorkflowEditorInner({
         setWorkflowMeta(newMeta);
         setName(remote.name ?? event.name);
         setDescription(remote.description ?? '');
+        setYamlDirty(false);
         // Normalize the baseline through the same pipeline the dirty check
         // uses (parse → tasksToYaml) so a clean apply doesn't immediately
         // register as "dirty" because of formatting differences.
@@ -1189,6 +1201,7 @@ function WorkflowEditorInner({
         setWorkflowMeta(newMeta);
         if (newMeta.name) setName(newMeta.name);
         if (newMeta.description) setDescription(newMeta.description);
+        setYamlDirty(false);
         taskIdCounter.current = newTasks.length;
         setError(null);
         // Reuse the remote-update pill UX — same affordance, different
@@ -1218,6 +1231,9 @@ function WorkflowEditorInner({
     if (!description.trim()) return setError('Workflow description is required.');
     if (nodes.length === 0) return setError('Add at least one step to the workflow.');
     if (hasCycle(nodes, edges)) return setError('Cannot save: workflow has cycles.');
+    if (yamlDirty) {
+      return setError('Apply the YAML changes to the graph before saving.');
+    }
 
     const tasks = flowToTasks(nodes as Node<TaskNodeData>[], edges);
     const definition = tasksToYaml(tasks, {
@@ -1237,16 +1253,18 @@ function WorkflowEditorInner({
       const message = err instanceof Error ? err.message : 'Save failed.';
       setError(message);
     }
-  }, [name, description, tags, nodes, edges, workflowMeta, onSave]);
+  }, [name, description, tags, nodes, edges, workflowMeta, yamlDirty, onSave]);
 
   // ── Sync YAML when toggling drawer ──────────────────────────────────────
   useEffect(() => {
     if (showAdvanced) {
-      const tasks = flowToTasks(nodes as Node<TaskNodeData>[], edges);
-      setYamlText(tasksToYaml(tasks, { ...workflowMeta, name, description }));
+      if (!yamlDirty) {
+        const tasks = flowToTasks(nodes as Node<TaskNodeData>[], edges);
+        setYamlText(tasksToYaml(tasks, { ...workflowMeta, name, description }));
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showAdvanced]);
+  }, [showAdvanced, currentYaml]);
 
   // ── Run-to-here ─────────────────────────────────────────────────────────
   // Closure preview is best-effort — backend re-derives authoritatively.
@@ -1694,12 +1712,27 @@ function WorkflowEditorInner({
                       style={{ padding: '4px 10px', fontSize: 11 }}
                     >
                       <Zap size={12} />
-                      Import
+                      Apply to graph
                     </button>
                   </div>
+                  {yamlDirty ? (
+                    <div
+                      className="border-b px-3 py-2 text-xs"
+                      style={{
+                        borderColor: 'var(--construct-border-soft)',
+                        color: 'var(--construct-status-warning)',
+                        background: 'color-mix(in srgb, var(--construct-status-warning) 8%, transparent)',
+                      }}
+                    >
+                      YAML edits are not saved until applied to the graph.
+                    </div>
+                  ) : null}
                   <textarea
                     value={yamlText}
-                    onChange={(e) => setYamlText(e.target.value)}
+                    onChange={(e) => {
+                      setYamlText(e.target.value);
+                      setYamlDirty(true);
+                    }}
                     spellCheck={false}
                     style={{
                       flex: 1,
@@ -2457,4 +2490,3 @@ function SectionGroup({
     </div>
   );
 }
-

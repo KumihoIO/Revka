@@ -38,6 +38,7 @@ from operator_mcp.workflow.schema import (
     PythonStepConfig,
     ShellStepConfig,
     StepDef,
+    StepResult,
     StepType,
     WorkflowDef,
     WorkflowState,
@@ -55,6 +56,14 @@ def _pid_alive(pid: int) -> bool:
         return True
     except (ProcessLookupError, OSError):
         return False
+
+
+@pytest.fixture(autouse=True)
+def isolate_workflow_locks(tmp_path, monkeypatch):
+    """Keep per-run lock files inside pytest's writable temp tree."""
+    import operator_mcp.workflow.recovery as recovery
+
+    monkeypatch.setattr(recovery, "_RUN_LOCK_DIR", str(tmp_path / "workflow_locks"))
 
 
 # ── tool_cancel_workflow ────────────────────────────────────────────
@@ -156,6 +165,30 @@ class TestExecutorCooperativeCancel:
         # We should NOT have waited the full sleep 5 — cancel should land
         # quickly. Allow generous slack for CI; the point is "well under 5s".
         assert elapsed < 4.0, f"expected fast cancel, took {elapsed:.2f}s"
+
+    @pytest.mark.asyncio
+    async def test_resume_state_still_obeys_run_lock(self, tmp_path, monkeypatch) -> None:
+        """Retry/resume executions must not bypass duplicate-run locking."""
+        import operator_mcp.workflow.recovery as recovery
+
+        monkeypatch.setattr(recovery, "_acquire_run_lock", lambda _run_id: None)
+        wf = WorkflowDef(
+            name="locked-resume",
+            steps=[
+                StepDef(
+                    id="s1",
+                    type=StepType.SHELL,
+                    shell=ShellStepConfig(command="true", timeout=5),
+                ),
+            ],
+            checkpoint=False,
+        )
+        state = _state_for("locked-resume-run")
+
+        final = await execute_workflow(wf, inputs={}, cwd=str(tmp_path), resume_state=state)
+
+        assert final.status == WorkflowStatus.CANCELLED
+        assert final.error == "Duplicate execution prevented by run lock"
 
 
 # ── _exec_shell mid-step kill + timeout-orphan fix ───────────────────
@@ -348,3 +381,44 @@ class TestForEachCancelBetweenIterations:
         # Allow ±1 slack for scheduler timing.
         assert 1 <= completed <= 3, f"unexpected iterations_completed={completed}"
         assert loop_result.output_data.get("cancelled_after_iteration") == completed
+
+
+def test_recovery_module_only_exposes_run_lock_helpers() -> None:
+    """Interrupted workflow runs are not auto-resumed on operator startup.
+
+    The recovery module is intentionally limited to lock helpers used by the
+    executor; stale runs are failed on startup and retried only by user action.
+    """
+    import operator_mcp.workflow.recovery as recovery
+
+    assert not hasattr(recovery, "recover_interrupted_runs")
+    assert hasattr(recovery, "_acquire_run_lock")
+    assert hasattr(recovery, "_release_run_lock")
+
+
+def test_mark_stale_checkpoint_preserves_retry_state(tmp_path, monkeypatch) -> None:
+    """Startup stale marking keeps checkpoints loadable for explicit Retry."""
+    import operator_mcp.workflow.executor as executor
+    from operator_mcp.workflow.memory import _mark_checkpoint_failed
+
+    home = tmp_path / "home"
+    checkpoint_dir = home / ".construct" / "workflow_checkpoints"
+    checkpoint_dir.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(executor, "_CHECKPOINT_DIR", str(checkpoint_dir))
+
+    state = _state_for("retry-after-stale", status=WorkflowStatus.RUNNING)
+    state.step_results["done"] = StepResult(
+        step_id="done",
+        status="completed",
+        output="ok",
+    )
+    executor._save_checkpoint(state)
+
+    assert _mark_checkpoint_failed("retry-after-stale", "interrupted", "2026-05-10T00:00:00Z")
+    loaded = executor.load_checkpoint("retry-after-stale")
+
+    assert loaded is not None
+    assert loaded.status == WorkflowStatus.FAILED
+    assert loaded.error == "interrupted"
+    assert loaded.step_results["done"].status == "completed"
