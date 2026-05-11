@@ -144,29 +144,10 @@ pub struct SkillResponse {
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
-/// Convert Kumiho error to an HTTP response.
-fn kumiho_err(e: KumihoError) -> (StatusCode, Json<serde_json::Value>) {
-    match &e {
-        KumihoError::Unreachable(_) => (
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(serde_json::json!({ "error": format!("Kumiho service unavailable: {e}") })),
-        ),
-        KumihoError::Api { status, body } => {
-            let code = if *status == 401 || *status == 403 {
-                StatusCode::BAD_GATEWAY
-            } else {
-                StatusCode::from_u16(*status).unwrap_or(StatusCode::BAD_GATEWAY)
-            };
-            (
-                code,
-                Json(serde_json::json!({ "error": format!("Kumiho upstream: {body}") })),
-            )
-        }
-        KumihoError::Decode(msg) => (
-            StatusCode::BAD_GATEWAY,
-            Json(serde_json::json!({ "error": format!("Bad response from Kumiho: {msg}") })),
-        ),
-    }
+/// Convert Kumiho error to an HTTP response (delegates to the centralised
+/// helper in `kumiho_client`).
+fn kumiho_err(e: KumihoError) -> axum::response::Response {
+    super::kumiho_client::kumiho_error_to_response(e)
 }
 
 /// Build lightweight revision metadata (no content — that goes into the artifact).

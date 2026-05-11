@@ -54,20 +54,12 @@ export class UnauthorizedError extends Error {
   }
 }
 
-/// Thrown when the gateway returns a non-2xx response. `.body` carries the
-/// parsed JSON error payload when the server sent one (otherwise null); use it
-/// to render structured error details (validation errors, etc.) in the UI.
-export class ApiError extends Error {
-  public readonly status: number;
-  public readonly body: unknown;
+// `ApiError` + error-message construction live in a sibling module so they
+// stay unit-testable without DOM dependencies. Re-exported here for back-
+// compat with the existing `import { ApiError } from './api'` call sites.
+export { ApiError, buildApiError, isHtmlErrorBody } from './apiError';
 
-  constructor(status: number, message: string, body: unknown) {
-    super(message);
-    this.name = 'ApiError';
-    this.status = status;
-    this.body = body;
-  }
-}
+import { buildApiError as _buildApiError } from './apiError';
 
 export async function apiFetch<T = unknown>(
   path: string,
@@ -98,22 +90,8 @@ export async function apiFetch<T = unknown>(
 
   if (!response.ok) {
     const text = await response.text().catch(() => '');
-    let parsedBody: unknown = null;
-    if (text) {
-      try {
-        parsedBody = JSON.parse(text);
-      } catch {
-        parsedBody = text;
-      }
-    }
-    const message =
-      (parsedBody && typeof parsedBody === 'object' && 'error' in parsedBody
-        ? String((parsedBody as { error: unknown }).error)
-        : null) ||
-      text ||
-      response.statusText ||
-      `API ${response.status}`;
-    throw new ApiError(response.status, `API ${response.status}: ${message}`, parsedBody);
+    const contentType = response.headers.get('content-type');
+    throw _buildApiError(response.status, response.statusText, text, contentType);
   }
 
   // Some endpoints may return 204 No Content
