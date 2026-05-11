@@ -69,6 +69,29 @@ test('400 with simple JSON error keeps current behaviour', () => {
   assert.deepEqual(err.body, payload);
 });
 
+test('errorCode falls back to bare `code` when no `error_code`', () => {
+  // Some gateway routes (api_auth_profiles rate limit, workflow cancel) emit
+  // `code` without the `error_` prefix. The client must still expose it on
+  // `.errorCode` so call sites can branch without string-matching messages.
+  const payload = { error: 'rate limited', code: 'auth_profile_rate_limited' };
+  const err = buildApiError(
+    429,
+    'Too Many Requests',
+    JSON.stringify(payload),
+    'application/json',
+  );
+
+  assert.equal(err.errorCode, 'auth_profile_rate_limited');
+});
+
+test('error_code wins over code when both are present', () => {
+  // A defensive case: if a route ever sets both, prefer the canonical
+  // `error_code` so we don't accidentally regress against the standard shape.
+  const payload = { error: 'x', error_code: 'canonical', code: 'legacy' };
+  const err = buildApiError(503, 'Service Unavailable', JSON.stringify(payload), 'application/json');
+  assert.equal(err.errorCode, 'canonical');
+});
+
 test('isHtmlErrorBody detects content-type and body shapes', () => {
   assert.equal(isHtmlErrorBody('<!DOCTYPE html><html>', null), true);
   assert.equal(isHtmlErrorBody('   <html>', null), true);

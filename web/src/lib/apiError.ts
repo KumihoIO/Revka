@@ -20,8 +20,12 @@ export class ApiError extends Error {
     this.body = body;
     // Best-effort: if the caller didn't pass an explicit code, pull it out of
     // a structured JSON body so existing callers transparently get the field.
-    if (errorCode === null && body && typeof body === 'object' && 'error_code' in body) {
-      const ec = (body as { error_code?: unknown }).error_code;
+    // The gateway is inconsistent — most routes emit `error_code`, but a few
+    // older ones (`api_auth_profiles`, the operator workflow cancel path) emit
+    // bare `code`. Prefer `error_code`, fall back to `code`.
+    if (errorCode === null && body && typeof body === 'object') {
+      const bag = body as { error_code?: unknown; code?: unknown };
+      const ec = bag.error_code ?? bag.code;
       this.errorCode = typeof ec === 'string' ? ec : null;
     } else {
       this.errorCode = errorCode;

@@ -501,10 +501,10 @@ pub async fn handle_list_teams(
             )
             .into_response();
         }
-        Err(ref e) if matches!(e, KumihoError::Api { status: 500, .. }) => {
-            tracing::warn!("Teams list failed (Kumiho 500, likely corrupted data): {e}");
-            return Json(serde_json::json!({ "teams": [], "total_count": 0, "page": 1, "per_page": 9, "warning": "Kumiho returned a server error." })).into_response();
-        }
+        // 500 from Kumiho previously returned a degraded 200/empty here. That
+        // diverged from the rest of the gateway's contract (non-retried 5xx →
+        // 503 + `kumiho_upstream_unavailable`). Route through the central
+        // mapper so the dashboard sees a single consistent shape.
         Err(e) => return kumiho_err(e).into_response(),
     };
 
