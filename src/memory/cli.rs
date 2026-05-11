@@ -359,6 +359,10 @@ fn kumiho_err(e: KumihoError, action: &'static str) -> anyhow::Error {
         KumihoError::Api { status, body } => {
             anyhow::anyhow!("Kumiho returned {status} while attempting to {action}: {body}")
         }
+        KumihoError::UpstreamUnavailable { status, attempts } => anyhow::anyhow!(
+            "Kumiho upstream temporarily unavailable (HTTP {status} after {attempts} attempts) \
+             while attempting to {action}. Try again shortly."
+        ),
         KumihoError::Decode(msg) => anyhow::anyhow!(
             "Kumiho returned an unexpected response while attempting to {action}: {msg}"
         ),
