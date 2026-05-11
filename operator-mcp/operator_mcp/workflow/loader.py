@@ -25,7 +25,7 @@ from pydantic import ValidationError as PydanticValidationError
 
 from .._log import _log
 from ..construct_config import harness_project
-from .schema import StepDef, WorkflowDef
+from .schema import StepDef, StepType, WorkflowDef
 from .validator import validate_workflow, ValidationResult
 from operator_mcp.workflow.event_listener import get_trigger_registry
 
@@ -120,10 +120,13 @@ def _scan_step_for_refs(step: StepDef) -> set[str]:
         _scan_value(step.email.bcc)
         _scan_text(step.email.reply_to)
         _scan_text(step.email.track_kref)
-    # conditional — branch conditions are interpolated
+    # conditional — branch conditions and (optional) value expressions are
+    # interpolated. Both surfaces can reference upstream step results, so
+    # both feed the depends_on inference pass.
     if step.conditional is not None:
         for branch in step.conditional.branches:
             _scan_text(branch.condition)
+            _scan_text(branch.value)
     # goto
     if step.goto is not None:
         _scan_text(step.goto.condition)
@@ -189,8 +192,24 @@ def _infer_depends_on(wf: WorkflowDef) -> None:
     Safe for unknown-step references: ignored here, the validator catches
     them separately as missing-reference errors so the user still gets a
     clear failure mode.
+
+    Parallel sub-steps: the validator forbids cross-group ``depends_on``
+    on parallel children (ambiguous ordering — the parent should gate the
+    block). When a child references an upstream the parallel parent
+    already depends on, ordering is already satisfied transitively; emit
+    no inferred edge rather than creating a validator-rejected one.
     """
     known_ids = {s.id for s in wf.steps}
+
+    # Map child step id -> (parallel parent id, parent's depends_on set).
+    # Used to suppress inferences that would violate the parallel-group rule.
+    parent_of: dict[str, tuple[str, set[str]]] = {}
+    for s in wf.steps:
+        if s.type == StepType.PARALLEL and s.parallel:
+            parent_deps = set(s.depends_on)
+            for child_id in s.parallel.steps:
+                parent_of[child_id] = (s.id, parent_deps)
+
     for step in wf.steps:
         refs = _scan_step_for_refs(step)
         if not refs:
@@ -198,6 +217,7 @@ def _infer_depends_on(wf: WorkflowDef) -> None:
         existing = list(step.depends_on)
         existing_set = set(existing)
         added: list[str] = []
+        parent_info = parent_of.get(step.id)
         for ref in refs:
             if ref == step.id:
                 continue  # self-reference — skip silently
@@ -205,6 +225,13 @@ def _infer_depends_on(wf: WorkflowDef) -> None:
                 continue  # validator surfaces this as a missing-step error
             if ref in existing_set:
                 continue
+            # Suppress inferences on parallel children that would create
+            # cross-group depends_on (validator rejects these). Ordering is
+            # already enforced via the parallel parent.
+            if parent_info is not None:
+                parent_id, parent_deps = parent_info
+                if ref != parent_id and ref in parent_deps:
+                    continue
             existing.append(ref)
             existing_set.add(ref)
             added.append(ref)

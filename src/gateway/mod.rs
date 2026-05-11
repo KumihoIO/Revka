@@ -1123,7 +1123,11 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
         shutdown_tx,
         node_registry,
         session_backend,
-        session_queue: Arc::new(session_queue::SessionActorQueue::new(8, 30, 600)),
+        session_queue: Arc::new(session_queue::SessionActorQueue::new(
+            8,
+            session_queue::session_lock_timeout_secs(),
+            600,
+        )),
         device_registry,
         pending_pairings,
         path_prefix: path_prefix.unwrap_or("").to_string(),
@@ -1658,6 +1662,7 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
                 .post(api_auth_profiles::handle_create_auth_profile),
         )
         .route("/api/auth/profiles/{id}/resolve", post(api_auth_profiles::handle_resolve_auth_profile))
+        .route("/api/auth/profiles/{id}", delete(api_auth_profiles::handle_delete_auth_profile))
         // ── Skill management API (proxied to Kumiho FastAPI) ──
         .route("/api/skills", get(api_skills::handle_list_skills).post(api_skills::handle_create_skill))
         .route("/api/skills/deprecate", post(api_skills::handle_deprecate_skill))
@@ -1681,6 +1686,7 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
         .route("/api/workflows/runs/{run_id}", get(api_workflows::handle_get_workflow_run).delete(api_workflows::handle_delete_workflow_run))
         .route("/api/workflows/runs/{run_id}/approve", post(api_workflows::handle_approve_workflow_run))
         .route("/api/workflows/runs/{run_id}/retry", post(api_workflows::handle_retry_workflow_run))
+        .route("/api/workflows/runs/{run_id}/cancel", post(api_workflows::handle_cancel_workflow_run))
         .route("/api/workflows/agent-activity/{agent_id}", get(api_workflows::handle_agent_activity))
         .route("/api/workflows/dashboard", get(api_workflows::handle_workflow_dashboard))
         // ── ClawHub marketplace API ──

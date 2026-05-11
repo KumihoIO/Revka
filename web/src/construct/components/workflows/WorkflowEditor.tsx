@@ -2,8 +2,8 @@
  * WorkflowEditor — P0 redesign on Construct dashboard tokens.
  *
  * Replaces the legacy `web/src/components/workflows/WorkflowEditor.tsx`.
- * Reuses the same data layer (yamlSync) so the YAML schema and the rest of
- * the dashboard (Dashboard, Workflows page DAG view) keep working.
+ * Reuses the construct workflow data layer (yamlSync) so the YAML schema and
+ * the rest of the dashboard (Dashboard, Workflows page DAG view) keep working.
  *
  * Surfaces:
  *   - Toolbar `+ Add Step` button → opens StepTypePalette
@@ -49,6 +49,7 @@ import { taskNodeTypes } from '@/components/workflows/TaskNode';
 import { gateNodeTypes } from '@/components/workflows/GateNode';
 import {
   GATE_EDGE_STYLES,
+  computeAncestorClosure,
   flowToTasks,
   parseWorkflowMeta,
   parseWorkflowYaml,
@@ -57,7 +58,7 @@ import {
   type InputDef,
   type TaskNodeData,
   type WorkflowMeta,
-} from '@/components/workflows/yamlSync';
+} from '@/construct/components/workflows/yamlSync';
 import { hasCycle, layoutNodes } from '@/components/teams/graphHelpers';
 
 import Panel from '@/construct/components/ui/Panel';
@@ -79,7 +80,7 @@ import {
   useWorkflowEvents,
   type WorkflowRevisionPublishedEvent,
 } from './useWorkflowEvents';
-import { fetchWorkflowByRevisionKref } from '@/lib/api';
+import { fetchWorkflowByRevisionKref, runWorkflow } from '@/lib/api';
 import '@/construct/styles/editor-chrome.css';
 
 const allNodeTypes = { ...taskNodeTypes, ...gateNodeTypes };
@@ -111,6 +112,76 @@ export default function WorkflowEditor(props: WorkflowEditorProps) {
       <WorkflowEditorInner {...props} />
     </ReactFlowProvider>
   );
+}
+
+// ---------------------------------------------------------------------------
+// Edge auto-insert helpers
+// ---------------------------------------------------------------------------
+
+// Map step type → the TaskNodeData field that holds the user-facing primary
+// text (the prompt / command / template / message). When the user wires an
+// edge into one of these step types we auto-append `${source.output}` so the
+// canvas action implies the matching `${ref}` interpolation in the target's
+// text — without this, the edge alone yields a `depends_on` that PR #182's
+// validator rejects as unused. Step types not in this map (parallel, goto,
+// tag, deprecate, human_approval, human_input, for_each, …) have no obvious
+// text field; the edge alone is enough.
+const STEP_PRIMARY_TEXT_FIELD: Record<string, keyof TaskNodeData> = {
+  agent: 'prompt',
+  shell: 'shellCommand',
+  output: 'outputTemplate',
+  conditional: 'condition',
+  notify: 'notifyMessage',
+  email: 'emailBody',
+  python: 'pythonCode',
+};
+
+// All TaskNodeData text fields that may carry `${step.<field>}` references —
+// mirrors INTERPOLATION_TEXT_FIELDS in yamlSync.ts (camelCase here, snake in
+// the TaskDefinition shape). Used to detect whether the target already
+// references the source so we don't pollute with a duplicate.
+const TASK_INTERPOLATION_FIELDS: ReadonlyArray<keyof TaskNodeData> = [
+  'prompt',
+  'shellCommand',
+  'pythonCode',
+  'pythonArgs',
+  'pythonScript',
+  'emailBody',
+  'emailBodyHtml',
+  'emailSubject',
+  'emailTo',
+  'emailCc',
+  'emailBcc',
+  'imagePrompt',
+  'outputTemplate',
+  'condition',
+  'gotoCondition',
+  'humanInputMessage',
+  'humanApprovalMessage',
+  'notifyMessage',
+  'notifyTitle',
+  'groupChatTopic',
+  'supervisorTask',
+  'a2aMessage',
+  'mapReduceTask',
+  'handoffReason',
+];
+
+// Same shape as yamlSync's STEP_REF_REGEX. Inlined so we don't import a
+// non-exported regex (and so this stays a frontend-only change).
+const EDITOR_STEP_REF_REGEX = /\$\{([a-zA-Z_][a-zA-Z0-9_-]*)(?:\.[a-zA-Z_][a-zA-Z0-9_.-]*)?\}/g;
+
+function targetAlreadyReferencesSource(data: TaskNodeData, sourceId: string): boolean {
+  for (const field of TASK_INTERPOLATION_FIELDS) {
+    const value = data[field];
+    if (typeof value !== 'string' || !value) continue;
+    EDITOR_STEP_REF_REGEX.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = EDITOR_STEP_REF_REGEX.exec(value)) !== null) {
+      if (m[1] === sourceId) return true;
+    }
+  }
+  return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -152,6 +223,8 @@ function defaultNodeData(id: string, overrides?: Partial<TaskNodeData>): TaskNod
     paramCount: 0,
     dependencyCount: 0,
     condition: '',
+    onTrueValue: '',
+    onFalseValue: '',
     channel: '',
     channels: [],
     agentType: '',
@@ -258,6 +331,26 @@ function defaultNodeData(id: string, overrides?: Partial<TaskNodeData>): TaskNod
     tagUntag: '',
     deprecateItemKref: '',
     deprecateReason: '',
+    manusPrompt: '',
+    manusStructuredOutputSchema: '',
+    manusConnectors: [],
+    manusEnableSkills: [],
+    manusForceSkills: [],
+    manusAgentProfile: '',
+    manusLocale: '',
+    manusProjectId: '',
+    manusTitle: '',
+    manusTimeoutSeconds: 600,
+    manusPollIntervalSeconds: 5,
+    manusAllowFailure: false,
+    manusCredentialsRef: '',
+    manusRegisterEnabled: false,
+    manusRegisterEntityName: '',
+    manusRegisterEntityKind: '',
+    manusRegisterEntityTag: '',
+    manusRegisterEntitySpace: '',
+    manusRegisterAttachments: true,
+    manusRegisterContentSource: 'message',
     ...overrides,
   };
 }
@@ -304,6 +397,7 @@ function WorkflowEditorInner({
   const [warning, setWarning] = useState<string | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [yamlText, setYamlText] = useState(workflow?.definition ?? '');
+  const [yamlDirty, setYamlDirty] = useState(false);
 
   const [workflowMeta, setWorkflowMeta] = useState<WorkflowMeta>({
     name: '',
@@ -685,15 +779,35 @@ function WorkflowEditorInner({
           : {}),
       };
       setEdges((eds) => [...eds, newEdge]);
-      if (!isBranch) {
-        setNodes((nds) =>
-          nds.map((n) =>
-            n.id === connection.target
-              ? { ...n, data: { ...n.data, dependencyCount: (n.data as TaskNodeData).dependencyCount + 1 } }
-              : n,
-          ),
-        );
-      }
+
+      // Auto-insert `${source.output}` into the target's primary text field so
+      // the wired edge implies the matching interpolation. Skip when source ===
+      // target (self-loop), when the edge is a conditional branch (true/false
+      // handles route control flow, not data), when the target type has no
+      // primary text field, or when the target already references this source
+      // somewhere.
+      const sourceId = connection.source;
+      const targetId = connection.target;
+      setNodes((nds) =>
+        nds.map((n) => {
+          if (n.id !== targetId) return n;
+          const data = n.data as TaskNodeData;
+          let nextData: TaskNodeData = data;
+          if (!isBranch) {
+            nextData = { ...nextData, dependencyCount: nextData.dependencyCount + 1 };
+          }
+          if (sourceId !== targetId && !isBranch) {
+            const primaryField = STEP_PRIMARY_TEXT_FIELD[nextData.type];
+            if (primaryField && !targetAlreadyReferencesSource(nextData, sourceId)) {
+              const current = (nextData[primaryField] as string | undefined) ?? '';
+              const ref = `\${${sourceId}.output}`;
+              const updated = current.length === 0 ? ref : `${current}\n\n${ref}`;
+              nextData = { ...nextData, [primaryField]: updated };
+            }
+          }
+          return nextData === data ? n : { ...n, data: nextData };
+        }),
+      );
     },
     [edges, setEdges, setNodes],
   );
@@ -933,18 +1047,31 @@ function WorkflowEditorInner({
       const laidOut = layoutNodes(rawNodes, newEdges);
       setNodes(laidOut);
       setEdges(newEdges);
+      setName(meta.name || name);
+      setDescription(meta.description || description);
+      setTags(meta.tags);
       taskIdCounter.current = tasks.length;
+      setYamlText(tasksToYaml(tasks, {
+        ...meta,
+        name: meta.name || name,
+        description: meta.description || description,
+      }));
+      setYamlDirty(false);
       setShowAdvanced(false);
       setError(null);
-    } catch {
-      setError('Failed to parse YAML. Check syntax.');
+    } catch (err) {
+      // js-yaml throws on malformed YAML — surface the parser's message so
+      // users can fix indentation / quoting issues without opening devtools.
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(`Invalid YAML: ${msg}`);
     }
-  }, [yamlText, setNodes, setEdges]);
+  }, [yamlText, name, description, setNodes, setEdges]);
 
   // Open YAML drawer (used by EditorCommandList row + ⌘I shortcut).
   const openYamlPanel = useCallback(() => {
     const tasks = flowToTasks(nodes as Node<TaskNodeData>[], edges);
     setYamlText(tasksToYaml(tasks, { ...workflowMeta, name, description }));
+    setYamlDirty(false);
     setShowAdvanced(true);
   }, [nodes, edges, workflowMeta, name, description]);
   // Keep the ⌘I keydown effect's ref pointed at the latest closure.
@@ -1015,6 +1142,7 @@ function WorkflowEditorInner({
         setWorkflowMeta(newMeta);
         setName(remote.name ?? event.name);
         setDescription(remote.description ?? '');
+        setYamlDirty(false);
         // Normalize the baseline through the same pipeline the dirty check
         // uses (parse → tasksToYaml) so a clean apply doesn't immediately
         // register as "dirty" because of formatting differences.
@@ -1093,6 +1221,7 @@ function WorkflowEditorInner({
         setWorkflowMeta(newMeta);
         if (newMeta.name) setName(newMeta.name);
         if (newMeta.description) setDescription(newMeta.description);
+        setYamlDirty(false);
         taskIdCounter.current = newTasks.length;
         setError(null);
         // Reuse the remote-update pill UX — same affordance, different
@@ -1122,6 +1251,9 @@ function WorkflowEditorInner({
     if (!description.trim()) return setError('Workflow description is required.');
     if (nodes.length === 0) return setError('Add at least one step to the workflow.');
     if (hasCycle(nodes, edges)) return setError('Cannot save: workflow has cycles.');
+    if (yamlDirty) {
+      return setError('Apply the YAML changes to the graph before saving.');
+    }
 
     const tasks = flowToTasks(nodes as Node<TaskNodeData>[], edges);
     const definition = tasksToYaml(tasks, {
@@ -1141,16 +1273,45 @@ function WorkflowEditorInner({
       const message = err instanceof Error ? err.message : 'Save failed.';
       setError(message);
     }
-  }, [name, description, tags, nodes, edges, workflowMeta, onSave]);
+  }, [name, description, tags, nodes, edges, workflowMeta, yamlDirty, onSave]);
 
   // ── Sync YAML when toggling drawer ──────────────────────────────────────
   useEffect(() => {
     if (showAdvanced) {
-      const tasks = flowToTasks(nodes as Node<TaskNodeData>[], edges);
-      setYamlText(tasksToYaml(tasks, { ...workflowMeta, name, description }));
+      if (!yamlDirty) {
+        const tasks = flowToTasks(nodes as Node<TaskNodeData>[], edges);
+        setYamlText(tasksToYaml(tasks, { ...workflowMeta, name, description }));
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showAdvanced]);
+  }, [showAdvanced, currentYaml]);
+
+  // ── Run-to-here ─────────────────────────────────────────────────────────
+  // Closure preview is best-effort — backend re-derives authoritatively.
+  const computeRunToHereClosure = useCallback(
+    (taskId: string) => {
+      const tasks = flowToTasks(nodes as Node<TaskNodeData>[], edges);
+      return computeAncestorClosure(tasks, taskId);
+    },
+    [nodes, edges],
+  );
+
+  const handleRunToHere = useCallback(
+    async (taskId: string) => {
+      const wfName = workflow?.name ?? name;
+      if (!wfName) {
+        setError('Save the workflow before using "Run to here".');
+        return;
+      }
+      try {
+        await runWorkflow(wfName, undefined, undefined, { targetStepId: taskId });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Run-to-here failed.';
+        setError(msg);
+      }
+    },
+    [workflow?.name, name],
+  );
 
   // ── Render ──────────────────────────────────────────────────────────────
   const isEmpty = nodes.length === 0;
@@ -1571,12 +1732,27 @@ function WorkflowEditorInner({
                       style={{ padding: '4px 10px', fontSize: 11 }}
                     >
                       <Zap size={12} />
-                      Import
+                      Apply to graph
                     </button>
                   </div>
+                  {yamlDirty ? (
+                    <div
+                      className="border-b px-3 py-2 text-xs"
+                      style={{
+                        borderColor: 'var(--construct-border-soft)',
+                        color: 'var(--construct-status-warning)',
+                        background: 'color-mix(in srgb, var(--construct-status-warning) 8%, transparent)',
+                      }}
+                    >
+                      YAML edits are not saved until applied to the graph.
+                    </div>
+                  ) : null}
                   <textarea
                     value={yamlText}
-                    onChange={(e) => setYamlText(e.target.value)}
+                    onChange={(e) => {
+                      setYamlText(e.target.value);
+                      setYamlDirty(true);
+                    }}
                     spellCheck={false}
                     style={{
                       flex: 1,
@@ -1711,6 +1887,14 @@ function WorkflowEditorInner({
               setPaletteOpen(true);
             }}
             dagContext={dagContext}
+            onRunToHere={handleRunToHere}
+            computeRunToHereClosure={computeRunToHereClosure}
+            runToHereDisabled={(!workflow?.name && !name) || dirty}
+            runToHereDisabledReason={
+              dirty
+                ? 'Save your edits first — Run to here uses the saved revision.'
+                : undefined
+            }
           />
         ) : (
           <WorkflowSettingsPanel meta={workflowMeta} setMeta={setWorkflowMeta} />
@@ -2326,4 +2510,3 @@ function SectionGroup({
     </div>
   );
 }
-

@@ -43,6 +43,10 @@ async def tool_run_workflow(args: dict[str, Any]) -> dict[str, Any]:
         inputs: Dict of input parameters for the workflow.
         cwd: Working directory for agent/shell steps (required).
         run_id: Optional run ID (generated if omitted).
+        target_step_id: Optional step id for "run to here" — when set, only
+            the transitive ancestor closure of this step (plus the step
+            itself) is executed. Unknown ids return a classified
+            `unknown_target_step` validation error.
     """
     from ..workflow.loader import load_workflow_from_dict
     from ..workflow.executor import execute_workflow
@@ -52,6 +56,7 @@ async def tool_run_workflow(args: dict[str, Any]) -> dict[str, Any]:
     inputs = args.get("inputs", {})
     cwd = args.get("cwd", "")
     run_id = args.get("run_id", str(uuid.uuid4()))
+    target_step_id = args.get("target_step_id") or None
 
     # Empty cwd → fall back to the user's home directory. Mirrors what the
     # event listener does at `_async_run_request` (metadata.cwd or self._cwd).
@@ -105,6 +110,15 @@ async def tool_run_workflow(args: dict[str, Any]) -> dict[str, Any]:
         if inp.name not in inputs and inp.default is not None:
             inputs[inp.name] = inp.default
 
+    # Run-to-step: confirm the target id exists. Done after wf is loaded so
+    # we can surface a clean classified error rather than letting the
+    # executor silently no-op.
+    if target_step_id and not wf.step_by_id(target_step_id):
+        return classified_error(
+            f"Unknown target step id: '{target_step_id}'",
+            code="unknown_target_step", category=VALIDATION_ERROR,
+        )
+
     # Cost guard
     max_cost_usd = args.get("max_cost_usd")
 
@@ -118,6 +132,7 @@ async def tool_run_workflow(args: dict[str, Any]) -> dict[str, Any]:
                 wf, inputs, cwd, run_id=run_id, max_cost_usd=max_cost_usd,
                 workflow_item_kref=workflow_item_kref,
                 workflow_revision_kref=workflow_revision_kref,
+                target_step_id=target_step_id,
             )
             _log(f"tool_run_workflow: background run={run_id[:8]} finished")
         except Exception as exc:
@@ -277,6 +292,15 @@ async def tool_list_workflows(args: dict[str, Any]) -> dict[str, Any]:
 async def tool_cancel_workflow(args: dict[str, Any]) -> dict[str, Any]:
     """Cancel a running workflow.
 
+    Sets ``state.cancel_requested = True`` — the executor's main loop and
+    long-running step handlers (shell/python polls) read this flag at the
+    next checkpoint, kill any owned subprocesses, and transition the run
+    to ``WorkflowStatus.CANCELLED`` cleanly.
+
+    Idempotent: calling on an already-cancelled or finished run returns a
+    success-shaped response with ``cancelled=false`` and a reason, never
+    an error.
+
     Args:
         run_id: The workflow run ID (required).
     """
@@ -289,24 +313,36 @@ async def tool_cancel_workflow(args: dict[str, Any]) -> dict[str, Any]:
 
     state = ACTIVE_WORKFLOWS.get(run_id)
     if not state:
-        return classified_error(
-            f"Workflow run '{run_id}' not found or not active",
-            code="not_found", category=VALIDATION_ERROR,
-        )
-
-    if state.status not in (WorkflowStatus.RUNNING, WorkflowStatus.PAUSED):
+        # Idempotent: not in active registry → either never existed or already
+        # finished. Return a success-shaped response so the gateway can map
+        # this to a 404 without classifying as an error.
         return {
+            "cancelled": False,
             "run_id": run_id,
-            "status": state.status.value,
-            "message": f"Workflow already in terminal state: {state.status.value}",
+            "reason": "not_found_or_already_finished",
         }
 
-    state.status = WorkflowStatus.CANCELLED
-    _log(f"tool_cancel_workflow: cancelled run={run_id[:8]}")
+    if state.status in (
+        WorkflowStatus.COMPLETED,
+        WorkflowStatus.FAILED,
+        WorkflowStatus.CANCELLED,
+    ):
+        return {
+            "cancelled": False,
+            "run_id": run_id,
+            "status": state.status.value,
+            "reason": "already_terminal",
+        }
+
+    # Idempotent: if cancel was already requested but the executor hasn't
+    # processed it yet, just confirm.
+    state.cancel_requested = True
+    _log(f"tool_cancel_workflow: cancel_requested set for run={run_id[:8]} (status={state.status.value})")
 
     return {
+        "cancelled": True,
         "run_id": run_id,
-        "status": "cancelled",
+        "status": state.status.value,
         "steps_completed": sum(1 for r in state.step_results.values() if r.status == "completed"),
     }
 

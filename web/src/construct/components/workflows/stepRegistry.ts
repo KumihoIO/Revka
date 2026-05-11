@@ -14,6 +14,7 @@ import {
   CheckCircle,
   Crown,
   FileCode,
+  Globe,
   GitBranch,
   Keyboard,
   LayoutGrid,
@@ -194,6 +195,14 @@ export const STEP_TYPES: StepTypeDef[] = [
     icon: Network,
     description: 'Call a remote agent over the Agent-to-Agent protocol.',
     searchTags: ['remote', 'protocol', 'agent', 'http'],
+  },
+  {
+    type: 'manus',
+    label: 'Manus',
+    category: 'coordination',
+    icon: Globe,
+    description: 'Delegate web research to a hosted Manus AI task with optional structured output.',
+    searchTags: ['manus', 'web', 'research', 'browse', 'agent', 'browser', 'remote'],
   },
 
   // ── Human ──────────────────────────────────────────────────────────────

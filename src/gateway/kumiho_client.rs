@@ -6,9 +6,13 @@
 //! (`/api/skills`).
 
 use crate::config::Config;
+use axum::http::{HeaderValue, StatusCode, header};
+use axum::response::{IntoResponse, Json, Response};
+use rand::RngExt;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 /// Build a `KumihoClient` from the top-level `Config`.
 ///
@@ -159,11 +163,166 @@ pub enum KumihoError {
     #[error("Kumiho returned {status}: {body}")]
     Api { status: u16, body: String },
 
+    #[error("Kumiho upstream temporarily unavailable (HTTP {status} after {attempts} attempts)")]
+    UpstreamUnavailable { status: u16, attempts: u32 },
+
     #[error("Unexpected response: {0}")]
     Decode(String),
 }
 
 pub type Result<T> = std::result::Result<T, KumihoError>;
+
+/// Statuses we treat as a "transient upstream blip" — gateway/CDN-style 5xx
+/// codes. Pure 500 (application error) and 501 (not implemented) are NOT
+/// retried: those usually mean a real bug, not a connectivity hiccup.
+pub(crate) fn is_retryable_status(status: u16) -> bool {
+    matches!(status, 502 | 503 | 504 | 520 | 522 | 524)
+}
+
+/// Per-attempt request timeout used by the retry helper. Short enough that
+/// 3 attempts + jittered backoffs fit inside `TOTAL_BUDGET`.
+const PER_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// End-to-end wall-time cap for `send_with_retry`. A hung upstream cannot
+/// hold a single gateway request open longer than this.
+const TOTAL_BUDGET: Duration = Duration::from_secs(15);
+
+/// Would sleeping `delay_ms` still leave room before `deadline`? Used by the
+/// retry helper to give up early when there isn't enough budget left to
+/// usefully retry.
+fn deadline_allows(deadline: Instant, delay_ms: u64) -> bool {
+    let now = Instant::now();
+    if now >= deadline {
+        return false;
+    }
+    let remaining = deadline.saturating_duration_since(now);
+    remaining > Duration::from_millis(delay_ms)
+}
+
+/// Sleep for `base_ms` ± 20% to avoid thundering-herd retry waves.
+async fn sleep_with_jitter(base_ms: u64) {
+    let jitter_range = (base_ms as f64 * 0.2) as i64;
+    let jitter: i64 = if jitter_range > 0 {
+        rand::rng().random_range(-jitter_range..=jitter_range)
+    } else {
+        0
+    };
+    let delay = (base_ms as i64 + jitter).max(0) as u64;
+    tokio::time::sleep(Duration::from_millis(delay)).await;
+}
+
+/// Heuristic: does this body look like an HTML error page (e.g. Cloudflare's
+/// 2KB 502 splash)? Used to keep upstream HTML out of our JSON error responses
+/// and out of structured logs. `pub(crate)` so the generic `/api/kumiho/*`
+/// proxy can detect HTML bodies without going through `KumihoClient`.
+pub(crate) fn looks_like_html_body(body: &str, content_type: Option<&str>) -> bool {
+    if let Some(ct) = content_type {
+        if ct.to_ascii_lowercase().starts_with("text/html") {
+            return true;
+        }
+    }
+    let trimmed = body.trim_start();
+    let head: String = trimmed
+        .chars()
+        .take(16)
+        .collect::<String>()
+        .to_ascii_lowercase();
+    head.starts_with("<!doctype") || head.starts_with("<html")
+}
+
+/// Map any `KumihoError` to a clean JSON HTTP response. Centralised so every
+/// gateway route returns the same shape. Upstream HTML never leaks past this
+/// boundary — `Api` errors with HTML bodies were trimmed in `check_response`.
+pub fn kumiho_error_to_response(err: KumihoError) -> Response {
+    match err {
+        KumihoError::Unreachable(e) => {
+            tracing::warn!(error = %e, "Kumiho unreachable");
+            // DNS/connect failures map to 503 (service unavailable), not 502:
+            // recovery typically takes longer than a per-request upstream blip,
+            // so we hint a slightly longer `Retry-After`.
+            let mut resp = (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({
+                    "error": "Kumiho cloud unreachable",
+                    "error_code": "kumiho_unreachable",
+                    "retry_after_seconds": 10,
+                })),
+            )
+                .into_response();
+            resp.headers_mut()
+                .insert(header::RETRY_AFTER, HeaderValue::from_static("10"));
+            resp
+        }
+        KumihoError::UpstreamUnavailable { status, attempts } => {
+            tracing::warn!(
+                upstream_status = status,
+                attempts = attempts,
+                "Kumiho upstream unavailable after retries"
+            );
+            let mut resp = (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({
+                    "error": "Kumiho cloud temporarily unavailable",
+                    "error_code": "kumiho_upstream_unavailable",
+                    "upstream_status": status,
+                    "attempts": attempts,
+                    "retry_after_seconds": 5,
+                })),
+            )
+                .into_response();
+            resp.headers_mut()
+                .insert(header::RETRY_AFTER, HeaderValue::from_static("5"));
+            resp
+        }
+        KumihoError::Api { status, body } => {
+            // 5xx that slipped past the retry layer (e.g. a non-retryable 500)
+            // — still treat as "temporarily unavailable" so we never forward
+            // upstream bodies to the client.
+            if status >= 500 {
+                tracing::warn!(upstream_status = status, body = %body, "Kumiho 5xx (non-retried)");
+                let mut resp = (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Json(serde_json::json!({
+                        "error": "Kumiho cloud temporarily unavailable",
+                        "error_code": "kumiho_upstream_unavailable",
+                        "upstream_status": status,
+                        "attempts": 1,
+                        "retry_after_seconds": 5,
+                    })),
+                )
+                    .into_response();
+                resp.headers_mut()
+                    .insert(header::RETRY_AFTER, HeaderValue::from_static("5"));
+                return resp;
+            }
+            // Keep current behaviour for 4xx — callers branch on 404/409/etc.
+            // 401/403 from Kumiho are rewritten to 502 so the dashboard doesn't
+            // confuse them with pairing auth failures and force a re-pair.
+            let code = if status == 401 || status == 403 {
+                StatusCode::BAD_GATEWAY
+            } else {
+                StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY)
+            };
+            (
+                code,
+                Json(serde_json::json!({
+                    "error": format!("Kumiho upstream: {body}"),
+                    "error_code": "kumiho_upstream_error",
+                    "upstream_status": status,
+                })),
+            )
+                .into_response()
+        }
+        KumihoError::Decode(msg) => (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({
+                "error": format!("Bad response from Kumiho: {msg}"),
+                "error_code": "kumiho_decode_error",
+            })),
+        )
+            .into_response(),
+    }
+}
 
 // ── Request body types ──────────────────────────────────────────────────
 
@@ -271,8 +430,171 @@ impl KumihoClient {
             Ok(resp)
         } else {
             let code = status.as_u16();
+            let content_type = resp
+                .headers()
+                .get(reqwest::header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_owned);
             let body = resp.text().await.unwrap_or_default();
+            let body = if looks_like_html_body(&body, content_type.as_deref()) {
+                // Log once at warn so the full body is still debuggable from
+                // the gateway logs, then trim it out of the in-memory error
+                // before any caller can forward it to the dashboard.
+                tracing::warn!(
+                    status = code,
+                    content_type = content_type.as_deref().unwrap_or(""),
+                    body_preview = body.chars().take(256).collect::<String>(),
+                    "Kumiho returned HTML error body (trimming before propagation)"
+                );
+                "<HTML error page — see gateway logs>".to_string()
+            } else {
+                body
+            };
             Err(KumihoError::Api { status: code, body })
+        }
+    }
+
+    /// Send a Kumiho request with bounded retries on transient upstream
+    /// failures. The caller passes a closure that re-builds the
+    /// `RequestBuilder` on each attempt, since `reqwest::RequestBuilder` is
+    /// consumed by `.send()`.
+    ///
+    /// Retry policy (for safe, idempotent reads — see `send_no_retry` for
+    /// POST/PUT/PATCH/DELETE write paths):
+    /// - `reqwest::Error` (network / timeout / dropped connection): retry.
+    /// - HTTP 502 / 503 / 504 / 520 / 522 / 524: retry.
+    /// - Any other non-2xx (incl. 500/501): no retry, returned via
+    ///   [`check_response`] as `KumihoError::Api`.
+    /// - Up to 3 attempts. Delays: 500ms, 1500ms (jittered ±20%).
+    /// - Each attempt is capped at `PER_ATTEMPT_TIMEOUT` (5s) — short enough
+    ///   that 3 retries + backoff fit inside `TOTAL_BUDGET` (15s).
+    /// - Total wall time across attempts is capped at `TOTAL_BUDGET`; if the
+    ///   remaining budget is shorter than the next backoff, retries stop and
+    ///   we surface `UpstreamUnavailable` immediately.
+    ///
+    /// On retry-budget exhaustion against a 5xx, returns
+    /// [`KumihoError::UpstreamUnavailable`] rather than `Api { body: ... }`
+    /// so the (potentially HTML) upstream body never propagates.
+    async fn send_with_retry<F>(&self, build: F) -> Result<reqwest::Response>
+    where
+        F: Fn() -> reqwest::RequestBuilder,
+    {
+        self.send_with_retry_deadline(build, Instant::now() + TOTAL_BUDGET)
+            .await
+    }
+
+    /// Variant of [`send_with_retry`] that shares a deadline with the caller.
+    /// Used by methods that issue multiple retried calls (e.g.
+    /// `get_published_or_latest`) so the combined wall time is still bounded
+    /// by `TOTAL_BUDGET`, not 2× it.
+    async fn send_with_retry_deadline<F>(
+        &self,
+        build: F,
+        deadline: Instant,
+    ) -> Result<reqwest::Response>
+    where
+        F: Fn() -> reqwest::RequestBuilder,
+    {
+        const MAX_ATTEMPTS: u32 = 3;
+        const BASE_DELAYS_MS: [u64; 2] = [500, 1500];
+
+        let mut last_status: Option<u16> = None;
+        for attempt in 1..=MAX_ATTEMPTS {
+            // Cap each attempt at the smaller of `PER_ATTEMPT_TIMEOUT` and the
+            // remaining budget, so a hung upstream can't blow past the
+            // end-to-end deadline.
+            let now = Instant::now();
+            if now >= deadline {
+                break;
+            }
+            let attempt_cap = PER_ATTEMPT_TIMEOUT.min(deadline.saturating_duration_since(now));
+            let attempt_request = build().timeout(attempt_cap);
+            let result = attempt_request.send().await;
+            match result {
+                Ok(resp) => {
+                    let status = resp.status().as_u16();
+                    if is_retryable_status(status) {
+                        last_status = Some(status);
+                        if attempt < MAX_ATTEMPTS {
+                            let delay_ms = BASE_DELAYS_MS[(attempt - 1) as usize];
+                            if !deadline_allows(deadline, delay_ms) {
+                                drop(resp);
+                                break;
+                            }
+                            tracing::warn!(
+                                attempt = attempt,
+                                max_attempts = MAX_ATTEMPTS,
+                                upstream_status = status,
+                                "Kumiho returned transient 5xx; retrying"
+                            );
+                            drop(resp);
+                            sleep_with_jitter(delay_ms).await;
+                            continue;
+                        }
+                        // Final attempt still returned a retryable 5xx — drop
+                        // the (likely HTML) body and surface a clean error.
+                        drop(resp);
+                        break;
+                    }
+                    return Ok(resp);
+                }
+                Err(e) => {
+                    if attempt < MAX_ATTEMPTS {
+                        let delay_ms = BASE_DELAYS_MS[(attempt - 1) as usize];
+                        if !deadline_allows(deadline, delay_ms) {
+                            return Err(KumihoError::Unreachable(e));
+                        }
+                        tracing::warn!(
+                            attempt = attempt,
+                            max_attempts = MAX_ATTEMPTS,
+                            error = %e,
+                            "Kumiho request failed (network); retrying"
+                        );
+                        sleep_with_jitter(delay_ms).await;
+                        continue;
+                    }
+                    return Err(KumihoError::Unreachable(e));
+                }
+            }
+        }
+
+        // Budget exhausted on a retryable status. Drop the body — it's almost
+        // certainly the upstream HTML splash page we don't want to forward.
+        Err(KumihoError::UpstreamUnavailable {
+            status: last_status.unwrap_or(502),
+            attempts: MAX_ATTEMPTS,
+        })
+    }
+
+    /// Single-attempt send used by write methods (POST/PUT/PATCH/DELETE).
+    /// We deliberately skip the retry loop because Kumiho's API does NOT
+    /// honour idempotency keys; retrying a create that succeeded but whose
+    /// response was dropped (or rewritten to 502 by a CDN) would create a
+    /// duplicate item. Prefer a clean error over a duplicate-write race.
+    ///
+    /// Still trims HTML bodies via `check_response`, and still surfaces
+    /// retryable 5xx as `UpstreamUnavailable` (so the central mapper returns
+    /// the same 503 shape as for retried paths).
+    async fn send_no_retry<F>(&self, build: F) -> Result<reqwest::Response>
+    where
+        F: FnOnce() -> reqwest::RequestBuilder,
+    {
+        let result = build().timeout(PER_ATTEMPT_TIMEOUT).send().await;
+        match result {
+            Ok(resp) => {
+                let status = resp.status().as_u16();
+                if is_retryable_status(status) {
+                    // Drop the body — it's almost certainly the upstream HTML
+                    // splash page we don't want to forward.
+                    drop(resp);
+                    return Err(KumihoError::UpstreamUnavailable {
+                        status,
+                        attempts: 1,
+                    });
+                }
+                Ok(resp)
+            }
+            Err(e) => Err(KumihoError::Unreachable(e)),
         }
     }
 
@@ -286,19 +608,21 @@ impl KumihoClient {
         };
 
         let resp = self
-            .client
-            .post(self.url("/projects"))
-            .header("X-Kumiho-Token", &self.service_token)
-            .json(&body)
-            .send()
+            .send_no_retry(|| {
+                self.client
+                    .post(self.url("/projects"))
+                    .header("X-Kumiho-Token", &self.service_token)
+                    .json(&body)
+            })
             .await?;
 
         let status = resp.status().as_u16();
         if resp.status().is_success() || status == 409 {
             Ok(())
         } else {
-            let text = resp.text().await.unwrap_or_default();
-            Err(KumihoError::Api { status, body: text })
+            // Defer to check_response so HTML bodies get trimmed here too.
+            let _ = self.check_response(resp).await?;
+            Ok(())
         }
     }
 
@@ -312,11 +636,12 @@ impl KumihoClient {
         };
 
         let resp = self
-            .client
-            .post(self.url("/spaces"))
-            .header("X-Kumiho-Token", &self.service_token)
-            .json(&body)
-            .send()
+            .send_no_retry(|| {
+                self.client
+                    .post(self.url("/spaces"))
+                    .header("X-Kumiho-Token", &self.service_token)
+                    .json(&body)
+            })
             .await?;
 
         let status = resp.status().as_u16();
@@ -324,8 +649,8 @@ impl KumihoClient {
         if resp.status().is_success() || status == 409 {
             Ok(())
         } else {
-            let text = resp.text().await.unwrap_or_default();
-            Err(KumihoError::Api { status, body: text })
+            let _ = self.check_response(resp).await?;
+            Ok(())
         }
     }
 
@@ -342,19 +667,20 @@ impl KumihoClient {
         };
 
         let resp = self
-            .client
-            .post(self.url("/spaces"))
-            .header("X-Kumiho-Token", &self.service_token)
-            .json(&body)
-            .send()
+            .send_no_retry(|| {
+                self.client
+                    .post(self.url("/spaces"))
+                    .header("X-Kumiho-Token", &self.service_token)
+                    .json(&body)
+            })
             .await?;
 
         let status = resp.status().as_u16();
         if resp.status().is_success() || status == 409 {
             Ok(())
         } else {
-            let text = resp.text().await.unwrap_or_default();
-            Err(KumihoError::Api { status, body: text })
+            let _ = self.check_response(resp).await?;
+            Ok(())
         }
     }
 
@@ -365,14 +691,15 @@ impl KumihoClient {
         recursive: bool,
     ) -> Result<Vec<SpaceResponse>> {
         let resp = self
-            .client
-            .get(self.url("/spaces"))
-            .header("X-Kumiho-Token", &self.service_token)
-            .query(&[
-                ("parent_path", parent_path),
-                ("recursive", if recursive { "true" } else { "false" }),
-            ])
-            .send()
+            .send_with_retry(|| {
+                self.client
+                    .get(self.url("/spaces"))
+                    .header("X-Kumiho-Token", &self.service_token)
+                    .query(&[
+                        ("parent_path", parent_path),
+                        ("recursive", if recursive { "true" } else { "false" }),
+                    ])
+            })
             .await?;
 
         let resp = self.check_response(resp).await?;
@@ -401,20 +728,23 @@ impl KumihoClient {
         limit: u32,
         offset: u32,
     ) -> Result<Vec<ItemResponse>> {
+        let limit_s = limit.to_string();
+        let offset_s = offset.to_string();
         let resp = self
-            .client
-            .get(self.url("/items"))
-            .header("X-Kumiho-Token", &self.service_token)
-            .query(&[
-                ("space_path", space_path),
-                (
-                    "include_deprecated",
-                    if include_deprecated { "true" } else { "false" },
-                ),
-                ("limit", &limit.to_string()),
-                ("offset", &offset.to_string()),
-            ])
-            .send()
+            .send_with_retry(|| {
+                self.client
+                    .get(self.url("/items"))
+                    .header("X-Kumiho-Token", &self.service_token)
+                    .query(&[
+                        ("space_path", space_path),
+                        (
+                            "include_deprecated",
+                            if include_deprecated { "true" } else { "false" },
+                        ),
+                        ("limit", limit_s.as_str()),
+                        ("offset", offset_s.as_str()),
+                    ])
+            })
             .await?;
 
         let resp = self.check_response(resp).await?;
@@ -434,18 +764,19 @@ impl KumihoClient {
         include_deprecated: bool,
     ) -> Result<Vec<ItemResponse>> {
         let resp = self
-            .client
-            .get(self.url("/items"))
-            .header("X-Kumiho-Token", &self.service_token)
-            .query(&[
-                ("space_path", space_path),
-                ("name_filter", name_filter),
-                (
-                    "include_deprecated",
-                    if include_deprecated { "true" } else { "false" },
-                ),
-            ])
-            .send()
+            .send_with_retry(|| {
+                self.client
+                    .get(self.url("/items"))
+                    .header("X-Kumiho-Token", &self.service_token)
+                    .query(&[
+                        ("space_path", space_path),
+                        ("name_filter", name_filter),
+                        (
+                            "include_deprecated",
+                            if include_deprecated { "true" } else { "false" },
+                        ),
+                    ])
+            })
             .await?;
 
         let resp = self.check_response(resp).await?;
@@ -470,11 +801,12 @@ impl KumihoClient {
         };
 
         let resp = self
-            .client
-            .post(self.url("/items"))
-            .header("X-Kumiho-Token", &self.service_token)
-            .json(&body)
-            .send()
+            .send_no_retry(|| {
+                self.client
+                    .post(self.url("/items"))
+                    .header("X-Kumiho-Token", &self.service_token)
+                    .json(&body)
+            })
             .await?;
 
         let resp = self.check_response(resp).await?;
@@ -486,14 +818,15 @@ impl KumihoClient {
     /// Deprecate or restore an item.
     pub async fn deprecate_item(&self, kref: &str, deprecated: bool) -> Result<ItemResponse> {
         let resp = self
-            .client
-            .post(self.url("/items/deprecate"))
-            .header("X-Kumiho-Token", &self.service_token)
-            .query(&[
-                ("kref", kref),
-                ("deprecated", if deprecated { "true" } else { "false" }),
-            ])
-            .send()
+            .send_no_retry(|| {
+                self.client
+                    .post(self.url("/items/deprecate"))
+                    .header("X-Kumiho-Token", &self.service_token)
+                    .query(&[
+                        ("kref", kref),
+                        ("deprecated", if deprecated { "true" } else { "false" }),
+                    ])
+            })
             .await?;
 
         let resp = self.check_response(resp).await?;
@@ -505,11 +838,12 @@ impl KumihoClient {
     /// Delete an item (force).
     pub async fn delete_item(&self, kref: &str) -> Result<()> {
         let resp = self
-            .client
-            .delete(self.url("/items/by-kref"))
-            .header("X-Kumiho-Token", &self.service_token)
-            .query(&[("kref", kref), ("force", "true")])
-            .send()
+            .send_no_retry(|| {
+                self.client
+                    .delete(self.url("/items/by-kref"))
+                    .header("X-Kumiho-Token", &self.service_token)
+                    .query(&[("kref", kref), ("force", "true")])
+            })
             .await?;
 
         let _ = self.check_response(resp).await?;
@@ -525,19 +859,20 @@ impl KumihoClient {
         include_deprecated: bool,
     ) -> Result<Vec<SearchResult>> {
         let resp = self
-            .client
-            .get(self.url("/items/fulltext-search"))
-            .header("X-Kumiho-Token", &self.service_token)
-            .query(&[
-                ("query", query),
-                ("context", context),
-                ("kind", kind),
-                (
-                    "include_deprecated",
-                    if include_deprecated { "true" } else { "false" },
-                ),
-            ])
-            .send()
+            .send_with_retry(|| {
+                self.client
+                    .get(self.url("/items/fulltext-search"))
+                    .header("X-Kumiho-Token", &self.service_token)
+                    .query(&[
+                        ("query", query),
+                        ("context", context),
+                        ("kind", kind),
+                        (
+                            "include_deprecated",
+                            if include_deprecated { "true" } else { "false" },
+                        ),
+                    ])
+            })
             .await?;
 
         let resp = self.check_response(resp).await?;
@@ -560,11 +895,12 @@ impl KumihoClient {
         };
 
         let resp = self
-            .client
-            .post(self.url("/revisions"))
-            .header("X-Kumiho-Token", &self.service_token)
-            .json(&body)
-            .send()
+            .send_no_retry(|| {
+                self.client
+                    .post(self.url("/revisions"))
+                    .header("X-Kumiho-Token", &self.service_token)
+                    .json(&body)
+            })
             .await?;
 
         let resp = self.check_response(resp).await?;
@@ -579,11 +915,12 @@ impl KumihoClient {
     /// editor's revision-history strip (Architect feature).
     pub async fn list_item_revisions(&self, item_kref: &str) -> Result<Vec<RevisionResponse>> {
         let resp = self
-            .client
-            .get(self.url("/revisions"))
-            .header("X-Kumiho-Token", &self.service_token)
-            .query(&[("item_kref", item_kref)])
-            .send()
+            .send_with_retry(|| {
+                self.client
+                    .get(self.url("/revisions"))
+                    .header("X-Kumiho-Token", &self.service_token)
+                    .query(&[("item_kref", item_kref)])
+            })
             .await?;
 
         let resp = self.check_response(resp).await?;
@@ -594,13 +931,15 @@ impl KumihoClient {
 
     /// Tag a revision (e.g. "published").
     pub async fn tag_revision(&self, revision_kref: &str, tag: &str) -> Result<()> {
+        let body = serde_json::json!({ "tag": tag });
         let resp = self
-            .client
-            .post(self.url("/revisions/tags"))
-            .header("X-Kumiho-Token", &self.service_token)
-            .query(&[("kref", revision_kref)])
-            .json(&serde_json::json!({ "tag": tag }))
-            .send()
+            .send_no_retry(|| {
+                self.client
+                    .post(self.url("/revisions/tags"))
+                    .header("X-Kumiho-Token", &self.service_token)
+                    .query(&[("kref", revision_kref)])
+                    .json(&body)
+            })
             .await?;
 
         let _ = self.check_response(resp).await?;
@@ -614,11 +953,12 @@ impl KumihoClient {
         tag: &str,
     ) -> Result<RevisionResponse> {
         let resp = self
-            .client
-            .get(self.url("/revisions/by-kref"))
-            .header("X-Kumiho-Token", &self.service_token)
-            .query(&[("kref", item_kref), ("t", tag)])
-            .send()
+            .send_with_retry(|| {
+                self.client
+                    .get(self.url("/revisions/by-kref"))
+                    .header("X-Kumiho-Token", &self.service_token)
+                    .query(&[("kref", item_kref), ("t", tag)])
+            })
             .await?;
 
         let resp = self.check_response(resp).await?;
@@ -632,11 +972,12 @@ impl KumihoClient {
     /// suffix out of the kref and returns that exact revision's metadata.
     pub async fn get_revision(&self, revision_kref: &str) -> Result<RevisionResponse> {
         let resp = self
-            .client
-            .get(self.url("/revisions/by-kref"))
-            .header("X-Kumiho-Token", &self.service_token)
-            .query(&[("kref", revision_kref)])
-            .send()
+            .send_with_retry(|| {
+                self.client
+                    .get(self.url("/revisions/by-kref"))
+                    .header("X-Kumiho-Token", &self.service_token)
+                    .query(&[("kref", revision_kref)])
+            })
             .await?;
 
         let resp = self.check_response(resp).await?;
@@ -648,11 +989,12 @@ impl KumihoClient {
     /// Get the latest revision for an item.
     pub async fn get_latest_revision(&self, item_kref: &str) -> Result<RevisionResponse> {
         let resp = self
-            .client
-            .get(self.url("/revisions/latest"))
-            .header("X-Kumiho-Token", &self.service_token)
-            .query(&[("item_kref", item_kref)])
-            .send()
+            .send_with_retry(|| {
+                self.client
+                    .get(self.url("/revisions/latest"))
+                    .header("X-Kumiho-Token", &self.service_token)
+                    .query(&[("item_kref", item_kref)])
+            })
             .await?;
 
         let resp = self.check_response(resp).await?;
@@ -662,10 +1004,47 @@ impl KumihoClient {
     }
 
     /// Get the published revision, falling back to latest.
+    ///
+    /// Both inner calls share ONE retry budget rather than each getting their
+    /// own — otherwise a degraded upstream could hold a single gateway
+    /// request open for ~2× `TOTAL_BUDGET`.
     pub async fn get_published_or_latest(&self, item_kref: &str) -> Result<RevisionResponse> {
-        match self.get_revision_by_tag(item_kref, "published").await {
-            Ok(rev) => Ok(rev),
-            Err(_) => self.get_latest_revision(item_kref).await,
+        let deadline = Instant::now() + TOTAL_BUDGET;
+        let by_tag = self
+            .send_with_retry_deadline(
+                || {
+                    self.client
+                        .get(self.url("/revisions/by-kref"))
+                        .header("X-Kumiho-Token", &self.service_token)
+                        .query(&[("kref", item_kref), ("t", "published")])
+                },
+                deadline,
+            )
+            .await;
+        match by_tag {
+            Ok(resp) => {
+                let resp = self.check_response(resp).await?;
+                resp.json::<RevisionResponse>()
+                    .await
+                    .map_err(|e| KumihoError::Decode(e.to_string()))
+            }
+            Err(_) => {
+                let resp = self
+                    .send_with_retry_deadline(
+                        || {
+                            self.client
+                                .get(self.url("/revisions/latest"))
+                                .header("X-Kumiho-Token", &self.service_token)
+                                .query(&[("item_kref", item_kref)])
+                        },
+                        deadline,
+                    )
+                    .await?;
+                let resp = self.check_response(resp).await?;
+                resp.json::<RevisionResponse>()
+                    .await
+                    .map_err(|e| KumihoError::Decode(e.to_string()))
+            }
         }
     }
 
@@ -687,12 +1066,17 @@ impl KumihoClient {
             "allow_partial": true,
         });
 
+        // POST used as a read (batch fetch by body) — but per the unsafe-write
+        // policy we still skip retry. A duplicate fetch is harmless, but the
+        // policy is enforced uniformly to avoid drift if the endpoint ever
+        // grows side-effects on Kumiho's side.
         let resp = self
-            .client
-            .post(self.url("/revisions/batch"))
-            .header("X-Kumiho-Token", &self.service_token)
-            .json(&body)
-            .send()
+            .send_no_retry(|| {
+                self.client
+                    .post(self.url("/revisions/batch"))
+                    .header("X-Kumiho-Token", &self.service_token)
+                    .json(&body)
+            })
             .await?;
 
         let resp = self.check_response(resp).await?;
@@ -721,14 +1105,78 @@ impl KumihoClient {
     }
 
     /// Search skills by query within the given project.
+    ///
+    /// Searches both the canonical [`crate::skills::registration::SKILL_ITEM_KIND`]
+    /// and the legacy [`crate::skills::registration::LEGACY_SKILL_ITEM_KIND`]
+    /// so items created before the kind rename remain discoverable.
+    /// Results from the two queries are unioned and de-duplicated by
+    /// `item.kref`; on a successful new-kind query, a failure on the
+    /// legacy query is logged + ignored (the new-kind results are still
+    /// returned).
     pub async fn search_skills(
         &self,
         query: &str,
         project: &str,
         include_deprecated: bool,
     ) -> Result<Vec<SearchResult>> {
-        self.search_items(query, project, "skill", include_deprecated)
+        self.search_items_with_legacy(
+            query,
+            project,
+            crate::skills::registration::SKILL_ITEM_KIND,
+            crate::skills::registration::LEGACY_SKILL_ITEM_KIND,
+            include_deprecated,
+        )
+        .await
+    }
+
+    /// Run two `search_items` queries (one per kind) and union the
+    /// results by `item.kref`.  On `legacy` failure we log + return the
+    /// `primary` results; `primary` failures bubble up as before.
+    ///
+    /// Used for the skill-kind transition (`skill` ↔ `skilldef`); kept
+    /// generic so the same shape can serve other kind renames.
+    pub async fn search_items_with_legacy(
+        &self,
+        query: &str,
+        context: &str,
+        primary: &str,
+        legacy: &str,
+        include_deprecated: bool,
+    ) -> Result<Vec<SearchResult>> {
+        let primary_results = self
+            .search_items(query, context, primary, include_deprecated)
+            .await?;
+        let legacy_results = match self
+            .search_items(query, context, legacy, include_deprecated)
             .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!(
+                    primary = primary,
+                    legacy = legacy,
+                    context = context,
+                    error = ?e,
+                    "search_items_with_legacy: legacy-kind query failed; \
+                     returning primary results only",
+                );
+                Vec::new()
+            }
+        };
+
+        let mut seen: std::collections::HashSet<String> =
+            std::collections::HashSet::with_capacity(primary_results.len() + legacy_results.len());
+        let mut merged: Vec<SearchResult> =
+            Vec::with_capacity(primary_results.len() + legacy_results.len());
+        for r in primary_results
+            .into_iter()
+            .chain(legacy_results.into_iter())
+        {
+            if seen.insert(r.item.kref.clone()) {
+                merged.push(r);
+            }
+        }
+        Ok(merged)
     }
 
     /// Create a new skill item + first revision in the given project.
@@ -741,7 +1189,12 @@ impl KumihoClient {
         self.ensure_space(project, "Skills").await.ok();
         let space_path = format!("/{project}/Skills");
         let item = self
-            .create_item(&space_path, name, "skill", HashMap::new())
+            .create_item(
+                &space_path,
+                name,
+                crate::skills::registration::SKILL_ITEM_KIND,
+                HashMap::new(),
+            )
             .await?;
         let revision = self.create_revision(&item.kref, metadata).await?;
         Ok((item, revision))
@@ -768,11 +1221,12 @@ impl KumihoClient {
         };
 
         let resp = self
-            .client
-            .post(self.url("/bundles"))
-            .header("X-Kumiho-Token", &self.service_token)
-            .json(&body)
-            .send()
+            .send_no_retry(|| {
+                self.client
+                    .post(self.url("/bundles"))
+                    .header("X-Kumiho-Token", &self.service_token)
+                    .json(&body)
+            })
             .await?;
 
         let resp = self.check_response(resp).await?;
@@ -784,11 +1238,12 @@ impl KumihoClient {
     /// Get a bundle by kref.
     pub async fn get_bundle(&self, kref: &str) -> Result<ItemResponse> {
         let resp = self
-            .client
-            .get(self.url("/bundles/by-kref"))
-            .header("X-Kumiho-Token", &self.service_token)
-            .query(&[("kref", kref)])
-            .send()
+            .send_with_retry(|| {
+                self.client
+                    .get(self.url("/bundles/by-kref"))
+                    .header("X-Kumiho-Token", &self.service_token)
+                    .query(&[("kref", kref)])
+            })
             .await?;
 
         let resp = self.check_response(resp).await?;
@@ -800,11 +1255,12 @@ impl KumihoClient {
     /// Delete a bundle (force).
     pub async fn delete_bundle(&self, kref: &str) -> Result<()> {
         let resp = self
-            .client
-            .delete(self.url("/bundles/by-kref"))
-            .header("X-Kumiho-Token", &self.service_token)
-            .query(&[("kref", kref), ("force", "true")])
-            .send()
+            .send_no_retry(|| {
+                self.client
+                    .delete(self.url("/bundles/by-kref"))
+                    .header("X-Kumiho-Token", &self.service_token)
+                    .query(&[("kref", kref), ("force", "true")])
+            })
             .await?;
 
         let _ = self.check_response(resp).await?;
@@ -829,11 +1285,12 @@ impl KumihoClient {
         };
 
         let resp = self
-            .client
-            .post(self.url("/bundles/members/add"))
-            .header("X-Kumiho-Token", &self.service_token)
-            .json(&body)
-            .send()
+            .send_no_retry(|| {
+                self.client
+                    .post(self.url("/bundles/members/add"))
+                    .header("X-Kumiho-Token", &self.service_token)
+                    .json(&body)
+            })
             .await?;
 
         let resp = self.check_response(resp).await?;
@@ -854,11 +1311,12 @@ impl KumihoClient {
         };
 
         let resp = self
-            .client
-            .post(self.url("/bundles/members/remove"))
-            .header("X-Kumiho-Token", &self.service_token)
-            .json(&body)
-            .send()
+            .send_no_retry(|| {
+                self.client
+                    .post(self.url("/bundles/members/remove"))
+                    .header("X-Kumiho-Token", &self.service_token)
+                    .json(&body)
+            })
             .await?;
 
         let resp = self.check_response(resp).await?;
@@ -870,11 +1328,12 @@ impl KumihoClient {
     /// List members of a bundle.
     pub async fn list_bundle_members(&self, bundle_kref: &str) -> Result<BundleMembersResponse> {
         let resp = self
-            .client
-            .get(self.url("/bundles/members"))
-            .header("X-Kumiho-Token", &self.service_token)
-            .query(&[("bundle_kref", bundle_kref)])
-            .send()
+            .send_with_retry(|| {
+                self.client
+                    .get(self.url("/bundles/members"))
+                    .header("X-Kumiho-Token", &self.service_token)
+                    .query(&[("bundle_kref", bundle_kref)])
+            })
             .await?;
 
         let resp = self.check_response(resp).await?;
@@ -901,11 +1360,12 @@ impl KumihoClient {
         };
 
         let resp = self
-            .client
-            .post(self.url("/edges"))
-            .header("X-Kumiho-Token", &self.service_token)
-            .json(&body)
-            .send()
+            .send_no_retry(|| {
+                self.client
+                    .post(self.url("/edges"))
+                    .header("X-Kumiho-Token", &self.service_token)
+                    .json(&body)
+            })
             .await?;
 
         let resp = self.check_response(resp).await?;
@@ -940,11 +1400,12 @@ impl KumihoClient {
         }
 
         let resp = self
-            .client
-            .get(self.url("/edges"))
-            .header("X-Kumiho-Token", &self.service_token)
-            .query(&query_params)
-            .send()
+            .send_with_retry(|| {
+                self.client
+                    .get(self.url("/edges"))
+                    .header("X-Kumiho-Token", &self.service_token)
+                    .query(&query_params)
+            })
             .await?;
 
         let resp = self.check_response(resp).await?;
@@ -961,15 +1422,16 @@ impl KumihoClient {
         edge_type: &str,
     ) -> Result<()> {
         let resp = self
-            .client
-            .delete(self.url("/edges"))
-            .header("X-Kumiho-Token", &self.service_token)
-            .query(&[
-                ("source_kref", source_kref),
-                ("target_kref", target_kref),
-                ("edge_type", edge_type),
-            ])
-            .send()
+            .send_no_retry(|| {
+                self.client
+                    .delete(self.url("/edges"))
+                    .header("X-Kumiho-Token", &self.service_token)
+                    .query(&[
+                        ("source_kref", source_kref),
+                        ("target_kref", target_kref),
+                        ("edge_type", edge_type),
+                    ])
+            })
             .await?;
 
         let _ = self.check_response(resp).await?;
@@ -994,11 +1456,12 @@ impl KumihoClient {
         };
 
         let resp = self
-            .client
-            .post(self.url("/artifacts"))
-            .header("X-Kumiho-Token", &self.service_token)
-            .json(&body)
-            .send()
+            .send_no_retry(|| {
+                self.client
+                    .post(self.url("/artifacts"))
+                    .header("X-Kumiho-Token", &self.service_token)
+                    .json(&body)
+            })
             .await?;
 
         let resp = self.check_response(resp).await?;
@@ -1010,11 +1473,12 @@ impl KumihoClient {
     /// List artifacts for a revision.
     pub async fn get_artifacts(&self, revision_kref: &str) -> Result<Vec<ArtifactResponse>> {
         let resp = self
-            .client
-            .get(self.url("/artifacts"))
-            .header("X-Kumiho-Token", &self.service_token)
-            .query(&[("revision_kref", revision_kref)])
-            .send()
+            .send_with_retry(|| {
+                self.client
+                    .get(self.url("/artifacts"))
+                    .header("X-Kumiho-Token", &self.service_token)
+                    .query(&[("revision_kref", revision_kref)])
+            })
             .await?;
 
         let resp = self.check_response(resp).await?;
@@ -1030,11 +1494,12 @@ impl KumihoClient {
         name: &str,
     ) -> Result<ArtifactResponse> {
         let resp = self
-            .client
-            .get(self.url("/artifacts/by-kref"))
-            .header("X-Kumiho-Token", &self.service_token)
-            .query(&[("revision_kref", revision_kref), ("name", name)])
-            .send()
+            .send_with_retry(|| {
+                self.client
+                    .get(self.url("/artifacts/by-kref"))
+                    .header("X-Kumiho-Token", &self.service_token)
+                    .query(&[("revision_kref", revision_kref), ("name", name)])
+            })
             .await?;
 
         let resp = self.check_response(resp).await?;
@@ -1058,5 +1523,327 @@ impl KumihoClient {
     pub async fn deprecate_team(&self, kref: &str, deprecated: bool) -> Result<()> {
         self.deprecate_item(kref, deprecated).await?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Tests for retry behaviour and HTML-body trimming. The goal is to lock
+    //! in three guarantees the dashboard depends on:
+    //!
+    //!   1. Transient gateway 5xx (Cloudflare 502/503/504/52x) is retried up
+    //!      to 3 times with backoff, then surfaces as `UpstreamUnavailable`
+    //!      (NOT `Api`), so upstream HTML never reaches the gateway response.
+    //!   2. Non-retryable status codes (4xx / 500 / 501) fail immediately.
+    //!   3. HTML response bodies on any non-2xx are replaced with a short
+    //!      placeholder before becoming part of `KumihoError::Api`.
+    use super::*;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, Respond, ResponseTemplate};
+
+    /// Counts each request hit so tests can assert retry-attempt totals.
+    struct CountingResponder {
+        responses: Vec<ResponseTemplate>,
+        counter: Arc<AtomicUsize>,
+    }
+
+    impl Respond for CountingResponder {
+        fn respond(&self, _request: &wiremock::Request) -> ResponseTemplate {
+            let idx = self.counter.fetch_add(1, Ordering::SeqCst);
+            let last = self.responses.len() - 1;
+            self.responses[idx.min(last)].clone()
+        }
+    }
+
+    fn make_client(base_url: &str) -> KumihoClient {
+        KumihoClient::new(base_url.to_string(), "test-token".to_string())
+    }
+
+    #[tokio::test]
+    async fn retries_on_502_then_succeeds_on_third_attempt() {
+        let server = MockServer::start().await;
+        let counter = Arc::new(AtomicUsize::new(0));
+        Mock::given(method("GET"))
+            .and(path("/api/v1/spaces"))
+            .respond_with(CountingResponder {
+                responses: vec![
+                    ResponseTemplate::new(502).set_body_string("<html>boom</html>"),
+                    ResponseTemplate::new(502).set_body_string("<html>boom</html>"),
+                    ResponseTemplate::new(200).set_body_json(serde_json::json!([])),
+                ],
+                counter: counter.clone(),
+            })
+            .mount(&server)
+            .await;
+
+        let client = make_client(&server.uri());
+        let result = client.list_spaces("/foo", false).await;
+        assert!(result.is_ok(), "expected Ok after retries, got {result:?}");
+        assert_eq!(
+            counter.load(Ordering::SeqCst),
+            3,
+            "should have hit upstream 3x"
+        );
+    }
+
+    #[tokio::test]
+    async fn three_502s_returns_upstream_unavailable_not_api() {
+        let server = MockServer::start().await;
+        let counter = Arc::new(AtomicUsize::new(0));
+        Mock::given(method("GET"))
+            .and(path("/api/v1/spaces"))
+            .respond_with(CountingResponder {
+                responses: vec![
+                    ResponseTemplate::new(502)
+                        .insert_header("content-type", "text/html")
+                        .set_body_string("<!DOCTYPE html><html>cloudflare</html>"),
+                ],
+                counter: counter.clone(),
+            })
+            .mount(&server)
+            .await;
+
+        let client = make_client(&server.uri());
+        let err = client
+            .list_spaces("/foo", false)
+            .await
+            .expect_err("must fail after 3 attempts");
+
+        match err {
+            KumihoError::UpstreamUnavailable { status, attempts } => {
+                assert_eq!(status, 502);
+                assert_eq!(attempts, 3);
+            }
+            other => panic!("expected UpstreamUnavailable, got {other:?}"),
+        }
+        assert_eq!(counter.load(Ordering::SeqCst), 3);
+    }
+
+    #[tokio::test]
+    async fn non_retryable_4xx_returns_api_immediately() {
+        let server = MockServer::start().await;
+        let counter = Arc::new(AtomicUsize::new(0));
+        Mock::given(method("GET"))
+            .and(path("/api/v1/spaces"))
+            .respond_with(CountingResponder {
+                responses: vec![ResponseTemplate::new(400).set_body_string("bad request")],
+                counter: counter.clone(),
+            })
+            .mount(&server)
+            .await;
+
+        let client = make_client(&server.uri());
+        let err = client
+            .list_spaces("/foo", false)
+            .await
+            .expect_err("400 must surface");
+        match err {
+            KumihoError::Api { status, body } => {
+                assert_eq!(status, 400);
+                assert_eq!(body, "bad request");
+            }
+            other => panic!("expected Api, got {other:?}"),
+        }
+        assert_eq!(counter.load(Ordering::SeqCst), 1, "no retry on 4xx");
+    }
+
+    #[tokio::test]
+    async fn html_body_on_non_retryable_status_is_trimmed() {
+        // 404 is not retryable. Even so, an HTML body must not enter the
+        // error variant — the dashboard would render it verbatim.
+        let server = MockServer::start().await;
+        let big_html = format!(
+            "<!doctype html><html><body>{}</body></html>",
+            "padding ".repeat(200) // ~1.6 KB body
+        );
+        Mock::given(method("GET"))
+            .and(path("/api/v1/spaces"))
+            .respond_with(
+                ResponseTemplate::new(404)
+                    .insert_header("content-type", "text/html; charset=utf-8")
+                    .set_body_string(big_html.clone()),
+            )
+            .mount(&server)
+            .await;
+
+        let client = make_client(&server.uri());
+        let err = client
+            .list_spaces("/foo", false)
+            .await
+            .expect_err("404 must surface");
+        match err {
+            KumihoError::Api { status, body } => {
+                assert_eq!(status, 404);
+                assert!(
+                    !body.contains("<html") && !body.contains("<!doctype"),
+                    "HTML body leaked into error: {body}"
+                );
+                assert!(
+                    body.len() < 200,
+                    "trimmed body should be a short placeholder, got {} bytes",
+                    body.len()
+                );
+            }
+            other => panic!("expected Api, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn connection_refused_eventually_returns_unreachable() {
+        // Point at a port we know is closed. reqwest's connect failure is a
+        // network error, which the retry helper treats as "retry, then
+        // surface as Unreachable".
+        let client = make_client("http://127.0.0.1:1"); // port 1 is reserved/closed
+        let err = client
+            .list_spaces("/foo", false)
+            .await
+            .expect_err("connection must fail");
+        assert!(
+            matches!(err, KumihoError::Unreachable(_)),
+            "expected Unreachable, got {err:?}"
+        );
+    }
+
+    // ── Pure-function tests (no network) ─────────────────────────────
+
+    #[test]
+    fn is_retryable_status_covers_gateway_codes() {
+        for s in [502, 503, 504, 520, 522, 524] {
+            assert!(is_retryable_status(s), "{s} should retry");
+        }
+        for s in [200, 400, 401, 404, 409, 500, 501, 505] {
+            assert!(!is_retryable_status(s), "{s} should NOT retry");
+        }
+    }
+
+    #[test]
+    fn looks_like_html_body_detects_common_shapes() {
+        assert!(looks_like_html_body("<!DOCTYPE html><html>", None));
+        assert!(looks_like_html_body("<!doctype html>", None));
+        assert!(looks_like_html_body("<html><body>x</body></html>", None));
+        assert!(looks_like_html_body("   <HTML>", None));
+        assert!(looks_like_html_body(
+            "{\"ok\":true}",
+            Some("text/html; charset=utf-8")
+        ));
+        assert!(!looks_like_html_body(
+            "{\"error\":\"x\"}",
+            Some("application/json")
+        ));
+        assert!(!looks_like_html_body("plain text", None));
+    }
+
+    // ── Bounded-retry-time tests (Finding #2) ────────────────────────
+
+    /// A hung upstream must not let a single retried request blow past the
+    /// `TOTAL_BUDGET` (15s) end-to-end cap. Worst case is 3 attempts × 5s
+    /// per-attempt timeout + ~2s of jittered backoffs ≈ 17s without the
+    /// deadline check; with the deadline check, retries stop early.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn hung_upstream_respects_total_budget() {
+        let server = MockServer::start().await;
+        // 10s delay per response, far longer than PER_ATTEMPT_TIMEOUT (5s).
+        Mock::given(method("GET"))
+            .and(path("/api/v1/spaces"))
+            .respond_with(
+                ResponseTemplate::new(502)
+                    .set_body_string("hang")
+                    .set_delay(Duration::from_secs(10)),
+            )
+            .mount(&server)
+            .await;
+
+        let client = make_client(&server.uri());
+        let started = Instant::now();
+        let err = client
+            .list_spaces("/foo", false)
+            .await
+            .expect_err("hung upstream must fail");
+        let elapsed = started.elapsed();
+
+        // 15s budget + small slack for jitter and scheduling.
+        assert!(
+            elapsed <= Duration::from_millis(15_500),
+            "retries blew past budget: elapsed={elapsed:?}"
+        );
+        // We expect Unreachable (per-attempt timeout) here; either Unreachable
+        // or UpstreamUnavailable is acceptable, but Api with the HTML body
+        // would mean we leaked the upstream payload.
+        assert!(
+            matches!(
+                err,
+                KumihoError::Unreachable(_) | KumihoError::UpstreamUnavailable { .. }
+            ),
+            "expected Unreachable / UpstreamUnavailable, got {err:?}"
+        );
+    }
+
+    // ── POST-skip-retry tests (Finding #3) ───────────────────────────
+
+    /// POSTs must NOT be retried on 502 — retrying a create that already
+    /// succeeded on the upstream (but was rewritten by a CDN to 502) would
+    /// produce a duplicate item. The error must still be the clean
+    /// `UpstreamUnavailable` shape (not `Api { body: "<html>" }`).
+    #[tokio::test]
+    async fn post_502_does_not_retry_returns_upstream_unavailable() {
+        let server = MockServer::start().await;
+        let counter = Arc::new(AtomicUsize::new(0));
+        Mock::given(method("POST"))
+            .and(path("/api/v1/items"))
+            .respond_with(CountingResponder {
+                responses: vec![
+                    ResponseTemplate::new(502)
+                        .insert_header("content-type", "text/html")
+                        .set_body_string("<!DOCTYPE html><html>cloudflare</html>"),
+                ],
+                counter: counter.clone(),
+            })
+            .mount(&server)
+            .await;
+
+        let client = make_client(&server.uri());
+        let err = client
+            .create_item("/foo", "item", "kind", HashMap::new())
+            .await
+            .expect_err("POST 502 must surface");
+        match err {
+            KumihoError::UpstreamUnavailable { status, attempts } => {
+                assert_eq!(status, 502);
+                assert_eq!(
+                    attempts, 1,
+                    "POST must not retry (idempotency-key not honoured by Kumiho)"
+                );
+            }
+            other => panic!("expected UpstreamUnavailable, got {other:?}"),
+        }
+        assert_eq!(
+            counter.load(Ordering::SeqCst),
+            1,
+            "POST must hit upstream exactly once"
+        );
+    }
+
+    /// Counterpart: GETs SHOULD still retry. Locks in the asymmetry.
+    #[tokio::test]
+    async fn get_502_retries_three_times() {
+        let server = MockServer::start().await;
+        let counter = Arc::new(AtomicUsize::new(0));
+        Mock::given(method("GET"))
+            .and(path("/api/v1/items"))
+            .respond_with(CountingResponder {
+                responses: vec![ResponseTemplate::new(502).set_body_string("<html>x</html>")],
+                counter: counter.clone(),
+            })
+            .mount(&server)
+            .await;
+
+        let client = make_client(&server.uri());
+        let _ = client
+            .list_items("/foo", false)
+            .await
+            .expect_err("3 retries");
+        assert_eq!(counter.load(Ordering::SeqCst), 3, "GET must retry 3x");
     }
 }

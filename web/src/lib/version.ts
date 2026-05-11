@@ -1,0 +1,1 @@
+export const CONSTRUCT_VERSION = __CONSTRUCT_VERSION__;

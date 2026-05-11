@@ -1,5 +1,5 @@
 import { Handle, Position, type NodeTypes } from '@xyflow/react';
-import type { TaskNodeData } from './yamlSync';
+import type { TaskNodeData } from '@/construct/components/workflows/yamlSync';
 
 const GATE_COLOR = 'var(--construct-status-warning)';
 const GATE_SOFT = 'color-mix(in srgb, var(--construct-status-warning) 16%, transparent)';
@@ -84,13 +84,41 @@ function GateNode({ data, selected }: { data: TaskNodeData; selected?: boolean }
 
       {/* Branch labels + handles */}
       <div className="flex items-center justify-between mt-2.5 -mx-1">
-        <div className="flex items-center gap-1">
-          <div className="w-2.5 h-2.5 rounded-full" style={{ background: TRUE_COLOR }} />
-          <span className="text-[9px] font-semibold uppercase" style={{ color: TRUE_COLOR }}>true</span>
+        <div className="flex flex-col items-start gap-0.5">
+          <div className="flex items-center gap-1">
+            <div className="w-2.5 h-2.5 rounded-full" style={{ background: TRUE_COLOR }} />
+            <span className="text-[9px] font-semibold uppercase" style={{ color: TRUE_COLOR }}>true</span>
+          </div>
+          {data.onTrueValue && (
+            <span
+              className="text-[9px] font-mono px-1 rounded truncate max-w-[110px]"
+              style={{
+                background: 'color-mix(in srgb, var(--construct-status-success) 14%, transparent)',
+                color: TRUE_COLOR,
+              }}
+              title={`emits: ${data.onTrueValue}`}
+            >
+              = {data.onTrueValue}
+            </span>
+          )}
         </div>
-        <div className="flex items-center gap-1">
-          <span className="text-[9px] font-semibold uppercase" style={{ color: FALSE_COLOR }}>false</span>
-          <div className="w-2.5 h-2.5 rounded-full" style={{ background: FALSE_COLOR }} />
+        <div className="flex flex-col items-end gap-0.5">
+          <div className="flex items-center gap-1">
+            <span className="text-[9px] font-semibold uppercase" style={{ color: FALSE_COLOR }}>false</span>
+            <div className="w-2.5 h-2.5 rounded-full" style={{ background: FALSE_COLOR }} />
+          </div>
+          {data.onFalseValue && (
+            <span
+              className="text-[9px] font-mono px-1 rounded truncate max-w-[110px]"
+              style={{
+                background: 'color-mix(in srgb, var(--construct-status-danger) 14%, transparent)',
+                color: FALSE_COLOR,
+              }}
+              title={`emits: ${data.onFalseValue}`}
+            >
+              = {data.onFalseValue}
+            </span>
+          )}
         </div>
       </div>
 

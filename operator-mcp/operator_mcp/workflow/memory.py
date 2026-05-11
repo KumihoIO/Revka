@@ -15,11 +15,115 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Callable
 
 from .._log import _log
 from ..construct_config import harness_project
+
+
+# ---------------------------------------------------------------------------
+# Persistence sanitization
+# ---------------------------------------------------------------------------
+
+# Per-step persistence caps. The Kumiho metadata budget is the binding
+# constraint; we trade per-step detail for the ability to persist the whole
+# run. Values were picked to keep a 20-step run under ~300KB total metadata.
+_PER_STRING_CAP = 4000        # any single string field in input_data/output_data
+_PER_STEP_JSON_CAP = 16_000   # full serialized step entry, post-truncation
+
+# Patterns we mask before persistence. Conservative — better to over-mask
+# than leak. We match `key=value` and `key: value` where key looks like a
+# secret name, plus the special-case `Bearer <token>` form used in HTTP
+# Authorization headers. The actual secret value is replaced with "***"
+# so length inspection still works for debugging.
+_REDACT_KEY_RE = re.compile(
+    r"(?i)\b(password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|"
+    r"authorization|auth[_-]?token|client[_-]?secret|private[_-]?key)"
+    r"\s*[:=]\s*([^\s,&;'\"]+)"
+)
+# `Bearer <token>` — Authorization header convention. Also catches a few
+# variants that happen to use the same prefix syntax.
+_REDACT_BEARER_RE = re.compile(r"(?i)\b(bearer)\s+([A-Za-z0-9._\-+/=]+)")
+
+
+def _redact_for_persistence(value: Any) -> Any:
+    """Walk a JSON-able value and mask obvious secret patterns in strings.
+
+    Scope: defends against secrets that get interpolated into `command:`,
+    email bodies, or python args. Does NOT replace explicit auth-profile
+    binding (those tokens never enter input_data/output_data — they go
+    through env vars).
+    """
+    if isinstance(value, str):
+        # Apply Bearer first so the `authorization: Bearer xyz` form gets
+        # the token masked (not just the literal "Bearer" word). The
+        # subsequent key=value pass then redacts any leftover key:value
+        # pairs that didn't fit the Bearer shape.
+        out = _REDACT_BEARER_RE.sub(lambda m: f"{m.group(1)} ***", value)
+        out = _REDACT_KEY_RE.sub(lambda m: f"{m.group(1)}=***", out)
+        return out
+    if isinstance(value, dict):
+        return {k: _redact_for_persistence(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_redact_for_persistence(v) for v in value]
+    return value
+
+
+def _coerce_jsonable(value: Any) -> Any:
+    """Replace non-JSON-serializable values with their repr.
+
+    Belt-and-suspenders: input_data/output_data should already be plain
+    dict/list/str/int/float/bool/None, but external tool responses
+    occasionally leak in (datetime, bytes, custom classes).
+    """
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    if isinstance(value, dict):
+        return {str(k): _coerce_jsonable(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_coerce_jsonable(v) for v in value]
+    return repr(value)
+
+
+def _truncate_strings_in_place(value: Any, cap: int = _PER_STRING_CAP) -> tuple[Any, bool]:
+    """Recursively truncate any string longer than ``cap``.
+
+    Returns ``(new_value, truncated)`` — the second element is True if any
+    string was shortened, so the caller can mark the step entry as
+    truncated for downstream UI consumers.
+    """
+    truncated = False
+    if isinstance(value, str):
+        if len(value) > cap:
+            return value[:cap], True
+        return value, False
+    if isinstance(value, dict):
+        out = {}
+        for k, v in value.items():
+            new_v, t = _truncate_strings_in_place(v, cap)
+            truncated = truncated or t
+            out[k] = new_v
+        return out, truncated
+    if isinstance(value, list):
+        out_list = []
+        for v in value:
+            new_v, t = _truncate_strings_in_place(v, cap)
+            truncated = truncated or t
+            out_list.append(new_v)
+        return out_list, truncated
+    return value, False
+
+
+def _prepare_for_persistence(value: Any) -> tuple[Any, bool]:
+    """Run the full persistence pipeline: coerce → redact → truncate.
+
+    Returns ``(prepared_value, truncated_flag)``.
+    """
+    coerced = _coerce_jsonable(value)
+    redacted = _redact_for_persistence(coerced)
+    return _truncate_strings_in_place(redacted, _PER_STRING_CAP)
 
 
 # ---------------------------------------------------------------------------
@@ -35,6 +139,34 @@ def _project() -> str:
 
 def _space_path() -> str:
     return f"/{_project()}/{_SPACE}"
+
+
+def _canonical_space(
+    path: str | None,
+    default: Callable[[], str] | None = None,
+) -> str:
+    """Normalize a user-supplied space path so write and read sides agree.
+
+    Output and resolve steps both accept space paths from YAML. The strings
+    looked identical to the user but reached Kumiho with different surface
+    forms (leading slash vs not, trailing slash, doubled separators), so
+    ``_exec_output`` would publish to one path and ``_exec_resolve`` would
+    miss it on lookup. This helper produces ONE canonical form used on both
+    sides.
+
+    Rules:
+      - Empty / None → ``default()`` if provided, else ``""``
+      - Strip leading / trailing ``/``
+      - Collapse repeated ``/`` to a single ``/``
+
+    The output is always slash-free at both ends — callers that need a
+    leading slash (e.g. for ``parent_path`` arguments to Kumiho) prepend it
+    themselves so the normalization point stays a single, predictable place.
+    """
+    if not path or not path.strip():
+        return default() if default is not None else ""
+    parts = [p for p in path.split("/") if p]
+    return "/".join(parts)
 
 
 # ---------------------------------------------------------------------------
@@ -104,7 +236,7 @@ async def persist_workflow_run(
         step_summary: dict[str, str] = {}
         all_files: list[str] = []
         for sid, sr in step_results.items():
-            entry: dict[str, str] = {
+            entry: dict[str, Any] = {
                 "status": sr.get("status", "unknown"),
             }
             if sr.get("agent_id"):
@@ -114,7 +246,7 @@ async def persist_workflow_run(
             if sr.get("role"):
                 entry["role"] = sr["role"]
             # Include template name and skills from output_data
-            od = sr.get("output_data", {})
+            od = sr.get("output_data", {}) or {}
             if od.get("template_name"):
                 entry["template_name"] = od["template_name"]
             if od.get("skills"):
@@ -133,7 +265,9 @@ async def persist_workflow_run(
             # Budget: ~400 chars for preview, ~100 for other fields + JSON overhead.
             output = sr.get("output", "")
             if output:
-                entry["output_preview"] = output[:400]
+                entry["output_preview"] = _redact_for_persistence(str(output))[:400]
+            if sr.get("error"):
+                entry["error"] = _redact_for_persistence(str(sr["error"]))[:1000]
             # Include artifact path so recovery can read full output from disk
             if od.get("artifact_path"):
                 entry["artifact_path"] = od["artifact_path"]
@@ -141,7 +275,50 @@ async def persist_workflow_run(
             if files:
                 entry["files"] = json.dumps(files[:10])
                 all_files.extend(files[:20])
-            step_summary[sid] = json.dumps(entry)
+
+            # ALWAYS persist input_data + output_data for the run-view UI.
+            # Pre-process: coerce non-JSON values, redact obvious secrets,
+            # cap each individual string field. Then enforce a per-step
+            # JSON cap so a single rogue step can't blow the whole run's
+            # metadata budget.
+            id_data, id_trunc = _prepare_for_persistence(sr.get("input_data") or {})
+            od_data, od_trunc = _prepare_for_persistence(od)
+            entry["input_data"] = id_data
+            entry["output_data"] = od_data
+
+            entry_truncated = id_trunc or od_trunc
+            entry_json = json.dumps(entry, default=str)
+            if len(entry_json) > _PER_STEP_JSON_CAP:
+                # Step JSON still too large after per-string truncation.
+                # Drop the heaviest fields (artifact_content, transcript,
+                # rendered email body, raw entity dump) progressively until
+                # we fit. Mark _truncated so the UI shows a warning instead
+                # of pretending the data is complete.
+                entry_truncated = True
+                for heavy_key in (
+                    "artifact_content",
+                    "rendered",
+                    "entities",
+                    "metadata",
+                ):
+                    for blob in (entry["input_data"], entry["output_data"]):
+                        if isinstance(blob, dict) and heavy_key in blob:
+                            blob[heavy_key] = "[truncated]"
+                    entry_json = json.dumps(entry, default=str)
+                    if len(entry_json) <= _PER_STEP_JSON_CAP:
+                        break
+                # Last resort: hard-truncate the JSON. Drop a marker; the
+                # Rust gateway treats unparseable values as legacy entries
+                # so we keep the parseable shape by trimming the heaviest
+                # nested blobs to empty objects.
+                if len(entry_json) > _PER_STEP_JSON_CAP:
+                    entry["input_data"] = {"_truncated": True}
+                    entry["output_data"] = {"_truncated": True}
+                    entry_json = json.dumps(entry, default=str)
+            if entry_truncated:
+                entry["_truncated"] = True
+                entry_json = json.dumps(entry, default=str)
+            step_summary[sid] = entry_json
 
         # Count completed / failed / total for dashboard
         completed_count = sum(
@@ -256,6 +433,59 @@ async def _ensure_space_path(space_path: str) -> None:
         await asyncio.to_thread(_create)
 
 
+# ---------------------------------------------------------------------------
+# Attachment filename helpers (used by Manus register_output)
+# ---------------------------------------------------------------------------
+
+def _sanitize_attachment_filename(name: str) -> str:
+    """Strip path traversal + separators from an attachment filename.
+
+    Manus attachments arrive with whatever filename the agent produced;
+    that may include ``../`` segments or absolute paths. Defensively
+    flatten the name to a single component, drop dangerous characters,
+    and cap length so it cannot blow up the artifact directory layout.
+
+    Returns "" when nothing remains after sanitization — callers should
+    fall back to a positional ``attachment_<index>`` name.
+    """
+    if not isinstance(name, str):
+        return ""
+    # Drop null bytes outright — they confuse os.path on every platform.
+    cleaned = name.replace("\x00", "")
+    # Reject path traversal — replace any ``..`` segment with the rest of
+    # the basename so an attacker can't escape the attachments/ dir.
+    cleaned = cleaned.replace("..", "")
+    # Take only the basename — strip leading directories from BOTH unix
+    # and windows path separators since Manus is platform-agnostic.
+    cleaned = cleaned.replace("\\", "/").rsplit("/", 1)[-1]
+    # Strip leading dots so we never write hidden files into the artifact dir.
+    cleaned = cleaned.lstrip(".")
+    # Trim whitespace + cap length. 200 chars is well under every common
+    # filesystem limit (255 bytes on ext4/APFS, 260 on NTFS without long-path).
+    cleaned = cleaned.strip()[:200]
+    return cleaned
+
+
+def _unique_attachment_path(base_dir: str, subdir: str, file_name: str) -> str:
+    """Return a unique path under ``base_dir/subdir``.
+
+    If ``base_dir/subdir/file_name`` already exists, append ``-1``, ``-2``,
+    ... before the extension until the path is free. Used so two attachments
+    that share a filename within the same step don't overwrite each other.
+    """
+    target_dir = os.path.join(base_dir, subdir)
+    candidate = os.path.join(target_dir, file_name)
+    if not os.path.exists(candidate):
+        return candidate
+    stem, ext = os.path.splitext(file_name)
+    i = 1
+    while True:
+        alt = os.path.join(target_dir, f"{stem}-{i}{ext}")
+        if not os.path.exists(alt):
+            return alt
+        i += 1
+
+
 async def publish_workflow_entity(
     *,
     entity_name: str,
@@ -268,7 +498,8 @@ async def publish_workflow_entity(
     workflow_name: str,
     run_id: str,
     step_id: str,
-) -> dict[str, str] | None:
+    artifact_path_override: str | None = None,
+) -> dict[str, Any] | None:
     """Register a workflow output as a Kumiho entity and tag it.
 
     This creates an item + revision in Kumiho, then tags the revision.
@@ -288,7 +519,15 @@ async def publish_workflow_entity(
             _log(f"workflow_memory: Kumiho SDK not available, skipping entity publish for {entity_name}")
             return None
 
-        space_path = entity_space or f"/{_project()}/WorkflowOutputs"
+        # Canonicalize the user-supplied space path so the write side here
+        # matches the read side in `resolve_entity`. Without this, an output
+        # step writing ``Construct/WorkflowOutputs/Github`` and a resolve
+        # step reading ``/Construct/WorkflowOutputs/Github`` would publish
+        # and lookup at different paths.
+        space_path = _canonical_space(
+            entity_space,
+            default=lambda: f"{_project()}/WorkflowOutputs",
+        )
         # Walk the full space path and ensure every segment exists. The SDK's
         # ensure_space only creates a single space directly under a project,
         # so deeper paths used to fail at create_item below with NOT_FOUND.
@@ -333,19 +572,42 @@ async def publish_workflow_entity(
             _log(f"workflow_memory: entity creation returned no kref for {entity_name}")
             return None
 
-        # Write content to disk as a hard copy artifact
-        artifact_dir = os.path.expanduser(f"~/.construct/artifacts/{workflow_name}/{run_id}")
-        os.makedirs(artifact_dir, exist_ok=True)
-        ext = {"json": ".json", "markdown": ".md", "text": ".txt"}.get(
-            content_format, ".md"
-        )
-        artifact_path = os.path.join(artifact_dir, f"{step_id}{ext}")
-        try:
-            with open(artifact_path, "w", encoding="utf-8") as f:
-                f.write(content)
-        except Exception as e:
-            _log(f"workflow_memory: failed to write artifact to {artifact_path}: {e}")
-            artifact_path = ""
+        # Write content to disk as a hard copy artifact — unless the caller
+        # supplied an override path (Manus register_output uses an
+        # entity-anchored path that lives outside the per-run tree, and
+        # writes the file itself). In override mode we trust the file to
+        # exist; the rest of the publish flow is unchanged.
+        artifact_write_error = ""
+        if artifact_path_override:
+            artifact_path = artifact_path_override
+            ext = os.path.splitext(artifact_path)[1] or ".md"
+            if not os.path.exists(artifact_path):
+                # The override path is supposed to be written by the
+                # caller before invoking publish. If it isn't, surface
+                # a clear error rather than silently producing a tagless
+                # entity (which the output-step path also refuses to do).
+                artifact_write_error = (
+                    f"artifact_path_override does not exist on disk: {artifact_path}"
+                )
+                _log(
+                    "workflow_memory: artifact_path_override missing — "
+                    f"{artifact_path}"
+                )
+                artifact_path = ""
+        else:
+            artifact_dir = os.path.expanduser(f"~/.construct/artifacts/{workflow_name}/{run_id}")
+            os.makedirs(artifact_dir, exist_ok=True)
+            ext = {"json": ".json", "markdown": ".md", "text": ".txt"}.get(
+                content_format, ".md"
+            )
+            artifact_path = os.path.join(artifact_dir, f"{step_id}{ext}")
+            try:
+                with open(artifact_path, "w", encoding="utf-8") as f:
+                    f.write(content)
+            except Exception as e:
+                artifact_write_error = str(e)
+                _log(f"workflow_memory: failed to write artifact to {artifact_path}: {e}")
+                artifact_path = ""
 
         # Create a revision with the content and tag it in one call
         metadata = {
@@ -357,21 +619,75 @@ async def publish_workflow_entity(
         }
         if artifact_path:
             metadata["artifact_path"] = artifact_path
-        rev = await KUMIHO_SDK.create_revision(item_kref, metadata, tag=entity_tag)
+        # Create the revision untagged first. Kumiho revisions can become
+        # immutable once tagged/published, so artifacts must be attached before
+        # applying the workflow-visible entity tag.
+        rev = await KUMIHO_SDK.create_revision(item_kref, metadata, tag=None)
         rev_kref = rev.get("kref", "") if isinstance(rev, dict) else getattr(rev, "kref", "")
         if not rev_kref:
             _log(f"workflow_memory: revision creation returned no kref for entity {entity_name}")
             return None
 
-        # Attach the disk artifact to the revision
+        # Attach the disk artifact to the revision before tagging it.
+        artifact_kref = ""
+        artifact_attached = False
+        artifact_error = artifact_write_error
         if artifact_path and rev_kref:
             try:
-                await KUMIHO_SDK.create_artifact(rev_kref, f"{step_id}{ext}", artifact_path)
+                # In override mode, use the override path's basename so the
+                # artifact's stored file_name matches what's actually on disk
+                # (e.g. "content.md" for Manus, not "<step_id>.md").
+                artifact_file_name = (
+                    os.path.basename(artifact_path)
+                    if artifact_path_override
+                    else f"{step_id}{ext}"
+                )
+                artifact = await KUMIHO_SDK.create_artifact(
+                    rev_kref,
+                    artifact_file_name,
+                    artifact_path,
+                )
+                artifact_kref = (
+                    artifact.get("kref", "")
+                    if isinstance(artifact, dict)
+                    else getattr(artifact, "kref", "")
+                )
+                artifact_attached = bool(artifact_kref)
+                if not artifact_attached:
+                    artifact_error = "create_artifact returned no artifact kref"
             except Exception as e:
-                _log(f"workflow_memory: failed to attach artifact to revision: {e}")
+                artifact_error = str(e)
+                _log(f"workflow_memory: failed to attach artifact to revision {rev_kref}: {e}")
+
+        tag_applied = False
+        tag_error = ""
+        if not artifact_path:
+            tag_error = f"artifact write failed; refusing to tag revision '{rev_kref}' as '{entity_tag}'"
+            _log(f"workflow_memory: {tag_error}")
+        elif not artifact_attached:
+            tag_error = f"artifact attach failed; refusing to tag revision '{rev_kref}' as '{entity_tag}'"
+            _log(f"workflow_memory: {tag_error}")
+        elif entity_tag:
+            try:
+                tag_result = await KUMIHO_SDK.tag_revision(rev_kref, entity_tag)
+                if isinstance(tag_result, dict) and tag_result.get("error"):
+                    raise RuntimeError(str(tag_result["error"]))
+                tag_applied = True
+            except Exception as e:
+                tag_error = str(e)
+                _log(f"workflow_memory: failed to tag revision {rev_kref} with '{entity_tag}': {e}")
 
         _log(f"workflow_memory: published entity: {entity_name} (kind={entity_kind}, tag={entity_tag}, artifact={artifact_path or 'none'})")
-        return {"item_kref": item_kref, "revision_kref": rev_kref}
+        return {
+            "item_kref": item_kref,
+            "revision_kref": rev_kref,
+            "artifact_path": artifact_path,
+            "artifact_kref": artifact_kref,
+            "artifact_attached": artifact_attached,
+            "artifact_error": artifact_error,
+            "tag_applied": tag_applied,
+            "tag_error": tag_error,
+        }
 
     except Exception as e:
         import traceback
@@ -395,19 +711,51 @@ async def resolve_entity(
     if not KUMIHO_SDK._available:
         raise RuntimeError("Kumiho SDK not available")
 
-    # Search for items matching the kind
-    context = space or f"{_project()}/WorkflowOutputs"
+    # Search for items matching the kind. Canonicalize the lookup path so
+    # ``space="/Construct/WorkflowOutputs/Github"`` and
+    # ``space="Construct/WorkflowOutputs/Github"`` resolve to the same
+    # context as the path used by `publish_workflow_entity`.
+    context = _canonical_space(
+        space,
+        default=lambda: f"{_project()}/WorkflowOutputs",
+    )
     items = await KUMIHO_SDK.list_items(context)
+    _log(f"resolve_entity: list_items({context}) → {len(items)} items")
 
     # Filter by kind
     matched = [it for it in items if it.get("kind") == kind]
+    _log(f"resolve_entity: kind={kind} → {len(matched)} items")
 
-    # Filter by name pattern if provided
+    # Filter by name pattern if provided. Kumiho stores item names as
+    # ``<base>.<kind>`` internally, so a user pattern like
+    # ``zeroclaw-repo`` (kind ``research``) wouldn't match the stored
+    # ``zeroclaw-repo.research`` under raw fnmatch. We strip the
+    # ``.<kind>`` suffix (only when it matches the item's own kind, to
+    # avoid eating arbitrary trailing-dot segments) before matching, and
+    # also accept the raw stored name for users who include the suffix.
     if name_pattern:
         import fnmatch
-        matched = [it for it in matched if fnmatch.fnmatch(it.get("name", ""), name_pattern)]
+
+        def _base_name(it: dict[str, Any]) -> str:
+            name = it.get("name", "")
+            it_kind = it.get("kind", "")
+            suffix = f".{it_kind}"
+            if it_kind and name.endswith(suffix):
+                return name[: -len(suffix)]
+            return name
+
+        matched = [
+            it for it in matched
+            if fnmatch.fnmatch(_base_name(it), name_pattern)
+            or fnmatch.fnmatch(it.get("name", ""), name_pattern)
+        ]
+        _log(f"resolve_entity: name_pattern={name_pattern!r} → {len(matched)} items")
 
     if not matched:
+        _log(
+            f"resolve_entity: NO MATCH — kind={kind} tag={tag} "
+            f"name_pattern={name_pattern!r} space={context}"
+        )
         return None
 
     if mode == "latest":
@@ -432,7 +780,20 @@ async def resolve_entity(
                     if k not in rev_meta:
                         rev_meta[k] = v
                 rev["metadata"] = rev_meta
+                _log(
+                    f"resolve_entity: matched {item.get('name')} "
+                    f"kref={item_kref} (rev tag={tag!r})"
+                )
                 return rev
+            else:
+                _log(
+                    f"resolve_entity: item {item.get('name')} kref={item_kref} "
+                    f"has no revision tagged {tag!r}"
+                )
+        _log(
+            f"resolve_entity: NO MATCH — kind={kind} tag={tag} "
+            f"name_pattern={name_pattern!r} space={context}"
+        )
         return None
     else:  # all
         results = []
@@ -823,13 +1184,12 @@ async def mark_stale_runs() -> int:
     executor is driving it.  This scans Kumiho for such runs and updates
     their status to 'failed' with a clear reason.
 
-    Also cleans up leftover checkpoint files.
+    Also marks matching local checkpoints failed so explicit Retry can load the
+    interrupted state instead of losing it on startup.
 
     Returns the number of runs marked stale.
     """
     import os
-    import glob
-
     marked = 0
     _log("workflow_memory: scanning for stale runs...")
 
@@ -876,6 +1236,7 @@ async def mark_stale_runs() -> int:
 
                     await KUMIHO_SDK.create_revision(kref, updated_meta, tag="latest")
                     run_id = meta.get("run_id", kref)
+                    _mark_checkpoint_failed(run_id, updated_meta["error"], updated_meta["completed_at"])
                     _log(f"workflow_memory: marked stale run={run_id[:8]} (was {status})")
                     marked += 1
 
@@ -886,22 +1247,31 @@ async def mark_stale_runs() -> int:
     except Exception as exc:
         _log(f"workflow_memory: stale run scan failed: {exc}")
 
-    # --- 2. Clean up orphaned checkpoint files ---
-    checkpoint_dir = os.path.expanduser("~/.construct/workflow_checkpoints")
-    try:
-        for cp_file in glob.glob(os.path.join(checkpoint_dir, "*.json")):
-            try:
-                os.remove(cp_file)
-                _log(f"workflow_memory: cleaned up checkpoint {os.path.basename(cp_file)}")
-            except OSError:
-                pass
-    except Exception:
-        pass
-
     if marked:
         _log(f"workflow_memory: marked {marked} stale run(s) as failed on startup")
 
     return marked
+
+
+def _mark_checkpoint_failed(run_id: str, error: str, completed_at: str) -> bool:
+    """Update a local checkpoint to failed without deleting retry state."""
+    checkpoint_dir = os.path.expanduser("~/.construct/workflow_checkpoints")
+    path = os.path.join(checkpoint_dir, f"{run_id}.json")
+    if not os.path.exists(path):
+        return False
+    try:
+        with open(path, "r") as f:
+            data = json.load(f)
+        data["status"] = "failed"
+        data["error"] = error
+        data["completed_at"] = completed_at
+        with open(path, "w") as f:
+            json.dump(data, f, indent=2, default=str)
+        _log(f"workflow_memory: marked checkpoint {os.path.basename(path)} failed")
+        return True
+    except Exception as exc:
+        _log(f"workflow_memory: failed to update checkpoint {path}: {exc}")
+        return False
 
 
 # ---------------------------------------------------------------------------

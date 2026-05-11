@@ -48,6 +48,7 @@ class StepType(str, Enum):
     FOR_EACH = "for_each"
     TAG = "tag"
     DEPRECATE = "deprecate"
+    MANUS = "manus"
 
 
 class JoinStrategy(str, Enum):
@@ -250,6 +251,13 @@ class ConditionalBranch(BaseModel):
     """A single branch in a conditional step."""
     condition: str  # Expression: "${step_id.status} == 'completed'" or "default"
     goto: str       # Step ID to jump to
+    # Optional expression evaluated when this branch matches; result becomes
+    # the conditional step's `output` so downstream steps can read
+    # ``${gate.output}``. Evaluated by the same simpleeval-based evaluator as
+    # ``condition`` — supports literals (``"'approved'"``), step refs
+    # (``"review.status"``), arithmetic, and ternary
+    # (``"score > 0.8 ? 'go' : 'stop'"``).
+    value: str | None = None
 
 
 class ConditionalStepConfig(BaseModel):
@@ -271,6 +279,20 @@ class ParallelStepConfig(BaseModel):
                 "parallel.steps must list at least one step ID. "
                 "If you don't need explicit grouping, drop the parallel wrapper "
                 "entirely — sibling steps without depends_on run in parallel naturally."
+            )
+        # Duplicate child refs corrupt _exec_parallel accounting: results is a
+        # dict keyed by step_id, so two refs to the same id produce one entry
+        # while `total = len(cfg.steps)` counts both — giving a false-fail
+        # `completed: 1, total: 2`. Reject at parse time.
+        counts: dict[str, int] = {}
+        for sid in v:
+            counts[sid] = counts.get(sid, 0) + 1
+        dups = [(sid, n) for sid, n in counts.items() if n > 1]
+        if dups:
+            sid, n = dups[0]
+            raise ValueError(
+                f"parallel.steps must not contain duplicate child references: "
+                f"'{sid}' appears {n} times"
             )
         return v
 
@@ -397,6 +419,106 @@ class ForEachStepConfig(BaseModel):
     fail_fast: bool = True                   # Stop on first iteration failure
     max_iterations: int = Field(default=20, ge=1, le=50)  # Safety cap
 
+    @field_validator("steps")
+    @classmethod
+    def steps_must_be_unique(cls, v: list[str]) -> list[str]:
+        # Same accounting hazard as ParallelStepConfig: duplicate child refs
+        # would write to the same `<step_id>__iter_<N>` keys twice and the
+        # second write clobbers the first. Reject at parse time.
+        counts: dict[str, int] = {}
+        for sid in v:
+            counts[sid] = counts.get(sid, 0) + 1
+        dups = [(sid, n) for sid, n in counts.items() if n > 1]
+        if dups:
+            sid, n = dups[0]
+            raise ValueError(
+                f"for_each.steps must not contain duplicate child references: "
+                f"'{sid}' appears {n} times"
+            )
+        return v
+
+
+class ManusRegisterOutputConfig(BaseModel):
+    """Auto-publish a Manus step's result as a Kumiho entity.
+
+    When attached to a `manus:` step, after the task reaches a successful
+    terminal state (`agent_status == "stopped"` without structured-output
+    or error_message events), the step internally:
+
+    1. Picks a content source (assistant message text or structured output
+       JSON) and writes it to disk at an entity-anchored path:
+       ``~/.construct/artifacts/<canonical_space>/<entity_kind>/<entity_name>/content.md``
+    2. Downloads all attachments (best-effort) into
+       ``<entity_dir>/attachments/`` with sanitized filenames + collision
+       suffixes.
+    3. Publishes the entity revision via the shared
+       :func:`publish_workflow_entity` helper (re-using the canonical-space
+       semantics + tag flow that `output:` steps use) AND attaches each
+       downloaded file to the Kumiho revision as an artifact.
+
+    The disk path is entity-anchored (NOT per-run) because Manus is the
+    debut of this new artifact layout — long-running research outputs
+    don't naturally map to ephemeral run ids. The `output:` step keeps its
+    existing per-run path for backward compatibility.
+    """
+    entity_name: str
+    entity_kind: str
+    entity_tag: str = "published"
+    entity_space: str | None = None
+    register_attachments: bool = True
+    content_source: Literal["message", "structured"] = "message"
+
+
+class ManusStepConfig(BaseModel):
+    """Config for 'manus' step type — delegate web research to Manus AI.
+
+    Manus is a hosted general-purpose web agent. The step creates a Manus
+    task with the configured prompt (optionally constrained by a JSON
+    schema for structured output), then polls the task's message stream
+    until the agent reaches a terminal state (``stopped`` or ``error``).
+    The final assistant message — plus any structured-output payload — is
+    returned as the step's result so downstream steps can consume it via
+    ``${manus_step.output_data.*}``.
+
+    Auth: the Manus API key is read from the env var named in
+    ``[manus].api_key_env`` (default ``MANUS_API_KEY``). Construct never
+    persists the key value — only the env var name — so workflow YAML
+    stays safe to commit.
+
+    Polling rationale: Manus exposes a streaming SSE channel and a
+    cursor-based poll API. The first iteration uses polling because it's
+    operationally simpler (single asyncio task, cancel just stops looping)
+    and Manus tasks are long-lived enough that 5-second polls don't add
+    meaningful latency. We can swap to SSE later without changing the
+    public step contract.
+    """
+    prompt: str
+    structured_output_schema: dict[str, Any] | None = None
+    connectors: list[str] = Field(default_factory=list)
+    enable_skills: list[str] = Field(default_factory=list)
+    force_skills: list[str] = Field(default_factory=list)
+    agent_profile: str | None = None
+    locale: str | None = None
+    project_id: str | None = None
+    title: str | None = None
+    timeout_seconds: int | None = None
+    poll_interval_seconds: int | None = None
+    allow_failure: bool = False
+    # Auth profile binding — an ``AuthProfile.id`` (e.g. ``manus:work``) from
+    # Kumiho's auth-profiles store. When set, the runtime resolves the bound
+    # token via the gateway's ``POST /api/auth/profiles/{id}/resolve``
+    # endpoint at execution time and sends it as the ``x-manus-api-key``
+    # header. When unset, the runtime falls back to the env var configured in
+    # ``[manus].api_key_env`` (default ``MANUS_API_KEY``). Never the token
+    # bytes themselves — only the profile id, which is safe to commit in YAML.
+    credentials_ref: str | None = None
+    # Auto-publish the result as a Kumiho entity + download attachments to
+    # an entity-anchored disk path. See ``ManusRegisterOutputConfig`` for
+    # the disk layout + Kumiho publish semantics. When None (default) the
+    # step behaves exactly as before — caller is responsible for any
+    # downstream registration via a separate ``output:`` step.
+    register_output: ManusRegisterOutputConfig | None = None
+
 
 class A2AStepConfig(BaseModel):
     """Config for 'a2a' step type — call external A2A agent."""
@@ -516,6 +638,7 @@ class StepDef(BaseModel):
     handoff: HandoffStepConfig | None = None
     tag_step: TagStepConfig | None = None
     deprecate_step: DeprecateStepConfig | None = None
+    manus: ManusStepConfig | None = None
 
     # Retry
     retry: int = Field(default=0, ge=0, le=5)
@@ -581,6 +704,87 @@ class StepDef(BaseModel):
                         data["action"] = raw_type.lower()
                     data["type"] = defaults["type"]
 
+        return data
+
+    @model_validator(mode="before")
+    @classmethod
+    def bridge_legacy_conditional(cls, data: Any) -> Any:
+        """Translate legacy flat conditional syntax to canonical
+        ``conditional.branches``.
+
+        The frontend editor (and many hand-written workflows) emit::
+
+            type: conditional
+            condition: "${X.status} == 'completed'"
+            on_true: step_a
+            on_false: step_b
+
+        but the executor + validator only consume the nested form::
+
+            type: conditional
+            conditional:
+              branches:
+                - {condition: "...", goto: step_a}
+                - {condition: "default", goto: step_b}
+
+        Run before field-type validation so the dict-shaped flat fields
+        become a populated ``ConditionalStepConfig`` and the legacy keys
+        are dropped (they are not declared on ``StepDef`` and would be
+        ignored, but we drop them explicitly to keep ``model_dump`` clean
+        and avoid surprising future strict-mode rejections).
+
+        No-op when ``conditional.branches`` is already provided — caller
+        already gave canonical form, so we silently drop a stray top-level
+        ``condition`` (mixed input) and leave branches alone.
+        """
+        if not isinstance(data, dict):
+            return data
+        # Only relevant for conditional steps. Be tolerant about how the
+        # type is spelled (StepType.CONDITIONAL or the literal string).
+        raw_type = data.get("type", "")
+        type_str = raw_type.value if isinstance(raw_type, StepType) else str(raw_type)
+        if type_str != StepType.CONDITIONAL.value:
+            return data
+
+        existing = data.get("conditional")
+        # Already canonical form — drop legacy top-level keys and bail.
+        if isinstance(existing, dict) and existing.get("branches"):
+            for k in ("condition", "on_true", "on_false",
+                      "on_true_value", "on_false_value"):
+                data.pop(k, None)
+            return data
+
+        def _clean(v: Any) -> str:
+            return v.strip() if isinstance(v, str) else ""
+
+        cond = _clean(data.get("condition"))
+        on_true = _clean(data.get("on_true"))
+        on_false = _clean(data.get("on_false"))
+        on_true_value = data.get("on_true_value")
+        on_false_value = data.get("on_false_value")
+
+        # Need a condition AND at least one target to translate. Otherwise
+        # leave untouched so the validator can emit its clearer "missing
+        # config / missing branches" error.
+        if not cond or (not on_true and not on_false):
+            return data
+
+        branches: list[dict[str, Any]] = []
+        if on_true:
+            branch_t: dict[str, Any] = {"condition": cond, "goto": on_true}
+            if isinstance(on_true_value, str) and on_true_value:
+                branch_t["value"] = on_true_value
+            branches.append(branch_t)
+        if on_false:
+            branch_f: dict[str, Any] = {"condition": "default", "goto": on_false}
+            if isinstance(on_false_value, str) and on_false_value:
+                branch_f["value"] = on_false_value
+            branches.append(branch_f)
+
+        data["conditional"] = {"branches": branches}
+        for k in ("condition", "on_true", "on_false",
+                  "on_true_value", "on_false_value"):
+            data.pop(k, None)
         return data
 
     @field_validator("name", mode="before")
@@ -685,6 +889,24 @@ class WorkflowDef(BaseModel):
     def at_least_one_step(cls, v: list[StepDef]) -> list[StepDef]:
         if not v:
             raise ValueError("Workflow must have at least one step")
+        # Duplicate step ids are always a bug: ``step_by_id`` returns the
+        # first match while the frontend's `new Map(...)` round-trip keeps
+        # the last, so the closure preview can disagree with the executor.
+        # Reject at parse time rather than papering over it everywhere
+        # downstream.
+        seen: dict[str, int] = {}
+        duplicates: list[str] = []
+        for s in v:
+            if s.id in seen:
+                if s.id not in duplicates:
+                    duplicates.append(s.id)
+            else:
+                seen[s.id] = 1
+        if duplicates:
+            raise ValueError(
+                f"Duplicate step id(s): {', '.join(sorted(duplicates))}. "
+                f"Each step.id must be unique within a workflow."
+            )
         return v
 
     def step_by_id(self, step_id: str) -> StepDef | None:
@@ -708,6 +930,12 @@ class StepResult(BaseModel):
     step_id: str
     status: Literal["pending", "running", "completed", "failed", "skipped"] = "pending"
     output: str = ""
+    # input_data: the resolved/interpolated inputs at execution time, captured
+    # by each `_exec_*` handler so the run-view UI can render the actual values
+    # the step ran with (NOT the raw YAML config — that may contain ${...}
+    # references that haven't been resolved yet). Persisted alongside
+    # output_data so the dashboard can show full per-step detail.
+    input_data: dict[str, Any] = Field(default_factory=dict)
     output_data: dict[str, Any] = Field(default_factory=dict)
     error: str = ""
     agent_id: str | None = None
@@ -738,3 +966,43 @@ class WorkflowState(BaseModel):
     # Empty strings mean "built-in / disk fallback" — name-matching is fine.
     workflow_item_kref: str = ""
     workflow_revision_kref: str = ""
+    # Side-channel cache for conditional-step matched gotos. Keyed by
+    # step id. Held off ``StepResult.output_data`` so the entry can't leak
+    # into the simpleeval names dict or ``${gate.output_data.*}`` lookups.
+    conditional_routes: dict[str, str] = Field(default_factory=dict)
+    # Per-conditional branch outcome: which branch matched + its goto, plus
+    # the goto targets on every non-matched branch. Consumed by the scheduler
+    # to gate steps that are downstream ONLY of a non-matched branch (so
+    # auto-derived ``depends_on`` from interpolation doesn't force them to
+    # run). Persisted so that a run checkpointed mid-flight after a
+    # conditional has fired resumes with the same gating still in force —
+    # otherwise loser-branch steps would execute on resume.
+    conditional_branch_results: dict[str, dict[str, Any]] = Field(
+        default_factory=dict
+    )
+
+    # Cancel signal — set by the cancel_workflow MCP tool. Distinct from
+    # ``status: CANCELLED`` (the OUTCOME): ``cancel_requested`` is the
+    # SIGNAL the executor reads at step boundaries / inside long-running
+    # subprocess polls, then transitions the run to CANCELLED cleanly.
+    # Excluded from persistence/checkpoint dumps because it's a transient
+    # in-memory signal — once observed and the status flips to CANCELLED,
+    # the flag's job is done.
+    cancel_requested: bool = Field(default=False, exclude=True)
+    # Live subprocess handles for the run, registered by step handlers
+    # (_exec_shell, _exec_python). When cancel fires, the executor walks
+    # this list and kills each process so subprocesses don't outlive
+    # their parent run. Excluded from persistence: Process objects are
+    # not serializable and only meaningful within the running executor.
+    running_processes: list[Any] = Field(default_factory=list, exclude=True)
+    # Run-to-step closure — set by the executor when ``target_step_id`` is
+    # passed to ``execute_workflow``. Step handlers (currently
+    # ``_exec_parallel``, ``_exec_for_each``) consult this to skip non-closure
+    # children. Empty set means "no restriction" (normal full run). Excluded
+    # from persistence: it's a transient input to the running executor and is
+    # always re-derived from ``target_step_id`` on resume.
+    run_to_closure: set[str] = Field(default_factory=set, exclude=True)
+    # Persisted run-to-step target. Closure is derived from this so a paused
+    # run-to-here resumed from checkpoint honours the same scoping it started
+    # with. ``None`` means "no scoping" (normal full run).
+    target_step_id: str | None = None

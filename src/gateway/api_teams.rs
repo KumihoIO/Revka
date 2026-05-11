@@ -155,29 +155,10 @@ pub struct TeamEdgeResponse {
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
-/// Convert Kumiho error to an HTTP response.
-fn kumiho_err(e: KumihoError) -> (StatusCode, Json<serde_json::Value>) {
-    match &e {
-        KumihoError::Unreachable(_) => (
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(serde_json::json!({ "error": format!("Kumiho service unavailable: {e}") })),
-        ),
-        KumihoError::Api { status, body } => {
-            let code = if *status == 401 || *status == 403 {
-                StatusCode::BAD_GATEWAY
-            } else {
-                StatusCode::from_u16(*status).unwrap_or(StatusCode::BAD_GATEWAY)
-            };
-            (
-                code,
-                Json(serde_json::json!({ "error": format!("Kumiho upstream: {body}") })),
-            )
-        }
-        KumihoError::Decode(msg) => (
-            StatusCode::BAD_GATEWAY,
-            Json(serde_json::json!({ "error": format!("Bad response from Kumiho: {msg}") })),
-        ),
-    }
+/// Convert Kumiho error to an HTTP response (delegates to the centralised
+/// helper in `kumiho_client`).
+fn kumiho_err(e: KumihoError) -> axum::response::Response {
+    super::kumiho_client::kumiho_error_to_response(e)
 }
 
 /// Build a full `TeamResponse` for a bundle kref by fetching members, enriching
@@ -520,10 +501,10 @@ pub async fn handle_list_teams(
             )
             .into_response();
         }
-        Err(ref e) if matches!(e, KumihoError::Api { status: 500, .. }) => {
-            tracing::warn!("Teams list failed (Kumiho 500, likely corrupted data): {e}");
-            return Json(serde_json::json!({ "teams": [], "total_count": 0, "page": 1, "per_page": 9, "warning": "Kumiho returned a server error." })).into_response();
-        }
+        // 500 from Kumiho previously returned a degraded 200/empty here. That
+        // diverged from the rest of the gateway's contract (non-retried 5xx →
+        // 503 + `kumiho_upstream_unavailable`). Route through the central
+        // mapper so the dashboard sees a single consistent shape.
         Err(e) => return kumiho_err(e).into_response(),
     };
 

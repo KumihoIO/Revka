@@ -84,7 +84,6 @@ steps:
   - id: events
     name: "Create chapter events"
     type: agent
-    depends_on: [world_building]
     agent:
       agent_type: claude
       role: event-creator

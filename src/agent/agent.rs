@@ -92,6 +92,42 @@ pub(crate) fn filter_tool_specs_for_architect(tool_specs: &mut Vec<ToolSpec>, us
     });
 }
 
+/// Approximate context window (tokens) for a given model name.
+///
+/// Used by `turn_streamed` to size `ContextCompressor` so the Operator chat
+/// can compress *before* it exceeds the provider's hard limit.  Mirrors the
+/// model→window heuristic used in `loop_.rs` for the interactive loop.
+///
+/// Falls back to a conservative `128_000` for unknown models — high enough
+/// not to over-compress, low enough that a single 1M-token tool result will
+/// trigger compaction.
+pub(crate) fn context_window_for_model(model: &str) -> usize {
+    // Strip provider prefix (e.g. "anthropic/claude-opus-4-7" -> "claude-opus-4-7")
+    // so OpenRouter-style and bare model names map to the same window.
+    let bare = model.rsplit('/').next().unwrap_or(model);
+
+    // Anthropic Claude 4-family (Opus/Sonnet/Haiku 4.x): 1M context.
+    if bare.starts_with("claude-opus-4")
+        || bare.starts_with("claude-sonnet-4")
+        || bare.starts_with("claude-haiku-4")
+        || bare.starts_with("claude-4")
+    {
+        1_000_000
+    } else if bare.starts_with("claude-3") || bare.starts_with("claude-") {
+        // Older Claude 3.x / 3.5 / 3.7: 200K.
+        200_000
+    } else if bare.starts_with("gpt-4o") || bare.starts_with("gpt-5") {
+        128_000
+    } else if bare.starts_with("o1") || bare.starts_with("o3") {
+        200_000
+    } else if bare.starts_with("gemini-2") || bare.starts_with("gemini-1.5") {
+        1_000_000
+    } else {
+        // Conservative default — better to over-compress than blow up the request.
+        128_000
+    }
+}
+
 pub struct Agent {
     provider: Box<dyn Provider>,
     /// Logical provider name (e.g. "anthropic", "openrouter") used for cost
@@ -485,6 +521,15 @@ impl Agent {
         self.history.clear();
     }
 
+    /// Test-only: override the model name the agent uses for compression
+    /// sizing.  Production code sets this through the builder; the tests use
+    /// it to exercise specific context-window tiers without a full builder
+    /// dance.
+    #[cfg(test)]
+    pub fn set_model_name_for_test(&mut self, model: impl Into<String>) {
+        self.model_name = model.into();
+    }
+
     pub fn set_memory_session_id(&mut self, session_id: Option<String>) {
         self.memory_session_id = session_id;
     }
@@ -808,6 +853,147 @@ impl Agent {
         self.history.extend(other_messages);
     }
 
+    /// Token-aware compression for the Operator chat history.
+    ///
+    /// `trim_history` only caps by **message count**, so a single huge tool
+    /// result (Manus task output, Kumiho revision content, web fetch) can
+    /// pin the chat at 1M+ tokens with the 500-message cap still satisfied
+    /// and break with `prompt is too long`.
+    ///
+    /// This wraps [`ContextCompressor::compress_if_needed`] — the same path
+    /// the workflow loop (`loop_.rs`) and channel handlers (`channels/mod.rs`)
+    /// use — and surfaces the result through `self.history`.  When the
+    /// compressor decides to summarize, we preserve structural typing by:
+    ///   1. Keeping all leading system messages intact.
+    ///   2. Keeping the trailing `protect_last_n` original messages intact
+    ///      (skipping the boundary forward past any orphaned `ToolResults`
+    ///      to satisfy Anthropic's tool_use/tool_result pairing rule).
+    ///   3. Replacing the middle with one synthetic assistant message
+    ///      carrying the compressor's summary.
+    ///
+    /// Returns the [`CompressionResult`] (with `compressed: false` when the
+    /// history is under threshold).  Errors are logged and treated as a no-op
+    /// so a single compressor failure can't kill a turn.
+    async fn compress_history_if_needed(
+        &mut self,
+        model: &str,
+    ) -> crate::agent::context_compressor::CompressionResult {
+        use crate::agent::context_compressor::{
+            CompressionResult, ContextCompressor, estimate_tokens,
+        };
+
+        // Cheap short-circuit — most turns never come close to the threshold.
+        // Avoids cloning the full flat-message vec when there's nothing to do.
+        if !self.config.context_compression.enabled {
+            return CompressionResult {
+                compressed: false,
+                tokens_before: 0,
+                tokens_after: 0,
+                passes_used: 0,
+            };
+        }
+
+        let context_window = context_window_for_model(model);
+        let compressor =
+            ContextCompressor::new(self.config.context_compression.clone(), context_window)
+                .with_memory(Arc::clone(&self.memory));
+
+        // Flatten history for the compressor.  We rebuild `self.history` from
+        // the compressed result if compression actually fires.
+        let mut flat = self.tool_dispatcher.to_provider_messages(&self.history);
+        let before_len = flat.len();
+
+        let result = match compressor
+            .compress_if_needed(&mut flat, self.provider.as_ref(), model)
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "context_compressor: compression failed; continuing with full history (provider may reject)"
+                );
+                let tokens =
+                    estimate_tokens(&self.tool_dispatcher.to_provider_messages(&self.history));
+                return CompressionResult {
+                    compressed: false,
+                    tokens_before: tokens,
+                    tokens_after: tokens,
+                    passes_used: 0,
+                };
+            }
+        };
+
+        if !result.compressed {
+            return result;
+        }
+
+        tracing::info!(
+            tokens_before = result.tokens_before,
+            tokens_after = result.tokens_after,
+            passes_used = result.passes_used,
+            messages_before = before_len,
+            messages_after = flat.len(),
+            "context_compressor: compressed Operator chat history"
+        );
+
+        self.apply_compressed_history(&flat);
+
+        result
+    }
+
+    /// Rebuild `self.history` after the compressor mutated the flat message
+    /// list.  Preserves system messages and the structural tail; replaces the
+    /// summarised middle with a single synthetic assistant message carrying
+    /// the summary text the compressor emitted.
+    ///
+    /// We can't perfectly reverse `to_provider_messages` (it's lossy for
+    /// `AssistantToolCalls`/`ToolResults`), so this is the pragmatic v1
+    /// described in the fix plan: head system + summary + last-N originals.
+    fn apply_compressed_history(&mut self, compressed: &[ChatMessage]) {
+        // Extract the summary text the compressor produced.  The compressor
+        // tags it with "[CONTEXT SUMMARY" — find the first such message in
+        // the compressed flat list.  Fall back to a generic notice if the
+        // marker is missing (e.g. compressor used only fast_trim).
+        let summary_text = compressed
+            .iter()
+            .find(|m| m.content.starts_with("[CONTEXT SUMMARY"))
+            .map(|m| m.content.clone())
+            .unwrap_or_else(|| {
+                "[CONTEXT SUMMARY — earlier conversation compacted by fast-trim]".to_string()
+            });
+
+        let protect_last_n = self.config.context_compression.protect_last_n;
+
+        // Split `self.history` into [system...] | [middle...] | [tail].
+        let mut system_msgs: Vec<ConversationMessage> = Vec::new();
+        let mut rest: Vec<ConversationMessage> = Vec::new();
+        for msg in self.history.drain(..) {
+            match &msg {
+                ConversationMessage::Chat(c) if c.role == "system" => system_msgs.push(msg),
+                _ => rest.push(msg),
+            }
+        }
+
+        let tail_start = rest.len().saturating_sub(protect_last_n);
+        // Drop any leading ToolResults in the tail — they'd be orphaned by
+        // the splice (their paired AssistantToolCalls just got summarised).
+        let mut tail_start_safe = tail_start;
+        while tail_start_safe < rest.len()
+            && matches!(rest[tail_start_safe], ConversationMessage::ToolResults(_))
+        {
+            tail_start_safe += 1;
+        }
+        let tail: Vec<ConversationMessage> = rest.split_off(tail_start_safe);
+
+        let mut rebuilt = system_msgs;
+        rebuilt.push(ConversationMessage::Chat(ChatMessage::assistant(
+            summary_text,
+        )));
+        rebuilt.extend(tail);
+        self.history = rebuilt;
+    }
+
     fn build_system_prompt(&self) -> Result<String> {
         let instructions = self.tool_dispatcher.prompt_instructions(&self.tools);
         let ctx = PromptContext {
@@ -1021,7 +1207,27 @@ impl Agent {
         let effective_model = self.classify_model(user_message);
 
         for _ in 0..self.config.max_tool_iterations {
+            // Token-aware compression — keeps history under the model's
+            // context window.  See `compress_history_if_needed` for the
+            // rationale (turn_streamed shares the exact same bug).
+            let _ = self.compress_history_if_needed(&effective_model).await;
+
             let messages = self.tool_dispatcher.to_provider_messages(&self.history);
+
+            // Hard safety cap: fail loud rather than ship a request the
+            // provider will reject after thinking time has already burned.
+            {
+                let window = context_window_for_model(&effective_model);
+                let est = crate::agent::context_compressor::estimate_tokens(&messages);
+                let hard_cap = (window as f64 * 0.95) as usize;
+                if window > 0 && est > hard_cap {
+                    anyhow::bail!(
+                        "Conversation too long even after compression \
+                         ({est} tokens > {hard_cap} cap for model {effective_model}). \
+                         Start a new chat tab to continue."
+                    );
+                }
+            }
 
             // Response cache: check before LLM call (only for deterministic, text-only prompts)
             let cache_key = if self.temperature == 0.0 {
@@ -1212,7 +1418,32 @@ impl Agent {
 
         // ── Turn loop ──────────────────────────────────────────────────
         for _ in 0..self.config.max_tool_iterations {
+            // Token-aware compression — keeps the Operator chat under the
+            // model's context window.  Without this, accumulating tool
+            // results (Manus task output, Kumiho revisions, web fetches)
+            // can push past 1M tokens and break with `prompt is too long`.
+            // `trim_history` alone is message-count based and does not
+            // protect against this.
+            let _ = self.compress_history_if_needed(&effective_model).await;
+
             let messages = self.tool_dispatcher.to_provider_messages(&self.history);
+
+            // Hard safety cap: even after compression, if we'd still send a
+            // request that exceeds ~95% of the context window, fail loud
+            // rather than producing nonsense or a confusing provider 400.
+            // Surfaces inline in the chat panel via the Err return.
+            {
+                let window = context_window_for_model(&effective_model);
+                let est = crate::agent::context_compressor::estimate_tokens(&messages);
+                let hard_cap = (window as f64 * 0.95) as usize;
+                if window > 0 && est > hard_cap {
+                    anyhow::bail!(
+                        "Conversation too long even after compression \
+                         ({est} tokens > {hard_cap} cap for model {effective_model}). \
+                         Start a new chat tab to continue."
+                    );
+                }
+            }
 
             // Response cache check (same as turn)
             let cache_key = if self.temperature == 0.0 {
@@ -1405,7 +1636,55 @@ impl Agent {
                     .await
                 {
                     Ok(resp) => resp,
-                    Err(err) => return Err(err),
+                    Err(err) => {
+                        // Reactive context-window recovery: if the provider
+                        // signals overflow, parse the actual limit out of
+                        // the error and compress, then retry the loop.
+                        // Mirrors `loop_.rs:4579-4615`.
+                        if crate::providers::reliable::is_context_window_exceeded(&err) {
+                            tracing::warn!(
+                                "Context overflow in Operator chat, attempting compression recovery"
+                            );
+                            let window = context_window_for_model(&effective_model);
+                            let mut compressor =
+                                crate::agent::context_compressor::ContextCompressor::new(
+                                    self.config.context_compression.clone(),
+                                    window,
+                                )
+                                .with_memory(Arc::clone(&self.memory));
+                            let mut flat = self.tool_dispatcher.to_provider_messages(&self.history);
+                            let error_msg = format!("{err}");
+                            match compressor
+                                .compress_on_error(
+                                    &mut flat,
+                                    self.provider.as_ref(),
+                                    &effective_model,
+                                    &error_msg,
+                                )
+                                .await
+                            {
+                                Ok(true) => {
+                                    tracing::info!(
+                                        "Context recovered via compression, retrying turn"
+                                    );
+                                    self.apply_compressed_history(&flat);
+                                    continue;
+                                }
+                                Ok(false) => {
+                                    tracing::warn!(
+                                        "Compression ran but couldn't reduce enough below provider limit"
+                                    );
+                                }
+                                Err(ce) => {
+                                    tracing::warn!(
+                                        error = %ce,
+                                        "Compression failed during error recovery"
+                                    );
+                                }
+                            }
+                        }
+                        return Err(err);
+                    }
                 };
                 // Record cost — always, even when the provider omits usage — so
                 // request_count on the cost page reflects every turn.

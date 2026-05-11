@@ -509,9 +509,52 @@ class WorkflowEventListener:
 
     # -- Cron run-request handling -----------------------------------------
 
-    # Set of run_ids already claimed by THIS process (prevents duplicate
-    # scheduling within a single operator even when multiple events arrive).
+    # Persistent run_id dedup. The Kumiho event stream replays history on
+    # gRPC reconnect (every macOS idle, every operator restart, every
+    # network blip), so pure in-memory dedup is not enough — a `pending`
+    # tag from yesterday gets re-delivered today and we'd re-launch the
+    # same run_id.  Persisted to disk so dedup survives restart and
+    # cross-process (mirror of the poller's seen-set at `_SEEN_PATH`).
+    _CLAIMED_RUNS_PATH = os.path.expanduser("~/.construct/event_listener_claimed_runs.json")
     _claimed_runs: set[str] = set()
+    _claimed_runs_loaded: bool = False
+
+    def _load_claimed_runs(self) -> None:
+        """Lazy-load the persistent claimed-runs set on first access.
+
+        Class-level mutable default ``set()`` is shared across instances by
+        design — this lets unrelated callers within the same process all
+        see the same dedup state without plumbing an instance through.
+        """
+        if self._claimed_runs_loaded:
+            return
+        try:
+            if os.path.exists(self._CLAIMED_RUNS_PATH):
+                with open(self._CLAIMED_RUNS_PATH, "r") as f:
+                    data = json.load(f)
+                    if isinstance(data, list):
+                        # Cap at 10k to stop the file growing unbounded
+                        # over months of usage; fresh entries always
+                        # added back as new run-requests arrive.
+                        WorkflowEventListener._claimed_runs.update(
+                            str(r) for r in data[-10000:]
+                        )
+        except Exception:
+            pass
+        WorkflowEventListener._claimed_runs_loaded = True
+
+    def _save_claimed_runs(self) -> None:
+        """Persist the claimed-runs set after every add. Best-effort —
+        a write failure just means dedup falls back to in-memory until
+        next successful save."""
+        try:
+            os.makedirs(os.path.dirname(self._CLAIMED_RUNS_PATH), exist_ok=True)
+            with open(self._CLAIMED_RUNS_PATH, "w") as f:
+                # Sorted for determinism; capped at 10k newest entries.
+                runs = sorted(self._claimed_runs)
+                json.dump(runs[-10000:], f)
+        except Exception:
+            pass
 
     def _handle_run_request(
         self,
@@ -524,7 +567,10 @@ class WorkflowEventListener:
         :meth:`loop.call_soon_threadsafe` — same pattern as
         :meth:`_launch_workflow`.
         """
-        # Dedup: skip if this process already claimed this run
+        # Dedup: skip if this run was ever claimed (persistent across
+        # restarts so Kumiho stream replays don't re-launch yesterday's
+        # already-completed run_ids).
+        self._load_claimed_runs()
         run_id = item_metadata.get("run_id", "")
         if run_id and run_id in self._claimed_runs:
             return
@@ -557,6 +603,7 @@ class WorkflowEventListener:
         # next operator-mcp via the run-request poller.
         if run_id:
             self._claimed_runs.add(run_id)
+            self._save_claimed_runs()
 
     async def _async_run_request(
         self,
@@ -576,10 +623,49 @@ class WorkflowEventListener:
         inputs_str = metadata.get("inputs", "{}")
         cwd = metadata.get("cwd", "") or self._cwd
         run_id = metadata.get("run_id", "") or str(uuid.uuid4())
+        target_step_id = metadata.get("target_step_id", "") or None
 
         if not workflow_name:
             _log("event_listener: run request missing workflow_name, skipping")
             return
+
+        # Re-fetch the item's CURRENT status from Kumiho before launching.
+        # The event stream replays old `tag=pending` events on every gRPC
+        # reconnect (network blips, daemon restarts, macOS idle wakeups);
+        # the in-memory `_claimed_runs` dedup catches that within a
+        # process and the persistent disk file extends across restarts,
+        # but a fresh install or wiped state directory still misses.
+        # This guard is the durable backstop — same shape as the poller's
+        # check at `_poll_run_requests` line ~757.
+        try:
+            from operator_mcp.operator_mcp import KUMIHO_SDK
+            if KUMIHO_SDK._available and item_kref:
+                latest_rev = await KUMIHO_SDK.get_latest_revision(
+                    item_kref, tag="latest"
+                )
+                latest_meta = (latest_rev or {}).get("metadata", {}) or {}
+                current_status = str(latest_meta.get("status", "")).lower()
+                if current_status in ("running", "completed", "failed"):
+                    _log(
+                        f"event_listener: skipping run request for "
+                        f"'{workflow_name}' (run_id={run_id[:8]}) — "
+                        f"latest revision already in status='{current_status}' "
+                        f"(stream replay or duplicate dispatch)"
+                    )
+                    # Mark it claimed so future replays of the same event
+                    # short-circuit without another Kumiho roundtrip.
+                    if run_id:
+                        self._claimed_runs.add(run_id)
+                        self._save_claimed_runs()
+                    return
+        except Exception as exc:
+            # Best-effort — a Kumiho hiccup here just falls through to
+            # the launch attempt, which is the pre-fix behavior.  We log
+            # so it's visible without making the runtime worse.
+            _log(
+                f"event_listener: status pre-check failed for run_id="
+                f"{run_id[:8]} ({exc}); proceeding with launch"
+            )
 
         _log(
             f"event_listener: cron-triggered run request for "
@@ -626,6 +712,7 @@ class WorkflowEventListener:
                 trigger_context={"trigger_source": "cron", "run_request_kref": item_kref},
                 workflow_item_kref=wf_item_kref,
                 workflow_revision_kref=wf_rev_kref,
+                target_step_id=target_step_id,
             )
             self._workflows_triggered += 1
             _log(

@@ -15,6 +15,7 @@ dependencies = [
     "pyyaml>=6.0",
     "kumiho>=0.9.20",
     "kumiho-memory>=0.5.2",
+    "simpleeval>=1.0.3",
 ]
 
 [project.optional-dependencies]

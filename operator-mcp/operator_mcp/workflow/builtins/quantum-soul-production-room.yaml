@@ -83,7 +83,7 @@ steps:
   - id: persona_review
     name: Persona & Voice Deep Review
     type: agent
-    depends_on: [resolve_cursor, resolve_last_final]
+    depends_on: [resolve_cursor]
     skills:
       - "kref://CognitiveMemory/Skills/quantum-soul-character-seo-jin.skilldef"
       - "kref://CognitiveMemory/Skills/quantum-soul-character-kang-hyun.skilldef"
@@ -125,7 +125,7 @@ steps:
   - id: cliffhanger_review
     name: Cliffhanger & Hook Deep Review
     type: agent
-    depends_on: [resolve_cursor, resolve_last_final]
+    depends_on: [resolve_cursor]
     skills:
       - "kref://CognitiveMemory/Skills/quantum-soul-series-synopsis.skilldef"
     agent:
@@ -156,7 +156,7 @@ steps:
   - id: science_deep_review
     name: Science Deep Review
     type: agent
-    depends_on: [resolve_cursor, resolve_last_final]
+    depends_on: [resolve_cursor]
     skills:
       - "kref://CognitiveMemory/Skills/quantum-soul-quantum-cognition-grounding.skilldef"
       - "kref://CognitiveMemory/Skills/quantum-soul-ai-agi-mesh-grounding.skilldef"
@@ -191,7 +191,7 @@ steps:
   - id: structure_deep_review
     name: Structural Deep Review
     type: agent
-    depends_on: [resolve_cursor, resolve_last_final]
+    depends_on: [resolve_cursor]
     skills:
       - "kref://CognitiveMemory/Skills/quantum-soul-series-synopsis.skilldef"
     agent:
@@ -415,15 +415,17 @@ steps:
     type: conditional
     description: Route to publish (approved) or revision (rejected with notes).
     depends_on: [review_approval]
-    condition: "'approve' in '${review_approval.output}'.lower()"
-    on_true: publish_episode
-    on_false: revision_producer
+    conditional:
+      branches:
+        - condition: "'approve' in lower(review_approval.output)"
+          goto: publish_episode
+        - condition: "default"
+          goto: revision_producer
 
   - id: publish_episode
     name: Publish Episode
     type: agent
     description: Tag the episode entity as published, making it available for the next arc-room cursor cycle.
-    depends_on: [approval_gate]
     agent:
       agent_type: claude
       role: researcher
@@ -448,7 +450,6 @@ steps:
     name: Revision Pass
     type: agent
     description: Apply human revision notes to produce an improved polished draft.
-    depends_on: [approval_gate]
     skills:
       - "kref://CognitiveMemory/Skills/quantum-soul-character-seo-jin.skilldef"
       - "kref://CognitiveMemory/Skills/quantum-soul-character-kang-hyun.skilldef"

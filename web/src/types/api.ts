@@ -141,6 +141,7 @@ export interface CliTool {
 export interface Session {
   id: string;
   channel: string;
+  name?: string;
   started_at: string;
   last_activity: string;
   status: 'active' | 'idle' | 'closed';
@@ -359,17 +360,21 @@ export interface WorkflowStepDetail {
   role?: string;
   template_name?: string;
   output_preview?: string;
+  /** Truncated error message when the step failed. */
+  error?: string;
   /** Absolute filesystem path to the step's full output artifact on disk */
   artifact_path?: string;
   skills?: string[];
   transcript?: TranscriptEntry[];
-  /** Set when the step is a human_approval step waiting for a decision */
-  output_data?: {
-    awaiting_approval?: boolean;
-    approval_message?: string;
-    approve_keywords?: string[];
-    reject_keywords?: string[];
-  };
+  /** Per-step-type interpolated inputs captured by the executor (PR #220).
+   *  Shape varies by step type — `shell` carries `command`/`timeout_secs`,
+   *  `resolve` carries `kind`/`tag`/`name_pattern`, etc. */
+  input_data?: Record<string, unknown>;
+  /** Per-step-type output blob persisted by the executor (PR #220).
+   *  For `human_approval` steps this still carries `awaiting_approval` /
+   *  `approval_message` / `approve_keywords` / `reject_keywords` at the
+   *  top level — wire format is unchanged from the legacy approval shape. */
+  output_data?: Record<string, unknown>;
 }
 
 export interface WorkflowRunDetail extends WorkflowRunSummary {
@@ -647,3 +652,14 @@ export interface AuthProfileSummary {
   updated_at: string;
 }
 
+/** POST /api/workflows/run/{name} body. Mirrors `RunWorkflowBody` in
+ *  `src/gateway/api_workflows.rs`. The gateway forwards `target_step_id`
+ *  to operator-mcp's `run_workflow` tool so the executor can run the
+ *  ancestor closure of a chosen step ("run to here"). */
+export interface RunWorkflowRequest {
+  inputs?: Record<string, unknown>;
+  cwd?: string;
+  /** Optional: when set, only the transitive ancestor closure of this
+   *  step (plus the step itself) executes. */
+  target_step_id?: string;
+}

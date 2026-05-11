@@ -2,7 +2,7 @@ import { RefreshCw, Workflow } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useT } from '@/construct/hooks/useT';
-import { parseWorkflowYaml, type TaskDefinition } from '@/components/workflows/yamlSync';
+import { parseWorkflowYaml, type TaskDefinition } from '@/construct/components/workflows/yamlSync';
 import type {
   AuditVerifyResponse,
   ChannelDetail,

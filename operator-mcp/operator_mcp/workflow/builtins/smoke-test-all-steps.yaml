@@ -1,0 +1,492 @@
+name: smoke-test-all-steps
+version: "1.0"
+description: |
+  End-to-end smoke test of the workflow runtime. Exercises every step type the
+  executor supports so a single run sanity-checks the dispatch path, schema
+  validation, auto-deps, conditional value emission (PR #216), the canonical
+  `conditional.branches` form (PR #217), and goto loop termination.
+
+  Steps that hit external services (image generation, A2A peers, agents that
+  need an API key, Kumiho writes, handoff sources) live inside `parallel`
+  blocks with `join: any` paired with a `notify` sibling. Notify never fails,
+  so the parallel always succeeds — failed risky branches are still recorded
+  in step_results for the summary, but they do not abort the workflow.
+
+  Soft-fail steps in unattended runs (these will not block completion):
+    - `human_approval`, `human_input` (always pause; nested in parallel-any)
+    - `image`                          (needs codex; nested in parallel-any)
+    - `a2a`                            (needs peer; nested in parallel-any)
+    - `manus`                          (needs MANUS_API_KEY; nested in parallel-any)
+    - `agent`, `handoff`, `supervisor`,
+      `group_chat`, `map_reduce`       (need agent provider; parallel-any)
+    - `tag`, `deprecate`               (need real Kumiho kref; parallel-any)
+    - `resolve`                        (uses fail_if_missing: false)
+
+  Run with:
+    construct-mcp tools call run_workflow --workflow_name smoke-test-all-steps
+tags: [smoke-test, internal, qa]
+
+inputs:
+  - name: greeting
+    type: string
+    required: false
+    default: "smoke"
+    description: "Short label echoed by the seed step (default: 'smoke')"
+
+steps:
+  # -------------------------------------------------------------------------
+  # Phase 1 — Seed: emit a small JSON-ish blob downstream steps consume.
+  # -------------------------------------------------------------------------
+  - id: seed
+    name: "Seed values for downstream steps"
+    type: python
+    python:
+      code: |
+        import json, sys
+        payload = {
+            "items": ["alpha", "beta", "gamma"],
+            "score": 0.92,
+            "label": "smoke",
+        }
+        json.dump(payload, sys.stdout)
+      timeout: 10
+
+  # -------------------------------------------------------------------------
+  # Phase 2 — Shell at top level (allow_failure so a missing /bin/sh on the
+  # CI runner can't fail the run). Demonstrates `${seed.output_data.*}`
+  # interpolation driving auto-deps (PR #170).
+  # -------------------------------------------------------------------------
+  - id: shell_echo
+    name: "Shell — echo greeting"
+    type: shell
+    shell:
+      command: 'echo "shell saw greeting=${inputs.greeting} score=${seed.output_data.score}"'
+      timeout: 10
+      allow_failure: true
+
+  # -------------------------------------------------------------------------
+  # Phase 3 — Conditional gate with value emission (PR #216), canonical
+  # `branches` form (PR #217). gate_landing consumes ${gate.output}.
+  # -------------------------------------------------------------------------
+  - id: gate
+    name: "Conditional gate (value emission)"
+    type: conditional
+    conditional:
+      branches:
+        - condition: "seed.output_data.score > 0.5"
+          goto: gate_landing
+          value: "'high-confidence'"
+        - condition: default
+          goto: gate_landing
+          value: "'low-confidence'"
+
+  - id: gate_landing
+    name: "Gate landing — render gate.output"
+    type: output
+    output:
+      format: markdown
+      template: |
+        ## Gate verdict
+        - matched value: `${gate.output}`
+        - upstream score: `${seed.output_data.score}`
+
+  # -------------------------------------------------------------------------
+  # Phase 4 — Resolve: fail-soft Kumiho lookup (clean install returns
+  # found=false instead of failing the workflow).
+  # -------------------------------------------------------------------------
+  - id: resolve_probe
+    name: "Resolve — fail-soft probe"
+    type: resolve
+    resolve:
+      kind: "smoke-test-nonexistent-kind"
+      tag: "ready"
+      mode: latest
+      fail_if_missing: false
+
+  # -------------------------------------------------------------------------
+  # Phase 5 — Output(entity): emits a real Kumiho entity if Kumiho is wired
+  # up. Output never fails when entity registration fails (it just omits
+  # `output_data.entity_kref`), so this step is safe at top level.
+  # -------------------------------------------------------------------------
+  - id: emit_taggable
+    name: "Output — emit a Kumiho entity"
+    type: output
+    output:
+      format: text
+      template: "smoke-test taggable payload"
+      entity_name: "smoke-test-taggable"
+      entity_kind: "smoke-test-artifact"
+      entity_tag: "ready"
+
+  # -------------------------------------------------------------------------
+  # Phase 6 — Notify (always succeeds; useful as a guaranteed-success
+  # sibling inside parallel-any clusters).
+  # -------------------------------------------------------------------------
+  - id: notify_progress
+    name: "Notify — dashboard ping"
+    type: notify
+    notify:
+      channels: [dashboard]
+      title: "smoke-test progress"
+      message: "Reached the parallel coverage section."
+
+  # -------------------------------------------------------------------------
+  # Phase 7 — for_each: walk a literal list. Body is a tiny shell echo so
+  # the loop runs in milliseconds and doesn't depend on agents.
+  # -------------------------------------------------------------------------
+  - id: for_each_body
+    name: "for_each body — echo current item"
+    type: shell
+    shell:
+      command: 'echo "iter=${for_each.index} value=${for_each.value}"'
+      timeout: 5
+      allow_failure: true
+
+  - id: iterate_seed
+    name: "for_each — walk a literal list"
+    type: for_each
+    for_each:
+      items: ["alpha", "beta", "gamma"]
+      variable: value
+      steps: [for_each_body]
+      fail_fast: false
+      max_iterations: 5
+
+  # -------------------------------------------------------------------------
+  # Phase 8 — Parallel coverage clusters. Each cluster pairs the risky
+  # branch(es) with a `notify` sibling (always succeeds) and uses
+  # `join: any` so the cluster as a whole completes even when the risky
+  # branches fail.
+  #
+  # NB: parallel sub-steps cannot reference upstream steps via ${X} — the
+  # validator forbids deps that point outside the parallel group. So each
+  # risky branch below is self-contained (constants only).
+  # -------------------------------------------------------------------------
+
+  # Cluster A: agent (needs API key, may fail soft)
+  - id: cluster_anchor_a
+    name: "Notify — cluster A anchor"
+    type: notify
+    notify:
+      channels: [dashboard]
+      message: "Cluster A — agent."
+
+  - id: agent_hello
+    name: "Agent — one-word reply"
+    type: agent
+    agent:
+      agent_type: claude
+      role: researcher
+      prompt: "Reply with exactly one word: hello."
+      timeout: 25
+      max_turns: 1
+      tools: none
+
+  - id: cluster_a_agent
+    name: "Cluster A — agent (parallel any)"
+    type: parallel
+    parallel:
+      steps: [cluster_anchor_a, agent_hello]
+      join: any
+      max_concurrency: 2
+
+  # Cluster B: email (dry_run) + image (best-effort)
+  - id: cluster_anchor_b
+    name: "Notify — cluster B anchor"
+    type: notify
+    notify:
+      channels: [dashboard]
+      message: "Cluster B — email(dry) + image."
+
+  - id: email_preview
+    name: "Email — dry-run render"
+    type: email
+    email:
+      to: "smoke@example.com"
+      subject: "smoke-test preview"
+      body: "Smoke-test rendered email body."
+      dry_run: true
+      timeout: 10
+
+  - id: image_preview
+    name: "Image — codex preview (best-effort)"
+    type: image
+    image:
+      prompt: "A tiny abstract token used as a smoke-test placeholder"
+      output_path: "smoke-test-token.png"
+      count: 1
+      canvas: false
+      register_artifact: false
+      timeout: 30
+
+  - id: cluster_b_side_effects
+    name: "Cluster B — side effects (parallel any)"
+    type: parallel
+    parallel:
+      steps: [cluster_anchor_b, email_preview, image_preview]
+      join: any
+      max_concurrency: 3
+
+  # Cluster C: tag + deprecate. Each operates on a constant placeholder
+  # kref. They will fail in environments without that kref (the common
+  # case), but the parallel-any with the notify sibling still completes.
+  - id: cluster_anchor_c
+    name: "Notify — cluster C anchor"
+    type: notify
+    notify:
+      channels: [dashboard]
+      message: "Cluster C — tag/deprecate (best-effort)."
+
+  - id: tag_round_trip
+    name: "Tag — apply on placeholder kref"
+    type: tag
+    tag_step:
+      item_kref: "kref://smoke-test/placeholder-not-real"
+      tag: "smoke-tested"
+
+  - id: deprecate_round_trip
+    name: "Deprecate — placeholder kref"
+    type: deprecate
+    deprecate_step:
+      item_kref: "kref://smoke-test/placeholder-not-real"
+      reason: "smoke-test cleanup"
+
+  - id: cluster_c_kumiho_writes
+    name: "Cluster C — tag/deprecate (parallel any)"
+    type: parallel
+    parallel:
+      steps: [cluster_anchor_c, tag_round_trip, deprecate_round_trip]
+      join: any
+      max_concurrency: 3
+
+  # Cluster D: handoff (needs a real source agent_id, will fail soft)
+  - id: cluster_anchor_d
+    name: "Notify — cluster D anchor"
+    type: notify
+    notify:
+      channels: [dashboard]
+      message: "Cluster D — handoff (best-effort)."
+
+  - id: handoff_demo
+    name: "Handoff — best-effort"
+    type: handoff
+    handoff:
+      from_step: cluster_anchor_d
+      to_agent_type: claude
+      reason: "smoke-test handoff"
+      task: "Reply with one word: ack."
+      timeout: 20
+
+  - id: cluster_d_handoff
+    name: "Cluster D — handoff (parallel any)"
+    type: parallel
+    parallel:
+      steps: [cluster_anchor_d, handoff_demo]
+      join: any
+      max_concurrency: 2
+
+  # Cluster E: supervisor + group_chat + map_reduce (need agent provider)
+  - id: cluster_anchor_e
+    name: "Notify — cluster E anchor"
+    type: notify
+    notify:
+      channels: [dashboard]
+      message: "Cluster E — supervisor / group_chat / map_reduce."
+
+  - id: supervisor_demo
+    name: "Supervisor — single tiny task"
+    type: supervisor
+    supervisor:
+      task: "Reply with one word: done."
+      max_iterations: 1
+      timeout: 30
+
+  - id: group_chat_demo
+    name: "Group chat — 2 participants, 2 rounds"
+    type: group_chat
+    group_chat:
+      topic: "Pick one word for the smoke test."
+      participants: [claude, claude]
+      max_rounds: 2
+      timeout: 30
+
+  - id: map_reduce_demo
+    name: "Map-reduce — 3-way split"
+    type: map_reduce
+    map_reduce:
+      task: "Echo each segment back as one word."
+      splits: ["one", "two", "three"]
+      mapper: claude
+      reducer: claude
+      concurrency: 3
+      timeout: 30
+
+  - id: cluster_e_orchestration
+    name: "Cluster E — orchestration patterns (parallel any)"
+    type: parallel
+    parallel:
+      steps:
+        - cluster_anchor_e
+        - supervisor_demo
+        - group_chat_demo
+        - map_reduce_demo
+      join: any
+      max_concurrency: 3
+
+  # Cluster F: a2a (unreachable peer) + manus (needs API key)
+  - id: cluster_anchor_f
+    name: "Notify — cluster F anchor"
+    type: notify
+    notify:
+      channels: [dashboard]
+      message: "Cluster F — a2a / manus probes (expected to fail without creds)."
+
+  - id: a2a_probe
+    name: "A2A — unreachable peer (best-effort)"
+    type: a2a
+    a2a:
+      url: "http://127.0.0.1:1/smoke-test-nonexistent"
+      message: "smoke-test ping"
+      timeout: 5
+
+  - id: manus_probe
+    name: "Manus — placeholder prompt (best-effort)"
+    type: manus
+    manus:
+      prompt: "smoke-test placeholder — no real research requested"
+      timeout_seconds: 30
+      poll_interval_seconds: 2
+      allow_failure: true
+      # Smoke-test the register_output path too. Lives inside the soft-fail
+      # parallel cluster so a Manus outage or missing API key never breaks
+      # the whole smoke run.
+      register_output:
+        entity_name: "smoke-test-manus-probe"
+        entity_kind: "smoke-test-report"
+        entity_tag: "smoke"
+        entity_space: "Construct/WorkflowOutputs/SmokeTests"
+        content_source: "message"
+
+  - id: cluster_f_a2a
+    name: "Cluster F — a2a / manus (parallel any)"
+    type: parallel
+    parallel:
+      steps: [cluster_anchor_f, a2a_probe, manus_probe]
+      join: any
+      max_concurrency: 3
+
+  # Cluster G: human gates. Each returns `pending` and would pause the
+  # workflow at top level, but inside a parallel block the pause logic
+  # doesn't fire (the wave loop only pauses on direct-dispatch human
+  # steps, not on nested ones). With `join: any` and the notify anchor
+  # this cluster always completes.
+  - id: cluster_anchor_g
+    name: "Notify — cluster G anchor"
+    type: notify
+    notify:
+      channels: [dashboard]
+      message: "Cluster G — human gates (will be marked pending unattended)."
+
+  - id: human_input_demo
+    name: "Human input — short timeout"
+    type: human_input
+    human_input:
+      message: "smoke-test: respond with anything"
+      timeout: 5
+
+  - id: human_approval_demo
+    name: "Human approval — short timeout"
+    type: human_approval
+    human_approval:
+      message: "smoke-test: approve to continue"
+      timeout: 5
+
+  - id: cluster_g_human
+    name: "Cluster G — human gates (parallel any)"
+    type: parallel
+    parallel:
+      steps: [cluster_anchor_g, human_input_demo, human_approval_demo]
+      join: any
+      max_concurrency: 3
+
+  # -------------------------------------------------------------------------
+  # Phase 9 — goto loop with explicit max_iterations termination guard.
+  # ping_for_loop runs, loop_back jumps back. The iteration counter caps
+  # at 2 so the loop terminates deterministically.
+  # -------------------------------------------------------------------------
+  - id: ping_for_loop
+    name: "Shell — loop body"
+    type: shell
+    depends_on: [cluster_g_human]
+    shell:
+      command: 'echo "loop body tick"'
+      timeout: 5
+      allow_failure: true
+
+  - id: loop_back
+    name: "Goto — bounded loop"
+    type: goto
+    depends_on: [ping_for_loop]
+    goto:
+      target: ping_for_loop
+      max_iterations: 2
+
+  # -------------------------------------------------------------------------
+  # Phase 10 — Final summary. References every step covered so a reader
+  # sees which dispatched and which soft-failed.
+  # -------------------------------------------------------------------------
+  - id: summary
+    name: "Summary — per-cluster status"
+    type: output
+    output:
+      format: markdown
+      template: |
+        # smoke-test-all-steps — summary
+
+        Each entry below interpolates the step's runtime status. Per-step
+        status of risky branches (agent / handoff / image / tag / etc.) is
+        intentionally NOT interpolated here — they live inside parallel-any
+        clusters, and the auto-deps loader would otherwise force `summary`
+        to wait on (and skip on) their failure. The cluster wrapper status
+        is the load-bearing signal: cluster `completed` ⇒ at least one
+        branch ran; cluster `failed` ⇒ the executor's parallel-any path is
+        broken.
+
+        ## Phase 1 — seed
+        - `seed` (python): ${seed.status}
+
+        ## Phase 2 — shell + interpolation (auto-deps via ${seed.*})
+        - `shell_echo`: ${shell_echo.status}
+
+        ## Phase 3 — conditional + output
+        - `gate` (conditional, value=${gate.output}): ${gate.status}
+        - `gate_landing` (output): ${gate_landing.status}
+
+        ## Phase 4 — resolve (fail-soft)
+        - `resolve_probe`: ${resolve_probe.status}
+
+        ## Phase 5 — output(entity)
+        - `emit_taggable`: ${emit_taggable.status}
+
+        ## Phase 6 — notify
+        - `notify_progress`: ${notify_progress.status}
+
+        ## Phase 7 — for_each
+        - `iterate_seed`: ${iterate_seed.status}
+
+        ## Phase 8 — parallel-any clusters
+        - cluster A (agent):           ${cluster_a_agent.status}
+        - cluster B (email/image):     ${cluster_b_side_effects.status}
+        - cluster C (tag/deprecate):   ${cluster_c_kumiho_writes.status}
+        - cluster D (handoff):         ${cluster_d_handoff.status}
+        - cluster E (orchestration):   ${cluster_e_orchestration.status}
+        - cluster F (a2a/manus):       ${cluster_f_a2a.status}
+        - cluster G (human gates):     ${cluster_g_human.status}
+
+        ## Phase 9 — goto loop
+        - `ping_for_loop`: ${ping_for_loop.status}
+        - `loop_back`:     ${loop_back.status}
+
+outputs:
+  - name: summary
+    source: "${summary.output}"

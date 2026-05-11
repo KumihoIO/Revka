@@ -1,7 +1,10 @@
 //! REST API handlers for skill management (`/api/skills`).
 //!
 //! Proxies to Kumiho FastAPI for persistent skill storage.  Each skill is a
-//! Kumiho item of kind `"skilldef"` in the `<memory_project>/Skills` space.
+//! Kumiho item of kind `"skill"` in the `<memory_project>/Skills` space.
+//! Items created before the kind rename use the legacy `"skilldef"` kind
+//! and remain readable via the search fallback in
+//! [`super::kumiho_client::KumihoClient::search_skill_items_with_legacy`].
 //!
 //! ## Storage layout
 //!
@@ -75,8 +78,10 @@ pub fn invalidate_skill_cache() {
 const SKILL_SPACE_NAME: &str = "Skills";
 /// Artifact name for skill markdown content.
 const SKILL_ARTIFACT_NAME: &str = "SKILL.md";
-/// Item kind for skill definitions.
-const SKILL_KIND: &str = "skilldef";
+/// Item kind for skill definitions.  Re-exports the canonical constant
+/// from [`crate::skills::registration::SKILL_ITEM_KIND`] so the gateway
+/// and `register_skill_with_kumiho` write the same value.
+const SKILL_KIND: &str = crate::skills::registration::SKILL_ITEM_KIND;
 /// Local directory where skill markdown files are stored.
 const SKILLS_DIR: &str = ".construct/workspace/skills";
 
@@ -139,29 +144,10 @@ pub struct SkillResponse {
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
-/// Convert Kumiho error to an HTTP response.
-fn kumiho_err(e: KumihoError) -> (StatusCode, Json<serde_json::Value>) {
-    match &e {
-        KumihoError::Unreachable(_) => (
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(serde_json::json!({ "error": format!("Kumiho service unavailable: {e}") })),
-        ),
-        KumihoError::Api { status, body } => {
-            let code = if *status == 401 || *status == 403 {
-                StatusCode::BAD_GATEWAY
-            } else {
-                StatusCode::from_u16(*status).unwrap_or(StatusCode::BAD_GATEWAY)
-            };
-            (
-                code,
-                Json(serde_json::json!({ "error": format!("Kumiho upstream: {body}") })),
-            )
-        }
-        KumihoError::Decode(msg) => (
-            StatusCode::BAD_GATEWAY,
-            Json(serde_json::json!({ "error": format!("Bad response from Kumiho: {msg}") })),
-        ),
-    }
+/// Convert Kumiho error to an HTTP response (delegates to the centralised
+/// helper in `kumiho_client`).
+fn kumiho_err(e: KumihoError) -> axum::response::Response {
+    super::kumiho_client::kumiho_error_to_response(e)
 }
 
 /// Build lightweight revision metadata (no content — that goes into the artifact).
@@ -385,10 +371,18 @@ pub async fn handle_list_skills(
     let project_name = skill_project(&state);
     let space_path = skill_space_path(&state);
 
-    // Search mode — use Kumiho fulltext search
+    // Search mode — use Kumiho fulltext search.  Goes through the
+    // legacy-aware helper so items written before the `skilldef` →
+    // `skill` rename remain discoverable via a single user-facing query.
     if let Some(ref q) = query.q {
         let items_result = client
-            .search_items(q, &project_name, SKILL_KIND, query.include_deprecated)
+            .search_items_with_legacy(
+                q,
+                &project_name,
+                SKILL_KIND,
+                crate::skills::registration::LEGACY_SKILL_ITEM_KIND,
+                query.include_deprecated,
+            )
             .await
             .map(|results| results.into_iter().map(|sr| sr.item).collect::<Vec<_>>());
 
@@ -427,7 +421,10 @@ pub async fn handle_list_skills(
     let items: Vec<ItemResponse> = match client.list_items(&space_path, include_deprecated).await {
         Ok(items) => items,
         Err(_) => {
-            // Fallback: name_filter queries covering all "skilldef" items
+            // Fallback: name_filter queries covering all skill items
+            // (canonical `"skill"` kind plus any legacy `"skilldef"`
+            // items still in the space — `list_items` doesn't filter by
+            // kind so both surface naturally).
             let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
             let mut fallback_items: Vec<ItemResponse> = Vec::new();
             for filter in &["a", "d"] {

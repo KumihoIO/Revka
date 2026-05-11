@@ -1906,6 +1906,68 @@ async def list_tools() -> list[Tool]:
                 "required": ["run_id"],
             },
         ),
+        # -- Manus ad-hoc research (web/research) --
+        Tool(
+            name="manus_create_task",
+            description=(
+                "Run an ad-hoc Manus research task mid-conversation. Manus is a "
+                "hosted web agent with real browser access — use this when the "
+                "user asks for research that benefits from live web browsing or "
+                "structured data extraction. Mirrors the workflow `manus:` step "
+                "(same auth precedence: credentials_ref → MANUS_API_KEY env var) "
+                "but is callable directly from chat. Returns task_id / task_url / "
+                "final_state / assistant message / attachments / optional "
+                "structured_output. No register_output — call kumiho_create_item "
+                "separately if you want to persist the result."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "prompt": {
+                        "type": "string",
+                        "description": "The research prompt for Manus.",
+                    },
+                    "structured_output_schema": {
+                        "type": "object",
+                        "description": "Optional JSON schema for Manus to populate. When provided, the result includes `structured_output`.",
+                    },
+                    "connectors": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Manus connector ids to attach (e.g. 'google_drive').",
+                    },
+                    "enable_skills": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                    "force_skills": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                    "agent_profile": {
+                        "type": "string",
+                        "description": "Manus agent profile id (default 'manus-1.6').",
+                    },
+                    "locale": {"type": "string"},
+                    "project_id": {"type": "string"},
+                    "title": {"type": "string"},
+                    "timeout_seconds": {
+                        "type": "integer",
+                        "description": "Max seconds to poll the task (default 600).",
+                        "default": 600,
+                    },
+                    "poll_interval_seconds": {
+                        "type": "integer",
+                        "description": "Seconds between poll calls (default 5).",
+                    },
+                    "credentials_ref": {
+                        "type": "string",
+                        "description": "Auth-profile id (e.g. 'manus:work'). When unset, falls back to MANUS_API_KEY env var.",
+                    },
+                },
+                "required": ["prompt"],
+            },
+        ),
         # -- A2A Outbound Client --
         Tool(
             name="a2a_discover",
@@ -2665,6 +2727,15 @@ async def _dispatch(name: str, args: dict[str, Any]) -> dict[str, Any]:
     if name == "retry_workflow":
         from .tool_handlers.workflows import tool_retry_workflow
         return await tool_retry_workflow(args)
+
+    # -- Manus ad-hoc research (web/research category) --
+    # Wraps the same `manus_run_task` helper the workflow `manus:` step
+    # uses, so the Operator agent can invoke a Manus task mid-conversation
+    # for ad-hoc browser/web research without authoring a workflow.
+    if name == "manus_create_task":
+        from .tool_handlers.manus import tool_manus_create_task
+        return await tool_manus_create_task(args)
+
     # -- A2A Outbound Client --
     if name == "a2a_discover":
         from .a2a.a2a_client import tool_a2a_discover
@@ -2942,15 +3013,15 @@ async def _background_init() -> None:
     if recovered:
         _log(f"Reconnected {len(recovered)} agent(s) from previous session")
 
-    # Recover interrupted workflow runs (must run after reconnect_agents
-    # so that surviving agents are in the AGENTS dict for output harvesting)
+    # Do not auto-resume interrupted workflow runs on restart. Mark stale runs
+    # failed so the user can explicitly choose Retry from the run page.
     try:
-        from .workflow.recovery import recover_interrupted_runs
-        recovered_wf = await recover_interrupted_runs(SIDECAR)
-        if recovered_wf:
-            _log(f"Recovery: submitted {len(recovered_wf)} workflow run(s) for resumption")
+        from .workflow.memory import mark_stale_runs
+        marked_stale = await mark_stale_runs()
+        if marked_stale:
+            _log(f"Workflow startup: marked {marked_stale} interrupted run(s) failed; retry is user-initiated")
     except Exception as exc:
-        _log(f"Recovery: failed (non-fatal): {exc}")
+        _log(f"Workflow stale-run scan failed (non-fatal): {exc}")
 
     # Start journal health monitor
     from .journal_health import get_journal_health_monitor

@@ -141,6 +141,12 @@ pub struct RunWorkflowBody {
     pub inputs: serde_json::Value,
     #[serde(default)]
     pub cwd: Option<String>,
+    /// Optional "run to here" target step id. When present, the operator
+    /// runs only the transitive ancestor closure of this step (plus the
+    /// step itself) and stops. Unknown ids are surfaced as a classified
+    /// validation error from the operator-mcp tool call.
+    #[serde(default)]
+    pub target_step_id: Option<String>,
 }
 
 // ── Response types ──────────────────────────────────────────────────────
@@ -208,18 +214,6 @@ pub struct TranscriptEntry {
     pub round: u32,
 }
 
-#[derive(Serialize, Clone, Default)]
-pub struct ApprovalOutputData {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub awaiting_approval: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub approval_message: Option<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub approve_keywords: Vec<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub reject_keywords: Vec<String>,
-}
-
 #[derive(Serialize, Clone)]
 pub struct WorkflowStepDetail {
     pub step_id: String,
@@ -235,13 +229,28 @@ pub struct WorkflowStepDetail {
     #[serde(skip_serializing_if = "String::is_empty")]
     pub output_preview: String,
     #[serde(skip_serializing_if = "String::is_empty")]
+    pub error: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
     pub artifact_path: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub skills: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub transcript: Vec<TranscriptEntry>,
+    // Generic input/output blobs the run-view UI renders for any step type.
+    // Stored as raw JSON Values so each step type can shape them differently
+    // — a `shell` step has `command`/`exit_code`, a `resolve` step has
+    // `kind`/`tag`/`matched_kref`, etc. The frontend type-switches on the
+    // step's type to decide which keys to show.
+    //
+    // The existing approval-shape UI continues to work because the JSON
+    // wire format is identical: a `human_approval` step's output_data still
+    // carries `awaiting_approval` / `approve_keywords` / `reject_keywords`
+    // at the top level — they just used to be filtered through the
+    // ApprovalOutputData struct (now removed in favour of raw Value).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub output_data: Option<ApprovalOutputData>,
+    pub input_data: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_data: Option<serde_json::Value>,
 }
 
 #[derive(Serialize, Clone)]
@@ -262,28 +271,8 @@ pub struct WorkflowDashboard {
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
-fn kumiho_err(e: KumihoError) -> (StatusCode, Json<serde_json::Value>) {
-    match &e {
-        KumihoError::Unreachable(_) => (
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(serde_json::json!({ "error": format!("Kumiho service unavailable: {e}") })),
-        ),
-        KumihoError::Api { status, body } => {
-            let code = if *status == 401 || *status == 403 {
-                StatusCode::BAD_GATEWAY
-            } else {
-                StatusCode::from_u16(*status).unwrap_or(StatusCode::BAD_GATEWAY)
-            };
-            (
-                code,
-                Json(serde_json::json!({ "error": format!("Kumiho upstream: {body}") })),
-            )
-        }
-        KumihoError::Decode(msg) => (
-            StatusCode::BAD_GATEWAY,
-            Json(serde_json::json!({ "error": format!("Bad response from Kumiho: {msg}") })),
-        ),
-    }
+fn kumiho_err(e: KumihoError) -> axum::response::Response {
+    super::kumiho_client::kumiho_error_to_response(e)
 }
 
 fn workflow_metadata(body: &CreateWorkflowBody) -> HashMap<String, String> {
@@ -535,40 +524,23 @@ fn extract_steps_from_metadata(meta: &HashMap<String, String>) -> Vec<WorkflowSt
                             .collect::<Vec<_>>()
                     })
                     .unwrap_or_default();
-                // Decode output_data for approval steps
-                let output_data = parsed.get("output_data").and_then(|v| {
-                    // output_data may be a JSON string or an embedded object
-                    let obj = if let Some(s) = v.as_str() {
-                        serde_json::from_str::<serde_json::Value>(s).ok()
-                    } else {
-                        Some(v.clone())
-                    };
-                    obj.map(|o| ApprovalOutputData {
-                        awaiting_approval: o.get("awaiting_approval").and_then(|v| v.as_bool()),
-                        approval_message: o
-                            .get("approval_message")
-                            .and_then(|v| v.as_str())
-                            .map(String::from),
-                        approve_keywords: o
-                            .get("approve_keywords")
-                            .and_then(|v| v.as_array())
-                            .map(|arr| {
-                                arr.iter()
-                                    .filter_map(|s| s.as_str().map(String::from))
-                                    .collect()
-                            })
-                            .unwrap_or_default(),
-                        reject_keywords: o
-                            .get("reject_keywords")
-                            .and_then(|v| v.as_array())
-                            .map(|arr| {
-                                arr.iter()
-                                    .filter_map(|s| s.as_str().map(String::from))
-                                    .collect()
-                            })
-                            .unwrap_or_default(),
+                // Generic input/output blobs — exposed as raw JSON for any
+                // step type. Persistence may write these as either embedded
+                // objects (current) or JSON strings (legacy / size-capped),
+                // so we accept both.
+                let decode_blob = |key: &str| -> Option<serde_json::Value> {
+                    parsed.get(key).and_then(|v| {
+                        if let Some(s) = v.as_str() {
+                            serde_json::from_str::<serde_json::Value>(s).ok()
+                        } else if v.is_object() || v.is_array() {
+                            Some(v.clone())
+                        } else {
+                            None
+                        }
                     })
-                });
+                };
+                let input_data_raw = decode_blob("input_data");
+                let output_data_raw = decode_blob("output_data");
                 steps.push(WorkflowStepDetail {
                     step_id: step_id.to_string(),
                     status: parsed
@@ -601,6 +573,11 @@ fn extract_steps_from_metadata(meta: &HashMap<String, String>) -> Vec<WorkflowSt
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string(),
+                    error: parsed
+                        .get("error")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string(),
                     artifact_path: parsed
                         .get("artifact_path")
                         .and_then(|v| v.as_str())
@@ -608,7 +585,8 @@ fn extract_steps_from_metadata(meta: &HashMap<String, String>) -> Vec<WorkflowSt
                         .to_string(),
                     skills,
                     transcript,
-                    output_data,
+                    input_data: input_data_raw,
+                    output_data: output_data_raw,
                 });
             } else if value.contains(r#""status""#) {
                 // Truncated JSON fallback: extract status with simple string search
@@ -626,9 +604,11 @@ fn extract_steps_from_metadata(meta: &HashMap<String, String>) -> Vec<WorkflowSt
                     role: String::new(),
                     template_name: String::new(),
                     output_preview: String::new(),
+                    error: String::new(),
                     artifact_path: String::new(),
                     skills: Vec::new(),
                     transcript: Vec::new(),
+                    input_data: None,
                     output_data: None,
                 });
             }
@@ -1047,13 +1027,16 @@ pub async fn handle_list_workflows(
 /// Result of calling the operator's `validate_workflow` MCP tool.
 ///
 /// Mirrors the Python-side `ValidationResult.to_dict()` shape:
-/// `{ valid: bool, errors: [...], warnings: [...] }`. Unwraps the MCP
-/// `content[0].text` envelope.
+/// `{ valid: bool, errors: [...], warnings: [...], all_step_ids: [...] }`.
+/// `all_step_ids` is the superset of every step id (including parallel /
+/// for_each body steps) — used to validate caller-supplied
+/// ``target_step_id`` for run-to-step.
 #[derive(Debug)]
 struct ValidationOutcome {
     valid: bool,
     errors: Vec<serde_json::Value>,
     warnings: Vec<serde_json::Value>,
+    all_step_ids: Vec<String>,
 }
 
 /// Call the operator's `validate_workflow` tool via MCP. Returns a structured
@@ -1108,11 +1091,21 @@ async fn validate_via_operator(
         .and_then(|v| v.as_array())
         .cloned()
         .unwrap_or_default();
+    let all_step_ids = inner
+        .get("all_step_ids")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
 
     Ok(ValidationOutcome {
         valid,
         errors,
         warnings,
+        all_step_ids,
     })
 }
 
@@ -1414,6 +1407,10 @@ pub async fn handle_run_workflow(
         .map(|b| b.inputs.clone())
         .unwrap_or(serde_json::Value::Object(Default::default()));
     let cwd = body.as_ref().and_then(|b| b.cwd.clone());
+    let target_step_id = body
+        .as_ref()
+        .and_then(|b| b.target_step_id.clone())
+        .filter(|s| !s.is_empty());
 
     // Pre-dispatch validation: resolve the named workflow (from builtins/Kumiho)
     // and run the schema validator. Blocks silent failures where a malformed
@@ -1426,14 +1423,45 @@ pub async fn handle_run_workflow(
     if let Some(ref c) = cwd {
         v_args.insert("cwd".to_string(), serde_json::Value::String(c.clone()));
     }
-    match validate_via_operator(&state, v_args).await {
+    // Validation also returns the workflow's ``all_step_ids`` (superset
+    // including parallel/for_each body steps). Use that to check
+    // ``target_step_id`` BEFORE we touch Kumiho — without this preflight, a
+    // typo'd id would create a pending run-request item that the listener
+    // later picks up and (per the executor's older behaviour) silently
+    // executes the entire workflow.
+    let all_step_ids: Vec<String> = match validate_via_operator(&state, v_args).await {
         Ok(outcome) if !outcome.valid => {
             return validation_error_response(&outcome, "cannot dispatch invalid workflow")
                 .into_response();
         }
-        Ok(_) => {}
+        Ok(outcome) => outcome.all_step_ids,
         Err(e) => {
             tracing::warn!("run_workflow: validation skipped (infra error): {e}");
+            Vec::new()
+        }
+    };
+
+    if let Some(ref tsid) = target_step_id {
+        // Only check when validation actually returned step ids — otherwise
+        // we'd 400 every call when validate_via_operator hits an infra
+        // error. Operator-side hard validation in execute_workflow is the
+        // backstop.
+        if !all_step_ids.is_empty() && !all_step_ids.iter().any(|s| s == tsid) {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": format!("unknown_target_step: '{tsid}'"),
+                    "error_code": "unknown_target_step",
+                    "valid": false,
+                    "errors": [{
+                        "message": format!(
+                            "target_step_id '{tsid}' is not a step in workflow '{name}'"
+                        ),
+                        "severity": "error",
+                    }],
+                })),
+            )
+                .into_response();
         }
     }
 
@@ -1457,6 +1485,9 @@ pub async fn handle_run_workflow(
     metadata.insert("cwd".to_string(), cwd.unwrap_or_default());
     metadata.insert("trigger_source".to_string(), "api".to_string());
     metadata.insert("requested_at".to_string(), now);
+    if let Some(ref tsid) = target_step_id {
+        metadata.insert("target_step_id".to_string(), tsid.clone());
+    }
 
     let item_name = format!("run-{}", &run_id[..run_id.len().min(12)]);
 
@@ -1508,6 +1539,12 @@ pub async fn handle_run_workflow(
                     "run_id".to_string(),
                     serde_json::Value::String(run_id.clone()),
                 );
+                if let Some(ref tsid) = target_step_id {
+                    tool_args.insert(
+                        "target_step_id".to_string(),
+                        serde_json::Value::String(tsid.clone()),
+                    );
+                }
                 let tool_args_val = serde_json::Value::Object(tool_args);
                 let run_id_for_log = run_id.clone();
                 let workflow_name_for_log = name.clone();
@@ -2113,6 +2150,98 @@ pub struct RetryWorkflowBody {
     pub cwd: Option<String>,
 }
 
+/// POST /api/workflows/runs/{run_id}/cancel
+///
+/// Body: empty.
+///
+/// Cancels a running workflow. Sets the executor's `cancel_requested` flag
+/// via the `cancel_workflow` MCP tool — the executor reads this at the next
+/// step boundary, kills any in-flight subprocesses (shell/python steps),
+/// and transitions the run to `cancelled` cleanly.
+///
+/// Returns:
+///   - 200 with `{cancelled: true, run_id, status, ...}` for active runs.
+///   - 404 with `{cancelled: false, reason: "not_found_or_already_finished"}`
+///     when the run isn't in the active registry.
+///   - 409 when the run is already in a terminal state.
+pub async fn handle_cancel_workflow_run(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(run_id): Path<String>,
+) -> impl IntoResponse {
+    if let Err(e) = require_auth(&state, &headers) {
+        return e.into_response();
+    }
+
+    let tool_name = format!(
+        "{}__cancel_workflow",
+        crate::agent::operator::OPERATOR_SERVER_NAME
+    );
+    let mut tool_args = serde_json::Map::new();
+    tool_args.insert(
+        "run_id".to_string(),
+        serde_json::Value::String(run_id.clone()),
+    );
+
+    let mcp_result = if let Some(ref registry) = state.mcp_registry {
+        let mcp_future = registry.call_tool(&tool_name, serde_json::Value::Object(tool_args));
+        match tokio::time::timeout(std::time::Duration::from_secs(10), mcp_future).await {
+            Ok(Ok(result_str)) => Ok(result_str),
+            Ok(Err(e)) => Err(format!("operator tool call failed: {e:#}")),
+            Err(_) => Err("operator tool call timed out (10s)".to_string()),
+        }
+    } else {
+        Err("MCP registry not available — operator not connected".to_string())
+    };
+
+    match mcp_result {
+        Ok(result_str) => {
+            let payload = serde_json::from_str::<serde_json::Value>(&result_str)
+                .unwrap_or_else(|_| serde_json::json!({"raw": result_str}));
+
+            let status_code = cancel_status_for(&payload);
+            if status_code == StatusCode::OK {
+                let _ = state.event_tx.send(serde_json::json!({
+                    "type": "workflow_cancel",
+                    "run_id": run_id,
+                    "timestamp": chrono::Utc::now().to_rfc3339(),
+                }));
+            }
+            (status_code, Json(payload)).into_response()
+        }
+        Err(e) => {
+            tracing::warn!("cancel_workflow_run: failed for run_id={run_id}: {e}");
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(serde_json::json!({ "error": format!("Failed to cancel workflow: {e}") })),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// Map a `cancel_workflow` MCP-tool result to the gateway's HTTP status code.
+///
+///   - `cancelled=true`                                  → 200 OK
+///   - `reason=not_found_or_already_finished`            → 404
+///   - `reason=already_terminal`                         → 409
+///   - anything else (e.g. classified_error)             → 400
+fn cancel_status_for(payload: &serde_json::Value) -> StatusCode {
+    let cancelled = payload
+        .get("cancelled")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    if cancelled {
+        return StatusCode::OK;
+    }
+    let reason = payload.get("reason").and_then(|v| v.as_str()).unwrap_or("");
+    match reason {
+        "not_found_or_already_finished" => StatusCode::NOT_FOUND,
+        "already_terminal" => StatusCode::CONFLICT,
+        _ => StatusCode::BAD_REQUEST,
+    }
+}
+
 /// GET /api/workflows/agent-activity/{agent_id}
 ///
 /// Reads the RunLog JSONL file for an agent and returns structured activity data.
@@ -2370,4 +2499,57 @@ pub async fn handle_workflow_dashboard(
     };
 
     Json(serde_json::json!({ "dashboard": dashboard })).into_response()
+}
+
+#[cfg(test)]
+mod cancel_tests {
+    //! Tests for the `POST /api/workflows/runs/{run_id}/cancel` response-shape
+    //! mapping. We don't exercise the full handler (it requires a real
+    //! `AppState` with an MCP registry) — instead we test the pure mapping
+    //! function `cancel_status_for`, which is what determines the 200/404/409
+    //! semantics. The MCP tool's behavior is tested in the operator-mcp
+    //! Python suite (`tests/test_workflow_cancel.py`).
+    use super::cancel_status_for;
+    use axum::http::StatusCode;
+    use serde_json::json;
+
+    #[test]
+    fn cancelled_true_returns_200_for_active_run() {
+        let payload = json!({
+            "cancelled": true,
+            "run_id": "abc123",
+            "status": "running",
+            "steps_completed": 1,
+        });
+        assert_eq!(cancel_status_for(&payload), StatusCode::OK);
+    }
+
+    #[test]
+    fn unknown_run_returns_404() {
+        let payload = json!({
+            "cancelled": false,
+            "run_id": "nope",
+            "reason": "not_found_or_already_finished",
+        });
+        assert_eq!(cancel_status_for(&payload), StatusCode::NOT_FOUND);
+    }
+
+    #[test]
+    fn terminal_state_returns_409() {
+        let payload = json!({
+            "cancelled": false,
+            "run_id": "done123",
+            "status": "completed",
+            "reason": "already_terminal",
+        });
+        assert_eq!(cancel_status_for(&payload), StatusCode::CONFLICT);
+    }
+
+    #[test]
+    fn unrecognized_payload_returns_400() {
+        // Operator's classified_error path (missing_run_id etc.) — generic
+        // bad-request fallback, never silently 200.
+        let payload = json!({"error": "missing run_id", "code": "missing_run_id"});
+        assert_eq!(cancel_status_for(&payload), StatusCode::BAD_REQUEST);
+    }
 }

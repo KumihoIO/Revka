@@ -7,9 +7,9 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Link2, Link2Off, Loader2, Lock, Search, Sparkles, Trash2, X } from 'lucide-react';
+import { Crosshair, Link2, Link2Off, Loader2, Lock, Search, Sparkles, Trash2, X } from 'lucide-react';
 import type { Node } from '@xyflow/react';
-import { type TaskNodeData } from '@/components/workflows/yamlSync';
+import { type TaskNodeData } from '@/construct/components/workflows/yamlSync';
 import type { SkillDefinition } from '@/types/api';
 import { fetchSkills, getChannels } from '@/lib/api';
 import Panel from '@/construct/components/ui/Panel';
@@ -114,6 +114,21 @@ interface Props {
   onChangeType: () => void;
   /** Available references for ${...} autocomplete in expression textareas. */
   dagContext?: DagContext;
+  /** "Run to here" — launch a partial workflow run that executes the
+   *  selected step's ancestor closure (plus the step itself). Owner is
+   *  responsible for hitting the runWorkflow API and setting `targetStepId`.
+   *  Receives the closure as the editor sees it for the popover preview. */
+  onRunToHere?: (taskId: string, closureTaskIds: string[]) => void;
+  /** Disable the "Run to here" button (e.g. while a run is in flight or
+   *  the editor has unsaved changes). */
+  runToHereDisabled?: boolean;
+  /** Tooltip / aria text explaining WHY the button is disabled — surfaced
+   *  on hover so users understand they need to save first. */
+  runToHereDisabledReason?: string;
+  /** Compute the ancestor closure of a task id for the popover preview.
+   *  The owner injects this so the panel doesn't need direct access to
+   *  the task list. Returns ids in editor order, target last. */
+  computeRunToHereClosure?: (taskId: string) => string[];
 }
 
 export default function StepConfigPanel({
@@ -124,6 +139,10 @@ export default function StepConfigPanel({
   onDelete,
   onChangeType,
   dagContext,
+  onRunToHere,
+  runToHereDisabled = false,
+  runToHereDisabledReason,
+  computeRunToHereClosure,
 }: Props) {
   const dagStepIds = dagContext?.stepIds ?? [];
   const dagInputs = dagContext?.workflowInputs ?? [];
@@ -209,6 +228,13 @@ export default function StepConfigPanel({
   const [authPickerOpen, setAuthPickerOpen] = useState(false);
   const [authAnchorRect, setAuthAnchorRect] = useState<DOMRect | null>(null);
 
+  // Separate picker for the Manus step's ``credentials_ref`` field. Manus
+  // doesn't go through the generic ``data.auth`` channel — it has its own
+  // dedicated slot so the env-var fallback path stays explicit and the
+  // run-view records which credential was used.
+  const [manusPickerOpen, setManusPickerOpen] = useState(false);
+  const [manusAnchorRect, setManusAnchorRect] = useState<DOMRect | null>(null);
+
   // Reset the auth picker when the user clicks a different node — without
   // this, opening the picker on node A and then clicking node B before
   // selecting leaves the picker mounted with a stale anchor (same class as
@@ -216,11 +242,17 @@ export default function StepConfigPanel({
   useEffect(() => {
     setAuthPickerOpen(false);
     setAuthAnchorRect(null);
+    setManusPickerOpen(false);
+    setManusAnchorRect(null);
   }, [node.id]);
   const showAuthField = AUTH_ELIGIBLE_STEP_TYPES.has(stepType);
   const selectedAuthProfile = useMemo(
     () => authProfiles.find((p) => p.id === data.auth) ?? null,
     [authProfiles, data.auth],
+  );
+  const selectedManusProfile = useMemo(
+    () => authProfiles.find((p) => p.id === data.manusCredentialsRef) ?? null,
+    [authProfiles, data.manusCredentialsRef],
   );
 
   // Channels: load for human / notify steps
@@ -290,6 +322,28 @@ export default function StepConfigPanel({
     [node.id, data.channels, onUpdate],
   );
 
+  // ── Run-to-here popover ────────────────────────────────────────────────
+  // Opens a confirmation popover listing the ancestor closure that would
+  // execute. Closure preview is purely best-effort — the backend
+  // re-derives it authoritatively before scheduling.
+  const [runToHereOpen, setRunToHereOpen] = useState(false);
+  const runToHereClosureIds = useMemo<string[]>(
+    () =>
+      runToHereOpen && computeRunToHereClosure ? computeRunToHereClosure(data.taskId) : [],
+    [runToHereOpen, computeRunToHereClosure, data.taskId],
+  );
+  // Reset whenever the user picks a different node so a stale popover
+  // can't fire against the wrong target.
+  useEffect(() => {
+    setRunToHereOpen(false);
+  }, [node.id]);
+
+  const handleRunToHereConfirm = useCallback(() => {
+    if (!onRunToHere) return;
+    onRunToHere(data.taskId, runToHereClosureIds);
+    setRunToHereOpen(false);
+  }, [onRunToHere, data.taskId, runToHereClosureIds]);
+
   const TypeIcon = typeDef?.icon;
 
   return (
@@ -303,29 +357,151 @@ export default function StepConfigPanel({
             justifyContent: 'space-between',
             padding: '14px 16px',
             borderBottom: '1px solid var(--construct-border-soft)',
+            position: 'relative',
           }}
         >
           <div className="construct-kicker">Step Details</div>
-          <button
-            type="button"
-            onClick={() => onDelete(node.id)}
-            title="Delete step"
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 4,
-              padding: '4px 8px',
-              borderRadius: 8,
-              border: '1px solid var(--construct-border-soft)',
-              background: 'transparent',
-              color: 'var(--construct-status-danger)',
-              fontSize: 11,
-              cursor: 'pointer',
-            }}
-          >
-            <Trash2 size={12} />
-            Delete
-          </button>
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            {onRunToHere ? (
+              <button
+                type="button"
+                onClick={() => setRunToHereOpen((v) => !v)}
+                disabled={runToHereDisabled}
+                title={
+                  runToHereDisabled && runToHereDisabledReason
+                    ? runToHereDisabledReason
+                    : 'Run every ancestor of this step plus the step itself, then stop'
+                }
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 4,
+                  padding: '4px 8px',
+                  borderRadius: 8,
+                  border: '1px solid var(--construct-border-soft)',
+                  background: 'transparent',
+                  color: runToHereDisabled
+                    ? 'var(--pc-text-faint)'
+                    : 'var(--construct-status-success)',
+                  fontSize: 11,
+                  cursor: runToHereDisabled ? 'not-allowed' : 'pointer',
+                  opacity: runToHereDisabled ? 0.6 : 1,
+                }}
+              >
+                <Crosshair size={12} />
+                Run to here
+              </button>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => onDelete(node.id)}
+              title="Delete step"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 4,
+                padding: '4px 8px',
+                borderRadius: 8,
+                border: '1px solid var(--construct-border-soft)',
+                background: 'transparent',
+                color: 'var(--construct-status-danger)',
+                fontSize: 11,
+                cursor: 'pointer',
+              }}
+            >
+              <Trash2 size={12} />
+              Delete
+            </button>
+          </div>
+          {runToHereOpen && onRunToHere ? (
+            <div
+              role="dialog"
+              aria-label="Run to here confirmation"
+              style={{
+                position: 'absolute',
+                top: 'calc(100% + 4px)',
+                right: 12,
+                zIndex: 50,
+                width: 280,
+                padding: 12,
+                borderRadius: 10,
+                border: '1px solid var(--construct-border-soft)',
+                background: 'var(--pc-bg-base)',
+                boxShadow: '0 8px 24px rgba(0, 0, 0, 0.25)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 10,
+              }}
+            >
+              <div style={{ fontSize: 11, color: 'var(--pc-text-primary)' }}>
+                {runToHereClosureIds.length <= 1
+                  ? 'Just this one step will run.'
+                  : `This will run ${runToHereClosureIds.length} steps in order:`}
+              </div>
+              {runToHereClosureIds.length > 1 ? (
+                <ol
+                  style={{
+                    margin: 0,
+                    padding: '0 0 0 18px',
+                    fontSize: 11,
+                    color: 'var(--pc-text-faint)',
+                    maxHeight: 160,
+                    overflowY: 'auto',
+                    fontFamily: 'var(--pc-font-mono, ui-monospace, monospace)',
+                  }}
+                >
+                  {runToHereClosureIds.map((sid) => (
+                    <li
+                      key={sid}
+                      style={{
+                        color:
+                          sid === data.taskId
+                            ? 'var(--construct-status-success)'
+                            : 'var(--pc-text-faint)',
+                        fontWeight: sid === data.taskId ? 600 : 400,
+                      }}
+                    >
+                      {sid}
+                      {sid === data.taskId ? '  ← target' : ''}
+                    </li>
+                  ))}
+                </ol>
+              ) : null}
+              <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                <button
+                  type="button"
+                  onClick={() => setRunToHereOpen(false)}
+                  style={{
+                    padding: '4px 10px',
+                    borderRadius: 6,
+                    border: '1px solid var(--construct-border-soft)',
+                    background: 'transparent',
+                    color: 'var(--pc-text-primary)',
+                    fontSize: 11,
+                    cursor: 'pointer',
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleRunToHereConfirm}
+                  style={{
+                    padding: '4px 10px',
+                    borderRadius: 6,
+                    border: '1px solid var(--construct-status-success)',
+                    background: 'var(--construct-status-success)',
+                    color: 'var(--pc-bg-base)',
+                    fontSize: 11,
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                  }}
+                >
+                  Run
+                </button>
+              </div>
+            </div>
+          ) : null}
         </div>
 
         <div style={{ overflowY: 'auto', padding: 16, display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -506,6 +682,31 @@ export default function StepConfigPanel({
                 style={monoInputStyle}
               />
               <p style={helperStyle()}>Wire the green (true) and red (false) handles to branch targets.</p>
+
+              {/* Optional branch values — emitted on the gate's `output` so
+                  downstream steps can read `${gate.output}`. Multi-branch
+                  workflows should edit YAML directly. */}
+              <label style={labelStyle}>True branch value (optional)</label>
+              <input
+                type="text"
+                value={data.onTrueValue || ''}
+                onChange={(e) => onUpdate(node.id, { onTrueValue: e.target.value })}
+                placeholder="e.g. 'approved' or review.output_data.score"
+                style={monoInputStyle}
+              />
+              <label style={labelStyle}>False branch value (optional)</label>
+              <input
+                type="text"
+                value={data.onFalseValue || ''}
+                onChange={(e) => onUpdate(node.id, { onFalseValue: e.target.value })}
+                placeholder="e.g. 'rejected'"
+                style={monoInputStyle}
+              />
+              <p style={helperStyle()}>
+                When the matching branch fires, this expression's result becomes the
+                gate's <code>output</code>. Same syntax as <code>condition</code> —
+                literals, name refs, ternary all work.
+              </p>
             </div>
           )}
 
@@ -1544,6 +1745,262 @@ export default function StepConfigPanel({
           )}
 
           {/* ── A2A ── */}
+          {stepType === 'manus' && (
+            <div style={sectionShellStyle}>
+              <div style={{ ...sectionTitleStyle, color: 'var(--construct-signal-network)' }}>Manus Config</div>
+              <div>
+                <label style={labelStyle}>Prompt</label>
+                <ExpressionTextarea
+                  value={data.manusPrompt || ''}
+                  onChange={(next) => onUpdate(node.id, { manusPrompt: next })}
+                  rows={5}
+                  placeholder="Research the top 5 startups in Seoul working on robotics — return names + one-line descriptions."
+                  style={inputStyle}
+                  stepIds={dagStepIds}
+                  workflowInputs={dagInputs}
+                  triggerFields={dagTriggerFields}
+                />
+                <p style={helperStyle()}>Free-text task for the Manus web agent. Supports ${'${...}'} interpolation.</p>
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <div style={{ flex: 1 }}>
+                  <label style={labelStyle}>Agent profile</label>
+                  <input
+                    type="text"
+                    value={data.manusAgentProfile || ''}
+                    onChange={(e) => onUpdate(node.id, { manusAgentProfile: e.target.value })}
+                    placeholder="manus-1.6"
+                    style={inputStyle}
+                  />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={labelStyle}>Locale</label>
+                  <input
+                    type="text"
+                    value={data.manusLocale || ''}
+                    onChange={(e) => onUpdate(node.id, { manusLocale: e.target.value })}
+                    placeholder="auto"
+                    style={inputStyle}
+                  />
+                </div>
+              </div>
+              <div>
+                <label style={labelStyle}>Connectors</label>
+                <input
+                  type="text"
+                  defaultValue={(data.manusConnectors || []).join(', ')}
+                  onBlur={(e) =>
+                    onUpdate(node.id, {
+                      manusConnectors: e.target.value.split(',').map((s) => s.trim()).filter(Boolean),
+                    })
+                  }
+                  placeholder="gmail, drive, slack"
+                  style={monoInputStyle}
+                />
+                <p style={helperStyle()}>Comma-separated connector ids enabled for this task.</p>
+              </div>
+              <div>
+                <label style={labelStyle}>Title (optional)</label>
+                <input
+                  type="text"
+                  value={data.manusTitle || ''}
+                  onChange={(e) => onUpdate(node.id, { manusTitle: e.target.value })}
+                  placeholder="Robotics startup scan — Seoul"
+                  style={inputStyle}
+                />
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <div style={{ flex: 1 }}>
+                  <label style={labelStyle}>Timeout (s)</label>
+                  <input
+                    type="number"
+                    min={30}
+                    value={data.manusTimeoutSeconds ?? 600}
+                    onChange={(e) => onUpdate(node.id, { manusTimeoutSeconds: parseInt(e.target.value) || 600 })}
+                    style={inputStyle}
+                  />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={labelStyle}>Poll interval (s)</label>
+                  <input
+                    type="number"
+                    min={1}
+                    value={data.manusPollIntervalSeconds ?? 5}
+                    onChange={(e) => onUpdate(node.id, { manusPollIntervalSeconds: parseInt(e.target.value) || 5 })}
+                    style={inputStyle}
+                  />
+                </div>
+              </div>
+              <div>
+                <label style={labelStyle}>Structured output schema (JSON, optional)</label>
+                <textarea
+                  value={data.manusStructuredOutputSchema || ''}
+                  onChange={(e) => onUpdate(node.id, { manusStructuredOutputSchema: e.target.value })}
+                  rows={5}
+                  placeholder='{"type": "object", "properties": {"companies": {"type": "array"}}}'
+                  style={monoInputStyle}
+                />
+                <p style={helperStyle()}>When set, Manus returns a value matching this schema; available as ${'${step.output_data.structured_output}'}.</p>
+              </div>
+              <div style={{ paddingTop: 8, borderTop: '1px solid var(--pc-border)' }}>
+                <Checkbox
+                  checked={data.manusAllowFailure || false}
+                  onChange={(v) => onUpdate(node.id, { manusAllowFailure: v })}
+                  label="Allow failure (continue workflow on Manus error)"
+                />
+              </div>
+              {/* Credential binding — picks a stored Manus auth profile so
+                  the runtime resolves the API key at execution time instead
+                  of relying on the MANUS_API_KEY env var. */}
+              <div style={{ paddingTop: 8, borderTop: '1px solid var(--pc-border)' }}>
+                <label style={labelStyle}>Manus credential</label>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    setManusAnchorRect(e.currentTarget.getBoundingClientRect());
+                    setManusPickerOpen(true);
+                  }}
+                  style={{
+                    ...inputStyle,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    textAlign: 'left',
+                    cursor: 'pointer',
+                    color: data.manusCredentialsRef ? 'var(--pc-text-primary)' : 'var(--pc-text-faint)',
+                  }}
+                >
+                  <Lock size={12} style={{ color: 'var(--construct-text-faint)', flexShrink: 0 }} />
+                  <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {selectedManusProfile
+                      ? `${providerLabel(selectedManusProfile.provider)} · ${selectedManusProfile.profile_name}`
+                      : data.manusCredentialsRef || 'None — falls back to MANUS_API_KEY env var'}
+                  </span>
+                </button>
+                {data.manusCredentialsRef && (
+                  <button
+                    type="button"
+                    onClick={() => onUpdate(node.id, { manusCredentialsRef: '' })}
+                    style={{
+                      marginTop: 6,
+                      padding: '4px 10px',
+                      fontSize: 11,
+                      fontWeight: 600,
+                      borderRadius: 6,
+                      border: '1px solid var(--construct-status-warning)',
+                      background: 'color-mix(in srgb, var(--construct-status-warning) 14%, transparent)',
+                      color: 'var(--construct-status-warning)',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Clear
+                  </button>
+                )}
+                <p style={helperStyle()}>
+                  Optional. Encrypted Manus API key from the auth-profile store.
+                  When set, the runtime resolves it at execution time and skips
+                  the MANUS_API_KEY env var.
+                </p>
+                <AuthProfilePicker
+                  open={manusPickerOpen}
+                  onOpenChange={setManusPickerOpen}
+                  value={data.manusCredentialsRef}
+                  anchorRect={manusAnchorRect}
+                  providerFilter="manus"
+                  onSelect={(id) => onUpdate(node.id, { manusCredentialsRef: id ?? '' })}
+                />
+              </div>
+
+              {/* register_output — toggle that auto-publishes the Manus result
+                  as a Kumiho entity + downloads attachments to an
+                  entity-anchored path. Toggle is off by default; flipping it
+                  on reveals the per-field inputs that mirror the output-step
+                  Kumiho Entity panel. Toggling off keeps the previously-entered
+                  values on the node so re-enabling restores user input. */}
+              <div style={{ paddingTop: 8, borderTop: '1px solid var(--pc-border)' }}>
+                <Checkbox
+                  checked={data.manusRegisterEnabled === true}
+                  onChange={(v) => onUpdate(node.id, { manusRegisterEnabled: v })}
+                  label="Register output as Kumiho entity"
+                />
+              </div>
+              {data.manusRegisterEnabled && (
+                <div style={{ paddingTop: 8 }}>
+                  <div style={{ ...sectionTitleStyle, color: 'var(--pc-accent-light)', marginBottom: 8 }}>
+                    Kumiho Entity
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <div>
+                      <label style={labelStyle}>Entity Name</label>
+                      <input
+                        type="text"
+                        value={data.manusRegisterEntityName || ''}
+                        onChange={(e) => onUpdate(node.id, { manusRegisterEntityName: e.target.value })}
+                        placeholder="e.g. report-${inputs.topic}"
+                        style={monoInputStyle}
+                      />
+                    </div>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <div style={{ flex: 1 }}>
+                        <label style={labelStyle}>Kind</label>
+                        <input
+                          type="text"
+                          value={data.manusRegisterEntityKind || ''}
+                          onChange={(e) => onUpdate(node.id, { manusRegisterEntityKind: e.target.value })}
+                          placeholder="e.g. research-report"
+                          style={monoInputStyle}
+                        />
+                      </div>
+                      <div style={{ width: 96 }}>
+                        <label style={labelStyle}>Tag</label>
+                        <input
+                          type="text"
+                          value={data.manusRegisterEntityTag || ''}
+                          onChange={(e) => onUpdate(node.id, { manusRegisterEntityTag: e.target.value })}
+                          placeholder="published"
+                          style={monoInputStyle}
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label style={labelStyle}>Space</label>
+                      <input
+                        type="text"
+                        value={data.manusRegisterEntitySpace || ''}
+                        onChange={(e) => onUpdate(node.id, { manusRegisterEntitySpace: e.target.value })}
+                        placeholder="Construct/WorkflowOutputs/Research"
+                        style={monoInputStyle}
+                      />
+                    </div>
+                    <div>
+                      <label style={labelStyle}>Content source</label>
+                      <select
+                        value={data.manusRegisterContentSource || 'message'}
+                        onChange={(e) => onUpdate(node.id, {
+                          manusRegisterContentSource: e.target.value as 'message' | 'structured',
+                        })}
+                        style={inputStyle}
+                      >
+                        <option value="message">message (assistant text)</option>
+                        <option value="structured">structured (structured_output JSON)</option>
+                      </select>
+                    </div>
+                    <Checkbox
+                      checked={data.manusRegisterAttachments ?? true}
+                      onChange={(v) => onUpdate(node.id, { manusRegisterAttachments: v })}
+                      label="Download attachments to entity_dir/attachments/"
+                    />
+                    <p style={helperStyle()}>
+                      Content is written to
+                      <code> ~/.construct/artifacts/&lt;space&gt;/&lt;kind&gt;/&lt;name&gt;/content.md</code>.
+                      Each attachment lands under the same dir's <code>attachments/</code>.
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           {stepType === 'a2a' && (
             <div style={sectionShellStyle}>
               <div style={{ ...sectionTitleStyle, color: 'var(--construct-signal-network)' }}>A2A Config</div>

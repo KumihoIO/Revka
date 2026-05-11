@@ -84,13 +84,13 @@ export default function EditorCommandList({
       >
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
           <img
-            src={appAssetPath('construct-trans.png')}
+            src={appAssetPath('logo.png')}
             alt="Construct"
             style={{
               height: 56,
               width: 56,
               borderRadius: 14,
-              objectFit: 'cover',
+              objectFit: 'contain',
               opacity: 0.85,
             }}
             onError={(e) => {

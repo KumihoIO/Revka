@@ -49,7 +49,10 @@ def _resolve_skill_name(skill_name: str | None, skill_kref: str | None) -> str |
 
     krefs look like::
 
-        kref://CognitiveMemory/Skills/operator-orchestrator.skilldef?r=3
+        kref://CognitiveMemory/Skills/operator-orchestrator.skill?r=3
+
+    (Legacy items use the ``.skilldef`` suffix instead — both forms are
+    handled the same way because we split on ``.`` and take the prefix.)
 
     We want ``operator-orchestrator``.
     """
@@ -60,7 +63,8 @@ def _resolve_skill_name(skill_name: str | None, skill_kref: str | None) -> str |
     s = skill_kref.split("?", 1)[0]  # drop revision query
     s = s.rstrip("/")
     last = s.rsplit("/", 1)[-1]
-    # last looks like "operator-orchestrator.skilldef"
+    # last looks like "operator-orchestrator.skill" (or, for legacy
+    # items, "operator-orchestrator.skilldef").
     return last.split(".", 1)[0] if "." in last else last
 
 

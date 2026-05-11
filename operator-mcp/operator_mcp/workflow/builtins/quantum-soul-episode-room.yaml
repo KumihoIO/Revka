@@ -96,7 +96,7 @@ steps:
   - id: world_builder
     name: World Builder Memo
     type: agent
-    depends_on: [resolve_cursor, resolve_arc_plan]
+    depends_on: [resolve_cursor]
     skills:
       - "kref://CognitiveMemory/Skills/quantum-soul-world-bible.skilldef"
       - "kref://CognitiveMemory/Skills/quantum-soul-ai-agi-mesh-grounding.skilldef"
@@ -127,7 +127,7 @@ steps:
   - id: science_advisor
     name: Science Advisor Memo
     type: agent
-    depends_on: [resolve_cursor, resolve_arc_plan]
+    depends_on: [resolve_cursor]
     skills:
       - "kref://CognitiveMemory/Skills/quantum-soul-quantum-cognition-grounding.skilldef"
       - "kref://CognitiveMemory/Skills/quantum-soul-ai-agi-mesh-grounding.skilldef"
@@ -160,7 +160,7 @@ steps:
   - id: character_voice
     name: Character & Voice Memo
     type: agent
-    depends_on: [resolve_cursor, resolve_arc_plan]
+    depends_on: [resolve_cursor]
     skills:
       - "kref://CognitiveMemory/Skills/quantum-soul-character-seo-jin.skilldef"
       - "kref://CognitiveMemory/Skills/quantum-soul-character-kang-hyun.skilldef"
@@ -199,7 +199,7 @@ steps:
   - id: structure_hook
     name: Structure & Hook Memo
     type: agent
-    depends_on: [resolve_cursor, resolve_arc_plan]
+    depends_on: [resolve_cursor]
     skills:
       - "kref://CognitiveMemory/Skills/quantum-soul-series-synopsis.skilldef"
     agent:

@@ -1,0 +1,625 @@
+/**
+ * Tests for parseWorkflowYaml — the YAML→tasks pipeline that powers the
+ * editor's "Import YAML" path. Mirrors the parallel test file under
+ * `web/src/components/workflows/__tests__/yamlSync.test.ts`; both yamlSync
+ * modules are kept in sync, so both get covered by symmetric tests.
+ *
+ * Run: npx tsx --test src/construct/components/workflows/__tests__/yamlSync.test.ts
+ */
+
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+
+import { parseWorkflowYaml, tasksToFlow, flowToTasks, tasksToYaml, type TaskDefinition } from '../yamlSync';
+
+test('canonical conditional.branches populates flat fields + edges', () => {
+  const yaml = `
+steps:
+  - id: gate-1
+    type: conditional
+    conditional:
+      branches:
+        - condition: "\${research.score} > 0.5"
+          goto: publish
+          value: "high"
+        - condition: "default"
+          goto: archive
+          value: "low"
+  - id: publish
+    type: agent
+    agent:
+      agent_type: claude
+      role: coder
+      prompt: "Publish"
+  - id: archive
+    type: agent
+    agent:
+      agent_type: claude
+      role: coder
+      prompt: "Archive"
+`;
+  const tasks = parseWorkflowYaml(yaml);
+  const gate = tasks.find((t) => t.id === 'gate-1');
+  assert.ok(gate, 'gate-1 task exists');
+  assert.equal(gate!.condition, '${research.score} > 0.5');
+  assert.equal(gate!.on_true, 'publish');
+  assert.equal(gate!.on_false, 'archive');
+  assert.equal(gate!.on_true_value, 'high');
+  assert.equal(gate!.on_false_value, 'low');
+
+  const { edges } = tasksToFlow(tasks);
+  const pairs = new Set(edges.map((e) => `${e.source}->${e.target}`));
+  assert.ok(pairs.has('gate-1->publish'), 'gate→true edge present');
+  assert.ok(pairs.has('gate-1->archive'), 'gate→false edge present');
+});
+
+test('legacy flat condition + on_true + on_false also populates fields', () => {
+  const yaml = `
+steps:
+  - id: gate
+    type: conditional
+    condition: "\${score} > 0.5"
+    on_true: pub
+    on_false: arc
+  - id: pub
+    type: agent
+    agent:
+      agent_type: claude
+      role: coder
+      prompt: "Publish"
+  - id: arc
+    type: agent
+    agent:
+      agent_type: claude
+      role: coder
+      prompt: "Archive"
+`;
+  const tasks = parseWorkflowYaml(yaml);
+  const gate = tasks.find((t) => t.id === 'gate')!;
+  assert.equal(gate.condition, '${score} > 0.5');
+  assert.equal(gate.on_true, 'pub');
+  assert.equal(gate.on_false, 'arc');
+
+  const { edges } = tasksToFlow(tasks);
+  const pairs = new Set(edges.map((e) => `${e.source}->${e.target}`));
+  assert.ok(pairs.has('gate->pub'));
+  assert.ok(pairs.has('gate->arc'));
+});
+
+test('multi-line prompt: | scalar is preserved intact', () => {
+  const yaml = `
+steps:
+  - id: writer
+    type: agent
+    agent:
+      agent_type: claude
+      role: coder
+      prompt: |
+        Line one.
+        Line two.
+        Line three with \${ref.output}
+`;
+  const tasks = parseWorkflowYaml(yaml);
+  const writer = tasks[0]!;
+  assert.equal(
+    writer.prompt,
+    'Line one.\nLine two.\nLine three with ${ref.output}\n',
+  );
+});
+
+test('hyphenated step IDs survive parse and edge build', () => {
+  const yaml = `
+steps:
+  - id: zeroclaw-resolve
+    type: agent
+    agent:
+      agent_type: claude
+      role: coder
+      prompt: "Resolve"
+  - id: zeroclaw-publish
+    type: agent
+    depends_on: [zeroclaw-resolve]
+    agent:
+      agent_type: claude
+      role: coder
+      prompt: "Publish from \${zeroclaw-resolve.output}"
+`;
+  const tasks = parseWorkflowYaml(yaml);
+  assert.equal(tasks.length, 2);
+  assert.equal(tasks[0]!.id, 'zeroclaw-resolve');
+  assert.equal(tasks[1]!.id, 'zeroclaw-publish');
+  assert.deepEqual(tasks[1]!.depends_on, ['zeroclaw-resolve']);
+
+  const { edges } = tasksToFlow(tasks);
+  const pairs = new Set(edges.map((e) => `${e.source}->${e.target}`));
+  assert.ok(pairs.has('zeroclaw-resolve->zeroclaw-publish'));
+});
+
+test('4-space and mixed indentation parse identically', () => {
+  const yaml = `
+steps:
+    - id: a
+      type: agent
+      agent:
+          agent_type: claude
+          role: coder
+          prompt: "Hello"
+    - id: b
+      type: agent
+      depends_on: [a]
+      agent:
+          agent_type: claude
+          role: coder
+          prompt: "World"
+`;
+  const tasks = parseWorkflowYaml(yaml);
+  assert.equal(tasks.length, 2);
+  assert.equal(tasks[0]!.prompt, 'Hello');
+  assert.equal(tasks[1]!.prompt, 'World');
+  assert.deepEqual(tasks[1]!.depends_on, ['a']);
+});
+
+test('deeply nested parallel containing for_each containing agent', () => {
+  const yaml = `
+steps:
+  - id: par
+    type: parallel
+    parallel:
+      steps: [loop_a, loop_b]
+      join: all
+  - id: loop_a
+    type: for_each
+    for_each:
+      items: ["x", "y"]
+      variable: item
+      steps: [worker_a]
+  - id: loop_b
+    type: for_each
+    for_each:
+      items: ["1", "2"]
+      variable: item
+      steps: [worker_b]
+  - id: worker_a
+    type: agent
+    agent:
+      agent_type: claude
+      role: coder
+      prompt: "Work A on \${item}"
+  - id: worker_b
+    type: agent
+    agent:
+      agent_type: claude
+      role: coder
+      prompt: "Work B on \${item}"
+`;
+  const tasks = parseWorkflowYaml(yaml);
+  assert.equal(tasks.length, 5);
+  const par = tasks.find((t) => t.id === 'par')!;
+  assert.deepEqual(par.parallel_steps, ['loop_a', 'loop_b']);
+  const loopA = tasks.find((t) => t.id === 'loop_a')!;
+  assert.deepEqual(loopA.for_each_items, ['x', 'y']);
+  assert.deepEqual(loopA.for_each_steps, ['worker_a']);
+  const workerA = tasks.find((t) => t.id === 'worker_a')!;
+  assert.equal(workerA.prompt, 'Work A on ${item}');
+});
+
+test('round-trip: parse then emit then parse yields equivalent tasks', () => {
+  const yaml = `
+steps:
+  - id: a
+    type: agent
+    agent:
+      agent_type: claude
+      role: coder
+      prompt: "Hello"
+  - id: b
+    type: agent
+    depends_on: [a]
+    agent:
+      agent_type: claude
+      role: coder
+      prompt: "Use \${a.output}"
+`;
+  const tasks1 = parseWorkflowYaml(yaml);
+  const { nodes, edges } = tasksToFlow(tasks1);
+  const round = flowToTasks(nodes, edges);
+  const yaml2 = tasksToYaml(round);
+  const tasks2 = parseWorkflowYaml(yaml2);
+  assert.equal(tasks2.length, tasks1.length);
+  assert.equal(tasks2[0]!.id, tasks1[0]!.id);
+  assert.equal(tasks2[0]!.prompt, tasks1[0]!.prompt);
+  assert.equal(tasks2[1]!.id, tasks1[1]!.id);
+  assert.deepEqual(tasks2[1]!.depends_on, ['a']);
+});
+
+test('malformed YAML throws an Error with a useful message', () => {
+  const bad = `
+steps:
+  - id: a
+    type: agent
+    agent:
+      prompt: "unterminated string
+`;
+  assert.throws(
+    () => parseWorkflowYaml(bad),
+    (err) => {
+      assert.ok(err instanceof Error, 'is Error');
+      assert.ok(err.message.length > 0, 'has message');
+      return true;
+    },
+  );
+});
+
+test('full multi-step workflow: nodes populated and edges reconstruct', () => {
+  const yaml = `
+name: blog-writer
+version: "1.0"
+description: Multi-stage blog writer.
+
+steps:
+  - id: research-topic
+    type: agent
+    agent:
+      agent_type: claude
+      role: researcher
+      prompt: |
+        Research the topic deeply.
+        Produce \${research-topic.output}.
+
+  - id: score-gate
+    type: conditional
+    depends_on: [research-topic]
+    conditional:
+      branches:
+        - condition: "\${research-topic.score} >= 0.6"
+          goto: parallel-drafts
+          value: "ok"
+        - condition: "default"
+          goto: abort
+          value: "low"
+
+  - id: parallel-drafts
+    type: parallel
+    parallel:
+      steps: [draft-short, draft-long]
+      join: all
+
+  - id: draft-short
+    type: agent
+    agent:
+      agent_type: claude
+      role: coder
+      prompt: "Short draft"
+
+  - id: draft-long
+    type: agent
+    agent:
+      agent_type: claude
+      role: coder
+      prompt: "Long draft"
+
+  - id: review-loop
+    type: for_each
+    depends_on: [parallel-drafts]
+    for_each:
+      items: ["short", "long"]
+      variable: variant
+      steps: [reviewer]
+
+  - id: reviewer
+    type: agent
+    agent:
+      agent_type: claude
+      role: reviewer
+      prompt: "Review \${variant}"
+
+  - id: final-output
+    type: output
+    depends_on: [review-loop]
+    output:
+      format: markdown
+      template: |
+        # Final
+        \${draft-short.output}
+        \${draft-long.output}
+
+  - id: abort
+    type: agent
+    agent:
+      agent_type: claude
+      role: coder
+      prompt: "Abort"
+`;
+  const tasks = parseWorkflowYaml(yaml);
+  assert.equal(tasks.length, 9);
+
+  const gate = tasks.find((t) => t.id === 'score-gate')!;
+  assert.equal(gate.condition, '${research-topic.score} >= 0.6');
+  assert.equal(gate.on_true, 'parallel-drafts');
+  assert.equal(gate.on_false, 'abort');
+
+  assert.equal(tasks.find((t) => t.id === 'parallel-drafts')!.type, 'parallel');
+  assert.deepEqual(
+    tasks.find((t) => t.id === 'parallel-drafts')!.parallel_steps,
+    ['draft-short', 'draft-long'],
+  );
+  assert.equal(tasks.find((t) => t.id === 'review-loop')!.type, 'for_each');
+  assert.deepEqual(
+    tasks.find((t) => t.id === 'review-loop')!.for_each_steps,
+    ['reviewer'],
+  );
+
+  const { edges } = tasksToFlow(tasks);
+  const pairs = new Set(edges.map((e) => `${e.source}->${e.target}`));
+  assert.ok(pairs.has('research-topic->score-gate'), 'depends_on edge');
+  assert.ok(pairs.has('score-gate->parallel-drafts'), 'gate true edge');
+  assert.ok(pairs.has('score-gate->abort'), 'gate false edge');
+  assert.ok(pairs.has('parallel-drafts->draft-short'), 'parallel→child');
+  assert.ok(pairs.has('parallel-drafts->draft-long'), 'parallel→child');
+  assert.ok(pairs.has('draft-short->final-output'), 'output template ref');
+  assert.ok(pairs.has('draft-long->final-output'), 'output template ref');
+});
+
+test('manus step: full-fields round-trip preserves all manus_* fields and schema-as-object', () => {
+  const yaml = `
+steps:
+  - id: research
+    type: manus
+    manus:
+      prompt: "Investigate widget market"
+      structured_output_schema:
+        type: object
+        properties:
+          summary:
+            type: string
+          score:
+            type: number
+        required: [summary]
+      connectors: [google_drive, slack]
+      enable_skills: [browse, code]
+      force_skills: [browse]
+      agent_profile: deep_research
+      locale: en-US
+      project_id: proj-123
+      title: "Widget market scan"
+      timeout_seconds: 1200
+      poll_interval_seconds: 10
+      allow_failure: true
+`;
+  const tasks1 = parseWorkflowYaml(yaml);
+  assert.equal(tasks1.length, 1);
+  const t1 = tasks1[0]!;
+  assert.equal(t1.type, 'manus');
+  assert.equal(t1.manus_prompt, 'Investigate widget market');
+  // structured_output_schema parses to a JSON-string round-trip of the object.
+  assert.ok(t1.manus_structured_output_schema, 'schema string present');
+  const schema1 = JSON.parse(t1.manus_structured_output_schema!);
+  assert.equal(schema1.type, 'object');
+  assert.deepEqual(schema1.required, ['summary']);
+  assert.equal(schema1.properties.summary.type, 'string');
+  assert.equal(schema1.properties.score.type, 'number');
+  assert.deepEqual(t1.manus_connectors, ['google_drive', 'slack']);
+  assert.deepEqual(t1.manus_enable_skills, ['browse', 'code']);
+  assert.deepEqual(t1.manus_force_skills, ['browse']);
+  assert.equal(t1.manus_agent_profile, 'deep_research');
+  assert.equal(t1.manus_locale, 'en-US');
+  assert.equal(t1.manus_project_id, 'proj-123');
+  assert.equal(t1.manus_title, 'Widget market scan');
+  assert.equal(t1.manus_timeout_seconds, 1200);
+  assert.equal(t1.manus_poll_interval_seconds, 10);
+  assert.equal(t1.manus_allow_failure, true);
+
+  // Re-emit and re-parse — structural equivalence with the original parse.
+  const yaml2 = tasksToYaml(tasks1);
+  const tasks2 = parseWorkflowYaml(yaml2);
+  assert.equal(tasks2.length, 1);
+  const t2 = tasks2[0]!;
+  assert.equal(t2.type, 'manus');
+  assert.equal(t2.manus_prompt, t1.manus_prompt);
+  assert.deepEqual(t2.manus_connectors, t1.manus_connectors);
+  assert.deepEqual(t2.manus_enable_skills, t1.manus_enable_skills);
+  assert.deepEqual(t2.manus_force_skills, t1.manus_force_skills);
+  assert.equal(t2.manus_agent_profile, t1.manus_agent_profile);
+  assert.equal(t2.manus_locale, t1.manus_locale);
+  assert.equal(t2.manus_project_id, t1.manus_project_id);
+  assert.equal(t2.manus_title, t1.manus_title);
+  assert.equal(t2.manus_timeout_seconds, t1.manus_timeout_seconds);
+  assert.equal(t2.manus_poll_interval_seconds, t1.manus_poll_interval_seconds);
+  assert.equal(t2.manus_allow_failure, t1.manus_allow_failure);
+
+  // structured_output_schema must round-trip as a JSON object (not a stringified blob).
+  assert.ok(t2.manus_structured_output_schema, 'schema string present after round-trip');
+  const schema2 = JSON.parse(t2.manus_structured_output_schema!);
+  assert.deepEqual(schema2, schema1);
+  // The emitted YAML must contain the schema as an inline JSON object, not a quoted string.
+  assert.ok(
+    /structured_output_schema:\s*\{/.test(yaml2),
+    'emitted schema is an inline object, not a quoted string',
+  );
+});
+
+test('manus step: minimal-fields case round-trips cleanly with only prompt set', () => {
+  const yaml = `
+steps:
+  - id: quick
+    type: manus
+    manus:
+      prompt: "Quick check"
+`;
+  const tasks1 = parseWorkflowYaml(yaml);
+  assert.equal(tasks1.length, 1);
+  const t1 = tasks1[0]!;
+  assert.equal(t1.type, 'manus');
+  assert.equal(t1.manus_prompt, 'Quick check');
+  assert.equal(t1.manus_structured_output_schema, undefined);
+  assert.equal(t1.manus_agent_profile, undefined);
+  assert.equal(t1.manus_locale, undefined);
+
+  const yaml2 = tasksToYaml(tasks1);
+  const tasks2 = parseWorkflowYaml(yaml2);
+  assert.equal(tasks2.length, 1);
+  const t2 = tasks2[0]!;
+  assert.equal(t2.type, 'manus');
+  assert.equal(t2.manus_prompt, 'Quick check');
+  assert.equal(t2.manus_structured_output_schema, undefined);
+  assert.equal(t2.manus_agent_profile, undefined);
+  assert.equal(t2.manus_locale, undefined);
+  assert.equal(t2.manus_allow_failure, undefined);
+});
+
+test('manus step with credentials_ref round-trips cleanly', () => {
+  const yaml = `
+steps:
+  - id: research
+    type: manus
+    manus:
+      prompt: "Find competitors"
+      credentials_ref: "manus:work"
+`;
+  const tasks1 = parseWorkflowYaml(yaml);
+  assert.equal(tasks1.length, 1);
+  assert.equal(tasks1[0]!.manus_credentials_ref, 'manus:work');
+
+  // Re-emit + re-parse — credentials_ref survives the round-trip.
+  const yaml2 = tasksToYaml(tasks1);
+  assert.ok(/credentials_ref:\s*['"]?manus:work['"]?/.test(yaml2),
+    'emitted YAML contains credentials_ref under the manus block');
+  const tasks2 = parseWorkflowYaml(yaml2);
+  assert.equal(tasks2[0]!.manus_credentials_ref, 'manus:work');
+});
+
+test('manus step without credentials_ref omits the field in emitted YAML', () => {
+  const yaml = `
+steps:
+  - id: research
+    type: manus
+    manus:
+      prompt: "Find competitors"
+`;
+  const tasks1 = parseWorkflowYaml(yaml);
+  assert.equal(tasks1[0]!.manus_credentials_ref, undefined);
+
+  // Emitted YAML must NOT contain a credentials_ref line — empty values
+  // should be skipped, not serialized as ``credentials_ref: ""``.
+  const yaml2 = tasksToYaml(tasks1);
+  assert.ok(!/credentials_ref/.test(yaml2),
+    'emitted YAML omits credentials_ref when unset');
+  const tasks2 = parseWorkflowYaml(yaml2);
+  assert.equal(tasks2[0]!.manus_credentials_ref, undefined);
+});
+
+test('manus step register_output: full-fields round-trip', () => {
+  const yaml = `
+steps:
+  - id: research
+    type: manus
+    manus:
+      prompt: "Investigate"
+      register_output:
+        entity_name: "report-\${inputs.topic}"
+        entity_kind: "research-report"
+        entity_tag: "ready"
+        entity_space: "Construct/WorkflowOutputs/Research"
+        register_attachments: false
+        content_source: "structured"
+`;
+  const tasks1 = parseWorkflowYaml(yaml);
+  const t1 = tasks1[0]!;
+  assert.equal(t1.manus_register_enabled, true);
+  assert.equal(t1.manus_register_entity_name, 'report-${inputs.topic}');
+  assert.equal(t1.manus_register_entity_kind, 'research-report');
+  assert.equal(t1.manus_register_entity_tag, 'ready');
+  assert.equal(t1.manus_register_entity_space, 'Construct/WorkflowOutputs/Research');
+  assert.equal(t1.manus_register_attachments, false);
+  assert.equal(t1.manus_register_content_source, 'structured');
+
+  const yaml2 = tasksToYaml(tasks1);
+  assert.ok(/register_output:/.test(yaml2), 'emitted YAML contains register_output block');
+  const tasks2 = parseWorkflowYaml(yaml2);
+  const t2 = tasks2[0]!;
+  assert.equal(t2.manus_register_enabled, true);
+  assert.equal(t2.manus_register_entity_name, t1.manus_register_entity_name);
+  assert.equal(t2.manus_register_entity_kind, t1.manus_register_entity_kind);
+  assert.equal(t2.manus_register_entity_tag, t1.manus_register_entity_tag);
+  assert.equal(t2.manus_register_entity_space, t1.manus_register_entity_space);
+  assert.equal(t2.manus_register_attachments, t1.manus_register_attachments);
+  assert.equal(t2.manus_register_content_source, t1.manus_register_content_source);
+});
+
+test('manus step register_output: omitted when register_output block absent in YAML', () => {
+  // Without register_output in the YAML, the emitted YAML should not
+  // contain a register_output block — even after a round-trip through tasks.
+  const yaml = `
+steps:
+  - id: r
+    type: manus
+    manus:
+      prompt: "x"
+`;
+  const tasks = parseWorkflowYaml(yaml);
+  // The canonical enabled flag should be unset when no block is present.
+  assert.notEqual(tasks[0]!.manus_register_enabled, true);
+  const out = tasksToYaml(tasks);
+  assert.ok(!/register_output/.test(out),
+    'emitted YAML omits register_output when unconfigured');
+});
+
+test('manus step register_output: enabled flag round-trips through tasksToFlow / flowToTasks', () => {
+  // Mirrors the UI checkbox flow: parse → tasksToFlow → flowToTasks →
+  // tasksToYaml. The canonical `manus_register_enabled` flag must
+  // survive that round-trip so the editor's checkbox state is preserved.
+  const yaml = `
+steps:
+  - id: research
+    type: manus
+    manus:
+      prompt: "Investigate"
+      register_output:
+        entity_name: "report"
+        entity_kind: "research-report"
+`;
+  const tasks1 = parseWorkflowYaml(yaml);
+  const { nodes, edges } = tasksToFlow(tasks1);
+  // Node data carries the canonical UI flag.
+  const n = nodes[0]!;
+  assert.equal(n.data.manusRegisterEnabled, true);
+
+  const tasks2 = flowToTasks(nodes, edges);
+  assert.equal(tasks2[0]!.manus_register_enabled, true);
+  const yaml2 = tasksToYaml(tasks2);
+  assert.ok(/register_output:/.test(yaml2), 'enabled flag round-trip emits register_output block');
+});
+
+test('manus step register_output: enabled with empty entity_name/kind still emits block', () => {
+  // The checkbox is on but the user hasn't filled in entity_name/kind
+  // yet. The emit path should still emit the block (with empty strings)
+  // so the runtime fail-fasts at registration time with register_output_error
+  // — that's the right behavior so users see the error and know to fill
+  // in the fields rather than silently dropping the block.
+  const tasks: TaskDefinition[] = [{
+    id: 'r',
+    type: 'manus',
+    name: 'r',
+    description: '',
+    agent_hints: [],
+    skills: [],
+    depends_on: [],
+    inputs: [],
+    outputs: [],
+    on_complete: '',
+    on_fail: '',
+    timeout_minutes: 0,
+    retry_count: 0,
+    manus_prompt: 'x',
+    manus_register_enabled: true,
+    manus_register_entity_name: '',
+    manus_register_entity_kind: '',
+  } as unknown as TaskDefinition];
+  const out = tasksToYaml(tasks);
+  assert.ok(/register_output:/.test(out),
+    'emit block even when entity_name/kind are empty (runtime fail-fast)');
+  // yamlEscape('') returns '' so the lines render as `entity_name:` / `entity_kind:`
+  // — both keys are present so the runtime fail-fast path sees the empty values.
+  assert.ok(/entity_name:/.test(out), 'entity_name key present in block');
+  assert.ok(/entity_kind:/.test(out), 'entity_kind key present in block');
+});
