@@ -8,6 +8,16 @@ use std::str::FromStr;
 const SERVICE_LABEL: &str = "com.construct.daemon";
 const WINDOWS_TASK_NAME: &str = "Construct Daemon";
 
+/// Soft NumberOfFiles for the daemon process. 16× launchd's default of 256
+/// (real-world incident 2026-05-11: user hit Too many open files spawning
+/// MCP servers). Each agent spawns 3 MCP sidecars; at ~10 FDs per sidecar
+/// stdio pipe set + headroom, this comfortably covers ~100 concurrent agents.
+pub const DAEMON_NOFILE_SOFT: u64 = 4096;
+
+/// Hard ceiling — double the soft cap. Operators can raise the soft limit
+/// at runtime up to this without re-installing the service.
+pub const DAEMON_NOFILE_HARD: u64 = 8192;
+
 /// Supported init systems for service management
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum InitSystem {
@@ -758,6 +768,28 @@ fn install_macos(config: &Config) -> Result<()> {
     let stdout = logs_dir.join("daemon.stdout.log");
     let stderr = logs_dir.join("daemon.stderr.log");
 
+    let plist = format_macos_plist(&exe, homebrew_var_dir.as_deref(), &stdout, &stderr);
+
+    fs::write(&file, plist)?;
+    println!("✅ Installed launchd service: {}", file.display());
+    if let Some(ref var_dir) = homebrew_var_dir {
+        println!("   Homebrew var: {}", var_dir.display());
+    }
+    println!("   Start with: construct service start");
+    Ok(())
+}
+
+/// Build the launchd plist contents for the Construct daemon.
+///
+/// Extracted from `install_macos` so tests can pin the generated XML
+/// without performing filesystem side effects. See `install_macos` for
+/// the surrounding install flow (directory creation, plist write).
+fn format_macos_plist(
+    exe: &Path,
+    homebrew_var_dir: Option<&Path>,
+    stdout: &Path,
+    stderr: &Path,
+) -> String {
     // PATH for the daemon process — see build_unix_daemon_path() for
     // why this is necessary on every Unix init system.
     let path_env = build_unix_daemon_path(true);
@@ -766,7 +798,7 @@ fn install_macos(config: &Config) -> Result<()> {
     // carries CONSTRUCT_CONFIG_DIR. WorkingDirectory is Homebrew-only
     // (lives outside the EnvironmentVariables dict, so it stays a
     // separate stanza).
-    let env_section = if let Some(ref var_dir) = homebrew_var_dir {
+    let env_section = if let Some(var_dir) = homebrew_var_dir {
         format!(
             r#"  <key>EnvironmentVariables</key>
   <dict>
@@ -794,7 +826,29 @@ fn install_macos(config: &Config) -> Result<()> {
         )
     };
 
-    let plist = format!(
+    // Resource limits — real-world incident 2026-05-11: a user hit
+    // `Failed to spawn MCP server: Too many open files (os error 24)`
+    // because launchd's default NumberOfFiles is 256, and each
+    // Construct agent spawns 3 MCP sidecars over stdio pipes. Bump the
+    // soft cap to DAEMON_NOFILE_SOFT (operators can `ulimit -n` up to
+    // the hard cap at runtime without re-installing).
+    let resource_limits = format!(
+        r#"  <key>SoftResourceLimits</key>
+  <dict>
+    <key>NumberOfFiles</key>
+    <integer>{soft}</integer>
+  </dict>
+  <key>HardResourceLimits</key>
+  <dict>
+    <key>NumberOfFiles</key>
+    <integer>{hard}</integer>
+  </dict>
+"#,
+        soft = DAEMON_NOFILE_SOFT,
+        hard = DAEMON_NOFILE_HARD,
+    );
+
+    format!(
         r#"<?xml version=\"1.0\" encoding=\"UTF-8\"?>
 <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">
 <plist version=\"1.0\">
@@ -810,7 +864,7 @@ fn install_macos(config: &Config) -> Result<()> {
   <true/>
   <key>KeepAlive</key>
   <true/>
-{env_section}  <key>StandardOutPath</key>
+{resource_limits}{env_section}  <key>StandardOutPath</key>
   <string>{stdout}</string>
   <key>StandardErrorPath</key>
   <string>{stderr}</string>
@@ -819,18 +873,11 @@ fn install_macos(config: &Config) -> Result<()> {
 "#,
         label = SERVICE_LABEL,
         exe = xml_escape(&exe.display().to_string()),
+        resource_limits = resource_limits,
         env_section = env_section,
         stdout = xml_escape(&stdout.display().to_string()),
         stderr = xml_escape(&stderr.display().to_string())
-    );
-
-    fs::write(&file, plist)?;
-    println!("✅ Installed launchd service: {}", file.display());
-    if let Some(ref var_dir) = homebrew_var_dir {
-        println!("   Homebrew var: {}", var_dir.display());
-    }
-    println!("   Start with: construct service start");
-    Ok(())
+    )
 }
 
 fn install_linux(config: &Config, init_system: InitSystem) -> Result<()> {
@@ -841,15 +888,13 @@ fn install_linux(config: &Config, init_system: InitSystem) -> Result<()> {
     }
 }
 
-fn install_linux_systemd(config: &Config) -> Result<()> {
-    let file = linux_service_file(config)?;
-    if let Some(parent) = file.parent() {
-        fs::create_dir_all(parent)?;
-    }
-
-    let exe = std::env::current_exe().context("Failed to resolve current executable")?;
+/// Build the systemd user-unit contents for the Construct daemon.
+///
+/// Extracted from `install_linux_systemd` so tests can pin the
+/// generated unit body without performing filesystem side effects.
+fn format_systemd_unit(exe: &Path) -> String {
     let path_env = build_unix_daemon_path(true);
-    let unit = format!(
+    format!(
         "[Unit]\n\
          Description=Construct daemon\n\
          After=network.target\n\
@@ -861,6 +906,13 @@ fn install_linux_systemd(config: &Config) -> Result<()> {
          RestartSec=3\n\
          # Ensure HOME is set so headless browsers can create profile/cache dirs.\n\
          Environment=HOME=%h\n\
+         # File-descriptor limits — real-world incident 2026-05-11: a user\n\
+         # hit `Too many open files` spawning MCP servers because the\n\
+         # supervised daemon inherited the default soft NOFILE (often 1024\n\
+         # on systemd user units). Each agent spawns 3 MCP sidecars over\n\
+         # stdio pipes, so a small handful of agents exhausts that cap.\n\
+         # Format is `<soft>:<hard>`.\n\
+         LimitNOFILE={nofile_soft}:{nofile_hard}\n\
          # PATH override — systemd user services start with a minimal\n\
          # default PATH (typically /usr/local/bin:/usr/bin:/bin:...) that\n\
          # excludes ~/.cargo/bin, ~/.local/bin, and ~/.npm-global/bin.\n\
@@ -873,8 +925,20 @@ fn install_linux_systemd(config: &Config) -> Result<()> {
          \n\
          [Install]\n\
          WantedBy=default.target\n",
-        exe = exe.display()
-    );
+        exe = exe.display(),
+        nofile_soft = DAEMON_NOFILE_SOFT,
+        nofile_hard = DAEMON_NOFILE_HARD,
+    )
+}
+
+fn install_linux_systemd(config: &Config) -> Result<()> {
+    let file = linux_service_file(config)?;
+    if let Some(parent) = file.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let exe = std::env::current_exe().context("Failed to resolve current executable")?;
+    let unit = format_systemd_unit(&exe);
 
     fs::write(&file, unit)?;
     let _ = run_checked(Command::new("systemctl").args(["--user", "daemon-reload"]));
@@ -1283,6 +1347,14 @@ error_log="/var/log/construct/error.log"
 # Without this, Chromium/Firefox fail with sandbox or profile errors.
 export HOME="/var/lib/construct"
 
+# File-descriptor limit — real-world incident 2026-05-11: a user hit
+# `Too many open files` spawning MCP servers. Each agent spawns 3 MCP
+# sidecars over stdio pipes; the default soft NOFILE (256–1024 depending
+# on the host) exhausts after a small handful of concurrent agents.
+# OpenRC reads rc_ulimit and calls `ulimit -n` before launching the
+# service. Single-value syntax (no separate hard cap).
+rc_ulimit="-n {nofile_soft}"
+
 # PATH override — the OpenRC system `construct` user starts with the
 # default supervised-process PATH which can be even narrower than the
 # user's interactive shell. Daemon subprocess spawns of codex/claude/etc
@@ -1300,6 +1372,7 @@ start_pre() {{
 "#,
         exe = exe_path.display(),
         config_dir = config_dir.display(),
+        nofile_soft = DAEMON_NOFILE_SOFT,
     )
 }
 
@@ -1434,6 +1507,7 @@ fn install_linux_openrc(config: &Config) -> Result<()> {
 }
 
 fn install_windows(config: &Config) -> Result<()> {
+    // FD limits not needed on Windows — default per-process handle limits are already in the tens of thousands.
     let exe = std::env::current_exe().context("Failed to resolve current executable")?;
     let logs_dir = config
         .config_path
@@ -1790,6 +1864,69 @@ mod tests {
         // No-op assertion to keep this test useful on non-Windows runners
         // where USERPROFILE/APPDATA aren't typically set.
         let _ = path;
+    }
+
+    #[test]
+    fn generate_openrc_script_sets_fd_limit() {
+        // Real-world incident 2026-05-11: launchd-supervised daemon hit
+        // `Too many open files` spawning MCP servers. OpenRC variant
+        // must declare `rc_ulimit="-n 4096"` so the supervisor calls
+        // `ulimit -n 4096` before exec'ing the daemon.
+        use std::path::PathBuf;
+
+        let exe_path = PathBuf::from("/usr/local/bin/construct");
+        let script = generate_openrc_script(&exe_path, Path::new("/etc/construct"));
+
+        assert!(
+            script.contains("rc_ulimit=\"-n 4096\""),
+            "OpenRC script must set rc_ulimit so the daemon gets a raised NOFILE soft cap: {script}"
+        );
+    }
+
+    #[test]
+    fn systemd_unit_sets_fd_limit() {
+        // Real-world incident 2026-05-11: same root cause as the launchd
+        // / OpenRC variants. systemd format is `<soft>:<hard>`.
+        let exe_path = Path::new("/usr/local/bin/construct");
+        let unit = format_systemd_unit(exe_path);
+
+        assert!(
+            unit.contains("LimitNOFILE=4096:8192"),
+            "systemd unit must set LimitNOFILE for daemon MCP spawns: {unit}"
+        );
+    }
+
+    #[test]
+    fn macos_plist_sets_fd_limit() {
+        // Real-world incident 2026-05-11: launchd's default NumberOfFiles
+        // is 256. Plist must declare both Soft + HardResourceLimits with
+        // NumberOfFiles entries so a freshly-installed daemon can spawn
+        // its MCP sidecars at scale.
+        let exe = Path::new("/usr/local/bin/construct");
+        let stdout = Path::new("/var/log/construct/daemon.stdout.log");
+        let stderr = Path::new("/var/log/construct/daemon.stderr.log");
+        let plist = format_macos_plist(exe, None, stdout, stderr);
+
+        assert!(
+            plist.contains("<key>NumberOfFiles</key>"),
+            "plist must declare NumberOfFiles resource limit: {plist}"
+        );
+        assert!(
+            plist.contains("<integer>4096</integer>"),
+            "plist must set soft NumberOfFiles to 4096: {plist}"
+        );
+        assert!(
+            plist.contains("<integer>8192</integer>"),
+            "plist must set hard NumberOfFiles to 8192: {plist}"
+        );
+        assert!(
+            plist.contains("<key>SoftResourceLimits</key>"),
+            "plist must include SoftResourceLimits stanza: {plist}"
+        );
+        assert!(
+            plist.contains("<key>HardResourceLimits</key>"),
+            "plist must include HardResourceLimits stanza: {plist}"
+        );
     }
 
     #[test]
