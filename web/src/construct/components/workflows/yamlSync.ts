@@ -232,7 +232,14 @@ export interface TaskDefinition {
    * entity-anchored disk path. See `ManusRegisterOutputConfig` in
    * operator-mcp/operator_mcp/workflow/schema.py for the on-disk layout
    * and Kumiho publish semantics.
+   *
+   * `manus_register_enabled` is the canonical on/off flag — when true the
+   * emit path writes a `register_output:` block (regardless of whether
+   * entity_name/kind are set; empty fields fail-fast in the runtime so
+   * users see the error). The other fields hold the per-field values that
+   * survive a toggle-off + toggle-on cycle.
    */
+  manus_register_enabled?: boolean;
   manus_register_entity_name?: string;
   manus_register_entity_kind?: string;
   manus_register_entity_tag?: string;
@@ -466,7 +473,11 @@ export interface TaskNodeData {
   manusPollIntervalSeconds: number;
   manusAllowFailure: boolean;
   manusCredentialsRef: string;
-  // Manus register_output — Kumiho entity auto-publish + attachment download
+  // Manus register_output — Kumiho entity auto-publish + attachment download.
+  // `manusRegisterEnabled` is the canonical on/off flag for the UI checkbox
+  // and gates emission of the `register_output:` YAML block. The other
+  // fields hold per-field values so toggling off → on restores user input.
+  manusRegisterEnabled: boolean;
   manusRegisterEntityName: string;
   manusRegisterEntityKind: string;
   manusRegisterEntityTag: string;
@@ -908,9 +919,12 @@ function parseStep(s: YAMLObj): TaskDefinition | null {
     t.manus_credentials_ref = asStr(manus.credentials_ref);
 
     // register_output — nested block, optional. Round-trip every field so
-    // re-emitted YAML matches the input.
+    // re-emitted YAML matches the input. Presence of the block flips the
+    // canonical `manus_register_enabled` flag on; the per-field values
+    // round-trip independently.
     const ro = isObj(manus.register_output) ? manus.register_output : undefined;
     if (ro) {
+      t.manus_register_enabled = true;
       t.manus_register_entity_name = asStr(ro.entity_name);
       t.manus_register_entity_kind = asStr(ro.entity_kind);
       const tag = asStr(ro.entity_tag);
@@ -1314,6 +1328,7 @@ export function tasksToFlow(tasks: TaskDefinition[]): { nodes: Node<TaskNodeData
       manusPollIntervalSeconds: task.manus_poll_interval_seconds ?? 5,
       manusAllowFailure: task.manus_allow_failure || false,
       manusCredentialsRef: task.manus_credentials_ref || '',
+      manusRegisterEnabled: task.manus_register_enabled === true,
       manusRegisterEntityName: task.manus_register_entity_name || '',
       manusRegisterEntityKind: task.manus_register_entity_kind || '',
       manusRegisterEntityTag: task.manus_register_entity_tag || '',
@@ -1946,11 +1961,16 @@ export function flowToTasks(nodes: Node<TaskNodeData>[], edges: Edge[]): TaskDef
       if (d.manusPollIntervalSeconds && d.manusPollIntervalSeconds !== 5) base.manus_poll_interval_seconds = d.manusPollIntervalSeconds;
       if (d.manusAllowFailure) base.manus_allow_failure = true;
       if (d.manusCredentialsRef) base.manus_credentials_ref = d.manusCredentialsRef;
-      // register_output round-trip: only emit when entity_name + entity_kind
-      // are both set (the minimum to enable registration in the executor).
-      if (d.manusRegisterEntityName && d.manusRegisterEntityKind) {
-        base.manus_register_entity_name = d.manusRegisterEntityName;
-        base.manus_register_entity_kind = d.manusRegisterEntityKind;
+      // register_output round-trip: emission is gated by the canonical
+      // `manusRegisterEnabled` flag — the user-facing checkbox. Empty
+      // entity_name / entity_kind still emit (the runtime fail-fasts at
+      // registration time with register_output_error so users see the
+      // error and know to fill them in). Empty optional fields (space,
+      // tag default, etc.) are omitted as before.
+      if (d.manusRegisterEnabled === true) {
+        base.manus_register_enabled = true;
+        base.manus_register_entity_name = d.manusRegisterEntityName || '';
+        base.manus_register_entity_kind = d.manusRegisterEntityKind || '';
         if (d.manusRegisterEntityTag && d.manusRegisterEntityTag !== 'published') {
           base.manus_register_entity_tag = d.manusRegisterEntityTag;
         }
@@ -2385,11 +2405,14 @@ export function tasksToYaml(tasks: TaskDefinition[], meta?: Partial<WorkflowMeta
       }
       if (task.manus_allow_failure) lines.push(`      allow_failure: true`);
       if (task.manus_credentials_ref) lines.push(`      credentials_ref: ${yamlEscape(task.manus_credentials_ref)}`);
-      // register_output — emit when both entity_name and entity_kind are set.
-      if (task.manus_register_entity_name && task.manus_register_entity_kind) {
+      // register_output — emission is gated by the canonical
+      // `manus_register_enabled` flag. Empty entity_name / entity_kind
+      // still emit (the runtime fail-fasts so the user sees the error);
+      // empty optional fields are omitted.
+      if (task.manus_register_enabled === true) {
         lines.push(`      register_output:`);
-        lines.push(`        entity_name: ${yamlEscape(task.manus_register_entity_name)}`);
-        lines.push(`        entity_kind: ${yamlEscape(task.manus_register_entity_kind)}`);
+        lines.push(`        entity_name: ${yamlEscape(task.manus_register_entity_name || '')}`);
+        lines.push(`        entity_kind: ${yamlEscape(task.manus_register_entity_kind || '')}`);
         if (task.manus_register_entity_tag && task.manus_register_entity_tag !== 'published') {
           lines.push(`        entity_tag: ${yamlEscape(task.manus_register_entity_tag)}`);
         }

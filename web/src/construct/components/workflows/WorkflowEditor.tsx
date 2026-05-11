@@ -344,6 +344,7 @@ function defaultNodeData(id: string, overrides?: Partial<TaskNodeData>): TaskNod
     manusPollIntervalSeconds: 5,
     manusAllowFailure: false,
     manusCredentialsRef: '',
+    manusRegisterEnabled: false,
     manusRegisterEntityName: '',
     manusRegisterEntityKind: '',
     manusRegisterEntityTag: '',

@@ -2960,134 +2960,131 @@ async def _manus_register_output(
                     dl["artifact_error"] = _manus_sanitize(str(e))
 
 
-async def _exec_manus(step: StepDef, state: WorkflowState) -> StepResult:
-    """Execute a Manus web-research step.
+async def manus_run_task(
+    *,
+    prompt: str,
+    structured_output_schema: dict[str, Any] | None = None,
+    connectors: list[str] | None = None,
+    enable_skills: list[str] | None = None,
+    force_skills: list[str] | None = None,
+    agent_profile: str | None = None,
+    locale: str | None = None,
+    project_id: str | None = None,
+    title: str | None = None,
+    timeout_seconds: int | None = None,
+    poll_interval_seconds: int | None = None,
+    credentials_ref: str | None = None,
+    cancel_check: Any = None,
+) -> dict[str, Any]:
+    """Shared Manus task executor — used by both the workflow ``manus:`` step
+    and the Operator MCP ``manus_create_task`` tool.
 
-    Creates a Manus task with the configured prompt, polls task.listMessages
-    until the agent reaches a terminal state, then returns the final
-    assistant message plus any structured-output payload as the step's
-    output_data. Honors ``state.cancel_requested`` between polls so a
-    cancel from the dashboard stops the loop and returns ``failed`` with
-    a clear cancellation message.
+    Resolves the API key (credentials_ref → gateway resolve, else
+    ``[manus].api_key_env`` env var), creates a Manus task, polls
+    ``task.listMessages`` until a terminal state is reached, and returns
+    a result dict. NEVER raises for expected error paths — returns
+    ``{"error": "..."}`` instead so callers can decide whether to fail
+    the step or surface the error to the user.
+
+    Cancellation: when ``cancel_check`` is a callable that returns truthy,
+    the poll loop fires ``task.stop`` and returns with
+    ``final_state='cancelled'``. The workflow step passes
+    ``lambda: state.cancel_requested``; the MCP tool passes None.
+
+    Returns a dict that always includes:
+        task_id, task_url, share_url, final_state, event_count,
+        elapsed_seconds, assistant_message, attachments, status_detail,
+        brief, description, api_key_env, credentials_ref
+
+    Plus, when populated:
+        structured_output, structured_output_error, error_message,
+        error (set on non-stopped terminal or transport failure),
+        auth_resolve_failed, auth_resolve_code
     """
-    cfg: ManusStepConfig = step.manus  # type: ignore[assignment]
-    if cfg is None or not cfg.prompt:
-        return StepResult(
-            step_id=step.id,
-            status="failed",
-            error="manus step requires `prompt`",
-        )
-
-    # Interpolate user-facing strings. Lists / dicts are passed through
-    # verbatim — Manus accepts both literal connector ids and skill names
-    # and there's no template syntax inside those lists in practice.
     from ..construct_config import manus_config
     mc = manus_config()
 
     api_key_env = mc.get("api_key_env", "MANUS_API_KEY")
     api_key = ""
+
     # When credentials_ref is set, the gateway resolves the encrypted token
     # at execution time; otherwise fall back to the env var. The resolved
-    # token is NEVER written to input_data, output_data, logs, or errors —
-    # only the env-var name (when used) and the profile id (when used) are
-    # recorded for the run-view UI.
-    if cfg.credentials_ref:
+    # token is NEVER written to the return dict — only the env-var name
+    # (when used) and the profile id (when used) are echoed back.
+    if credentials_ref:
         try:
-            resolved = await resolve_auth_profile(cfg.credentials_ref)
+            resolved = await resolve_auth_profile(credentials_ref)
             api_key = str(resolved.get("token") or "")
         except AuthResolveError as exc:
-            return StepResult(
-                step_id=step.id,
-                status="failed",
-                error=(
+            return {
+                "api_key_env": api_key_env,
+                "credentials_ref": credentials_ref,
+                "auth_resolve_failed": True,
+                "auth_resolve_code": exc.code,
+                "error": (
                     f"auth_resolve_failed: {exc.code} — "
                     f"{_manus_sanitize(str(exc))}"
                 ),
-                output_data={
-                    "auth_resolve_failed": True,
-                    "auth_resolve_code": exc.code,
-                },
-            )
+            }
         if not api_key:
-            return StepResult(
-                step_id=step.id,
-                status="failed",
-                error=(
-                    f"auth profile '{cfg.credentials_ref}' resolved to an "
+            return {
+                "api_key_env": api_key_env,
+                "credentials_ref": credentials_ref,
+                "auth_resolve_failed": True,
+                "auth_resolve_code": "auth_profile_empty",
+                "error": (
+                    f"auth profile '{credentials_ref}' resolved to an "
                     f"empty token"
                 ),
-                output_data={
-                    "auth_resolve_failed": True,
-                    "auth_resolve_code": "auth_profile_empty",
-                },
-            )
+            }
     else:
         api_key = os.environ.get(api_key_env, "")
         if not api_key:
-            return StepResult(
-                step_id=step.id,
-                status="failed",
-                error=(
+            return {
+                "api_key_env": api_key_env,
+                "credentials_ref": "",
+                "error": (
                     f"{api_key_env} env var not set — set it, bind a "
                     f"credentials_ref, or configure [manus].api_key_env "
                     f"in ~/.construct/config.toml"
                 ),
-            )
+            }
 
     base_url = (mc.get("base_url") or "https://api.manus.ai").rstrip("/")
     default_profile = mc.get("default_agent_profile") or "manus-1.6"
     default_timeout = int(mc.get("default_timeout_seconds") or 600)
     default_poll = int(mc.get("default_poll_interval_seconds") or 5)
 
-    prompt = interpolate(cfg.prompt, state)
-    title = interpolate(cfg.title, state) if cfg.title else None
-    agent_profile = cfg.agent_profile or default_profile
-    timeout_s = int(cfg.timeout_seconds or default_timeout)
-    poll_s = max(1, int(cfg.poll_interval_seconds or default_poll))
+    agent_profile_final = agent_profile or default_profile
+    timeout_s = int(timeout_seconds or default_timeout)
+    poll_s = max(1, int(poll_interval_seconds or default_poll))
 
-    # Capture interpolated inputs for the run-view UI. NEVER include the
-    # api key or the env-var value — only the env-var NAME.
-    input_data: dict[str, Any] = {
-        "prompt_preview": (prompt or "")[:500],
-        "prompt_length": len(prompt or ""),
-        "agent_profile": agent_profile,
-        "connectors": list(cfg.connectors),
-        "enable_skills": list(cfg.enable_skills),
-        "force_skills": list(cfg.force_skills),
-        "timeout_seconds": timeout_s,
-        "poll_interval_seconds": poll_s,
-        "structured_output": cfg.structured_output_schema is not None,
-        "title": title or "",
-        "locale": cfg.locale or "",
-        "project_id": cfg.project_id or "",
-        "api_key_env": api_key_env,
-        # The profile id (NOT the resolved token) so the run-view shows
-        # which credential was used. Empty string when env-var fallback.
-        "credentials_ref": cfg.credentials_ref or "",
-    }
+    connectors = list(connectors or [])
+    enable_skills = list(enable_skills or [])
+    force_skills = list(force_skills or [])
 
     # Build the create-task request body. Manus accepts a minimal
     # {message: {content}} payload — every other field is optional and
     # only emitted when set.
     message: dict[str, Any] = {"content": prompt}
-    if cfg.connectors:
-        message["connectors"] = list(cfg.connectors)
-    if cfg.enable_skills:
-        message["enable_skills"] = list(cfg.enable_skills)
-    if cfg.force_skills:
-        message["force_skills"] = list(cfg.force_skills)
+    if connectors:
+        message["connectors"] = connectors
+    if enable_skills:
+        message["enable_skills"] = enable_skills
+    if force_skills:
+        message["force_skills"] = force_skills
 
     create_body: dict[str, Any] = {"message": message}
-    if cfg.project_id:
-        create_body["project_id"] = cfg.project_id
-    if cfg.locale:
-        create_body["locale"] = cfg.locale
-    if agent_profile:
-        create_body["agent_profile"] = agent_profile
+    if project_id:
+        create_body["project_id"] = project_id
+    if locale:
+        create_body["locale"] = locale
+    if agent_profile_final:
+        create_body["agent_profile"] = agent_profile_final
     if title:
         create_body["title"] = title
-    if cfg.structured_output_schema is not None:
-        create_body["structured_output_schema"] = cfg.structured_output_schema
+    if structured_output_schema is not None:
+        create_body["structured_output_schema"] = structured_output_schema
 
     headers = {"x-manus-api-key": api_key, "content-type": "application/json"}
 
@@ -3097,6 +3094,12 @@ async def _exec_manus(step: StepDef, state: WorkflowState) -> StepResult:
     task_url = ""
     share_url = ""
     started = time.monotonic()
+
+    def _cancelled() -> bool:
+        try:
+            return bool(cancel_check and cancel_check())
+        except Exception:
+            return False
 
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -3110,17 +3113,13 @@ async def _exec_manus(step: StepDef, state: WorkflowState) -> StepResult:
             except httpx.HTTPError as exc:
                 msg = _manus_sanitize(str(exc))
                 _log(f"manus: API error — {msg}")
-                return StepResult(
-                    step_id=step.id,
-                    status="failed",
-                    error=f"manus task.create transport error: {msg}",
-                    input_data=input_data,
-                )
+                return {
+                    "api_key_env": api_key_env,
+                    "credentials_ref": credentials_ref or "",
+                    "error": f"manus task.create transport error: {msg}",
+                }
 
             if create.status_code >= 400:
-                # Manus errors come back as JSON when possible; fall back
-                # to the raw body otherwise. Never bubble through headers
-                # (could contain a re-issued auth challenge).
                 try:
                     err_body = create.json()
                     err_msg = (
@@ -3132,50 +3131,41 @@ async def _exec_manus(step: StepDef, state: WorkflowState) -> StepResult:
                     err_msg = create.text[:300]
                 sanitized = _manus_sanitize(err_msg)
                 _log(f"manus: API error — status={create.status_code} {sanitized}")
-                return StepResult(
-                    step_id=step.id,
-                    status="failed",
-                    error=f"manus task.create failed ({create.status_code}): {sanitized}",
-                    input_data=input_data,
-                )
+                return {
+                    "api_key_env": api_key_env,
+                    "credentials_ref": credentials_ref or "",
+                    "error": f"manus task.create failed ({create.status_code}): {sanitized}",
+                }
 
             try:
                 created = create.json()
             except Exception:
-                return StepResult(
-                    step_id=step.id,
-                    status="failed",
-                    error="manus task.create returned non-JSON body",
-                    input_data=input_data,
-                )
+                return {
+                    "api_key_env": api_key_env,
+                    "credentials_ref": credentials_ref or "",
+                    "error": "manus task.create returned non-JSON body",
+                }
 
             if not created.get("ok"):
                 err = _manus_sanitize(str(created.get("error") or created))
-                return StepResult(
-                    step_id=step.id,
-                    status="failed",
-                    error=f"manus task.create rejected: {err}",
-                    input_data=input_data,
-                )
+                return {
+                    "api_key_env": api_key_env,
+                    "credentials_ref": credentials_ref or "",
+                    "error": f"manus task.create rejected: {err}",
+                }
 
             task_id = str(created.get("task_id") or "")
             task_url = str(created.get("task_url") or "")
             share_url = str(created.get("share_url") or "")
             if not task_id:
-                return StepResult(
-                    step_id=step.id,
-                    status="failed",
-                    error="manus task.create returned no task_id",
-                    input_data=input_data,
-                )
+                return {
+                    "api_key_env": api_key_env,
+                    "credentials_ref": credentials_ref or "",
+                    "error": "manus task.create returned no task_id",
+                }
             _log(f"manus: created task_id={task_id} url={task_url}")
 
             # ── Poll ──────────────────────────────────────────────────
-            # Walk forward from the oldest message each poll using a
-            # cursor-based scan. The desc order spec lets us cheaply
-            # fetch just the head to spot the terminal status_update
-            # without re-reading the whole stream. We track the last
-            # seen agent_status so we can log transitions cleanly.
             last_status = ""
             last_log_at = 0.0
             event_count = 0
@@ -3186,9 +3176,7 @@ async def _exec_manus(step: StepDef, state: WorkflowState) -> StepResult:
             all_events: list[dict[str, Any]] = []
 
             while True:
-                if state.cancel_requested:
-                    # Best-effort stop — fire-and-forget so cancellation
-                    # is fast even when Manus is slow.
+                if _cancelled():
                     try:
                         await client.post(
                             f"{base_url}/v2/task.stop",
@@ -3198,20 +3186,17 @@ async def _exec_manus(step: StepDef, state: WorkflowState) -> StepResult:
                         )
                     except Exception:
                         pass
-                    return StepResult(
-                        step_id=step.id,
-                        status="failed",
-                        error="manus task cancelled by workflow cancel",
-                        input_data=input_data,
-                        output_data={
-                            "task_id": task_id,
-                            "task_url": task_url,
-                            "share_url": share_url,
-                            "final_state": "cancelled",
-                            "event_count": event_count,
-                            "elapsed_seconds": int(time.monotonic() - started),
-                        },
-                    )
+                    return {
+                        "api_key_env": api_key_env,
+                        "credentials_ref": credentials_ref or "",
+                        "task_id": task_id,
+                        "task_url": task_url,
+                        "share_url": share_url,
+                        "final_state": "cancelled",
+                        "event_count": event_count,
+                        "elapsed_seconds": int(time.monotonic() - started),
+                        "error": "manus task cancelled",
+                    }
 
                 elapsed = time.monotonic() - started
                 if elapsed > timeout_s:
@@ -3224,20 +3209,17 @@ async def _exec_manus(step: StepDef, state: WorkflowState) -> StepResult:
                         )
                     except Exception:
                         pass
-                    return StepResult(
-                        step_id=step.id,
-                        status="failed",
-                        error=f"manus task timed out after {timeout_s}s",
-                        input_data=input_data,
-                        output_data={
-                            "task_id": task_id,
-                            "task_url": task_url,
-                            "share_url": share_url,
-                            "final_state": "timeout",
-                            "event_count": event_count,
-                            "elapsed_seconds": int(elapsed),
-                        },
-                    )
+                    return {
+                        "api_key_env": api_key_env,
+                        "credentials_ref": credentials_ref or "",
+                        "task_id": task_id,
+                        "task_url": task_url,
+                        "share_url": share_url,
+                        "final_state": "timeout",
+                        "event_count": event_count,
+                        "elapsed_seconds": int(elapsed),
+                        "error": f"manus task timed out after {timeout_s}s",
+                    }
 
                 try:
                     poll = await client.get(
@@ -3270,17 +3252,12 @@ async def _exec_manus(step: StepDef, state: WorkflowState) -> StepResult:
                     await asyncio.sleep(poll_s)
                     continue
 
-                # Manus returns the event array under "data" (per spec); a
-                # few legacy envelopes used "messages" — accept both so this
-                # path is resilient to either.
                 events = payload.get("data")
                 if events is None:
                     events = payload.get("messages") or []
                 if isinstance(events, list):
                     event_count = len(events)
                     all_events = events
-                    # Reset accumulators each poll so we always reflect the
-                    # latest full event window (order=asc, limit=200).
                     final_status_event = None
                     structured_event = None
                     error_message_event = None
@@ -3299,8 +3276,6 @@ async def _exec_manus(step: StepDef, state: WorkflowState) -> StepResult:
                         elif ev_type == "assistant_message":
                             am = ev.get("assistant_message")
                             if isinstance(am, dict):
-                                # Store the inner dict so downstream readers
-                                # can treat it as a plain payload.
                                 assistant_messages.append(am)
                         elif ev_type == "structured_output_result":
                             sor = ev.get("structured_output_result")
@@ -3311,7 +3286,6 @@ async def _exec_manus(step: StepDef, state: WorkflowState) -> StepResult:
                             if isinstance(em, dict):
                                 error_message_event = em
 
-                # Throttled progress log: ~every 30s.
                 now = time.monotonic()
                 if now - last_log_at >= 30.0:
                     _log(
@@ -3320,22 +3294,18 @@ async def _exec_manus(step: StepDef, state: WorkflowState) -> StepResult:
                     )
                     last_log_at = now
 
-                # An error_message event is also terminal — Manus has
-                # surfaced a task-side failure (e.g. rate_limited) that
-                # won't be followed by another status_update.
                 if last_status in _MANUS_TERMINAL or error_message_event is not None:
                     break
 
                 await asyncio.sleep(poll_s)
 
-            # ── Done — assemble output ────────────────────────────────
+            # ── Done — assemble result ────────────────────────────────
             elapsed_total = int(time.monotonic() - started)
             _log(
                 f"manus: task_id={task_id[:8]} final={last_status or 'unknown'} "
                 f"elapsed={elapsed_total}s events={event_count}"
             )
 
-            # Pick the final assistant message (last one wins) for `output`.
             final_assistant = assistant_messages[-1] if assistant_messages else None
             assistant_text = ""
             attachments: list[Any] = []
@@ -3344,8 +3314,6 @@ async def _exec_manus(step: StepDef, state: WorkflowState) -> StepResult:
                 if isinstance(content, str):
                     assistant_text = content
                 elif isinstance(content, list):
-                    # Manus may return list-of-parts content; concatenate
-                    # text-typed parts only.
                     parts: list[str] = []
                     for part in content:
                         if isinstance(part, dict):
@@ -3365,16 +3333,12 @@ async def _exec_manus(step: StepDef, state: WorkflowState) -> StepResult:
                 else:
                     structured_error = str(structured_event.get("error") or "")
 
-            # Pull status detail + brief for the run-view UI. Per the
-            # Manus spec these live under the inner ``status_update`` dict.
             status_detail = ""
             brief = ""
             description = ""
             if isinstance(final_status_event, dict):
                 su = final_status_event.get("status_update") or {}
                 if isinstance(su, dict):
-                    # status_detail may be a dict (when waiting) or string;
-                    # stringify defensively so the run-view never crashes.
                     sd = su.get("status_detail")
                     status_detail = "" if sd is None else (
                         sd if isinstance(sd, str) else json.dumps(sd)[:500]
@@ -3382,16 +3346,15 @@ async def _exec_manus(step: StepDef, state: WorkflowState) -> StepResult:
                     brief = str(su.get("brief") or "")
                     description = str(su.get("description") or "")
 
-            # Manus surfaces task-side failures via error_message events.
-            # When present, capture the sanitized error_type + content so
-            # the step's StepResult.error carries actionable detail.
             error_message_type = ""
             error_message_content = ""
             if isinstance(error_message_event, dict):
                 error_message_type = str(error_message_event.get("error_type") or "")
                 error_message_content = str(error_message_event.get("content") or "")
 
-            output_data: dict[str, Any] = {
+            result: dict[str, Any] = {
+                "api_key_env": api_key_env,
+                "credentials_ref": credentials_ref or "",
                 "task_id": task_id,
                 "task_url": task_url,
                 "share_url": share_url,
@@ -3405,11 +3368,11 @@ async def _exec_manus(step: StepDef, state: WorkflowState) -> StepResult:
                 "attachments": attachments,
             }
             if structured_value is not None:
-                output_data["structured_output"] = structured_value
+                result["structured_output"] = structured_value
             if structured_error:
-                output_data["structured_output_error"] = structured_error
+                result["structured_output_error"] = structured_error
             if error_message_type or error_message_content:
-                output_data["error_message"] = {
+                result["error_message"] = {
                     "error_type": error_message_type,
                     "content": error_message_content,
                 }
@@ -3419,91 +3382,249 @@ async def _exec_manus(step: StepDef, state: WorkflowState) -> StepResult:
                 and not structured_error
                 and error_message_event is None
             )
-            if terminal_ok:
-                output_text = assistant_text or json.dumps(
-                    {"task_id": task_id, "final_state": last_status}
+            if not terminal_ok:
+                err = (
+                    f"manus task ended in state={last_status or 'unknown'} "
+                    f"detail={_manus_sanitize(status_detail)}"
                 )
-                output_data["output_truncated"] = len(output_text) > 6000
-
-                # ── register_output ──────────────────────────────────
-                # When configured, auto-publish the result as a Kumiho
-                # entity and download attachments to an entity-anchored
-                # disk path. Best-effort: registration failures surface
-                # in output_data but don't fail the step (the Manus task
-                # already succeeded — losing the publish is a separate
-                # axis from losing the work).
-                if cfg.register_output is not None:
-                    await _manus_register_output(
-                        step=step,
-                        state=state,
-                        ro_cfg=cfg.register_output,
-                        assistant_text=assistant_text,
-                        structured_value=structured_value,
-                        attachments=attachments,
-                        output_data=output_data,
+                if structured_error:
+                    err += f" | structured_output_error={_manus_sanitize(structured_error)}"
+                if error_message_event is not None:
+                    err += (
+                        f" | error_message={_manus_sanitize(error_message_type)}: "
+                        f"{_manus_sanitize(error_message_content)}"
                     )
+                result["error"] = err
 
-                return StepResult(
-                    step_id=step.id,
-                    status="completed",
-                    output=output_text[:6000],
-                    input_data=input_data,
-                    output_data=output_data,
-                )
-
-            # Failure branch — distinguish "error" terminal from
-            # "stopped + structured_output_error" from Manus-emitted
-            # error_message events. allow_failure converts the failure
-            # into a soft pass so the workflow continues.
-            err = (
-                f"manus task ended in state={last_status or 'unknown'} "
-                f"detail={_manus_sanitize(status_detail)}"
-            )
-            if structured_error:
-                err += f" | structured_output_error={_manus_sanitize(structured_error)}"
-            if error_message_event is not None:
-                err += (
-                    f" | error_message={_manus_sanitize(error_message_type)}: "
-                    f"{_manus_sanitize(error_message_content)}"
-                )
-            if cfg.allow_failure:
-                return StepResult(
-                    step_id=step.id,
-                    status="completed",
-                    output=err,
-                    input_data=input_data,
-                    output_data={**output_data, "allow_failure": True},
-                )
-            return StepResult(
-                step_id=step.id,
-                status="failed",
-                error=err,
-                input_data=input_data,
-                output_data=output_data,
-            )
+            return result
     except Exception as exc:
         msg = _manus_sanitize(str(exc))
         _log(f"manus: API error — {msg}")
-        if cfg.allow_failure:
-            return StepResult(
-                step_id=step.id,
-                status="completed",
-                output=f"manus error (allow_failure): {msg}",
-                input_data=input_data,
-                output_data={
-                    "task_id": task_id,
-                    "task_url": task_url,
-                    "share_url": share_url,
-                    "final_state": "error",
-                    "allow_failure": True,
-                },
-            )
+        return {
+            "api_key_env": api_key_env,
+            "credentials_ref": credentials_ref or "",
+            "task_id": task_id,
+            "task_url": task_url,
+            "share_url": share_url,
+            "final_state": "error",
+            "error": f"manus step error: {msg}",
+        }
+
+
+async def _exec_manus(step: StepDef, state: WorkflowState) -> StepResult:
+    """Execute a Manus web-research step.
+
+    Thin wrapper around :func:`manus_run_task` that adds workflow-step
+    concerns: ``state.cancel_requested`` plumbing, interpolation of
+    user-facing strings against the workflow state, ``input_data``
+    capture for the run-view UI, ``allow_failure`` soft-pass handling,
+    and the optional ``register_output`` Kumiho-entity publish flow.
+    The HTTP create + poll mechanics live in ``manus_run_task`` so the
+    Operator MCP tool can reuse them.
+    """
+    cfg: ManusStepConfig = step.manus  # type: ignore[assignment]
+    if cfg is None or not cfg.prompt:
         return StepResult(
             step_id=step.id,
             status="failed",
-            error=f"manus step error: {msg}",
-            input_data=input_data,
+            error="manus step requires `prompt`",
         )
+
+    prompt = interpolate(cfg.prompt, state)
+    title = interpolate(cfg.title, state) if cfg.title else None
+    # Read the cached config once for the input_data echo (manus_run_task
+    # re-reads it internally, which is fine — it's an in-process cache).
+    from ..construct_config import manus_config
+    mc = manus_config()
+    api_key_env = mc.get("api_key_env", "MANUS_API_KEY")
+    default_profile = mc.get("default_agent_profile") or "manus-1.6"
+    default_timeout = int(mc.get("default_timeout_seconds") or 600)
+    default_poll = int(mc.get("default_poll_interval_seconds") or 5)
+    agent_profile = cfg.agent_profile or default_profile
+    timeout_s = int(cfg.timeout_seconds or default_timeout)
+    poll_s = max(1, int(cfg.poll_interval_seconds or default_poll))
+
+    # Capture interpolated inputs for the run-view UI. NEVER include the
+    # api key or the env-var value — only the env-var NAME.
+    input_data: dict[str, Any] = {
+        "prompt_preview": (prompt or "")[:500],
+        "prompt_length": len(prompt or ""),
+        "agent_profile": agent_profile,
+        "connectors": list(cfg.connectors),
+        "enable_skills": list(cfg.enable_skills),
+        "force_skills": list(cfg.force_skills),
+        "timeout_seconds": timeout_s,
+        "poll_interval_seconds": poll_s,
+        "structured_output": cfg.structured_output_schema is not None,
+        "title": title or "",
+        "locale": cfg.locale or "",
+        "project_id": cfg.project_id or "",
+        "api_key_env": api_key_env,
+        # The profile id (NOT the resolved token) so the run-view shows
+        # which credential was used. Empty string when env-var fallback.
+        "credentials_ref": cfg.credentials_ref or "",
+    }
+
+    # Delegate the create + poll + parse mechanics to manus_run_task. It
+    # returns a result dict with the canonical fields; we translate it
+    # into a StepResult and layer on register_output / allow_failure.
+    result = await manus_run_task(
+        prompt=prompt,
+        structured_output_schema=cfg.structured_output_schema,
+        connectors=list(cfg.connectors),
+        enable_skills=list(cfg.enable_skills),
+        force_skills=list(cfg.force_skills),
+        agent_profile=agent_profile,
+        locale=cfg.locale,
+        project_id=cfg.project_id,
+        title=title,
+        timeout_seconds=timeout_s,
+        poll_interval_seconds=poll_s,
+        credentials_ref=cfg.credentials_ref,
+        cancel_check=lambda: state.cancel_requested,
+    )
+
+    # Pre-create-task auth/config errors short-circuit with only `error`
+    # populated — no task_id means we never reached the API.
+    if "task_id" not in result:
+        out: dict[str, Any] = {}
+        if result.get("auth_resolve_failed"):
+            out["auth_resolve_failed"] = True
+            out["auth_resolve_code"] = result.get("auth_resolve_code", "")
+        return StepResult(
+            step_id=step.id,
+            status="failed",
+            error=str(result.get("error") or "manus step failed"),
+            input_data=input_data,
+            output_data=out,
+        )
+
+    task_id = str(result.get("task_id") or "")
+    task_url = str(result.get("task_url") or "")
+    share_url = str(result.get("share_url") or "")
+    last_status = str(result.get("final_state") or "")
+    assistant_text = str(result.get("assistant_message") or "")
+    attachments = list(result.get("attachments") or [])
+    structured_value = result.get("structured_output")
+    structured_error = str(result.get("structured_output_error") or "")
+    error_message_event = result.get("error_message")
+
+    # Translate cancelled / timeout terminals into the legacy step
+    # error strings — same surface area as before so callers/tests
+    # that grep on "cancel" / "timeout" / "time" still match.
+    if last_status == "cancelled":
+        return StepResult(
+            step_id=step.id,
+            status="failed",
+            error="manus task cancelled by workflow cancel",
+            input_data=input_data,
+            output_data={
+                "task_id": task_id,
+                "task_url": task_url,
+                "share_url": share_url,
+                "final_state": "cancelled",
+                "event_count": int(result.get("event_count") or 0),
+                "elapsed_seconds": int(result.get("elapsed_seconds") or 0),
+            },
+        )
+    if last_status == "timeout":
+        return StepResult(
+            step_id=step.id,
+            status="failed",
+            error=f"manus task timed out after {timeout_s}s",
+            input_data=input_data,
+            output_data={
+                "task_id": task_id,
+                "task_url": task_url,
+                "share_url": share_url,
+                "final_state": "timeout",
+                "event_count": int(result.get("event_count") or 0),
+                "elapsed_seconds": int(result.get("elapsed_seconds") or 0),
+            },
+        )
+
+    # Build the output_data the run-view UI expects. Mirrors the
+    # pre-refactor shape exactly (status_detail, brief, description,
+    # event_count, elapsed_seconds, assistant_message, attachments,
+    # optional structured_output / structured_output_error / error_message).
+    output_data: dict[str, Any] = {
+        "task_id": task_id,
+        "task_url": task_url,
+        "share_url": share_url,
+        "final_state": last_status or "unknown",
+        "status_detail": str(result.get("status_detail") or ""),
+        "brief": str(result.get("brief") or ""),
+        "description": str(result.get("description") or ""),
+        "event_count": int(result.get("event_count") or 0),
+        "elapsed_seconds": int(result.get("elapsed_seconds") or 0),
+        "assistant_message": assistant_text,
+        "attachments": attachments,
+    }
+    if structured_value is not None:
+        output_data["structured_output"] = structured_value
+    if structured_error:
+        output_data["structured_output_error"] = structured_error
+    if error_message_event:
+        output_data["error_message"] = error_message_event
+
+    terminal_ok = (
+        last_status == "stopped"
+        and not structured_error
+        and not error_message_event
+    )
+    if terminal_ok:
+        output_text = assistant_text or json.dumps(
+            {"task_id": task_id, "final_state": last_status}
+        )
+        output_data["output_truncated"] = len(output_text) > 6000
+
+        # ── register_output ──────────────────────────────────
+        # When configured, auto-publish the result as a Kumiho
+        # entity and download attachments to an entity-anchored
+        # disk path. Best-effort: registration failures surface
+        # in output_data but don't fail the step (the Manus task
+        # already succeeded — losing the publish is a separate
+        # axis from losing the work).
+        if cfg.register_output is not None:
+            await _manus_register_output(
+                step=step,
+                state=state,
+                ro_cfg=cfg.register_output,
+                assistant_text=assistant_text,
+                structured_value=structured_value,
+                attachments=attachments,
+                output_data=output_data,
+            )
+
+        return StepResult(
+            step_id=step.id,
+            status="completed",
+            output=output_text[:6000],
+            input_data=input_data,
+            output_data=output_data,
+        )
+
+    # Failure branch — manus_run_task already composed the error
+    # string with the same format as before. allow_failure converts
+    # the failure into a soft pass so the workflow continues.
+    err = str(result.get("error") or f"manus task ended in state={last_status or 'unknown'}")
+    if cfg.allow_failure:
+        return StepResult(
+            step_id=step.id,
+            status="completed",
+            output=err,
+            input_data=input_data,
+            output_data={**output_data, "allow_failure": True},
+        )
+    return StepResult(
+        step_id=step.id,
+        status="failed",
+        error=err,
+        input_data=input_data,
+        output_data=output_data,
+    )
+
+
 
 
 # ---------------------------------------------------------------------------
