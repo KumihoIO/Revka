@@ -141,6 +141,7 @@ export interface CliTool {
 export interface Session {
   id: string;
   channel: string;
+  name?: string;
   started_at: string;
   last_activity: string;
   status: 'active' | 'idle' | 'closed';
@@ -662,4 +663,3 @@ export interface RunWorkflowRequest {
    *  step (plus the step itself) executes. */
   target_step_id?: string;
 }
-

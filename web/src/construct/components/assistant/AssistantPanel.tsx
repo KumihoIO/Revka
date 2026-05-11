@@ -24,6 +24,7 @@ import { generateUUID } from '@/lib/uuid';
 import { useAgentChatSession } from '@/construct/hooks/useAgentChatSession';
 import { useTheme } from '@/construct/hooks/useTheme';
 import { useT, type Locale } from '@/construct/hooks/useT';
+import { deleteSession, getSessions } from '@/lib/api';
 import { useV2Assistant } from './AssistantContext';
 import { v2RouteMeta } from '../layout/construct-navigation';
 import {
@@ -66,6 +67,64 @@ interface AssistantTab {
 
 function routeContext(pathname: string) {
   return pathname.replace(/^\//, '');
+}
+
+const OPERATOR_MAIN_SESSION_ID = 'operator-main';
+const ASSISTANT_TABS_STORAGE_KEY = 'construct_assistant_tabs_v1';
+
+interface PersistedAssistantTabs {
+  tabs: AssistantTab[];
+  activeTabId?: string;
+}
+
+function defaultAssistantTabs(): AssistantTab[] {
+  return [
+    { id: 'chat-main', type: 'chat', title: 'Chat', sessionId: OPERATOR_MAIN_SESSION_ID },
+    { id: 'terminal-main', type: 'terminal', title: 'Terminal', sessionId: generateUUID() },
+  ];
+}
+
+function loadAssistantTabs(): PersistedAssistantTabs {
+  try {
+    const raw = localStorage.getItem(ASSISTANT_TABS_STORAGE_KEY);
+    if (!raw) return { tabs: defaultAssistantTabs(), activeTabId: 'chat-main' };
+    const parsed = JSON.parse(raw) as Partial<PersistedAssistantTabs>;
+    const tabs = Array.isArray(parsed.tabs)
+      ? parsed.tabs.filter((tab): tab is AssistantTab =>
+          !!tab
+          && typeof tab.id === 'string'
+          && typeof tab.title === 'string'
+          && typeof tab.sessionId === 'string'
+          && (tab.type === 'chat' || tab.type === 'terminal' || tab.type === 'code'),
+        )
+      : [];
+    if (tabs.length === 0) return { tabs: defaultAssistantTabs(), activeTabId: 'chat-main' };
+    const activeTabId = tabs.some((tab) => tab.id === parsed.activeTabId)
+      ? parsed.activeTabId
+      : tabs[0]?.id;
+    return { tabs, activeTabId };
+  } catch {
+    return { tabs: defaultAssistantTabs(), activeTabId: 'chat-main' };
+  }
+}
+
+function saveAssistantTabs(tabs: AssistantTab[], activeTabId: string | null) {
+  try {
+    const safeTabs = tabs.map((tab) => ({
+      id: tab.id,
+      type: tab.type,
+      title: tab.title,
+      sessionId: tab.sessionId,
+      codeSession: tab.type === 'code' ? null : undefined,
+      pageContextOverride: tab.pageContextOverride,
+    }));
+    localStorage.setItem(
+      ASSISTANT_TABS_STORAGE_KEY,
+      JSON.stringify({ tabs: safeTabs, activeTabId }),
+    );
+  } catch {
+    // Private mode / quota failures should not break Operator chat.
+  }
 }
 
 /* ── ConfigPanel ──────────────────────────────────── */
@@ -189,6 +248,7 @@ function ConfigPanel({
 
 function ChatPane({
   sessionId,
+  sessionName,
   pageContext,
   placeholder,
   config,
@@ -199,6 +259,7 @@ function ChatPane({
   onOpenNewTabMenu,
 }: {
   sessionId: string;
+  sessionName: string;
   pageContext: string;
   placeholder: string;
   config: AssistantConfig;
@@ -234,7 +295,12 @@ function ChatPane({
     streamingThinking,
     typing,
     uploadingCount,
-  } = useAgentChatSession({ sessionId, draftKey: `construct-assistant:${pageContext}`, pageContext });
+  } = useAgentChatSession({
+    sessionId,
+    sessionName,
+    draftKey: `construct-assistant:${sessionId}`,
+    pageContext,
+  });
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -913,11 +979,12 @@ export default function AssistantPanel() {
   const pageContext = pageContextOverride ?? `v2:${routeContext(location.pathname) || 'dashboard'}`;
   const placeholder = placeholderOverride ?? `Ask about ${routeMeta?.title?.toLowerCase() ?? 'this workspace'}.`;
 
-  const [tabs, setTabs] = useState<AssistantTab[]>(() => [
-    { id: 'chat-main', type: 'chat', title: 'Chat', sessionId: generateUUID() },
-    { id: 'terminal-main', type: 'terminal', title: 'Terminal', sessionId: generateUUID() },
-  ]);
-  const [activeTabId, setActiveTabId] = useState('chat-main');
+  const initialTabsRef = useRef<PersistedAssistantTabs | null>(null);
+  if (initialTabsRef.current === null) {
+    initialTabsRef.current = loadAssistantTabs();
+  }
+  const [tabs, setTabs] = useState<AssistantTab[]>(() => initialTabsRef.current!.tabs);
+  const [activeTabId, setActiveTabId] = useState(() => initialTabsRef.current!.activeTabId ?? 'chat-main');
   const [showNewTabMenu, setShowNewTabMenu] = useState(false);
   const newTabBtnRef = useRef<HTMLButtonElement>(null);
   const [showConfig, setShowConfig] = useState(false);
@@ -927,6 +994,43 @@ export default function AssistantPanel() {
   // split and render normally; switching to one auto-closes the split.
   const [splitTabId, setSplitTabId] = useState<string | null>(null);
   const [splitDirection, setSplitDirection] = useState<'horizontal' | 'vertical'>('vertical');
+
+  useEffect(() => {
+    saveAssistantTabs(tabs, activeTabId);
+  }, [tabs, activeTabId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const sessions = await getSessions();
+        if (cancelled) return;
+        const gatewaySessions = sessions
+          .filter((session) => session.channel === 'gateway')
+          .filter((session) => session.message_count > 0 || !!session.name)
+          .sort((a, b) => new Date(b.last_activity).getTime() - new Date(a.last_activity).getTime());
+
+        setTabs((prev) => {
+          const seenSessionIds = new Set(prev.filter((tab) => tab.type === 'chat').map((tab) => tab.sessionId));
+          const restored = gatewaySessions
+            .filter((session) => !seenSessionIds.has(session.id))
+            .map((session, index): AssistantTab => ({
+              id: `chat-${session.id}`,
+              type: 'chat',
+              title: session.name || (index === 0 ? 'Chat' : `Chat ${index + 1}`),
+              sessionId: session.id,
+            }));
+          return restored.length > 0 ? [...prev, ...restored] : prev;
+        });
+      } catch {
+        // Session continuity is best-effort; the active tab still connects by
+        // stable session id and loads its own transcript.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -991,11 +1095,18 @@ export default function AssistantPanel() {
   );
 
   const closeTab = useCallback((tabId: string) => {
+    const closing = tabs.find((t) => t.id === tabId);
+    if (closing?.type === 'chat') {
+      void deleteSession(closing.sessionId).catch(() => {
+        // The tab is intentionally closed locally even if the persisted
+        // transcript was already gone or the gateway is temporarily offline.
+      });
+    }
     setTabs((prev) => {
       const remaining = prev.filter((t) => t.id !== tabId);
       if (remaining.length === 0) {
         // Always keep at least one tab
-        const fallback: AssistantTab = { id: generateUUID(), type: 'chat', title: 'Chat', sessionId: generateUUID() };
+        const fallback: AssistantTab = { id: 'chat-main', type: 'chat', title: 'Chat', sessionId: OPERATOR_MAIN_SESSION_ID };
         return [fallback];
       }
       return remaining;
@@ -1004,7 +1115,7 @@ export default function AssistantPanel() {
       if (prev !== tabId) return prev;
       const idx = tabs.findIndex((t) => t.id === tabId);
       const remaining = tabs.filter((t) => t.id !== tabId);
-      if (remaining.length === 0) return prev; // will be replaced by new tab
+      if (remaining.length === 0) return 'chat-main';
       return remaining[Math.min(idx, remaining.length - 1)]!.id;
     });
     // Closing either side of an active split clears the split.
@@ -1297,6 +1408,7 @@ export default function AssistantPanel() {
                       >
                         <ChatPane
                           sessionId={tab.sessionId}
+                          sessionName={tab.title}
                           pageContext={tab.pageContextOverride ?? pageContext}
                           placeholder={placeholder}
                           config={config}
@@ -1315,6 +1427,7 @@ export default function AssistantPanel() {
                 <ChatPane
                   key={tab.id}
                   sessionId={tab.sessionId}
+                  sessionName={tab.title}
                   pageContext={tab.pageContextOverride ?? pageContext}
                   placeholder={placeholder}
                   config={config}

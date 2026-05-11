@@ -33,6 +33,7 @@ export interface ToolResultEvent {
 
 interface UseAgentChatSessionOptions {
   sessionId: string;
+  sessionName?: string;
   draftKey: string;
   pageContext?: string;
   onUserMessage?: (content: string) => void;
@@ -52,6 +53,7 @@ export interface StagedAttachment extends AttachmentUploadResponse {
 
 export function useAgentChatSession({
   sessionId,
+  sessionName,
   draftKey,
   pageContext,
   onUserMessage,
@@ -153,7 +155,7 @@ export function useAgentChatSession({
 
     const connectTimer = setTimeout(() => {
       if (cancelled) return;
-      ws = new WebSocketClient({ sessionId });
+      ws = new WebSocketClient({ sessionId, name: sessionName });
 
       ws.onOpen = () => {
         if (cancelled) return;
@@ -406,7 +408,7 @@ export function useAgentChatSession({
     // session changes. Re-connecting on every route change drops the in-flight
     // Operator request and clears the activity feed mid-tool-call.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId]);
+  }, [sessionId, sessionName]);
 
   const handleSend = useCallback(() => {
     const trimmed = input.trim();

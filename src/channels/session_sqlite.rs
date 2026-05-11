@@ -360,10 +360,15 @@ impl SessionBackend for SqliteSessionBackend {
 
     fn set_session_name(&self, session_key: &str, name: &str) -> std::io::Result<()> {
         let conn = self.conn.lock();
+        let now = Utc::now().to_rfc3339();
         let name_val = if name.is_empty() { None } else { Some(name) };
         conn.execute(
-            "UPDATE session_metadata SET name = ?1 WHERE session_key = ?2",
-            params![name_val, session_key],
+            "INSERT INTO session_metadata (session_key, created_at, last_activity, message_count, name)
+             VALUES (?1, ?2, ?2, 0, ?3)
+             ON CONFLICT(session_key) DO UPDATE SET
+                name = excluded.name,
+                last_activity = excluded.last_activity",
+            params![session_key, now, name_val],
         )
         .map_err(std::io::Error::other)?;
         Ok(())
@@ -376,7 +381,10 @@ impl SessionBackend for SqliteSessionBackend {
             params![session_key],
             |row| row.get(0),
         )
-        .map_err(std::io::Error::other)
+        .or_else(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => Ok(None),
+            other => Err(std::io::Error::other(other)),
+        })
     }
 
     fn set_session_state(
@@ -770,6 +778,29 @@ mod tests {
 
         let meta = backend.list_sessions_with_metadata();
         assert_eq!(meta[0].name.as_deref(), Some("Second"));
+    }
+
+    #[test]
+    fn set_session_name_creates_empty_metadata_entry() {
+        let tmp = TempDir::new().unwrap();
+        let backend = SqliteSessionBackend::new(tmp.path()).unwrap();
+
+        backend
+            .set_session_name("gw_operator-main", "Chat")
+            .unwrap();
+
+        let meta = backend.list_sessions_with_metadata();
+        assert_eq!(meta.len(), 1);
+        assert_eq!(meta[0].key, "gw_operator-main");
+        assert_eq!(meta[0].name.as_deref(), Some("Chat"));
+        assert_eq!(meta[0].message_count, 0);
+        assert_eq!(
+            backend
+                .get_session_name("gw_operator-main")
+                .unwrap()
+                .as_deref(),
+            Some("Chat"),
+        );
     }
 
     #[test]

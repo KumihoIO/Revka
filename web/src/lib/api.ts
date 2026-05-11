@@ -428,6 +428,14 @@ export function getSessionMessages(id: string): Promise<SessionMessagesResponse>
   );
 }
 
+/** Remove an operator chat session from the active gateway transcript list. */
+export function deleteSession(id: string): Promise<{ deleted: boolean; session_id: string }> {
+  return apiFetch<{ deleted: boolean; session_id: string }>(
+    `/api/sessions/${encodeURIComponent(id)}`,
+    { method: 'DELETE' },
+  );
+}
+
 /** Server response from `POST /api/sessions/{id}/attachments`. */
 export interface AttachmentUploadResponse {
   file_id: string;
