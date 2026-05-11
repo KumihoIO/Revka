@@ -14,6 +14,8 @@ export interface WebSocketClientOptions {
   baseUrl?: string;
   /** Explicit session id. Defaults to the legacy global session storage value. */
   sessionId?: string;
+  /** Optional human-readable name stored by the gateway session backend. */
+  name?: string;
   /** Delay in ms before attempting reconnect. Doubles on each failure up to maxReconnectDelay. */
   reconnectDelay?: number;
   /** Maximum reconnect delay in ms. */
@@ -50,6 +52,7 @@ export class WebSocketClient {
 
   private readonly baseUrl: string;
   private readonly sessionId?: string;
+  private readonly name?: string;
   private readonly reconnectDelay: number;
   private readonly maxReconnectDelay: number;
   private readonly autoReconnect: boolean;
@@ -65,6 +68,7 @@ export class WebSocketClient {
     }
     this.baseUrl = options.baseUrl ?? defaultBase;
     this.sessionId = options.sessionId;
+    this.name = options.name;
     this.reconnectDelay = options.reconnectDelay ?? DEFAULT_RECONNECT_DELAY;
     this.maxReconnectDelay = options.maxReconnectDelay ?? MAX_RECONNECT_DELAY;
     this.autoReconnect = options.autoReconnect ?? true;
@@ -96,6 +100,7 @@ export class WebSocketClient {
     const params = new URLSearchParams();
     if (token) params.set('token', token);
     params.set('session_id', sessionId);
+    if (this.name) params.set('name', this.name);
     const url = `${this.baseUrl}${basePath}/ws/chat?${params.toString()}`;
 
     const protocols: string[] = ['construct.v1'];
