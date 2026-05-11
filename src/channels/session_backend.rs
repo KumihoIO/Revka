@@ -80,6 +80,31 @@ pub trait SessionBackend: Send + Sync {
         Vec::new()
     }
 
+    /// Archive a session so it is hidden from active session lists while
+    /// preserving its transcript. Backends without archive support may delete.
+    fn archive_session(&self, session_key: &str) -> std::io::Result<Option<DateTime<Utc>>> {
+        if self.delete_session(session_key)? {
+            Ok(Some(Utc::now()))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Unarchive a session. Returns `true` if the session existed and was archived.
+    fn unarchive_session(&self, _session_key: &str) -> std::io::Result<bool> {
+        Ok(false)
+    }
+
+    /// Returns `true` when the session exists but is archived.
+    fn is_session_archived(&self, _session_key: &str) -> std::io::Result<bool> {
+        Ok(false)
+    }
+
+    /// List archived sessions with metadata. Active lists should exclude these.
+    fn list_archived_sessions(&self) -> Vec<SessionMetadata> {
+        Vec::new()
+    }
+
     /// Delete all messages for a session. Returns `true` if the session existed.
     fn delete_session(&self, _session_key: &str) -> std::io::Result<bool> {
         Ok(false)

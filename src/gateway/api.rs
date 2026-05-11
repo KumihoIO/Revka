@@ -1449,8 +1449,17 @@ pub async fn handle_api_sessions_list(
             Some(entry)
         })
         .collect();
+    let archived_session_ids: Vec<String> = backend
+        .list_archived_sessions()
+        .into_iter()
+        .filter_map(|meta| meta.key.strip_prefix("gw_").map(ToOwned::to_owned))
+        .collect();
 
-    Json(serde_json::json!({ "sessions": gw_sessions })).into_response()
+    Json(serde_json::json!({
+        "sessions": gw_sessions,
+        "archived_session_ids": archived_session_ids,
+    }))
+    .into_response()
 }
 
 /// GET /api/sessions/{id}/messages — load persisted gateway WebSocket chat transcript
@@ -1487,7 +1496,7 @@ pub async fn handle_api_session_messages(
     .into_response()
 }
 
-/// DELETE /api/sessions/{id} — delete a gateway session
+/// DELETE /api/sessions/{id} — archive a gateway session
 pub async fn handle_api_session_delete(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1506,9 +1515,15 @@ pub async fn handle_api_session_delete(
     };
 
     let session_key = format!("gw_{id}");
-    match backend.delete_session(&session_key) {
-        Ok(true) => Json(serde_json::json!({"deleted": true, "session_id": id})).into_response(),
-        Ok(false) => (
+    match backend.archive_session(&session_key) {
+        Ok(Some(archived_at)) => Json(serde_json::json!({
+            "deleted": true,
+            "archived": true,
+            "archived_at": archived_at.to_rfc3339(),
+            "session_id": id,
+        }))
+        .into_response(),
+        Ok(None) => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({"error": "Session not found"})),
         )

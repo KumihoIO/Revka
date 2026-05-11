@@ -300,6 +300,9 @@ async fn handle_socket(
                     let attachments = parse_attachments(&parsed);
                     // Persist user message
                     if let Some(ref backend) = state.session_backend {
+                        if backend.is_session_archived(&session_key).unwrap_or(false) {
+                            let _ = backend.unarchive_session(&session_key);
+                        }
                         let user_msg = crate::providers::ChatMessage::user(&content);
                         let _ = backend.append(&session_key, &user_msg);
                     }
@@ -410,6 +413,9 @@ async fn handle_socket(
 
                 // Persist user message
                 if let Some(ref backend) = state.session_backend {
+                    if backend.is_session_archived(&session_key).unwrap_or(false) {
+                        let _ = backend.unarchive_session(&session_key);
+                    }
                     let user_msg = crate::providers::ChatMessage::user(&content);
                     let _ = backend.append(&session_key, &user_msg);
                 }

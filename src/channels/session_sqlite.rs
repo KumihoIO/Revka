@@ -54,7 +54,8 @@ impl SqliteSessionBackend {
                 created_at   TEXT NOT NULL,
                 last_activity TEXT NOT NULL,
                 message_count INTEGER NOT NULL DEFAULT 0,
-                name         TEXT
+                name         TEXT,
+                archived_at  TEXT
              );
 
              CREATE VIRTUAL TABLE IF NOT EXISTS sessions_fts USING fts5(
@@ -100,6 +101,21 @@ impl SqliteSessionBackend {
             let _ = conn.execute("ALTER TABLE session_metadata ADD COLUMN turn_id TEXT", []);
             let _ = conn.execute(
                 "ALTER TABLE session_metadata ADD COLUMN turn_started_at TEXT",
+                [],
+            );
+        }
+
+        // Migration: add soft-archive tracking for dashboard chat tabs.
+        let has_archived_at: bool = conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM pragma_table_info('session_metadata') WHERE name = 'archived_at'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(false);
+        if !has_archived_at {
+            let _ = conn.execute(
+                "ALTER TABLE session_metadata ADD COLUMN archived_at TEXT",
                 [],
             );
         }
@@ -243,9 +259,11 @@ impl SessionBackend for SqliteSessionBackend {
 
     fn list_sessions(&self) -> Vec<String> {
         let conn = self.conn.lock();
-        let mut stmt = match conn
-            .prepare("SELECT session_key FROM session_metadata ORDER BY last_activity DESC")
-        {
+        let mut stmt = match conn.prepare(
+            "SELECT session_key FROM session_metadata
+             WHERE archived_at IS NULL
+             ORDER BY last_activity DESC",
+        ) {
             Ok(s) => s,
             Err(_) => return Vec::new(),
         };
@@ -262,7 +280,9 @@ impl SessionBackend for SqliteSessionBackend {
         let conn = self.conn.lock();
         let mut stmt = match conn.prepare(
             "SELECT session_key, created_at, last_activity, message_count, name
-             FROM session_metadata ORDER BY last_activity DESC",
+             FROM session_metadata
+             WHERE archived_at IS NULL
+             ORDER BY last_activity DESC",
         ) {
             Ok(s) => s,
             Err(_) => return Vec::new(),
@@ -323,6 +343,98 @@ impl SessionBackend for SqliteSessionBackend {
         }
 
         Ok(count)
+    }
+
+    fn archive_session(&self, session_key: &str) -> std::io::Result<Option<DateTime<Utc>>> {
+        let conn = self.conn.lock();
+        let archived_at = Utc::now();
+        let archived_at_str = archived_at.to_rfc3339();
+
+        let changed = conn
+            .execute(
+                "UPDATE session_metadata
+                 SET archived_at = COALESCE(archived_at, ?1),
+                     state = 'idle',
+                     turn_id = NULL,
+                     turn_started_at = NULL
+                 WHERE session_key = ?2",
+                params![archived_at_str, session_key],
+            )
+            .map_err(std::io::Error::other)?;
+
+        if changed == 0 {
+            Ok(None)
+        } else {
+            Ok(Some(archived_at))
+        }
+    }
+
+    fn unarchive_session(&self, session_key: &str) -> std::io::Result<bool> {
+        let conn = self.conn.lock();
+        let changed = conn
+            .execute(
+                "UPDATE session_metadata
+                 SET archived_at = NULL
+                 WHERE session_key = ?1 AND archived_at IS NOT NULL",
+                params![session_key],
+            )
+            .map_err(std::io::Error::other)?;
+        Ok(changed > 0)
+    }
+
+    fn is_session_archived(&self, session_key: &str) -> std::io::Result<bool> {
+        let conn = self.conn.lock();
+        conn.query_row(
+            "SELECT archived_at IS NOT NULL FROM session_metadata WHERE session_key = ?1",
+            params![session_key],
+            |row| row.get(0),
+        )
+        .or_else(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => Ok(false),
+            other => Err(std::io::Error::other(other)),
+        })
+    }
+
+    fn list_archived_sessions(&self) -> Vec<SessionMetadata> {
+        let conn = self.conn.lock();
+        let mut stmt = match conn.prepare(
+            "SELECT session_key, created_at, last_activity, message_count, name
+             FROM session_metadata
+             WHERE archived_at IS NOT NULL
+             ORDER BY archived_at DESC, last_activity DESC",
+        ) {
+            Ok(s) => s,
+            Err(_) => return Vec::new(),
+        };
+
+        let rows = match stmt.query_map([], |row| {
+            let key: String = row.get(0)?;
+            let created_str: String = row.get(1)?;
+            let activity_str: String = row.get(2)?;
+            let count: i64 = row.get(3)?;
+            let name: Option<String> = row.get(4)?;
+
+            let created = DateTime::parse_from_rfc3339(&created_str)
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or_else(|_| Utc::now());
+            let activity = DateTime::parse_from_rfc3339(&activity_str)
+                .map(|dt| dt.with_timezone(&Utc))
+                .unwrap_or_else(|_| Utc::now());
+
+            #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+            Ok(SessionMetadata {
+                key,
+                name,
+                created_at: created,
+                last_activity: activity,
+                message_count: count as usize,
+            })
+        }) {
+            Ok(r) => r,
+            Err(_) => return Vec::new(),
+        };
+
+        rows.filter_map(|r| r.ok()).collect()
     }
 
     fn delete_session(&self, session_key: &str) -> std::io::Result<bool> {
@@ -441,7 +553,9 @@ impl SessionBackend for SqliteSessionBackend {
         let conn = self.conn.lock();
         let mut stmt = match conn.prepare(
             "SELECT session_key, created_at, last_activity, message_count, name
-             FROM session_metadata WHERE state = 'running' ORDER BY turn_started_at DESC",
+             FROM session_metadata
+             WHERE state = 'running' AND archived_at IS NULL
+             ORDER BY turn_started_at DESC",
         ) {
             Ok(s) => s,
             Err(_) => return Vec::new(),
@@ -482,7 +596,7 @@ impl SessionBackend for SqliteSessionBackend {
         let mut stmt = match conn.prepare(
             "SELECT session_key, created_at, last_activity, message_count, name
              FROM session_metadata
-             WHERE state = 'running' AND turn_started_at < ?1
+             WHERE state = 'running' AND archived_at IS NULL AND turn_started_at < ?1
              ORDER BY turn_started_at ASC",
         ) {
             Ok(s) => s,
@@ -553,7 +667,9 @@ impl SessionBackend for SqliteSessionBackend {
         keys.iter()
             .filter_map(|key| {
                 conn.query_row(
-                    "SELECT created_at, last_activity, message_count, name FROM session_metadata WHERE session_key = ?1",
+                    "SELECT created_at, last_activity, message_count, name
+                     FROM session_metadata
+                     WHERE session_key = ?1 AND archived_at IS NULL",
                     params![key],
                     |row| {
                         let created_str: String = row.get(0)?;
@@ -717,6 +833,47 @@ mod tests {
         assert!(backend.load("s1").is_empty());
         assert_eq!(backend.list_sessions().len(), 1);
         assert_eq!(backend.list_sessions()[0], "s2");
+    }
+
+    #[test]
+    fn archive_session_hides_but_preserves_transcript() {
+        let tmp = TempDir::new().unwrap();
+        let backend = SqliteSessionBackend::new(tmp.path()).unwrap();
+
+        backend.append("s1", &ChatMessage::user("hello")).unwrap();
+        backend.append("s1", &ChatMessage::assistant("hi")).unwrap();
+        backend.append("s2", &ChatMessage::user("other")).unwrap();
+
+        let archived_at = backend.archive_session("s1").unwrap();
+        assert!(archived_at.is_some());
+        assert!(backend.is_session_archived("s1").unwrap());
+        assert_eq!(backend.load("s1").len(), 2);
+        assert_eq!(backend.list_sessions(), vec!["s2".to_string()]);
+
+        let archived = backend.list_archived_sessions();
+        assert_eq!(archived.len(), 1);
+        assert_eq!(archived[0].key, "s1");
+        assert_eq!(archived[0].message_count, 2);
+    }
+
+    #[test]
+    fn unarchive_session_restores_active_listing() {
+        let tmp = TempDir::new().unwrap();
+        let backend = SqliteSessionBackend::new(tmp.path()).unwrap();
+
+        backend.append("s1", &ChatMessage::user("hello")).unwrap();
+        assert!(backend.archive_session("s1").unwrap().is_some());
+        assert!(backend.unarchive_session("s1").unwrap());
+        assert!(!backend.is_session_archived("s1").unwrap());
+        assert_eq!(backend.list_sessions(), vec!["s1".to_string()]);
+        assert!(backend.list_archived_sessions().is_empty());
+    }
+
+    #[test]
+    fn archive_session_returns_none_for_missing() {
+        let tmp = TempDir::new().unwrap();
+        let backend = SqliteSessionBackend::new(tmp.path()).unwrap();
+        assert!(backend.archive_session("nonexistent").unwrap().is_none());
     }
 
     #[test]
