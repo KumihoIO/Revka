@@ -1513,7 +1513,7 @@ fn seed_huge_history(agent: &mut Agent, payload_chars: usize) {
     agent.seed_history(&[
         ChatMessage::system("sys"),
         ChatMessage::user("kick off long task"),
-        ChatMessage::assistant(&"x".repeat(payload_chars)),
+        ChatMessage::assistant("x".repeat(payload_chars)),
         ChatMessage::user("follow-up 1"),
         ChatMessage::assistant("ok 1"),
         ChatMessage::user("follow-up 2"),
@@ -1624,7 +1624,7 @@ async fn hard_token_cap_fails_loud_when_compression_cant_reduce_enough() {
     // Seed with ~5M chars — well past the 1M token cap (~95% of 1M = 950K).
     agent.seed_history(&[
         ChatMessage::system("sys"),
-        ChatMessage::assistant(&"y".repeat(5_000_000)),
+        ChatMessage::assistant("y".repeat(5_000_000)),
     ]);
 
     let err = agent

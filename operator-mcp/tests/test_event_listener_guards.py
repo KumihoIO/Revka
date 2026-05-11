@@ -12,6 +12,8 @@ import asyncio
 import pytest
 
 from operator_mcp.workflow.event_listener import (
+    _LAST_LIMITED_LOG_AT,
+    _log_limited,
     TriggerRegistry,
     TriggerRule,
     WorkflowEventListener,
@@ -36,9 +38,22 @@ def _isolate_claimed_runs_persistence(tmp_path, monkeypatch):
     )
     WorkflowEventListener._claimed_runs.clear()
     WorkflowEventListener._claimed_runs_loaded = False
+    _LAST_LIMITED_LOG_AT.clear()
     yield
     WorkflowEventListener._claimed_runs.clear()
     WorkflowEventListener._claimed_runs_loaded = False
+    _LAST_LIMITED_LOG_AT.clear()
+
+
+def test_log_limited_throttles_repeated_messages(monkeypatch):
+    messages: list[str] = []
+    monkeypatch.setattr("operator_mcp.workflow.event_listener._log", messages.append)
+
+    _log_limited("same", "first", interval=300)
+    _log_limited("same", "second", interval=300)
+    _log_limited("other", "third", interval=300)
+
+    assert messages == ["first", "third"]
 
 
 def test_handle_run_request_skips_when_loop_closed():

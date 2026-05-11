@@ -294,7 +294,7 @@ mod tests {
             std::env::set_var(
                 "CONSTRUCT_GATEWAY_SESSION_LOCK_TIMEOUT_SECS",
                 "not-a-number",
-            )
+            );
         };
         assert_eq!(
             session_lock_timeout_secs(),

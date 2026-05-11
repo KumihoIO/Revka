@@ -620,34 +620,50 @@ impl BedrockProvider {
                     }
                 }
                 "tool" => {
-                    let tool_result_msg = Self::parse_tool_result_message(&msg.content)
-                        .unwrap_or_else(|| {
-                            // Fallback: always emit a toolResult block so the
-                            // Bedrock API contract (every toolUse needs a matching
-                            // toolResult) is never violated.
-                            let tool_use_id = Self::extract_tool_call_id(&msg.content)
-                                .or_else(|| Self::last_pending_tool_use_id(&converse_messages))
-                                .unwrap_or_else(|| "unknown".to_string());
-
+                    let pending_tool_use_ids = Self::pending_tool_use_ids(&converse_messages);
+                    let tool_result_msg = if let Some(tool_result_msg) =
+                        Self::parse_tool_result_message(&msg.content)
+                    {
+                        let tool_use_id = Self::first_tool_result_id(&tool_result_msg);
+                        if tool_use_id
+                            .as_deref()
+                            .is_none_or(|id| !pending_tool_use_ids.iter().any(|p| p == id))
+                        {
                             tracing::warn!(
-                                "Failed to parse tool result message, creating error \
-                                 toolResult for tool_use_id={}",
-                                tool_use_id
+                                tool_use_id = tool_use_id.as_deref().unwrap_or(""),
+                                "Dropping orphaned Bedrock toolResult before provider request"
                             );
+                            continue;
+                        }
+                        tool_result_msg
+                    } else if let Some(tool_use_id) = pending_tool_use_ids.first().cloned() {
+                        // Fallback: always emit a toolResult block so the
+                        // Bedrock API contract (every toolUse needs a matching
+                        // toolResult) is never violated.
+                        tracing::warn!(
+                            "Failed to parse tool result message, creating error \
+                                 toolResult for tool_use_id={}",
+                            tool_use_id
+                        );
 
-                            ConverseMessage {
-                                role: "user".to_string(),
-                                content: vec![ContentBlock::ToolResult(ToolResultWrapper {
-                                    tool_result: ToolResultBlock {
-                                        tool_use_id,
-                                        content: vec![ToolResultContent {
-                                            text: msg.content.clone(),
-                                        }],
-                                        status: "error".to_string(),
-                                    },
-                                })],
-                            }
-                        });
+                        ConverseMessage {
+                            role: "user".to_string(),
+                            content: vec![ContentBlock::ToolResult(ToolResultWrapper {
+                                tool_result: ToolResultBlock {
+                                    tool_use_id,
+                                    content: vec![ToolResultContent {
+                                        text: msg.content.clone(),
+                                    }],
+                                    status: "error".to_string(),
+                                },
+                            })],
+                        }
+                    } else {
+                        tracing::warn!(
+                            "Dropping orphaned Bedrock toolResult with no pending toolUse"
+                        );
+                        continue;
+                    };
 
                     // Merge consecutive tool results into a single user message.
                     // Bedrock requires all toolResult blocks for a multi-tool-call
@@ -694,16 +710,19 @@ impl BedrockProvider {
             .map(String::from)
     }
 
-    /// Find the first unmatched tool_use_id from the last assistant message.
+    /// Find unmatched tool_use_id values from the last assistant message.
     ///
     /// When a tool result can't be parsed at all (not even the ID), we fall
     /// back to matching it against the preceding assistant turn's toolUse
     /// blocks that don't yet have a corresponding toolResult.
-    fn last_pending_tool_use_id(converse_messages: &[ConverseMessage]) -> Option<String> {
-        let last_assistant = converse_messages
+    fn pending_tool_use_ids(converse_messages: &[ConverseMessage]) -> Vec<String> {
+        let Some(last_assistant) = converse_messages
             .iter()
             .rev()
-            .find(|m| m.role == "assistant")?;
+            .find(|m| m.role == "assistant")
+        else {
+            return Vec::new();
+        };
 
         let tool_use_ids: Vec<&str> = last_assistant
             .content
@@ -727,8 +746,16 @@ impl BedrockProvider {
 
         tool_use_ids
             .into_iter()
-            .find(|id| !answered_ids.contains(id))
+            .filter(|id| !answered_ids.contains(id))
             .map(String::from)
+            .collect()
+    }
+
+    fn first_tool_result_id(message: &ConverseMessage) -> Option<String> {
+        message.content.iter().find_map(|block| match block {
+            ContentBlock::ToolResult(wrapper) => Some(wrapper.tool_result.tool_use_id.clone()),
+            _ => None,
+        })
     }
 
     /// Parse user message content, extracting [IMAGE:data:...] markers into image blocks.
@@ -762,12 +789,14 @@ impl BedrockProvider {
                         let mime = &rest[..semi];
                         let after_semi = &rest[semi + 1..];
                         if let Some(b64) = after_semi.strip_prefix("base64,") {
-                            let format = match mime {
-                                "image/png" => "png",
-                                "image/gif" => "gif",
-                                "image/webp" => "webp",
-                                _ => "jpeg",
-                            };
+                            let mime =
+                                crate::providers::image_media::image_media_type_from_data_uri(
+                                    mime, b64,
+                                );
+                            let format =
+                                crate::providers::image_media::bedrock_image_format_from_media_type(
+                                    &mime,
+                                );
                             blocks.push(ContentBlock::Image(ImageWrapper {
                                 image: ImageBlock {
                                     format: format.to_string(),
@@ -1495,13 +1524,30 @@ mod tests {
     }
 
     #[test]
-    fn convert_messages_tool_role_to_tool_result() {
+    fn convert_messages_user_image_sniffs_format() {
+        let messages = vec![ChatMessage::user(
+            "Look [IMAGE:data:image/jpeg;base64,iVBORw0KGgo=]",
+        )];
+        let (_, msgs) = BedrockProvider::convert_messages(&messages);
+
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].role, "user");
+        let Some(ContentBlock::Image(wrapper)) = msgs[0]
+            .content
+            .iter()
+            .find(|block| matches!(block, ContentBlock::Image(_)))
+        else {
+            panic!("expected image block");
+        };
+        assert_eq!(wrapper.image.format, "png");
+    }
+
+    #[test]
+    fn convert_messages_drops_orphaned_tool_role() {
         let tool_json = r#"{"tool_call_id": "call_123", "content": "Result data"}"#;
         let messages = vec![ChatMessage::tool(tool_json)];
         let (_, msgs) = BedrockProvider::convert_messages(&messages);
-        assert_eq!(msgs.len(), 1);
-        assert_eq!(msgs[0].role, "user");
-        assert!(matches!(msgs[0].content[0], ContentBlock::ToolResult(_)));
+        assert!(msgs.is_empty());
     }
 
     #[test]
@@ -1815,6 +1861,22 @@ mod tests {
         );
         assert!(matches!(&msgs[2].content[0], ContentBlock::ToolResult(_)));
         assert!(matches!(&msgs[2].content[1], ContentBlock::ToolResult(_)));
+    }
+
+    #[test]
+    fn mismatched_tool_result_is_dropped() {
+        let messages = vec![
+            ChatMessage::user("do one thing"),
+            ChatMessage::assistant(
+                r#"{"content":"","tool_calls":[{"id":"expected","name":"shell","arguments":"{}"}]}"#,
+            ),
+            ChatMessage::tool(r#"{"tool_call_id":"stale","content":"old result"}"#),
+        ];
+        let (_, msgs) = BedrockProvider::convert_messages(&messages);
+
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0].role, "user");
+        assert_eq!(msgs[1].role, "assistant");
     }
 
     #[test]

@@ -5,14 +5,22 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 
 from operator_mcp.agent_state import AGENTS, ManagedAgent
-from operator_mcp.reconnect import reconnect_agents, _build_journal_index, _map_sidecar_status
+from operator_mcp.reconnect import (
+    _LAST_LOG_AT,
+    _build_journal_index,
+    _log_limited,
+    _map_sidecar_status,
+    reconnect_agents,
+)
 
 
 @pytest.fixture(autouse=True)
 def clean_agents():
     AGENTS.clear()
+    _LAST_LOG_AT.clear()
     yield
     AGENTS.clear()
+    _LAST_LOG_AT.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -68,6 +76,17 @@ class TestBuildJournalIndex:
         journal.load_history.side_effect = Exception("disk error")
         index = _build_journal_index(journal)
         assert index == {}
+
+
+def test_log_limited_throttles_repeated_messages(monkeypatch):
+    messages: list[str] = []
+    monkeypatch.setattr("operator_mcp.reconnect._log", messages.append)
+
+    _log_limited("same", "first", interval=300)
+    _log_limited("same", "second", interval=300)
+    _log_limited("other", "third", interval=300)
+
+    assert messages == ["first", "third"]
 
 
 # ---------------------------------------------------------------------------
