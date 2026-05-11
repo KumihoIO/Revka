@@ -2995,6 +2995,7 @@ async def _exec_manus(step: StepDef, state: WorkflowState) -> StepResult:
                 output_text = assistant_text or json.dumps(
                     {"task_id": task_id, "final_state": last_status}
                 )
+                output_data["output_truncated"] = len(output_text) > 6000
                 return StepResult(
                     step_id=step.id,
                     status="completed",

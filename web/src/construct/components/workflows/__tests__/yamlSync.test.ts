@@ -359,3 +359,110 @@ steps:
   assert.ok(pairs.has('draft-short->final-output'), 'output template ref');
   assert.ok(pairs.has('draft-long->final-output'), 'output template ref');
 });
+
+test('manus step: full-fields round-trip preserves all manus_* fields and schema-as-object', () => {
+  const yaml = `
+steps:
+  - id: research
+    type: manus
+    manus:
+      prompt: "Investigate widget market"
+      structured_output_schema:
+        type: object
+        properties:
+          summary:
+            type: string
+          score:
+            type: number
+        required: [summary]
+      connectors: [google_drive, slack]
+      enable_skills: [browse, code]
+      force_skills: [browse]
+      agent_profile: deep_research
+      locale: en-US
+      project_id: proj-123
+      title: "Widget market scan"
+      timeout_seconds: 1200
+      poll_interval_seconds: 10
+      allow_failure: true
+`;
+  const tasks1 = parseWorkflowYaml(yaml);
+  assert.equal(tasks1.length, 1);
+  const t1 = tasks1[0]!;
+  assert.equal(t1.type, 'manus');
+  assert.equal(t1.manus_prompt, 'Investigate widget market');
+  // structured_output_schema parses to a JSON-string round-trip of the object.
+  assert.ok(t1.manus_structured_output_schema, 'schema string present');
+  const schema1 = JSON.parse(t1.manus_structured_output_schema!);
+  assert.equal(schema1.type, 'object');
+  assert.deepEqual(schema1.required, ['summary']);
+  assert.equal(schema1.properties.summary.type, 'string');
+  assert.equal(schema1.properties.score.type, 'number');
+  assert.deepEqual(t1.manus_connectors, ['google_drive', 'slack']);
+  assert.deepEqual(t1.manus_enable_skills, ['browse', 'code']);
+  assert.deepEqual(t1.manus_force_skills, ['browse']);
+  assert.equal(t1.manus_agent_profile, 'deep_research');
+  assert.equal(t1.manus_locale, 'en-US');
+  assert.equal(t1.manus_project_id, 'proj-123');
+  assert.equal(t1.manus_title, 'Widget market scan');
+  assert.equal(t1.manus_timeout_seconds, 1200);
+  assert.equal(t1.manus_poll_interval_seconds, 10);
+  assert.equal(t1.manus_allow_failure, true);
+
+  // Re-emit and re-parse — structural equivalence with the original parse.
+  const yaml2 = tasksToYaml(tasks1);
+  const tasks2 = parseWorkflowYaml(yaml2);
+  assert.equal(tasks2.length, 1);
+  const t2 = tasks2[0]!;
+  assert.equal(t2.type, 'manus');
+  assert.equal(t2.manus_prompt, t1.manus_prompt);
+  assert.deepEqual(t2.manus_connectors, t1.manus_connectors);
+  assert.deepEqual(t2.manus_enable_skills, t1.manus_enable_skills);
+  assert.deepEqual(t2.manus_force_skills, t1.manus_force_skills);
+  assert.equal(t2.manus_agent_profile, t1.manus_agent_profile);
+  assert.equal(t2.manus_locale, t1.manus_locale);
+  assert.equal(t2.manus_project_id, t1.manus_project_id);
+  assert.equal(t2.manus_title, t1.manus_title);
+  assert.equal(t2.manus_timeout_seconds, t1.manus_timeout_seconds);
+  assert.equal(t2.manus_poll_interval_seconds, t1.manus_poll_interval_seconds);
+  assert.equal(t2.manus_allow_failure, t1.manus_allow_failure);
+
+  // structured_output_schema must round-trip as a JSON object (not a stringified blob).
+  assert.ok(t2.manus_structured_output_schema, 'schema string present after round-trip');
+  const schema2 = JSON.parse(t2.manus_structured_output_schema!);
+  assert.deepEqual(schema2, schema1);
+  // The emitted YAML must contain the schema as an inline JSON object, not a quoted string.
+  assert.ok(
+    /structured_output_schema:\s*\{/.test(yaml2),
+    'emitted schema is an inline object, not a quoted string',
+  );
+});
+
+test('manus step: minimal-fields case round-trips cleanly with only prompt set', () => {
+  const yaml = `
+steps:
+  - id: quick
+    type: manus
+    manus:
+      prompt: "Quick check"
+`;
+  const tasks1 = parseWorkflowYaml(yaml);
+  assert.equal(tasks1.length, 1);
+  const t1 = tasks1[0]!;
+  assert.equal(t1.type, 'manus');
+  assert.equal(t1.manus_prompt, 'Quick check');
+  assert.equal(t1.manus_structured_output_schema, undefined);
+  assert.equal(t1.manus_agent_profile, undefined);
+  assert.equal(t1.manus_locale, undefined);
+
+  const yaml2 = tasksToYaml(tasks1);
+  const tasks2 = parseWorkflowYaml(yaml2);
+  assert.equal(tasks2.length, 1);
+  const t2 = tasks2[0]!;
+  assert.equal(t2.type, 'manus');
+  assert.equal(t2.manus_prompt, 'Quick check');
+  assert.equal(t2.manus_structured_output_schema, undefined);
+  assert.equal(t2.manus_agent_profile, undefined);
+  assert.equal(t2.manus_locale, undefined);
+  assert.equal(t2.manus_allow_failure, undefined);
+});
