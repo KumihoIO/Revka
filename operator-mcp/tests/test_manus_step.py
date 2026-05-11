@@ -227,16 +227,26 @@ class TestHappyPath:
                 "share_url": "https://manus.ai/share/task-abc",
             }),
             poll_responses=[
-                _FakeResp(200, {"ok": True, "messages": [
-                    {"type": "status_update", "agent_status": "running"},
+                _FakeResp(200, {"ok": True, "data": [
+                    {"id": "e1", "type": "status_update",
+                     "status_update": {"agent_status": "running"}},
                 ], "has_more": False}),
-                _FakeResp(200, {"ok": True, "messages": [
-                    {"type": "status_update", "agent_status": "running"},
-                    {"type": "assistant_message",
-                     "content": "Found 3 widgets.",
-                     "attachments": [{"name": "report.md"}]},
-                    {"type": "status_update", "agent_status": "stopped",
-                     "status_detail": "task completed", "brief": "done"},
+                _FakeResp(200, {"ok": True, "data": [
+                    {"id": "e1", "type": "status_update",
+                     "status_update": {"agent_status": "running"}},
+                    {"id": "e2", "type": "assistant_message",
+                     "assistant_message": {
+                        "content": "Found 3 widgets.",
+                        "attachments": [
+                            {"file_name": "report.md",
+                             "url": "https://manus.ai/files/report.md",
+                             "size_bytes": 2048},
+                        ],
+                     }},
+                    {"id": "e3", "type": "status_update",
+                     "status_update": {"agent_status": "stopped",
+                                       "status_detail": "task completed",
+                                       "brief": "done"}},
                 ], "has_more": False}),
             ],
         )
@@ -253,7 +263,11 @@ class TestHappyPath:
         assert result.output_data["task_url"].startswith("https://manus.ai")
         assert result.output_data["final_state"] == "stopped"
         assert result.output_data["assistant_message"] == "Found 3 widgets."
-        assert result.output_data["attachments"] == [{"name": "report.md"}]
+        assert result.output_data["attachments"] == [
+            {"file_name": "report.md",
+             "url": "https://manus.ai/files/report.md",
+             "size_bytes": 2048},
+        ]
         # Auth header asserted on first call.
         first = fc.calls[0]
         assert first["headers"].get("x-manus-api-key") == "fake-test-key"
@@ -276,9 +290,11 @@ class TestTerminalStopped:
                 "task_url": "u", "share_url": "s",
             }),
             poll_responses=[
-                _FakeResp(200, {"ok": True, "messages": [
-                    {"type": "assistant_message", "content": "answer"},
-                    {"type": "status_update", "agent_status": "stopped"},
+                _FakeResp(200, {"ok": True, "data": [
+                    {"id": "e1", "type": "assistant_message",
+                     "assistant_message": {"content": "answer"}},
+                    {"id": "e2", "type": "status_update",
+                     "status_update": {"agent_status": "stopped"}},
                 ]}),
             ],
         )
@@ -311,9 +327,10 @@ class TestTerminalError:
                 "task_url": "u", "share_url": "s",
             }),
             poll_responses=[
-                _FakeResp(200, {"ok": True, "messages": [
-                    {"type": "status_update", "agent_status": "error",
-                     "status_detail": "manus internal failure"},
+                _FakeResp(200, {"ok": True, "data": [
+                    {"id": "e1", "type": "status_update",
+                     "status_update": {"agent_status": "error",
+                                       "status_detail": "manus internal failure"}},
                 ]}),
             ],
         )
@@ -336,9 +353,10 @@ class TestTerminalError:
                 "task_url": "u", "share_url": "s",
             }),
             poll_responses=[
-                _FakeResp(200, {"ok": True, "messages": [
-                    {"type": "status_update", "agent_status": "error",
-                     "status_detail": "manus internal failure"},
+                _FakeResp(200, {"ok": True, "data": [
+                    {"id": "e1", "type": "status_update",
+                     "status_update": {"agent_status": "error",
+                                       "status_detail": "manus internal failure"}},
                 ]}),
             ],
         )
@@ -370,8 +388,9 @@ class TestCancel:
         monkeypatch.setattr(construct_config, "_cached_manus", None)
         # Build a client that returns `running` forever — only cancel
         # can break the loop.
-        running_msg = _FakeResp(200, {"ok": True, "messages": [
-            {"type": "status_update", "agent_status": "running"},
+        running_msg = _FakeResp(200, {"ok": True, "data": [
+            {"id": "e1", "type": "status_update",
+             "status_update": {"agent_status": "running"}},
         ]})
         fc = _FakeClient(
             create_response=_FakeResp(200, {
@@ -424,8 +443,9 @@ class TestTimeout:
         monkeypatch.setattr(construct_config, "_cached_manus", None)
         # Always-running responses; timeout_seconds=0 should fire on the
         # first elapsed check after the create call.
-        running_msg = _FakeResp(200, {"ok": True, "messages": [
-            {"type": "status_update", "agent_status": "running"},
+        running_msg = _FakeResp(200, {"ok": True, "data": [
+            {"id": "e1", "type": "status_update",
+             "status_update": {"agent_status": "running"}},
         ]})
         fc = _FakeClient(
             create_response=_FakeResp(200, {
@@ -479,11 +499,17 @@ class TestStructuredOutput:
                 "task_url": "u", "share_url": "s",
             }),
             poll_responses=[
-                _FakeResp(200, {"ok": True, "messages": [
-                    {"type": "assistant_message", "content": "Found 2 companies"},
-                    {"type": "structured_output_result", "success": True,
-                     "value": {"companies": [{"name": "A"}, {"name": "B"}]}},
-                    {"type": "status_update", "agent_status": "stopped"},
+                _FakeResp(200, {"ok": True, "data": [
+                    {"id": "e1", "type": "assistant_message",
+                     "assistant_message": {"content": "Found 2 companies"}},
+                    {"id": "e2", "type": "structured_output_result",
+                     "structured_output_result": {
+                        "success": True,
+                        "value": {"companies": [{"name": "A"}, {"name": "B"}]},
+                        "error": None,
+                     }},
+                    {"id": "e3", "type": "status_update",
+                     "status_update": {"agent_status": "stopped"}},
                 ]}),
             ],
         )
@@ -523,7 +549,7 @@ class TestKeyHandling:
         secret = "sk-MANUS-SECRET-DO-NOT-LEAK-1234567890"
         fc = _FakeClient(
             create_response=_FakeResp(401, {"error": "bad auth"}),
-            poll_responses=[_FakeResp(200, {"ok": True, "messages": []})],
+            poll_responses=[_FakeResp(200, {"ok": True, "data": []})],
         )
         ctxs = _patch_manus(fake_client=fc, api_key=secret)
         try:
@@ -575,9 +601,11 @@ class TestCredentialsRef:
                 "ok": True, "task_id": "task-cred",
                 "task_url": "u", "share_url": "s",
             }),
-            poll_responses=[_FakeResp(200, {"ok": True, "messages": [
-                {"type": "assistant_message", "content": "done"},
-                {"type": "status_update", "agent_status": "stopped"},
+            poll_responses=[_FakeResp(200, {"ok": True, "data": [
+                {"id": "e1", "type": "assistant_message",
+                 "assistant_message": {"content": "done"}},
+                {"id": "e2", "type": "status_update",
+                 "status_update": {"agent_status": "stopped"}},
             ]})],
         )
 
@@ -623,9 +651,11 @@ class TestCredentialsRef:
                 "ok": True, "task_id": "task-env",
                 "task_url": "u", "share_url": "s",
             }),
-            poll_responses=[_FakeResp(200, {"ok": True, "messages": [
-                {"type": "assistant_message", "content": "done"},
-                {"type": "status_update", "agent_status": "stopped"},
+            poll_responses=[_FakeResp(200, {"ok": True, "data": [
+                {"id": "e1", "type": "assistant_message",
+                 "assistant_message": {"content": "done"}},
+                {"id": "e2", "type": "status_update",
+                 "status_update": {"agent_status": "stopped"}},
             ]})],
         )
 
@@ -702,7 +732,7 @@ class TestCredentialsRef:
         # Force a Manus-side failure so the error path is exercised too.
         fc = _FakeClient(
             create_response=_FakeResp(500, {"error": "manus exploded"}),
-            poll_responses=[_FakeResp(200, {"ok": True, "messages": []})],
+            poll_responses=[_FakeResp(200, {"ok": True, "data": []})],
         )
 
         ctxs = _patch_manus(fake_client=fc, api_key="other")
@@ -733,3 +763,139 @@ class TestCredentialsRef:
             assert secret not in record.getMessage()
         # The credentials_ref id IS recorded — just not the token.
         assert result.input_data.get("credentials_ref") == "manus:work"
+
+
+# ---------------------------------------------------------------------------
+# 11. Real-API shape — regression for the data/nested-events bug that made
+# every Manus task time out even when it completed on Manus's side. Feeds
+# the canonical response shape from https://open.manus.ai docs and asserts
+# the step terminates with the assistant content + attachments intact.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestRealApiShape:
+    async def test_real_api_shape_terminates_correctly(self, monkeypatch):
+        from operator_mcp import construct_config
+        monkeypatch.setattr(construct_config, "_cached_manus", None)
+        fc = _FakeClient(
+            create_response=_FakeResp(200, {
+                "ok": True, "request_id": "req_xxx",
+                "task_id": "task-real-1",
+                "task_url": "https://manus.ai/tasks/task-real-1",
+                "share_url": "https://manus.ai/share/task-real-1",
+            }),
+            poll_responses=[
+                _FakeResp(200, {
+                    "ok": True,
+                    "request_id": "req_xxx",
+                    "data": [
+                        {
+                            "id": "evt_001",
+                            "type": "status_update",
+                            "timestamp": 1715000000,
+                            "status_update": {
+                                "agent_status": "running",
+                                "brief": "working",
+                                "description": "Investigating...",
+                            },
+                        },
+                        {
+                            "id": "evt_002",
+                            "type": "assistant_message",
+                            "timestamp": 1715000001,
+                            "assistant_message": {
+                                "content": "Here's the result",
+                                "attachments": [
+                                    {
+                                        "file_name": "report.pdf",
+                                        "url": "https://manus.ai/files/report.pdf",
+                                        "size_bytes": 204800,
+                                    },
+                                ],
+                            },
+                        },
+                        {
+                            "id": "evt_003",
+                            "type": "status_update",
+                            "timestamp": 1715000002,
+                            "status_update": {
+                                "agent_status": "stopped",
+                                "brief": "done",
+                                "description": "Task complete",
+                            },
+                        },
+                    ],
+                }),
+            ],
+        )
+        ctxs = _patch_manus(fake_client=fc)
+        try:
+            _enter_all(ctxs)
+            cfg = ManusStepConfig(prompt="Investigate X", **_FAST_CFG)
+            result = await _exec_manus(_step(cfg), _state())
+        finally:
+            _exit_all(ctxs)
+
+        # The crux: must NOT time out — must reach the terminal status.
+        assert result.status == "completed"
+        assert result.output == "Here's the result"
+        od = result.output_data
+        assert od["task_id"] == "task-real-1"
+        assert od["final_state"] == "stopped"
+        assert od["brief"] == "done"
+        assert od["description"] == "Task complete"
+        assert od["assistant_message"] == "Here's the result"
+        # Attachments are passed through verbatim using the spec's field
+        # names so the UI / downstream readers can rely on them.
+        assert od["attachments"] == [
+            {
+                "file_name": "report.pdf",
+                "url": "https://manus.ai/files/report.pdf",
+                "size_bytes": 204800,
+            },
+        ]
+
+
+# ---------------------------------------------------------------------------
+# 12. error_message events — Manus-side task failures should terminate the
+# step with a sanitized error pulled from the event payload.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestErrorMessageEvent:
+    async def test_error_message_event_fails_step(self, monkeypatch):
+        from operator_mcp import construct_config
+        monkeypatch.setattr(construct_config, "_cached_manus", None)
+        fc = _FakeClient(
+            create_response=_FakeResp(200, {
+                "ok": True, "task_id": "task-rl",
+                "task_url": "u", "share_url": "s",
+            }),
+            poll_responses=[
+                _FakeResp(200, {"ok": True, "data": [
+                    {"id": "e1", "type": "error_message",
+                     "error_message": {
+                        "error_type": "rate_limited",
+                        "content": "Too many requests",
+                     }},
+                ]}),
+            ],
+        )
+        ctxs = _patch_manus(fake_client=fc)
+        try:
+            _enter_all(ctxs)
+            cfg = ManusStepConfig(prompt="x", **_FAST_CFG)
+            result = await _exec_manus(_step(cfg), _state())
+        finally:
+            _exit_all(ctxs)
+        assert result.status == "failed"
+        # Error text carries both the sanitized type and content.
+        assert "rate_limited" in result.error
+        assert "Too many requests" in result.error
+        # The raw event is preserved in output_data for the run-view UI.
+        assert result.output_data["error_message"] == {
+            "error_type": "rate_limited",
+            "content": "Too many requests",
+        }
