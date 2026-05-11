@@ -1732,6 +1732,113 @@ export default function StepConfigPanel({
           )}
 
           {/* ── A2A ── */}
+          {stepType === 'manus' && (
+            <div style={sectionShellStyle}>
+              <div style={{ ...sectionTitleStyle, color: 'var(--construct-signal-network)' }}>Manus Config</div>
+              <div>
+                <label style={labelStyle}>Prompt</label>
+                <ExpressionTextarea
+                  value={data.manusPrompt || ''}
+                  onChange={(next) => onUpdate(node.id, { manusPrompt: next })}
+                  rows={5}
+                  placeholder="Research the top 5 startups in Seoul working on robotics — return names + one-line descriptions."
+                  style={inputStyle}
+                  stepIds={dagStepIds}
+                  workflowInputs={dagInputs}
+                  triggerFields={dagTriggerFields}
+                />
+                <p style={helperStyle()}>Free-text task for the Manus web agent. Supports ${'${...}'} interpolation.</p>
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <div style={{ flex: 1 }}>
+                  <label style={labelStyle}>Agent profile</label>
+                  <input
+                    type="text"
+                    value={data.manusAgentProfile || ''}
+                    onChange={(e) => onUpdate(node.id, { manusAgentProfile: e.target.value })}
+                    placeholder="manus-1.6"
+                    style={inputStyle}
+                  />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={labelStyle}>Locale</label>
+                  <input
+                    type="text"
+                    value={data.manusLocale || ''}
+                    onChange={(e) => onUpdate(node.id, { manusLocale: e.target.value })}
+                    placeholder="auto"
+                    style={inputStyle}
+                  />
+                </div>
+              </div>
+              <div>
+                <label style={labelStyle}>Connectors</label>
+                <input
+                  type="text"
+                  defaultValue={(data.manusConnectors || []).join(', ')}
+                  onBlur={(e) =>
+                    onUpdate(node.id, {
+                      manusConnectors: e.target.value.split(',').map((s) => s.trim()).filter(Boolean),
+                    })
+                  }
+                  placeholder="gmail, drive, slack"
+                  style={monoInputStyle}
+                />
+                <p style={helperStyle()}>Comma-separated connector ids enabled for this task.</p>
+              </div>
+              <div>
+                <label style={labelStyle}>Title (optional)</label>
+                <input
+                  type="text"
+                  value={data.manusTitle || ''}
+                  onChange={(e) => onUpdate(node.id, { manusTitle: e.target.value })}
+                  placeholder="Robotics startup scan — Seoul"
+                  style={inputStyle}
+                />
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <div style={{ flex: 1 }}>
+                  <label style={labelStyle}>Timeout (s)</label>
+                  <input
+                    type="number"
+                    min={30}
+                    value={data.manusTimeoutSeconds ?? 600}
+                    onChange={(e) => onUpdate(node.id, { manusTimeoutSeconds: parseInt(e.target.value) || 600 })}
+                    style={inputStyle}
+                  />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={labelStyle}>Poll interval (s)</label>
+                  <input
+                    type="number"
+                    min={1}
+                    value={data.manusPollIntervalSeconds ?? 5}
+                    onChange={(e) => onUpdate(node.id, { manusPollIntervalSeconds: parseInt(e.target.value) || 5 })}
+                    style={inputStyle}
+                  />
+                </div>
+              </div>
+              <div>
+                <label style={labelStyle}>Structured output schema (JSON, optional)</label>
+                <textarea
+                  value={data.manusStructuredOutputSchema || ''}
+                  onChange={(e) => onUpdate(node.id, { manusStructuredOutputSchema: e.target.value })}
+                  rows={5}
+                  placeholder='{"type": "object", "properties": {"companies": {"type": "array"}}}'
+                  style={monoInputStyle}
+                />
+                <p style={helperStyle()}>When set, Manus returns a value matching this schema; available as ${'${step.output_data.structured_output}'}.</p>
+              </div>
+              <div style={{ paddingTop: 8, borderTop: '1px solid var(--pc-border)' }}>
+                <Checkbox
+                  checked={data.manusAllowFailure || false}
+                  onChange={(v) => onUpdate(node.id, { manusAllowFailure: v })}
+                  label="Allow failure (continue workflow on Manus error)"
+                />
+              </div>
+            </div>
+          )}
+
           {stepType === 'a2a' && (
             <div style={sectionShellStyle}>
               <div style={{ ...sectionTitleStyle, color: 'var(--construct-signal-network)' }}>A2A Config</div>

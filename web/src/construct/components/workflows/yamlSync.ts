@@ -205,6 +205,19 @@ export interface TaskDefinition {
   // --- Deprecate step: deprecate a Kumiho item ---
   deprecate_item_kref?: string;
   deprecate_reason?: string;
+  // --- Manus step: delegate web research to Manus AI ---
+  manus_prompt?: string;
+  manus_structured_output_schema?: string;  // JSON string round-trip
+  manus_connectors?: string[];
+  manus_enable_skills?: string[];
+  manus_force_skills?: string[];
+  manus_agent_profile?: string;
+  manus_locale?: string;
+  manus_project_id?: string;
+  manus_title?: string;
+  manus_timeout_seconds?: number;
+  manus_poll_interval_seconds?: number;
+  manus_allow_failure?: boolean;
   /**
    * Encrypted auth-profile binding for agent / shell / python / email / a2a
    * steps. Format: `<provider>:<profile_name>`. Resolved at runtime via the
@@ -418,6 +431,19 @@ export interface TaskNodeData {
   // Deprecate step
   deprecateItemKref: string;
   deprecateReason: string;
+  // Manus step
+  manusPrompt: string;
+  manusStructuredOutputSchema: string;
+  manusConnectors: string[];
+  manusEnableSkills: string[];
+  manusForceSkills: string[];
+  manusAgentProfile: string;
+  manusLocale: string;
+  manusProjectId: string;
+  manusTitle: string;
+  manusTimeoutSeconds: number;
+  manusPollIntervalSeconds: number;
+  manusAllowFailure: boolean;
   /** Encrypted auth-profile id (e.g. `gmail:work`) — resolved at runtime. */
   auth?: string;
   /** Run-mode overlay — populated when viewing a workflow run */
@@ -480,6 +506,7 @@ export const ACTION_TO_TYPE: Record<string, string> = {
   // New step types — see operator_mcp/workflow/schema.py
   python: 'python', email: 'email',
   tag: 'tag', deprecate: 'deprecate',
+  manus: 'manus',
 };
 
 /** Resolve legacy `action:` verb or `type:` value to a canonical step type. */
@@ -822,6 +849,33 @@ function parseStep(s: YAMLObj): TaskDefinition | null {
   if (deprecateStep) {
     t.deprecate_item_kref = asStr(deprecateStep.item_kref);
     t.deprecate_reason = asStr(deprecateStep.reason);
+  }
+
+  const manus = isObj(s.manus) ? s.manus : undefined;
+  if (manus) {
+    t.manus_prompt = asStr(manus.prompt);
+    // structured_output_schema is an object on the wire; we round-trip
+    // through a JSON string so the editor textarea can show it verbatim.
+    if (manus.structured_output_schema !== undefined &&
+        manus.structured_output_schema !== null) {
+      try {
+        t.manus_structured_output_schema = JSON.stringify(
+          manus.structured_output_schema,
+          null,
+          2,
+        );
+      } catch { /* ignore — leave undefined */ }
+    }
+    t.manus_connectors = asStrArr(manus.connectors);
+    t.manus_enable_skills = asStrArr(manus.enable_skills);
+    t.manus_force_skills = asStrArr(manus.force_skills);
+    t.manus_agent_profile = asStr(manus.agent_profile);
+    t.manus_locale = asStr(manus.locale);
+    t.manus_project_id = asStr(manus.project_id);
+    t.manus_title = asStr(manus.title);
+    t.manus_timeout_seconds = asNum(manus.timeout_seconds);
+    t.manus_poll_interval_seconds = asNum(manus.poll_interval_seconds);
+    t.manus_allow_failure = asBool(manus.allow_failure);
   }
 
   // Conditional canonical form — `conditional.branches: [{condition, goto, value?}, ...]`.
@@ -1194,6 +1248,18 @@ export function tasksToFlow(tasks: TaskDefinition[]): { nodes: Node<TaskNodeData
       tagUntag: task.tag_untag || '',
       deprecateItemKref: task.deprecate_item_kref || '',
       deprecateReason: task.deprecate_reason || '',
+      manusPrompt: task.manus_prompt || '',
+      manusStructuredOutputSchema: task.manus_structured_output_schema || '',
+      manusConnectors: task.manus_connectors || [],
+      manusEnableSkills: task.manus_enable_skills || [],
+      manusForceSkills: task.manus_force_skills || [],
+      manusAgentProfile: task.manus_agent_profile || '',
+      manusLocale: task.manus_locale || '',
+      manusProjectId: task.manus_project_id || '',
+      manusTitle: task.manus_title || '',
+      manusTimeoutSeconds: task.manus_timeout_seconds ?? 600,
+      manusPollIntervalSeconds: task.manus_poll_interval_seconds ?? 5,
+      manusAllowFailure: task.manus_allow_failure || false,
       auth: task.auth || '',
     },
   }));
@@ -1426,6 +1492,8 @@ const INTERPOLATION_TEXT_FIELDS: ReadonlyArray<keyof TaskDefinition> = [
   'a2a_message',
   'map_reduce_task',
   'handoff_reason',
+  'manus_prompt',
+  'manus_title',
 ];
 
 /** IDs that look like step refs but are actually workflow-scope sources. */
@@ -1803,6 +1871,20 @@ export function flowToTasks(nodes: Node<TaskNodeData>[], edges: Edge[]): TaskDef
       if (d.deprecateItemKref) base.deprecate_item_kref = d.deprecateItemKref;
       if (d.deprecateReason) base.deprecate_reason = d.deprecateReason;
     }
+    if (st === 'manus') {
+      if (d.manusPrompt) base.manus_prompt = d.manusPrompt;
+      if (d.manusStructuredOutputSchema) base.manus_structured_output_schema = d.manusStructuredOutputSchema;
+      if (d.manusConnectors?.length) base.manus_connectors = d.manusConnectors;
+      if (d.manusEnableSkills?.length) base.manus_enable_skills = d.manusEnableSkills;
+      if (d.manusForceSkills?.length) base.manus_force_skills = d.manusForceSkills;
+      if (d.manusAgentProfile) base.manus_agent_profile = d.manusAgentProfile;
+      if (d.manusLocale) base.manus_locale = d.manusLocale;
+      if (d.manusProjectId) base.manus_project_id = d.manusProjectId;
+      if (d.manusTitle) base.manus_title = d.manusTitle;
+      if (d.manusTimeoutSeconds && d.manusTimeoutSeconds !== 600) base.manus_timeout_seconds = d.manusTimeoutSeconds;
+      if (d.manusPollIntervalSeconds && d.manusPollIntervalSeconds !== 5) base.manus_poll_interval_seconds = d.manusPollIntervalSeconds;
+      if (d.manusAllowFailure) base.manus_allow_failure = true;
+    }
     return base;
   });
 }
@@ -2178,6 +2260,50 @@ export function tasksToYaml(tasks: TaskDefinition[], meta?: Partial<WorkflowMeta
       lines.push(`    deprecate_step:`);
       if (task.deprecate_item_kref) lines.push(`      item_kref: ${yamlEscape(task.deprecate_item_kref)}`);
       if (task.deprecate_reason) lines.push(`      reason: ${yamlEscape(task.deprecate_reason)}`);
+    }
+    if (stepType === 'manus') {
+      lines.push(`    manus:`);
+      if (task.manus_prompt) {
+        if (task.manus_prompt.includes('\n')) {
+          lines.push(`      prompt: |`);
+          for (const pl of task.manus_prompt.split('\n')) lines.push(`        ${pl}`);
+        } else {
+          lines.push(`      prompt: ${yamlEscape(task.manus_prompt)}`);
+        }
+      }
+      if (task.manus_structured_output_schema) {
+        // The textarea holds a JSON string. Try to parse and re-emit as
+        // a YAML inline map so the file stays valid YAML; fall back to
+        // a quoted string if parsing fails (the executor handles both
+        // — pydantic accepts either, and a malformed JSON schema would
+        // fail the validator anyway).
+        try {
+          const parsed = JSON.parse(task.manus_structured_output_schema);
+          lines.push(`      structured_output_schema: ${JSON.stringify(parsed)}`);
+        } catch {
+          lines.push(`      structured_output_schema: ${yamlEscape(task.manus_structured_output_schema)}`);
+        }
+      }
+      if (task.manus_connectors?.length) {
+        lines.push(`      connectors: [${task.manus_connectors.map(yamlEscape).join(', ')}]`);
+      }
+      if (task.manus_enable_skills?.length) {
+        lines.push(`      enable_skills: [${task.manus_enable_skills.map(yamlEscape).join(', ')}]`);
+      }
+      if (task.manus_force_skills?.length) {
+        lines.push(`      force_skills: [${task.manus_force_skills.map(yamlEscape).join(', ')}]`);
+      }
+      if (task.manus_agent_profile) lines.push(`      agent_profile: ${yamlEscape(task.manus_agent_profile)}`);
+      if (task.manus_locale) lines.push(`      locale: ${yamlEscape(task.manus_locale)}`);
+      if (task.manus_project_id) lines.push(`      project_id: ${yamlEscape(task.manus_project_id)}`);
+      if (task.manus_title) lines.push(`      title: ${yamlEscape(task.manus_title)}`);
+      if (task.manus_timeout_seconds && task.manus_timeout_seconds !== 600) {
+        lines.push(`      timeout_seconds: ${task.manus_timeout_seconds}`);
+      }
+      if (task.manus_poll_interval_seconds && task.manus_poll_interval_seconds !== 5) {
+        lines.push(`      poll_interval_seconds: ${task.manus_poll_interval_seconds}`);
+      }
+      if (task.manus_allow_failure) lines.push(`      allow_failure: true`);
     }
     if (task.agent_hints.length > 0) {
       lines.push(`    agent_hints: [${task.agent_hints.join(', ')}]`);

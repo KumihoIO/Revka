@@ -27,8 +27,72 @@ _CONFIG_PATH = os.path.expanduser("~/.construct/config.toml")
 _DEFAULT_HARNESS = "Construct"
 _DEFAULT_MEMORY = "CognitiveMemory"
 
+# Manus step defaults. Overridable per-step via ManusStepConfig and at the
+# user level via [manus] in ~/.construct/config.toml. The api_key value
+# itself never lives in config.toml — only the env-var NAME does.
+_DEFAULT_MANUS = {
+    "api_key_env": "MANUS_API_KEY",
+    "base_url": "https://api.manus.ai",
+    "default_agent_profile": "manus-1.6",
+    "default_timeout_seconds": 600,
+    "default_poll_interval_seconds": 5,
+}
+
 _cached_harness: str | None = None
 _cached_memory: str | None = None
+_cached_manus: dict | None = None
+
+
+def _read_section(section: str) -> dict:
+    """Return a top-level section from config.toml as a dict.
+
+    Returns an empty dict on any read / parse error so callers can fall
+    back to defaults.
+    """
+    if tomllib is None:
+        return {}
+    try:
+        with open(_CONFIG_PATH, "rb") as f:
+            config = tomllib.load(f)
+    except FileNotFoundError:
+        return {}
+    except Exception as exc:
+        _log(f"construct_config: error reading config: {exc}")
+        return {}
+    sec = config.get(section, {})
+    return sec if isinstance(sec, dict) else {}
+
+
+def manus_config(*, force_reload: bool = False) -> dict:
+    """Return Manus step defaults from [manus] in ~/.construct/config.toml.
+
+    Falls back to built-in defaults for any missing keys. Cached after
+    first read; pass ``force_reload=True`` to re-read from disk.
+
+    NEVER reads or returns the actual API key — only the env-var NAME
+    holding it. Callers do ``os.environ.get(cfg['api_key_env'], '')``.
+    """
+    global _cached_manus
+    if _cached_manus is not None and not force_reload:
+        return _cached_manus
+
+    on_disk = _read_section("manus")
+    merged = dict(_DEFAULT_MANUS)
+    for k, v in on_disk.items():
+        if v is None or v == "":
+            continue
+        # Only accept values whose shape matches the default so a malformed
+        # config can't break the dispatch path (str expected → reject ints).
+        if isinstance(_DEFAULT_MANUS.get(k), int):
+            try:
+                merged[k] = int(v)
+            except (TypeError, ValueError):
+                continue
+        else:
+            if isinstance(v, str):
+                merged[k] = v.strip() or _DEFAULT_MANUS.get(k, "")
+    _cached_manus = merged
+    return _cached_manus
 
 
 def _read_kumiho_section() -> dict:
