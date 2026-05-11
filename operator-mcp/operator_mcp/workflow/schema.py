@@ -933,6 +933,16 @@ class WorkflowState(BaseModel):
     # step id. Held off ``StepResult.output_data`` so the entry can't leak
     # into the simpleeval names dict or ``${gate.output_data.*}`` lookups.
     conditional_routes: dict[str, str] = Field(default_factory=dict)
+    # Per-conditional branch outcome: which branch matched + its goto, plus
+    # the goto targets on every non-matched branch. Consumed by the scheduler
+    # to gate steps that are downstream ONLY of a non-matched branch (so
+    # auto-derived ``depends_on`` from interpolation doesn't force them to
+    # run). Excluded from persistence: rebuilt as conditionals fire on
+    # resume, and persisting the structure would lock in a stale routing
+    # decision against a possibly-edited workflow.
+    conditional_branch_results: dict[str, dict[str, Any]] = Field(
+        default_factory=dict, exclude=True
+    )
 
     # Cancel signal — set by the cancel_workflow MCP tool. Distinct from
     # ``status: CANCELLED`` (the OUTCOME): ``cancel_requested`` is the
