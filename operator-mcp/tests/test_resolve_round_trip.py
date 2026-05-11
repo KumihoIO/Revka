@@ -71,6 +71,9 @@ class _FakeKumihoSDK:
         # Calls captured for assertions.
         self.create_item_calls: list[str] = []
         self.list_items_calls: list[str] = []
+        self.create_artifact_calls: list[tuple[str, str, str]] = []
+        self.tag_revision_calls: list[tuple[str, str]] = []
+        self.events: list[tuple[Any, ...]] = []
 
     async def ensure_space(self, project: str, space: str) -> None:
         return None
@@ -108,8 +111,15 @@ class _FakeKumihoSDK:
     async def get_latest_revision(self, item_kref: str, tag: str = "published") -> dict[str, Any] | None:
         return self.revisions_by_kref.get(item_kref)
 
-    async def create_artifact(self, *args: Any, **kwargs: Any) -> Any:
-        return None
+    async def create_artifact(self, revision_kref: str, name: str, location: str) -> Any:
+        self.create_artifact_calls.append((revision_kref, name, location))
+        self.events.append(("create_artifact", revision_kref, name, location))
+        return {"kref": f"{revision_kref}#artifact-{len(self.create_artifact_calls)}"}
+
+    async def tag_revision(self, revision_kref: str, tag: str) -> dict[str, bool]:
+        self.tag_revision_calls.append((revision_kref, tag))
+        self.events.append(("tag_revision", revision_kref, tag))
+        return {"tagged": True}
 
 
 @pytest.fixture
@@ -174,6 +184,144 @@ class TestRoundTripNormalization:
         # And both sides hit Kumiho with the SAME canonical path.
         assert fake_sdk.create_item_calls == ["Construct/WorkflowOutputs/Github"]
         assert "Construct/WorkflowOutputs/Github" in fake_sdk.list_items_calls
+
+    async def test_publish_attaches_output_artifact_before_tagging(self, fake_sdk):
+        result = await publish_workflow_entity(
+            entity_name="report",
+            entity_kind="Report",
+            entity_tag="ready",
+            entity_space="Construct/WorkflowOutputs",
+            entity_metadata={"k": "v"},
+            content="# report",
+            content_format="markdown",
+            workflow_name="wf",
+            run_id="r1",
+            step_id="final-output",
+        )
+
+        assert result is not None
+        assert result["artifact_attached"] is True
+        assert result["artifact_kref"].endswith("#artifact-1")
+        assert result["tag_applied"] is True
+        assert result["artifact_path"].endswith("/final-output.md")
+        assert fake_sdk.create_artifact_calls == [
+            (result["revision_kref"], "final-output.md", result["artifact_path"])
+        ]
+        assert fake_sdk.tag_revision_calls == [
+            (result["revision_kref"], "ready")
+        ]
+        assert fake_sdk.events == [
+            ("create_artifact", result["revision_kref"], "final-output.md", result["artifact_path"]),
+            ("tag_revision", result["revision_kref"], "ready"),
+        ]
+
+    async def test_publish_reports_artifact_attach_failure_without_tagging(self, fake_sdk):
+        async def fail_create_artifact(*_args: Any, **_kwargs: Any) -> Any:
+            raise RuntimeError("revision already published")
+
+        fake_sdk.create_artifact = fail_create_artifact  # type: ignore[method-assign]
+
+        result = await publish_workflow_entity(
+            entity_name="report",
+            entity_kind="Report",
+            entity_tag="ready",
+            entity_space="Construct/WorkflowOutputs",
+            entity_metadata={"k": "v"},
+            content="# report",
+            content_format="markdown",
+            workflow_name="wf",
+            run_id="r1",
+            step_id="final-output",
+        )
+
+        assert result is not None
+        assert result["artifact_attached"] is False
+        assert "revision already published" in result["artifact_error"]
+        assert result["tag_applied"] is False
+        assert "refusing to tag" in result["tag_error"]
+        assert fake_sdk.tag_revision_calls == []
+
+    async def test_publish_requires_artifact_kref_without_tagging(self, fake_sdk):
+        async def no_kref_create_artifact(*_args: Any, **_kwargs: Any) -> Any:
+            return {}
+
+        fake_sdk.create_artifact = no_kref_create_artifact  # type: ignore[method-assign]
+
+        result = await publish_workflow_entity(
+            entity_name="report",
+            entity_kind="Report",
+            entity_tag="ready",
+            entity_space="Construct/WorkflowOutputs",
+            entity_metadata={"k": "v"},
+            content="# report",
+            content_format="markdown",
+            workflow_name="wf",
+            run_id="r1",
+            step_id="final-output",
+        )
+
+        assert result is not None
+        assert result["artifact_attached"] is False
+        assert "no artifact kref" in result["artifact_error"]
+        assert result["tag_applied"] is False
+        assert "refusing to tag" in result["tag_error"]
+        assert fake_sdk.tag_revision_calls == []
+
+    async def test_publish_reports_tag_error(self, fake_sdk):
+        async def fail_tag_revision(*_args: Any, **_kwargs: Any) -> dict[str, str]:
+            return {"error": "tag write failed"}
+
+        fake_sdk.tag_revision = fail_tag_revision  # type: ignore[method-assign]
+
+        result = await publish_workflow_entity(
+            entity_name="report",
+            entity_kind="Report",
+            entity_tag="ready",
+            entity_space="Construct/WorkflowOutputs",
+            entity_metadata={"k": "v"},
+            content="# report",
+            content_format="markdown",
+            workflow_name="wf",
+            run_id="r1",
+            step_id="final-output",
+        )
+
+        assert result is not None
+        assert result["artifact_attached"] is True
+        assert result["tag_applied"] is False
+        assert result["tag_error"] == "tag write failed"
+
+    async def test_publish_reports_artifact_write_failure_without_tagging(
+        self,
+        fake_sdk,
+        monkeypatch,
+    ):
+        def fail_open(*_args: Any, **_kwargs: Any) -> Any:
+            raise OSError("disk full")
+
+        monkeypatch.setattr("builtins.open", fail_open)
+
+        result = await publish_workflow_entity(
+            entity_name="report",
+            entity_kind="Report",
+            entity_tag="ready",
+            entity_space="Construct/WorkflowOutputs",
+            entity_metadata={"k": "v"},
+            content="# report",
+            content_format="markdown",
+            workflow_name="wf",
+            run_id="r1",
+            step_id="final-output",
+        )
+
+        assert result is not None
+        assert result["artifact_path"] == ""
+        assert result["artifact_attached"] is False
+        assert "disk full" in result["artifact_error"]
+        assert result["tag_applied"] is False
+        assert "artifact write failed" in result["tag_error"]
+        assert fake_sdk.create_artifact_calls == []
+        assert fake_sdk.tag_revision_calls == []
 
     async def test_resolve_with_leading_slash(self, fake_sdk):
         # Write without slash, read with leading slash — must still find.

@@ -445,7 +445,7 @@ async def publish_workflow_entity(
     workflow_name: str,
     run_id: str,
     step_id: str,
-) -> dict[str, str] | None:
+) -> dict[str, Any] | None:
     """Register a workflow output as a Kumiho entity and tag it.
 
     This creates an item + revision in Kumiho, then tags the revision.
@@ -525,10 +525,12 @@ async def publish_workflow_entity(
             content_format, ".md"
         )
         artifact_path = os.path.join(artifact_dir, f"{step_id}{ext}")
+        artifact_write_error = ""
         try:
             with open(artifact_path, "w", encoding="utf-8") as f:
                 f.write(content)
         except Exception as e:
+            artifact_write_error = str(e)
             _log(f"workflow_memory: failed to write artifact to {artifact_path}: {e}")
             artifact_path = ""
 
@@ -542,21 +544,67 @@ async def publish_workflow_entity(
         }
         if artifact_path:
             metadata["artifact_path"] = artifact_path
-        rev = await KUMIHO_SDK.create_revision(item_kref, metadata, tag=entity_tag)
+        # Create the revision untagged first. Kumiho revisions can become
+        # immutable once tagged/published, so artifacts must be attached before
+        # applying the workflow-visible entity tag.
+        rev = await KUMIHO_SDK.create_revision(item_kref, metadata, tag=None)
         rev_kref = rev.get("kref", "") if isinstance(rev, dict) else getattr(rev, "kref", "")
         if not rev_kref:
             _log(f"workflow_memory: revision creation returned no kref for entity {entity_name}")
             return None
 
-        # Attach the disk artifact to the revision
+        # Attach the disk artifact to the revision before tagging it.
+        artifact_kref = ""
+        artifact_attached = False
+        artifact_error = artifact_write_error
         if artifact_path and rev_kref:
             try:
-                await KUMIHO_SDK.create_artifact(rev_kref, f"{step_id}{ext}", artifact_path)
+                artifact = await KUMIHO_SDK.create_artifact(
+                    rev_kref,
+                    f"{step_id}{ext}",
+                    artifact_path,
+                )
+                artifact_kref = (
+                    artifact.get("kref", "")
+                    if isinstance(artifact, dict)
+                    else getattr(artifact, "kref", "")
+                )
+                artifact_attached = bool(artifact_kref)
+                if not artifact_attached:
+                    artifact_error = "create_artifact returned no artifact kref"
             except Exception as e:
-                _log(f"workflow_memory: failed to attach artifact to revision: {e}")
+                artifact_error = str(e)
+                _log(f"workflow_memory: failed to attach artifact to revision {rev_kref}: {e}")
+
+        tag_applied = False
+        tag_error = ""
+        if not artifact_path:
+            tag_error = f"artifact write failed; refusing to tag revision '{rev_kref}' as '{entity_tag}'"
+            _log(f"workflow_memory: {tag_error}")
+        elif not artifact_attached:
+            tag_error = f"artifact attach failed; refusing to tag revision '{rev_kref}' as '{entity_tag}'"
+            _log(f"workflow_memory: {tag_error}")
+        elif entity_tag:
+            try:
+                tag_result = await KUMIHO_SDK.tag_revision(rev_kref, entity_tag)
+                if isinstance(tag_result, dict) and tag_result.get("error"):
+                    raise RuntimeError(str(tag_result["error"]))
+                tag_applied = True
+            except Exception as e:
+                tag_error = str(e)
+                _log(f"workflow_memory: failed to tag revision {rev_kref} with '{entity_tag}': {e}")
 
         _log(f"workflow_memory: published entity: {entity_name} (kind={entity_kind}, tag={entity_tag}, artifact={artifact_path or 'none'})")
-        return {"item_kref": item_kref, "revision_kref": rev_kref}
+        return {
+            "item_kref": item_kref,
+            "revision_kref": rev_kref,
+            "artifact_path": artifact_path,
+            "artifact_kref": artifact_kref,
+            "artifact_attached": artifact_attached,
+            "artifact_error": artifact_error,
+            "tag_applied": tag_applied,
+            "tag_error": tag_error,
+        }
 
     except Exception as e:
         import traceback
