@@ -460,17 +460,6 @@ export interface WorkflowMeta {
   checkpoint: boolean;
 }
 
-/** Legacy type kept for WorkflowGraph read-only viewer */
-export interface StepNodeData {
-  label: string;
-  stepId: string;
-  type: string;
-  agent: string;
-  paramCount: number;
-  dependencyCount: number;
-  [key: string]: unknown;
-}
-
 export type ParsedStep = TaskDefinition;
 
 /** Map editor action / friendly verb to canonical executor step type.
@@ -1463,47 +1452,6 @@ function collectStepRefs(task: TaskDefinition, nodeIds: Set<string>): Set<string
     }
   }
   return refs;
-}
-
-/** Legacy adapter for the read-only WorkflowGraph viewer */
-export function stepsToFlow(steps: TaskDefinition[]): { nodes: Node<StepNodeData>[]; edges: Edge[] } {
-  const nodes: Node<StepNodeData>[] = steps.map((step, i) => ({
-    id: step.id,
-    type: 'stepNode',
-    position: { x: 0, y: i * 150 },
-    width: 280,
-    height: 140, // Initial hint for MiniMap; cards grow via minHeight.
-    data: {
-      label: step.id,
-      stepId: step.id,
-      type: step.type,
-      agent: step.agent_hints?.[0] || '',
-      paramCount: step.params ? Object.keys(step.params).length : 0,
-      dependencyCount: step.depends_on.length,
-    },
-  }));
-
-  const edges: Edge[] = [];
-  const nodeIds = new Set(steps.map((s) => s.id));
-
-  for (const step of steps) {
-    for (const dep of step.depends_on) {
-      if (nodeIds.has(dep)) {
-        edges.push({
-          id: `${dep}->${step.id}`,
-          source: dep,
-          target: step.id,
-          type: 'default',
-          animated: true,
-          style: { stroke: 'var(--construct-status-warning)', strokeWidth: 2 },
-          label: 'depends on',
-          labelStyle: { fill: 'var(--construct-status-warning)', fontSize: 10 },
-        });
-      }
-    }
-  }
-
-  return { nodes, edges };
 }
 
 // ---------------------------------------------------------------------------

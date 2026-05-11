@@ -149,8 +149,8 @@ The **Operator** is Construct's hand on the controls — a Python MCP server tha
 
 Workflows are stored as YAML artifacts attached to Kumiho revisions — every save creates a new revision, giving you full history, version-to-version diffs, and promotion tagging (e.g., `published`) without an external version control system. The on-disk YAMLs under `~/.construct/workflows/` use a two-tier layout: the base file (`name.yaml`) is your editable working copy, discovered by the filesystem scan, while each save freezes a snapshot as `name.r{N}.yaml` bound to revision N as an immutable artifact via `file://` URI. The `.r{N}` files are skipped by directory scans and reachable only through kref resolution — so running an older revision is just `kref://...#rN` → Kumiho looks up the artifact URI → loader reads that exact frozen YAML from disk. The revision graph is the source of truth; the disk layout is just where the artifact bytes happen to live. Multi-agent patterns like `supervisor`, `group_chat`, `map_reduce`, `handoff`, and `human_approval` are first-class step types, so a multi-agent pipeline reads end-to-end in one file without a Python interpreter in the loop. See [WORKFLOWS.md](WORKFLOWS.md) for the full DSL reference.
 
-<!-- TODO screenshot: Workflows view with YAML editor on the left and DAG workspace on the right, showing a declarative multi-agent workflow definition with step dependencies -->
-![Workflows view with YAML editor and DAG workspace for declarative multi-agent workflow definition](docs/assets/dashboard/readme-03-workflow-yaml.png)
+<!-- TODO screenshot: embedded dashboard served by the Rust gateway, showing the current app shell and live operational surface -->
+![Construct dashboard gateway landing page showing the embedded web dashboard served by the local gateway](docs/assets/dashboard-dev-01-gateway-landing.png)
 
 ### Step Types
 

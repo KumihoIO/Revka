@@ -4,6 +4,7 @@ import { Loader2, Menu, MessageSquare, MonitorCog, MoonStar, ShieldAlert, Shield
 import { useTheme } from '@/construct/hooks/useTheme';
 import { useT } from '@/construct/hooks/useT';
 import { verifyAuditChain } from '@/lib/api';
+import { CONSTRUCT_VERSION } from '@/lib/version';
 import type { AuditVerifyResponse } from '@/types/api';
 import { useV2Assistant } from '../assistant/AssistantContext';
 import { v2RouteMeta } from './construct-navigation';
@@ -52,7 +53,7 @@ export default function Header({ onOpenMobileNav }: HeaderProps) {
             Desktop (lg+): full layout with pills and theme toggles. */}
         <div className="flex items-center gap-2 lg:hidden">
           <div className="min-w-0 flex-1">
-            <div className="construct-kicker text-[10px]">Construct</div>
+            <div className="construct-kicker text-[10px]">Construct v{CONSTRUCT_VERSION}</div>
             <h1 className="construct-title mt-0.5 truncate text-lg">{title}</h1>
           </div>
           <ApprovalBadge />
@@ -95,7 +96,7 @@ export default function Header({ onOpenMobileNav }: HeaderProps) {
 
         <div className="hidden flex-col gap-4 lg:flex lg:flex-row lg:items-center lg:justify-between">
           <div className="min-w-0 flex-1">
-            <div className="construct-kicker text-[10px]">Construct</div>
+            <div className="construct-kicker text-[10px]">Construct v{CONSTRUCT_VERSION}</div>
             <h1 className="construct-title mt-1 truncate text-2xl">{title}</h1>
           </div>
           <div className="flex flex-wrap items-center gap-2">

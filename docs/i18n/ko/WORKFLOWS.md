@@ -54,6 +54,15 @@ steps:
 - **Cron**: `triggers:` 블록 추가 — 저장 시 Construct가 스케줄을 자동 등록
 - **이벤트 체인**: 이전 워크플로의 출력 엔티티가 이 워크플로를 자동으로 트리거
 
+### 4. 대시보드 에디터와 실행 제어
+
+대시보드는 워크플로 정의와 워크플로 실행 인스턴스를 분리해서 다룹니다:
+
+- **정의 탭**(`/workflows`)은 워크플로 정의를 편집, 복제, 비활성화, 삭제, 시작합니다.
+- **실행 탭**(`/workflows`, `/runs`)은 실행 인스턴스를 선택하고 실행 범위 제어만 제공합니다: 활성 실행 중지, 실패 실행 재시도, 선택한 실행 기록 삭제.
+- YAML 드로어는 그래프 에디터 표면입니다. YAML 텍스트 변경은 저장 전에 그래프에 적용해야 하며, Save는 그래프를 다시 YAML로 직렬화한 뒤 게이트웨이 검증을 거쳐 Kumiho 리비전을 만듭니다.
+- 실행 뷰어는 가능하면 실행이 사용한 워크플로 리비전에 고정되므로 이후 정의 편집이 표시 중인 실행 그래프를 바꾸지 않습니다.
+
 ---
 
 ## 워크플로의 구조
@@ -593,7 +602,17 @@ steps:
 checkpoint: true         # 기본값: true (워크플로 레벨에서 설정)
 ```
 
-활성화되면 executor는 각 단계 완료 시점과 워크플로 일시 정지(human approval) 시점에 상태를 `~/.construct/workflow_checkpoints/{run_id}.json`에 저장합니다. 이로써 크래시나 재시작 후에도 멈췄던 자리에서 워크플로를 재개할 수 있습니다.
+활성화되면 executor는 각 단계 완료 시점과 워크플로 일시 정지(human approval) 시점에 상태를 `~/.construct/workflow_checkpoints/{run_id}.json`에 저장합니다. 체크포인트는 승인 후 재개와 실패 실행 재시도 같은 명시적 사용자 동작을 지원합니다. Operator 시작 시 중단된 워크플로 실행을 자동으로 재개하지 않습니다. 진행 중으로 남은 오래된 실행은 실패로 표시되며, 사용자가 Retry를 눌러야 재시도 경로가 시작됩니다.
+
+### 실행 중지와 삭제
+
+실행 중지는 게이트웨이에 `POST /api/workflows/runs/{run_id}/cancel`을 보내고, 게이트웨이는 Operator MCP 서버의 `cancel_workflow`로 전달합니다. executor는 다음 경계에서 멈추며 가능한 경우 소유한 shell/python 서브프로세스를 종료합니다. 실행 삭제는 `DELETE /api/workflows/runs/{run_id}`를 호출해 WorkflowRuns Kumiho 아이템과 로컬 체크포인트/아티팩트 파일을 best-effort로 제거합니다. 워크플로 정의를 삭제하거나 비활성화하지 않습니다.
+
+정의에는 별도 엔드포인트를 사용합니다:
+
+- `DELETE /api/workflows/{kref}`는 워크플로 정의를 삭제합니다.
+- `POST /api/workflows/deprecate`는 정의 사용 가능 상태를 토글합니다.
+- 실행 중지, 재시도, 삭제 엔드포인트는 실행 인스턴스에만 적용됩니다.
 
 ---
 

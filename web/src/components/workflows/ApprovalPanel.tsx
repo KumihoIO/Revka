@@ -1,7 +1,7 @@
 /**
  * ApprovalPanel — shown when a workflow step is paused awaiting human approval.
  *
- * Renders inside WorkflowRunLive when a step has status === 'pending' and
+ * Renders inside the workflow run page when a step has status === 'pending' and
  * StepRunInfo.awaiting_approval === true.
  */
 

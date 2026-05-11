@@ -145,9 +145,9 @@ function PairingDialog({ onPair }: { onPair: (code: string) => Promise<void> }) 
 
         <div className="text-center mb-8">
           <img
-            src={appAssetPath('construct-trans.png')}
+            src={appAssetPath('logo.png')}
             alt="Construct"
-            className="h-20 w-20 rounded-2xl object-cover mx-auto mb-4 animate-float"
+            className="h-20 w-20 rounded-2xl object-contain mx-auto mb-4 animate-float"
             onError={(e) => { e.currentTarget.style.display = 'none'; }}
           />
           <h1 className="text-2xl font-bold mb-2 text-gradient-blue">Construct</h1>

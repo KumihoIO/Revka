@@ -82,12 +82,11 @@ def _clear_active_workflows():
 def _isolate_workflow_state(monkeypatch, tmp_path):
     """Hermetic file-state fixtures for every test in this module.
 
-    The executor and recovery modules reach into ``~/.construct`` for
-    per-run file locks and checkpoint files. On a developer machine with a
-    stale lock or pre-existing checkpoint, tests that share a run_id (or
-    that lock-claim a run_id from an earlier crash) fail before reaching
-    the feature assertions. Pin both dirs to a per-test ``tmp_path`` so
-    every test starts from clean slate.
+    The executor reaches into ``~/.construct`` for checkpoint files, and
+    recovery owns per-run file locks. On a developer machine with a stale
+    lock or pre-existing checkpoint, tests that share a run_id fail before
+    reaching the feature assertions. Pin both dirs to a per-test ``tmp_path``
+    so every test starts from clean slate.
     """
     from operator_mcp.workflow import executor, recovery
 
@@ -97,7 +96,6 @@ def _isolate_workflow_state(monkeypatch, tmp_path):
     ckpt_dir.mkdir(parents=True, exist_ok=True)
 
     monkeypatch.setattr(executor, "_CHECKPOINT_DIR", str(ckpt_dir))
-    monkeypatch.setattr(recovery, "_CHECKPOINT_DIR", str(ckpt_dir))
     monkeypatch.setattr(recovery, "_RUN_LOCK_DIR", str(lock_dir))
     yield
 

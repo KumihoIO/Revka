@@ -1,11 +1,11 @@
-import { Eye, RefreshCw, Trash2, Wrench, MessageSquareText, RotateCcw } from 'lucide-react';
+import { Eye, Pause, RefreshCw, Trash2, Wrench, MessageSquareText, RotateCcw } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import type { TaskDefinition } from '@/components/workflows/yamlSync';
-import { parseWorkflowYaml } from '@/components/workflows/yamlSync';
+import type { TaskDefinition } from '@/construct/components/workflows/yamlSync';
+import { parseWorkflowYaml } from '@/construct/components/workflows/yamlSync';
 import type { KumihoArtifact, WorkflowRunDetail, WorkflowRunSummary, WorkflowDefinition } from '@/types/api';
 import type { AgentActivity, AgentToolCall } from '@/lib/api';
-import { deleteWorkflowRun, fetchAgentActivity, fetchWorkflowByRevisionKref, fetchWorkflowRun, fetchWorkflowRuns, fetchWorkflows, retryWorkflowRun } from '@/lib/api';
+import { cancelWorkflowRun, deleteWorkflowRun, fetchAgentActivity, fetchWorkflowByRevisionKref, fetchWorkflowRun, fetchWorkflowRuns, fetchWorkflows, retryWorkflowRun } from '@/lib/api';
 import ApprovalPanel from '@/components/workflows/ApprovalPanel';
 import { usePendingApprovals } from '@/contexts/PendingApprovalsContext';
 import {
@@ -47,6 +47,7 @@ export default function WorkflowRuns() {
   const [error, setError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [retrying, setRetrying] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
   const [pathMode, setPathMode] = useState<'all' | 'failed' | 'blocked'>('all');
   const [detailTab, setDetailTab] = useState<'summary' | 'output' | 'tools' | 'transcript'>('summary');
   const [notice, setNotice] = useState<{ tone: 'success' | 'error' | 'info'; message: string } | null>(null);
@@ -411,6 +412,23 @@ export default function WorkflowRuns() {
     }
   };
 
+  const handleCancelRun = async () => {
+    if (!selectedRun || cancelling) return;
+    setCancelling(true);
+    try {
+      const runLabel = selectedRun.run_id.slice(0, 8);
+      await cancelWorkflowRun(selectedRun.run_id);
+      setNotice({ tone: 'success', message: tpl('runs.toast.stop_requested', { id: runLabel }) });
+      const fresh = await fetchWorkflowRun(selectedRun.run_id).catch(() => null);
+      if (fresh) setSelectedRun(fresh);
+      await load();
+    } catch (err) {
+      setNotice({ tone: 'error', message: err instanceof Error ? err.message : t('runs.err.stop') });
+    } finally {
+      setCancelling(false);
+    }
+  };
+
   const handleDeleteRun = async () => {
     if (!selectedRun) return;
     setDeleting(true);
@@ -564,6 +582,17 @@ export default function WorkflowRuns() {
                   >
                     <RotateCcw className={`h-3.5 w-3.5 ${retrying ? 'animate-spin' : ''}`} />
                     <span className="ml-1 text-xs">{retrying ? t('runs.action.retrying') : t('runs.action.retry_failed')}</span>
+                  </button>
+                ) : null}
+                {selectedRun.status === 'running' || selectedRun.status === 'pending' || selectedRun.status === 'paused' ? (
+                  <button
+                    className="construct-button"
+                    onClick={handleCancelRun}
+                    disabled={cancelling}
+                    title={t('runs.action.stop_tooltip')}
+                  >
+                    {cancelling ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Pause className="h-3.5 w-3.5" />}
+                    <span className="ml-1 text-xs">{cancelling ? t('runs.action.stopping') : t('runs.action.stop')}</span>
                   </button>
                 ) : null}
                 <button

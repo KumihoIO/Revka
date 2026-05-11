@@ -1053,13 +1053,12 @@ async def mark_stale_runs() -> int:
     executor is driving it.  This scans Kumiho for such runs and updates
     their status to 'failed' with a clear reason.
 
-    Also cleans up leftover checkpoint files.
+    Also marks matching local checkpoints failed so explicit Retry can load the
+    interrupted state instead of losing it on startup.
 
     Returns the number of runs marked stale.
     """
     import os
-    import glob
-
     marked = 0
     _log("workflow_memory: scanning for stale runs...")
 
@@ -1106,6 +1105,7 @@ async def mark_stale_runs() -> int:
 
                     await KUMIHO_SDK.create_revision(kref, updated_meta, tag="latest")
                     run_id = meta.get("run_id", kref)
+                    _mark_checkpoint_failed(run_id, updated_meta["error"], updated_meta["completed_at"])
                     _log(f"workflow_memory: marked stale run={run_id[:8]} (was {status})")
                     marked += 1
 
@@ -1116,22 +1116,31 @@ async def mark_stale_runs() -> int:
     except Exception as exc:
         _log(f"workflow_memory: stale run scan failed: {exc}")
 
-    # --- 2. Clean up orphaned checkpoint files ---
-    checkpoint_dir = os.path.expanduser("~/.construct/workflow_checkpoints")
-    try:
-        for cp_file in glob.glob(os.path.join(checkpoint_dir, "*.json")):
-            try:
-                os.remove(cp_file)
-                _log(f"workflow_memory: cleaned up checkpoint {os.path.basename(cp_file)}")
-            except OSError:
-                pass
-    except Exception:
-        pass
-
     if marked:
         _log(f"workflow_memory: marked {marked} stale run(s) as failed on startup")
 
     return marked
+
+
+def _mark_checkpoint_failed(run_id: str, error: str, completed_at: str) -> bool:
+    """Update a local checkpoint to failed without deleting retry state."""
+    checkpoint_dir = os.path.expanduser("~/.construct/workflow_checkpoints")
+    path = os.path.join(checkpoint_dir, f"{run_id}.json")
+    if not os.path.exists(path):
+        return False
+    try:
+        with open(path, "r") as f:
+            data = json.load(f)
+        data["status"] = "failed"
+        data["error"] = error
+        data["completed_at"] = completed_at
+        with open(path, "w") as f:
+            json.dump(data, f, indent=2, default=str)
+        _log(f"workflow_memory: marked checkpoint {os.path.basename(path)} failed")
+        return True
+    except Exception as exc:
+        _log(f"workflow_memory: failed to update checkpoint {path}: {exc}")
+        return False
 
 
 # ---------------------------------------------------------------------------

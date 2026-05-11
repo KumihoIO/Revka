@@ -127,7 +127,7 @@ export class WebSocketClient {
   }
 
   /** Send a connect/handshake frame so the server enters the message loop.
-   *  Required for listen-only connections (e.g. WorkflowRunLive) that never
+   *  Required for listen-only connections that never
    *  send a chat message — without this the server blocks waiting for the
    *  first client frame and never relays broadcast events. */
   sendConnect(): void {

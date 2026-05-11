@@ -1,5 +1,5 @@
 import { Handle, Position, type NodeTypes } from '@xyflow/react';
-import type { TaskNodeData } from './yamlSync';
+import type { TaskNodeData } from '@/construct/components/workflows/yamlSync';
 
 const GATE_COLOR = 'var(--construct-status-warning)';
 const GATE_SOFT = 'color-mix(in srgb, var(--construct-status-warning) 16%, transparent)';

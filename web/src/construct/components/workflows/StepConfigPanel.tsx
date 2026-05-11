@@ -9,7 +9,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Crosshair, Link2, Link2Off, Loader2, Lock, Search, Sparkles, Trash2, X } from 'lucide-react';
 import type { Node } from '@xyflow/react';
-import { type TaskNodeData } from '@/components/workflows/yamlSync';
+import { type TaskNodeData } from '@/construct/components/workflows/yamlSync';
 import type { SkillDefinition } from '@/types/api';
 import { fetchSkills, getChannels } from '@/lib/api';
 import Panel from '@/construct/components/ui/Panel';

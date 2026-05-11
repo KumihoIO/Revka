@@ -2254,10 +2254,7 @@ fn cancel_status_for(payload: &serde_json::Value) -> StatusCode {
     if cancelled {
         return StatusCode::OK;
     }
-    let reason = payload
-        .get("reason")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let reason = payload.get("reason").and_then(|v| v.as_str()).unwrap_or("");
     match reason {
         "not_found_or_already_finished" => StatusCode::NOT_FOUND,
         "already_terminal" => StatusCode::CONFLICT,
