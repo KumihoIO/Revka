@@ -331,6 +331,18 @@ function defaultNodeData(id: string, overrides?: Partial<TaskNodeData>): TaskNod
     tagUntag: '',
     deprecateItemKref: '',
     deprecateReason: '',
+    manusPrompt: '',
+    manusStructuredOutputSchema: '',
+    manusConnectors: [],
+    manusEnableSkills: [],
+    manusForceSkills: [],
+    manusAgentProfile: '',
+    manusLocale: '',
+    manusProjectId: '',
+    manusTitle: '',
+    manusTimeoutSeconds: 600,
+    manusPollIntervalSeconds: 5,
+    manusAllowFailure: false,
     ...overrides,
   };
 }

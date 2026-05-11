@@ -48,6 +48,7 @@ class StepType(str, Enum):
     FOR_EACH = "for_each"
     TAG = "tag"
     DEPRECATE = "deprecate"
+    MANUS = "manus"
 
 
 class JoinStrategy(str, Enum):
@@ -437,6 +438,43 @@ class ForEachStepConfig(BaseModel):
         return v
 
 
+class ManusStepConfig(BaseModel):
+    """Config for 'manus' step type — delegate web research to Manus AI.
+
+    Manus is a hosted general-purpose web agent. The step creates a Manus
+    task with the configured prompt (optionally constrained by a JSON
+    schema for structured output), then polls the task's message stream
+    until the agent reaches a terminal state (``stopped`` or ``error``).
+    The final assistant message — plus any structured-output payload — is
+    returned as the step's result so downstream steps can consume it via
+    ``${manus_step.output_data.*}``.
+
+    Auth: the Manus API key is read from the env var named in
+    ``[manus].api_key_env`` (default ``MANUS_API_KEY``). Construct never
+    persists the key value — only the env var name — so workflow YAML
+    stays safe to commit.
+
+    Polling rationale: Manus exposes a streaming SSE channel and a
+    cursor-based poll API. The first iteration uses polling because it's
+    operationally simpler (single asyncio task, cancel just stops looping)
+    and Manus tasks are long-lived enough that 5-second polls don't add
+    meaningful latency. We can swap to SSE later without changing the
+    public step contract.
+    """
+    prompt: str
+    structured_output_schema: dict[str, Any] | None = None
+    connectors: list[str] = Field(default_factory=list)
+    enable_skills: list[str] = Field(default_factory=list)
+    force_skills: list[str] = Field(default_factory=list)
+    agent_profile: str | None = None
+    locale: str | None = None
+    project_id: str | None = None
+    title: str | None = None
+    timeout_seconds: int | None = None
+    poll_interval_seconds: int | None = None
+    allow_failure: bool = False
+
+
 class A2AStepConfig(BaseModel):
     """Config for 'a2a' step type — call external A2A agent."""
     url: str  # A2A endpoint URL
@@ -555,6 +593,7 @@ class StepDef(BaseModel):
     handoff: HandoffStepConfig | None = None
     tag_step: TagStepConfig | None = None
     deprecate_step: DeprecateStepConfig | None = None
+    manus: ManusStepConfig | None = None
 
     # Retry
     retry: int = Field(default=0, ge=0, le=5)

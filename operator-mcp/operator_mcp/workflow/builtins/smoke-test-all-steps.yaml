@@ -16,6 +16,7 @@ description: |
     - `human_approval`, `human_input` (always pause; nested in parallel-any)
     - `image`                          (needs codex; nested in parallel-any)
     - `a2a`                            (needs peer; nested in parallel-any)
+    - `manus`                          (needs MANUS_API_KEY; nested in parallel-any)
     - `agent`, `handoff`, `supervisor`,
       `group_chat`, `map_reduce`       (need agent provider; parallel-any)
     - `tag`, `deprecate`               (need real Kumiho kref; parallel-any)
@@ -332,13 +333,13 @@ steps:
       join: any
       max_concurrency: 3
 
-  # Cluster F: a2a (unreachable peer)
+  # Cluster F: a2a (unreachable peer) + manus (needs API key)
   - id: cluster_anchor_f
     name: "Notify — cluster F anchor"
     type: notify
     notify:
       channels: [dashboard]
-      message: "Cluster F — a2a probe (expected to fail)."
+      message: "Cluster F — a2a / manus probes (expected to fail without creds)."
 
   - id: a2a_probe
     name: "A2A — unreachable peer (best-effort)"
@@ -348,13 +349,22 @@ steps:
       message: "smoke-test ping"
       timeout: 5
 
+  - id: manus_probe
+    name: "Manus — placeholder prompt (best-effort)"
+    type: manus
+    manus:
+      prompt: "smoke-test placeholder — no real research requested"
+      timeout_seconds: 30
+      poll_interval_seconds: 2
+      allow_failure: true
+
   - id: cluster_f_a2a
-    name: "Cluster F — a2a (parallel any)"
+    name: "Cluster F — a2a / manus (parallel any)"
     type: parallel
     parallel:
-      steps: [cluster_anchor_f, a2a_probe]
+      steps: [cluster_anchor_f, a2a_probe, manus_probe]
       join: any
-      max_concurrency: 2
+      max_concurrency: 3
 
   # Cluster G: human gates. Each returns `pending` and would pause the
   # workflow at top level, but inside a parallel block the pause logic
@@ -461,7 +471,7 @@ steps:
         - cluster C (tag/deprecate):   ${cluster_c_kumiho_writes.status}
         - cluster D (handoff):         ${cluster_d_handoff.status}
         - cluster E (orchestration):   ${cluster_e_orchestration.status}
-        - cluster F (a2a):             ${cluster_f_a2a.status}
+        - cluster F (a2a/manus):       ${cluster_f_a2a.status}
         - cluster G (human gates):     ${cluster_g_human.status}
 
         ## Phase 9 — goto loop

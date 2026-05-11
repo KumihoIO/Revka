@@ -30,6 +30,7 @@ from ..workflow.schema import (
     HumanApprovalConfig,
     HumanInputConfig,
     ImageStepConfig,
+    ManusStepConfig,
     MapReduceStepConfig,
     NotifyStepConfig,
     OutputStepConfig,
@@ -69,6 +70,7 @@ _STEP_CONFIG_CLASS: dict[StepType, type[BaseModel]] = {
     StepType.FOR_EACH: ForEachStepConfig,
     StepType.TAG: TagStepConfig,
     StepType.DEPRECATE: DeprecateStepConfig,
+    StepType.MANUS: ManusStepConfig,
 }
 
 _STEP_LABELS: dict[StepType, str] = {
@@ -93,6 +95,7 @@ _STEP_LABELS: dict[StepType, str] = {
     StepType.FOR_EACH: "For Each",
     StepType.TAG: "Tag",
     StepType.DEPRECATE: "Deprecate",
+    StepType.MANUS: "Manus",
 }
 
 _STEP_DESCRIPTIONS: dict[StepType, str] = {
@@ -125,6 +128,11 @@ _STEP_DESCRIPTIONS: dict[StepType, str] = {
     StepType.FOR_EACH: "Sequential iteration over a range or list of items.",
     StepType.TAG: "Re-tag an existing Kumiho entity revision.",
     StepType.DEPRECATE: "Deprecate a Kumiho item.",
+    StepType.MANUS: (
+        "Delegate a web-research task to a hosted Manus AI agent. "
+        "Returns the final assistant message + optional structured-output "
+        "value as the step's output_data."
+    ),
 }
 
 _EXAMPLE_YAML: dict[StepType, str] = {
@@ -284,6 +292,13 @@ _EXAMPLE_YAML: dict[StepType, str] = {
         "deprecate_step:\n"
         "  item_kref: \"${earlier.output_data.kref}\"\n"
         "  reason: \"superseded\"\n"
+    ),
+    StepType.MANUS: (
+        "id: research\n"
+        "type: manus\n"
+        "manus:\n"
+        "  prompt: \"Research the top 5 robotics startups in Seoul\"\n"
+        "  timeout_seconds: 600\n"
     ),
 }
 
