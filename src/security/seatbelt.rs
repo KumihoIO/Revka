@@ -191,8 +191,11 @@ fn generate_policy(workspace: &Path) -> String {
 
 ;; Allow localhost connections only (for local dev servers).
 ;; Note: macOS sandbox-exec only accepts "localhost:*" or "*:port" in
-;; (remote ip ...) filters — raw IPs like "127.0.0.1:*" cause the
-;; entire policy to fail to parse.
+;; (remote ip ...) filters — raw IPv4 loopback literals cause the
+;; entire policy to fail to parse, so we always emit the "localhost"
+;; hostname form here. (The test `generate_policy_restricts_network`
+;; asserts the loopback IPv4 string is absent from the generated
+;; policy; don't add it back even in comments.)
 (allow network-outbound
     (remote ip "localhost:*"))
 

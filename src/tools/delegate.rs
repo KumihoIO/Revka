@@ -2687,6 +2687,44 @@ mod tests {
         assert!(tool.cancellation_token().is_cancelled());
     }
 
+    /// Poll the result file until the background task reaches a terminal
+    /// status (`Completed` / `Failed` / `Cancelled`), up to ~10 s. Returns
+    /// the final result. Hard-coded `tokio::time::sleep` here is flaky —
+    /// the 500ms originally used wasn't enough on slow runners (real
+    /// failure observed during release CI of v2026.5.9), and bumping the
+    /// sleep just hides the timing dependency. Poll-with-deadline is the
+    /// honest fix.
+    async fn await_bg_task_terminal(
+        workspace: &std::path::Path,
+        task_id: &str,
+    ) -> BackgroundDelegateResult {
+        let path = workspace
+            .join("delegate_results")
+            .join(format!("{task_id}.json"));
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while std::time::Instant::now() < deadline {
+            if path.exists() {
+                if let Ok(content) = std::fs::read_to_string(&path)
+                    && let Ok(bg) = serde_json::from_str::<BackgroundDelegateResult>(&content)
+                    && matches!(
+                        bg.status,
+                        BackgroundTaskStatus::Completed
+                            | BackgroundTaskStatus::Failed
+                            | BackgroundTaskStatus::Cancelled
+                    )
+                {
+                    return bg;
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        panic!(
+            "background task {task_id} did not reach a terminal status \
+             within 10s (last path: {path:?}); test is genuinely broken \
+             or the result writer hung"
+        );
+    }
+
     #[tokio::test]
     async fn background_task_result_persisted_to_disk() {
         let workspace = std::env::temp_dir().join(format!(
@@ -2718,8 +2756,8 @@ mod tests {
             .trim_start_matches("task_id: ")
             .trim();
 
-        // Wait for the background task to finish
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        // Wait for the background task to reach a terminal status.
+        await_bg_task_terminal(&workspace, task_id).await;
 
         // Check that the result file exists
         let result_path = workspace
@@ -2775,8 +2813,10 @@ mod tests {
             .trim()
             .to_string();
 
-        // Wait for background task
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        // Wait for the background task to reach a terminal status before
+        // calling check_result — otherwise we race the writer and the
+        // assertion below can see a "running" placeholder.
+        await_bg_task_terminal(&workspace, &task_id).await;
 
         // Check result
         let check = tool
@@ -2816,8 +2856,15 @@ mod tests {
             .unwrap();
         assert!(result.success);
 
-        // Wait for task to complete
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        // Extract task_id so we can poll for completion deterministically.
+        let task_id = result
+            .output
+            .lines()
+            .find(|l| l.starts_with("task_id:"))
+            .unwrap()
+            .trim_start_matches("task_id: ")
+            .trim();
+        await_bg_task_terminal(&workspace, task_id).await;
 
         // List results
         let list = tool

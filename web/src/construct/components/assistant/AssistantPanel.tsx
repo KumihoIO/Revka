@@ -24,7 +24,7 @@ import { generateUUID } from '@/lib/uuid';
 import { useAgentChatSession } from '@/construct/hooks/useAgentChatSession';
 import { useTheme } from '@/construct/hooks/useTheme';
 import { useT, type Locale } from '@/construct/hooks/useT';
-import { deleteSession, getSessions } from '@/lib/api';
+import { deleteSession, getSessions, renameSession } from '@/lib/api';
 import { useV2Assistant } from './AssistantContext';
 import { v2RouteMeta } from '../layout/construct-navigation';
 import {
@@ -994,6 +994,9 @@ export default function AssistantPanel() {
   // split and render normally; switching to one auto-closes the split.
   const [splitTabId, setSplitTabId] = useState<string | null>(null);
   const [splitDirection, setSplitDirection] = useState<'horizontal' | 'vertical'>('vertical');
+  // Inline tab rename: double-click a chat tab to edit, Enter/blur saves, Escape cancels.
+  const [editingTabId, setEditingTabId] = useState<string | null>(null);
+  const [editingTitle, setEditingTitle] = useState('');
 
   useEffect(() => {
     saveAssistantTabs(tabs, activeTabId);
@@ -1061,6 +1064,36 @@ export default function AssistantPanel() {
 
   const updateTab = useCallback((tabId: string, patch: Partial<AssistantTab>) => {
     setTabs((prev) => prev.map((t) => (t.id === tabId ? { ...t, ...patch } : t)));
+  }, []);
+
+  const commitRename = useCallback(async (tab: AssistantTab) => {
+    const trimmed = editingTitle.trim();
+    setEditingTabId(null);
+    // No-op if unchanged or empty (treat empty as cancel).
+    if (!trimmed || trimmed === tab.title) {
+      setEditingTitle('');
+      return;
+    }
+    // Optimistic local update.
+    const previousTitle = tab.title;
+    updateTab(tab.id, { title: trimmed });
+    setEditingTitle('');
+    // Persist to backend only for chat tabs with a real session id. The
+    // gateway handler accepts the bare session id and prefixes `gw_` itself.
+    if (tab.type === 'chat' && tab.sessionId) {
+      try {
+        await renameSession(tab.sessionId, trimmed);
+      } catch (err) {
+        // Revert local title on failure so the UI doesn't lie about persistence.
+        updateTab(tab.id, { title: previousTitle });
+        console.error('Rename failed:', err);
+      }
+    }
+  }, [editingTitle, updateTab]);
+
+  const cancelRename = useCallback(() => {
+    setEditingTabId(null);
+    setEditingTitle('');
   }, []);
 
   const handleCodeSessionStart = useCallback(
@@ -1213,12 +1246,20 @@ export default function AssistantPanel() {
           >
             {tabs.map((tab) => {
               const isActive = activeTabId === tab.id;
+              const isEditing = editingTabId === tab.id;
               return (
                 <button
                   key={tab.id}
                   type="button"
                   className="group flex shrink-0 items-center gap-1.5 px-2.5 py-1.5 font-mono text-[11px] transition-colors"
                   onClick={() => setActiveTabId(tab.id)}
+                  onDoubleClick={(e) => {
+                    if (tab.type !== 'chat') return;
+                    e.stopPropagation();
+                    setEditingTabId(tab.id);
+                    setEditingTitle(tab.title);
+                  }}
+                  title={tab.type === 'chat' ? 'Double-click to rename' : undefined}
                   style={{
                     background: isActive ? colors.primary + '18' : 'transparent',
                     color: isActive ? colors.primary : 'var(--construct-text-muted)',
@@ -1233,7 +1274,36 @@ export default function AssistantPanel() {
                   ) : (
                     <MessageSquare className="h-3 w-3" />
                   )}
-                  {tab.title}
+                  {isEditing ? (
+                    <input
+                      value={editingTitle}
+                      onChange={(e) => setEditingTitle(e.target.value)}
+                      onClick={(e) => e.stopPropagation()}
+                      onBlur={() => commitRename(tab)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          commitRename(tab);
+                        } else if (e.key === 'Escape') {
+                          e.preventDefault();
+                          cancelRename();
+                        }
+                      }}
+                      autoFocus
+                      maxLength={64}
+                      style={{
+                        background: 'transparent',
+                        border: 'none',
+                        outline: 'none',
+                        color: 'inherit',
+                        font: 'inherit',
+                        width: 'min(180px, 100%)',
+                        padding: 0,
+                      }}
+                    />
+                  ) : (
+                    <>{tab.title}</>
+                  )}
                   {tabs.length > 1 && (
                     <span
                       className="ml-0.5 p-0.5 opacity-0 transition-opacity hover:bg-white/10 group-hover:opacity-100"
