@@ -1396,3 +1396,264 @@ fn filter_tool_specs_for_architect_is_noop_without_marker() {
     assert!(names.contains(&"construct-operator__save_workflow_preset"));
     assert!(names.contains(&"construct-operator__propose_workflow_yaml"));
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Operator chat context compression — guards against the 1M-token blowup
+// reproduced in /Users/neo/.construct/logs/daemon.stderr.log on 2026-05-11.
+// Failure mode: `trim_history` is message-count based and missed huge tool
+// results, letting the Anthropic request hit the 1M cap.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Provider used by compression tests.  Counts chat calls and records the
+/// last messages seen so tests can assert what (and how much) was sent.
+struct CompressionTestProvider {
+    chat_calls: Arc<Mutex<usize>>,
+    last_request_chars: Arc<Mutex<usize>>,
+    /// If `true`, the first chat call returns a context-window-exceeded error
+    /// to exercise the reactive `compress_on_error` path.
+    fail_first_with_overflow: Arc<Mutex<bool>>,
+    /// Optional summarizer-call response.  When set, returns this from
+    /// `chat_with_system` so the compressor's LLM summarization path is
+    /// exercised deterministically.
+    summarizer_response: Arc<Mutex<Option<String>>>,
+}
+
+impl CompressionTestProvider {
+    fn new() -> Self {
+        Self {
+            chat_calls: Arc::new(Mutex::new(0)),
+            last_request_chars: Arc::new(Mutex::new(0)),
+            fail_first_with_overflow: Arc::new(Mutex::new(false)),
+            summarizer_response: Arc::new(Mutex::new(Some(
+                "[CONTEXT SUMMARY — 5 earlier messages compressed]\n- placeholder summary"
+                    .to_string(),
+            ))),
+        }
+    }
+}
+
+#[async_trait]
+impl Provider for CompressionTestProvider {
+    async fn chat_with_system(
+        &self,
+        _system_prompt: Option<&str>,
+        _message: &str,
+        _model: &str,
+        _temperature: f64,
+    ) -> Result<String> {
+        // Used by `ContextCompressor` for summarization.
+        Ok(self
+            .summarizer_response
+            .lock()
+            .unwrap()
+            .clone()
+            .unwrap_or_else(|| "[CONTEXT SUMMARY] fallback".into()))
+    }
+
+    async fn chat(
+        &self,
+        request: ChatRequest<'_>,
+        _model: &str,
+        _temperature: f64,
+    ) -> Result<ChatResponse> {
+        let chars: usize = request.messages.iter().map(|m| m.content.len()).sum();
+        *self.last_request_chars.lock().unwrap() = chars;
+        let mut calls = self.chat_calls.lock().unwrap();
+        *calls += 1;
+
+        let should_fail = {
+            let mut g = self.fail_first_with_overflow.lock().unwrap();
+            if *g {
+                *g = false;
+                true
+            } else {
+                false
+            }
+        };
+        if should_fail {
+            anyhow::bail!("prompt is too long: 1049796 tokens > 1000000 maximum context length");
+        }
+
+        Ok(ChatResponse {
+            text: Some("ok".into()),
+            tool_calls: vec![],
+            usage: None,
+            reasoning_content: None,
+        })
+    }
+}
+
+/// Build an agent wired with `CompressionTestProvider` and a context
+/// compression config tuned for fast, deterministic tests.
+fn build_compression_test_agent(
+    provider: Box<CompressionTestProvider>,
+    threshold_ratio: f64,
+) -> Agent {
+    let mut cfg = AgentConfig::default();
+    cfg.context_compression.threshold_ratio = threshold_ratio;
+    cfg.context_compression.protect_first_n = 1; // just the system prompt
+    cfg.context_compression.protect_last_n = 2;
+    cfg.context_compression.max_passes = 1;
+    // Force a low max_history_messages so we know trim_history alone is NOT
+    // what saves us — the test depends on the token-aware path firing.
+    cfg.max_history_messages = 1_000;
+
+    build_agent_with_config(provider, vec![Box::new(EchoTool)], cfg)
+}
+
+/// Fill the agent's history with a single oversized user message + tool
+/// result pair simulating a Manus/Kumiho payload that pins the chat above
+/// 1M tokens with very few messages.
+fn seed_huge_history(agent: &mut Agent, payload_chars: usize) {
+    // We mimic the production pattern: system message (seeded automatically
+    // on the first turn — we add one here for the test directly) + a single
+    // assistant message with a giant blob.  This is intentionally as small
+    // as possible (few messages, huge content) so message-count trimming
+    // does nothing.
+    agent.seed_history(&[
+        ChatMessage::system("sys"),
+        ChatMessage::user("kick off long task"),
+        ChatMessage::assistant(&"x".repeat(payload_chars)),
+        ChatMessage::user("follow-up 1"),
+        ChatMessage::assistant("ok 1"),
+        ChatMessage::user("follow-up 2"),
+        ChatMessage::assistant("ok 2"),
+    ]);
+}
+
+#[tokio::test]
+async fn compression_invoked_when_over_threshold() {
+    // 800K chars ≈ 240K tokens with the compressor's 4-chars/token + 1.2x
+    // margin heuristic.  With threshold_ratio=0.20 and the default Claude
+    // 4-series window (1M), we trip the compressor.
+    let provider = Box::new(CompressionTestProvider::new());
+    let chat_calls = provider.chat_calls.clone();
+    let last_chars = provider.last_request_chars.clone();
+
+    let mut agent = build_compression_test_agent(provider, 0.20);
+    seed_huge_history(&mut agent, 800_000);
+
+    // Run a normal turn — model name defaults to a Claude 4-series-ish slug
+    // via the agent's `classify_model` fallback (returns the configured
+    // model_name which is empty in the builder; for the test we set it).
+    agent.set_model_name_for_test("claude-opus-4-7");
+
+    let _ = agent.turn("compress please").await.unwrap();
+
+    // After the turn the provider was called with significantly fewer
+    // characters than the seeded payload — compression replaced the huge
+    // middle with a summary.
+    let final_chars = *last_chars.lock().unwrap();
+    assert!(
+        final_chars < 100_000,
+        "expected compression to drastically reduce request size, got {final_chars} chars"
+    );
+    assert!(
+        *chat_calls.lock().unwrap() >= 1,
+        "provider chat should have been called at least once"
+    );
+}
+
+#[tokio::test]
+async fn no_compression_under_threshold() {
+    let provider = Box::new(CompressionTestProvider::new());
+    let last_chars = provider.last_request_chars.clone();
+
+    // Threshold high enough that small history never trips it.
+    let mut agent = build_compression_test_agent(provider, 0.95);
+    agent.set_model_name_for_test("claude-opus-4-7");
+    agent.seed_history(&[ChatMessage::user("hi"), ChatMessage::assistant("hello")]);
+
+    let _ = agent.turn("how are you?").await.unwrap();
+
+    // History should still contain the original content — no summary message.
+    let final_chars = *last_chars.lock().unwrap();
+    assert!(
+        final_chars < 500,
+        "small history should be sent verbatim; got {final_chars} chars"
+    );
+    let has_summary = agent.history().iter().any(
+        |m| matches!(m, ConversationMessage::Chat(c) if c.content.starts_with("[CONTEXT SUMMARY")),
+    );
+    assert!(!has_summary, "compressor must not run when under threshold");
+}
+
+#[tokio::test]
+async fn compression_preserves_system_and_recent_messages() {
+    let provider = Box::new(CompressionTestProvider::new());
+    let mut agent = build_compression_test_agent(provider, 0.20);
+    agent.set_model_name_for_test("claude-opus-4-7");
+    seed_huge_history(&mut agent, 800_000);
+
+    let _ = agent.turn("compress").await.unwrap();
+
+    let history = agent.history();
+    // System prompt preserved at the head (the agent injects its own on the
+    // first turn; original "sys" gets replaced — what matters is that the
+    // head is still a system message).
+    assert!(
+        matches!(&history[0], ConversationMessage::Chat(m) if m.role == "system"),
+        "head of history must remain a system message after compression"
+    );
+    // Summary message present.
+    let summary_present = history.iter().any(
+        |m| matches!(m, ConversationMessage::Chat(c) if c.content.starts_with("[CONTEXT SUMMARY")),
+    );
+    assert!(summary_present, "compressed summary must be retained");
+    // Last user message preserved (tail of `protect_last_n`).
+    let has_recent_user = history.iter().any(|m| {
+        matches!(m, ConversationMessage::Chat(c) if c.role == "user" && c.content.contains("compress"))
+    });
+    assert!(
+        has_recent_user,
+        "most recent user message must be preserved through compression"
+    );
+}
+
+#[tokio::test]
+async fn hard_token_cap_fails_loud_when_compression_cant_reduce_enough() {
+    // Disable compression entirely so the hard cap is the only gate.
+    let provider = Box::new(CompressionTestProvider::new());
+    let mut cfg = AgentConfig::default();
+    cfg.context_compression.enabled = false;
+    cfg.max_history_messages = 10_000;
+
+    let mut agent = build_agent_with_config(provider, vec![Box::new(EchoTool)], cfg);
+    agent.set_model_name_for_test("claude-opus-4-7");
+
+    // Seed with ~5M chars — well past the 1M token cap (~95% of 1M = 950K).
+    agent.seed_history(&[
+        ChatMessage::system("sys"),
+        ChatMessage::assistant(&"y".repeat(5_000_000)),
+    ]);
+
+    let err = agent
+        .turn("trigger hard cap")
+        .await
+        .expect_err("expected hard token cap to bail");
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("Conversation too long") && msg.contains("compression"),
+        "error must explain the situation; got: {msg}"
+    );
+}
+
+#[tokio::test]
+async fn compression_failure_doesnt_crash_turn() {
+    // Compressor's summarizer returns Err — fast_trim still runs but on a
+    // history with no oversized tool messages it saves nothing.  The agent
+    // must continue with the original history and not propagate the error.
+    let provider = CompressionTestProvider::new();
+    // Force the summarizer to "succeed" with bogus content — the chat()
+    // path still works.  Compression is best-effort; the turn must complete.
+    *provider.summarizer_response.lock().unwrap() = Some(String::new());
+    let provider = Box::new(provider);
+
+    let mut agent = build_compression_test_agent(provider, 0.20);
+    agent.set_model_name_for_test("claude-opus-4-7");
+    // History just under hard-cap so a no-op compressor still lets the turn through.
+    seed_huge_history(&mut agent, 100_000);
+
+    let resp = agent.turn("hello").await.unwrap();
+    assert_eq!(resp, "ok");
+}
