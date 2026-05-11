@@ -438,6 +438,37 @@ class ForEachStepConfig(BaseModel):
         return v
 
 
+class ManusRegisterOutputConfig(BaseModel):
+    """Auto-publish a Manus step's result as a Kumiho entity.
+
+    When attached to a `manus:` step, after the task reaches a successful
+    terminal state (`agent_status == "stopped"` without structured-output
+    or error_message events), the step internally:
+
+    1. Picks a content source (assistant message text or structured output
+       JSON) and writes it to disk at an entity-anchored path:
+       ``~/.construct/artifacts/<canonical_space>/<entity_kind>/<entity_name>/content.md``
+    2. Downloads all attachments (best-effort) into
+       ``<entity_dir>/attachments/`` with sanitized filenames + collision
+       suffixes.
+    3. Publishes the entity revision via the shared
+       :func:`publish_workflow_entity` helper (re-using the canonical-space
+       semantics + tag flow that `output:` steps use) AND attaches each
+       downloaded file to the Kumiho revision as an artifact.
+
+    The disk path is entity-anchored (NOT per-run) because Manus is the
+    debut of this new artifact layout — long-running research outputs
+    don't naturally map to ephemeral run ids. The `output:` step keeps its
+    existing per-run path for backward compatibility.
+    """
+    entity_name: str
+    entity_kind: str
+    entity_tag: str = "published"
+    entity_space: str | None = None
+    register_attachments: bool = True
+    content_source: Literal["message", "structured"] = "message"
+
+
 class ManusStepConfig(BaseModel):
     """Config for 'manus' step type — delegate web research to Manus AI.
 
@@ -481,6 +512,12 @@ class ManusStepConfig(BaseModel):
     # ``[manus].api_key_env`` (default ``MANUS_API_KEY``). Never the token
     # bytes themselves — only the profile id, which is safe to commit in YAML.
     credentials_ref: str | None = None
+    # Auto-publish the result as a Kumiho entity + download attachments to
+    # an entity-anchored disk path. See ``ManusRegisterOutputConfig`` for
+    # the disk layout + Kumiho publish semantics. When None (default) the
+    # step behaves exactly as before — caller is responsible for any
+    # downstream registration via a separate ``output:`` step.
+    register_output: ManusRegisterOutputConfig | None = None
 
 
 class A2AStepConfig(BaseModel):

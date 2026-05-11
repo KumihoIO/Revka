@@ -507,3 +507,55 @@ steps:
   const tasks2 = parseWorkflowYaml(yaml2);
   assert.equal(tasks2[0]!.manus_credentials_ref, undefined);
 });
+
+test('manus step register_output: full-fields round-trip', () => {
+  const yaml = `
+steps:
+  - id: research
+    type: manus
+    manus:
+      prompt: "Investigate"
+      register_output:
+        entity_name: "report-\${inputs.topic}"
+        entity_kind: "research-report"
+        entity_tag: "ready"
+        entity_space: "Construct/WorkflowOutputs/Research"
+        register_attachments: false
+        content_source: "structured"
+`;
+  const tasks1 = parseWorkflowYaml(yaml);
+  const t1 = tasks1[0]!;
+  assert.equal(t1.manus_register_entity_name, 'report-${inputs.topic}');
+  assert.equal(t1.manus_register_entity_kind, 'research-report');
+  assert.equal(t1.manus_register_entity_tag, 'ready');
+  assert.equal(t1.manus_register_entity_space, 'Construct/WorkflowOutputs/Research');
+  assert.equal(t1.manus_register_attachments, false);
+  assert.equal(t1.manus_register_content_source, 'structured');
+
+  const yaml2 = tasksToYaml(tasks1);
+  assert.ok(/register_output:/.test(yaml2), 'emitted YAML contains register_output block');
+  const tasks2 = parseWorkflowYaml(yaml2);
+  const t2 = tasks2[0]!;
+  assert.equal(t2.manus_register_entity_name, t1.manus_register_entity_name);
+  assert.equal(t2.manus_register_entity_kind, t1.manus_register_entity_kind);
+  assert.equal(t2.manus_register_entity_tag, t1.manus_register_entity_tag);
+  assert.equal(t2.manus_register_entity_space, t1.manus_register_entity_space);
+  assert.equal(t2.manus_register_attachments, t1.manus_register_attachments);
+  assert.equal(t2.manus_register_content_source, t1.manus_register_content_source);
+});
+
+test('manus step register_output: omitted when entity_name/kind unset', () => {
+  // Without register_output in the YAML, the emitted YAML should not
+  // contain a register_output block — even after a round-trip through tasks.
+  const yaml = `
+steps:
+  - id: r
+    type: manus
+    manus:
+      prompt: "x"
+`;
+  const tasks = parseWorkflowYaml(yaml);
+  const out = tasksToYaml(tasks);
+  assert.ok(!/register_output/.test(out),
+    'emitted YAML omits register_output when unconfigured');
+});

@@ -1910,6 +1910,112 @@ export default function StepConfigPanel({
                   onSelect={(id) => onUpdate(node.id, { manusCredentialsRef: id ?? '' })}
                 />
               </div>
+
+              {/* register_output — toggle that auto-publishes the Manus result
+                  as a Kumiho entity + downloads attachments to an
+                  entity-anchored path. Toggle is off by default; flipping it
+                  on reveals the per-field inputs that mirror the output-step
+                  Kumiho Entity panel. */}
+              <div style={{ paddingTop: 8, borderTop: '1px solid var(--pc-border)' }}>
+                <Checkbox
+                  checked={Boolean(data.manusRegisterEntityName || data.manusRegisterEntityKind)}
+                  onChange={(v) => {
+                    if (v) {
+                      // Seed reasonable defaults so the inputs aren't empty.
+                      onUpdate(node.id, {
+                        manusRegisterEntityName: data.manusRegisterEntityName || '',
+                        manusRegisterEntityKind: data.manusRegisterEntityKind || '',
+                        manusRegisterEntityTag: data.manusRegisterEntityTag || 'published',
+                        manusRegisterAttachments: data.manusRegisterAttachments ?? true,
+                        manusRegisterContentSource: data.manusRegisterContentSource || 'message',
+                      });
+                    } else {
+                      // Clearing both name+kind suppresses register_output
+                      // emission in tasksToYaml — same condition as the
+                      // executor's "register_output configured" gate.
+                      onUpdate(node.id, {
+                        manusRegisterEntityName: '',
+                        manusRegisterEntityKind: '',
+                      });
+                    }
+                  }}
+                  label="Register output as Kumiho entity"
+                />
+              </div>
+              {(data.manusRegisterEntityName || data.manusRegisterEntityKind) && (
+                <div style={{ paddingTop: 8 }}>
+                  <div style={{ ...sectionTitleStyle, color: 'var(--pc-accent-light)', marginBottom: 8 }}>
+                    Kumiho Entity
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <div>
+                      <label style={labelStyle}>Entity Name</label>
+                      <input
+                        type="text"
+                        value={data.manusRegisterEntityName || ''}
+                        onChange={(e) => onUpdate(node.id, { manusRegisterEntityName: e.target.value })}
+                        placeholder="e.g. report-${inputs.topic}"
+                        style={monoInputStyle}
+                      />
+                    </div>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <div style={{ flex: 1 }}>
+                        <label style={labelStyle}>Kind</label>
+                        <input
+                          type="text"
+                          value={data.manusRegisterEntityKind || ''}
+                          onChange={(e) => onUpdate(node.id, { manusRegisterEntityKind: e.target.value })}
+                          placeholder="e.g. research-report"
+                          style={monoInputStyle}
+                        />
+                      </div>
+                      <div style={{ width: 96 }}>
+                        <label style={labelStyle}>Tag</label>
+                        <input
+                          type="text"
+                          value={data.manusRegisterEntityTag || ''}
+                          onChange={(e) => onUpdate(node.id, { manusRegisterEntityTag: e.target.value })}
+                          placeholder="published"
+                          style={monoInputStyle}
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label style={labelStyle}>Space</label>
+                      <input
+                        type="text"
+                        value={data.manusRegisterEntitySpace || ''}
+                        onChange={(e) => onUpdate(node.id, { manusRegisterEntitySpace: e.target.value })}
+                        placeholder="Construct/WorkflowOutputs/Research"
+                        style={monoInputStyle}
+                      />
+                    </div>
+                    <div>
+                      <label style={labelStyle}>Content source</label>
+                      <select
+                        value={data.manusRegisterContentSource || 'message'}
+                        onChange={(e) => onUpdate(node.id, {
+                          manusRegisterContentSource: e.target.value as 'message' | 'structured',
+                        })}
+                        style={inputStyle}
+                      >
+                        <option value="message">message (assistant text)</option>
+                        <option value="structured">structured (structured_output JSON)</option>
+                      </select>
+                    </div>
+                    <Checkbox
+                      checked={data.manusRegisterAttachments ?? true}
+                      onChange={(v) => onUpdate(node.id, { manusRegisterAttachments: v })}
+                      label="Download attachments to entity_dir/attachments/"
+                    />
+                    <p style={helperStyle()}>
+                      Content is written to
+                      <code> ~/.construct/artifacts/&lt;space&gt;/&lt;kind&gt;/&lt;name&gt;/content.md</code>.
+                      Each attachment lands under the same dir's <code>attachments/</code>.
+                    </p>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

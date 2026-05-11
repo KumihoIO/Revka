@@ -51,6 +51,7 @@ from .schema import (
     TagStepConfig,
     DeprecateStepConfig,
     ManusStepConfig,
+    ManusRegisterOutputConfig,
 )
 from .validator import validate_workflow
 
@@ -2656,6 +2657,309 @@ def _manus_sanitize(msg: str) -> str:
     return out[:500]
 
 
+def _sanitize_path_segment(seg: str) -> str:
+    """Strip path-traversal chars from an entity name/kind before filesystem use.
+    Returns empty string for fully-bad input (caller should fail-fast)."""
+    if not seg or not isinstance(seg, str):
+        return ""
+    # Strip null, slashes, backslashes
+    seg = seg.replace("\0", "").replace("/", "").replace("\\", "")
+    # Strip .. anywhere (run twice to catch overlapping cases like "...")
+    while ".." in seg:
+        seg = seg.replace("..", "")
+    seg = seg.strip(".")  # leading/trailing dots
+    return seg.strip()[:200]
+
+
+# Cap streaming attachment downloads at 500 MB. Manus attachments are
+# typically small reports / CSVs; anything larger is almost certainly a
+# config error or runaway response and would fill the disk silently.
+MAX_ATTACHMENT_BYTES = 500 * 1024 * 1024
+
+
+async def _manus_register_output(
+    *,
+    step: StepDef,
+    state: WorkflowState,
+    ro_cfg: ManusRegisterOutputConfig,
+    assistant_text: str,
+    structured_value: Any,
+    attachments: list[Any],
+    output_data: dict[str, Any],
+) -> None:
+    """Auto-publish the Manus step's result as a Kumiho entity + downloads.
+
+    Mutates ``output_data`` in place with the registration outcome:
+    ``registered_entity``, ``content_path``, ``attachments_downloaded``,
+    ``attachments_failed``. Best-effort throughout — individual failures
+    are logged + recorded in output_data but never raise.
+
+    Disk layout (entity-anchored, NOT per-run):
+      ~/.construct/artifacts/<canonical_space>/<kind>/<name>/content.md
+      ~/.construct/artifacts/<canonical_space>/<kind>/<name>/attachments/...
+    """
+    from .memory import (
+        _canonical_space,
+        _project,
+        _sanitize_attachment_filename,
+        _unique_attachment_path,
+        publish_workflow_entity,
+    )
+
+    # Interpolate the entity fields so ${inputs.*} / ${step.output} references
+    # resolve before we touch disk or Kumiho.
+    entity_name = interpolate(ro_cfg.entity_name, state)
+    entity_kind = interpolate(ro_cfg.entity_kind, state)
+    entity_tag = interpolate(ro_cfg.entity_tag, state)
+    entity_space = (
+        interpolate(ro_cfg.entity_space, state) if ro_cfg.entity_space else None
+    )
+
+    # Sanitize entity_name/entity_kind — they become filesystem path segments
+    # below. A malicious YAML with entity_name: "../../escape" would otherwise
+    # write outside ~/.construct/artifacts/. Fail-fast on empty post-sanitize
+    # rather than silently falling back to a default (hides config bugs).
+    entity_name = _sanitize_path_segment(entity_name)
+    entity_kind = _sanitize_path_segment(entity_kind)
+    if not entity_name or not entity_kind:
+        _log(
+            "manus: entity_name/entity_kind invalid after sanitization — "
+            "skipping register_output"
+        )
+        output_data["register_output_error"] = (
+            "entity_name/entity_kind invalid after sanitization"
+        )
+        return
+
+    # Resolve content source. "structured" falls back to the message text
+    # with a warning when no structured value arrived — losing the publish
+    # over a missing field would be a worse failure mode than producing a
+    # text-only artifact.
+    if ro_cfg.content_source == "structured":
+        if structured_value is not None:
+            try:
+                content_text = json.dumps(structured_value, indent=2)
+            except (TypeError, ValueError) as e:
+                _log(
+                    "manus: register_output content_source=structured but "
+                    f"value not JSON-serializable ({e}); falling back to message"
+                )
+                content_text = assistant_text or ""
+        else:
+            _log(
+                "manus: register_output content_source=structured but no "
+                "structured_output_result event present; falling back to message"
+            )
+            content_text = assistant_text or ""
+    else:
+        content_text = assistant_text or ""
+
+    # Build entity-anchored dir. Canonical space normalizes leading /
+    # trailing slashes + collapses doubled separators so the disk path and
+    # the Kumiho publish path agree (same helper output:steps use).
+    canonical = _canonical_space(
+        entity_space,
+        default=lambda: f"{_project()}/WorkflowOutputs",
+    )
+    entity_dir = os.path.expanduser(
+        f"~/.construct/artifacts/{canonical}/{entity_kind}/{entity_name}"
+    )
+
+    # Belt-and-braces containment check — entity_space is canonicalized, and
+    # entity_name/entity_kind are sanitized, but symlinks or unexpected
+    # canonical-space output could still produce a path outside artifacts/.
+    artifacts_root = os.path.expanduser("~/.construct/artifacts")
+    try:
+        os.makedirs(artifacts_root, exist_ok=True)
+        real_root = os.path.realpath(artifacts_root)
+        # realpath on a not-yet-existent path resolves the existing prefix —
+        # good enough to catch traversal before mkdir.
+        real_entity = os.path.realpath(entity_dir)
+        if os.path.commonpath([real_root, real_entity]) != real_root:
+            _log(
+                f"manus: entity_dir escapes artifacts root, refusing — "
+                f"{entity_dir}"
+            )
+            output_data["register_output_error"] = (
+                "entity_dir would escape artifacts root"
+            )
+            return
+    except (ValueError, OSError) as e:
+        # commonpath raises ValueError if the paths are on different drives
+        # (Windows) or otherwise incomparable — treat as containment failure.
+        _log(f"manus: entity_dir containment check failed — {e}")
+        output_data["register_output_error"] = (
+            "entity_dir would escape artifacts root"
+        )
+        return
+
+    try:
+        os.makedirs(entity_dir, exist_ok=True)
+        if ro_cfg.register_attachments:
+            os.makedirs(os.path.join(entity_dir, "attachments"), exist_ok=True)
+    except Exception as e:
+        _log(f"manus: register_output failed to create dir {entity_dir}: {e}")
+        output_data["register_output_error"] = (
+            f"failed to create entity dir: {_manus_sanitize(str(e))}"
+        )
+        return
+
+    # Write content.md
+    content_path = os.path.join(entity_dir, "content.md")
+    try:
+        with open(content_path, "w", encoding="utf-8") as f:
+            f.write(content_text)
+    except Exception as e:
+        _log(f"manus: register_output failed to write content.md: {e}")
+        output_data["register_output_error"] = (
+            f"failed to write content.md: {_manus_sanitize(str(e))}"
+        )
+        return
+    output_data["content_path"] = content_path
+
+    # Download attachments — best effort, per-file timeout, no auth header
+    # (Manus attachment URLs are pre-signed CDN links).
+    downloaded: list[dict[str, Any]] = []
+    failed: list[dict[str, Any]] = []
+    if ro_cfg.register_attachments and attachments:
+        import httpx
+
+        for idx, att in enumerate(attachments):
+            if not isinstance(att, dict):
+                continue
+            url = att.get("url")
+            if not isinstance(url, str) or not url:
+                failed.append({
+                    "file_name": str(att.get("file_name") or f"attachment_{idx}"),
+                    "url": "",
+                    "error": "attachment missing url",
+                })
+                continue
+            raw_name = (
+                att.get("file_name")
+                or att.get("filename")
+                or f"attachment_{idx}"
+            )
+            safe_name = _sanitize_attachment_filename(str(raw_name)) or f"attachment_{idx}"
+            final_path = _unique_attachment_path(entity_dir, "attachments", safe_name)
+            # Stream the download so we can abort past MAX_ATTACHMENT_BYTES
+            # instead of buffering the full response in memory. follow_redirects
+            # is required — Manus pre-signed CDN URLs often 302.
+            async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+                try:
+                    async with client.stream("GET", url) as resp:
+                        resp.raise_for_status()
+                        written = 0
+                        with open(final_path, "wb") as f:
+                            async for chunk in resp.aiter_bytes(chunk_size=64 * 1024):
+                                written += len(chunk)
+                                if written > MAX_ATTACHMENT_BYTES:
+                                    f.close()
+                                    try:
+                                        os.remove(final_path)
+                                    except OSError:
+                                        pass
+                                    raise ValueError(
+                                        f"attachment exceeds {MAX_ATTACHMENT_BYTES} bytes"
+                                    )
+                                f.write(chunk)
+                    downloaded.append({
+                        "file_name": os.path.basename(final_path),
+                        "local_path": final_path,
+                        "url": url,
+                        "size_bytes": written,
+                    })
+                except Exception as e:
+                    _log(
+                        f"manus: attachment download failed file_name={safe_name!r} "
+                        f"err={_manus_sanitize(str(e))}"
+                    )
+                    failed.append({
+                        "file_name": safe_name,
+                        "url": url,
+                        "error": _manus_sanitize(str(e)),
+                    })
+                    # Clean up any partial file left on disk.
+                    try:
+                        os.remove(final_path)
+                    except OSError:
+                        pass
+
+    output_data["attachments_downloaded"] = downloaded
+    output_data["attachments_failed"] = failed
+
+    # Publish entity. Pass the entity-anchored content_path as
+    # artifact_path_override so publish_workflow_entity uses our file
+    # instead of writing its own per-run copy. Wrap in try/except so a
+    # publish raise doesn't crash the step — record the error and bail.
+    try:
+        entity_result = await publish_workflow_entity(
+            entity_name=entity_name,
+            entity_kind=entity_kind,
+            entity_tag=entity_tag,
+            entity_space=canonical,
+            entity_metadata=None,
+            content=content_text,
+            content_format="markdown",
+            workflow_name=state.workflow_name,
+            run_id=state.run_id,
+            step_id=step.id,
+            artifact_path_override=content_path,
+        )
+    except Exception as e:
+        _log(
+            f"manus: publish_workflow_entity raised — "
+            f"{_manus_sanitize(str(e))}"
+        )
+        output_data["register_output_error"] = _manus_sanitize(str(e))
+        return
+
+    if not entity_result:
+        output_data["register_output_error"] = "publish_workflow_entity returned None"
+        return
+
+    output_data["registered_entity"] = {
+        "item_kref": entity_result.get("item_kref", ""),
+        "revision_kref": entity_result.get("revision_kref", ""),
+        "name": entity_name,
+        "kind": entity_kind,
+        "tag": entity_tag,
+        "space": canonical,
+    }
+
+    # Attach each downloaded file to the revision as a Kumiho artifact.
+    # Skipped when there's no revision (publish failed upstream) or when
+    # no downloads succeeded. Per-file failures are logged and recorded
+    # on the corresponding downloaded entry so the UI can show them.
+    rev_kref = entity_result.get("revision_kref", "")
+    if rev_kref and downloaded:
+        try:
+            from ..operator_mcp import KUMIHO_SDK
+        except Exception:
+            KUMIHO_SDK = None  # type: ignore[assignment]
+        if KUMIHO_SDK is not None and getattr(KUMIHO_SDK, "_available", False):
+            for dl in downloaded:
+                try:
+                    art = await KUMIHO_SDK.create_artifact(
+                        rev_kref,
+                        dl["file_name"],
+                        dl["local_path"],
+                    )
+                    art_kref = (
+                        art.get("kref", "")
+                        if isinstance(art, dict)
+                        else getattr(art, "kref", "")
+                    )
+                    if art_kref:
+                        dl["artifact_kref"] = art_kref
+                except Exception as e:
+                    _log(
+                        f"manus: create_artifact failed for {dl['file_name']!r}: "
+                        f"{_manus_sanitize(str(e))}"
+                    )
+                    dl["artifact_error"] = _manus_sanitize(str(e))
+
+
 async def _exec_manus(step: StepDef, state: WorkflowState) -> StepResult:
     """Execute a Manus web-research step.
 
@@ -3120,6 +3424,25 @@ async def _exec_manus(step: StepDef, state: WorkflowState) -> StepResult:
                     {"task_id": task_id, "final_state": last_status}
                 )
                 output_data["output_truncated"] = len(output_text) > 6000
+
+                # ── register_output ──────────────────────────────────
+                # When configured, auto-publish the result as a Kumiho
+                # entity and download attachments to an entity-anchored
+                # disk path. Best-effort: registration failures surface
+                # in output_data but don't fail the step (the Manus task
+                # already succeeded — losing the publish is a separate
+                # axis from losing the work).
+                if cfg.register_output is not None:
+                    await _manus_register_output(
+                        step=step,
+                        state=state,
+                        ro_cfg=cfg.register_output,
+                        assistant_text=assistant_text,
+                        structured_value=structured_value,
+                        attachments=attachments,
+                        output_data=output_data,
+                    )
+
                 return StepResult(
                     step_id=step.id,
                     status="completed",

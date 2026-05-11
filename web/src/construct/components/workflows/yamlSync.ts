@@ -227,6 +227,19 @@ export interface TaskDefinition {
    */
   manus_credentials_ref?: string;
   /**
+   * Manus register_output — when present, the Manus step auto-publishes
+   * its result as a Kumiho entity and downloads attachments to an
+   * entity-anchored disk path. See `ManusRegisterOutputConfig` in
+   * operator-mcp/operator_mcp/workflow/schema.py for the on-disk layout
+   * and Kumiho publish semantics.
+   */
+  manus_register_entity_name?: string;
+  manus_register_entity_kind?: string;
+  manus_register_entity_tag?: string;
+  manus_register_entity_space?: string;
+  manus_register_attachments?: boolean;
+  manus_register_content_source?: 'message' | 'structured';
+  /**
    * Encrypted auth-profile binding for agent / shell / python / email / a2a
    * steps. Format: `<provider>:<profile_name>`. Resolved at runtime via the
    * gateway's auth-profile resolve endpoint — token bytes never appear in
@@ -453,6 +466,13 @@ export interface TaskNodeData {
   manusPollIntervalSeconds: number;
   manusAllowFailure: boolean;
   manusCredentialsRef: string;
+  // Manus register_output — Kumiho entity auto-publish + attachment download
+  manusRegisterEntityName: string;
+  manusRegisterEntityKind: string;
+  manusRegisterEntityTag: string;
+  manusRegisterEntitySpace: string;
+  manusRegisterAttachments: boolean;
+  manusRegisterContentSource: 'message' | 'structured';
   /** Encrypted auth-profile id (e.g. `gmail:work`) — resolved at runtime. */
   auth?: string;
   /** Run-mode overlay — populated when viewing a workflow run */
@@ -886,6 +906,29 @@ function parseStep(s: YAMLObj): TaskDefinition | null {
     t.manus_poll_interval_seconds = asNum(manus.poll_interval_seconds);
     t.manus_allow_failure = asBool(manus.allow_failure);
     t.manus_credentials_ref = asStr(manus.credentials_ref);
+
+    // register_output — nested block, optional. Round-trip every field so
+    // re-emitted YAML matches the input.
+    const ro = isObj(manus.register_output) ? manus.register_output : undefined;
+    if (ro) {
+      t.manus_register_entity_name = asStr(ro.entity_name);
+      t.manus_register_entity_kind = asStr(ro.entity_kind);
+      const tag = asStr(ro.entity_tag);
+      if (tag) t.manus_register_entity_tag = tag;
+      const space = asStr(ro.entity_space);
+      if (space) t.manus_register_entity_space = space;
+      // `register_attachments` defaults to true on the wire; only round-trip
+      // the explicit `false` case so a re-emit stays clean for the common path.
+      if (ro.register_attachments === false) {
+        t.manus_register_attachments = false;
+      } else if (ro.register_attachments === true) {
+        t.manus_register_attachments = true;
+      }
+      const cs = asStr(ro.content_source);
+      if (cs === 'structured' || cs === 'message') {
+        t.manus_register_content_source = cs;
+      }
+    }
   }
 
   // Conditional canonical form — `conditional.branches: [{condition, goto, value?}, ...]`.
@@ -1271,6 +1314,13 @@ export function tasksToFlow(tasks: TaskDefinition[]): { nodes: Node<TaskNodeData
       manusPollIntervalSeconds: task.manus_poll_interval_seconds ?? 5,
       manusAllowFailure: task.manus_allow_failure || false,
       manusCredentialsRef: task.manus_credentials_ref || '',
+      manusRegisterEntityName: task.manus_register_entity_name || '',
+      manusRegisterEntityKind: task.manus_register_entity_kind || '',
+      manusRegisterEntityTag: task.manus_register_entity_tag || '',
+      manusRegisterEntitySpace: task.manus_register_entity_space || '',
+      // Default true on the wire — preserve unless explicitly false.
+      manusRegisterAttachments: task.manus_register_attachments !== false,
+      manusRegisterContentSource: task.manus_register_content_source || 'message',
       auth: task.auth || '',
     },
   }));
@@ -1896,6 +1946,24 @@ export function flowToTasks(nodes: Node<TaskNodeData>[], edges: Edge[]): TaskDef
       if (d.manusPollIntervalSeconds && d.manusPollIntervalSeconds !== 5) base.manus_poll_interval_seconds = d.manusPollIntervalSeconds;
       if (d.manusAllowFailure) base.manus_allow_failure = true;
       if (d.manusCredentialsRef) base.manus_credentials_ref = d.manusCredentialsRef;
+      // register_output round-trip: only emit when entity_name + entity_kind
+      // are both set (the minimum to enable registration in the executor).
+      if (d.manusRegisterEntityName && d.manusRegisterEntityKind) {
+        base.manus_register_entity_name = d.manusRegisterEntityName;
+        base.manus_register_entity_kind = d.manusRegisterEntityKind;
+        if (d.manusRegisterEntityTag && d.manusRegisterEntityTag !== 'published') {
+          base.manus_register_entity_tag = d.manusRegisterEntityTag;
+        }
+        if (d.manusRegisterEntitySpace) {
+          base.manus_register_entity_space = d.manusRegisterEntitySpace;
+        }
+        if (d.manusRegisterAttachments === false) {
+          base.manus_register_attachments = false;
+        }
+        if (d.manusRegisterContentSource && d.manusRegisterContentSource !== 'message') {
+          base.manus_register_content_source = d.manusRegisterContentSource;
+        }
+      }
     }
     return base;
   });
@@ -2317,6 +2385,24 @@ export function tasksToYaml(tasks: TaskDefinition[], meta?: Partial<WorkflowMeta
       }
       if (task.manus_allow_failure) lines.push(`      allow_failure: true`);
       if (task.manus_credentials_ref) lines.push(`      credentials_ref: ${yamlEscape(task.manus_credentials_ref)}`);
+      // register_output — emit when both entity_name and entity_kind are set.
+      if (task.manus_register_entity_name && task.manus_register_entity_kind) {
+        lines.push(`      register_output:`);
+        lines.push(`        entity_name: ${yamlEscape(task.manus_register_entity_name)}`);
+        lines.push(`        entity_kind: ${yamlEscape(task.manus_register_entity_kind)}`);
+        if (task.manus_register_entity_tag && task.manus_register_entity_tag !== 'published') {
+          lines.push(`        entity_tag: ${yamlEscape(task.manus_register_entity_tag)}`);
+        }
+        if (task.manus_register_entity_space) {
+          lines.push(`        entity_space: ${yamlEscape(task.manus_register_entity_space)}`);
+        }
+        if (task.manus_register_attachments === false) {
+          lines.push(`        register_attachments: false`);
+        }
+        if (task.manus_register_content_source && task.manus_register_content_source !== 'message') {
+          lines.push(`        content_source: ${yamlEscape(task.manus_register_content_source)}`);
+        }
+      }
     }
     if (task.agent_hints.length > 0) {
       lines.push(`    agent_hints: [${task.agent_hints.join(', ')}]`);

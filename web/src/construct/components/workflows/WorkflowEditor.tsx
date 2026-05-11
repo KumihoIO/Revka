@@ -344,6 +344,12 @@ function defaultNodeData(id: string, overrides?: Partial<TaskNodeData>): TaskNod
     manusPollIntervalSeconds: 5,
     manusAllowFailure: false,
     manusCredentialsRef: '',
+    manusRegisterEntityName: '',
+    manusRegisterEntityKind: '',
+    manusRegisterEntityTag: '',
+    manusRegisterEntitySpace: '',
+    manusRegisterAttachments: true,
+    manusRegisterContentSource: 'message',
     ...overrides,
   };
 }
