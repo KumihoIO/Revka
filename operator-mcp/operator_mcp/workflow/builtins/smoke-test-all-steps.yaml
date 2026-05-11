@@ -357,6 +357,15 @@ steps:
       timeout_seconds: 30
       poll_interval_seconds: 2
       allow_failure: true
+      # Smoke-test the register_output path too. Lives inside the soft-fail
+      # parallel cluster so a Manus outage or missing API key never breaks
+      # the whole smoke run.
+      register_output:
+        entity_name: "smoke-test-manus-probe"
+        entity_kind: "smoke-test-report"
+        entity_tag: "smoke"
+        entity_space: "Construct/WorkflowOutputs/SmokeTests"
+        content_source: "message"
 
   - id: cluster_f_a2a
     name: "Cluster F — a2a / manus (parallel any)"

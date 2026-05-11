@@ -433,6 +433,59 @@ async def _ensure_space_path(space_path: str) -> None:
         await asyncio.to_thread(_create)
 
 
+# ---------------------------------------------------------------------------
+# Attachment filename helpers (used by Manus register_output)
+# ---------------------------------------------------------------------------
+
+def _sanitize_attachment_filename(name: str) -> str:
+    """Strip path traversal + separators from an attachment filename.
+
+    Manus attachments arrive with whatever filename the agent produced;
+    that may include ``../`` segments or absolute paths. Defensively
+    flatten the name to a single component, drop dangerous characters,
+    and cap length so it cannot blow up the artifact directory layout.
+
+    Returns "" when nothing remains after sanitization — callers should
+    fall back to a positional ``attachment_<index>`` name.
+    """
+    if not isinstance(name, str):
+        return ""
+    # Drop null bytes outright — they confuse os.path on every platform.
+    cleaned = name.replace("\x00", "")
+    # Reject path traversal — replace any ``..`` segment with the rest of
+    # the basename so an attacker can't escape the attachments/ dir.
+    cleaned = cleaned.replace("..", "")
+    # Take only the basename — strip leading directories from BOTH unix
+    # and windows path separators since Manus is platform-agnostic.
+    cleaned = cleaned.replace("\\", "/").rsplit("/", 1)[-1]
+    # Strip leading dots so we never write hidden files into the artifact dir.
+    cleaned = cleaned.lstrip(".")
+    # Trim whitespace + cap length. 200 chars is well under every common
+    # filesystem limit (255 bytes on ext4/APFS, 260 on NTFS without long-path).
+    cleaned = cleaned.strip()[:200]
+    return cleaned
+
+
+def _unique_attachment_path(base_dir: str, subdir: str, file_name: str) -> str:
+    """Return a unique path under ``base_dir/subdir``.
+
+    If ``base_dir/subdir/file_name`` already exists, append ``-1``, ``-2``,
+    ... before the extension until the path is free. Used so two attachments
+    that share a filename within the same step don't overwrite each other.
+    """
+    target_dir = os.path.join(base_dir, subdir)
+    candidate = os.path.join(target_dir, file_name)
+    if not os.path.exists(candidate):
+        return candidate
+    stem, ext = os.path.splitext(file_name)
+    i = 1
+    while True:
+        alt = os.path.join(target_dir, f"{stem}-{i}{ext}")
+        if not os.path.exists(alt):
+            return alt
+        i += 1
+
+
 async def publish_workflow_entity(
     *,
     entity_name: str,
@@ -445,6 +498,7 @@ async def publish_workflow_entity(
     workflow_name: str,
     run_id: str,
     step_id: str,
+    artifact_path_override: str | None = None,
 ) -> dict[str, Any] | None:
     """Register a workflow output as a Kumiho entity and tag it.
 
@@ -518,21 +572,42 @@ async def publish_workflow_entity(
             _log(f"workflow_memory: entity creation returned no kref for {entity_name}")
             return None
 
-        # Write content to disk as a hard copy artifact
-        artifact_dir = os.path.expanduser(f"~/.construct/artifacts/{workflow_name}/{run_id}")
-        os.makedirs(artifact_dir, exist_ok=True)
-        ext = {"json": ".json", "markdown": ".md", "text": ".txt"}.get(
-            content_format, ".md"
-        )
-        artifact_path = os.path.join(artifact_dir, f"{step_id}{ext}")
+        # Write content to disk as a hard copy artifact — unless the caller
+        # supplied an override path (Manus register_output uses an
+        # entity-anchored path that lives outside the per-run tree, and
+        # writes the file itself). In override mode we trust the file to
+        # exist; the rest of the publish flow is unchanged.
         artifact_write_error = ""
-        try:
-            with open(artifact_path, "w", encoding="utf-8") as f:
-                f.write(content)
-        except Exception as e:
-            artifact_write_error = str(e)
-            _log(f"workflow_memory: failed to write artifact to {artifact_path}: {e}")
-            artifact_path = ""
+        if artifact_path_override:
+            artifact_path = artifact_path_override
+            ext = os.path.splitext(artifact_path)[1] or ".md"
+            if not os.path.exists(artifact_path):
+                # The override path is supposed to be written by the
+                # caller before invoking publish. If it isn't, surface
+                # a clear error rather than silently producing a tagless
+                # entity (which the output-step path also refuses to do).
+                artifact_write_error = (
+                    f"artifact_path_override does not exist on disk: {artifact_path}"
+                )
+                _log(
+                    "workflow_memory: artifact_path_override missing — "
+                    f"{artifact_path}"
+                )
+                artifact_path = ""
+        else:
+            artifact_dir = os.path.expanduser(f"~/.construct/artifacts/{workflow_name}/{run_id}")
+            os.makedirs(artifact_dir, exist_ok=True)
+            ext = {"json": ".json", "markdown": ".md", "text": ".txt"}.get(
+                content_format, ".md"
+            )
+            artifact_path = os.path.join(artifact_dir, f"{step_id}{ext}")
+            try:
+                with open(artifact_path, "w", encoding="utf-8") as f:
+                    f.write(content)
+            except Exception as e:
+                artifact_write_error = str(e)
+                _log(f"workflow_memory: failed to write artifact to {artifact_path}: {e}")
+                artifact_path = ""
 
         # Create a revision with the content and tag it in one call
         metadata = {
@@ -559,9 +634,17 @@ async def publish_workflow_entity(
         artifact_error = artifact_write_error
         if artifact_path and rev_kref:
             try:
+                # In override mode, use the override path's basename so the
+                # artifact's stored file_name matches what's actually on disk
+                # (e.g. "content.md" for Manus, not "<step_id>.md").
+                artifact_file_name = (
+                    os.path.basename(artifact_path)
+                    if artifact_path_override
+                    else f"{step_id}{ext}"
+                )
                 artifact = await KUMIHO_SDK.create_artifact(
                     rev_kref,
-                    f"{step_id}{ext}",
+                    artifact_file_name,
                     artifact_path,
                 )
                 artifact_kref = (
