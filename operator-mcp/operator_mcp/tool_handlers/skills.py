@@ -12,6 +12,7 @@ from ..kumiho_clients import KumihoAgentPoolClient
 from ..skill_loader import list_skills, load_skill
 
 _SKILL_ARTIFACT_NAME = "SKILL.md"
+_SKILL_ITEM_KINDS = {"skill"}
 _TRAILING_AGENT_ID = re.compile(
     r"[\s_-]*(?:agent[-_\s]*)?[0-9a-f]{8,}(?:-[0-9a-f]{4,}){0,4}\s*$",
     re.IGNORECASE,
@@ -66,6 +67,20 @@ def _item_name(item: dict[str, Any]) -> str:
     return str(item.get("item_name") or item.get("name") or "")
 
 
+def _item_kind(item: dict[str, Any]) -> str:
+    kind = item.get("kind") or item.get("item_kind")
+    if isinstance(kind, str) and kind.strip():
+        return kind.strip()
+
+    kref = str(item.get("kref") or "")
+    match = re.search(r"\.([A-Za-z0-9_]+)(?:[?#]|$)", kref)
+    return match.group(1) if match else ""
+
+
+def _skill_match_name(item: dict[str, Any]) -> str:
+    return _item_name(item).strip().removesuffix(".skill")
+
+
 async def _find_existing_skill(
     pool_client: KumihoAgentPoolClient,
     space_path: str,
@@ -73,10 +88,7 @@ async def _find_existing_skill(
 ) -> dict[str, Any] | None:
     items = await pool_client.list_items(space_path)
     for item in items:
-        if _item_name(item) == name and str(item.get("kind", item.get("item_kind", "skill"))) == "skill":
-            return item
-    for item in items:
-        if _item_name(item) == name:
+        if _item_kind(item) in _SKILL_ITEM_KINDS and _skill_match_name(item) == name:
             return item
     return None
 
