@@ -1115,21 +1115,37 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="list_skills",
-            description="List all available orchestration skills (operator-orchestrator, operator-loop, operator-committee, etc.).",
+            description="List captured skills from Kumiho's Skills space. Does not read local markdown files unless legacy fallback is explicitly requested.",
             inputSchema={
                 "type": "object",
-                "properties": {},
+                "properties": {
+                    "include_legacy_disk": {
+                        "type": "boolean",
+                        "description": "If true and Kumiho is unavailable, fall back to legacy local markdown skills. Default false.",
+                        "default": False,
+                    },
+                },
             },
         ),
         Tool(
             name="load_skill",
-            description="Load a specific orchestration skill's full instructions. Use before starting a pattern you haven't used recently.",
+            description="Load a captured skill's SKILL.md artifact from Kumiho by skill name or kref.",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "name": {
                         "type": "string",
-                        "description": "Skill name, e.g. 'operator-orchestrator', 'operator-loop'.",
+                        "description": "Captured skill name or Kumiho item kref.",
+                    },
+                    "tag": {
+                        "type": "string",
+                        "description": "Revision tag to load. Default published.",
+                        "default": "published",
+                    },
+                    "allow_legacy_disk_fallback": {
+                        "type": "boolean",
+                        "description": "If true, fall back to legacy local markdown only when the skill is not found in Kumiho or Kumiho is unavailable. Default false.",
+                        "default": False,
                     },
                 },
                 "required": ["name"],
@@ -2911,9 +2927,9 @@ async def _dispatch(name: str, args: dict[str, Any]) -> dict[str, Any]:
     if name == "capture_skill":
         return await skills.tool_capture_skill(args, KUMIHO_POOL)
     if name == "list_skills":
-        return await skills.tool_list_skills()
+        return await skills.tool_list_skills(args, KUMIHO_POOL)
     if name == "load_skill":
-        return await skills.tool_load_skill(args)
+        return await skills.tool_load_skill(args, KUMIHO_POOL)
 
     # -- ClawHub --
     if name == "search_clawhub":
