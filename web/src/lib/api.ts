@@ -35,6 +35,9 @@ import type {
   RevisionOperation,
   ReviseWorkflowResponse,
   RevisionListResponse,
+  KumihoArtifact,
+  KumihoItem,
+  KumihoRevision,
 } from '../types/api';
 import { clearToken, getToken, setToken } from './auth';
 import { apiOrigin, basePath } from './basePath';
@@ -1103,6 +1106,73 @@ export async function kumihoProxy<T>(
   const qsStr = qs.toString();
   const cleanPath = path.startsWith('/') ? path.slice(1) : path;
   return apiFetch<T>(`/api/kumiho/${cleanPath}${qsStr ? `?${qsStr}` : ''}`);
+}
+
+export async function toggleAssetItemDeprecation(kref: string, deprecated: boolean): Promise<KumihoItem> {
+  return apiFetch<{ item: KumihoItem }>('/api/assets/items/deprecate', {
+    method: 'POST',
+    body: JSON.stringify({ kref, deprecated }),
+  }).then((data) => data.item);
+}
+
+export async function toggleAssetRevisionDeprecation(kref: string, deprecated: boolean): Promise<KumihoRevision> {
+  return apiFetch<{ revision: KumihoRevision }>('/api/assets/revisions/deprecate', {
+    method: 'POST',
+    body: JSON.stringify({ kref, deprecated }),
+  }).then((data) => data.revision);
+}
+
+export async function publishAssetRevision(kref: string): Promise<KumihoRevision> {
+  return apiFetch<{ revision: KumihoRevision }>('/api/assets/revisions/publish', {
+    method: 'POST',
+    body: JSON.stringify({ kref }),
+  }).then((data) => data.revision);
+}
+
+export async function toggleAssetArtifactDeprecation(kref: string, deprecated: boolean): Promise<KumihoArtifact> {
+  return apiFetch<{ artifact: KumihoArtifact }>('/api/assets/artifacts/deprecate', {
+    method: 'POST',
+    body: JSON.stringify({ kref, deprecated }),
+  }).then((data) => data.artifact);
+}
+
+export interface UpdateAssetArtifactContentResponse {
+  revision: KumihoRevision;
+  artifact: KumihoArtifact;
+  created_revision: boolean;
+  copied_artifacts: number;
+}
+
+export async function updateAssetArtifactContent(
+  artifactKref: string,
+  revisionKref: string,
+  content: string,
+): Promise<UpdateAssetArtifactContentResponse> {
+  return apiFetch<UpdateAssetArtifactContentResponse>('/api/assets/artifacts/content', {
+    method: 'PUT',
+    body: JSON.stringify({
+      artifact_kref: artifactKref,
+      revision_kref: revisionKref,
+      content,
+    }),
+  });
+}
+
+export async function fetchArtifactBodyText(location: string): Promise<string> {
+  const token = getToken();
+  const headers = new Headers();
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+
+  const response = await fetch(
+    `${apiOrigin}${basePath}/api/artifact-body?location=${encodeURIComponent(location)}`,
+    { headers },
+  );
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    const contentType = response.headers.get('content-type');
+    throw _buildApiError(response.status, response.statusText, text, contentType);
+  }
+  return response.text();
 }
 
 // ---------------------------------------------------------------------------

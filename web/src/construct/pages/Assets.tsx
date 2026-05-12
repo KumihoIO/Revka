@@ -2,20 +2,25 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   AlertTriangle,
   ArrowRight,
+  Ban,
   Bot,
   BookOpen,
+  Check,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   Database,
+  Edit3,
   Eye,
   FileText,
   FolderOpen,
   GitBranch,
   Hash,
+  Loader2,
   MapPinned,
   MessageSquare,
   Package,
+  Save,
   Search,
   Settings,
   Sparkles,
@@ -32,11 +37,20 @@ import type {
   KumihoSearchResult,
   KumihoSpace,
 } from '@/types/api';
-import { kumihoProxy } from '@/lib/api';
+import {
+  fetchArtifactBodyText,
+  kumihoProxy,
+  publishAssetRevision,
+  toggleAssetArtifactDeprecation,
+  toggleAssetItemDeprecation,
+  toggleAssetRevisionDeprecation,
+  updateAssetArtifactContent,
+} from '@/lib/api';
 import Panel from '../components/ui/Panel';
 import PageHeader from '../components/ui/PageHeader';
 import StateMessage from '../components/ui/StateMessage';
 import ArtifactViewerModal from '../components/ui/ArtifactViewerModal';
+import Modal from '../components/ui/Modal';
 import { copyToClipboard } from '../lib/clipboard';
 import { useT } from '@/construct/hooks/useT';
 
@@ -67,6 +81,10 @@ const DEFAULT_KIND: KindMeta = {
 
 function getKindMeta(kind: string): KindMeta {
   return KIND_MAP[kind.toLowerCase()] ?? DEFAULT_KIND;
+}
+
+function revisionIsPublished(revision: KumihoRevision): boolean {
+  return Boolean(revision.published || revision.tags?.includes('published'));
 }
 
 /* ------------------------------------------------------------------ */
@@ -190,6 +208,11 @@ export default function Assets() {
   const [loadingRevisions, setLoadingRevisions] = useState(false);
   const [loadingRevisionDetail, setLoadingRevisionDetail] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
+  const [actionBusy, setActionBusy] = useState<string | null>(null);
+  const [editingArtifact, setEditingArtifact] = useState<KumihoArtifact | null>(null);
+  const [artifactDraft, setArtifactDraft] = useState('');
+  const [artifactDraftLoading, setArtifactDraftLoading] = useState(false);
   const searchTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const dropdownRef = useRef<HTMLDivElement | null>(null);
 
@@ -246,6 +269,33 @@ export default function Assets() {
   }, [selectedProject]);
 
   const currentSpacePath = currentPath[currentPath.length - 1]?.path ?? null;
+
+  const showNotice = useCallback((tone: 'success' | 'error', message: string) => {
+    setNotice({ tone, message });
+    setTimeout(() => {
+      setNotice((current) => (current?.message === message ? null : current));
+    }, 4500);
+  }, []);
+
+  const refreshRevisionDetail = useCallback(async (
+    revision: KumihoRevision,
+    preferredArtifactKref?: string,
+  ) => {
+    setLoadingRevisionDetail(true);
+    try {
+      const [nextArtifacts, nextEdges] = await Promise.all([
+        kumihoProxy<KumihoArtifact[]>('/artifacts', { revision_kref: revision.kref }).catch(() => []),
+        kumihoProxy<KumihoEdge[]>('/edges', { kref: revision.kref, direction: 'both' }).catch(() => []),
+      ]);
+      setArtifacts(nextArtifacts);
+      setSelectedArtifact(
+        nextArtifacts.find((artifact) => artifact.kref === preferredArtifactKref) ?? nextArtifacts[0] ?? null,
+      );
+      setEdges(nextEdges);
+    } finally {
+      setLoadingRevisionDetail(false);
+    }
+  }, []);
 
   useEffect(() => {
     if (!currentSpacePath) return;
@@ -306,20 +356,15 @@ export default function Assets() {
       return;
     }
 
-    setLoadingRevisionDetail(true);
     setSelectedArtifact(null);
 
-    Promise.all([
-      kumihoProxy<KumihoArtifact[]>('/artifacts', { revision_kref: selectedRevision.kref }).catch(() => []),
-      kumihoProxy<KumihoEdge[]>('/edges', { kref: selectedRevision.kref, direction: 'both' }).catch(() => []),
-    ])
-      .then(([nextArtifacts, nextEdges]) => {
-        setArtifacts(nextArtifacts);
-        setSelectedArtifact(nextArtifacts[0] ?? null);
-        setEdges(nextEdges);
-      })
-      .finally(() => setLoadingRevisionDetail(false));
-  }, [selectedRevision?.kref]);
+    refreshRevisionDetail(selectedRevision).catch(() => {
+      setArtifacts([]);
+      setSelectedArtifact(null);
+      setEdges([]);
+      setLoadingRevisionDetail(false);
+    });
+  }, [refreshRevisionDetail, selectedRevision?.kref]);
 
   /* ---- callbacks ---- */
 
@@ -381,6 +426,143 @@ export default function Assets() {
     setSearchResults([]);
     setSearching(false);
   }, []);
+
+  const mergeItem = useCallback((updated: KumihoItem) => {
+    setItems((prev) => prev.map((item) => (item.kref === updated.kref ? updated : item)));
+    setSearchResults((prev) => prev.map((result) => (
+      result.item.kref === updated.kref ? { ...result, item: updated } : result
+    )));
+    setSelectedItem((current) => (current?.kref === updated.kref ? updated : current));
+  }, []);
+
+  const mergeRevision = useCallback((updated: KumihoRevision, publishedExclusive = false) => {
+    const normalized = {
+      ...updated,
+      published: revisionIsPublished(updated),
+      tags: revisionIsPublished(updated) && !updated.tags.includes('published')
+        ? [...updated.tags, 'published']
+        : updated.tags,
+    };
+    setRevisions((prev) => prev.map((revision) => {
+      if (revision.kref === normalized.kref) return normalized;
+      if (!publishedExclusive) return revision;
+      return {
+        ...revision,
+        published: false,
+        tags: revision.tags.filter((tag) => tag !== 'published'),
+      };
+    }));
+    setSelectedRevision((current) => (current?.kref === normalized.kref ? normalized : current));
+  }, []);
+
+  const mergeArtifact = useCallback((updated: KumihoArtifact) => {
+    setArtifacts((prev) => prev.map((artifact) => (artifact.kref === updated.kref ? updated : artifact)));
+    setSelectedArtifact((current) => (current?.kref === updated.kref ? updated : current));
+  }, []);
+
+  const handleToggleItemDeprecation = useCallback(async () => {
+    if (!selectedItem) return;
+    const next = !selectedItem.deprecated;
+    setActionBusy('item-deprecate');
+    try {
+      const updated = await toggleAssetItemDeprecation(selectedItem.kref, next);
+      mergeItem(updated);
+      showNotice('success', next ? t('assets.toast.item_deprecated') : t('assets.toast.item_restored'));
+    } catch (err) {
+      showNotice('error', err instanceof Error ? err.message : t('assets.err.action'));
+    } finally {
+      setActionBusy(null);
+    }
+  }, [mergeItem, selectedItem, showNotice, t]);
+
+  const handleToggleRevisionDeprecation = useCallback(async () => {
+    if (!selectedRevision) return;
+    const next = !selectedRevision.deprecated;
+    setActionBusy('revision-deprecate');
+    try {
+      const updated = await toggleAssetRevisionDeprecation(selectedRevision.kref, next);
+      mergeRevision(updated);
+      showNotice('success', next ? t('assets.toast.revision_deprecated') : t('assets.toast.revision_restored'));
+    } catch (err) {
+      showNotice('error', err instanceof Error ? err.message : t('assets.err.action'));
+    } finally {
+      setActionBusy(null);
+    }
+  }, [mergeRevision, selectedRevision, showNotice, t]);
+
+  const handlePublishRevision = useCallback(async () => {
+    if (!selectedRevision) return;
+    setActionBusy('revision-publish');
+    try {
+      const updated = await publishAssetRevision(selectedRevision.kref);
+      mergeRevision(updated, true);
+      showNotice('success', t('assets.toast.revision_published'));
+    } catch (err) {
+      showNotice('error', err instanceof Error ? err.message : t('assets.err.action'));
+    } finally {
+      setActionBusy(null);
+    }
+  }, [mergeRevision, selectedRevision, showNotice, t]);
+
+  const handleToggleArtifactDeprecation = useCallback(async (artifact: KumihoArtifact) => {
+    const next = !artifact.deprecated;
+    setActionBusy(`artifact-deprecate:${artifact.kref}`);
+    try {
+      const updated = await toggleAssetArtifactDeprecation(artifact.kref, next);
+      mergeArtifact(updated);
+      showNotice('success', next ? t('assets.toast.artifact_deprecated') : t('assets.toast.artifact_restored'));
+    } catch (err) {
+      showNotice('error', err instanceof Error ? err.message : t('assets.err.action'));
+    } finally {
+      setActionBusy(null);
+    }
+  }, [mergeArtifact, showNotice, t]);
+
+  const handleOpenArtifactEditor = useCallback(async (artifact: KumihoArtifact) => {
+    setEditingArtifact(artifact);
+    setArtifactDraft('');
+    setArtifactDraftLoading(true);
+    try {
+      const text = await fetchArtifactBodyText(artifact.location);
+      setArtifactDraft(text);
+    } catch (err) {
+      showNotice('error', err instanceof Error ? err.message : t('assets.err.load_artifact'));
+      setEditingArtifact(null);
+    } finally {
+      setArtifactDraftLoading(false);
+    }
+  }, [showNotice, t]);
+
+  const handleSaveArtifactDraft = useCallback(async () => {
+    if (!editingArtifact || !selectedRevision) return;
+    setActionBusy('artifact-save');
+    try {
+      const result = await updateAssetArtifactContent(
+        editingArtifact.kref,
+        selectedRevision.kref,
+        artifactDraft,
+      );
+      if (result.created_revision) {
+        const nextRevision = {
+          ...result.revision,
+          published: revisionIsPublished(result.revision),
+        };
+        setRevisions((prev) => [nextRevision, ...prev.filter((revision) => revision.kref !== nextRevision.kref)]
+          .sort((a, b) => b.number - a.number));
+        setSelectedRevision(nextRevision);
+        await refreshRevisionDetail(nextRevision, result.artifact.kref);
+        showNotice('success', t('assets.toast.artifact_saved_new_revision'));
+      } else {
+        await refreshRevisionDetail(selectedRevision, editingArtifact.kref);
+        showNotice('success', t('assets.toast.artifact_saved'));
+      }
+      setEditingArtifact(null);
+    } catch (err) {
+      showNotice('error', err instanceof Error ? err.message : t('assets.err.action'));
+    } finally {
+      setActionBusy(null);
+    }
+  }, [artifactDraft, editingArtifact, refreshRevisionDetail, selectedRevision, showNotice, t]);
 
   /* ---- derived ---- */
 
@@ -490,6 +672,19 @@ export default function Assets() {
         <div className="flex items-center gap-2 text-sm" style={{ color: 'var(--construct-status-danger)' }}>
           <AlertTriangle className="h-4 w-4 shrink-0" />
           {error}
+        </div>
+      ) : null}
+      {notice ? (
+        <div
+          className="flex items-center gap-2 rounded-[8px] border px-3 py-2 text-sm"
+          style={{
+            borderColor: notice.tone === 'success' ? 'rgba(125,255,155,0.24)' : 'rgba(255,107,122,0.24)',
+            color: notice.tone === 'success' ? 'var(--construct-status-success)' : 'var(--construct-status-danger)',
+            background: notice.tone === 'success' ? 'rgba(125,255,155,0.08)' : 'rgba(255,107,122,0.08)',
+          }}
+        >
+          {notice.tone === 'success' ? <Check className="h-4 w-4 shrink-0" /> : <AlertTriangle className="h-4 w-4 shrink-0" />}
+          {notice.message}
         </div>
       ) : null}
 
@@ -711,6 +906,16 @@ export default function Assets() {
                 <span className="text-xs" style={{ color: 'var(--construct-text-faint)' }}>
                   {tpl(revisions.length === 1 ? 'assets.rev_count_one' : 'assets.rev_count', { count: revisions.length })}
                 </span>
+                <button
+                  type="button"
+                  className="construct-button ml-auto h-8 px-2 text-xs"
+                  onClick={handleToggleItemDeprecation}
+                  disabled={actionBusy === 'item-deprecate'}
+                  title={selectedItem.deprecated ? t('assets.action.restore_item') : t('assets.action.deprecate_item')}
+                >
+                  {actionBusy === 'item-deprecate' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Ban className="h-3.5 w-3.5" />}
+                  {selectedItem.deprecated ? t('assets.action.restore') : t('assets.action.deprecate')}
+                </button>
               </div>
 
               {/* Author & date */}
@@ -735,9 +940,35 @@ export default function Assets() {
                       {t('assets.section.revisions_empty')}
                     </div>
                   ) : (
-                    <div className="max-h-[20rem] space-y-1.5 overflow-y-auto">
-                      {revisions.map((revision) => {
+                    <div className="space-y-2">
+                      {selectedRevision ? (
+                        <div className="flex flex-wrap gap-2 rounded-[10px] border p-2" style={{ borderColor: 'var(--construct-border-soft)' }}>
+                          <button
+                            type="button"
+                            className="construct-button h-8 px-2 text-xs"
+                            onClick={handlePublishRevision}
+                            disabled={revisionIsPublished(selectedRevision) || actionBusy === 'revision-publish'}
+                            title={t('assets.action.publish_revision')}
+                          >
+                            {actionBusy === 'revision-publish' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Tag className="h-3.5 w-3.5" />}
+                            {revisionIsPublished(selectedRevision) ? t('assets.action.published') : t('assets.action.publish')}
+                          </button>
+                          <button
+                            type="button"
+                            className="construct-button h-8 px-2 text-xs"
+                            onClick={handleToggleRevisionDeprecation}
+                            disabled={actionBusy === 'revision-deprecate'}
+                            title={selectedRevision.deprecated ? t('assets.action.restore_revision') : t('assets.action.deprecate_revision')}
+                          >
+                            {actionBusy === 'revision-deprecate' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Ban className="h-3.5 w-3.5" />}
+                            {selectedRevision.deprecated ? t('assets.action.restore') : t('assets.action.deprecate')}
+                          </button>
+                        </div>
+                      ) : null}
+                      <div className="max-h-[20rem] space-y-1.5 overflow-y-auto">
+                        {revisions.map((revision) => {
                         const isRevActive = selectedRevision?.kref === revision.kref;
+                        const published = revisionIsPublished(revision);
                         return (
                           <button
                             key={revision.kref}
@@ -765,8 +996,11 @@ export default function Assets() {
                                 {revision.latest ? (
                                   <TagChip label={t('assets.tag.latest')} tone="var(--construct-signal-live)" />
                                 ) : null}
-                                {revision.published ? (
+                                {published ? (
                                   <TagChip label={t('assets.tag.published')} tone="var(--construct-status-success)" />
+                                ) : null}
+                                {revision.deprecated ? (
+                                  <TagChip label={t('assets.deprecated')} tone="var(--construct-status-warning)" />
                                 ) : null}
                                 {revision.tags
                                   .filter((tag) => tag !== 'latest' && tag !== 'published')
@@ -783,7 +1017,8 @@ export default function Assets() {
                             </span>
                           </button>
                         );
-                      })}
+                        })}
+                      </div>
                     </div>
                   )}
                 </CollapsibleSection>
@@ -816,6 +1051,7 @@ export default function Assets() {
                               selectedArtifact?.kref === artifact.kref
                                 ? 'var(--construct-signal-live-soft)'
                                 : 'color-mix(in srgb, var(--construct-bg-elevated) 50%, transparent)',
+                            opacity: artifact.deprecated ? 0.62 : 1,
                           }}
                         >
                           <div className="flex items-center gap-2">
@@ -826,6 +1062,30 @@ export default function Assets() {
                             >
                               {artifact.name}
                             </span>
+                            {artifact.deprecated ? (
+                              <span className="rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase" style={{ color: 'var(--construct-status-warning)', background: 'rgba(245,158,11,0.12)' }}>
+                                {t('assets.deprecated')}
+                              </span>
+                            ) : null}
+                            {artifact.location ? (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleOpenArtifactEditor(artifact);
+                                }}
+                                className="inline-flex items-center gap-1 rounded-[6px] px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider shrink-0 transition"
+                                style={{
+                                  background: 'var(--construct-bg-elevated)',
+                                  color: 'var(--construct-text-secondary)',
+                                  border: '1px solid var(--construct-border-strong)',
+                                }}
+                                aria-label={`${t('assets.action.edit_artifact')} ${artifact.name}`}
+                              >
+                                <Edit3 className="h-3 w-3" />
+                                {t('assets.action.edit')}
+                              </button>
+                            ) : null}
                             {artifact.location ? (
                               <button
                                 type="button"
@@ -842,9 +1102,26 @@ export default function Assets() {
                                 aria-label={`View ${artifact.name}`}
                               >
                                 <Eye className="h-3 w-3" />
-                                View
+                                {t('assets.action.view')}
                               </button>
                             ) : null}
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleToggleArtifactDeprecation(artifact);
+                              }}
+                              className="inline-flex items-center gap-1 rounded-[6px] px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider shrink-0 transition"
+                              style={{
+                                background: 'var(--construct-bg-elevated)',
+                                color: artifact.deprecated ? 'var(--construct-status-success)' : 'var(--construct-status-warning)',
+                                border: '1px solid var(--construct-border-strong)',
+                              }}
+                              aria-label={`${artifact.deprecated ? t('assets.action.restore_artifact') : t('assets.action.deprecate_artifact')} ${artifact.name}`}
+                            >
+                              {actionBusy === `artifact-deprecate:${artifact.kref}` ? <Loader2 className="h-3 w-3 animate-spin" /> : <Ban className="h-3 w-3" />}
+                              {artifact.deprecated ? t('assets.action.restore') : t('assets.action.deprecate')}
+                              </button>
                           </div>
                           {artifact.location ? (
                             <div
@@ -955,6 +1232,54 @@ export default function Assets() {
         ) : null}
       </div>
     </div>
+    {editingArtifact ? (
+      <Modal
+        title={tpl('assets.editor.title', { name: editingArtifact.name })}
+        description={
+          selectedRevision && revisionIsPublished(selectedRevision)
+            ? t('assets.editor.published_desc')
+            : t('assets.editor.mutable_desc')
+        }
+        onClose={() => {
+          if (actionBusy !== 'artifact-save') setEditingArtifact(null);
+        }}
+        size="2xl"
+      >
+        <div className="mb-3 flex items-center gap-2 text-xs" style={{ color: 'var(--construct-text-faint)' }}>
+          <FileText className="h-3.5 w-3.5" />
+          <span className="truncate font-mono">{editingArtifact.kref}</span>
+        </div>
+        {artifactDraftLoading ? (
+          <StateMessage tone="loading" compact title={t('assets.loading.generic')} />
+        ) : (
+          <textarea
+            className="construct-input min-h-[24rem] w-full resize-y font-mono text-xs leading-5"
+            value={artifactDraft}
+            onChange={(event) => setArtifactDraft(event.target.value)}
+            spellCheck={false}
+          />
+        )}
+        <div className="mt-4 flex justify-end gap-2">
+          <button
+            type="button"
+            className="construct-button"
+            onClick={() => setEditingArtifact(null)}
+            disabled={actionBusy === 'artifact-save'}
+          >
+            {t('common.cancel')}
+          </button>
+          <button
+            type="button"
+            className="construct-button construct-button-primary"
+            onClick={handleSaveArtifactDraft}
+            disabled={artifactDraftLoading || actionBusy === 'artifact-save'}
+          >
+            {actionBusy === 'artifact-save' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+            {t('assets.action.save_artifact')}
+          </button>
+        </div>
+      </Modal>
+    ) : null}
     {viewerArtifact ? (
       <ArtifactViewerModal
         artifact={viewerArtifact}

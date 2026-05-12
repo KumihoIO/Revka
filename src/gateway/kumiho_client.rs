@@ -946,6 +946,30 @@ impl KumihoClient {
         Ok(())
     }
 
+    /// Deprecate or restore a revision.
+    pub async fn deprecate_revision(
+        &self,
+        revision_kref: &str,
+        deprecated: bool,
+    ) -> Result<RevisionResponse> {
+        let resp = self
+            .send_no_retry(|| {
+                self.client
+                    .post(self.url("/revisions/deprecate"))
+                    .header("X-Kumiho-Token", &self.service_token)
+                    .query(&[
+                        ("kref", revision_kref),
+                        ("deprecated", if deprecated { "true" } else { "false" }),
+                    ])
+            })
+            .await?;
+
+        let resp = self.check_response(resp).await?;
+        resp.json::<RevisionResponse>()
+            .await
+            .map_err(|e| KumihoError::Decode(e.to_string()))
+    }
+
     /// Get a revision by tag (e.g. "published").
     pub async fn get_revision_by_tag(
         &self,
@@ -1499,6 +1523,47 @@ impl KumihoClient {
                     .get(self.url("/artifacts/by-kref"))
                     .header("X-Kumiho-Token", &self.service_token)
                     .query(&[("revision_kref", revision_kref), ("name", name)])
+            })
+            .await?;
+
+        let resp = self.check_response(resp).await?;
+        resp.json::<ArtifactResponse>()
+            .await
+            .map_err(|e| KumihoError::Decode(e.to_string()))
+    }
+
+    /// Get a specific artifact by artifact kref.
+    pub async fn get_artifact(&self, artifact_kref: &str) -> Result<ArtifactResponse> {
+        let resp = self
+            .send_with_retry(|| {
+                self.client
+                    .get(self.url("/artifacts/by-kref"))
+                    .header("X-Kumiho-Token", &self.service_token)
+                    .query(&[("kref", artifact_kref)])
+            })
+            .await?;
+
+        let resp = self.check_response(resp).await?;
+        resp.json::<ArtifactResponse>()
+            .await
+            .map_err(|e| KumihoError::Decode(e.to_string()))
+    }
+
+    /// Deprecate or restore an artifact.
+    pub async fn deprecate_artifact(
+        &self,
+        artifact_kref: &str,
+        deprecated: bool,
+    ) -> Result<ArtifactResponse> {
+        let resp = self
+            .send_no_retry(|| {
+                self.client
+                    .post(self.url("/artifacts/deprecate"))
+                    .header("X-Kumiho-Token", &self.service_token)
+                    .query(&[
+                        ("kref", artifact_kref),
+                        ("deprecated", if deprecated { "true" } else { "false" }),
+                    ])
             })
             .await?;
 

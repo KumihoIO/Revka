@@ -11,6 +11,7 @@ pub mod api;
 pub mod api_agents;
 pub mod api_architect;
 pub mod api_artifact_body;
+pub mod api_assets;
 pub mod api_attachments;
 pub mod api_auth_profiles;
 pub mod api_clawhub;
@@ -1580,6 +1581,39 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
             Duration::from_secs(120),
         ));
 
+    // Asset Browser artifact-content edits are JSON payloads and can be larger
+    // than the default 64 KiB API cap. Keep the write surface typed and bounded
+    // without loosening limits for the rest of the gateway.
+    const ASSET_EDIT_MAX_BODY: usize = 2 * 1024 * 1024;
+    let asset_router = Router::new()
+        .route(
+            "/api/assets/items/deprecate",
+            post(api_assets::handle_deprecate_item),
+        )
+        .route(
+            "/api/assets/revisions/deprecate",
+            post(api_assets::handle_deprecate_revision),
+        )
+        .route(
+            "/api/assets/revisions/publish",
+            post(api_assets::handle_publish_revision),
+        )
+        .route(
+            "/api/assets/artifacts/deprecate",
+            post(api_assets::handle_deprecate_artifact),
+        )
+        .route(
+            "/api/assets/artifacts/content",
+            put(api_assets::handle_update_artifact_content),
+        )
+        .with_state(state.clone())
+        .layer(DefaultBodyLimit::disable())
+        .layer(RequestBodyLimitLayer::new(ASSET_EDIT_MAX_BODY))
+        .layer(TimeoutLayer::with_status_code(
+            StatusCode::REQUEST_TIMEOUT,
+            Duration::from_secs(30),
+        ));
+
     // Build router with middleware
     let inner = Router::new()
         // ── Admin routes (for CLI management) ──
@@ -1815,6 +1849,10 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
     // Merge attachments router (has its own 25 MiB body limit + 120s timeout,
     // outside the global 64 KiB / 30s caps).
     let inner = inner.merge(attachments_router);
+
+    // Merge Asset Browser write router (has its own bounded JSON body limit,
+    // outside the global 64 KiB cap).
+    let inner = inner.merge(asset_router);
 
     // Nest under path prefix when configured (axum strips prefix before routing).
     // nest() at "/prefix" handles both "/prefix" and "/prefix/*" but not "/prefix/"
