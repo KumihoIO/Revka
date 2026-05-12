@@ -26,6 +26,7 @@ from ._log import _log
 _CONFIG_PATH = os.path.expanduser("~/.construct/config.toml")
 _DEFAULT_HARNESS = "Construct"
 _DEFAULT_MEMORY = "CognitiveMemory"
+_DEFAULT_WORKSPACE_DIR = "~/.construct/workspace"
 
 # Manus step defaults. Overridable per-step via ManusStepConfig and at the
 # user level via [manus] in ~/.construct/config.toml. The api_key value
@@ -41,6 +42,7 @@ _DEFAULT_MANUS = {
 _cached_harness: str | None = None
 _cached_memory: str | None = None
 _cached_manus: dict | None = None
+_cached_workspace_dir: str | None = None
 
 
 def _read_section(section: str) -> dict:
@@ -159,3 +161,30 @@ def memory_project(*, force_reload: bool = False) -> str:
 
     _cached_memory = _DEFAULT_MEMORY
     return _cached_memory
+
+
+def workspace_dir(*, force_reload: bool = False) -> str:
+    """Return Construct's resolved workspace directory.
+
+    Rust resolves this at runtime and stores generated assets below it. The
+    Operator sidecar mirrors the same default path and honors
+    ``CONSTRUCT_WORKSPACE`` when present so artifacts are browser-viewable via
+    the gateway workspace asset endpoints.
+    """
+    global _cached_workspace_dir
+    if _cached_workspace_dir is not None and not force_reload:
+        return _cached_workspace_dir
+
+    env_value = os.environ.get("CONSTRUCT_WORKSPACE")
+    if isinstance(env_value, str) and env_value.strip():
+        path = os.path.expanduser(env_value.strip())
+        # When CONSTRUCT_WORKSPACE points at a profile/config directory, Rust
+        # uses its nested workspace/ directory. If it already points at a data
+        # directory without config.toml, use it directly.
+        if os.path.exists(os.path.join(path, "config.toml")):
+            path = os.path.join(path, "workspace")
+        _cached_workspace_dir = os.path.abspath(path)
+        return _cached_workspace_dir
+
+    _cached_workspace_dir = os.path.abspath(os.path.expanduser(_DEFAULT_WORKSPACE_DIR))
+    return _cached_workspace_dir
