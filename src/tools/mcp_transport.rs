@@ -4,7 +4,7 @@ use std::borrow::Cow;
 
 use anyhow::{Context, Result, anyhow, bail};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::process::{Child, Command};
+use tokio::process::Command;
 use tokio::sync::{Mutex, Notify, oneshot};
 use tokio::time::{Duration, timeout};
 use tokio_stream::StreamExt;
@@ -44,13 +44,15 @@ pub trait McpTransportConn: Send + Sync {
 
 /// Stdio-based transport (spawn local process).
 pub struct StdioTransport {
-    _child: Child,
+    child_shutdown: Option<oneshot::Sender<()>>,
+    _child_reaper: tokio::task::JoinHandle<()>,
     stdin: tokio::process::ChildStdin,
     stdout_lines: tokio::io::Lines<BufReader<tokio::process::ChildStdout>>,
 }
 
 impl StdioTransport {
     pub fn new(config: &McpServerConfig) -> Result<Self> {
+        let server_name = config.name.clone();
         let mut child = Command::new(&config.command)
             .args(&config.args)
             .envs(&config.env)
@@ -70,9 +72,48 @@ impl StdioTransport {
             .take()
             .ok_or_else(|| anyhow!("no stdout on MCP server `{}`", config.name))?;
         let stdout_lines = BufReader::new(stdout).lines();
+        let (child_shutdown, mut shutdown_rx) = oneshot::channel::<()>();
+        let child_reaper = tokio::spawn(async move {
+            tokio::select! {
+                status = child.wait() => {
+                    match status {
+                        Ok(status) => {
+                            tracing::debug!(
+                                "MCP stdio server `{server_name}` exited with status {status}"
+                            );
+                        }
+                        Err(e) => {
+                            tracing::debug!(
+                                "MCP stdio server `{server_name}` wait failed: {e}"
+                            );
+                        }
+                    }
+                }
+                _ = &mut shutdown_rx => {
+                    if let Err(e) = child.start_kill() {
+                        tracing::debug!(
+                            "MCP stdio server `{server_name}` kill on close failed: {e}"
+                        );
+                    }
+                    match child.wait().await {
+                        Ok(status) => {
+                            tracing::debug!(
+                                "MCP stdio server `{server_name}` stopped with status {status}"
+                            );
+                        }
+                        Err(e) => {
+                            tracing::debug!(
+                                "MCP stdio server `{server_name}` wait after close failed: {e}"
+                            );
+                        }
+                    }
+                }
+            }
+        });
 
         Ok(Self {
-            _child: child,
+            child_shutdown: Some(child_shutdown),
+            _child_reaper: child_reaper,
             stdin,
             stdout_lines,
         })
@@ -148,7 +189,18 @@ impl McpTransportConn for StdioTransport {
 
     async fn close(&mut self) -> Result<()> {
         let _ = self.stdin.shutdown().await;
+        if let Some(shutdown) = self.child_shutdown.take() {
+            let _ = shutdown.send(());
+        }
         Ok(())
+    }
+}
+
+impl Drop for StdioTransport {
+    fn drop(&mut self) {
+        if let Some(shutdown) = self.child_shutdown.take() {
+            let _ = shutdown.send(());
+        }
     }
 }
 
