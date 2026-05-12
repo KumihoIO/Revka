@@ -127,8 +127,7 @@ class TestToolCaptureSkill:
         pool = FakeSkillPool()
         item = {
             "kref": "kref://CognitiveMemory/Skills/operator-review.skill",
-            "name": "operator-review",
-            "kind": "skill",
+            "name": "operator-review.skill",
         }
         pool.items.append(item)
         previous_path = tmp_path / "old" / "SKILL.md"
@@ -164,3 +163,73 @@ class TestToolCaptureSkill:
         assert rev_meta["previous_revision_kref"].endswith("?r=2")
         assert rev_meta["previous_artifact_path"] == str(previous_path)
         assert rev_meta["previous_content_length"] == str(len("# Old Guide\n\nReview quickly."))
+
+    async def test_same_name_bundle_is_not_updated_as_skill(self, tmp_path):
+        pool = FakeSkillPool()
+        bundle = {
+            "kref": "kref://CognitiveMemory/Skills/cc-char-morgas.bundle",
+            "name": "cc-char-morgas",
+            "kind": "bundle",
+        }
+        pool.items.append(bundle)
+        pool.revisions[(bundle["kref"], "published")] = {
+            "kref": "kref://CognitiveMemory/Skills/cc-char-morgas.bundle?r=3",
+        }
+
+        with (
+            patch("operator_mcp.tool_handlers.skills.memory_project", return_value="CognitiveMemory"),
+            patch("operator_mcp.tool_handlers.skills.workspace_dir", return_value=str(tmp_path)),
+        ):
+            result = await tool_capture_skill({
+                "name": "cc-char-morgas",
+                "domain": "writing",
+                "description": "Character guide.",
+                "procedure": "# Morgas\n\nUse the current guide.",
+            }, pool)
+
+        assert result["captured"] is True
+        assert result["updated_existing"] is False
+        assert result["item_kref"].endswith("/cc-char-morgas.skill")
+        assert not result["item_kref"].endswith(".bundle")
+        assert pool.created_items == [
+            (
+                "/CognitiveMemory/Skills",
+                "cc-char-morgas",
+                "skill",
+                {
+                    "description": "Character guide.",
+                    "domain": "writing",
+                    "source": "operator-capture-skill",
+                },
+            ),
+        ]
+        assert pool.created_revisions[0][0] == result["item_kref"]
+
+    async def test_same_name_skilldef_is_not_updated_as_skill(self, tmp_path):
+        pool = FakeSkillPool()
+        skilldef = {
+            "kref": "kref://CognitiveMemory/Skills/cc-char-morgas.skilldef",
+            "name": "cc-char-morgas",
+            "kind": "skilldef",
+        }
+        pool.items.append(skilldef)
+        pool.revisions[(skilldef["kref"], "published")] = {
+            "kref": "kref://CognitiveMemory/Skills/cc-char-morgas.skilldef?r=3",
+        }
+
+        with (
+            patch("operator_mcp.tool_handlers.skills.memory_project", return_value="CognitiveMemory"),
+            patch("operator_mcp.tool_handlers.skills.workspace_dir", return_value=str(tmp_path)),
+        ):
+            result = await tool_capture_skill({
+                "name": "cc-char-morgas",
+                "domain": "writing",
+                "description": "Character guide.",
+                "procedure": "# Morgas\n\nUse the current guide.",
+            }, pool)
+
+        assert result["captured"] is True
+        assert result["updated_existing"] is False
+        assert result["item_kref"].endswith("/cc-char-morgas.skill")
+        assert pool.created_items[0][2] == "skill"
+        assert pool.created_revisions[0][0] == result["item_kref"]
