@@ -2,9 +2,6 @@
 //!
 //! Proxies to Kumiho FastAPI for persistent skill storage.  Each skill is a
 //! Kumiho item of kind `"skill"` in the `<memory_project>/Skills` space.
-//! Items created before the kind rename use the legacy `"skilldef"` kind
-//! and remain readable via the search fallback in
-//! [`super::kumiho_client::KumihoClient::search_skill_items_with_legacy`].
 //!
 //! ## Storage layout
 //!
@@ -93,6 +90,50 @@ fn skill_project(state: &AppState) -> String {
 /// Full space path for skills, e.g. "/CognitiveMemory/Skills".
 fn skill_space_path(state: &AppState) -> String {
     format!("/{}/{}", skill_project(state), SKILL_SPACE_NAME)
+}
+
+fn is_canonical_skill_item(item: &ItemResponse) -> bool {
+    item.kind == SKILL_KIND
+}
+
+fn canonical_skill_items(items: Vec<ItemResponse>) -> Vec<ItemResponse> {
+    items.into_iter().filter(is_canonical_skill_item).collect()
+}
+
+fn kref_kind(kref: &str) -> Option<&str> {
+    let path = kref
+        .split_once('?')
+        .map(|(path, _)| path)
+        .unwrap_or(kref)
+        .trim_end_matches('/');
+    path.rsplit('/')
+        .next()?
+        .rsplit_once('.')
+        .map(|(_, kind)| kind)
+}
+
+fn reject_non_skill_kref(kref: &str) -> Option<axum::response::Response> {
+    match kref_kind(kref) {
+        Some(SKILL_KIND) => None,
+        Some(kind) => Some(
+            (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": format!("Expected a {SKILL_KIND} kref for the Skills API, got {kind}")
+                })),
+            )
+                .into_response(),
+        ),
+        None => Some(
+            (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": "Expected a kref with an item kind suffix for the Skills API"
+                })),
+            )
+                .into_response(),
+        ),
+    }
 }
 
 // ── Query / request types ───────────────────────────────────────────────
@@ -371,24 +412,16 @@ pub async fn handle_list_skills(
     let project_name = skill_project(&state);
     let space_path = skill_space_path(&state);
 
-    // Search mode — use Kumiho fulltext search.  Goes through the
-    // legacy-aware helper so items written before the `skilldef` →
-    // `skill` rename remain discoverable via a single user-facing query.
+    // Search mode — use Kumiho fulltext search for canonical skill items only.
     if let Some(ref q) = query.q {
         let items_result = client
-            .search_items_with_legacy(
-                q,
-                &project_name,
-                SKILL_KIND,
-                crate::skills::registration::LEGACY_SKILL_ITEM_KIND,
-                query.include_deprecated,
-            )
+            .search_items(q, &project_name, SKILL_KIND, query.include_deprecated)
             .await
             .map(|results| results.into_iter().map(|sr| sr.item).collect::<Vec<_>>());
 
         return match items_result {
             Ok(items) => {
-                let skills = enrich_items(&client, items).await;
+                let skills = enrich_items(&client, canonical_skill_items(items)).await;
                 let total_count = skills.len() as u32;
                 let per_page = query.per_page.unwrap_or(9).min(50).max(1);
                 let page = query.page.unwrap_or(1).max(1);
@@ -421,10 +454,7 @@ pub async fn handle_list_skills(
     let items: Vec<ItemResponse> = match client.list_items(&space_path, include_deprecated).await {
         Ok(items) => items,
         Err(_) => {
-            // Fallback: name_filter queries covering all skill items
-            // (canonical `"skill"` kind plus any legacy `"skilldef"`
-            // items still in the space — `list_items` doesn't filter by
-            // kind so both surface naturally).
+            // Fallback: name_filter queries covering canonical skill items.
             let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
             let mut fallback_items: Vec<ItemResponse> = Vec::new();
             for filter in &["a", "d"] {
@@ -439,7 +469,7 @@ pub async fn handle_list_skills(
                     }
                 }
             }
-            fallback_items
+            canonical_skill_items(fallback_items)
         }
     };
 
@@ -448,7 +478,7 @@ pub async fn handle_list_skills(
         let _ = client.ensure_space(&project_name, SKILL_SPACE_NAME).await;
     }
 
-    let skills = enrich_items(&client, items).await;
+    let skills = enrich_items(&client, canonical_skill_items(items)).await;
     set_cached_skills(&skills, query.include_deprecated);
 
     // Pagination
@@ -638,6 +668,10 @@ pub async fn handle_deprecate_skill(
     }
 
     let kref = body.kref.clone();
+    if let Some(response) = reject_non_skill_kref(&kref) {
+        return response;
+    }
+
     let client = build_kumiho_client(&state);
 
     match client.deprecate_item(&kref, body.deprecated).await {
@@ -670,5 +704,54 @@ pub async fn handle_delete_skill(
             StatusCode::NO_CONTENT.into_response()
         }
         Err(e) => kumiho_err(e).into_response(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn item(kref: &str, kind: &str) -> ItemResponse {
+        ItemResponse {
+            kref: kref.to_string(),
+            name: kref.to_string(),
+            item_name: kref.to_string(),
+            kind: kind.to_string(),
+            deprecated: false,
+            created_at: None,
+            metadata: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn canonical_skill_items_filters_non_skill_records() {
+        let items = vec![
+            item("kref://CognitiveMemory/Skills/a.skill", "skill"),
+            item("kref://CognitiveMemory/Skills/b.bundle", "bundle"),
+            item(
+                "kref://CognitiveMemory/Skills/c.conversation",
+                "conversation",
+            ),
+            item("kref://CognitiveMemory/Skills/d.skilldef", "skilldef"),
+        ];
+
+        let filtered = canonical_skill_items(items);
+
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].kind, SKILL_KIND);
+        assert_eq!(filtered[0].kref, "kref://CognitiveMemory/Skills/a.skill");
+    }
+
+    #[test]
+    fn kref_kind_ignores_revision_and_artifact_query() {
+        assert_eq!(
+            kref_kind("kref://CognitiveMemory/Skills/a.skill?r=3&a=SKILL.md"),
+            Some("skill")
+        );
+        assert_eq!(
+            kref_kind("kref://CognitiveMemory/Skills/b.bundle?r=1"),
+            Some("bundle")
+        );
+        assert_eq!(kref_kind("kref://CognitiveMemory/Skills/no-kind"), None);
     }
 }

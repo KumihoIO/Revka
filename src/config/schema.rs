@@ -13006,6 +13006,7 @@ channel_ids = ["C123", "D456"]
             idempotency_max_keys: 4096,
             session_persistence: true,
             session_ttl_hours: 0,
+            chat_keepalive_secs: 45,
             pairing_dashboard: PairingDashboardConfig::default(),
             tls: None,
         };
@@ -13023,6 +13024,7 @@ channel_ids = ["C123", "D456"]
         assert_eq!(parsed.rate_limit_max_keys, 2048);
         assert_eq!(parsed.idempotency_ttl_secs, 600);
         assert_eq!(parsed.idempotency_max_keys, 4096);
+        assert_eq!(parsed.chat_keepalive_secs, 45);
     }
 
     #[test]
