@@ -553,6 +553,7 @@ fn memory_config_defaults_for_backend(backend: &str) -> MemoryConfig {
         purge_after_days: if profile.uses_sqlite_hygiene { 30 } else { 0 },
         conversation_retention_days: 30,
         min_relevance_score: 0.4,
+        retrieval_limit: 3,
         response_cache_enabled: false,
         response_cache_ttl_minutes: 60,
         response_cache_max_entries: 5_000,

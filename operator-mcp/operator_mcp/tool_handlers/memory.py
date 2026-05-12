@@ -13,7 +13,11 @@ from __future__ import annotations
 
 import asyncio
 import re
+import time
 from typing import Any
+
+from .._log import _log
+from ..construct_config import memory_retrieval_limit
 
 # Strip question framing from queries before forwarding to engage. The
 # graph engine scores documents against the query terms; question framing
@@ -106,7 +110,7 @@ async def tool_memory_retrieve_op(args: dict[str, Any]) -> dict[str, Any]:
         topics=args.get("topics"),
         space_paths=args.get("space_paths"),
         memory_item_kind=args.get("memory_item_kind", "conversation"),
-        limit=args.get("limit", 5),
+        limit=args.get("limit", memory_retrieval_limit()),
         mode=args.get("mode", "search"),
         memory_types=args.get("memory_types"),
     )
@@ -248,9 +252,35 @@ async def tool_memory_engage_op(args: dict[str, Any]) -> dict[str, Any]:
 
     forwarded = dict(args)
     forwarded["query"] = _normalize_query(forwarded["query"])
+    forwarded.setdefault("limit", memory_retrieval_limit())
     forwarded.setdefault("graph_augmented", True)
 
-    return await asyncio.to_thread(_km_tool_memory_engage, forwarded)
+    started = time.monotonic()
+    result = await asyncio.to_thread(_km_tool_memory_engage, forwarded)
+    elapsed = time.monotonic() - started
+    results = result.get("results") if isinstance(result, dict) else None
+    count = len(results) if isinstance(results, list) else result.get("count") if isinstance(result, dict) else None
+    titles: list[str] = []
+    if isinstance(results, list):
+        for item in results[:5]:
+            if not isinstance(item, dict):
+                continue
+            title = (
+                item.get("title")
+                or item.get("item_name")
+                or item.get("name")
+                or item.get("kref")
+            )
+            if title:
+                titles.append(str(title)[:80])
+    _log(
+        "memory_engage "
+        f"query={forwarded.get('query')!r} "
+        f"limit={forwarded.get('limit')} "
+        f"graph_augmented={forwarded.get('graph_augmented')} "
+        f"elapsed={elapsed:.2f}s count={count} titles={titles}"
+    )
+    return result
 
 
 async def tool_memory_reflect_op(args: dict[str, Any]) -> dict[str, Any]:

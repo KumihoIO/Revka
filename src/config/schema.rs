@@ -2278,6 +2278,14 @@ pub struct GatewayConfig {
     #[serde(default = "default_true")]
     pub session_persistence: bool,
 
+    /// Send WebSocket ping frames while an Operator chat turn is active.
+    ///
+    /// This keeps browser/proxy/tunnel connections alive during long provider
+    /// or tool waits that produce no streamed tokens. Set to `0` to disable.
+    /// Default: 25 seconds.
+    #[serde(default = "default_gateway_chat_keepalive_secs")]
+    pub chat_keepalive_secs: u64,
+
     /// Auto-archive stale gateway sessions older than N hours. 0 = disabled. Default: 0.
     #[serde(default)]
     pub session_ttl_hours: u32,
@@ -2319,6 +2327,10 @@ fn default_gateway_idempotency_max_keys() -> usize {
     10_000
 }
 
+fn default_gateway_chat_keepalive_secs() -> u64 {
+    25
+}
+
 fn default_true() -> bool {
     true
 }
@@ -2343,6 +2355,7 @@ impl Default for GatewayConfig {
             idempotency_ttl_secs: default_idempotency_ttl_secs(),
             idempotency_max_keys: default_gateway_idempotency_max_keys(),
             session_persistence: true,
+            chat_keepalive_secs: default_gateway_chat_keepalive_secs(),
             session_ttl_hours: 0,
             pairing_dashboard: PairingDashboardConfig::default(),
             tls: None,
@@ -4994,6 +5007,13 @@ pub struct MemoryConfig {
     /// context from bleeding into conversations. Default: 0.4
     #[serde(default = "default_min_relevance_score")]
     pub min_relevance_score: f64,
+    /// Maximum memory results to retrieve during automatic pre-turn recall.
+    ///
+    /// Applies to local memory recall and Kumiho `memory_engage` bootstrap calls.
+    /// Keep this low for Operator responsiveness; users can raise it for deeper
+    /// recall-heavy sessions. Default: 3.
+    #[serde(default = "default_memory_retrieval_limit")]
+    pub retrieval_limit: usize,
 
     // ── Response Cache (saves tokens on repeated prompts) ──────
     /// Enable LLM response caching to avoid paying for duplicate prompts
@@ -5077,6 +5097,9 @@ fn default_conversation_retention_days() -> u32 {
 fn default_min_relevance_score() -> f64 {
     0.4
 }
+fn default_memory_retrieval_limit() -> usize {
+    3
+}
 fn default_response_cache_ttl() -> u32 {
     60
 }
@@ -5098,6 +5121,7 @@ impl Default for MemoryConfig {
             purge_after_days: default_purge_after_days(),
             conversation_retention_days: default_conversation_retention_days(),
             min_relevance_score: default_min_relevance_score(),
+            retrieval_limit: default_memory_retrieval_limit(),
             response_cache_enabled: false,
             response_cache_ttl_minutes: default_response_cache_ttl(),
             response_cache_max_entries: default_response_cache_max(),
@@ -11149,6 +11173,7 @@ mod tests {
             SkillsPromptInjectionMode::Full
         );
         assert_eq!(c.provider_timeout_secs, 120);
+        assert_eq!(c.gateway.chat_keepalive_secs, 25);
         assert!(c.workspace_dir.to_string_lossy().contains("workspace"));
         assert!(c.config_path.to_string_lossy().contains("config.toml"));
     }
@@ -11353,6 +11378,7 @@ default_temperature = 0.7
         assert_eq!(m.archive_after_days, 7);
         assert_eq!(m.purge_after_days, 30);
         assert_eq!(m.conversation_retention_days, 30);
+        assert_eq!(m.retrieval_limit, 3);
     }
 
     #[test]

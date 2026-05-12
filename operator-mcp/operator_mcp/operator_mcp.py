@@ -25,7 +25,7 @@ from mcp.types import TextContent, Tool
 
 from ._log import _log
 from .cost_tracker import CostTracker
-from .construct_config import memory_project
+from .construct_config import memory_project, memory_retrieval_limit
 from .kumiho_clients import KumihoAgentPoolClient, KumihoSDKClient, KumihoTeamClient
 from .gateway_client import ConstructGatewayClient
 from .journal import SessionJournal
@@ -2328,7 +2328,7 @@ async def list_tools() -> list[Tool]:
                     "memory_types": {"type": "array", "items": {"type": "string"}, "description": "Filter by memory_type ('decision','fact','preference',...)"},
                     "keywords": {"type": "array", "items": {"type": "string"}},
                     "topics": {"type": "array", "items": {"type": "string"}},
-                    "limit": {"type": "integer", "default": 5},
+                    "limit": {"type": "integer", "default": memory_retrieval_limit()},
                     "mode": {"type": "string", "enum": ["search", "latest"], "default": "search"},
                     "memory_item_kind": {"type": "string", "default": "conversation"},
                 },
@@ -2387,7 +2387,7 @@ async def list_tools() -> list[Tool]:
                     "topics": {"type": "array", "items": {"type": "string"}},
                     "memory_item_kind": {"type": "string", "default": "conversation"},
                     "memory_types": {"type": "array", "items": {"type": "string"}, "description": "Filter by memory_type ('decision','fact','preference','summary',...)"},
-                    "limit": {"type": "integer", "default": 5},
+                    "limit": {"type": "integer", "default": memory_retrieval_limit()},
                     "mode": {"type": "string", "enum": ["search", "latest"], "default": "search"},
                 },
                 "required": ["query"],

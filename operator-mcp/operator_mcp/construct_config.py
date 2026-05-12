@@ -27,6 +27,7 @@ _CONFIG_PATH = os.path.expanduser("~/.construct/config.toml")
 _DEFAULT_HARNESS = "Construct"
 _DEFAULT_MEMORY = "CognitiveMemory"
 _DEFAULT_WORKSPACE_DIR = "~/.construct/workspace"
+_DEFAULT_MEMORY_RETRIEVAL_LIMIT = 3
 
 # Manus step defaults. Overridable per-step via ManusStepConfig and at the
 # user level via [manus] in ~/.construct/config.toml. The api_key value
@@ -43,6 +44,7 @@ _cached_harness: str | None = None
 _cached_memory: str | None = None
 _cached_manus: dict | None = None
 _cached_workspace_dir: str | None = None
+_cached_memory_retrieval_limit: int | None = None
 
 
 def _read_section(section: str) -> dict:
@@ -161,6 +163,21 @@ def memory_project(*, force_reload: bool = False) -> str:
 
     _cached_memory = _DEFAULT_MEMORY
     return _cached_memory
+
+
+def memory_retrieval_limit(*, force_reload: bool = False) -> int:
+    """Return [memory].retrieval_limit with a conservative default of 3."""
+    global _cached_memory_retrieval_limit
+    if _cached_memory_retrieval_limit is not None and not force_reload:
+        return _cached_memory_retrieval_limit
+
+    memory = _read_section("memory")
+    try:
+        value = int(memory.get("retrieval_limit", _DEFAULT_MEMORY_RETRIEVAL_LIMIT))
+    except (TypeError, ValueError):
+        value = _DEFAULT_MEMORY_RETRIEVAL_LIMIT
+    _cached_memory_retrieval_limit = max(1, value)
+    return _cached_memory_retrieval_limit
 
 
 def workspace_dir(*, force_reload: bool = False) -> str:

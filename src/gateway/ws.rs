@@ -891,6 +891,11 @@ async fn process_chat_message(
 
     // Drive the turn and relays in one select loop so the WebSocket can
     // receive a `stop` control frame while the agent is still working.
+    let keepalive_secs = state.config.lock().gateway.chat_keepalive_secs;
+    let mut keepalive_interval =
+        tokio::time::interval(std::time::Duration::from_secs(keepalive_secs.max(1)));
+    keepalive_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    keepalive_interval.tick().await;
     tokio::pin!(turn_fut);
     let result = loop {
         tokio::select! {
@@ -952,6 +957,11 @@ async fn process_chat_message(
                         let _ = sender.send(Message::Text(notice.to_string().into())).await;
                     }
                     _ => {}
+                }
+            }
+            _ = keepalive_interval.tick(), if keepalive_secs > 0 => {
+                if sender.send(Message::Ping(Vec::new().into())).await.is_err() {
+                    break None;
                 }
             }
         }

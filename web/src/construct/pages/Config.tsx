@@ -48,6 +48,8 @@ interface ParsedConfig {
     auto_save?: boolean;
     hygiene_enabled?: boolean;
     snapshot_enabled?: boolean;
+    retrieval_limit?: number;
+    min_relevance_score?: number;
   };
   gateway?: {
     port?: number;
@@ -55,6 +57,7 @@ interface ParsedConfig {
     require_pairing?: boolean;
     allow_public_bind?: boolean;
     session_persistence?: boolean;
+    chat_keepalive_secs?: number;
   };
   autonomy?: {
     level?: string;
@@ -366,11 +369,13 @@ function buildConfigSections(
       populatedCount: countDefined([
         parsedConfig?.memory?.backend,
         parsedConfig?.memory?.auto_save,
+        parsedConfig?.memory?.retrieval_limit,
+        parsedConfig?.memory?.min_relevance_score,
         parsedConfig?.memory?.snapshot_enabled,
         parsedConfig?.kumiho?.enabled,
         parsedConfig?.kumiho?.memory_project,
       ]),
-      paths: ['memory.backend', 'memory.auto_save', 'memory.snapshot_enabled', 'kumiho.enabled', 'kumiho.memory_project', 'kumiho.harness_project'],
+      paths: ['memory.backend', 'memory.auto_save', 'memory.retrieval_limit', 'memory.min_relevance_score', 'memory.snapshot_enabled', 'kumiho.enabled', 'kumiho.memory_project', 'kumiho.harness_project'],
     },
     {
       id: 'runtime' as const,
@@ -380,10 +385,11 @@ function buildConfigSections(
         parsedConfig?.gateway?.host,
         parsedConfig?.gateway?.port,
         parsedConfig?.gateway?.require_pairing,
+        parsedConfig?.gateway?.chat_keepalive_secs,
         parsedConfig?.autonomy?.level,
         parsedConfig?.autonomy?.max_actions_per_hour,
       ]),
-      paths: ['gateway.host', 'gateway.port', 'gateway.require_pairing', 'gateway.session_persistence', 'autonomy.level', 'autonomy.max_actions_per_hour'],
+      paths: ['gateway.host', 'gateway.port', 'gateway.require_pairing', 'gateway.session_persistence', 'gateway.chat_keepalive_secs', 'autonomy.level', 'autonomy.max_actions_per_hour'],
     },
     {
       id: 'security' as const,
@@ -676,6 +682,7 @@ export default function Config() {
                     <ConfigRow label={t('config.summary.gateway')} value={parsedConfig.gateway?.host && parsedConfig.gateway?.port ? `${parsedConfig.gateway.host}:${parsedConfig.gateway.port}` : undefined} />
                     <ConfigRow label={t('config.summary.pairing_required')} value={parsedConfig.gateway?.require_pairing} />
                     <ConfigRow label={t('config.summary.session_persistence')} value={parsedConfig.gateway?.session_persistence} />
+                    <ConfigRow label={t('config.summary.chat_keepalive')} value={parsedConfig.gateway?.chat_keepalive_secs} />
                     <ConfigRow label={t('config.summary.autonomy_level')} value={parsedConfig.autonomy?.level} />
                     <ConfigRow label={t('config.summary.workspace_only')} value={parsedConfig.autonomy?.workspace_only} />
                     <ConfigRow label={t('config.summary.max_actions_hour')} value={parsedConfig.autonomy?.max_actions_per_hour} />
@@ -684,6 +691,8 @@ export default function Config() {
                   <ConfigGroup title={t('config.summary.memory')}>
                     <ConfigRow label={t('config.summary.backend')} value={parsedConfig.memory?.backend} />
                     <ConfigRow label={t('config.summary.auto_save')} value={parsedConfig.memory?.auto_save} />
+                    <ConfigRow label={t('config.summary.retrieval_limit')} value={parsedConfig.memory?.retrieval_limit} />
+                    <ConfigRow label={t('config.summary.min_relevance')} value={parsedConfig.memory?.min_relevance_score} />
                     <ConfigRow label={t('config.summary.hygiene')} value={parsedConfig.memory?.hygiene_enabled} />
                     <ConfigRow label={t('config.summary.snapshots')} value={parsedConfig.memory?.snapshot_enabled} />
                     <ConfigRow label={t('config.summary.kumiho_enabled')} value={parsedConfig.kumiho?.enabled} />
@@ -808,6 +817,12 @@ function renderConfigSection(
           <EditableField label={t('config.memory.backend')}>
             <input className="construct-input" value={parsedConfig.memory?.backend ?? ''} onChange={(event) => updateField('memory', 'backend', event.target.value)} />
           </EditableField>
+          <EditableField label={t('config.memory.retrieval_limit')}>
+            <input className="construct-input" type="number" min={1} max={50} value={parsedConfig.memory?.retrieval_limit ?? 3} onChange={(event) => updateField('memory', 'retrieval_limit', Number(event.target.value))} />
+          </EditableField>
+          <EditableField label={t('config.memory.min_relevance')}>
+            <input className="construct-input" type="number" min={0} max={1} step="0.05" value={parsedConfig.memory?.min_relevance_score ?? 0.4} onChange={(event) => updateField('memory', 'min_relevance_score', Number(event.target.value))} />
+          </EditableField>
           <EditableToggle label={t('config.memory.auto_save')} checked={parsedConfig.memory?.auto_save ?? false} onChange={(checked) => updateField('memory', 'auto_save', checked)} t={t} />
           <EditableToggle label={t('config.memory.snapshots')} checked={parsedConfig.memory?.snapshot_enabled ?? false} onChange={(checked) => updateField('memory', 'snapshot_enabled', checked)} t={t} />
         </ConfigSectionCard>
@@ -823,6 +838,9 @@ function renderConfigSection(
           </EditableField>
           <EditableToggle label={t('config.runtime.require_pairing')} checked={parsedConfig.gateway?.require_pairing ?? false} onChange={(checked) => updateField('gateway', 'require_pairing', checked)} t={t} />
           <EditableToggle label={t('config.runtime.session_persistence')} checked={parsedConfig.gateway?.session_persistence ?? false} onChange={(checked) => updateField('gateway', 'session_persistence', checked)} t={t} />
+          <EditableField label={t('config.runtime.chat_keepalive')}>
+            <input className="construct-input" type="number" min={0} value={parsedConfig.gateway?.chat_keepalive_secs ?? 25} onChange={(event) => updateField('gateway', 'chat_keepalive_secs', Number(event.target.value))} />
+          </EditableField>
           <EditableField label={t('config.runtime.autonomy_level')}>
             <input className="construct-input" value={parsedConfig.autonomy?.level ?? ''} onChange={(event) => updateField('autonomy', 'level', event.target.value)} />
           </EditableField>
