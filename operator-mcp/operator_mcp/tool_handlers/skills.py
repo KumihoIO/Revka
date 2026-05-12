@@ -320,6 +320,7 @@ async def tool_list_skills(args: dict[str, Any], pool_client: KumihoAgentPoolCli
     project = memory_project()
     space_path = f"/{project}/Skills"
     include_legacy_disk = bool(args.get("include_legacy_disk"))
+    include_details = bool(args.get("include_details"))
 
     if hasattr(pool_client, "_ensure_available") and not pool_client._ensure_available():  # type: ignore[attr-defined]
         if not include_legacy_disk:
@@ -330,15 +331,43 @@ async def tool_list_skills(args: dict[str, Any], pool_client: KumihoAgentPoolCli
     try:
         items = await pool_client.list_items(space_path)
         skill_items = [item for item in items if _item_kind(item) in _SKILL_ITEM_KINDS]
+        if not include_details:
+            results = [_skill_summary(item) for item in skill_items]
+            results.sort(key=lambda skill: skill["name"])
+            return {
+                "skills": results,
+                "count": len(results),
+                "source": "kumiho",
+                "space": space_path,
+                "details_included": False,
+            }
+
+        revision_by_item: dict[str, dict[str, Any]] = {}
+        batch_get_revisions = getattr(pool_client, "batch_get_revisions", None)
+        item_krefs = [str(item.get("kref") or "") for item in skill_items if item.get("kref")]
+        if batch_get_revisions and item_krefs:
+            try:
+                revision_by_item = await batch_get_revisions(item_krefs, "published")
+            except Exception as e:
+                _log(f"Skill batch revision lookup failed: {e}")
+
         results: list[dict[str, Any]] = []
         for item in skill_items:
             item_kref = str(item.get("kref") or "")
-            revision = await _latest_skill_revision(pool_client, item_kref) if item_kref else None
+            revision = revision_by_item.get(item_kref)
+            if revision is None and item_kref:
+                revision = await _latest_skill_revision(pool_client, item_kref)
             revision_kref = str(revision.get("kref") or "") if revision else ""
             artifact = await _get_skill_artifact(pool_client, revision_kref) if revision_kref else None
             results.append(_skill_summary(item, revision, artifact))
         results.sort(key=lambda skill: skill["name"])
-        return {"skills": results, "count": len(results), "source": "kumiho", "space": space_path}
+        return {
+            "skills": results,
+            "count": len(results),
+            "source": "kumiho",
+            "space": space_path,
+            "details_included": True,
+        }
     except Exception as e:
         _log(f"Skill list failed: {e}")
         return {"error": f"Failed to list skills from Kumiho: {e}", "skills": [], "count": 0, "source": "kumiho"}

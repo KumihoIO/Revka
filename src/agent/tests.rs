@@ -24,7 +24,7 @@
 //!  19. Builder validation (missing required fields)
 //!  20. Idempotent system prompt insertion
 
-use crate::agent::agent::Agent;
+use crate::agent::agent::{Agent, TurnEvent};
 use crate::agent::dispatcher::{
     NativeToolDispatcher, ToolDispatcher, ToolExecutionResult, XmlToolDispatcher,
 };
@@ -393,6 +393,59 @@ async fn turn_executes_single_tool_then_returns() {
         !response.is_empty(),
         "Expected non-empty response after tool execution"
     );
+}
+
+#[tokio::test]
+async fn turn_retries_empty_final_after_tool_execution() {
+    let provider = Box::new(ScriptedProvider::new(vec![
+        tool_response(vec![ToolCall {
+            id: "tc1".into(),
+            name: "echo".into(),
+            arguments: r#"{"message": "tool result"}"#.into(),
+        }]),
+        text_response(""),
+        text_response("Recovered final answer"),
+    ]));
+
+    let mut agent = build_agent_with(
+        provider,
+        vec![Box::new(EchoTool)],
+        Box::new(NativeToolDispatcher),
+    );
+
+    let response = agent.turn("run echo").await.unwrap();
+    assert_eq!(response, "Recovered final answer");
+}
+
+#[tokio::test]
+async fn turn_streamed_retries_empty_final_after_tool_execution() {
+    let provider = Box::new(ScriptedProvider::new(vec![
+        tool_response(vec![ToolCall {
+            id: "tc1".into(),
+            name: "echo".into(),
+            arguments: r#"{"message": "tool result"}"#.into(),
+        }]),
+        text_response(""),
+        text_response("Recovered streamed answer"),
+    ]));
+
+    let mut agent = build_agent_with(
+        provider,
+        vec![Box::new(EchoTool)],
+        Box::new(NativeToolDispatcher),
+    );
+    let (event_tx, mut event_rx) = tokio::sync::mpsc::channel::<TurnEvent>(64);
+
+    let response = agent.turn_streamed("run echo", event_tx).await.unwrap();
+    assert_eq!(response, "Recovered streamed answer");
+
+    let mut streamed = String::new();
+    while let Ok(event) = event_rx.try_recv() {
+        if let TurnEvent::Chunk { delta } = event {
+            streamed.push_str(&delta);
+        }
+    }
+    assert_eq!(streamed, "Recovered streamed answer");
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

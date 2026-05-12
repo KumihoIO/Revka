@@ -16,7 +16,7 @@ use chrono::{Datelike, Timelike};
 use std::collections::HashMap;
 use std::io::Write as IoWrite;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 /// Events emitted during a streamed agent turn.
 ///
@@ -70,6 +70,11 @@ pub(crate) const ARCHITECT_DENIED_TOOLS: &[&str] = &[
     "validate_workflow",
     "dry_run_workflow",
 ];
+
+const EMPTY_FINAL_AFTER_TOOLS_RETRY_PROMPT: &str = "The previous model response was empty after tool execution. Provide the final answer to the user now, based on the completed tool results. Do not leave the response blank.";
+const EMPTY_FINAL_AFTER_TOOLS_FALLBACK: &str = "I completed tool work, but the model returned an empty final response. Please retry the request or ask me to summarize the latest tool results.";
+const EMPTY_FINAL_FALLBACK: &str =
+    "The model returned an empty response. Please retry the request.";
 
 /// True when the current turn's user message carries the Architect
 /// editor-state marker.  See [`ARCHITECT_EDITOR_STATE_MARKER`].
@@ -961,6 +966,76 @@ impl Agent {
         result
     }
 
+    fn compression_pending(&self, model: &str) -> Option<(usize, usize)> {
+        if !self.config.context_compression.enabled {
+            return None;
+        }
+
+        let context_window = context_window_for_model(model);
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let threshold =
+            (context_window as f64 * self.config.context_compression.threshold_ratio) as usize;
+        let flat = self.tool_dispatcher.to_provider_messages(&self.history);
+        let tokens = crate::agent::context_compressor::estimate_tokens(&flat);
+
+        (tokens > threshold).then_some((tokens, threshold))
+    }
+
+    async fn compress_history_if_needed_streamed(
+        &mut self,
+        model: &str,
+        event_tx: &tokio::sync::mpsc::Sender<TurnEvent>,
+    ) -> crate::agent::context_compressor::CompressionResult {
+        let Some((tokens, threshold)) = self.compression_pending(model) else {
+            return self.compress_history_if_needed(model).await;
+        };
+
+        let _ = event_tx
+            .send(TurnEvent::OperatorStatus {
+                phase: "compressing".to_string(),
+                detail: format!(
+                    "Compacting conversation context ({tokens} estimated tokens, threshold {threshold})"
+                ),
+            })
+            .await;
+
+        let compress = self.compress_history_if_needed(model);
+        tokio::pin!(compress);
+        let mut heartbeat = Box::pin(tokio::time::sleep(Duration::from_secs(15)));
+        let mut elapsed_secs = 0u64;
+
+        loop {
+            tokio::select! {
+                result = &mut compress => {
+                    if result.compressed {
+                        let _ = event_tx
+                            .send(TurnEvent::OperatorStatus {
+                                phase: "compressing".to_string(),
+                                detail: format!(
+                                    "Context compacted: {} -> {} estimated tokens",
+                                    result.tokens_before, result.tokens_after
+                                ),
+                            })
+                            .await;
+                    }
+                    return result;
+                }
+                () = &mut heartbeat => {
+                    elapsed_secs += 15;
+                    let _ = event_tx
+                        .send(TurnEvent::OperatorStatus {
+                            phase: "compressing".to_string(),
+                            detail: format!("Still compacting conversation context ({elapsed_secs}s)"),
+                        })
+                        .await;
+                    heartbeat
+                        .as_mut()
+                        .reset(tokio::time::Instant::now() + Duration::from_secs(15));
+                }
+            }
+        }
+    }
+
     /// Rebuild `self.history` after the compressor mutated the flat message
     /// list.  Preserves system messages and the structural tail; replaces the
     /// summarised middle with a single synthetic assistant message carrying
@@ -1225,6 +1300,9 @@ impl Agent {
 
         let effective_model = self.classify_model(user_message);
 
+        let mut saw_tool_calls = false;
+        let mut empty_final_retries = 0usize;
+
         for _ in 0..self.config.max_tool_iterations {
             // Token-aware compression — keeps history under the model's
             // context window.  See `compress_history_if_needed` for the
@@ -1326,14 +1404,37 @@ impl Agent {
 
             let (text, calls) = self.tool_dispatcher.parse_response(&response);
             if calls.is_empty() {
-                let final_text = if text.is_empty() {
+                let mut final_text = if text.is_empty() {
                     response.text.unwrap_or_default()
                 } else {
                     text
                 };
+                let mut synthesized_empty_fallback = false;
+
+                if final_text.trim().is_empty() {
+                    if saw_tool_calls && empty_final_retries == 0 {
+                        empty_final_retries += 1;
+                        tracing::warn!(
+                            "Provider returned empty final response after tool calls; retrying once"
+                        );
+                        self.history
+                            .push(ConversationMessage::Chat(ChatMessage::user(
+                                EMPTY_FINAL_AFTER_TOOLS_RETRY_PROMPT,
+                            )));
+                        continue;
+                    }
+                    final_text = if saw_tool_calls {
+                        EMPTY_FINAL_AFTER_TOOLS_FALLBACK.to_string()
+                    } else {
+                        EMPTY_FINAL_FALLBACK.to_string()
+                    };
+                    synthesized_empty_fallback = true;
+                }
 
                 // Store in response cache (text-only, no tool calls)
-                if let (Some(cache), Some(key)) = (&self.response_cache, &cache_key) {
+                if !synthesized_empty_fallback
+                    && let (Some(cache), Some(key)) = (&self.response_cache, &cache_key)
+                {
                     let token_count = response
                         .usage
                         .as_ref()
@@ -1352,6 +1453,7 @@ impl Agent {
                 return Ok(final_text);
             }
 
+            saw_tool_calls = true;
             if !text.is_empty() {
                 self.history
                     .push(ConversationMessage::Chat(ChatMessage::assistant(
@@ -1436,6 +1538,9 @@ impl Agent {
         let effective_model = self.classify_model(user_message);
 
         // ── Turn loop ──────────────────────────────────────────────────
+        let mut saw_tool_calls = false;
+        let mut empty_final_retries = 0usize;
+
         for _ in 0..self.config.max_tool_iterations {
             // Token-aware compression — keeps the Operator chat under the
             // model's context window.  Without this, accumulating tool
@@ -1443,7 +1548,9 @@ impl Agent {
             // can push past 1M tokens and break with `prompt is too long`.
             // `trim_history` alone is message-count based and does not
             // protect against this.
-            let _ = self.compress_history_if_needed(&effective_model).await;
+            let _ = self
+                .compress_history_if_needed_streamed(&effective_model, &event_tx)
+                .await;
 
             let messages = self.tool_dispatcher.to_provider_messages(&self.history);
 
@@ -1721,14 +1828,37 @@ impl Agent {
 
             let (text, calls) = self.tool_dispatcher.parse_response(&response);
             if calls.is_empty() {
-                let final_text = if text.is_empty() {
+                let mut final_text = if text.is_empty() {
                     response.text.unwrap_or_default()
                 } else {
                     text
                 };
+                let mut synthesized_empty_fallback = false;
+
+                if final_text.trim().is_empty() {
+                    if saw_tool_calls && empty_final_retries == 0 {
+                        empty_final_retries += 1;
+                        tracing::warn!(
+                            "Provider returned empty final response after tool calls; retrying once"
+                        );
+                        self.history
+                            .push(ConversationMessage::Chat(ChatMessage::user(
+                                EMPTY_FINAL_AFTER_TOOLS_RETRY_PROMPT,
+                            )));
+                        continue;
+                    }
+                    final_text = if saw_tool_calls {
+                        EMPTY_FINAL_AFTER_TOOLS_FALLBACK.to_string()
+                    } else {
+                        EMPTY_FINAL_FALLBACK.to_string()
+                    };
+                    synthesized_empty_fallback = true;
+                }
 
                 // Store in response cache
-                if let (Some(cache), Some(key)) = (&self.response_cache, &cache_key) {
+                if !synthesized_empty_fallback
+                    && let (Some(cache), Some(key)) = (&self.response_cache, &cache_key)
+                {
                     let token_count = response
                         .usage
                         .as_ref()
@@ -1757,6 +1887,7 @@ impl Agent {
             }
 
             // ── Tool calls ─────────────────────────────────────────────
+            saw_tool_calls = true;
             if !text.is_empty() {
                 self.history
                     .push(ConversationMessage::Chat(ChatMessage::assistant(

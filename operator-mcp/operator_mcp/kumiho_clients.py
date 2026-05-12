@@ -457,6 +457,17 @@ class KumihoAgentPoolClient:
             resp = await client.get(f"{self.api_url}/api/v1/revisions/latest", params={"item_kref": item_kref}, headers=self._headers())
             return resp.json() if resp.status_code == 200 else None
 
+    async def batch_get_revisions(self, item_krefs: list[str], tag: str = "published") -> dict[str, dict[str, Any]]:
+        sdk = _get_sdk()
+        if sdk:
+            return await sdk.batch_get_revisions(item_krefs, tag)
+        revisions: dict[str, dict[str, Any]] = {}
+        for item_kref in item_krefs:
+            revision = await self.get_latest_revision(item_kref, tag)
+            if revision:
+                revisions[item_kref] = revision
+        return revisions
+
     async def create_artifact(self, revision_kref: str, name: str, location: str) -> dict[str, Any]:
         sdk = _get_sdk()
         if sdk:
