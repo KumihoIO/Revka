@@ -16,7 +16,7 @@ use chrono::{Datelike, Timelike};
 use std::collections::HashMap;
 use std::io::Write as IoWrite;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 /// Events emitted during a streamed agent turn.
 ///
@@ -966,6 +966,76 @@ impl Agent {
         result
     }
 
+    fn compression_pending(&self, model: &str) -> Option<(usize, usize)> {
+        if !self.config.context_compression.enabled {
+            return None;
+        }
+
+        let context_window = context_window_for_model(model);
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let threshold =
+            (context_window as f64 * self.config.context_compression.threshold_ratio) as usize;
+        let flat = self.tool_dispatcher.to_provider_messages(&self.history);
+        let tokens = crate::agent::context_compressor::estimate_tokens(&flat);
+
+        (tokens > threshold).then_some((tokens, threshold))
+    }
+
+    async fn compress_history_if_needed_streamed(
+        &mut self,
+        model: &str,
+        event_tx: &tokio::sync::mpsc::Sender<TurnEvent>,
+    ) -> crate::agent::context_compressor::CompressionResult {
+        let Some((tokens, threshold)) = self.compression_pending(model) else {
+            return self.compress_history_if_needed(model).await;
+        };
+
+        let _ = event_tx
+            .send(TurnEvent::OperatorStatus {
+                phase: "compressing".to_string(),
+                detail: format!(
+                    "Compacting conversation context ({tokens} estimated tokens, threshold {threshold})"
+                ),
+            })
+            .await;
+
+        let compress = self.compress_history_if_needed(model);
+        tokio::pin!(compress);
+        let mut heartbeat = Box::pin(tokio::time::sleep(Duration::from_secs(15)));
+        let mut elapsed_secs = 0u64;
+
+        loop {
+            tokio::select! {
+                result = &mut compress => {
+                    if result.compressed {
+                        let _ = event_tx
+                            .send(TurnEvent::OperatorStatus {
+                                phase: "compressing".to_string(),
+                                detail: format!(
+                                    "Context compacted: {} -> {} estimated tokens",
+                                    result.tokens_before, result.tokens_after
+                                ),
+                            })
+                            .await;
+                    }
+                    return result;
+                }
+                () = &mut heartbeat => {
+                    elapsed_secs += 15;
+                    let _ = event_tx
+                        .send(TurnEvent::OperatorStatus {
+                            phase: "compressing".to_string(),
+                            detail: format!("Still compacting conversation context ({elapsed_secs}s)"),
+                        })
+                        .await;
+                    heartbeat
+                        .as_mut()
+                        .reset(tokio::time::Instant::now() + Duration::from_secs(15));
+                }
+            }
+        }
+    }
+
     /// Rebuild `self.history` after the compressor mutated the flat message
     /// list.  Preserves system messages and the structural tail; replaces the
     /// summarised middle with a single synthetic assistant message carrying
@@ -1478,7 +1548,9 @@ impl Agent {
             // can push past 1M tokens and break with `prompt is too long`.
             // `trim_history` alone is message-count based and does not
             // protect against this.
-            let _ = self.compress_history_if_needed(&effective_model).await;
+            let _ = self
+                .compress_history_if_needed_streamed(&effective_model, &event_tx)
+                .await;
 
             let messages = self.tool_dispatcher.to_provider_messages(&self.history);
 

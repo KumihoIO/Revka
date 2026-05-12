@@ -440,16 +440,19 @@ export function useAgentChatSession({
               markSendingTurnsSent();
             }
             setTyping(true);
-            const nextActivities = [
-              ...activitiesRef.current,
-              {
+            const activity = {
                 id: generateUUID(),
                 kind: 'operator' as const,
                 label: `${operatorPhaseIcon(phase)} ${detail}`,
                 detail: detail || undefined,
                 timestamp: new Date(),
-              },
-            ];
+              };
+            const currentActivities = activitiesRef.current;
+            const lastActivity = currentActivities[currentActivities.length - 1];
+            const nextActivities =
+              isTransientPhase(phase) && lastActivity?.kind === 'operator'
+                ? [...currentActivities.slice(0, -1), { ...activity, id: lastActivity.id }]
+                : [...currentActivities, activity];
             activitiesRef.current = nextActivities;
             setActivities(nextActivities);
 
