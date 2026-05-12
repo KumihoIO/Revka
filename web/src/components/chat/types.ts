@@ -8,6 +8,7 @@ export interface ChatMessage {
   markdown?: boolean;
   timestamp: Date;
   operatorPhase?: string;
+  deliveryStatus?: 'queued' | 'sending' | 'sent';
   activityLog?: ActivityEvent[];
 }
 
@@ -16,6 +17,8 @@ export interface ActivityEvent {
   kind: 'thinking' | 'tool_call' | 'tool_result' | 'operator';
   label: string;
   detail?: string;
+  toolName?: string;
+  status?: 'running' | 'done';
   timestamp: Date;
 }
 

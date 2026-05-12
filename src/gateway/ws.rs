@@ -300,6 +300,7 @@ async fn handle_socket(
                         &state,
                         agent,
                         &mut sender,
+                        &mut receiver,
                         &content,
                         &session_key,
                         page_ctx,
@@ -361,6 +362,15 @@ async fn handle_socket(
                 };
 
                 let msg_type = parsed["type"].as_str().unwrap_or("");
+                if msg_type == "stop" {
+                    let stopped = serde_json::json!({
+                        "type": "stopped",
+                        "message": "No active Operator turn to stop."
+                    });
+                    let _ = sender.send(Message::Text(stopped.to_string().into())).await;
+                    continue;
+                }
+
                 if msg_type != "message" {
                     let err = serde_json::json!({
                         "type": "error",
@@ -422,7 +432,7 @@ async fn handle_socket(
                     return;
                 }
                 let agent = agent.as_mut().expect("agent initialized");
-                process_chat_message(&state, agent, &mut sender, &content, &session_key, page_ctx, &attachments, &mut broadcast_rx).await;
+                process_chat_message(&state, agent, &mut sender, &mut receiver, &content, &session_key, page_ctx, &attachments, &mut broadcast_rx).await;
             }
 
             // ── Branch 2: broadcast channel event from operator ──
@@ -776,6 +786,7 @@ async fn process_chat_message(
     state: &AppState,
     agent: &mut crate::agent::Agent,
     sender: &mut futures_util::stream::SplitSink<WebSocket, Message>,
+    receiver: &mut futures_util::stream::SplitStream<WebSocket>,
     content: &str,
     session_key: &str,
     page_context: Option<&str>,
@@ -878,58 +889,94 @@ async fn process_chat_message(
             agent.turn_streamed(&content_owned, event_tx).await
         });
 
-    // Drive both futures concurrently: the agent turn produces events
-    // and we relay them over WebSocket.  Also relay broadcast channel
-    // events (agent activity from the operator) so they reach the
-    // frontend in real-time even during long-running turns.
-    let forward_fut = async {
-        let mut turn_done = false;
-        loop {
-            if turn_done {
-                break;
+    // Drive the turn and relays in one select loop so the WebSocket can
+    // receive a `stop` control frame while the agent is still working.
+    tokio::pin!(turn_fut);
+    let result = loop {
+        tokio::select! {
+            result = &mut turn_fut => break Some(result),
+            event = event_rx.recv() => {
+                match event {
+                    Some(event) => {
+                        let ws_msg = match event {
+                            TurnEvent::Chunk { delta } => {
+                                serde_json::json!({ "type": "chunk", "content": delta })
+                            }
+                            TurnEvent::Thinking { delta } => {
+                                serde_json::json!({ "type": "thinking", "content": delta })
+                            }
+                            TurnEvent::ToolCall { name, args } => {
+                                serde_json::json!({ "type": "tool_call", "name": name, "args": args })
+                            }
+                            TurnEvent::ToolResult { name, output } => {
+                                serde_json::json!({ "type": "tool_result", "name": name, "output": output })
+                            }
+                            TurnEvent::OperatorStatus { phase, detail } => {
+                                serde_json::json!({ "type": "operator_status", "phase": phase, "detail": detail })
+                            }
+                        };
+                        let _ = sender.send(Message::Text(ws_msg.to_string().into())).await;
+                    }
+                    None => {}
+                }
             }
-            tokio::select! {
-                event = event_rx.recv() => {
-                    match event {
-                        Some(event) => {
-                            let ws_msg = match event {
-                                TurnEvent::Chunk { delta } => {
-                                    serde_json::json!({ "type": "chunk", "content": delta })
-                                }
-                                TurnEvent::Thinking { delta } => {
-                                    serde_json::json!({ "type": "thinking", "content": delta })
-                                }
-                                TurnEvent::ToolCall { name, args } => {
-                                    serde_json::json!({ "type": "tool_call", "name": name, "args": args })
-                                }
-                                TurnEvent::ToolResult { name, output } => {
-                                    serde_json::json!({ "type": "tool_result", "name": name, "output": output })
-                                }
-                                TurnEvent::OperatorStatus { phase, detail } => {
-                                    serde_json::json!({ "type": "operator_status", "phase": phase, "detail": detail })
-                                }
-                            };
-                            let _ = sender.send(Message::Text(ws_msg.to_string().into())).await;
-                        }
-                        None => { turn_done = true; }
+            bcast = broadcast_rx.recv() => {
+                if let Ok(ev) = bcast {
+                    if ev["type"].as_str() == Some("channel_event") {
+                        let relay = serde_json::json!({
+                            "type": "agent_event",
+                            "event": ev["payload"],
+                        });
+                        let _ = sender.send(Message::Text(relay.to_string().into())).await;
                     }
                 }
-                bcast = broadcast_rx.recv() => {
-                    if let Ok(ev) = bcast {
-                        if ev["type"].as_str() == Some("channel_event") {
-                            let relay = serde_json::json!({
-                                "type": "agent_event",
-                                "event": ev["payload"],
-                            });
-                            let _ = sender.send(Message::Text(relay.to_string().into())).await;
-                        }
+            }
+            ws_msg = receiver.next() => {
+                let text = match ws_msg {
+                    Some(Ok(Message::Text(text))) => text,
+                    Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break None,
+                    _ => continue,
+                };
+                let parsed: serde_json::Value = match serde_json::from_str(&text) {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
+                match parsed["type"].as_str().unwrap_or("") {
+                    "stop" => break None,
+                    "message" => {
+                        let notice = serde_json::json!({
+                            "type": "operator_status",
+                            "phase": "queued",
+                            "detail": "Current response is still running; the dashboard queues follow-up messages locally."
+                        });
+                        let _ = sender.send(Message::Text(notice.to_string().into())).await;
                     }
+                    _ => {}
                 }
             }
         }
     };
 
-    let (result, ()) = tokio::join!(turn_fut, forward_fut);
+    let Some(result) = result else {
+        // Dropping `turn_fut` cancels the in-flight provider/tool future at the
+        // next await point. Reset the persisted session state and tell the UI
+        // to clear its streaming/progress state without treating this as an
+        // agent error.
+        if let Some(ref backend) = state.session_backend {
+            let _ = backend.set_session_state(session_key, "idle", None);
+        }
+        let stopped = serde_json::json!({
+            "type": "stopped",
+            "message": "Stopped current Operator turn."
+        });
+        let _ = sender.send(Message::Text(stopped.to_string().into())).await;
+        let _ = state.event_tx.send(serde_json::json!({
+            "type": "agent_end",
+            "provider": provider_label,
+            "model": state.model,
+        }));
+        return;
+    };
 
     match result {
         Ok(response) => {

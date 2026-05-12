@@ -16,6 +16,7 @@ import {
   Send,
   Settings,
   SplitSquareHorizontal,
+  Square,
   Terminal,
   X,
 } from 'lucide-react';
@@ -324,6 +325,9 @@ function ChatPane({
     setInput,
     streamingContent,
     streamingThinking,
+    queuedTurns,
+    stopCurrentTurn,
+    stopping,
     typing,
     uploadingCount,
   } = useAgentChatSession({
@@ -610,6 +614,30 @@ function ChatPane({
                       Lives BELOW the message text per design — easier to reach with
                       thumb on mobile and doesn't overlap content on long messages. */}
                   <div className="mt-0.5 flex items-center justify-end gap-2 text-[10px]" style={{ color: 'var(--construct-text-faint)' }}>
+                    {msg.deliveryStatus === 'queued' && (
+                      <span
+                        className="mr-auto inline-flex items-center rounded border px-1.5 py-0.5 uppercase tracking-[0.12em]"
+                        style={{
+                          borderColor: 'var(--construct-border-soft)',
+                          color: 'var(--construct-text-faint)',
+                        }}
+                      >
+                        queued
+                      </span>
+                    )}
+                    {msg.deliveryStatus === 'sending' && (
+                      <span
+                        className="mr-auto inline-flex items-center gap-1 rounded border px-1.5 py-0.5 uppercase tracking-[0.12em]"
+                        style={{
+                          borderColor: 'var(--construct-border-soft)',
+                          color: colors.primary,
+                          textShadow: colors.glow,
+                        }}
+                      >
+                        <Loader2 className="h-2.5 w-2.5 animate-spin" />
+                        sending
+                      </span>
+                    )}
                     <button
                       type="button"
                       onClick={() => copyMessage(msg.id, msg.content)}
@@ -796,15 +824,11 @@ function ChatPane({
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
                 if (runSlashFromInput()) return;
-                // Block send while a turn is in flight — gateway would
-                // reject the second turn with SESSION_BUSY otherwise.
-                // Slash commands still run because they're client-side.
-                if (typing) return;
                 handleSend();
               }
             }}
             onPaste={onPaste}
-            placeholder={connected ? (typing ? 'Operator is responding…' : 'message…') : 'connecting…'}
+            placeholder={connected ? (typing ? 'queue next message…' : 'message…') : 'connecting…'}
             disabled={!connected}
             // `focus-visible:outline-none` overrides the global `:focus-visible`
             // ring set in index.css (2px accent outline) — without it Tailwind's
@@ -823,16 +847,31 @@ function ChatPane({
               fontSize: `${Math.max(16, config.fontSize)}px`,
             }}
           />
+          {typing && (
+            <button
+              type="button"
+              onClick={stopCurrentTurn}
+              disabled={!connected || stopping}
+              aria-label={stopping ? 'Stopping Operator' : 'Stop Operator'}
+              title={stopping ? 'Stopping…' : 'Stop current response'}
+              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded transition-all hover:bg-white/5 focus:outline-none focus-visible:ring-2 focus-visible:ring-current disabled:cursor-not-allowed disabled:opacity-30"
+              style={{
+                color: stopping ? 'var(--construct-text-faint)' : 'var(--construct-status-danger)',
+              }}
+            >
+              {stopping ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Square className="h-3.5 w-3.5" />}
+            </button>
+          )}
           <button
             type="button"
             onClick={() => handleSend()}
-            disabled={!connected || (!input.trim() && attachments.length === 0) || uploadingCount > 0 || typing}
-            aria-label={typing ? 'Operator is responding' : 'Send message'}
+            disabled={!connected || (!input.trim() && attachments.length === 0) || uploadingCount > 0}
+            aria-label={typing ? 'Queue message' : 'Send message'}
             title={
               !connected
                 ? 'Disconnected'
                 : typing
-                  ? 'Operator is responding…'
+                  ? 'Queue after current response'
                   : 'Send (Enter)'
             }
             className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded transition-all hover:bg-white/5 focus:outline-none focus-visible:ring-2 focus-visible:ring-current disabled:cursor-not-allowed disabled:opacity-30"
@@ -840,14 +879,18 @@ function ChatPane({
               color:
                 (input.trim() || attachments.length > 0) && connected && uploadingCount === 0 && !typing
                   ? colors.primary
-                  : 'var(--construct-text-faint)',
+                  : (input.trim() || attachments.length > 0) && connected && uploadingCount === 0 && typing
+                    ? colors.secondary
+                    : 'var(--construct-text-faint)',
               textShadow:
                 (input.trim() || attachments.length > 0) && connected && uploadingCount === 0 && !typing
                   ? colors.glow
-                  : 'none',
+                  : (input.trim() || attachments.length > 0) && connected && uploadingCount === 0 && typing
+                    ? colors.glowSecondary
+                    : 'none',
             }}
           >
-            {typing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+            <Send className="h-3.5 w-3.5" />
           </button>
         </div>
 
@@ -885,6 +928,14 @@ function ChatPane({
             >
               <Loader2 className="h-3 w-3 animate-spin" />
               Operator is responding…
+            </span>
+          )}
+          {queuedTurns.length > 0 && (
+            <span
+              className="flex shrink-0 items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.12em]"
+              style={{ color: colors.secondary, textShadow: colors.glowSecondary }}
+            >
+              {queuedTurns.length} queued
             </span>
           )}
           <span

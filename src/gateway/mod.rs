@@ -843,10 +843,31 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
         None
     };
 
+    // Device registry and pairing store (only when pairing is required).
+    //
+    // Dashboard pairing writes device rows immediately. Hydrate the auth guard
+    // from both config and the registry so tokens issued by that flow survive
+    // daemon restarts even if the config write was interrupted.
+    let device_registry = if config.gateway.require_pairing {
+        Some(Arc::new(api_pairing::DeviceRegistry::new(
+            &config.workspace_dir,
+        )?))
+    } else {
+        None
+    };
+
     // ── Pairing guard ──────────────────────────────────────
+    let mut pairing_tokens = config.gateway.paired_tokens.clone();
+    if let Some(ref registry) = device_registry {
+        for token_hash in registry.token_hashes() {
+            if !pairing_tokens.iter().any(|token| token == &token_hash) {
+                pairing_tokens.push(token_hash);
+            }
+        }
+    }
     let pairing = Arc::new(PairingGuard::new(
         config.gateway.require_pairing,
-        &config.gateway.paired_tokens,
+        &pairing_tokens,
     ));
     let rate_limit_max_keys = normalize_max_keys(
         config.gateway.rate_limit_max_keys,
@@ -956,14 +977,6 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
     // Node registry for dynamic node discovery
     let node_registry = Arc::new(nodes::NodeRegistry::new(config.nodes.max_nodes));
 
-    // Device registry and pairing store (only when pairing is required)
-    let device_registry = if config.gateway.require_pairing {
-        Some(Arc::new(api_pairing::DeviceRegistry::new(
-            &config.workspace_dir,
-        )?))
-    } else {
-        None
-    };
     let pending_pairings = if config.gateway.require_pairing {
         Some(Arc::new(api_pairing::PairingStore::new(
             config.gateway.pairing_dashboard.max_pending_codes,

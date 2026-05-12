@@ -588,6 +588,7 @@ export interface WsMessage {
     | 'operator_status'
     | 'agent_event'
     | 'done'
+    | 'stopped'
     | 'error'
     | 'session_start'
     | 'connected';
