@@ -329,8 +329,20 @@ impl ContextCompressor {
 
         let mut passes_used = 0;
         for _ in 0..self.config.max_passes {
+            let before_pass_tokens = estimate_tokens(history);
+            let before_pass_history = history.clone();
             let did_compress = self.compress_once(history, provider, model).await?;
             if did_compress {
+                let after_pass_tokens = estimate_tokens(history);
+                if after_pass_tokens >= before_pass_tokens {
+                    *history = before_pass_history;
+                    tracing::warn!(
+                        before_pass_tokens,
+                        after_pass_tokens,
+                        "Compression pass did not reduce context estimate; restored previous history"
+                    );
+                    break;
+                }
                 passes_used += 1;
             }
             if estimate_tokens(history) <= threshold || !did_compress {
@@ -581,6 +593,24 @@ fn truncate_chars(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use async_trait::async_trait;
+
+    struct SummaryProvider {
+        summary: String,
+    }
+
+    #[async_trait]
+    impl Provider for SummaryProvider {
+        async fn chat_with_system(
+            &self,
+            _system_prompt: Option<&str>,
+            _message: &str,
+            _model: &str,
+            _temperature: f64,
+        ) -> anyhow::Result<String> {
+            Ok(self.summary.clone())
+        }
+    }
 
     fn msg(role: &str, content: &str) -> ChatMessage {
         ChatMessage {
@@ -857,5 +887,38 @@ mod tests {
         let mut history = vec![msg("tool", &big)];
         let saved = compressor.fast_trim_tool_results(&mut history);
         assert_eq!(saved, 0);
+    }
+
+    #[tokio::test]
+    async fn compress_if_needed_rejects_non_reducing_summary() {
+        let config = ContextCompressionConfig {
+            protect_first_n: 1,
+            protect_last_n: 1,
+            threshold_ratio: 0.01,
+            max_passes: 1,
+            summary_max_chars: 20_000,
+            tool_result_retrim_chars: 0,
+            ..Default::default()
+        };
+        let compressor = ContextCompressor::new(config, 128_000);
+        let provider = SummaryProvider {
+            summary: "summary ".repeat(10_000),
+        };
+        let mut history = vec![
+            msg("system", "sys"),
+            msg("user", "small middle"),
+            msg("assistant", "tail"),
+        ];
+        let original = history.clone();
+
+        let result = compressor
+            .compress_if_needed(&mut history, &provider, "test-model")
+            .await
+            .unwrap();
+
+        assert!(!result.compressed);
+        assert_eq!(history.len(), original.len());
+        assert_eq!(history[1].content, original[1].content);
+        assert_eq!(result.tokens_before, result.tokens_after);
     }
 }

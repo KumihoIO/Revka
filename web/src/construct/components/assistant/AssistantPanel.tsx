@@ -24,7 +24,7 @@ import { generateUUID } from '@/lib/uuid';
 import { useAgentChatSession } from '@/construct/hooks/useAgentChatSession';
 import { useTheme } from '@/construct/hooks/useTheme';
 import { useT, type Locale } from '@/construct/hooks/useT';
-import { deleteSession, getSessions, renameSession } from '@/lib/api';
+import { deleteSession, getSessionsWithArchiveState, renameSession } from '@/lib/api';
 import { useV2Assistant } from './AssistantContext';
 import { v2RouteMeta } from '../layout/construct-navigation';
 import {
@@ -71,6 +71,7 @@ function routeContext(pathname: string) {
 
 const OPERATOR_MAIN_SESSION_ID = 'operator-main';
 const ASSISTANT_TABS_STORAGE_KEY = 'construct_assistant_tabs_v1';
+const ASSISTANT_ARCHIVED_SESSIONS_STORAGE_KEY = 'construct_assistant_archived_session_ids_v1';
 
 interface PersistedAssistantTabs {
   tabs: AssistantTab[];
@@ -82,6 +83,10 @@ function defaultAssistantTabs(): AssistantTab[] {
     { id: 'chat-main', type: 'chat', title: 'Chat', sessionId: OPERATOR_MAIN_SESSION_ID },
     { id: 'terminal-main', type: 'terminal', title: 'Terminal', sessionId: generateUUID() },
   ];
+}
+
+function fallbackChatTab(): AssistantTab {
+  return { id: 'chat-main', type: 'chat', title: 'Chat', sessionId: generateUUID() };
 }
 
 function loadAssistantTabs(): PersistedAssistantTabs {
@@ -106,6 +111,32 @@ function loadAssistantTabs(): PersistedAssistantTabs {
   } catch {
     return { tabs: defaultAssistantTabs(), activeTabId: 'chat-main' };
   }
+}
+
+function loadArchivedSessionIds(): Set<string> {
+  try {
+    const raw = localStorage.getItem(ASSISTANT_ARCHIVED_SESSIONS_STORAGE_KEY);
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return new Set();
+    return new Set(parsed.filter((id): id is string => typeof id === 'string' && id.length > 0));
+  } catch {
+    return new Set();
+  }
+}
+
+function saveArchivedSessionIds(ids: Set<string>) {
+  try {
+    localStorage.setItem(ASSISTANT_ARCHIVED_SESSIONS_STORAGE_KEY, JSON.stringify([...ids]));
+  } catch {
+    // Private mode / quota failures should not break Operator chat.
+  }
+}
+
+function rememberArchivedSessionId(sessionId: string) {
+  const ids = loadArchivedSessionIds();
+  ids.add(sessionId);
+  saveArchivedSessionIds(ids);
 }
 
 function saveAssistantTabs(tabs: AssistantTab[], activeTabId: string | null) {
@@ -1003,18 +1034,33 @@ export default function AssistantPanel() {
   }, [tabs, activeTabId]);
 
   useEffect(() => {
+    if (tabs.length > 0 && tabs.some((tab) => tab.id === activeTabId)) return;
+    setActiveTabId(tabs[0]?.id ?? 'chat-main');
+  }, [tabs, activeTabId]);
+
+  useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const sessions = await getSessions();
+        const { sessions, archivedSessionIds } = await getSessionsWithArchiveState();
         if (cancelled) return;
+        const archivedSessionIdsSet = new Set([
+          ...archivedSessionIds,
+          ...loadArchivedSessionIds(),
+        ]);
         const gatewaySessions = sessions
           .filter((session) => session.channel === 'gateway')
+          .filter((session) => !archivedSessionIdsSet.has(session.id))
           .filter((session) => session.message_count > 0 || !!session.name)
           .sort((a, b) => new Date(b.last_activity).getTime() - new Date(a.last_activity).getTime());
 
         setTabs((prev) => {
-          const seenSessionIds = new Set(prev.filter((tab) => tab.type === 'chat').map((tab) => tab.sessionId));
+          const activeTabs = prev.filter(
+            (tab) => tab.type !== 'chat' || !archivedSessionIdsSet.has(tab.sessionId),
+          );
+          const seenSessionIds = new Set(
+            activeTabs.filter((tab) => tab.type === 'chat').map((tab) => tab.sessionId),
+          );
           const restored = gatewaySessions
             .filter((session) => !seenSessionIds.has(session.id))
             .map((session, index): AssistantTab => ({
@@ -1023,7 +1069,8 @@ export default function AssistantPanel() {
               title: session.name || (index === 0 ? 'Chat' : `Chat ${index + 1}`),
               sessionId: session.id,
             }));
-          return restored.length > 0 ? [...prev, ...restored] : prev;
+          const next = restored.length > 0 ? [...activeTabs, ...restored] : activeTabs;
+          return next.length > 0 ? next : [fallbackChatTab()];
         });
       } catch {
         // Session continuity is best-effort; the active tab still connects by
@@ -1130,6 +1177,7 @@ export default function AssistantPanel() {
   const closeTab = useCallback((tabId: string) => {
     const closing = tabs.find((t) => t.id === tabId);
     if (closing?.type === 'chat') {
+      rememberArchivedSessionId(closing.sessionId);
       void deleteSession(closing.sessionId).catch(() => {
         // The tab is intentionally closed locally even if the persisted
         // transcript was already gone or the gateway is temporarily offline.
@@ -1138,9 +1186,7 @@ export default function AssistantPanel() {
     setTabs((prev) => {
       const remaining = prev.filter((t) => t.id !== tabId);
       if (remaining.length === 0) {
-        // Always keep at least one tab
-        const fallback: AssistantTab = { id: 'chat-main', type: 'chat', title: 'Chat', sessionId: OPERATOR_MAIN_SESSION_ID };
-        return [fallback];
+        return [fallbackChatTab()];
       }
       return remaining;
     });

@@ -25,6 +25,7 @@ from mcp.types import TextContent, Tool
 
 from ._log import _log
 from .cost_tracker import CostTracker
+from .construct_config import memory_project
 from .kumiho_clients import KumihoAgentPoolClient, KumihoSDKClient, KumihoTeamClient
 from .gateway_client import ConstructGatewayClient
 from .journal import SessionJournal
@@ -1063,13 +1064,21 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="capture_skill",
-            description=f"Capture a novel procedure as a skill in {os.environ.get('KUMIHO_MEMORY_PROJECT', 'CognitiveMemory')}/Skills. Use after an agent develops a successful new approach not covered by existing skills.",
+            description=(
+                f"Capture or update a reusable procedure as a first-class skill in "
+                f"{memory_project()}/Skills. "
+                "Use this tool whenever the user asks to capture/save/record something as a skill; "
+                "do not use memory_store for skill-guide captures. The tool stores SKILL.md as a "
+                "revision artifact under the Construct workspace artifact tree, keeps agent provenance "
+                "in revision metadata rather than in the item name, and reads the previous published "
+                "SKILL.md artifact when updating an existing skill so the new revision can improve it."
+            ),
             inputSchema={
                 "type": "object",
                 "properties": {
                     "name": {
                         "type": "string",
-                        "description": "Skill name, e.g. 'rust-error-handling-pattern'.",
+                        "description": "Stable skill name, e.g. 'rust-error-handling-pattern'. Do not append agent IDs or run IDs.",
                     },
                     "domain": {
                         "type": "string",
@@ -1086,6 +1095,19 @@ async def list_tools() -> list[Tool]:
                     "learned_from": {
                         "type": "string",
                         "description": "Context: what task led to discovering this procedure.",
+                    },
+                    "agent_id": {
+                        "type": "string",
+                        "description": "Optional source agent/session ID. Stored as revision metadata, never appended to the skill name.",
+                    },
+                    "change_summary": {
+                        "type": "string",
+                        "description": "For updates, briefly describe how this revision improves the previous skill guide.",
+                    },
+                    "source_revision_krefs": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional revision/artifact krefs this skill revision was derived from.",
                     },
                 },
                 "required": ["name", "domain", "description", "procedure"],
@@ -2420,7 +2442,8 @@ async def list_tools() -> list[Tool]:
             description=(
                 "Store a memory bundle (decision/fact/preference/summary). Auto-stacks revisions on "
                 "similar items by default. Use this to record orchestration decisions, sub-agent outcomes, "
-                "or cross-session lessons."
+                "or cross-session lessons. Do not use for skill guides or requests to capture/save a skill; "
+                "use capture_skill instead so SKILL.md is stored as a revision artifact."
             ),
             inputSchema={
                 "type": "object",

@@ -5,7 +5,59 @@ from unittest.mock import patch
 
 import pytest
 
-from operator_mcp.tool_handlers.skills import tool_list_skills, tool_load_skill
+from operator_mcp.tool_handlers.skills import tool_capture_skill, tool_list_skills, tool_load_skill
+
+
+class FakeSkillPool:
+    def __init__(self):
+        self.items = []
+        self.revisions = {}
+        self.artifacts = {}
+        self.created_items = []
+        self.created_revisions = []
+        self.created_artifacts = []
+        self.tagged = []
+
+    def _ensure_available(self):
+        return True
+
+    async def ensure_space(self, project, space):
+        self.project = project
+        self.space = space
+
+    async def list_items(self, space_path):
+        self.space_path = space_path
+        return self.items
+
+    async def create_item(self, space_path, name, kind, metadata=None):
+        item = {
+            "kref": f"kref://{space_path.strip('/')}/{name}.{kind}",
+            "name": name,
+            "kind": kind,
+            "metadata": metadata or {},
+        }
+        self.items.append(item)
+        self.created_items.append((space_path, name, kind, metadata or {}))
+        return item
+
+    async def get_latest_revision(self, item_kref, tag="published"):
+        return self.revisions.get((item_kref, tag))
+
+    async def get_artifacts(self, revision_kref):
+        return self.artifacts.get(revision_kref, [])
+
+    async def create_revision(self, item_kref, metadata, tag=None):
+        rev = {"kref": f"{item_kref}?r={len(self.created_revisions) + 1}"}
+        self.created_revisions.append((item_kref, metadata, tag))
+        return rev
+
+    async def create_artifact(self, revision_kref, name, location):
+        artifact = {"kref": f"{revision_kref}#{name}", "name": name, "location": location}
+        self.created_artifacts.append((revision_kref, name, location))
+        return artifact
+
+    async def tag_revision(self, revision_kref, tag):
+        self.tagged.append((revision_kref, tag))
 
 
 @pytest.mark.asyncio
@@ -37,3 +89,78 @@ class TestToolLoadSkill:
             result = await tool_load_skill({"name": "nonexistent"})
             assert "error" in result
             assert "not found" in result["error"]
+
+
+@pytest.mark.asyncio
+class TestToolCaptureSkill:
+    async def test_creates_skill_artifact_under_workspace_without_agent_id_in_name(self, tmp_path):
+        pool = FakeSkillPool()
+
+        with (
+            patch("operator_mcp.tool_handlers.skills.memory_project", return_value="CognitiveMemory"),
+            patch("operator_mcp.tool_handlers.skills.workspace_dir", return_value=str(tmp_path)),
+        ):
+            result = await tool_capture_skill({
+                "name": "rust-error-handling-pattern agent-1234567890abcdef",
+                "domain": "rust",
+                "description": "Handle Rust errors consistently.",
+                "procedure": "# Rust Error Handling\n\nUse anyhow at boundaries.",
+                "learned_from": "agent session",
+                "agent_id": "agent-1234567890abcdef",
+            }, pool)
+
+        assert result["captured"] is True
+        assert result["name"] == "rust-error-handling-pattern"
+        assert pool.created_items[0][1] == "rust-error-handling-pattern"
+        assert "agent" not in pool.created_items[0][1]
+        _, rev_meta, tag = pool.created_revisions[0]
+        assert tag is None
+        assert rev_meta["agent_id"] == "agent-1234567890abcdef"
+        assert pool.tagged == [(result["revision_kref"], "published")]
+
+        artifact_path = tmp_path / "artifact" / "cognitivememory" / "skills" / "rust-error-handling-pattern" / "skill" / "SKILL.md"
+        assert result["artifact_path"] == str(artifact_path)
+        assert artifact_path.read_text(encoding="utf-8").startswith("# Rust Error Handling")
+        assert pool.created_artifacts == [(result["revision_kref"], "SKILL.md", str(artifact_path))]
+
+    async def test_updates_existing_skill_and_reads_previous_artifact(self, tmp_path):
+        pool = FakeSkillPool()
+        item = {
+            "kref": "kref://CognitiveMemory/Skills/operator-review.skill",
+            "name": "operator-review",
+            "kind": "skill",
+        }
+        pool.items.append(item)
+        previous_path = tmp_path / "old" / "SKILL.md"
+        previous_path.parent.mkdir(parents=True)
+        previous_path.write_text("# Old Guide\n\nReview quickly.", encoding="utf-8")
+        pool.revisions[(item["kref"], "published")] = {
+            "kref": "kref://CognitiveMemory/Skills/operator-review.skill?r=2",
+        }
+        pool.artifacts["kref://CognitiveMemory/Skills/operator-review.skill?r=2"] = [{
+            "kref": "kref://artifact/old",
+            "name": "SKILL.md",
+            "location": str(previous_path),
+        }]
+
+        with (
+            patch("operator_mcp.tool_handlers.skills.memory_project", return_value="CognitiveMemory"),
+            patch("operator_mcp.tool_handlers.skills.workspace_dir", return_value=str(tmp_path)),
+        ):
+            result = await tool_capture_skill({
+                "name": "operator-review",
+                "domain": "review",
+                "description": "Review implementation changes.",
+                "procedure": "# Improved Guide\n\nReview rigorously.",
+                "change_summary": "Adds stricter verification.",
+            }, pool)
+
+        assert result["updated_existing"] is True
+        assert result["read_previous_artifact"] is True
+        assert result["previous_revision_kref"].endswith("?r=2")
+        assert result["previous_artifact_path"] == str(previous_path)
+        assert pool.created_items == []
+        _, rev_meta, _ = pool.created_revisions[0]
+        assert rev_meta["previous_revision_kref"].endswith("?r=2")
+        assert rev_meta["previous_artifact_path"] == str(previous_path)
+        assert rev_meta["previous_content_length"] == str(len("# Old Guide\n\nReview quickly."))

@@ -389,10 +389,28 @@ export function invokeNode(
 // Sessions
 // ---------------------------------------------------------------------------
 
+export interface SessionsResponse {
+  sessions: Session[];
+  archived_session_ids?: string[];
+}
+
+export function getSessionsWithArchiveState(): Promise<{
+  sessions: Session[];
+  archivedSessionIds: string[];
+}> {
+  return apiFetch<Session[] | SessionsResponse>('/api/sessions').then((data) => {
+    if (Array.isArray(data)) {
+      return { sessions: data, archivedSessionIds: [] };
+    }
+    return {
+      sessions: data.sessions,
+      archivedSessionIds: data.archived_session_ids ?? [],
+    };
+  });
+}
+
 export function getSessions(): Promise<Session[]> {
-  return apiFetch<Session[] | { sessions: Session[] }>('/api/sessions').then((data) =>
-    unwrapField(data, 'sessions'),
-  );
+  return getSessionsWithArchiveState().then((data) => data.sessions);
 }
 
 export function getSession(id: string): Promise<Session> {
@@ -407,8 +425,18 @@ export function getSessionMessages(id: string): Promise<SessionMessagesResponse>
 }
 
 /** Remove an operator chat session from the active gateway transcript list. */
-export function deleteSession(id: string): Promise<{ deleted: boolean; session_id: string }> {
-  return apiFetch<{ deleted: boolean; session_id: string }>(
+export function deleteSession(id: string): Promise<{
+  deleted: boolean;
+  session_id: string;
+  archived?: boolean;
+  archived_at?: string;
+}> {
+  return apiFetch<{
+    deleted: boolean;
+    session_id: string;
+    archived?: boolean;
+    archived_at?: string;
+  }>(
     `/api/sessions/${encodeURIComponent(id)}`,
     { method: 'DELETE' },
   );

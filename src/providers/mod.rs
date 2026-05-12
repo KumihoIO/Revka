@@ -24,6 +24,7 @@ pub mod compatible;
 pub mod copilot;
 pub mod gemini;
 pub mod gemini_cli;
+pub(crate) mod image_media;
 pub mod kilocli;
 pub mod ollama;
 pub mod openai;

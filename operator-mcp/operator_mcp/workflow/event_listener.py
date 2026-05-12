@@ -44,10 +44,25 @@ except ImportError:
 # ---------------------------------------------------------------------------
 
 _logger = logging.getLogger("construct.event_listener")
+_LAST_LIMITED_LOG_AT: dict[str, float] = {}
+_LIMITED_LOG_INTERVAL_SECS = 300.0
 
 
 def _log(msg: str) -> None:
     _logger.info(msg)
+
+
+def _log_limited(
+    key: str,
+    msg: str,
+    *,
+    interval: float = _LIMITED_LOG_INTERVAL_SECS,
+) -> None:
+    now = time.monotonic()
+    last = _LAST_LIMITED_LOG_AT.get(key, 0.0)
+    if now - last >= interval:
+        _LAST_LIMITED_LOG_AT[key] = now
+        _log(msg)
 
 
 def _debug(msg: str) -> None:
@@ -211,7 +226,10 @@ class WorkflowEventListener:
             self._listener_lock_fd.write(f"{os.getpid()}\n")
             self._listener_lock_fd.flush()
         except (OSError, BlockingIOError):
-            _log("WorkflowEventListener: lock held by another operator, skipping")
+            _log_limited(
+                "listener_lock_held",
+                "WorkflowEventListener: lock held by another operator, skipping",
+            )
             return
 
         self._running = True
@@ -807,7 +825,10 @@ class WorkflowEventListener:
             lock_fd.write(str(os.getpid()))
             lock_fd.flush()
         except (IOError, OSError):
-            _log("event_listener: poller lock held by another process, skipping")
+            _log_limited(
+                "poller_lock_held",
+                "event_listener: poller lock held by another process, skipping",
+            )
             if lock_fd:
                 lock_fd.close()
             return
