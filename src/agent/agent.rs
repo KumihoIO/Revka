@@ -554,6 +554,13 @@ impl Agent {
     }
 
     pub async fn from_config(config: &Config) -> Result<Self> {
+        Self::from_config_with_mcp_registry(config, None).await
+    }
+
+    pub async fn from_config_with_mcp_registry(
+        config: &Config,
+        shared_mcp_registry: Option<Arc<tools::McpRegistry>>,
+    ) -> Result<Self> {
         // Inject Kumiho memory MCP server and Operator orchestration MCP server
         // so dashboard/WebSocket agents also get persistent memory and multi-agent
         // tools.  Both inject functions are idempotent.
@@ -620,13 +627,25 @@ impl Agent {
         let mut kumiho_advanced = false;
         let mut deferred_section_for_prompt = String::new();
         if config.mcp.enabled && !config.mcp.servers.is_empty() {
-            tracing::info!(
-                "Initializing MCP client — {} server(s) configured",
-                config.mcp.servers.len()
-            );
-            match tools::McpRegistry::connect_all(&config.mcp.servers).await {
+            let registry_result: Result<Arc<tools::McpRegistry>> =
+                if let Some(registry) = shared_mcp_registry.as_ref() {
+                    tracing::info!(
+                        "Using shared MCP registry — {} server(s), {} tool(s)",
+                        registry.server_count(),
+                        registry.tool_count()
+                    );
+                    Ok(Arc::clone(registry))
+                } else {
+                    tracing::info!(
+                        "Initializing MCP client — {} server(s) configured",
+                        config.mcp.servers.len()
+                    );
+                    tools::McpRegistry::connect_all(&config.mcp.servers)
+                        .await
+                        .map(Arc::new)
+                };
+            match registry_result {
                 Ok(registry) => {
-                    let registry = std::sync::Arc::new(registry);
                     // Registry-based probe for the high-level Kumiho memory
                     // reflexes. See coherence audit row 1 + 13: the prompt
                     // gate must reflect actual runtime tool availability,
