@@ -73,6 +73,7 @@ function routeContext(pathname: string) {
 const OPERATOR_MAIN_SESSION_ID = 'operator-main';
 const ASSISTANT_TABS_STORAGE_KEY = 'construct_assistant_tabs_v1';
 const ASSISTANT_ARCHIVED_SESSIONS_STORAGE_KEY = 'construct_assistant_archived_session_ids_v1';
+const MAX_RESTORED_CHAT_TABS = 12;
 
 interface PersistedAssistantTabs {
   tabs: AssistantTab[];
@@ -95,7 +96,7 @@ function loadAssistantTabs(): PersistedAssistantTabs {
     const raw = localStorage.getItem(ASSISTANT_TABS_STORAGE_KEY);
     if (!raw) return { tabs: defaultAssistantTabs(), activeTabId: 'chat-main' };
     const parsed = JSON.parse(raw) as Partial<PersistedAssistantTabs>;
-    const tabs = Array.isArray(parsed.tabs)
+    const parsedTabs = Array.isArray(parsed.tabs)
       ? parsed.tabs.filter((tab): tab is AssistantTab =>
           !!tab
           && typeof tab.id === 'string'
@@ -104,11 +105,22 @@ function loadAssistantTabs(): PersistedAssistantTabs {
           && (tab.type === 'chat' || tab.type === 'terminal' || tab.type === 'code'),
         )
       : [];
-    if (tabs.length === 0) return { tabs: defaultAssistantTabs(), activeTabId: 'chat-main' };
-    const activeTabId = tabs.some((tab) => tab.id === parsed.activeTabId)
+    const activeTabId = parsedTabs.some((tab) => tab.id === parsed.activeTabId)
       ? parsed.activeTabId
-      : tabs[0]?.id;
-    return { tabs, activeTabId };
+      : parsedTabs[0]?.id;
+    const chatTabs = parsedTabs.filter((tab) => tab.type === 'chat');
+    const nonChatTabs = parsedTabs.filter((tab) => tab.type !== 'chat');
+    const activeChat = activeTabId ? chatTabs.find((tab) => tab.id === activeTabId) : undefined;
+    const boundedChatTabs = [
+      ...(activeChat ? [activeChat] : []),
+      ...chatTabs.filter((tab) => tab.id !== activeChat?.id),
+    ].slice(0, MAX_RESTORED_CHAT_TABS);
+    const tabs = [...boundedChatTabs, ...nonChatTabs];
+    if (tabs.length === 0) return { tabs: defaultAssistantTabs(), activeTabId: 'chat-main' };
+    return {
+      tabs,
+      activeTabId: tabs.some((tab) => tab.id === activeTabId) ? activeTabId : tabs[0]?.id,
+    };
   } catch {
     return { tabs: defaultAssistantTabs(), activeTabId: 'chat-main' };
   }
@@ -1102,12 +1114,23 @@ export default function AssistantPanel() {
         const gatewaySessions = sessions
           .filter((session) => session.channel === 'gateway')
           .filter((session) => !archivedSessionIdsSet.has(session.id))
-          .filter((session) => session.message_count > 0 || !!session.name)
-          .sort((a, b) => new Date(b.last_activity).getTime() - new Date(a.last_activity).getTime());
+          .filter((session) => session.message_count > 0)
+          .sort((a, b) => new Date(b.last_activity).getTime() - new Date(a.last_activity).getTime())
+          .slice(0, MAX_RESTORED_CHAT_TABS);
+        const sessionIdsWithMessages = new Set(gatewaySessions.map((session) => session.id));
 
         setTabs((prev) => {
           const activeTabs = prev.filter(
-            (tab) => tab.type !== 'chat' || !archivedSessionIdsSet.has(tab.sessionId),
+            (tab) =>
+              tab.type !== 'chat'
+              || (
+                !archivedSessionIdsSet.has(tab.sessionId)
+                && (
+                  tab.id === activeTabId
+                  || tab.sessionId === OPERATOR_MAIN_SESSION_ID
+                  || sessionIdsWithMessages.has(tab.sessionId)
+                )
+              ),
           );
           const seenSessionIds = new Set(
             activeTabs.filter((tab) => tab.type === 'chat').map((tab) => tab.sessionId),
