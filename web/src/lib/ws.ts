@@ -157,6 +157,14 @@ export class WebSocketClient {
     this.ws.send(JSON.stringify(payload));
   }
 
+  /** Request cancellation of the active agent turn for this WebSocket session. */
+  sendStop(): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      throw new Error('WebSocket is not connected');
+    }
+    this.ws.send(JSON.stringify({ type: 'stop' }));
+  }
+
   /** Close the connection without auto-reconnecting. */
   disconnect(): void {
     this.intentionallyClosed = true;
