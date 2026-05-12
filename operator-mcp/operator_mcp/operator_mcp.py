@@ -1119,6 +1119,11 @@ async def list_tools() -> list[Tool]:
             inputSchema={
                 "type": "object",
                 "properties": {
+                    "include_details": {
+                        "type": "boolean",
+                        "description": "If true, enrich each skill with latest revision and SKILL.md artifact metadata. Default false for fast listing.",
+                        "default": False,
+                    },
                     "include_legacy_disk": {
                         "type": "boolean",
                         "description": "If true and Kumiho is unavailable, fall back to legacy local markdown skills. Default false.",

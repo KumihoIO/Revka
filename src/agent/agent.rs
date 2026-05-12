@@ -71,6 +71,11 @@ pub(crate) const ARCHITECT_DENIED_TOOLS: &[&str] = &[
     "dry_run_workflow",
 ];
 
+const EMPTY_FINAL_AFTER_TOOLS_RETRY_PROMPT: &str = "The previous model response was empty after tool execution. Provide the final answer to the user now, based on the completed tool results. Do not leave the response blank.";
+const EMPTY_FINAL_AFTER_TOOLS_FALLBACK: &str = "I completed tool work, but the model returned an empty final response. Please retry the request or ask me to summarize the latest tool results.";
+const EMPTY_FINAL_FALLBACK: &str =
+    "The model returned an empty response. Please retry the request.";
+
 /// True when the current turn's user message carries the Architect
 /// editor-state marker.  See [`ARCHITECT_EDITOR_STATE_MARKER`].
 pub(crate) fn is_architect_turn(user_message: &str) -> bool {
@@ -1225,6 +1230,9 @@ impl Agent {
 
         let effective_model = self.classify_model(user_message);
 
+        let mut saw_tool_calls = false;
+        let mut empty_final_retries = 0usize;
+
         for _ in 0..self.config.max_tool_iterations {
             // Token-aware compression — keeps history under the model's
             // context window.  See `compress_history_if_needed` for the
@@ -1326,14 +1334,37 @@ impl Agent {
 
             let (text, calls) = self.tool_dispatcher.parse_response(&response);
             if calls.is_empty() {
-                let final_text = if text.is_empty() {
+                let mut final_text = if text.is_empty() {
                     response.text.unwrap_or_default()
                 } else {
                     text
                 };
+                let mut synthesized_empty_fallback = false;
+
+                if final_text.trim().is_empty() {
+                    if saw_tool_calls && empty_final_retries == 0 {
+                        empty_final_retries += 1;
+                        tracing::warn!(
+                            "Provider returned empty final response after tool calls; retrying once"
+                        );
+                        self.history
+                            .push(ConversationMessage::Chat(ChatMessage::user(
+                                EMPTY_FINAL_AFTER_TOOLS_RETRY_PROMPT,
+                            )));
+                        continue;
+                    }
+                    final_text = if saw_tool_calls {
+                        EMPTY_FINAL_AFTER_TOOLS_FALLBACK.to_string()
+                    } else {
+                        EMPTY_FINAL_FALLBACK.to_string()
+                    };
+                    synthesized_empty_fallback = true;
+                }
 
                 // Store in response cache (text-only, no tool calls)
-                if let (Some(cache), Some(key)) = (&self.response_cache, &cache_key) {
+                if !synthesized_empty_fallback
+                    && let (Some(cache), Some(key)) = (&self.response_cache, &cache_key)
+                {
                     let token_count = response
                         .usage
                         .as_ref()
@@ -1352,6 +1383,7 @@ impl Agent {
                 return Ok(final_text);
             }
 
+            saw_tool_calls = true;
             if !text.is_empty() {
                 self.history
                     .push(ConversationMessage::Chat(ChatMessage::assistant(
@@ -1436,6 +1468,9 @@ impl Agent {
         let effective_model = self.classify_model(user_message);
 
         // ── Turn loop ──────────────────────────────────────────────────
+        let mut saw_tool_calls = false;
+        let mut empty_final_retries = 0usize;
+
         for _ in 0..self.config.max_tool_iterations {
             // Token-aware compression — keeps the Operator chat under the
             // model's context window.  Without this, accumulating tool
@@ -1721,14 +1756,37 @@ impl Agent {
 
             let (text, calls) = self.tool_dispatcher.parse_response(&response);
             if calls.is_empty() {
-                let final_text = if text.is_empty() {
+                let mut final_text = if text.is_empty() {
                     response.text.unwrap_or_default()
                 } else {
                     text
                 };
+                let mut synthesized_empty_fallback = false;
+
+                if final_text.trim().is_empty() {
+                    if saw_tool_calls && empty_final_retries == 0 {
+                        empty_final_retries += 1;
+                        tracing::warn!(
+                            "Provider returned empty final response after tool calls; retrying once"
+                        );
+                        self.history
+                            .push(ConversationMessage::Chat(ChatMessage::user(
+                                EMPTY_FINAL_AFTER_TOOLS_RETRY_PROMPT,
+                            )));
+                        continue;
+                    }
+                    final_text = if saw_tool_calls {
+                        EMPTY_FINAL_AFTER_TOOLS_FALLBACK.to_string()
+                    } else {
+                        EMPTY_FINAL_FALLBACK.to_string()
+                    };
+                    synthesized_empty_fallback = true;
+                }
 
                 // Store in response cache
-                if let (Some(cache), Some(key)) = (&self.response_cache, &cache_key) {
+                if !synthesized_empty_fallback
+                    && let (Some(cache), Some(key)) = (&self.response_cache, &cache_key)
+                {
                     let token_count = response
                         .usage
                         .as_ref()
@@ -1757,6 +1815,7 @@ impl Agent {
             }
 
             // ── Tool calls ─────────────────────────────────────────────
+            saw_tool_calls = true;
             if !text.is_empty() {
                 self.history
                     .push(ConversationMessage::Chat(ChatMessage::assistant(

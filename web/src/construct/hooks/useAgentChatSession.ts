@@ -97,6 +97,7 @@ export function useAgentChatSession({
   const activitiesRef = useRef<ActivityEvent[]>([]);
   const typingRef = useRef(false);
   const sendingQueuedRef = useRef(false);
+  const inFlightTurnsRef = useRef<Map<string, QueuedTurn>>(new Map());
   const onUserMessageRef = useRef(onUserMessage);
   onUserMessageRef.current = onUserMessage;
   const onToolResultRef = useRef(onToolResult);
@@ -107,6 +108,27 @@ export function useAgentChatSession({
   useEffect(() => {
     typingRef.current = typing;
   }, [typing]);
+
+  const markSendingTurnsSent = useCallback(() => {
+    inFlightTurnsRef.current.clear();
+    setMessages((prev) => prev.map((message) =>
+      message.deliveryStatus === 'sending' ? { ...message, deliveryStatus: 'sent' } : message,
+    ));
+  }, []);
+
+  const requeueLatestSendingTurn = useCallback(() => {
+    const inFlightTurns = Array.from(inFlightTurnsRef.current.values());
+    const latest = inFlightTurns[inFlightTurns.length - 1];
+    if (!latest) return false;
+    inFlightTurnsRef.current.delete(latest.id);
+    setQueuedTurns((prev) =>
+      prev.some((turn) => turn.id === latest.id) ? prev : [latest, ...prev],
+    );
+    setMessages((prev) => prev.map((message) =>
+      message.id === latest.id ? { ...message, deliveryStatus: 'queued' } : message,
+    ));
+    return true;
+  }, []);
 
   // Reset input when session changes (one-way: store → state)
   useEffect(() => {
@@ -126,6 +148,7 @@ export function useAgentChatSession({
     setAgentEvents([]);
     setQueuedTurns([]);
     sendingQueuedRef.current = false;
+    inFlightTurnsRef.current.clear();
     setStopping(false);
     activitiesRef.current = [];
     setStreamingContent('');
@@ -187,6 +210,7 @@ export function useAgentChatSession({
       // `/clear`. Mirror what `done`/`error` handlers reset.
       const resetInFlightState = () => {
         setTyping(false);
+        inFlightTurnsRef.current.clear();
         pendingContentRef.current = '';
         pendingThinkingRef.current = '';
         capturedThinkingRef.current = '';
@@ -220,6 +244,7 @@ export function useAgentChatSession({
             break;
 
           case 'thinking': {
+            markSendingTurnsSent();
             setTyping(true);
             pendingThinkingRef.current += msg.content ?? '';
             setStreamingThinking(pendingThinkingRef.current);
@@ -240,6 +265,7 @@ export function useAgentChatSession({
           }
 
           case 'chunk':
+            markSendingTurnsSent();
             setTyping(true);
             pendingContentRef.current += msg.content ?? '';
             setStreamingContent(pendingContentRef.current);
@@ -296,15 +322,14 @@ export function useAgentChatSession({
             capturedThinkingRef.current = '';
             setStreamingContent('');
             setStreamingThinking('');
-            setMessages((prev) => prev.map((message) =>
-              message.deliveryStatus === 'sending' ? { ...message, deliveryStatus: 'sent' } : message,
-            ));
+            markSendingTurnsSent();
             setTyping(false);
             setStopping(false);
             break;
           }
 
           case 'tool_call': {
+            markSendingTurnsSent();
             setTyping(true);
             const toolName = msg.name ?? 'tool';
             const nextActivities = [
@@ -325,6 +350,7 @@ export function useAgentChatSession({
           }
 
           case 'tool_result': {
+            markSendingTurnsSent();
             const toolName = msg.name ?? 'tool';
             const output = msg.output && msg.output.length > 500 ? `${msg.output.slice(0, 500)}...` : msg.output;
             const previous = activitiesRef.current;
@@ -388,9 +414,7 @@ export function useAgentChatSession({
             capturedThinkingRef.current = '';
             setStreamingContent('');
             setStreamingThinking('');
-            setMessages((prev) => prev.map((message) =>
-              message.deliveryStatus === 'sending' ? { ...message, deliveryStatus: 'sent' } : message,
-            ));
+            markSendingTurnsSent();
             setTyping(false);
             setStopping(false);
             setMessages((prev) => [
@@ -408,9 +432,14 @@ export function useAgentChatSession({
           }
 
           case 'operator_status': {
-            setTyping(true);
             const phase = msg.phase ?? 'working';
             const detail = msg.detail ?? '';
+            if (phase === 'queued') {
+              requeueLatestSendingTurn();
+            } else {
+              markSendingTurnsSent();
+            }
+            setTyping(true);
             const nextActivities = [
               ...activitiesRef.current,
               {
@@ -471,9 +500,7 @@ export function useAgentChatSession({
             setStreamingThinking('');
             activitiesRef.current = [];
             setActivities([]);
-            setMessages((prev) => prev.map((message) =>
-              message.deliveryStatus === 'sending' ? { ...message, deliveryStatus: 'sent' } : message,
-            ));
+            markSendingTurnsSent();
             setStopping(false);
             break;
         }
@@ -495,12 +522,13 @@ export function useAgentChatSession({
     // session changes. Re-connecting on every route change drops the in-flight
     // Operator request and clears the activity feed mid-tool-call.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, sessionName]);
+  }, [markSendingTurnsSent, requeueLatestSendingTurn, sessionId, sessionName]);
 
   const sendTurn = useCallback((turn: QueuedTurn, fromQueue: boolean): boolean => {
     if (!wsRef.current?.connected) return false;
     try {
       wsRef.current.sendMessage(turn.content, pageContext, turn.attachments.map((a) => a.file_id));
+      inFlightTurnsRef.current.set(turn.id, turn);
       onUserMessageRef.current?.(turn.content);
       if (fromQueue) {
         setMessages((prev) => prev.map((message) =>

@@ -43,6 +43,13 @@ class FakeSkillPool:
     async def get_latest_revision(self, item_kref, tag="published"):
         return self.revisions.get((item_kref, tag))
 
+    async def batch_get_revisions(self, item_krefs, tag="published"):
+        return {
+            item_kref: self.revisions[(item_kref, tag)]
+            for item_kref in item_krefs
+            if (item_kref, tag) in self.revisions
+        }
+
     async def get_artifacts(self, revision_kref):
         return self.artifacts.get(revision_kref, [])
 
@@ -90,8 +97,36 @@ class TestToolListSkills:
             result = await tool_list_skills({}, pool)
         assert result["source"] == "kumiho"
         assert result["count"] == 1
+        assert result["details_included"] is False
         assert result["skills"][0]["name"] == "operator-loop"
         assert result["skills"][0]["kind"] == "skill"
+        assert "revision_kref" not in result["skills"][0]
+        assert "artifact_kref" not in result["skills"][0]
+
+    async def test_include_details_returns_revision_and_artifact(self, tmp_path):
+        pool = FakeSkillPool()
+        item = {
+            "kref": "kref://CognitiveMemory/Skills/operator-loop.skill",
+            "name": "operator-loop.skill",
+            "kind": "skill",
+            "metadata": {"description": "Loop orchestration.", "domain": "operator"},
+        }
+        pool.items.append(item)
+        pool.revisions[(item["kref"], "published")] = {
+            "kref": "kref://CognitiveMemory/Skills/operator-loop.skill?r=2",
+            "metadata": {"change_summary": "Updated loop flow."},
+        }
+        pool.artifacts["kref://CognitiveMemory/Skills/operator-loop.skill?r=2"] = [{
+            "kref": "kref://artifact/operator-loop",
+            "name": "SKILL.md",
+            "location": str(tmp_path / "SKILL.md"),
+        }]
+
+        with patch("operator_mcp.tool_handlers.skills.memory_project", return_value="CognitiveMemory"):
+            result = await tool_list_skills({"include_details": True}, pool)
+        assert result["source"] == "kumiho"
+        assert result["count"] == 1
+        assert result["details_included"] is True
         assert result["skills"][0]["revision_kref"].endswith("?r=2")
         assert result["skills"][0]["artifact_kref"] == "kref://artifact/operator-loop"
 
