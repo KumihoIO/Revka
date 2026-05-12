@@ -103,9 +103,7 @@ export class WebSocketClient {
     if (this.name) params.set('name', this.name);
     const url = `${this.baseUrl}${basePath}/ws/chat?${params.toString()}`;
 
-    const protocols: string[] = ['construct.v1'];
-    if (token) protocols.push(`bearer.${token}`);
-    this.ws = new WebSocket(url, protocols);
+    this.ws = new WebSocket(url, ['construct.v1']);
 
     this.ws.onopen = () => {
       this.currentDelay = this.reconnectDelay;
