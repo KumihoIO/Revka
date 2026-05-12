@@ -62,33 +62,104 @@ class FakeSkillPool:
 
 @pytest.mark.asyncio
 class TestToolListSkills:
-    async def test_returns_skills(self, skills_dir):
-        with patch("operator_mcp.tool_handlers.skills.list_skills", return_value=[
-            {"name": "operator-loop", "title": "Loop Skill", "path": "/skills/operator-loop.md"},
-        ]):
-            result = await tool_list_skills()
-            assert result["count"] == 1
-            assert result["skills"][0]["name"] == "operator-loop"
+    async def test_returns_kumiho_skills(self, tmp_path):
+        pool = FakeSkillPool()
+        item = {
+            "kref": "kref://CognitiveMemory/Skills/operator-loop.skill",
+            "name": "operator-loop.skill",
+            "kind": "skill",
+            "metadata": {"description": "Loop orchestration.", "domain": "operator"},
+        }
+        bundle = {
+            "kref": "kref://CognitiveMemory/Skills/operator-loop.bundle",
+            "name": "operator-loop",
+            "kind": "bundle",
+        }
+        pool.items.extend([item, bundle])
+        pool.revisions[(item["kref"], "published")] = {
+            "kref": "kref://CognitiveMemory/Skills/operator-loop.skill?r=2",
+            "metadata": {"change_summary": "Updated loop flow."},
+        }
+        pool.artifacts["kref://CognitiveMemory/Skills/operator-loop.skill?r=2"] = [{
+            "kref": "kref://artifact/operator-loop",
+            "name": "SKILL.md",
+            "location": str(tmp_path / "SKILL.md"),
+        }]
+
+        with patch("operator_mcp.tool_handlers.skills.memory_project", return_value="CognitiveMemory"):
+            result = await tool_list_skills({}, pool)
+        assert result["source"] == "kumiho"
+        assert result["count"] == 1
+        assert result["skills"][0]["name"] == "operator-loop"
+        assert result["skills"][0]["kind"] == "skill"
+        assert result["skills"][0]["revision_kref"].endswith("?r=2")
+        assert result["skills"][0]["artifact_kref"] == "kref://artifact/operator-loop"
 
     async def test_empty(self):
-        with patch("operator_mcp.tool_handlers.skills.list_skills", return_value=[]):
-            result = await tool_list_skills()
+        pool = FakeSkillPool()
+        result = await tool_list_skills({}, pool)
+        assert result["count"] == 0
+
+    async def test_legacy_disk_requires_explicit_fallback(self):
+        pool = FakeSkillPool()
+        pool._ensure_available = lambda: False
+        with patch("operator_mcp.tool_handlers.skills.list_local_skills", return_value=[
+            {"name": "operator-loop", "title": "Loop Skill", "path": "/skills/operator-loop.md"},
+        ]):
+            result = await tool_list_skills({}, pool)
             assert result["count"] == 0
+            assert result["source"] == "kumiho"
+            assert "error" in result
+
+            fallback = await tool_list_skills({"include_legacy_disk": True}, pool)
+            assert fallback["count"] == 1
+            assert fallback["skills"][0]["source"] == "local_legacy"
 
 
 @pytest.mark.asyncio
 class TestToolLoadSkill:
-    async def test_found(self):
-        with patch("operator_mcp.tool_handlers.skills.load_skill", return_value="# Skill Content"):
-            result = await tool_load_skill({"name": "operator-chat"})
-            assert result["name"] == "operator-chat"
-            assert result["content"] == "# Skill Content"
+    async def test_found_in_kumiho(self, tmp_path):
+        pool = FakeSkillPool()
+        item = {
+            "kref": "kref://CognitiveMemory/Skills/operator-chat.skill",
+            "name": "operator-chat.skill",
+            "kind": "skill",
+        }
+        pool.items.append(item)
+        revision_kref = "kref://CognitiveMemory/Skills/operator-chat.skill?r=1"
+        pool.revisions[(item["kref"], "published")] = {"kref": revision_kref}
+        skill_path = tmp_path / "SKILL.md"
+        skill_path.write_text("# Skill Content", encoding="utf-8")
+        pool.artifacts[revision_kref] = [{
+            "kref": "kref://artifact/operator-chat",
+            "name": "SKILL.md",
+            "location": str(skill_path),
+        }]
+
+        with patch("operator_mcp.tool_handlers.skills.memory_project", return_value="CognitiveMemory"):
+            result = await tool_load_skill({"name": "operator-chat"}, pool)
+        assert result["source"] == "kumiho"
+        assert result["name"] == "operator-chat"
+        assert result["content"] == "# Skill Content"
+        assert result["artifact_kref"] == "kref://artifact/operator-chat"
 
     async def test_not_found(self):
-        with patch("operator_mcp.tool_handlers.skills.load_skill", return_value=None):
-            result = await tool_load_skill({"name": "nonexistent"})
+        pool = FakeSkillPool()
+        result = await tool_load_skill({"name": "nonexistent"}, pool)
+        assert "error" in result
+        assert "not found" in result["error"].lower()
+
+    async def test_legacy_disk_requires_explicit_fallback(self):
+        pool = FakeSkillPool()
+        pool._ensure_available = lambda: False
+        with patch("operator_mcp.tool_handlers.skills.load_local_skill", return_value="# Local Skill"):
+            result = await tool_load_skill({"name": "operator-chat"}, pool)
+            assert result["source"] == "kumiho"
             assert "error" in result
-            assert "not found" in result["error"]
+
+            fallback = await tool_load_skill({"name": "operator-chat", "allow_legacy_disk_fallback": True}, pool)
+            assert fallback["source"] == "local_legacy"
+            assert fallback["content"] == "# Local Skill"
 
 
 @pytest.mark.asyncio

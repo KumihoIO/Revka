@@ -5,11 +5,13 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, urlparse
 
 from .._log import _log
 from ..construct_config import memory_project, workspace_dir
 from ..kumiho_clients import KumihoAgentPoolClient
-from ..skill_loader import list_skills, load_skill
+from ..skill_loader import list_skills as list_local_skills
+from ..skill_loader import load_skill as load_local_skill
 
 _SKILL_ARTIFACT_NAME = "SKILL.md"
 _SKILL_ITEM_KINDS = {"skill"}
@@ -81,6 +83,102 @@ def _skill_match_name(item: dict[str, Any]) -> str:
     return _item_name(item).strip().removesuffix(".skill")
 
 
+def _item_metadata(item: dict[str, Any]) -> dict[str, Any]:
+    metadata = item.get("metadata")
+    return metadata if isinstance(metadata, dict) else {}
+
+
+def _revision_metadata(revision: dict[str, Any] | None) -> dict[str, Any]:
+    if not revision:
+        return {}
+    metadata = revision.get("metadata")
+    return metadata if isinstance(metadata, dict) else {}
+
+
+def _artifact_path_from_location(location: str) -> Path:
+    if location.startswith("file://"):
+        parsed = urlparse(location)
+        return Path(unquote(parsed.path))
+    return Path(location)
+
+
+async def _get_skill_artifact(
+    pool_client: KumihoAgentPoolClient,
+    revision_kref: str,
+) -> dict[str, Any] | None:
+    get_artifacts = getattr(pool_client, "get_artifacts", None)
+    if not get_artifacts:
+        return None
+    artifacts = await get_artifacts(revision_kref)
+    if not isinstance(artifacts, list):
+        return None
+    skill_artifact = next(
+        (art for art in artifacts if isinstance(art, dict) and art.get("name") == _SKILL_ARTIFACT_NAME),
+        artifacts[0] if artifacts else None,
+    )
+    return skill_artifact if isinstance(skill_artifact, dict) else None
+
+
+async def _latest_skill_revision(
+    pool_client: KumihoAgentPoolClient,
+    item_kref: str,
+    tag: str = "published",
+) -> dict[str, Any] | None:
+    try:
+        return await pool_client.get_latest_revision(item_kref, tag=tag)
+    except Exception as e:
+        _log(f"Skill revision lookup failed for {item_kref}: {e}")
+        return None
+
+
+def _skill_summary(
+    item: dict[str, Any],
+    revision: dict[str, Any] | None = None,
+    artifact: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    item_meta = _item_metadata(item)
+    rev_meta = _revision_metadata(revision)
+    metadata = {**item_meta, **rev_meta}
+    name = _skill_match_name(item)
+    title = str(metadata.get("title") or name)
+    description = str(metadata.get("description") or "")
+    result: dict[str, Any] = {
+        "name": name,
+        "title": title,
+        "description": description,
+        "domain": str(metadata.get("domain") or ""),
+        "kref": str(item.get("kref") or ""),
+        "kind": _item_kind(item),
+        "source": "kumiho",
+    }
+    if revision:
+        result["revision_kref"] = str(revision.get("kref") or "")
+        if metadata.get("created_at"):
+            result["created_at"] = str(metadata["created_at"])
+        if metadata.get("change_summary"):
+            result["change_summary"] = str(metadata["change_summary"])
+    if artifact:
+        result["artifact_kref"] = str(artifact.get("kref") or "")
+        result["artifact_name"] = str(artifact.get("name") or _SKILL_ARTIFACT_NAME)
+    return result
+
+
+async def _find_skill_by_name_or_kref(
+    pool_client: KumihoAgentPoolClient,
+    space_path: str,
+    name_or_kref: str,
+) -> dict[str, Any] | None:
+    items = await pool_client.list_items(space_path)
+    for item in items:
+        if _item_kind(item) not in _SKILL_ITEM_KINDS:
+            continue
+        if str(item.get("kref") or "") == name_or_kref:
+            return item
+        if _skill_match_name(item) == name_or_kref:
+            return item
+    return None
+
+
 async def _find_existing_skill(
     pool_client: KumihoAgentPoolClient,
     space_path: str,
@@ -97,23 +195,15 @@ async def _load_revision_artifact(
     pool_client: KumihoAgentPoolClient,
     revision_kref: str,
 ) -> tuple[str, str, str]:
-    get_artifacts = getattr(pool_client, "get_artifacts", None)
-    if not get_artifacts:
-        return "", "", ""
-    artifacts = await get_artifacts(revision_kref)
-    if not isinstance(artifacts, list):
-        return "", "", ""
-    skill_artifact = next(
-        (art for art in artifacts if art.get("name") == _SKILL_ARTIFACT_NAME),
-        artifacts[0] if artifacts else None,
-    )
-    if not isinstance(skill_artifact, dict):
+    skill_artifact = await _get_skill_artifact(pool_client, revision_kref)
+    if not skill_artifact:
         return "", "", ""
     location = str(skill_artifact.get("location") or "")
     if not location:
         return "", "", ""
+    path = _artifact_path_from_location(location)
     try:
-        content = Path(location).read_text(encoding="utf-8")
+        content = path.read_text(encoding="utf-8")
     except OSError:
         return "", location, str(skill_artifact.get("kref") or "")
     return content, location, str(skill_artifact.get("kref") or "")
@@ -225,16 +315,85 @@ async def tool_capture_skill(args: dict[str, Any], pool_client: KumihoAgentPoolC
     }
 
 
-async def tool_list_skills() -> dict[str, Any]:
-    """List all available orchestration skills."""
-    skills = list_skills()
-    return {"skills": skills, "count": len(skills)}
+async def tool_list_skills(args: dict[str, Any], pool_client: KumihoAgentPoolClient) -> dict[str, Any]:
+    """List captured skills from Kumiho."""
+    project = memory_project()
+    space_path = f"/{project}/Skills"
+    include_legacy_disk = bool(args.get("include_legacy_disk"))
+
+    if hasattr(pool_client, "_ensure_available") and not pool_client._ensure_available():  # type: ignore[attr-defined]
+        if not include_legacy_disk:
+            return {"error": "Kumiho is not available", "skills": [], "count": 0, "source": "kumiho"}
+        skills = [{**skill, "source": "local_legacy"} for skill in list_local_skills()]
+        return {"skills": skills, "count": len(skills), "source": "local_legacy"}
+
+    try:
+        items = await pool_client.list_items(space_path)
+        skill_items = [item for item in items if _item_kind(item) in _SKILL_ITEM_KINDS]
+        results: list[dict[str, Any]] = []
+        for item in skill_items:
+            item_kref = str(item.get("kref") or "")
+            revision = await _latest_skill_revision(pool_client, item_kref) if item_kref else None
+            revision_kref = str(revision.get("kref") or "") if revision else ""
+            artifact = await _get_skill_artifact(pool_client, revision_kref) if revision_kref else None
+            results.append(_skill_summary(item, revision, artifact))
+        results.sort(key=lambda skill: skill["name"])
+        return {"skills": results, "count": len(results), "source": "kumiho", "space": space_path}
+    except Exception as e:
+        _log(f"Skill list failed: {e}")
+        return {"error": f"Failed to list skills from Kumiho: {e}", "skills": [], "count": 0, "source": "kumiho"}
 
 
-async def tool_load_skill(args: dict[str, Any]) -> dict[str, Any]:
-    """Load a specific skill's content."""
+async def tool_load_skill(args: dict[str, Any], pool_client: KumihoAgentPoolClient) -> dict[str, Any]:
+    """Load a captured skill's published SKILL.md artifact from Kumiho."""
     name = args["name"]
-    content = load_skill(name)
-    if content is None:
-        return {"error": f"Skill not found: {name}"}
-    return {"name": name, "content": content}
+    tag = str(args.get("tag") or "published")
+    allow_legacy_disk = bool(args.get("allow_legacy_disk_fallback"))
+    project = memory_project()
+    space_path = f"/{project}/Skills"
+
+    if hasattr(pool_client, "_ensure_available") and not pool_client._ensure_available():  # type: ignore[attr-defined]
+        if allow_legacy_disk:
+            content = load_local_skill(name)
+            if content is not None:
+                return {"name": name, "content": content, "source": "local_legacy"}
+        return {"error": "Kumiho is not available", "source": "kumiho"}
+
+    try:
+        item = await _find_skill_by_name_or_kref(pool_client, space_path, name)
+        if not item:
+            if allow_legacy_disk:
+                content = load_local_skill(name)
+                if content is not None:
+                    return {"name": name, "content": content, "source": "local_legacy"}
+            return {"error": f"Skill not found in Kumiho: {name}", "source": "kumiho"}
+
+        item_kref = str(item.get("kref") or "")
+        revision = await _latest_skill_revision(pool_client, item_kref, tag=tag)
+        if not revision:
+            return {"error": f"Skill has no {tag} revision: {name}", "source": "kumiho", "item_kref": item_kref}
+
+        revision_kref = str(revision.get("kref") or "")
+        content, artifact_path, artifact_kref = await _load_revision_artifact(pool_client, revision_kref)
+        if not content:
+            return {
+                "error": f"Skill revision has no readable {_SKILL_ARTIFACT_NAME} artifact: {name}",
+                "source": "kumiho",
+                "item_kref": item_kref,
+                "revision_kref": revision_kref,
+                "artifact_kref": artifact_kref,
+            }
+
+        return {
+            "name": _skill_match_name(item),
+            "content": content,
+            "source": "kumiho",
+            "item_kref": item_kref,
+            "revision_kref": revision_kref,
+            "artifact_kref": artifact_kref,
+            "artifact_path": artifact_path,
+            "tag": tag,
+        }
+    except Exception as e:
+        _log(f"Skill load failed: {e}")
+        return {"error": f"Failed to load skill from Kumiho: {e}", "source": "kumiho"}
