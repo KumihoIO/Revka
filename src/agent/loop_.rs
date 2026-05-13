@@ -319,13 +319,17 @@ fn autosave_memory_key(prefix: &str) -> String {
 async fn build_context(
     mem: &dyn Memory,
     user_msg: &str,
+    limit: usize,
     min_relevance_score: f64,
     session_id: Option<&str>,
 ) -> String {
     let mut context = String::new();
 
     // Pull relevant memories for this message
-    if let Ok(mut entries) = mem.recall(user_msg, 5, session_id, None, None).await {
+    if let Ok(mut entries) = mem
+        .recall(user_msg, limit.max(1), session_id, None, None)
+        .await
+    {
         // Apply time decay: older non-Core memories score lower
         decay::apply_time_decay(&mut entries, decay::DEFAULT_HALF_LIFE_DAYS);
 
@@ -4164,6 +4168,7 @@ pub async fn run(
         let mem_context = build_context(
             mem.as_ref(),
             &effective_msg,
+            config.kumiho.memory_retrieval_limit,
             config.memory.min_relevance_score,
             memory_session_id.as_deref(),
         )
@@ -4442,6 +4447,7 @@ pub async fn run(
             let mem_context = build_context(
                 mem.as_ref(),
                 &effective_input,
+                config.kumiho.memory_retrieval_limit,
                 config.memory.min_relevance_score,
                 memory_session_id.as_deref(),
             )
@@ -5054,6 +5060,7 @@ pub async fn process_message(
     let mem_context = build_context(
         mem.as_ref(),
         effective_msg_ref,
+        config.kumiho.memory_retrieval_limit,
         config.memory.min_relevance_score,
         session_id,
     )

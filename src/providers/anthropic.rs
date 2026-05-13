@@ -30,71 +30,6 @@ fn model_supports_temperature(model: &str) -> bool {
     !no_temp_prefixes.iter().any(|p| model.starts_with(p))
 }
 
-fn sniff_image_media_type(bytes: &[u8]) -> Option<&'static str> {
-    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
-        Some("image/png")
-    } else if bytes.starts_with(b"\xff\xd8\xff") {
-        Some("image/jpeg")
-    } else if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
-        Some("image/gif")
-    } else if bytes.len() >= 12 && bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WEBP" {
-        Some("image/webp")
-    } else {
-        None
-    }
-}
-
-fn decode_base64_header(data: &str) -> Option<Vec<u8>> {
-    let compact: String = data
-        .chars()
-        .filter(|c| !c.is_whitespace())
-        .take(96)
-        .collect();
-    if compact.is_empty() {
-        return None;
-    }
-    let mut padded = compact;
-    while padded.len() % 4 != 0 {
-        padded.push('=');
-    }
-    base64::engine::general_purpose::STANDARD
-        .decode(padded)
-        .ok()
-}
-
-fn image_media_type_from_data_uri(header: &str, data: &str) -> String {
-    let declared = header
-        .split(';')
-        .next()
-        .filter(|mime| mime.starts_with("image/"))
-        .unwrap_or("image/jpeg");
-    decode_base64_header(data)
-        .as_deref()
-        .and_then(sniff_image_media_type)
-        .unwrap_or(declared)
-        .to_string()
-}
-
-fn image_media_type_from_path(path: &std::path::Path, bytes: &[u8]) -> String {
-    if let Some(sniffed) = sniff_image_media_type(bytes) {
-        return sniffed.to_string();
-    }
-
-    match path
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("jpg")
-        .to_ascii_lowercase()
-        .as_str()
-    {
-        "png" => "image/png",
-        "gif" => "image/gif",
-        "webp" => "image/webp",
-        _ => "image/jpeg",
-    }
-    .to_string()
-}
-
 #[derive(Debug, Serialize)]
 struct ChatRequest {
     model: String,
@@ -575,7 +510,10 @@ impl AnthropicProvider {
                             if let Some(comma) = img_ref.find(',') {
                                 let header = &img_ref[5..comma];
                                 let b64 = img_ref[comma + 1..].trim().to_string();
-                                let mime = image_media_type_from_data_uri(header, &b64);
+                                let mime =
+                                    crate::providers::image_media::image_media_type_from_data_uri(
+                                        header, &b64,
+                                    );
                                 (mime, b64)
                             } else {
                                 continue;
@@ -587,7 +525,10 @@ impl AnthropicProvider {
                                 Ok(bytes) => {
                                     let b64 =
                                         base64::engine::general_purpose::STANDARD.encode(&bytes);
-                                    let mime = image_media_type_from_path(path, &bytes);
+                                    let mime =
+                                        crate::providers::image_media::image_media_type_from_path(
+                                            path, &bytes,
+                                        );
                                     (mime, b64)
                                 }
                                 Err(_) => continue,

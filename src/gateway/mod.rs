@@ -11,6 +11,7 @@ pub mod api;
 pub mod api_agents;
 pub mod api_architect;
 pub mod api_artifact_body;
+pub mod api_assets;
 pub mod api_attachments;
 pub mod api_auth_profiles;
 pub mod api_clawhub;
@@ -843,10 +844,31 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
         None
     };
 
+    // Device registry and pairing store (only when pairing is required).
+    //
+    // Dashboard pairing writes device rows immediately. Hydrate the auth guard
+    // from both config and the registry so tokens issued by that flow survive
+    // daemon restarts even if the config write was interrupted.
+    let device_registry = if config.gateway.require_pairing {
+        Some(Arc::new(api_pairing::DeviceRegistry::new(
+            &config.workspace_dir,
+        )?))
+    } else {
+        None
+    };
+
     // ── Pairing guard ──────────────────────────────────────
+    let mut pairing_tokens = config.gateway.paired_tokens.clone();
+    if let Some(ref registry) = device_registry {
+        for token_hash in registry.token_hashes() {
+            if !pairing_tokens.iter().any(|token| token == &token_hash) {
+                pairing_tokens.push(token_hash);
+            }
+        }
+    }
     let pairing = Arc::new(PairingGuard::new(
         config.gateway.require_pairing,
-        &config.gateway.paired_tokens,
+        &pairing_tokens,
     ));
     let rate_limit_max_keys = normalize_max_keys(
         config.gateway.rate_limit_max_keys,
@@ -956,14 +978,6 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
     // Node registry for dynamic node discovery
     let node_registry = Arc::new(nodes::NodeRegistry::new(config.nodes.max_nodes));
 
-    // Device registry and pairing store (only when pairing is required)
-    let device_registry = if config.gateway.require_pairing {
-        Some(Arc::new(api_pairing::DeviceRegistry::new(
-            &config.workspace_dir,
-        )?))
-    } else {
-        None
-    };
     let pending_pairings = if config.gateway.require_pairing {
         Some(Arc::new(api_pairing::PairingStore::new(
             config.gateway.pairing_dashboard.max_pending_codes,
@@ -1567,6 +1581,39 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
             Duration::from_secs(120),
         ));
 
+    // Asset Browser artifact-content edits are JSON payloads and can be larger
+    // than the default 64 KiB API cap. Keep the write surface typed and bounded
+    // without loosening limits for the rest of the gateway.
+    const ASSET_EDIT_MAX_BODY: usize = 2 * 1024 * 1024;
+    let asset_router = Router::new()
+        .route(
+            "/api/assets/items/deprecate",
+            post(api_assets::handle_deprecate_item),
+        )
+        .route(
+            "/api/assets/revisions/deprecate",
+            post(api_assets::handle_deprecate_revision),
+        )
+        .route(
+            "/api/assets/revisions/publish",
+            post(api_assets::handle_publish_revision),
+        )
+        .route(
+            "/api/assets/artifacts/deprecate",
+            post(api_assets::handle_deprecate_artifact),
+        )
+        .route(
+            "/api/assets/artifacts/content",
+            put(api_assets::handle_update_artifact_content),
+        )
+        .with_state(state.clone())
+        .layer(DefaultBodyLimit::disable())
+        .layer(RequestBodyLimitLayer::new(ASSET_EDIT_MAX_BODY))
+        .layer(TimeoutLayer::with_status_code(
+            StatusCode::REQUEST_TIMEOUT,
+            Duration::from_secs(30),
+        ));
+
     // Build router with middleware
     let inner = Router::new()
         // ── Admin routes (for CLI management) ──
@@ -1802,6 +1849,10 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
     // Merge attachments router (has its own 25 MiB body limit + 120s timeout,
     // outside the global 64 KiB / 30s caps).
     let inner = inner.merge(attachments_router);
+
+    // Merge Asset Browser write router (has its own bounded JSON body limit,
+    // outside the global 64 KiB cap).
+    let inner = inner.merge(asset_router);
 
     // Nest under path prefix when configured (axum strips prefix before routing).
     // nest() at "/prefix" handles both "/prefix" and "/prefix/*" but not "/prefix/"

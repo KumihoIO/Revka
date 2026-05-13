@@ -17,6 +17,8 @@ pub const DAEMON_NOFILE_SOFT: u64 = 4096;
 /// Hard ceiling — double the soft cap. Operators can raise the soft limit
 /// at runtime up to this without re-installing the service.
 pub const DAEMON_NOFILE_HARD: u64 = 8192;
+const DAEMON_LOG_ROTATE_BYTES: u64 = 20 * 1024 * 1024;
+const DAEMON_LOG_RETAINED_FILES: usize = 5;
 
 /// Supported init systems for service management
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -176,6 +178,7 @@ fn start(config: &Config, init_system: InitSystem) -> Result<()> {
                 let _ = fs::create_dir_all(&var_dir);
             }
         }
+        rotate_daemon_logs(config)?;
         let plist = macos_service_file()?;
         run_checked(Command::new("launchctl").arg("load").arg("-w").arg(&plist))?;
         run_checked(Command::new("launchctl").arg("start").arg(SERVICE_LABEL))?;
@@ -185,7 +188,7 @@ fn start(config: &Config, init_system: InitSystem) -> Result<()> {
         let resolved = init_system.resolve()?;
         start_linux(resolved)
     } else if cfg!(target_os = "windows") {
-        let _ = config;
+        rotate_daemon_logs(config)?;
         run_checked(Command::new("schtasks").args(["/Run", "/TN", windows_task_name()]))?;
         println!("✅ Service started");
         Ok(())
@@ -193,6 +196,75 @@ fn start(config: &Config, init_system: InitSystem) -> Result<()> {
         let _ = config;
         anyhow::bail!("Service management is supported on macOS and Linux only")
     }
+}
+
+fn daemon_logs_dir(config: &Config) -> PathBuf {
+    let exe = std::env::current_exe().ok();
+    if let Some(ref exe_path) = exe {
+        if let Some(var_dir) = detect_homebrew_var_dir(exe_path) {
+            return var_dir.join("logs");
+        }
+    }
+    config
+        .config_path
+        .parent()
+        .map_or_else(|| PathBuf::from("."), PathBuf::from)
+        .join("logs")
+}
+
+fn rotate_daemon_logs(config: &Config) -> Result<()> {
+    rotate_daemon_logs_in(&daemon_logs_dir(config), DAEMON_LOG_ROTATE_BYTES)
+}
+
+fn rotate_daemon_logs_in(logs_dir: &Path, max_bytes: u64) -> Result<()> {
+    fs::create_dir_all(logs_dir)?;
+    for name in ["daemon.stdout.log", "daemon.stderr.log"] {
+        rotate_log_file(&logs_dir.join(name), max_bytes)?;
+    }
+    Ok(())
+}
+
+fn rotate_log_file(path: &Path, max_bytes: u64) -> Result<()> {
+    let Ok(metadata) = fs::metadata(path) else {
+        return Ok(());
+    };
+    if metadata.len() < max_bytes {
+        return Ok(());
+    }
+
+    let oldest = rotated_log_path(path, DAEMON_LOG_RETAINED_FILES);
+    if oldest.exists() {
+        fs::remove_file(&oldest)
+            .with_context(|| format!("Failed to remove old daemon log {}", oldest.display()))?;
+    }
+
+    for idx in (1..DAEMON_LOG_RETAINED_FILES).rev() {
+        let from = rotated_log_path(path, idx);
+        if from.exists() {
+            let to = rotated_log_path(path, idx + 1);
+            fs::rename(&from, &to).with_context(|| {
+                format!(
+                    "Failed to rotate daemon log {} to {}",
+                    from.display(),
+                    to.display()
+                )
+            })?;
+        }
+    }
+
+    let first = rotated_log_path(path, 1);
+    fs::rename(path, &first).with_context(|| {
+        format!(
+            "Failed to rotate daemon log {} to {}",
+            path.display(),
+            first.display()
+        )
+    })?;
+    Ok(())
+}
+
+fn rotated_log_path(path: &Path, index: usize) -> PathBuf {
+    PathBuf::from(format!("{}.{}", path.display(), index))
 }
 
 fn start_linux(init_system: InitSystem) -> Result<()> {
@@ -2056,6 +2128,43 @@ mod tests {
         // tail should succeed on existing file
         let result = tail_file(&log, 3, false);
         assert!(result.is_ok(), "tail on existing file should succeed");
+    }
+
+    #[test]
+    fn rotate_daemon_logs_rotates_oversized_files() {
+        let dir = tempfile::tempdir().expect("failed to create temp dir");
+        let stderr_log = dir.path().join("daemon.stderr.log");
+        let stdout_log = dir.path().join("daemon.stdout.log");
+        fs::write(&stderr_log, "123456").unwrap();
+        fs::write(&stdout_log, "small").unwrap();
+
+        rotate_daemon_logs_in(dir.path(), 6).unwrap();
+
+        assert!(!stderr_log.exists());
+        assert_eq!(
+            fs::read_to_string(dir.path().join("daemon.stderr.log.1")).unwrap(),
+            "123456"
+        );
+        assert!(stdout_log.exists());
+    }
+
+    #[test]
+    fn rotate_daemon_logs_shifts_existing_retention() {
+        let dir = tempfile::tempdir().expect("failed to create temp dir");
+        let stderr_log = dir.path().join("daemon.stderr.log");
+        fs::write(&stderr_log, "new-large").unwrap();
+        fs::write(dir.path().join("daemon.stderr.log.1"), "old-1").unwrap();
+
+        rotate_daemon_logs_in(dir.path(), 1).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(dir.path().join("daemon.stderr.log.1")).unwrap(),
+            "new-large"
+        );
+        assert_eq!(
+            fs::read_to_string(dir.path().join("daemon.stderr.log.2")).unwrap(),
+            "old-1"
+        );
     }
 
     #[test]

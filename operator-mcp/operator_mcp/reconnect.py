@@ -18,6 +18,19 @@ from typing import Any
 from ._log import _log
 from .agent_state import AGENTS, ManagedAgent
 
+_LAST_LOG_AT: dict[str, float] = {}
+_LOG_THROTTLE_SECS = 300.0
+
+
+def _log_limited(key: str, msg: str, *, interval: float = _LOG_THROTTLE_SECS) -> None:
+    import time
+
+    now = time.monotonic()
+    last = _LAST_LOG_AT.get(key, 0.0)
+    if now - last >= interval:
+        _LAST_LOG_AT[key] = now
+        _log(msg)
+
 
 async def reconnect_agents(
     sidecar: Any,
@@ -35,11 +48,11 @@ async def reconnect_agents(
     try:
         sidecar_agents = await sidecar.list_agents()
     except Exception as e:
-        _log(f"reconnect: sidecar.list_agents() failed: {e}")
+        _log_limited("list_agents_failed", f"reconnect: sidecar.list_agents() failed: {e}")
         return []
 
     if not sidecar_agents:
-        _log("reconnect: no active sidecar agents found")
+        _log_limited("no_active_agents", "reconnect: no active sidecar agents found")
         return []
 
     _log(f"reconnect: sidecar reports {len(sidecar_agents)} active agent(s)")

@@ -1029,6 +1029,10 @@ pub struct KumihoConfig {
     /// Kumiho project for skills, operational data, and ClawHub installs.
     #[serde(default = "default_kumiho_harness_project")]
     pub harness_project: String,
+
+    /// Default maximum number of memories returned by Kumiho recall/engage.
+    #[serde(default = "default_kumiho_memory_retrieval_limit")]
+    pub memory_retrieval_limit: usize,
 }
 
 fn default_kumiho_mcp_path() -> String {
@@ -1051,6 +1055,10 @@ fn default_kumiho_harness_project() -> String {
     "Construct".to_string()
 }
 
+fn default_kumiho_memory_retrieval_limit() -> usize {
+    3
+}
+
 impl Default for KumihoConfig {
     fn default() -> Self {
         Self {
@@ -1060,6 +1068,7 @@ impl Default for KumihoConfig {
             api_url: default_kumiho_api_url(),
             memory_project: default_kumiho_memory_project(),
             harness_project: default_kumiho_harness_project(),
+            memory_retrieval_limit: default_kumiho_memory_retrieval_limit(),
         }
     }
 }
@@ -1523,6 +1532,18 @@ pub struct AgentConfig {
     /// are summarized to preserve context while staying within budget. Default: `32000`.
     #[serde(default = "default_agent_max_context_tokens")]
     pub max_context_tokens: usize,
+    /// Per-model context window overrides used for compression and hard-cap checks.
+    ///
+    /// Keys are matched case-insensitively against full model IDs and provider-stripped
+    /// model IDs. For TOML bare keys, use `_` where a model ID contains `.`, e.g.
+    /// `gpt-5_5 = 1050000`.
+    #[serde(default)]
+    pub model_context_windows: HashMap<String, usize>,
+    /// Fraction of the model context window allowed before Construct fails loud.
+    ///
+    /// Defaults to `0.95` to leave headroom for provider-side accounting drift.
+    #[serde(default = "default_context_window_safety_ratio")]
+    pub context_window_safety_ratio: f64,
     /// Enable parallel tool execution within a single iteration. Default: `false`.
     #[serde(default)]
     pub parallel_tools: bool,
@@ -1604,6 +1625,10 @@ fn default_agent_max_context_tokens() -> usize {
     32_000
 }
 
+fn default_context_window_safety_ratio() -> f64 {
+    0.95
+}
+
 fn default_agent_tool_dispatcher() -> String {
     "auto".into()
 }
@@ -1619,6 +1644,8 @@ impl Default for AgentConfig {
             max_tool_iterations: default_agent_max_tool_iterations(),
             max_history_messages: default_agent_max_history_messages(),
             max_context_tokens: default_agent_max_context_tokens(),
+            model_context_windows: HashMap::new(),
+            context_window_safety_ratio: default_context_window_safety_ratio(),
             parallel_tools: false,
             tool_dispatcher: default_agent_tool_dispatcher(),
             tool_call_dedup_exempt: Vec::new(),

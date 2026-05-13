@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ExternalLink, Pencil, Plus, Power, Search, Sparkles, Trash2 } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import type { ClawHubSearchResult, SkillCreateRequest, SkillDefinition, SkillUpdateRequest } from '@/types/api';
-import { createSkill, deleteSkill, fetchClawHubTrending, fetchSkills, installClawHubSkill, searchClawHub, toggleSkillDeprecation, updateSkill } from '@/lib/api';
+import { createSkill, deleteSkill, fetchClawHubTrending, fetchSkillDetail, fetchSkills, installClawHubSkill, searchClawHub, toggleSkillDeprecation, updateSkill } from '@/lib/api';
 import { useT } from '@/construct/hooks/useT';
 import Panel from '../components/ui/Panel';
 import PageHeader from '../components/ui/PageHeader';
@@ -16,6 +18,9 @@ export default function Skills() {
   const [skills, setSkills] = useState<SkillDefinition[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedSkillKref, setSelectedSkillKref] = useState<string | null>(null);
+  const [selectedSkillDetail, setSelectedSkillDetail] = useState<SkillDefinition | null>(null);
+  const [skillDetailLoading, setSkillDetailLoading] = useState(false);
+  const [skillDetailError, setSkillDetailError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [editorMode, setEditorMode] = useState<'create' | 'edit' | null>(null);
   const [saving, setSaving] = useState(false);
@@ -33,7 +38,9 @@ export default function Skills() {
     return fetchSkills(true, 1, 100)
       .then((page) => {
         setSkills(page.skills);
-        setSelectedSkillKref((current) => current ?? page.skills[0]?.kref ?? null);
+        setSelectedSkillKref((current) => (
+          current && page.skills.some((skill) => skill.kref === current) ? current : null
+        ));
       })
       .catch(() => setSkills([]))
       .finally(() => setLoading(false));
@@ -68,10 +75,52 @@ export default function Skills() {
     loadMarketplace();
   }, []);
 
-  const selectedSkill = useMemo(
-    () => skills.find((skill) => skill.kref === selectedSkillKref) ?? skills[0] ?? null,
+  const selectedSkillSummary = useMemo(
+    () => skills.find((skill) => skill.kref === selectedSkillKref) ?? null,
     [selectedSkillKref, skills],
   );
+
+  const selectedSkill = useMemo(() => {
+    if (!selectedSkillSummary && !selectedSkillDetail) return null;
+    if (selectedSkillDetail?.kref !== selectedSkillKref) return selectedSkillSummary;
+    return {
+      ...selectedSkillSummary,
+      ...selectedSkillDetail,
+      deprecated: selectedSkillSummary?.deprecated ?? selectedSkillDetail.deprecated,
+      created_at: selectedSkillSummary?.created_at ?? selectedSkillDetail.created_at,
+    };
+  }, [selectedSkillDetail, selectedSkillKref, selectedSkillSummary]);
+
+  useEffect(() => {
+    if (!selectedSkillKref) {
+      setSelectedSkillDetail(null);
+      setSkillDetailLoading(false);
+      setSkillDetailError(null);
+      return;
+    }
+
+    let cancelled = false;
+    setSkillDetailLoading(true);
+    setSkillDetailError(null);
+    setSelectedSkillDetail(null);
+
+    fetchSkillDetail(selectedSkillKref)
+      .then((skill) => {
+        if (!cancelled) setSelectedSkillDetail(skill);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setSkillDetailError(err instanceof Error ? err.message : String(err));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setSkillDetailLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedSkillKref]);
 
   const filteredSkills = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -224,8 +273,8 @@ export default function Skills() {
                     className="w-full rounded-[14px] border px-3 py-3.5 text-left transition"
                     style={{
                       opacity: skill.deprecated ? 0.65 : 1,
-                      borderColor: skill.kref === selectedSkill?.kref ? 'var(--construct-border-strong)' : 'var(--construct-border-soft)',
-                      background: skill.kref === selectedSkill?.kref
+                      borderColor: skill.kref === selectedSkillKref ? 'var(--construct-border-strong)' : 'var(--construct-border-soft)',
+                      background: skill.kref === selectedSkillKref
                         ? 'color-mix(in srgb, var(--construct-signal-live-soft) 80%, var(--construct-bg-panel-strong))'
                         : 'color-mix(in srgb, var(--construct-bg-panel-strong) 94%, transparent)',
                     }}
@@ -295,13 +344,34 @@ export default function Skills() {
 
               <div>
                 <div className="construct-kicker">{t('skills.content')}</div>
-                <pre className="mt-2 max-h-[24rem] overflow-auto rounded-[14px] border p-4 text-xs leading-6" style={{ borderColor: 'var(--construct-border-soft)', color: 'var(--construct-text-secondary)', fontFamily: 'var(--pc-font-mono)', background: 'color-mix(in srgb, var(--construct-bg-panel-strong) 94%, transparent)' }}>
-                  {selectedSkill.content}
-                </pre>
+                {skillDetailLoading ? (
+                  <div className="mt-2 rounded-[14px] border p-4" style={{ borderColor: 'var(--construct-border-soft)', background: 'color-mix(in srgb, var(--construct-bg-panel-strong) 94%, transparent)' }}>
+                    <StateMessage compact tone="loading" title={t('skills.loading')} />
+                  </div>
+                ) : skillDetailError ? (
+                  <div className="mt-2 rounded-[14px] border p-4" style={{ borderColor: 'var(--construct-border-soft)', background: 'color-mix(in srgb, var(--construct-bg-panel-strong) 94%, transparent)' }}>
+                    <StateMessage compact tone="error" title={t('skills.err.load_detail')} description={skillDetailError} />
+                  </div>
+                ) : selectedSkillDetail?.content.trim() ? (
+                  <div
+                    className="chat-markdown mt-2 max-h-[24rem] overflow-auto rounded-[14px] border p-4 text-sm leading-6"
+                    style={{
+                      borderColor: 'var(--construct-border-soft)',
+                      color: 'var(--construct-text-secondary)',
+                      background: 'color-mix(in srgb, var(--construct-bg-panel-strong) 94%, transparent)',
+                    }}
+                  >
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{selectedSkillDetail.content}</ReactMarkdown>
+                  </div>
+                ) : (
+                  <div className="mt-2 rounded-[14px] border p-4" style={{ borderColor: 'var(--construct-border-soft)', background: 'color-mix(in srgb, var(--construct-bg-panel-strong) 94%, transparent)' }}>
+                    <StateMessage compact title={t('skills.content')} description={t('skills.content_empty')} />
+                  </div>
+                )}
               </div>
 
               <div className="flex gap-2">
-                <button className="construct-button" onClick={() => setEditorMode('edit')}>
+                <button className="construct-button" onClick={() => setEditorMode('edit')} disabled={skillDetailLoading || !selectedSkillDetail}>
                   <Pencil className="h-4 w-4" />
                   {t('skills.edit')}
                 </button>

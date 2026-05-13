@@ -484,6 +484,8 @@ export interface KumihoSpace {
   type: 'root' | 'sub';
   created_at?: string | null;
   author?: string | null;
+  username?: string | null;
+  author_display?: string | null;
   metadata?: Record<string, string>;
 }
 
@@ -495,6 +497,8 @@ export interface KumihoItem {
   deprecated: boolean;
   created_at?: string | null;
   author?: string | null;
+  username?: string | null;
+  author_display?: string | null;
   metadata?: Record<string, string>;
 }
 
@@ -508,6 +512,8 @@ export interface KumihoRevision {
   published?: boolean;
   created_at?: string | null;
   author?: string | null;
+  username?: string | null;
+  author_display?: string | null;
   metadata?: Record<string, string>;
 }
 
@@ -519,6 +525,9 @@ export interface KumihoArtifact {
   item_kref: string;
   deprecated: boolean;
   created_at?: string | null;
+  author?: string | null;
+  username?: string | null;
+  author_display?: string | null;
   metadata?: Record<string, string>;
 }
 
@@ -588,6 +597,7 @@ export interface WsMessage {
     | 'operator_status'
     | 'agent_event'
     | 'done'
+    | 'stopped'
     | 'error'
     | 'session_start'
     | 'connected';

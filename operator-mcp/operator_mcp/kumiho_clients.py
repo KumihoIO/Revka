@@ -457,6 +457,60 @@ class KumihoAgentPoolClient:
             resp = await client.get(f"{self.api_url}/api/v1/revisions/latest", params={"item_kref": item_kref}, headers=self._headers())
             return resp.json() if resp.status_code == 200 else None
 
+    async def batch_get_revisions(self, item_krefs: list[str], tag: str = "published") -> dict[str, dict[str, Any]]:
+        sdk = _get_sdk()
+        if sdk:
+            return await sdk.batch_get_revisions(item_krefs, tag)
+        revisions: dict[str, dict[str, Any]] = {}
+        for item_kref in item_krefs:
+            revision = await self.get_latest_revision(item_kref, tag)
+            if revision:
+                revisions[item_kref] = revision
+        return revisions
+
+    async def create_artifact(self, revision_kref: str, name: str, location: str) -> dict[str, Any]:
+        sdk = _get_sdk()
+        if sdk:
+            return await sdk.create_artifact(revision_kref, name, location)
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(
+                f"{self.api_url}/api/v1/artifacts",
+                json={"revision_kref": revision_kref, "name": name, "location": location},
+                headers=self._headers(),
+            )
+            resp.raise_for_status()
+            return resp.json()
+
+    async def get_artifacts(self, revision_kref: str) -> list[dict[str, Any]]:
+        sdk = _get_sdk()
+        if sdk:
+            return await sdk.get_artifacts(revision_kref)
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(
+                f"{self.api_url}/api/v1/artifacts",
+                params={"revision_kref": revision_kref},
+                headers=self._headers(),
+            )
+            if resp.status_code == 404:
+                return []
+            resp.raise_for_status()
+            result = resp.json()
+            return result if isinstance(result, list) else result.get("artifacts", [])
+
+    async def tag_revision(self, revision_kref: str, tag: str) -> None:
+        sdk = _get_sdk()
+        if sdk:
+            await sdk.tag_revision(revision_kref, tag)
+            return
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(
+                f"{self.api_url}/api/v1/revisions/tags",
+                params={"kref": revision_kref},
+                json={"tag": tag},
+                headers=self._headers(),
+            )
+            resp.raise_for_status()
+
     # -- Agent-specific methods ------------------------------------------------
 
     async def list_agents(self) -> list[dict[str, Any]]:

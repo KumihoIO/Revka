@@ -169,9 +169,11 @@ fn build_parts(content: &str) -> Vec<Part> {
             if let Some(semi_pos) = rest.find(';') {
                 let mime = &rest[..semi_pos];
                 if let Some(b64) = rest[semi_pos + 1..].strip_prefix("base64,") {
+                    let mime =
+                        crate::providers::image_media::image_media_type_from_data_uri(mime, b64);
                     parts.push(Part::Inline {
                         inline_data: InlineData {
-                            mime_type: mime.to_string(),
+                            mime_type: mime,
                             data: b64.to_string(),
                         },
                     });
@@ -2210,6 +2212,17 @@ mod tests {
             serde_json::json!({"text": "Check this"})
         );
         // Second part is inline image
+        assert_eq!(
+            serde_json::to_value(&parts[1]).unwrap(),
+            serde_json::json!({"inline_data": {"mime_type": "image/png", "data": "iVBORw0KGgo="}})
+        );
+    }
+
+    #[test]
+    fn build_parts_sniffs_data_uri_media_type() {
+        let content = "Check this [IMAGE:data:image/jpeg;base64,iVBORw0KGgo=]";
+        let parts = build_parts(content);
+        assert_eq!(parts.len(), 2);
         assert_eq!(
             serde_json::to_value(&parts[1]).unwrap(),
             serde_json::json!({"inline_data": {"mime_type": "image/png", "data": "iVBORw0KGgo="}})

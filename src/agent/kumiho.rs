@@ -53,11 +53,12 @@ conversation.  Skip engage for greetings, acknowledgements, yes/no \
 answers, simple status checks, tool-availability confirmations, \
 brief meta chat, and short direct answers.  Your query MUST derive \
 from the user's current message.  Hold the returned source_krefs \
-for reflect.  IMPORTANT: User memories and conversation history \
-live in the CognitiveMemory project — use \
-space_paths=['CognitiveMemory'] for memory recall.  Do NOT search \
-Construct/ for user memories — that space holds agent operational \
-data (AgentPool, Teams, Plans).
+for reflect.  Use limit={{KUMIHO_MEMORY_RETRIEVAL_LIMIT}} unless \
+the user explicitly asks for broader recall.  IMPORTANT: User \
+memories and conversation history live in the CognitiveMemory \
+project — use space_paths=['CognitiveMemory'] for memory recall.  \
+Do NOT search Construct/ for user memories — that space holds agent \
+operational data (AgentPool, Teams, Plans).
   - NEVER SAY 'I DON'T KNOW' WITHOUT CHECKING MEMORY — If the \
 answer is not in the current conversation and you would otherwise \
 say you don't know, don't have context, or can't find something, \
@@ -199,9 +200,11 @@ You have access to kumiho-memory MCP for persistent memory.
 ENGAGE: Call kumiho_memory_engage ONCE when prior context is needed \
 (user references past work, decisions, people, or asks 'do you \
 remember' something not in current conversation). Use \
-space_paths=['CognitiveMemory']. Skip for greetings, simple \
-answers, and casual chat. NEVER say 'I don't know' or 'I don't \
-have that context' without calling engage first. Use \
+space_paths=['CognitiveMemory'] and \
+limit={{KUMIHO_MEMORY_RETRIEVAL_LIMIT}} unless the user explicitly \
+asks for broader recall. Skip for greetings, simple answers, and \
+casual chat. NEVER say 'I don't know' or 'I don't have that context' \
+without calling engage first. Use \
 kumiho_memory_engage for all recall — do NOT chain low-level tools.
 
 REFLECT: Call kumiho_memory_reflect only for explicit 'remember \
@@ -319,6 +322,10 @@ pub fn kumiho_mcp_server_config(kumiho_cfg: &KumihoConfig) -> McpServerConfig {
     env.insert(
         "KUMIHO_HARNESS_PROJECT".to_string(),
         kumiho_cfg.harness_project.clone(),
+    );
+    env.insert(
+        "KUMIHO_MEMORY_RETRIEVAL_LIMIT".to_string(),
+        kumiho_cfg.memory_retrieval_limit.max(1).to_string(),
     );
     // Forward the bearer token to the spawned Python MCP. KUMIHO_AUTH_TOKEN
     // (what the SDK reads) and KUMIHO_SERVICE_TOKEN (what Construct's own
@@ -491,6 +498,10 @@ pub fn substitute_project_names(template: &str, config: &Config) -> String {
         // "Construct daemon" or "Construct channel".  We use targeted replacements.
         out = out.replace("Construct/", &format!("{har}/"));
     }
+    out = out.replace(
+        "{{KUMIHO_MEMORY_RETRIEVAL_LIMIT}}",
+        &config.kumiho.memory_retrieval_limit.max(1).to_string(),
+    );
     out
 }
 
@@ -766,6 +777,7 @@ mod tests {
             api_url: "http://localhost:8000".to_string(),
             memory_project: "CognitiveMemory".to_string(),
             harness_project: "Construct".to_string(),
+            memory_retrieval_limit: 7,
         };
         let server = kumiho_mcp_server_config(&kc);
         assert_eq!(server.command, "python3");
@@ -774,13 +786,23 @@ mod tests {
             server.env.get("KUMIHO_SPACE_PREFIX").map(|s| s.as_str()),
             Some("MyProject")
         );
+        assert_eq!(
+            server
+                .env
+                .get("KUMIHO_MEMORY_RETRIEVAL_LIMIT")
+                .map(|s| s.as_str()),
+            Some("7")
+        );
     }
 
     #[test]
-    fn substitute_project_names_with_defaults_is_noop() {
+    fn substitute_project_names_with_defaults_fills_retrieval_limit() {
         let cfg = Config::default();
         let result = substitute_project_names(KUMIHO_BOOTSTRAP_PROMPT, &cfg);
-        assert_eq!(result, KUMIHO_BOOTSTRAP_PROMPT);
+        assert!(result.contains("CognitiveMemory"));
+        assert!(result.contains("Construct/"));
+        assert!(result.contains("limit=3"));
+        assert!(!result.contains("{{KUMIHO_MEMORY_RETRIEVAL_LIMIT}}"));
     }
 
     #[test]

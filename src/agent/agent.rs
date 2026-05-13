@@ -16,7 +16,7 @@ use chrono::{Datelike, Timelike};
 use std::collections::HashMap;
 use std::io::Write as IoWrite;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 /// Events emitted during a streamed agent turn.
 ///
@@ -71,6 +71,11 @@ pub(crate) const ARCHITECT_DENIED_TOOLS: &[&str] = &[
     "dry_run_workflow",
 ];
 
+const EMPTY_FINAL_AFTER_TOOLS_RETRY_PROMPT: &str = "The previous model response was empty after tool execution. Provide the final answer to the user now, based on the completed tool results. Do not leave the response blank.";
+const EMPTY_FINAL_AFTER_TOOLS_FALLBACK: &str = "I completed tool work, but the model returned an empty final response. Please retry the request or ask me to summarize the latest tool results.";
+const EMPTY_FINAL_FALLBACK: &str =
+    "The model returned an empty response. Please retry the request.";
+
 /// True when the current turn's user message carries the Architect
 /// editor-state marker.  See [`ARCHITECT_EDITOR_STATE_MARKER`].
 pub(crate) fn is_architect_turn(user_message: &str) -> bool {
@@ -104,7 +109,12 @@ pub(crate) fn filter_tool_specs_for_architect(tool_specs: &mut Vec<ToolSpec>, us
 pub(crate) fn context_window_for_model(model: &str) -> usize {
     // Strip provider prefix (e.g. "anthropic/claude-opus-4-7" -> "claude-opus-4-7")
     // so OpenRouter-style and bare model names map to the same window.
-    let bare = model.rsplit('/').next().unwrap_or(model);
+    let bare = model
+        .rsplit('/')
+        .next()
+        .unwrap_or(model)
+        .to_ascii_lowercase();
+    let bare = bare.as_str();
 
     // Anthropic Claude 4-family (Opus/Sonnet/Haiku 4.x): 1M context.
     if bare.starts_with("claude-opus-4")
@@ -116,6 +126,12 @@ pub(crate) fn context_window_for_model(model: &str) -> usize {
     } else if bare.starts_with("claude-3") || bare.starts_with("claude-") {
         // Older Claude 3.x / 3.5 / 3.7: 200K.
         200_000
+    } else if bare.starts_with("gpt-5.5") {
+        1_050_000
+    } else if bare.starts_with("gpt-5.4-mini") || bare.starts_with("gpt-5.4-nano") {
+        400_000
+    } else if bare.starts_with("gpt-5.4") {
+        1_000_000
     } else if bare.starts_with("gpt-4o") || bare.starts_with("gpt-5") {
         128_000
     } else if bare.starts_with("o1") || bare.starts_with("o3") {
@@ -126,6 +142,57 @@ pub(crate) fn context_window_for_model(model: &str) -> usize {
         // Conservative default — better to over-compress than blow up the request.
         128_000
     }
+}
+
+fn normalize_model_context_key(value: &str) -> String {
+    value
+        .trim()
+        .to_ascii_lowercase()
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .collect()
+}
+
+pub(crate) fn context_window_for_model_with_overrides(
+    model: &str,
+    overrides: &std::collections::HashMap<String, usize>,
+) -> usize {
+    let model = model.trim();
+    let bare = model.rsplit('/').next().unwrap_or(model);
+    let candidates = [
+        model.to_ascii_lowercase(),
+        bare.to_ascii_lowercase(),
+        normalize_model_context_key(model),
+        normalize_model_context_key(bare),
+    ];
+
+    for (key, value) in overrides {
+        if *value == 0 {
+            continue;
+        }
+        let key_lower = key.trim().to_ascii_lowercase();
+        let key_normalized = normalize_model_context_key(key);
+        if candidates
+            .iter()
+            .any(|candidate| candidate == &key_lower || candidate == &key_normalized)
+        {
+            return *value;
+        }
+    }
+
+    context_window_for_model(model)
+}
+
+fn context_window_hard_cap(window: usize, safety_ratio: f64) -> usize {
+    if window == 0 {
+        return 0;
+    }
+    let ratio = if safety_ratio.is_finite() && safety_ratio > 0.0 {
+        safety_ratio.min(1.0)
+    } else {
+        0.95
+    };
+    (window as f64 * ratio) as usize
 }
 
 pub struct Agent {
@@ -554,6 +621,13 @@ impl Agent {
     }
 
     pub async fn from_config(config: &Config) -> Result<Self> {
+        Self::from_config_with_mcp_registry(config, None).await
+    }
+
+    pub async fn from_config_with_mcp_registry(
+        config: &Config,
+        shared_mcp_registry: Option<Arc<tools::McpRegistry>>,
+    ) -> Result<Self> {
         // Inject Kumiho memory MCP server and Operator orchestration MCP server
         // so dashboard/WebSocket agents also get persistent memory and multi-agent
         // tools.  Both inject functions are idempotent.
@@ -620,13 +694,25 @@ impl Agent {
         let mut kumiho_advanced = false;
         let mut deferred_section_for_prompt = String::new();
         if config.mcp.enabled && !config.mcp.servers.is_empty() {
-            tracing::info!(
-                "Initializing MCP client — {} server(s) configured",
-                config.mcp.servers.len()
-            );
-            match tools::McpRegistry::connect_all(&config.mcp.servers).await {
+            let registry_result: Result<Arc<tools::McpRegistry>> =
+                if let Some(registry) = shared_mcp_registry.as_ref() {
+                    tracing::info!(
+                        "Using shared MCP registry — {} server(s), {} tool(s)",
+                        registry.server_count(),
+                        registry.tool_count()
+                    );
+                    Ok(Arc::clone(registry))
+                } else {
+                    tracing::info!(
+                        "Initializing MCP client — {} server(s) configured",
+                        config.mcp.servers.len()
+                    );
+                    tools::McpRegistry::connect_all(&config.mcp.servers)
+                        .await
+                        .map(Arc::new)
+                };
+            match registry_result {
                 Ok(registry) => {
-                    let registry = std::sync::Arc::new(registry);
                     // Registry-based probe for the high-level Kumiho memory
                     // reflexes. See coherence audit row 1 + 13: the prompt
                     // gate must reflect actual runtime tool availability,
@@ -784,7 +870,7 @@ impl Agent {
             .response_cache(response_cache)
             .tool_dispatcher(tool_dispatcher)
             .memory_loader(Box::new(DefaultMemoryLoader::new(
-                5,
+                config.kumiho.memory_retrieval_limit,
                 config.memory.min_relevance_score,
             )))
             .prompt_builder(SystemPromptBuilder::with_defaults())
@@ -893,7 +979,8 @@ impl Agent {
             };
         }
 
-        let context_window = context_window_for_model(model);
+        let context_window =
+            context_window_for_model_with_overrides(model, &self.config.model_context_windows);
         let compressor =
             ContextCompressor::new(self.config.context_compression.clone(), context_window)
                 .with_memory(Arc::clone(&self.memory));
@@ -940,6 +1027,77 @@ impl Agent {
         self.apply_compressed_history(&flat);
 
         result
+    }
+
+    fn compression_pending(&self, model: &str) -> Option<(usize, usize)> {
+        if !self.config.context_compression.enabled {
+            return None;
+        }
+
+        let context_window =
+            context_window_for_model_with_overrides(model, &self.config.model_context_windows);
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let threshold =
+            (context_window as f64 * self.config.context_compression.threshold_ratio) as usize;
+        let flat = self.tool_dispatcher.to_provider_messages(&self.history);
+        let tokens = crate::agent::context_compressor::estimate_tokens(&flat);
+
+        (tokens > threshold).then_some((tokens, threshold))
+    }
+
+    async fn compress_history_if_needed_streamed(
+        &mut self,
+        model: &str,
+        event_tx: &tokio::sync::mpsc::Sender<TurnEvent>,
+    ) -> crate::agent::context_compressor::CompressionResult {
+        let Some((tokens, threshold)) = self.compression_pending(model) else {
+            return self.compress_history_if_needed(model).await;
+        };
+
+        let _ = event_tx
+            .send(TurnEvent::OperatorStatus {
+                phase: "compressing".to_string(),
+                detail: format!(
+                    "Compacting conversation context ({tokens} estimated tokens, threshold {threshold})"
+                ),
+            })
+            .await;
+
+        let compress = self.compress_history_if_needed(model);
+        tokio::pin!(compress);
+        let mut heartbeat = Box::pin(tokio::time::sleep(Duration::from_secs(15)));
+        let mut elapsed_secs = 0u64;
+
+        loop {
+            tokio::select! {
+                result = &mut compress => {
+                    if result.compressed {
+                        let _ = event_tx
+                            .send(TurnEvent::OperatorStatus {
+                                phase: "compressing".to_string(),
+                                detail: format!(
+                                    "Context compacted: {} -> {} estimated tokens",
+                                    result.tokens_before, result.tokens_after
+                                ),
+                            })
+                            .await;
+                    }
+                    return result;
+                }
+                () = &mut heartbeat => {
+                    elapsed_secs += 15;
+                    let _ = event_tx
+                        .send(TurnEvent::OperatorStatus {
+                            phase: "compressing".to_string(),
+                            detail: format!("Still compacting conversation context ({elapsed_secs}s)"),
+                        })
+                        .await;
+                    heartbeat
+                        .as_mut()
+                        .reset(tokio::time::Instant::now() + Duration::from_secs(15));
+                }
+            }
+        }
     }
 
     /// Rebuild `self.history` after the compressor mutated the flat message
@@ -1206,6 +1364,9 @@ impl Agent {
 
         let effective_model = self.classify_model(user_message);
 
+        let mut saw_tool_calls = false;
+        let mut empty_final_retries = 0usize;
+
         for _ in 0..self.config.max_tool_iterations {
             // Token-aware compression — keeps history under the model's
             // context window.  See `compress_history_if_needed` for the
@@ -1217,9 +1378,13 @@ impl Agent {
             // Hard safety cap: fail loud rather than ship a request the
             // provider will reject after thinking time has already burned.
             {
-                let window = context_window_for_model(&effective_model);
+                let window = context_window_for_model_with_overrides(
+                    &effective_model,
+                    &self.config.model_context_windows,
+                );
                 let est = crate::agent::context_compressor::estimate_tokens(&messages);
-                let hard_cap = (window as f64 * 0.95) as usize;
+                let hard_cap =
+                    context_window_hard_cap(window, self.config.context_window_safety_ratio);
                 if window > 0 && est > hard_cap {
                     anyhow::bail!(
                         "Conversation too long even after compression \
@@ -1307,14 +1472,37 @@ impl Agent {
 
             let (text, calls) = self.tool_dispatcher.parse_response(&response);
             if calls.is_empty() {
-                let final_text = if text.is_empty() {
+                let mut final_text = if text.is_empty() {
                     response.text.unwrap_or_default()
                 } else {
                     text
                 };
+                let mut synthesized_empty_fallback = false;
+
+                if final_text.trim().is_empty() {
+                    if saw_tool_calls && empty_final_retries == 0 {
+                        empty_final_retries += 1;
+                        tracing::warn!(
+                            "Provider returned empty final response after tool calls; retrying once"
+                        );
+                        self.history
+                            .push(ConversationMessage::Chat(ChatMessage::user(
+                                EMPTY_FINAL_AFTER_TOOLS_RETRY_PROMPT,
+                            )));
+                        continue;
+                    }
+                    final_text = if saw_tool_calls {
+                        EMPTY_FINAL_AFTER_TOOLS_FALLBACK.to_string()
+                    } else {
+                        EMPTY_FINAL_FALLBACK.to_string()
+                    };
+                    synthesized_empty_fallback = true;
+                }
 
                 // Store in response cache (text-only, no tool calls)
-                if let (Some(cache), Some(key)) = (&self.response_cache, &cache_key) {
+                if !synthesized_empty_fallback
+                    && let (Some(cache), Some(key)) = (&self.response_cache, &cache_key)
+                {
                     let token_count = response
                         .usage
                         .as_ref()
@@ -1333,6 +1521,7 @@ impl Agent {
                 return Ok(final_text);
             }
 
+            saw_tool_calls = true;
             if !text.is_empty() {
                 self.history
                     .push(ConversationMessage::Chat(ChatMessage::assistant(
@@ -1417,6 +1606,9 @@ impl Agent {
         let effective_model = self.classify_model(user_message);
 
         // ── Turn loop ──────────────────────────────────────────────────
+        let mut saw_tool_calls = false;
+        let mut empty_final_retries = 0usize;
+
         for _ in 0..self.config.max_tool_iterations {
             // Token-aware compression — keeps the Operator chat under the
             // model's context window.  Without this, accumulating tool
@@ -1424,7 +1616,9 @@ impl Agent {
             // can push past 1M tokens and break with `prompt is too long`.
             // `trim_history` alone is message-count based and does not
             // protect against this.
-            let _ = self.compress_history_if_needed(&effective_model).await;
+            let _ = self
+                .compress_history_if_needed_streamed(&effective_model, &event_tx)
+                .await;
 
             let messages = self.tool_dispatcher.to_provider_messages(&self.history);
 
@@ -1433,9 +1627,13 @@ impl Agent {
             // rather than producing nonsense or a confusing provider 400.
             // Surfaces inline in the chat panel via the Err return.
             {
-                let window = context_window_for_model(&effective_model);
+                let window = context_window_for_model_with_overrides(
+                    &effective_model,
+                    &self.config.model_context_windows,
+                );
                 let est = crate::agent::context_compressor::estimate_tokens(&messages);
-                let hard_cap = (window as f64 * 0.95) as usize;
+                let hard_cap =
+                    context_window_hard_cap(window, self.config.context_window_safety_ratio);
                 if window > 0 && est > hard_cap {
                     anyhow::bail!(
                         "Conversation too long even after compression \
@@ -1645,7 +1843,10 @@ impl Agent {
                             tracing::warn!(
                                 "Context overflow in Operator chat, attempting compression recovery"
                             );
-                            let window = context_window_for_model(&effective_model);
+                            let window = context_window_for_model_with_overrides(
+                                &effective_model,
+                                &self.config.model_context_windows,
+                            );
                             let mut compressor =
                                 crate::agent::context_compressor::ContextCompressor::new(
                                     self.config.context_compression.clone(),
@@ -1702,14 +1903,37 @@ impl Agent {
 
             let (text, calls) = self.tool_dispatcher.parse_response(&response);
             if calls.is_empty() {
-                let final_text = if text.is_empty() {
+                let mut final_text = if text.is_empty() {
                     response.text.unwrap_or_default()
                 } else {
                     text
                 };
+                let mut synthesized_empty_fallback = false;
+
+                if final_text.trim().is_empty() {
+                    if saw_tool_calls && empty_final_retries == 0 {
+                        empty_final_retries += 1;
+                        tracing::warn!(
+                            "Provider returned empty final response after tool calls; retrying once"
+                        );
+                        self.history
+                            .push(ConversationMessage::Chat(ChatMessage::user(
+                                EMPTY_FINAL_AFTER_TOOLS_RETRY_PROMPT,
+                            )));
+                        continue;
+                    }
+                    final_text = if saw_tool_calls {
+                        EMPTY_FINAL_AFTER_TOOLS_FALLBACK.to_string()
+                    } else {
+                        EMPTY_FINAL_FALLBACK.to_string()
+                    };
+                    synthesized_empty_fallback = true;
+                }
 
                 // Store in response cache
-                if let (Some(cache), Some(key)) = (&self.response_cache, &cache_key) {
+                if !synthesized_empty_fallback
+                    && let (Some(cache), Some(key)) = (&self.response_cache, &cache_key)
+                {
                     let token_count = response
                         .usage
                         .as_ref()
@@ -1738,6 +1962,7 @@ impl Agent {
             }
 
             // ── Tool calls ─────────────────────────────────────────────
+            saw_tool_calls = true;
             if !text.is_empty() {
                 self.history
                     .push(ConversationMessage::Chat(ChatMessage::assistant(
@@ -2093,6 +2318,28 @@ mod tests {
     use async_trait::async_trait;
     use parking_lot::Mutex;
     use std::collections::HashMap;
+
+    #[test]
+    fn context_window_uses_current_gpt55_fallback() {
+        assert_eq!(context_window_for_model("gpt-5.5"), 1_050_000);
+        assert_eq!(context_window_for_model("openai/gpt-5.5"), 1_050_000);
+    }
+
+    #[test]
+    fn context_window_override_matches_toml_safe_model_key() {
+        let overrides = HashMap::from([("gpt-5_5".to_string(), 2_000_000)]);
+        assert_eq!(
+            context_window_for_model_with_overrides("openai/gpt-5.5", &overrides),
+            2_000_000
+        );
+    }
+
+    #[test]
+    fn context_window_hard_cap_uses_configured_safety_ratio() {
+        assert_eq!(context_window_hard_cap(1_050_000, 0.95), 997_500);
+        assert_eq!(context_window_hard_cap(1_050_000, 1.0), 1_050_000);
+        assert_eq!(context_window_hard_cap(1_050_000, 0.0), 997_500);
+    }
 
     struct MockProvider {
         responses: Mutex<Vec<crate::providers::ChatResponse>>,

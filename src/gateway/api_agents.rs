@@ -489,6 +489,9 @@ pub async fn handle_update_agent(
                 kind: "agent".to_string(),
                 deprecated: false,
                 created_at: None,
+                author: None,
+                username: None,
+                author_display: None,
                 metadata: HashMap::new(),
             };
             let agent = to_agent_response(&fallback, Some(&rev));

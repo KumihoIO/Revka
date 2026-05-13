@@ -103,9 +103,7 @@ export class WebSocketClient {
     if (this.name) params.set('name', this.name);
     const url = `${this.baseUrl}${basePath}/ws/chat?${params.toString()}`;
 
-    const protocols: string[] = ['construct.v1'];
-    if (token) protocols.push(`bearer.${token}`);
-    this.ws = new WebSocket(url, protocols);
+    this.ws = new WebSocket(url, ['construct.v1']);
 
     this.ws.onopen = () => {
       this.currentDelay = this.reconnectDelay;
@@ -155,6 +153,14 @@ export class WebSocketClient {
     if (pageContext) payload.page_context = pageContext;
     if (attachments && attachments.length > 0) payload.attachments = attachments;
     this.ws.send(JSON.stringify(payload));
+  }
+
+  /** Request cancellation of the active agent turn for this WebSocket session. */
+  sendStop(): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      throw new Error('WebSocket is not connected');
+    }
+    this.ws.send(JSON.stringify({ type: 'stop' }));
   }
 
   /** Close the connection without auto-reconnecting. */

@@ -25,6 +25,7 @@ from mcp.types import TextContent, Tool
 
 from ._log import _log
 from .cost_tracker import CostTracker
+from .construct_config import memory_project
 from .kumiho_clients import KumihoAgentPoolClient, KumihoSDKClient, KumihoTeamClient
 from .gateway_client import ConstructGatewayClient
 from .journal import SessionJournal
@@ -1063,13 +1064,21 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="capture_skill",
-            description=f"Capture a novel procedure as a skill in {os.environ.get('KUMIHO_MEMORY_PROJECT', 'CognitiveMemory')}/Skills. Use after an agent develops a successful new approach not covered by existing skills.",
+            description=(
+                f"Capture or update a reusable procedure as a first-class skill in "
+                f"{memory_project()}/Skills. "
+                "Use this tool whenever the user asks to capture/save/record something as a skill; "
+                "do not use memory_store for skill-guide captures. The tool stores SKILL.md as a "
+                "revision artifact under the Construct workspace artifact tree, keeps agent provenance "
+                "in revision metadata rather than in the item name, and reads the previous published "
+                "SKILL.md artifact when updating an existing skill so the new revision can improve it."
+            ),
             inputSchema={
                 "type": "object",
                 "properties": {
                     "name": {
                         "type": "string",
-                        "description": "Skill name, e.g. 'rust-error-handling-pattern'.",
+                        "description": "Stable skill name, e.g. 'rust-error-handling-pattern'. Do not append agent IDs or run IDs.",
                     },
                     "domain": {
                         "type": "string",
@@ -1087,27 +1096,61 @@ async def list_tools() -> list[Tool]:
                         "type": "string",
                         "description": "Context: what task led to discovering this procedure.",
                     },
+                    "agent_id": {
+                        "type": "string",
+                        "description": "Optional source agent/session ID. Stored as revision metadata, never appended to the skill name.",
+                    },
+                    "change_summary": {
+                        "type": "string",
+                        "description": "For updates, briefly describe how this revision improves the previous skill guide.",
+                    },
+                    "source_revision_krefs": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional revision/artifact krefs this skill revision was derived from.",
+                    },
                 },
                 "required": ["name", "domain", "description", "procedure"],
             },
         ),
         Tool(
             name="list_skills",
-            description="List all available orchestration skills (operator-orchestrator, operator-loop, operator-committee, etc.).",
+            description="List captured skills from Kumiho's Skills space. Does not read local markdown files unless legacy fallback is explicitly requested.",
             inputSchema={
                 "type": "object",
-                "properties": {},
+                "properties": {
+                    "include_details": {
+                        "type": "boolean",
+                        "description": "If true, enrich each skill with latest revision and SKILL.md artifact metadata. Default false for fast listing.",
+                        "default": False,
+                    },
+                    "include_legacy_disk": {
+                        "type": "boolean",
+                        "description": "If true and Kumiho is unavailable, fall back to legacy local markdown skills. Default false.",
+                        "default": False,
+                    },
+                },
             },
         ),
         Tool(
             name="load_skill",
-            description="Load a specific orchestration skill's full instructions. Use before starting a pattern you haven't used recently.",
+            description="Load a captured skill's SKILL.md artifact from Kumiho by skill name or kref.",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "name": {
                         "type": "string",
-                        "description": "Skill name, e.g. 'operator-orchestrator', 'operator-loop'.",
+                        "description": "Captured skill name or Kumiho item kref.",
+                    },
+                    "tag": {
+                        "type": "string",
+                        "description": "Revision tag to load. Default published.",
+                        "default": "published",
+                    },
+                    "allow_legacy_disk_fallback": {
+                        "type": "boolean",
+                        "description": "If true, fall back to legacy local markdown only when the skill is not found in Kumiho or Kumiho is unavailable. Default false.",
+                        "default": False,
                     },
                 },
                 "required": ["name"],
@@ -2420,7 +2463,8 @@ async def list_tools() -> list[Tool]:
             description=(
                 "Store a memory bundle (decision/fact/preference/summary). Auto-stacks revisions on "
                 "similar items by default. Use this to record orchestration decisions, sub-agent outcomes, "
-                "or cross-session lessons."
+                "or cross-session lessons. Do not use for skill guides or requests to capture/save a skill; "
+                "use capture_skill instead so SKILL.md is stored as a revision artifact."
             ),
             inputSchema={
                 "type": "object",
@@ -2888,9 +2932,9 @@ async def _dispatch(name: str, args: dict[str, Any]) -> dict[str, Any]:
     if name == "capture_skill":
         return await skills.tool_capture_skill(args, KUMIHO_POOL)
     if name == "list_skills":
-        return await skills.tool_list_skills()
+        return await skills.tool_list_skills(args, KUMIHO_POOL)
     if name == "load_skill":
-        return await skills.tool_load_skill(args)
+        return await skills.tool_load_skill(args, KUMIHO_POOL)
 
     # -- ClawHub --
     if name == "search_clawhub":

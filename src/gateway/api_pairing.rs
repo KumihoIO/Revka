@@ -223,6 +223,15 @@ impl DeviceRegistry {
     pub fn device_count(&self) -> usize {
         self.cache.lock().len()
     }
+
+    /// Return the paired bearer-token hashes recorded for devices.
+    ///
+    /// The gateway accepts hashed tokens in `PairingGuard`, so this lets
+    /// restart-time auth hydrate from the same device registry the dashboard
+    /// pairing flow writes to.
+    pub fn token_hashes(&self) -> Vec<String> {
+        self.cache.lock().keys().cloned().collect()
+    }
 }
 
 /// Store for pending pairing requests.
@@ -370,8 +379,28 @@ pub async fn submit_pairing_enhanced(
             } else {
                 debug!("submit_pairing_enhanced: no device_registry configured; skipping persist");
             }
+
+            if let Err(e) = Box::pin(super::persist_pairing_tokens(
+                state.config.clone(),
+                &state.pairing,
+            ))
+            .await
+            {
+                error!(
+                    error = %e,
+                    "submit_pairing_enhanced: pairing succeeded but token persistence failed"
+                );
+                return Json(serde_json::json!({
+                    "token": token,
+                    "persisted": false,
+                    "message": "Pairing successful for this process, but token persistence failed"
+                }))
+                .into_response();
+            }
+
             Json(serde_json::json!({
                 "token": token,
+                "persisted": true,
                 "message": "Pairing successful"
             }))
             .into_response()

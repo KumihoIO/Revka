@@ -508,6 +508,9 @@ pub async fn handle_get_skill(
         kind: SKILL_KIND.to_string(),
         deprecated: false,
         created_at: None,
+        author: None,
+        username: None,
+        author_display: None,
         metadata: HashMap::new(),
     };
 
@@ -621,6 +624,9 @@ pub async fn handle_update_skill(
         kind: SKILL_KIND.to_string(),
         deprecated: false,
         created_at: None,
+        author: None,
+        username: None,
+        author_display: None,
         metadata: HashMap::new(),
     };
     let skill = to_skill_response(&item, Some(&rev), Some(&body.content));

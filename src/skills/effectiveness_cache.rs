@@ -624,6 +624,9 @@ mod tests {
             kind: "skill_outcome".to_string(),
             deprecated: false,
             created_at: None,
+            author: None,
+            username: None,
+            author_display: None,
             metadata: HashMap::new(),
         }
     }
@@ -833,6 +836,9 @@ mod tests {
             kind: "skill_outcome".to_string(),
             deprecated: false,
             created_at: None,
+            author: None,
+            username: None,
+            author_display: None,
             metadata,
         }
     }

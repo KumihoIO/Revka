@@ -91,6 +91,9 @@ Operational note for container users:
 | `compact_context` | `true` | When true: bootstrap_max_chars=6000, rag_chunk_limit=2. Use for 13B or smaller models |
 | `max_tool_iterations` | `10` | Maximum tool-call loop turns per user message across CLI, gateway, and channels |
 | `max_history_messages` | `50` | Maximum conversation history messages retained per session |
+| `max_context_tokens` | `32000` | Token budget used by loop-level context trimming/compression |
+| `model_context_windows` | `{}` | Per-model context window overrides used by Operator chat compression and hard-cap checks |
+| `context_window_safety_ratio` | `0.95` | Fraction of the model context window allowed before Construct fails loud |
 | `parallel_tools` | `false` | Enable parallel tool execution within a single iteration |
 | `tool_dispatcher` | `auto` | Tool dispatch strategy |
 | `tool_call_dedup_exempt` | `[]` | Tool names exempt from within-turn duplicate-call suppression |
@@ -103,6 +106,8 @@ Notes:
 - In CLI, gateway, and channel tool loops, multiple independent tool calls are executed concurrently by default when the pending calls do not require approval gating; result order remains stable.
 - `parallel_tools` applies to the `Agent::turn()` API surface. It does not gate the runtime loop used by CLI, gateway, or channel handlers.
 - `tool_call_dedup_exempt` accepts an array of exact tool names. Tools listed here are allowed to be called multiple times with identical arguments in the same turn, bypassing the dedup check. Example: `tool_call_dedup_exempt = ["browser"]`.
+- `model_context_windows` keys are matched case-insensitively against full model IDs and provider-stripped model IDs. For TOML bare keys, use `_` in place of `.`: `[agent.model_context_windows] gpt-5_5 = 1050000`.
+- `context_window_safety_ratio` is clamped to `1.0`; values `<= 0` fall back to `0.95`.
 
 ### `tool_filter_groups`
 
@@ -882,6 +887,7 @@ prompt into every non-internal agent.
 | `api_url` | `https://api.kumiho.cloud` | Base URL for the Kumiho FastAPI REST API used by the agent-management proxy |
 | `memory_project` | (default) | Project for user memories, sessions, and compactions |
 | `harness_project` | (default) | Project for skills, operational data, and ClawHub installs |
+| `memory_retrieval_limit` | `3` | Default maximum memories returned by Kumiho recall/engage |
 
 Notes:
 

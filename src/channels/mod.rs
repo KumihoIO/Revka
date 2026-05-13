@@ -1874,12 +1874,13 @@ async fn kumiho_engage_for_channel(
     registry: &crate::tools::McpRegistry,
     user_msg: &str,
     memory_project: &str,
+    retrieval_limit: usize,
 ) -> String {
     let args = serde_json::json!({
         "query": user_msg,
         "space_paths": [memory_project],
         "recall_mode": "summarized",
-        "limit": 5,
+        "limit": retrieval_limit.max(1),
     });
     match registry
         .call_tool("kumiho-memory__kumiho_memory_engage", args)
@@ -1989,12 +1990,16 @@ fn extract_mcp_text(raw: &str) -> String {
 async fn build_memory_context(
     mem: &dyn Memory,
     user_msg: &str,
+    retrieval_limit: usize,
     min_relevance_score: f64,
     session_id: Option<&str>,
 ) -> String {
     let mut context = String::new();
 
-    if let Ok(entries) = mem.recall(user_msg, 5, session_id, None, None).await {
+    if let Ok(entries) = mem
+        .recall(user_msg, retrieval_limit.max(1), session_id, None, None)
+        .await
+    {
         let mut included = 0usize;
         let mut used_chars = 0usize;
 
@@ -2753,6 +2758,7 @@ async fn process_channel_message(
             registry,
             &msg.content,
             &ctx.prompt_config.kumiho.memory_project,
+            ctx.prompt_config.kumiho.memory_retrieval_limit,
         )
         .await
     } else {
@@ -2762,6 +2768,7 @@ async fn process_channel_message(
         let sender_memory_fut = build_memory_context(
             ctx.memory.as_ref(),
             &msg.content,
+            ctx.prompt_config.kumiho.memory_retrieval_limit,
             ctx.min_relevance_score,
             Some(&msg.sender),
         );
@@ -2769,6 +2776,7 @@ async fn process_channel_message(
             let group_memory_fut = build_memory_context(
                 ctx.memory.as_ref(),
                 &msg.content,
+                ctx.prompt_config.kumiho.memory_retrieval_limit,
                 ctx.min_relevance_score,
                 Some(&history_key),
             );

@@ -170,40 +170,16 @@ async fn handle_socket(
     let session_id = session_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let session_key = format!("{GW_SESSION_PREFIX}{session_id}");
 
-    // Build a persistent Agent for this connection so history is maintained across turns.
-    let config = state.config.lock().clone();
-    let mut agent = match crate::agent::Agent::from_config(&config).await {
-        Ok(a) => a,
-        Err(e) => {
-            tracing::error!(error = %e, "Agent initialization failed");
-            let err = serde_json::json!({
-                "type": "error",
-                "message": format!("Failed to initialise agent: {e}"),
-                "code": "AGENT_INIT_FAILED"
-            });
-            let _ = sender.send(Message::Text(err.to_string().into())).await;
-            let _ = sender
-                .send(Message::Close(Some(axum::extract::ws::CloseFrame {
-                    code: 1011,
-                    reason: axum::extract::ws::Utf8Bytes::from_static(
-                        "Agent initialization failed",
-                    ),
-                })))
-                .await;
-            return;
-        }
-    };
-    agent.set_memory_session_id(Some(session_id.clone()));
-
     // Hydrate agent from persisted session (if available)
     let mut resumed = false;
     let mut message_count: usize = 0;
     let mut effective_name: Option<String> = None;
+    let mut persisted_messages: Vec<crate::providers::ChatMessage> = Vec::new();
     if let Some(ref backend) = state.session_backend {
         let messages = backend.load(&session_key);
         if !messages.is_empty() {
             message_count = messages.len();
-            agent.seed_history(&messages);
+            persisted_messages = messages;
             resumed = true;
         }
         // Set session name if provided (non-empty) on connect
@@ -240,6 +216,8 @@ async fn handle_socket(
     // is a regular `{"type":"message",...}` frame, we fall through and
     // process it immediately (backward-compatible).
     let mut first_msg_fallback: Option<String> = None;
+    let mut agent: Option<crate::agent::Agent> = None;
+    let mut agent_memory_session_id = session_id.clone();
 
     // Wait up to 5 seconds for the first client frame.  Listen-only
     // workflow run viewers may never send a message — the
@@ -258,7 +236,7 @@ async fn handle_socket(
                             );
                             // Override session_id if provided in connect params
                             if let Some(sid) = &cp.session_id {
-                                agent.set_memory_session_id(Some(sid.clone()));
+                                agent_memory_session_id = sid.clone();
                             }
                             let ack = serde_json::json!({
                                 "type": "connected",
@@ -274,7 +252,14 @@ async fn handle_socket(
                         first_msg_fallback = Some(text.to_string());
                     }
                 }
-                Ok(Message::Close(_)) | Err(_) => return,
+                Ok(Message::Close(frame)) => {
+                    tracing::info!(session = %session_key, ?frame, "WebSocket chat closed during handshake");
+                    return;
+                }
+                Err(error) => {
+                    tracing::warn!(session = %session_key, %error, "WebSocket chat error during handshake");
+                    return;
+                }
                 _ => {}
             }
         }
@@ -300,13 +285,29 @@ async fn handle_socket(
                     let attachments = parse_attachments(&parsed);
                     // Persist user message
                     if let Some(ref backend) = state.session_backend {
+                        if backend.is_session_archived(&session_key).unwrap_or(false) {
+                            let _ = backend.unarchive_session(&session_key);
+                        }
                         let user_msg = crate::providers::ChatMessage::user(&content);
                         let _ = backend.append(&session_key, &user_msg);
                     }
+                    if !ensure_agent_for_session(
+                        &state,
+                        &mut sender,
+                        &mut agent,
+                        &agent_memory_session_id,
+                        &persisted_messages,
+                    )
+                    .await
+                    {
+                        return;
+                    }
+                    let agent = agent.as_mut().expect("agent initialized");
                     process_chat_message(
                         &state,
-                        &mut agent,
+                        agent,
                         &mut sender,
+                        &mut receiver,
                         &content,
                         &session_key,
                         page_ctx,
@@ -350,7 +351,18 @@ async fn handle_socket(
             ws_msg = receiver.next() => {
                 let msg = match ws_msg {
                     Some(Ok(Message::Text(text))) => text,
-                    Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break,
+                    Some(Ok(Message::Close(frame))) => {
+                        tracing::info!(session = %session_key, ?frame, "WebSocket chat closed");
+                        break;
+                    }
+                    Some(Err(error)) => {
+                        tracing::warn!(session = %session_key, %error, "WebSocket chat error");
+                        break;
+                    }
+                    None => {
+                        tracing::info!(session = %session_key, "WebSocket chat stream ended");
+                        break;
+                    }
                     _ => continue,
                 };
 
@@ -368,6 +380,15 @@ async fn handle_socket(
                 };
 
                 let msg_type = parsed["type"].as_str().unwrap_or("");
+                if msg_type == "stop" {
+                    let stopped = serde_json::json!({
+                        "type": "stopped",
+                        "message": "No active Operator turn to stop."
+                    });
+                    let _ = sender.send(Message::Text(stopped.to_string().into())).await;
+                    continue;
+                }
+
                 if msg_type != "message" {
                     let err = serde_json::json!({
                         "type": "error",
@@ -410,11 +431,26 @@ async fn handle_socket(
 
                 // Persist user message
                 if let Some(ref backend) = state.session_backend {
+                    if backend.is_session_archived(&session_key).unwrap_or(false) {
+                        let _ = backend.unarchive_session(&session_key);
+                    }
                     let user_msg = crate::providers::ChatMessage::user(&content);
                     let _ = backend.append(&session_key, &user_msg);
                 }
 
-                process_chat_message(&state, &mut agent, &mut sender, &content, &session_key, page_ctx, &attachments, &mut broadcast_rx).await;
+                if !ensure_agent_for_session(
+                    &state,
+                    &mut sender,
+                    &mut agent,
+                    &agent_memory_session_id,
+                    &persisted_messages,
+                )
+                .await
+                {
+                    return;
+                }
+                let agent = agent.as_mut().expect("agent initialized");
+                process_chat_message(&state, agent, &mut sender, &mut receiver, &content, &session_key, page_ctx, &attachments, &mut broadcast_rx).await;
             }
 
             // ── Branch 2: broadcast channel event from operator ──
@@ -435,11 +471,62 @@ async fn handle_socket(
             // ── Branch 3: keepalive Ping ──
             _ = ping_interval.tick() => {
                 if sender.send(Message::Ping(Vec::new().into())).await.is_err() {
+                    tracing::warn!(session = %session_key, "WebSocket chat keepalive send failed");
                     break;
                 }
             }
         }
     }
+}
+
+/// Lazily build the per-socket Agent only when the socket actually submits a
+/// chat message. Dashboard pages also open listen-only WebSockets for live
+/// workflow/operator events; constructing a full Agent for those sockets
+/// spawns MCP stdio sidecars and can leak machine resources during reconnects.
+async fn ensure_agent_for_session(
+    state: &AppState,
+    sender: &mut futures_util::stream::SplitSink<WebSocket, Message>,
+    agent: &mut Option<crate::agent::Agent>,
+    memory_session_id: &str,
+    seed_messages: &[crate::providers::ChatMessage],
+) -> bool {
+    if agent.is_some() {
+        return true;
+    }
+
+    let config = state.config.lock().clone();
+    let mut new_agent = match crate::agent::Agent::from_config_with_mcp_registry(
+        &config,
+        state.mcp_registry.as_ref().map(Arc::clone),
+    )
+    .await
+    {
+        Ok(agent) => agent,
+        Err(e) => {
+            tracing::error!(error = %e, "Agent initialization failed");
+            let err = serde_json::json!({
+                "type": "error",
+                "message": format!("Failed to initialise agent: {e}"),
+                "code": "AGENT_INIT_FAILED"
+            });
+            let _ = sender.send(Message::Text(err.to_string().into())).await;
+            let _ = sender
+                .send(Message::Close(Some(axum::extract::ws::CloseFrame {
+                    code: 1011,
+                    reason: axum::extract::ws::Utf8Bytes::from_static(
+                        "Agent initialization failed",
+                    ),
+                })))
+                .await;
+            return false;
+        }
+    };
+    new_agent.set_memory_session_id(Some(memory_session_id.to_string()));
+    if !seed_messages.is_empty() {
+        new_agent.seed_history(seed_messages);
+    }
+    *agent = Some(new_agent);
+    true
 }
 
 /// Extract a `<tag>...</tag>` block from `page` by name, returning the
@@ -718,6 +805,7 @@ async fn process_chat_message(
     state: &AppState,
     agent: &mut crate::agent::Agent,
     sender: &mut futures_util::stream::SplitSink<WebSocket, Message>,
+    receiver: &mut futures_util::stream::SplitStream<WebSocket>,
     content: &str,
     session_key: &str,
     page_context: Option<&str>,
@@ -820,58 +908,125 @@ async fn process_chat_message(
             agent.turn_streamed(&content_owned, event_tx).await
         });
 
-    // Drive both futures concurrently: the agent turn produces events
-    // and we relay them over WebSocket.  Also relay broadcast channel
-    // events (agent activity from the operator) so they reach the
-    // frontend in real-time even during long-running turns.
-    let forward_fut = async {
-        let mut turn_done = false;
-        loop {
-            if turn_done {
-                break;
-            }
-            tokio::select! {
-                event = event_rx.recv() => {
-                    match event {
-                        Some(event) => {
-                            let ws_msg = match event {
-                                TurnEvent::Chunk { delta } => {
-                                    serde_json::json!({ "type": "chunk", "content": delta })
-                                }
-                                TurnEvent::Thinking { delta } => {
-                                    serde_json::json!({ "type": "thinking", "content": delta })
-                                }
-                                TurnEvent::ToolCall { name, args } => {
-                                    serde_json::json!({ "type": "tool_call", "name": name, "args": args })
-                                }
-                                TurnEvent::ToolResult { name, output } => {
-                                    serde_json::json!({ "type": "tool_result", "name": name, "output": output })
-                                }
-                                TurnEvent::OperatorStatus { phase, detail } => {
-                                    serde_json::json!({ "type": "operator_status", "phase": phase, "detail": detail })
-                                }
-                            };
-                            let _ = sender.send(Message::Text(ws_msg.to_string().into())).await;
+    // Drive the turn and relays in one select loop so the WebSocket can
+    // receive a `stop` control frame while the agent is still working.
+    // Keep sending protocol-level pings during the active turn as well as
+    // during idle waits. Long provider/tool calls can otherwise produce no
+    // outbound frames for minutes, which is enough for browser/proxy stacks
+    // such as Cloudflare Tunnel to close the connection with client-side 1006.
+    let mut ping_interval = tokio::time::interval(std::time::Duration::from_secs(30));
+    ping_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    ping_interval.tick().await;
+
+    tokio::pin!(turn_fut);
+    let result = loop {
+        tokio::select! {
+            result = &mut turn_fut => break Some(result),
+            event = event_rx.recv() => {
+                match event {
+                    Some(event) => {
+                        let ws_msg = match event {
+                            TurnEvent::Chunk { delta } => {
+                                serde_json::json!({ "type": "chunk", "content": delta })
+                            }
+                            TurnEvent::Thinking { delta } => {
+                                serde_json::json!({ "type": "thinking", "content": delta })
+                            }
+                            TurnEvent::ToolCall { name, args } => {
+                                serde_json::json!({ "type": "tool_call", "name": name, "args": args })
+                            }
+                            TurnEvent::ToolResult { name, output } => {
+                                serde_json::json!({ "type": "tool_result", "name": name, "output": output })
+                            }
+                            TurnEvent::OperatorStatus { phase, detail } => {
+                                serde_json::json!({ "type": "operator_status", "phase": phase, "detail": detail })
+                            }
+                        };
+                        if sender.send(Message::Text(ws_msg.to_string().into())).await.is_err() {
+                            tracing::warn!(session = %session_key, "WebSocket chat send failed during active turn");
+                            break None;
                         }
-                        None => { turn_done = true; }
+                    }
+                    None => {}
+                }
+            }
+            bcast = broadcast_rx.recv() => {
+                if let Ok(ev) = bcast {
+                    if ev["type"].as_str() == Some("channel_event") {
+                        let relay = serde_json::json!({
+                            "type": "agent_event",
+                            "event": ev["payload"],
+                        });
+                        if sender.send(Message::Text(relay.to_string().into())).await.is_err() {
+                            tracing::warn!(session = %session_key, "WebSocket chat event relay failed during active turn");
+                            break None;
+                        }
                     }
                 }
-                bcast = broadcast_rx.recv() => {
-                    if let Ok(ev) = bcast {
-                        if ev["type"].as_str() == Some("channel_event") {
-                            let relay = serde_json::json!({
-                                "type": "agent_event",
-                                "event": ev["payload"],
-                            });
-                            let _ = sender.send(Message::Text(relay.to_string().into())).await;
-                        }
+            }
+            ws_msg = receiver.next() => {
+                let text = match ws_msg {
+                    Some(Ok(Message::Text(text))) => text,
+                    Some(Ok(Message::Close(frame))) => {
+                        tracing::info!(session = %session_key, ?frame, "WebSocket chat closed during active turn");
+                        break None;
                     }
+                    Some(Err(error)) => {
+                        tracing::warn!(session = %session_key, %error, "WebSocket chat error during active turn");
+                        break None;
+                    }
+                    None => {
+                        tracing::info!(session = %session_key, "WebSocket chat stream ended during active turn");
+                        break None;
+                    }
+                    _ => continue,
+                };
+                let parsed: serde_json::Value = match serde_json::from_str(&text) {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
+                match parsed["type"].as_str().unwrap_or("") {
+                    "stop" => break None,
+                    "message" => {
+                        let notice = serde_json::json!({
+                            "type": "operator_status",
+                            "phase": "queued",
+                            "detail": "Current response is still running; the dashboard queues follow-up messages locally."
+                        });
+                        let _ = sender.send(Message::Text(notice.to_string().into())).await;
+                    }
+                    _ => {}
+                }
+            }
+            _ = ping_interval.tick() => {
+                if sender.send(Message::Ping(Vec::new().into())).await.is_err() {
+                    tracing::warn!(session = %session_key, "WebSocket chat keepalive send failed during active turn");
+                    break None;
                 }
             }
         }
     };
 
-    let (result, ()) = tokio::join!(turn_fut, forward_fut);
+    let Some(result) = result else {
+        // Dropping `turn_fut` cancels the in-flight provider/tool future at the
+        // next await point. Reset the persisted session state and tell the UI
+        // to clear its streaming/progress state without treating this as an
+        // agent error.
+        if let Some(ref backend) = state.session_backend {
+            let _ = backend.set_session_state(session_key, "idle", None);
+        }
+        let stopped = serde_json::json!({
+            "type": "stopped",
+            "message": "Stopped current Operator turn."
+        });
+        let _ = sender.send(Message::Text(stopped.to_string().into())).await;
+        let _ = state.event_tx.send(serde_json::json!({
+            "type": "agent_end",
+            "provider": provider_label,
+            "model": state.model,
+        }));
+        return;
+    };
 
     match result {
         Ok(response) => {

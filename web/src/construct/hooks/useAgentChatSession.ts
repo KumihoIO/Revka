@@ -51,6 +51,12 @@ export interface StagedAttachment extends AttachmentUploadResponse {
   previewUrl?: string;
 }
 
+interface QueuedTurn {
+  id: string;
+  content: string;
+  attachments: StagedAttachment[];
+}
+
 export function useAgentChatSession({
   sessionId,
   sessionName,
@@ -71,6 +77,8 @@ export function useAgentChatSession({
   const [streamingThinking, setStreamingThinking] = useState('');
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [agentEvents, setAgentEvents] = useState<AgentChannelEvent[]>([]);
+  const [queuedTurns, setQueuedTurns] = useState<QueuedTurn[]>([]);
+  const [stopping, setStopping] = useState(false);
   // Staged attachments waiting to ship with the next user message. Each
   // entry has the server-issued metadata plus an optional client-only
   // `previewUrl` (data URL for image thumbnails) so the chip strip can
@@ -87,12 +95,40 @@ export function useAgentChatSession({
   const pendingThinkingRef = useRef('');
   const capturedThinkingRef = useRef('');
   const activitiesRef = useRef<ActivityEvent[]>([]);
+  const typingRef = useRef(false);
+  const sendingQueuedRef = useRef(false);
+  const inFlightTurnsRef = useRef<Map<string, QueuedTurn>>(new Map());
   const onUserMessageRef = useRef(onUserMessage);
   onUserMessageRef.current = onUserMessage;
   const onToolResultRef = useRef(onToolResult);
   onToolResultRef.current = onToolResult;
   const draftKeyRef = useRef(draftKey);
   draftKeyRef.current = draftKey;
+
+  useEffect(() => {
+    typingRef.current = typing;
+  }, [typing]);
+
+  const markSendingTurnsSent = useCallback(() => {
+    inFlightTurnsRef.current.clear();
+    setMessages((prev) => prev.map((message) =>
+      message.deliveryStatus === 'sending' ? { ...message, deliveryStatus: 'sent' } : message,
+    ));
+  }, []);
+
+  const requeueLatestSendingTurn = useCallback(() => {
+    const inFlightTurns = Array.from(inFlightTurnsRef.current.values());
+    const latest = inFlightTurns[inFlightTurns.length - 1];
+    if (!latest) return false;
+    inFlightTurnsRef.current.delete(latest.id);
+    setQueuedTurns((prev) =>
+      prev.some((turn) => turn.id === latest.id) ? prev : [latest, ...prev],
+    );
+    setMessages((prev) => prev.map((message) =>
+      message.id === latest.id ? { ...message, deliveryStatus: 'queued' } : message,
+    ));
+    return true;
+  }, []);
 
   // Reset input when session changes (one-way: store → state)
   useEffect(() => {
@@ -110,6 +146,10 @@ export function useAgentChatSession({
     setMessages([]);
     setActivities([]);
     setAgentEvents([]);
+    setQueuedTurns([]);
+    sendingQueuedRef.current = false;
+    inFlightTurnsRef.current.clear();
+    setStopping(false);
     activitiesRef.current = [];
     setStreamingContent('');
     setStreamingThinking('');
@@ -170,6 +210,7 @@ export function useAgentChatSession({
       // `/clear`. Mirror what `done`/`error` handlers reset.
       const resetInFlightState = () => {
         setTyping(false);
+        inFlightTurnsRef.current.clear();
         pendingContentRef.current = '';
         pendingThinkingRef.current = '';
         capturedThinkingRef.current = '';
@@ -177,6 +218,7 @@ export function useAgentChatSession({
         setStreamingThinking('');
         activitiesRef.current = [];
         setActivities([]);
+        setStopping(false);
       };
 
       ws.onClose = (ev: CloseEvent) => {
@@ -184,7 +226,10 @@ export function useAgentChatSession({
         setConnected(false);
         resetInFlightState();
         if (ev.code !== 1000 && ev.code !== 1001) {
-          setError(`Connection closed unexpectedly (code: ${ev.code}). Please check your configuration.`);
+          const reason = ev.code === 1006
+            ? 'Connection interrupted; reconnecting...'
+            : `Connection closed unexpectedly (code: ${ev.code}). Reconnecting...`;
+          setError(reason);
         }
       };
 
@@ -202,6 +247,7 @@ export function useAgentChatSession({
             break;
 
           case 'thinking': {
+            markSendingTurnsSent();
             setTyping(true);
             pendingThinkingRef.current += msg.content ?? '';
             setStreamingThinking(pendingThinkingRef.current);
@@ -222,6 +268,7 @@ export function useAgentChatSession({
           }
 
           case 'chunk':
+            markSendingTurnsSent();
             setTyping(true);
             pendingContentRef.current += msg.content ?? '';
             setStreamingContent(pendingContentRef.current);
@@ -278,19 +325,25 @@ export function useAgentChatSession({
             capturedThinkingRef.current = '';
             setStreamingContent('');
             setStreamingThinking('');
+            markSendingTurnsSent();
             setTyping(false);
+            setStopping(false);
             break;
           }
 
           case 'tool_call': {
+            markSendingTurnsSent();
             setTyping(true);
+            const toolName = msg.name ?? 'tool';
             const nextActivities = [
               ...activitiesRef.current,
               {
                 id: generateUUID(),
                 kind: 'tool_call' as const,
-                label: friendlyToolLabel(msg.name ?? 'tool'),
+                label: friendlyToolLabel(toolName),
                 detail: msg.args ? (typeof msg.args === 'string' ? msg.args : JSON.stringify(msg.args, null, 2)) : undefined,
+                toolName,
+                status: 'running' as const,
                 timestamp: new Date(),
               },
             ];
@@ -300,16 +353,47 @@ export function useAgentChatSession({
           }
 
           case 'tool_result': {
-            const nextActivities = [
-              ...activitiesRef.current,
-              {
-                id: generateUUID(),
-                kind: 'tool_result' as const,
-                label: `${friendlyToolLabel(msg.name ?? 'tool')} - done`,
-                detail: msg.output && msg.output.length > 500 ? `${msg.output.slice(0, 500)}...` : msg.output,
-                timestamp: new Date(),
-              },
-            ];
+            markSendingTurnsSent();
+            const toolName = msg.name ?? 'tool';
+            const output = msg.output && msg.output.length > 500 ? `${msg.output.slice(0, 500)}...` : msg.output;
+            const previous = activitiesRef.current;
+            const pendingIndex = [...previous]
+              .reverse()
+              .findIndex((activity) =>
+                activity.kind === 'tool_call'
+                && activity.toolName === toolName
+                && activity.status !== 'done',
+              );
+            const actualIndex = pendingIndex >= 0 ? previous.length - 1 - pendingIndex : -1;
+            const nextActivities = actualIndex >= 0
+              ? previous.map((activity, index) => {
+                  if (index !== actualIndex) return activity;
+                  const input = activity.detail?.trim();
+                  const detail = [
+                    input ? `Input\n${input}` : '',
+                    output ? `Output\n${output}` : '',
+                  ].filter(Boolean).join('\n\n');
+                  return {
+                    ...activity,
+                    kind: 'tool_result' as const,
+                    label: `${friendlyToolLabel(toolName)} - done`,
+                    detail: detail || undefined,
+                    status: 'done' as const,
+                    timestamp: new Date(),
+                  };
+                })
+              : [
+                  ...previous,
+                  {
+                    id: generateUUID(),
+                    kind: 'tool_result' as const,
+                    label: `${friendlyToolLabel(toolName)} - done`,
+                    detail: output,
+                    toolName,
+                    status: 'done' as const,
+                    timestamp: new Date(),
+                  },
+                ];
             activitiesRef.current = nextActivities;
             setActivities(nextActivities);
             // Side-channel for consumers that need the raw tool output
@@ -324,20 +408,54 @@ export function useAgentChatSession({
             break;
           }
 
+          case 'stopped': {
+            const persistedActivities = activitiesRef.current;
+            activitiesRef.current = [];
+            setActivities([]);
+            pendingContentRef.current = '';
+            pendingThinkingRef.current = '';
+            capturedThinkingRef.current = '';
+            setStreamingContent('');
+            setStreamingThinking('');
+            markSendingTurnsSent();
+            setTyping(false);
+            setStopping(false);
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: generateUUID(),
+                role: 'operator',
+                content: msg.message ?? 'Stopped current Operator turn.',
+                operatorPhase: 'stopped',
+                timestamp: new Date(),
+                activityLog: persistedActivities.length > 0 ? persistedActivities : undefined,
+              },
+            ]);
+            break;
+          }
+
           case 'operator_status': {
-            setTyping(true);
             const phase = msg.phase ?? 'working';
             const detail = msg.detail ?? '';
-            const nextActivities = [
-              ...activitiesRef.current,
-              {
+            if (phase === 'queued') {
+              requeueLatestSendingTurn();
+            } else {
+              markSendingTurnsSent();
+            }
+            setTyping(true);
+            const activity = {
                 id: generateUUID(),
                 kind: 'operator' as const,
                 label: `${operatorPhaseIcon(phase)} ${detail}`,
                 detail: detail || undefined,
                 timestamp: new Date(),
-              },
-            ];
+              };
+            const currentActivities = activitiesRef.current;
+            const lastActivity = currentActivities[currentActivities.length - 1];
+            const nextActivities =
+              isTransientPhase(phase) && lastActivity?.kind === 'operator'
+                ? [...currentActivities.slice(0, -1), { ...activity, id: lastActivity.id }]
+                : [...currentActivities, activity];
             activitiesRef.current = nextActivities;
             setActivities(nextActivities);
 
@@ -388,6 +506,8 @@ export function useAgentChatSession({
             setStreamingThinking('');
             activitiesRef.current = [];
             setActivities([]);
+            markSendingTurnsSent();
+            setStopping(false);
             break;
         }
       };
@@ -408,7 +528,31 @@ export function useAgentChatSession({
     // session changes. Re-connecting on every route change drops the in-flight
     // Operator request and clears the activity feed mid-tool-call.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, sessionName]);
+  }, [markSendingTurnsSent, requeueLatestSendingTurn, sessionId, sessionName]);
+
+  const sendTurn = useCallback((turn: QueuedTurn, fromQueue: boolean): boolean => {
+    if (!wsRef.current?.connected) return false;
+    try {
+      wsRef.current.sendMessage(turn.content, pageContext, turn.attachments.map((a) => a.file_id));
+      inFlightTurnsRef.current.set(turn.id, turn);
+      onUserMessageRef.current?.(turn.content);
+      if (fromQueue) {
+        setMessages((prev) => prev.map((message) =>
+          message.id === turn.id ? { ...message, deliveryStatus: 'sending' } : message,
+        ));
+      }
+      setTyping(true);
+      pendingContentRef.current = '';
+      pendingThinkingRef.current = '';
+      capturedThinkingRef.current = '';
+      activitiesRef.current = [];
+      setActivities([]);
+    } catch {
+      setError(t('agent.send_error'));
+      return false;
+    }
+    return true;
+  }, [pageContext]);
 
   const handleSend = useCallback(() => {
     const trimmed = input.trim();
@@ -417,7 +561,6 @@ export function useAgentChatSession({
     if ((!trimmed && attachments.length === 0) || !wsRef.current?.connected) return false;
     if (uploadingCount > 0) return false; // wait for in-flight uploads
 
-    const attachmentIds = attachments.map((a) => a.file_id);
     // Render the user bubble with attachment chips inlined into the
     // message content so they appear in the scrollback. Plain text
     // (`content`) keeps the user's actual prompt; the trailing
@@ -429,29 +572,36 @@ export function useAgentChatSession({
         ? '\n' + attachments.map((a) => `[Attached: ${a.filename} (${a.size}b)]`).join('\n')
         : '';
     const userContent = trimmed + cosmeticAttach;
+    const turn: QueuedTurn = {
+      id: generateUUID(),
+      content: trimmed,
+      attachments,
+    };
 
-    setMessages((prev) => [
-      ...prev,
-      {
-        id: generateUUID(),
-        role: 'user',
-        content: userContent,
-        timestamp: new Date(),
-      },
-    ]);
-
-    try {
-      wsRef.current.sendMessage(trimmed, pageContext, attachmentIds);
-      onUserMessageRef.current?.(trimmed);
-      setTyping(true);
-      pendingContentRef.current = '';
-      pendingThinkingRef.current = '';
-      capturedThinkingRef.current = '';
-      activitiesRef.current = [];
-      setActivities([]);
-    } catch {
-      setError(t('agent.send_error'));
-      return false;
+    if (typingRef.current) {
+      setQueuedTurns((prev) => [...prev, turn]);
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: turn.id,
+          role: 'user',
+          content: userContent,
+          deliveryStatus: 'queued',
+          timestamp: new Date(),
+        },
+      ]);
+    } else {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: turn.id,
+          role: 'user',
+          content: userContent,
+          deliveryStatus: 'sending',
+          timestamp: new Date(),
+        },
+      ]);
+      if (!sendTurn(turn, false)) return false;
     }
 
     setInput('');
@@ -462,7 +612,34 @@ export function useAgentChatSession({
       inputRef.current.focus();
     }
     return true;
-  }, [attachments, clearDraftStore, input, pageContext, uploadingCount]);
+  }, [attachments, clearDraftStore, input, sendTurn, uploadingCount]);
+
+  useEffect(() => {
+    if (typing || !connected || queuedTurns.length === 0 || sendingQueuedRef.current) return;
+    const next = queuedTurns[0];
+    if (!next) return;
+    const rest = queuedTurns.slice(1);
+    sendingQueuedRef.current = true;
+    setQueuedTurns(rest);
+    if (!sendTurn(next, true)) {
+      setQueuedTurns((prev) => [next, ...prev]);
+    }
+    queueMicrotask(() => {
+      sendingQueuedRef.current = false;
+    });
+  }, [connected, queuedTurns, sendTurn, typing]);
+
+  const stopCurrentTurn = useCallback(() => {
+    if (!typingRef.current || !wsRef.current?.connected || stopping) return false;
+    try {
+      wsRef.current.sendStop();
+      setStopping(true);
+      return true;
+    } catch {
+      setError(t('agent.send_error'));
+      return false;
+    }
+  }, [stopping]);
 
   /** Send an arbitrary text turn without going through the textarea. Used
    *  by slash commands like `/architect` whose handler synthesizes a
@@ -474,33 +651,37 @@ export function useAgentChatSession({
     (text: string): boolean => {
       const trimmed = text.trim();
       if (!trimmed || !wsRef.current?.connected) return false;
+      const turn: QueuedTurn = { id: generateUUID(), content: trimmed, attachments: [] };
+
+      if (typingRef.current) {
+        setQueuedTurns((prev) => [...prev, turn]);
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: turn.id,
+            role: 'user',
+            content: trimmed,
+            deliveryStatus: 'queued',
+            timestamp: new Date(),
+          },
+        ]);
+        return true;
+      }
 
       setMessages((prev) => [
         ...prev,
         {
-          id: generateUUID(),
+          id: turn.id,
           role: 'user',
           content: trimmed,
+          deliveryStatus: 'sending',
           timestamp: new Date(),
         },
       ]);
 
-      try {
-        wsRef.current.sendMessage(trimmed, pageContext, []);
-        onUserMessageRef.current?.(trimmed);
-        setTyping(true);
-        pendingContentRef.current = '';
-        pendingThinkingRef.current = '';
-        capturedThinkingRef.current = '';
-        activitiesRef.current = [];
-        setActivities([]);
-      } catch {
-        setError(t('agent.send_error'));
-        return false;
-      }
-      return true;
+      return sendTurn(turn, false);
     },
-    [pageContext],
+    [sendTurn],
   );
 
   /** Upload a file to the session's attachment store and stage it for
@@ -613,6 +794,9 @@ export function useAgentChatSession({
     setInput,
     streamingContent,
     streamingThinking,
+    queuedTurns,
+    stopCurrentTurn,
+    stopping,
     submitMessage,
     typing,
     uploadingCount,

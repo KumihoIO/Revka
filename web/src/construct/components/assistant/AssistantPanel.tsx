@@ -16,6 +16,7 @@ import {
   Send,
   Settings,
   SplitSquareHorizontal,
+  Square,
   Terminal,
   X,
 } from 'lucide-react';
@@ -24,7 +25,7 @@ import { generateUUID } from '@/lib/uuid';
 import { useAgentChatSession } from '@/construct/hooks/useAgentChatSession';
 import { useTheme } from '@/construct/hooks/useTheme';
 import { useT, type Locale } from '@/construct/hooks/useT';
-import { deleteSession, getSessions, renameSession } from '@/lib/api';
+import { deleteSession, getSessionsWithArchiveState, renameSession } from '@/lib/api';
 import { useV2Assistant } from './AssistantContext';
 import { v2RouteMeta } from '../layout/construct-navigation';
 import {
@@ -71,6 +72,8 @@ function routeContext(pathname: string) {
 
 const OPERATOR_MAIN_SESSION_ID = 'operator-main';
 const ASSISTANT_TABS_STORAGE_KEY = 'construct_assistant_tabs_v1';
+const ASSISTANT_ARCHIVED_SESSIONS_STORAGE_KEY = 'construct_assistant_archived_session_ids_v1';
+const MAX_RESTORED_CHAT_TABS = 12;
 
 interface PersistedAssistantTabs {
   tabs: AssistantTab[];
@@ -84,12 +87,16 @@ function defaultAssistantTabs(): AssistantTab[] {
   ];
 }
 
+function fallbackChatTab(): AssistantTab {
+  return { id: 'chat-main', type: 'chat', title: 'Chat', sessionId: generateUUID() };
+}
+
 function loadAssistantTabs(): PersistedAssistantTabs {
   try {
     const raw = localStorage.getItem(ASSISTANT_TABS_STORAGE_KEY);
     if (!raw) return { tabs: defaultAssistantTabs(), activeTabId: 'chat-main' };
     const parsed = JSON.parse(raw) as Partial<PersistedAssistantTabs>;
-    const tabs = Array.isArray(parsed.tabs)
+    const parsedTabs = Array.isArray(parsed.tabs)
       ? parsed.tabs.filter((tab): tab is AssistantTab =>
           !!tab
           && typeof tab.id === 'string'
@@ -98,14 +105,51 @@ function loadAssistantTabs(): PersistedAssistantTabs {
           && (tab.type === 'chat' || tab.type === 'terminal' || tab.type === 'code'),
         )
       : [];
-    if (tabs.length === 0) return { tabs: defaultAssistantTabs(), activeTabId: 'chat-main' };
-    const activeTabId = tabs.some((tab) => tab.id === parsed.activeTabId)
+    const activeTabId = parsedTabs.some((tab) => tab.id === parsed.activeTabId)
       ? parsed.activeTabId
-      : tabs[0]?.id;
-    return { tabs, activeTabId };
+      : parsedTabs[0]?.id;
+    const chatTabs = parsedTabs.filter((tab) => tab.type === 'chat');
+    const nonChatTabs = parsedTabs.filter((tab) => tab.type !== 'chat');
+    const activeChat = activeTabId ? chatTabs.find((tab) => tab.id === activeTabId) : undefined;
+    const boundedChatTabs = [
+      ...(activeChat ? [activeChat] : []),
+      ...chatTabs.filter((tab) => tab.id !== activeChat?.id),
+    ].slice(0, MAX_RESTORED_CHAT_TABS);
+    const tabs = [...boundedChatTabs, ...nonChatTabs];
+    if (tabs.length === 0) return { tabs: defaultAssistantTabs(), activeTabId: 'chat-main' };
+    return {
+      tabs,
+      activeTabId: tabs.some((tab) => tab.id === activeTabId) ? activeTabId : tabs[0]?.id,
+    };
   } catch {
     return { tabs: defaultAssistantTabs(), activeTabId: 'chat-main' };
   }
+}
+
+function loadArchivedSessionIds(): Set<string> {
+  try {
+    const raw = localStorage.getItem(ASSISTANT_ARCHIVED_SESSIONS_STORAGE_KEY);
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return new Set();
+    return new Set(parsed.filter((id): id is string => typeof id === 'string' && id.length > 0));
+  } catch {
+    return new Set();
+  }
+}
+
+function saveArchivedSessionIds(ids: Set<string>) {
+  try {
+    localStorage.setItem(ASSISTANT_ARCHIVED_SESSIONS_STORAGE_KEY, JSON.stringify([...ids]));
+  } catch {
+    // Private mode / quota failures should not break Operator chat.
+  }
+}
+
+function rememberArchivedSessionId(sessionId: string) {
+  const ids = loadArchivedSessionIds();
+  ids.add(sessionId);
+  saveArchivedSessionIds(ids);
 }
 
 function saveAssistantTabs(tabs: AssistantTab[], activeTabId: string | null) {
@@ -293,6 +337,9 @@ function ChatPane({
     setInput,
     streamingContent,
     streamingThinking,
+    queuedTurns,
+    stopCurrentTurn,
+    stopping,
     typing,
     uploadingCount,
   } = useAgentChatSession({
@@ -579,6 +626,30 @@ function ChatPane({
                       Lives BELOW the message text per design — easier to reach with
                       thumb on mobile and doesn't overlap content on long messages. */}
                   <div className="mt-0.5 flex items-center justify-end gap-2 text-[10px]" style={{ color: 'var(--construct-text-faint)' }}>
+                    {msg.deliveryStatus === 'queued' && (
+                      <span
+                        className="mr-auto inline-flex items-center rounded border px-1.5 py-0.5 uppercase tracking-[0.12em]"
+                        style={{
+                          borderColor: 'var(--construct-border-soft)',
+                          color: 'var(--construct-text-faint)',
+                        }}
+                      >
+                        queued
+                      </span>
+                    )}
+                    {msg.deliveryStatus === 'sending' && (
+                      <span
+                        className="mr-auto inline-flex items-center gap-1 rounded border px-1.5 py-0.5 uppercase tracking-[0.12em]"
+                        style={{
+                          borderColor: 'var(--construct-border-soft)',
+                          color: colors.primary,
+                          textShadow: colors.glow,
+                        }}
+                      >
+                        <Loader2 className="h-2.5 w-2.5 animate-spin" />
+                        sending
+                      </span>
+                    )}
                     <button
                       type="button"
                       onClick={() => copyMessage(msg.id, msg.content)}
@@ -765,15 +836,11 @@ function ChatPane({
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
                 if (runSlashFromInput()) return;
-                // Block send while a turn is in flight — gateway would
-                // reject the second turn with SESSION_BUSY otherwise.
-                // Slash commands still run because they're client-side.
-                if (typing) return;
                 handleSend();
               }
             }}
             onPaste={onPaste}
-            placeholder={connected ? (typing ? 'Operator is responding…' : 'message…') : 'connecting…'}
+            placeholder={connected ? (typing ? 'queue next message…' : 'message…') : 'connecting…'}
             disabled={!connected}
             // `focus-visible:outline-none` overrides the global `:focus-visible`
             // ring set in index.css (2px accent outline) — without it Tailwind's
@@ -792,16 +859,31 @@ function ChatPane({
               fontSize: `${Math.max(16, config.fontSize)}px`,
             }}
           />
+          {typing && (
+            <button
+              type="button"
+              onClick={stopCurrentTurn}
+              disabled={!connected || stopping}
+              aria-label={stopping ? 'Stopping Operator' : 'Stop Operator'}
+              title={stopping ? 'Stopping…' : 'Stop current response'}
+              className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded transition-all hover:bg-white/5 focus:outline-none focus-visible:ring-2 focus-visible:ring-current disabled:cursor-not-allowed disabled:opacity-30"
+              style={{
+                color: stopping ? 'var(--construct-text-faint)' : 'var(--construct-status-danger)',
+              }}
+            >
+              {stopping ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Square className="h-3.5 w-3.5" />}
+            </button>
+          )}
           <button
             type="button"
             onClick={() => handleSend()}
-            disabled={!connected || (!input.trim() && attachments.length === 0) || uploadingCount > 0 || typing}
-            aria-label={typing ? 'Operator is responding' : 'Send message'}
+            disabled={!connected || (!input.trim() && attachments.length === 0) || uploadingCount > 0}
+            aria-label={typing ? 'Queue message' : 'Send message'}
             title={
               !connected
                 ? 'Disconnected'
                 : typing
-                  ? 'Operator is responding…'
+                  ? 'Queue after current response'
                   : 'Send (Enter)'
             }
             className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded transition-all hover:bg-white/5 focus:outline-none focus-visible:ring-2 focus-visible:ring-current disabled:cursor-not-allowed disabled:opacity-30"
@@ -809,14 +891,18 @@ function ChatPane({
               color:
                 (input.trim() || attachments.length > 0) && connected && uploadingCount === 0 && !typing
                   ? colors.primary
-                  : 'var(--construct-text-faint)',
+                  : (input.trim() || attachments.length > 0) && connected && uploadingCount === 0 && typing
+                    ? colors.secondary
+                    : 'var(--construct-text-faint)',
               textShadow:
                 (input.trim() || attachments.length > 0) && connected && uploadingCount === 0 && !typing
                   ? colors.glow
-                  : 'none',
+                  : (input.trim() || attachments.length > 0) && connected && uploadingCount === 0 && typing
+                    ? colors.glowSecondary
+                    : 'none',
             }}
           >
-            {typing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+            <Send className="h-3.5 w-3.5" />
           </button>
         </div>
 
@@ -854,6 +940,14 @@ function ChatPane({
             >
               <Loader2 className="h-3 w-3 animate-spin" />
               Operator is responding…
+            </span>
+          )}
+          {queuedTurns.length > 0 && (
+            <span
+              className="flex shrink-0 items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.12em]"
+              style={{ color: colors.secondary, textShadow: colors.glowSecondary }}
+            >
+              {queuedTurns.length} queued
             </span>
           )}
           <span
@@ -1003,18 +1097,44 @@ export default function AssistantPanel() {
   }, [tabs, activeTabId]);
 
   useEffect(() => {
+    if (tabs.length > 0 && tabs.some((tab) => tab.id === activeTabId)) return;
+    setActiveTabId(tabs[0]?.id ?? 'chat-main');
+  }, [tabs, activeTabId]);
+
+  useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const sessions = await getSessions();
+        const { sessions, archivedSessionIds } = await getSessionsWithArchiveState();
         if (cancelled) return;
+        const archivedSessionIdsSet = new Set([
+          ...archivedSessionIds,
+          ...loadArchivedSessionIds(),
+        ]);
         const gatewaySessions = sessions
           .filter((session) => session.channel === 'gateway')
-          .filter((session) => session.message_count > 0 || !!session.name)
-          .sort((a, b) => new Date(b.last_activity).getTime() - new Date(a.last_activity).getTime());
+          .filter((session) => !archivedSessionIdsSet.has(session.id))
+          .filter((session) => session.message_count > 0)
+          .sort((a, b) => new Date(b.last_activity).getTime() - new Date(a.last_activity).getTime())
+          .slice(0, MAX_RESTORED_CHAT_TABS);
+        const sessionIdsWithMessages = new Set(gatewaySessions.map((session) => session.id));
 
         setTabs((prev) => {
-          const seenSessionIds = new Set(prev.filter((tab) => tab.type === 'chat').map((tab) => tab.sessionId));
+          const activeTabs = prev.filter(
+            (tab) =>
+              tab.type !== 'chat'
+              || (
+                !archivedSessionIdsSet.has(tab.sessionId)
+                && (
+                  tab.id === activeTabId
+                  || tab.sessionId === OPERATOR_MAIN_SESSION_ID
+                  || sessionIdsWithMessages.has(tab.sessionId)
+                )
+              ),
+          );
+          const seenSessionIds = new Set(
+            activeTabs.filter((tab) => tab.type === 'chat').map((tab) => tab.sessionId),
+          );
           const restored = gatewaySessions
             .filter((session) => !seenSessionIds.has(session.id))
             .map((session, index): AssistantTab => ({
@@ -1023,7 +1143,8 @@ export default function AssistantPanel() {
               title: session.name || (index === 0 ? 'Chat' : `Chat ${index + 1}`),
               sessionId: session.id,
             }));
-          return restored.length > 0 ? [...prev, ...restored] : prev;
+          const next = restored.length > 0 ? [...activeTabs, ...restored] : activeTabs;
+          return next.length > 0 ? next : [fallbackChatTab()];
         });
       } catch {
         // Session continuity is best-effort; the active tab still connects by
@@ -1130,6 +1251,7 @@ export default function AssistantPanel() {
   const closeTab = useCallback((tabId: string) => {
     const closing = tabs.find((t) => t.id === tabId);
     if (closing?.type === 'chat') {
+      rememberArchivedSessionId(closing.sessionId);
       void deleteSession(closing.sessionId).catch(() => {
         // The tab is intentionally closed locally even if the persisted
         // transcript was already gone or the gateway is temporarily offline.
@@ -1138,9 +1260,7 @@ export default function AssistantPanel() {
     setTabs((prev) => {
       const remaining = prev.filter((t) => t.id !== tabId);
       if (remaining.length === 0) {
-        // Always keep at least one tab
-        const fallback: AssistantTab = { id: 'chat-main', type: 'chat', title: 'Chat', sessionId: OPERATOR_MAIN_SESSION_ID };
-        return [fallback];
+        return [fallbackChatTab()];
       }
       return remaining;
     });
