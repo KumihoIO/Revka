@@ -371,6 +371,18 @@ fn extract_responses_text_and_tools(
     (text, tool_calls)
 }
 
+fn ensure_nonempty_response_output(
+    text: &str,
+    tool_calls: &[crate::providers::ToolCall],
+) -> anyhow::Result<()> {
+    if text.trim().is_empty() && tool_calls.is_empty() {
+        anyhow::bail!(
+            "OpenAI Codex Responses API returned empty text and no tool calls; treating as retryable empty completion"
+        );
+    }
+    Ok(())
+}
+
 fn extract_responses_text(response: &ResponsesResponse) -> Option<String> {
     if let Some(text) = first_nonempty(response.output_text.as_deref()) {
         return Some(text);
@@ -637,32 +649,13 @@ async fn decode_responses_body(response: reqwest::Response) -> anyhow::Result<St
     extract_responses_text(&parsed).ok_or_else(|| anyhow::anyhow!("No response from OpenAI Codex"))
 }
 
-/// Like `decode_responses_body` but also extracts function_call tool calls.
-async fn decode_responses_body_with_tools(
-    response: reqwest::Response,
-) -> anyhow::Result<(
+type ResponsesDecode = (
     String,
     Vec<crate::providers::ToolCall>,
     Option<crate::providers::traits::TokenUsage>,
-)> {
-    let mut body = String::new();
-    let mut pending_utf8 = Vec::new();
-    let mut stream = response.bytes_stream();
+);
 
-    while let Some(chunk) = stream.next().await {
-        let bytes = chunk
-            .map_err(|err| anyhow::anyhow!("error reading OpenAI Codex response stream: {err}"))?;
-        append_utf8_stream_chunk(&mut body, &mut pending_utf8, &bytes)?;
-    }
-
-    if !pending_utf8.is_empty() {
-        let err = std::str::from_utf8(&pending_utf8)
-            .expect_err("pending bytes should be invalid UTF-8 at end of stream");
-        return Err(anyhow::anyhow!(
-            "OpenAI Codex response ended with incomplete UTF-8: {err}"
-        ));
-    }
-
+fn parse_responses_body_with_tools(body: &str) -> anyhow::Result<ResponsesDecode> {
     // Try SSE streaming parse first — collect function_call events
     let mut tool_calls: Vec<crate::providers::ToolCall> = Vec::new();
     let mut text_result: Option<String> = None;
@@ -820,6 +813,7 @@ async fn decode_responses_body_with_tools(
         }
 
         let text = text_result.unwrap_or_default();
+        ensure_nonempty_response_output(&text, &tool_calls)?;
         return Ok((text, tool_calls, usage_result));
     }
 
@@ -832,7 +826,34 @@ async fn decode_responses_body_with_tools(
     })?;
     let (text, tc) = extract_responses_text_and_tools(&parsed);
     let usage = token_usage_from_responses(&parsed);
-    Ok((text.unwrap_or_default(), tc, usage))
+    let text = text.unwrap_or_default();
+    ensure_nonempty_response_output(&text, &tc)?;
+    Ok((text, tc, usage))
+}
+
+/// Like `decode_responses_body` but also extracts function_call tool calls.
+async fn decode_responses_body_with_tools(
+    response: reqwest::Response,
+) -> anyhow::Result<ResponsesDecode> {
+    let mut body = String::new();
+    let mut pending_utf8 = Vec::new();
+    let mut stream = response.bytes_stream();
+
+    while let Some(chunk) = stream.next().await {
+        let bytes = chunk
+            .map_err(|err| anyhow::anyhow!("error reading OpenAI Codex response stream: {err}"))?;
+        append_utf8_stream_chunk(&mut body, &mut pending_utf8, &bytes)?;
+    }
+
+    if !pending_utf8.is_empty() {
+        let err = std::str::from_utf8(&pending_utf8)
+            .expect_err("pending bytes should be invalid UTF-8 at end of stream");
+        return Err(anyhow::anyhow!(
+            "OpenAI Codex response ended with incomplete UTF-8: {err}"
+        ));
+    }
+
+    parse_responses_body_with_tools(&body)
 }
 
 fn token_usage_from_responses(
@@ -1567,6 +1588,50 @@ data: [DONE]
 "#;
 
         assert_eq!(parse_sse_text(payload).unwrap().as_deref(), Some("Done"));
+    }
+
+    #[test]
+    fn parse_responses_body_with_tools_rejects_empty_sse_completion() {
+        let payload = r#"data: {"type":"response.created","response":{"id":"resp_empty"}}
+
+data: {"type":"response.completed","response":{"output":[]}}
+data: [DONE]
+"#;
+
+        let err = parse_responses_body_with_tools(payload).unwrap_err();
+        assert!(
+            err.to_string().contains("empty text and no tool calls"),
+            "unexpected error: {err:#}"
+        );
+    }
+
+    #[test]
+    fn parse_responses_body_with_tools_accepts_text_sse_completion() {
+        let payload = r#"data: {"type":"response.output_text.delta","delta":"Hello"}
+data: {"type":"response.completed","response":{"output_text":"Hello","usage":{"input_tokens":10,"output_tokens":2}}}
+data: [DONE]
+"#;
+
+        let (text, tool_calls, usage) = parse_responses_body_with_tools(payload).unwrap();
+        assert_eq!(text, "Hello");
+        assert!(tool_calls.is_empty());
+        assert_eq!(usage.and_then(|u| u.output_tokens), Some(2));
+    }
+
+    #[test]
+    fn parse_responses_body_with_tools_accepts_tool_call_without_text() {
+        let payload = r#"data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","call_id":"call_1","name":"file_read"}}
+data: {"type":"response.function_call_arguments.done","output_index":0,"arguments":"{\"path\":\"README.md\"}"}
+data: {"type":"response.completed","response":{"output":[],"usage":{"input_tokens":10,"output_tokens":2}}}
+data: [DONE]
+"#;
+
+        let (text, tool_calls, usage) = parse_responses_body_with_tools(payload).unwrap();
+        assert!(text.is_empty());
+        assert_eq!(tool_calls.len(), 1);
+        assert_eq!(tool_calls[0].id, "call_1");
+        assert_eq!(tool_calls[0].name, "file_read");
+        assert_eq!(usage.and_then(|u| u.input_tokens), Some(10));
     }
 
     #[test]
