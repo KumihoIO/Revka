@@ -80,6 +80,7 @@ jobs:
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
         with:
           prefix-key: release-notes-cliff
+          cache-bin: false
       - name: Build release notes (git-cliff)
         id: notes
         shell: bash
@@ -161,6 +162,7 @@ jobs:
         if: runner.os != 'Windows'
         with:
           prefix-key: ${{ matrix.os }}-${{ matrix.target }}
+          cache-bin: false
 
       - uses: actions/download-artifact@v4
         with:
@@ -264,6 +266,7 @@ jobs:
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
         with:
           prefix-key: macos-tauri
+          cache-bin: false
 
       - uses: actions/setup-node@v4
         with:
@@ -317,6 +320,7 @@ jobs:
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
         with:
           prefix-key: sbom-cyclonedx
+          cache-bin: false
       - uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a # v4
         with:
           node-version-file: web/.nvmrc
