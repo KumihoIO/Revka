@@ -226,7 +226,10 @@ export function useAgentChatSession({
         setConnected(false);
         resetInFlightState();
         if (ev.code !== 1000 && ev.code !== 1001) {
-          setError(`Connection closed unexpectedly (code: ${ev.code}). Please check your configuration.`);
+          const reason = ev.code === 1006
+            ? 'Connection interrupted; reconnecting...'
+            : `Connection closed unexpectedly (code: ${ev.code}). Reconnecting...`;
+          setError(reason);
         }
       };
 

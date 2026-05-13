@@ -252,7 +252,14 @@ async fn handle_socket(
                         first_msg_fallback = Some(text.to_string());
                     }
                 }
-                Ok(Message::Close(_)) | Err(_) => return,
+                Ok(Message::Close(frame)) => {
+                    tracing::info!(session = %session_key, ?frame, "WebSocket chat closed during handshake");
+                    return;
+                }
+                Err(error) => {
+                    tracing::warn!(session = %session_key, %error, "WebSocket chat error during handshake");
+                    return;
+                }
                 _ => {}
             }
         }
@@ -344,7 +351,18 @@ async fn handle_socket(
             ws_msg = receiver.next() => {
                 let msg = match ws_msg {
                     Some(Ok(Message::Text(text))) => text,
-                    Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break,
+                    Some(Ok(Message::Close(frame))) => {
+                        tracing::info!(session = %session_key, ?frame, "WebSocket chat closed");
+                        break;
+                    }
+                    Some(Err(error)) => {
+                        tracing::warn!(session = %session_key, %error, "WebSocket chat error");
+                        break;
+                    }
+                    None => {
+                        tracing::info!(session = %session_key, "WebSocket chat stream ended");
+                        break;
+                    }
                     _ => continue,
                 };
 
@@ -453,6 +471,7 @@ async fn handle_socket(
             // ── Branch 3: keepalive Ping ──
             _ = ping_interval.tick() => {
                 if sender.send(Message::Ping(Vec::new().into())).await.is_err() {
+                    tracing::warn!(session = %session_key, "WebSocket chat keepalive send failed");
                     break;
                 }
             }
@@ -891,6 +910,14 @@ async fn process_chat_message(
 
     // Drive the turn and relays in one select loop so the WebSocket can
     // receive a `stop` control frame while the agent is still working.
+    // Keep sending protocol-level pings during the active turn as well as
+    // during idle waits. Long provider/tool calls can otherwise produce no
+    // outbound frames for minutes, which is enough for browser/proxy stacks
+    // such as Cloudflare Tunnel to close the connection with client-side 1006.
+    let mut ping_interval = tokio::time::interval(std::time::Duration::from_secs(30));
+    ping_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    ping_interval.tick().await;
+
     tokio::pin!(turn_fut);
     let result = loop {
         tokio::select! {
@@ -915,7 +942,10 @@ async fn process_chat_message(
                                 serde_json::json!({ "type": "operator_status", "phase": phase, "detail": detail })
                             }
                         };
-                        let _ = sender.send(Message::Text(ws_msg.to_string().into())).await;
+                        if sender.send(Message::Text(ws_msg.to_string().into())).await.is_err() {
+                            tracing::warn!(session = %session_key, "WebSocket chat send failed during active turn");
+                            break None;
+                        }
                     }
                     None => {}
                 }
@@ -927,14 +957,28 @@ async fn process_chat_message(
                             "type": "agent_event",
                             "event": ev["payload"],
                         });
-                        let _ = sender.send(Message::Text(relay.to_string().into())).await;
+                        if sender.send(Message::Text(relay.to_string().into())).await.is_err() {
+                            tracing::warn!(session = %session_key, "WebSocket chat event relay failed during active turn");
+                            break None;
+                        }
                     }
                 }
             }
             ws_msg = receiver.next() => {
                 let text = match ws_msg {
                     Some(Ok(Message::Text(text))) => text,
-                    Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break None,
+                    Some(Ok(Message::Close(frame))) => {
+                        tracing::info!(session = %session_key, ?frame, "WebSocket chat closed during active turn");
+                        break None;
+                    }
+                    Some(Err(error)) => {
+                        tracing::warn!(session = %session_key, %error, "WebSocket chat error during active turn");
+                        break None;
+                    }
+                    None => {
+                        tracing::info!(session = %session_key, "WebSocket chat stream ended during active turn");
+                        break None;
+                    }
                     _ => continue,
                 };
                 let parsed: serde_json::Value = match serde_json::from_str(&text) {
@@ -952,6 +996,12 @@ async fn process_chat_message(
                         let _ = sender.send(Message::Text(notice.to_string().into())).await;
                     }
                     _ => {}
+                }
+            }
+            _ = ping_interval.tick() => {
+                if sender.send(Message::Ping(Vec::new().into())).await.is_err() {
+                    tracing::warn!(session = %session_key, "WebSocket chat keepalive send failed during active turn");
+                    break None;
                 }
             }
         }
