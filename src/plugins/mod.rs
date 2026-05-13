@@ -1,7 +1,7 @@
 //! WASM plugin system for Construct.
 //!
-//! Plugins are WebAssembly modules loaded via Extism that can extend
-//! Construct with custom tools and channels. Enable with `--features plugins-wasm`.
+//! Plugins are WebAssembly modules that can extend Construct with custom tools
+//! and channels. Enable manifest discovery with `--features plugins-wasm`.
 
 pub mod error;
 pub mod host;

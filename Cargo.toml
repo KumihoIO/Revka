@@ -27,6 +27,12 @@ targets = [
 pr-run-mode = "plan"
 install-updater = true
 
+[patch.crates-io]
+# Security backports for transitive desktop build dependencies until upstream
+# releases patched compatible versions for the Tauri 2.x stack.
+glib = { path = "vendor/security-patches/glib-0.18.5" }
+phf_generator = { path = "vendor/security-patches/phf_generator-0.8.0" }
+
 [package]
 name = "kumiho-construct"
 version = "2026.5.10"
@@ -249,9 +255,6 @@ probe-rs = { version = "0.31", optional = true }
 # PDF extraction for datasheet RAG (optional, enable with --features rag-pdf)
 pdf-extract = { version = "0.10", optional = true }
 
-# WASM plugin runtime (extism)
-extism = { version = "1.20", optional = true }
-
 # Cross-platform audio capture for voice wake word detection (optional, enable with --features voice-wake)
 cpal = { version = "0.15", optional = true }
 
@@ -307,8 +310,9 @@ skill-creation = []
 whatsapp-web = ["dep:wa-rs", "dep:wa-rs-core", "dep:wa-rs-binary", "dep:wa-rs-proto", "dep:wa-rs-ureq-http", "dep:wa-rs-tokio-transport", "dep:serde-big-array", "dep:prost", "dep:qrcode"]
 # voice-wake = Voice wake word detection via microphone (cpal)
 voice-wake = ["dep:cpal"]
-# WASM plugin system (extism-based)
-plugins-wasm = ["dep:extism"]
+# WASM plugin system. Runtime execution is intentionally not wired until the
+# plugin runtime dependency is on a patched security baseline.
+plugins-wasm = []
 # WebAuthn / FIDO2 hardware key authentication
 webauthn = []
 # Meta-feature for CI: all features except those requiring system C libraries

@@ -46,7 +46,7 @@ impl Tool for WasmTool {
     }
 
     async fn execute(&self, args: Value) -> anyhow::Result<ToolResult> {
-        // TODO: Call into Extism plugin runtime
+        // TODO: Call into a patched plugin runtime
         // For now, return a placeholder indicating the plugin system is available
         // but not yet wired to actual WASM execution.
         Ok(ToolResult {

@@ -84,6 +84,10 @@ const ALLOWLIST: &[&str] = &[
 /// Directories whose entire subtree is excluded from the walk.
 const SKIP_DIRS: &[&str] = &["target", "node_modules", ".git", "dist", "build"];
 
+fn is_local_worktree_cache(path: &Path) -> bool {
+    path.ends_with(Path::new(".claude").join("worktrees"))
+}
+
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
@@ -117,6 +121,9 @@ fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
         let name = entry.file_name();
         let name_str = name.to_string_lossy();
         if SKIP_DIRS.iter().any(|s| *s == name_str.as_ref()) {
+            continue;
+        }
+        if is_local_worktree_cache(&path) {
             continue;
         }
         if path.is_dir() {
