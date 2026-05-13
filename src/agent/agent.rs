@@ -109,7 +109,12 @@ pub(crate) fn filter_tool_specs_for_architect(tool_specs: &mut Vec<ToolSpec>, us
 pub(crate) fn context_window_for_model(model: &str) -> usize {
     // Strip provider prefix (e.g. "anthropic/claude-opus-4-7" -> "claude-opus-4-7")
     // so OpenRouter-style and bare model names map to the same window.
-    let bare = model.rsplit('/').next().unwrap_or(model);
+    let bare = model
+        .rsplit('/')
+        .next()
+        .unwrap_or(model)
+        .to_ascii_lowercase();
+    let bare = bare.as_str();
 
     // Anthropic Claude 4-family (Opus/Sonnet/Haiku 4.x): 1M context.
     if bare.starts_with("claude-opus-4")
@@ -121,6 +126,12 @@ pub(crate) fn context_window_for_model(model: &str) -> usize {
     } else if bare.starts_with("claude-3") || bare.starts_with("claude-") {
         // Older Claude 3.x / 3.5 / 3.7: 200K.
         200_000
+    } else if bare.starts_with("gpt-5.5") {
+        1_050_000
+    } else if bare.starts_with("gpt-5.4-mini") || bare.starts_with("gpt-5.4-nano") {
+        400_000
+    } else if bare.starts_with("gpt-5.4") {
+        1_000_000
     } else if bare.starts_with("gpt-4o") || bare.starts_with("gpt-5") {
         128_000
     } else if bare.starts_with("o1") || bare.starts_with("o3") {
@@ -131,6 +142,57 @@ pub(crate) fn context_window_for_model(model: &str) -> usize {
         // Conservative default — better to over-compress than blow up the request.
         128_000
     }
+}
+
+fn normalize_model_context_key(value: &str) -> String {
+    value
+        .trim()
+        .to_ascii_lowercase()
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .collect()
+}
+
+pub(crate) fn context_window_for_model_with_overrides(
+    model: &str,
+    overrides: &std::collections::HashMap<String, usize>,
+) -> usize {
+    let model = model.trim();
+    let bare = model.rsplit('/').next().unwrap_or(model);
+    let candidates = [
+        model.to_ascii_lowercase(),
+        bare.to_ascii_lowercase(),
+        normalize_model_context_key(model),
+        normalize_model_context_key(bare),
+    ];
+
+    for (key, value) in overrides {
+        if *value == 0 {
+            continue;
+        }
+        let key_lower = key.trim().to_ascii_lowercase();
+        let key_normalized = normalize_model_context_key(key);
+        if candidates
+            .iter()
+            .any(|candidate| candidate == &key_lower || candidate == &key_normalized)
+        {
+            return *value;
+        }
+    }
+
+    context_window_for_model(model)
+}
+
+fn context_window_hard_cap(window: usize, safety_ratio: f64) -> usize {
+    if window == 0 {
+        return 0;
+    }
+    let ratio = if safety_ratio.is_finite() && safety_ratio > 0.0 {
+        safety_ratio.min(1.0)
+    } else {
+        0.95
+    };
+    (window as f64 * ratio) as usize
 }
 
 pub struct Agent {
@@ -917,7 +979,8 @@ impl Agent {
             };
         }
 
-        let context_window = context_window_for_model(model);
+        let context_window =
+            context_window_for_model_with_overrides(model, &self.config.model_context_windows);
         let compressor =
             ContextCompressor::new(self.config.context_compression.clone(), context_window)
                 .with_memory(Arc::clone(&self.memory));
@@ -971,7 +1034,8 @@ impl Agent {
             return None;
         }
 
-        let context_window = context_window_for_model(model);
+        let context_window =
+            context_window_for_model_with_overrides(model, &self.config.model_context_windows);
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let threshold =
             (context_window as f64 * self.config.context_compression.threshold_ratio) as usize;
@@ -1314,9 +1378,13 @@ impl Agent {
             // Hard safety cap: fail loud rather than ship a request the
             // provider will reject after thinking time has already burned.
             {
-                let window = context_window_for_model(&effective_model);
+                let window = context_window_for_model_with_overrides(
+                    &effective_model,
+                    &self.config.model_context_windows,
+                );
                 let est = crate::agent::context_compressor::estimate_tokens(&messages);
-                let hard_cap = (window as f64 * 0.95) as usize;
+                let hard_cap =
+                    context_window_hard_cap(window, self.config.context_window_safety_ratio);
                 if window > 0 && est > hard_cap {
                     anyhow::bail!(
                         "Conversation too long even after compression \
@@ -1559,9 +1627,13 @@ impl Agent {
             // rather than producing nonsense or a confusing provider 400.
             // Surfaces inline in the chat panel via the Err return.
             {
-                let window = context_window_for_model(&effective_model);
+                let window = context_window_for_model_with_overrides(
+                    &effective_model,
+                    &self.config.model_context_windows,
+                );
                 let est = crate::agent::context_compressor::estimate_tokens(&messages);
-                let hard_cap = (window as f64 * 0.95) as usize;
+                let hard_cap =
+                    context_window_hard_cap(window, self.config.context_window_safety_ratio);
                 if window > 0 && est > hard_cap {
                     anyhow::bail!(
                         "Conversation too long even after compression \
@@ -1771,7 +1843,10 @@ impl Agent {
                             tracing::warn!(
                                 "Context overflow in Operator chat, attempting compression recovery"
                             );
-                            let window = context_window_for_model(&effective_model);
+                            let window = context_window_for_model_with_overrides(
+                                &effective_model,
+                                &self.config.model_context_windows,
+                            );
                             let mut compressor =
                                 crate::agent::context_compressor::ContextCompressor::new(
                                     self.config.context_compression.clone(),
@@ -2243,6 +2318,28 @@ mod tests {
     use async_trait::async_trait;
     use parking_lot::Mutex;
     use std::collections::HashMap;
+
+    #[test]
+    fn context_window_uses_current_gpt55_fallback() {
+        assert_eq!(context_window_for_model("gpt-5.5"), 1_050_000);
+        assert_eq!(context_window_for_model("openai/gpt-5.5"), 1_050_000);
+    }
+
+    #[test]
+    fn context_window_override_matches_toml_safe_model_key() {
+        let overrides = HashMap::from([("gpt-5_5".to_string(), 2_000_000)]);
+        assert_eq!(
+            context_window_for_model_with_overrides("openai/gpt-5.5", &overrides),
+            2_000_000
+        );
+    }
+
+    #[test]
+    fn context_window_hard_cap_uses_configured_safety_ratio() {
+        assert_eq!(context_window_hard_cap(1_050_000, 0.95), 997_500);
+        assert_eq!(context_window_hard_cap(1_050_000, 1.0), 1_050_000);
+        assert_eq!(context_window_hard_cap(1_050_000, 0.0), 997_500);
+    }
 
     struct MockProvider {
         responses: Mutex<Vec<crate::providers::ChatResponse>>,

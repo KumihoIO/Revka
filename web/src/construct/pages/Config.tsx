@@ -29,6 +29,8 @@ interface ParsedConfig {
     max_tool_iterations?: number;
     max_context_tokens?: number;
     max_history_messages?: number;
+    model_context_windows?: Record<string, number>;
+    context_window_safety_ratio?: number;
     parallel_tools?: boolean;
     context_compression?: { enabled?: boolean };
     thinking?: { default_level?: string };
@@ -355,10 +357,12 @@ function buildConfigSections(
         parsedConfig?.agent?.max_tool_iterations,
         parsedConfig?.agent?.max_context_tokens,
         parsedConfig?.agent?.max_history_messages,
+        parsedConfig?.agent?.model_context_windows?.['gpt-5_5'],
+        parsedConfig?.agent?.context_window_safety_ratio,
         parsedConfig?.agent?.parallel_tools,
         parsedConfig?.agent?.thinking?.default_level,
       ]),
-      paths: ['agent.max_tool_iterations', 'agent.max_context_tokens', 'agent.max_history_messages', 'agent.parallel_tools', 'agent.thinking.default_level'],
+      paths: ['agent.max_tool_iterations', 'agent.max_context_tokens', 'agent.max_history_messages', 'agent.model_context_windows', 'agent.context_window_safety_ratio', 'agent.parallel_tools', 'agent.thinking.default_level'],
     },
     {
       id: 'memory' as const,
@@ -791,6 +795,12 @@ function renderConfigSection(
           </EditableField>
           <EditableField label={t('config.agent.max_history_messages')}>
             <input className="construct-input" type="number" value={parsedConfig.agent?.max_history_messages ?? 40} onChange={(event) => updateField('agent', 'max_history_messages', Number(event.target.value))} />
+          </EditableField>
+          <EditableField label={t('config.agent.gpt55_context_window')}>
+            <input className="construct-input" type="number" min={1} value={parsedConfig.agent?.model_context_windows?.['gpt-5_5'] ?? 1050000} onChange={(event) => updateField('agent.model_context_windows', 'gpt-5_5', Number(event.target.value))} />
+          </EditableField>
+          <EditableField label={t('config.agent.context_window_safety_ratio')}>
+            <input className="construct-input" type="number" min={0.1} max={1} step={0.01} value={parsedConfig.agent?.context_window_safety_ratio ?? 0.95} onChange={(event) => updateField('agent', 'context_window_safety_ratio', Number(event.target.value))} />
           </EditableField>
           <EditableToggle label={t('config.agent.parallel_tools')} checked={parsedConfig.agent?.parallel_tools ?? false} onChange={(checked) => updateField('agent', 'parallel_tools', checked)} t={t} />
           <EditableField label={t('config.agent.thinking_level')}>
