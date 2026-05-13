@@ -111,7 +111,7 @@ pub async fn handle_memory_graph(
 
     // Try operator MCP tool first (direct SDK, no HTTP hop).
     // Cap at 45s — the memory graph route has its own 60s timeout, not the global 30s.
-    if let Some(ref registry) = state.mcp_registry {
+    if let Some(registry) = state.mcp_registry() {
         let tool_name = format!(
             "{}__memory_graph",
             crate::agent::operator::OPERATOR_SERVER_NAME

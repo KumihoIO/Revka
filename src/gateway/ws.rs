@@ -495,32 +495,30 @@ async fn ensure_agent_for_session(
     }
 
     let config = state.config.lock().clone();
-    let mut new_agent = match crate::agent::Agent::from_config_with_mcp_registry(
-        &config,
-        state.mcp_registry.as_ref().map(Arc::clone),
-    )
-    .await
-    {
-        Ok(agent) => agent,
-        Err(e) => {
-            tracing::error!(error = %e, "Agent initialization failed");
-            let err = serde_json::json!({
-                "type": "error",
-                "message": format!("Failed to initialise agent: {e}"),
-                "code": "AGENT_INIT_FAILED"
-            });
-            let _ = sender.send(Message::Text(err.to_string().into())).await;
-            let _ = sender
-                .send(Message::Close(Some(axum::extract::ws::CloseFrame {
-                    code: 1011,
-                    reason: axum::extract::ws::Utf8Bytes::from_static(
-                        "Agent initialization failed",
-                    ),
-                })))
-                .await;
-            return false;
-        }
-    };
+    let mut new_agent =
+        match crate::agent::Agent::from_config_with_mcp_registry(&config, state.mcp_registry())
+            .await
+        {
+            Ok(agent) => agent,
+            Err(e) => {
+                tracing::error!(error = %e, "Agent initialization failed");
+                let err = serde_json::json!({
+                    "type": "error",
+                    "message": format!("Failed to initialise agent: {e}"),
+                    "code": "AGENT_INIT_FAILED"
+                });
+                let _ = sender.send(Message::Text(err.to_string().into())).await;
+                let _ = sender
+                    .send(Message::Close(Some(axum::extract::ws::CloseFrame {
+                        code: 1011,
+                        reason: axum::extract::ws::Utf8Bytes::from_static(
+                            "Agent initialization failed",
+                        ),
+                    })))
+                    .await;
+                return false;
+            }
+        };
     new_agent.set_memory_session_id(Some(memory_session_id.to_string()));
     if !seed_messages.is_empty() {
         new_agent.seed_history(seed_messages);

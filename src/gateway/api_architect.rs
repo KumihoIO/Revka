@@ -37,8 +37,7 @@ async fn call_operator_tool(
     let tool_name = format!("{}__{}", crate::agent::operator::OPERATOR_SERVER_NAME, tool);
 
     let registry = state
-        .mcp_registry
-        .as_ref()
+        .mcp_registry()
         .ok_or_else(|| "MCP registry not available — operator not connected".to_string())?;
 
     let fut = registry.call_tool(&tool_name, serde_json::Value::Object(args));
