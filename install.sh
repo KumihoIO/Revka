@@ -976,7 +976,7 @@ run_guided_installer() {
 }
 
 ensure_default_config_and_workspace() {
-  # Creates a minimal config.toml and workspace scaffold files when the
+  # Creates a baseline config.toml and workspace scaffold files when the
   # onboard wizard was skipped (e.g. --skip-build --prefer-prebuilt, or
   # Docker mode without an API key).
   #
@@ -999,6 +999,8 @@ ensure_default_config_and_workspace() {
 
 default_provider = "${provider}"
 workspace_dir = "${workspace_dir}"
+provider_timeout_secs = 120
+provider_max_tokens = 16256
 TOML
     if [[ -n "${API_KEY:-}" ]]; then
       printf 'api_key = "%s"\n' "$API_KEY" >> "$config_path"
@@ -1006,6 +1008,58 @@ TOML
     if [[ -n "${MODEL:-}" ]]; then
       printf 'default_model = "%s"\n' "$MODEL" >> "$config_path"
     fi
+    cat >> "$config_path" <<'TOML'
+
+[agent]
+compact_context = true
+max_tool_iterations = 60
+max_history_messages = 1000
+max_context_tokens = 1050000
+context_window_safety_ratio = 0.95
+parallel_tools = true
+tool_dispatcher = "auto"
+max_system_prompt_chars = 0
+context_aware_tools = false
+max_tool_result_chars = 50000
+keep_tool_context_turns = 2
+
+[agent.model_context_windows]
+
+[agent.thinking]
+default_level = "high"
+
+[agent.context_compression]
+enabled = true
+threshold_ratio = 0.5
+protect_first_n = 3
+protect_last_n = 4
+max_passes = 3
+summary_max_chars = 4000
+source_max_chars = 50000
+timeout_secs = 60
+identifier_policy = "strict"
+tool_result_retrim_chars = 2000
+tool_result_trim_exempt = []
+
+[mcp]
+enabled = true
+deferred_loading = true
+
+[kumiho]
+enabled = true
+mcp_path = "~/.construct/kumiho/run_kumiho_mcp.py"
+space_prefix = "Construct"
+api_url = "https://api.kumiho.cloud"
+memory_project = "CognitiveMemory"
+harness_project = "Construct"
+memory_retrieval_limit = 3
+
+[operator]
+enabled = true
+mcp_path = ""
+max_tool_iterations = 80
+tool_timeout_secs = 600
+TOML
     chmod 600 "$config_path" 2>/dev/null || true
     step_ok "Default config.toml created at $config_path"
   else
