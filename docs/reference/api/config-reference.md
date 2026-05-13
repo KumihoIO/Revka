@@ -2,7 +2,7 @@
 
 This is a high-signal reference for common config sections and defaults.
 
-Last verified: **April 21, 2026**.
+Last verified: **May 13, 2026**.
 
 For the complete, machine-readable schema (every key, every default) run:
 
@@ -31,6 +31,8 @@ Schema export command:
 | `default_provider` | `openrouter` | provider ID or alias |
 | `default_model` | `anthropic/claude-sonnet-4-6` | model routed through selected provider |
 | `default_temperature` | `0.7` | model temperature |
+| `provider_timeout_secs` | `120` | HTTP request timeout in seconds for LLM provider API calls |
+| `provider_max_tokens` | unset (install default: `16256`) | Maximum output tokens included in provider API requests |
 
 <!-- TODO screenshot: editor showing the [observability] section of config.toml -->
 ![Editor showing the [observability] section of config.toml](../../assets/reference/config-reference-02-observability-section.png)
@@ -89,25 +91,43 @@ Operational note for container users:
 | Key | Default | Purpose |
 |---|---|---|
 | `compact_context` | `true` | When true: bootstrap_max_chars=6000, rag_chunk_limit=2. Use for 13B or smaller models |
-| `max_tool_iterations` | `10` | Maximum tool-call loop turns per user message across CLI, gateway, and channels |
-| `max_history_messages` | `50` | Maximum conversation history messages retained per session |
-| `max_context_tokens` | `32000` | Token budget used by loop-level context trimming/compression |
+| `max_tool_iterations` | `60` | Maximum tool-call loop turns per user message across CLI, gateway, and channels |
+| `max_history_messages` | `1000` | Maximum conversation history messages retained per session |
+| `max_context_tokens` | `1050000` | Token budget used by loop-level context trimming/compression |
 | `model_context_windows` | `{}` | Per-model context window overrides used by Operator chat compression and hard-cap checks |
 | `context_window_safety_ratio` | `0.95` | Fraction of the model context window allowed before Construct fails loud |
-| `parallel_tools` | `false` | Enable parallel tool execution within a single iteration |
+| `parallel_tools` | `true` | Enable parallel tool execution within a single iteration |
 | `tool_dispatcher` | `auto` | Tool dispatch strategy |
 | `tool_call_dedup_exempt` | `[]` | Tool names exempt from within-turn duplicate-call suppression |
 | `tool_filter_groups` | `[]` | Per-turn MCP tool schema filter groups (see below) |
+| `max_tool_result_chars` | `50000` | Maximum characters retained for a single tool result before middle truncation |
+| `keep_tool_context_turns` | `2` | Recent turns whose full tool-call/result messages are preserved in channel history |
 
 Notes:
 
-- Setting `max_tool_iterations = 0` falls back to safe default `10`.
+- Setting `max_tool_iterations = 0` falls back to safe default `60`.
 - If a channel message exceeds this value, the runtime returns: `Agent exceeded maximum tool iterations (<value>)`.
 - In CLI, gateway, and channel tool loops, multiple independent tool calls are executed concurrently by default when the pending calls do not require approval gating; result order remains stable.
 - `parallel_tools` applies to the `Agent::turn()` API surface. It does not gate the runtime loop used by CLI, gateway, or channel handlers.
 - `tool_call_dedup_exempt` accepts an array of exact tool names. Tools listed here are allowed to be called multiple times with identical arguments in the same turn, bypassing the dedup check. Example: `tool_call_dedup_exempt = ["browser"]`.
 - `model_context_windows` keys are matched case-insensitively against full model IDs and provider-stripped model IDs. For TOML bare keys, use `_` in place of `.`: `[agent.model_context_windows] gpt-5_5 = 1050000`.
 - `context_window_safety_ratio` is clamped to `1.0`; values `<= 0` fall back to `0.95`.
+
+### `[agent.context_compression]`
+
+| Key | Default | Purpose |
+|---|---|---|
+| `enabled` | `true` | Enable automatic context compression |
+| `threshold_ratio` | `0.5` | Fraction of the context window that triggers compression |
+| `protect_first_n` | `3` | Messages protected at the start of history |
+| `protect_last_n` | `4` | Recent messages protected from compression |
+| `max_passes` | `3` | Maximum compression passes before failing loud |
+| `summary_max_chars` | `4000` | Maximum characters retained in stored compaction summaries |
+| `source_max_chars` | `50000` | Safety cap for transcript text passed to the summarizer |
+| `timeout_secs` | `60` | Timeout for the summarization provider call |
+| `identifier_policy` | `strict` | Identifier preservation policy |
+| `tool_result_retrim_chars` | `2000` | Maximum characters retained for older tool results during fast trim |
+| `tool_result_trim_exempt` | `[]` | Tool names exempt from tool-result trimming |
 
 ### `tool_filter_groups`
 

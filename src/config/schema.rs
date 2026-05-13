@@ -1518,18 +1518,18 @@ fn default_local_whisper_timeout_secs() -> u64 {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct AgentConfig {
     /// When true: bootstrap_max_chars=6000, rag_chunk_limit=2. Use for 13B or smaller models.
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub compact_context: bool,
-    /// Maximum tool-call loop turns per user message. Default: `10`.
-    /// Setting to `0` falls back to the safe default of `10`.
+    /// Maximum tool-call loop turns per user message. Default: `60`.
+    /// Setting to `0` falls back to the safe default of `60`.
     #[serde(default = "default_agent_max_tool_iterations")]
     pub max_tool_iterations: usize,
-    /// Maximum conversation history messages retained per session. Default: `50`.
+    /// Maximum conversation history messages retained per session. Default: `1000`.
     #[serde(default = "default_agent_max_history_messages")]
     pub max_history_messages: usize,
     /// Maximum estimated tokens for conversation history before compaction triggers.
     /// Uses ~4 chars/token heuristic. When this threshold is exceeded, older messages
-    /// are summarized to preserve context while staying within budget. Default: `32000`.
+    /// are summarized to preserve context while staying within budget. Default: `1050000`.
     #[serde(default = "default_agent_max_context_tokens")]
     pub max_context_tokens: usize,
     /// Per-model context window overrides used for compression and hard-cap checks.
@@ -1544,8 +1544,8 @@ pub struct AgentConfig {
     /// Defaults to `0.95` to leave headroom for provider-side accounting drift.
     #[serde(default = "default_context_window_safety_ratio")]
     pub context_window_safety_ratio: f64,
-    /// Enable parallel tool execution within a single iteration. Default: `false`.
-    #[serde(default)]
+    /// Enable parallel tool execution within a single iteration. Default: `true`.
+    #[serde(default = "default_true")]
     pub parallel_tools: bool,
     /// Tool dispatch strategy (e.g. `"auto"`). Default: `"auto"`.
     #[serde(default = "default_agent_tool_dispatcher")]
@@ -1614,15 +1614,15 @@ fn default_keep_tool_context_turns() -> usize {
 }
 
 fn default_agent_max_tool_iterations() -> usize {
-    10
+    60
 }
 
 fn default_agent_max_history_messages() -> usize {
-    50
+    1000
 }
 
 fn default_agent_max_context_tokens() -> usize {
-    32_000
+    1_050_000
 }
 
 fn default_context_window_safety_ratio() -> f64 {
@@ -1646,7 +1646,7 @@ impl Default for AgentConfig {
             max_context_tokens: default_agent_max_context_tokens(),
             model_context_windows: HashMap::new(),
             context_window_safety_ratio: default_context_window_safety_ratio(),
-            parallel_tools: false,
+            parallel_tools: true,
             tool_dispatcher: default_agent_tool_dispatcher(),
             tool_call_dedup_exempt: Vec::new(),
             tool_filter_groups: Vec::new(),
@@ -11923,9 +11923,10 @@ reasoning_effort = "turbo"
     async fn agent_config_defaults() {
         let cfg = AgentConfig::default();
         assert!(cfg.compact_context);
-        assert_eq!(cfg.max_tool_iterations, 10);
-        assert_eq!(cfg.max_history_messages, 50);
-        assert!(!cfg.parallel_tools);
+        assert_eq!(cfg.max_tool_iterations, 60);
+        assert_eq!(cfg.max_history_messages, 1000);
+        assert_eq!(cfg.max_context_tokens, 1_050_000);
+        assert!(cfg.parallel_tools);
         assert_eq!(cfg.tool_dispatcher, "auto");
     }
 
@@ -11946,6 +11947,23 @@ tool_dispatcher = "xml"
         assert_eq!(parsed.agent.max_history_messages, 80);
         assert!(parsed.agent.parallel_tools);
         assert_eq!(parsed.agent.tool_dispatcher, "xml");
+    }
+
+    #[test]
+    async fn partial_agent_config_uses_performance_defaults() {
+        let parsed = parse_test_config(
+            r#"
+default_temperature = 0.7
+[agent]
+tool_dispatcher = "auto"
+"#,
+        );
+
+        assert!(parsed.agent.compact_context);
+        assert_eq!(parsed.agent.max_tool_iterations, 60);
+        assert_eq!(parsed.agent.max_history_messages, 1000);
+        assert_eq!(parsed.agent.max_context_tokens, 1_050_000);
+        assert!(parsed.agent.parallel_tools);
     }
 
     #[test]

@@ -70,7 +70,7 @@ use axum::{
     response::{IntoResponse, Json},
     routing::{delete, get, post, put},
 };
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
@@ -443,8 +443,13 @@ pub struct AppState {
     pub pending_pairings: Option<Arc<api_pairing::PairingStore>>,
     /// Shared canvas store for Live Canvas (A2UI) system
     pub canvas_store: CanvasStore,
-    /// MCP registry for direct tool invocation from HTTP handlers (memory graph, etc.)
-    pub mcp_registry: Option<Arc<tools::McpRegistry>>,
+    /// MCP registry for direct tool invocation from HTTP handlers (memory graph, etc.).
+    ///
+    /// The slot is mutable because `/api/config` can change settings that are
+    /// injected into stdio MCP sidecar environments. Replacing the registry
+    /// reconnects those sidecars so subsequent requests see the effective
+    /// config without a full daemon restart.
+    pub mcp_registry: Arc<RwLock<Option<Arc<tools::McpRegistry>>>>,
     /// WebAuthn state for hardware key authentication (optional, requires `webauthn` feature)
     #[cfg(feature = "webauthn")]
     pub webauthn: Option<Arc<api_webauthn::WebAuthnState>>,
@@ -463,6 +468,16 @@ pub struct AppState {
     /// and persisted to `<state_dir>/service-token` so the operator-mcp
     /// runtime can read it back without IPC.
     pub service_token: Arc<str>,
+}
+
+impl AppState {
+    pub fn mcp_registry(&self) -> Option<Arc<tools::McpRegistry>> {
+        self.mcp_registry.read().clone()
+    }
+
+    pub fn replace_mcp_registry(&self, registry: Option<Arc<tools::McpRegistry>>) {
+        *self.mcp_registry.write() = registry;
+    }
 }
 
 /// Run the HTTP gateway using axum with proper HTTP/1.1 compliance.
@@ -1146,7 +1161,7 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
         pending_pairings,
         path_prefix: path_prefix.unwrap_or("").to_string(),
         canvas_store,
-        mcp_registry: mcp_registry_shared,
+        mcp_registry: Arc::new(RwLock::new(mcp_registry_shared)),
         approval_registry: approval_registry::global(),
         // Populated after the in-process MCP server binds (see below).
         mcp_local_url: None,
@@ -3242,7 +3257,7 @@ mod tests {
             device_registry: None,
             pending_pairings: None,
             canvas_store: CanvasStore::new(),
-            mcp_registry: None,
+            mcp_registry: Arc::new(parking_lot::RwLock::new(None)),
             approval_registry: approval_registry::global(),
             mcp_local_url: None,
             auth_profiles: None,
@@ -3316,7 +3331,7 @@ mod tests {
             device_registry: None,
             pending_pairings: None,
             canvas_store: CanvasStore::new(),
-            mcp_registry: None,
+            mcp_registry: Arc::new(parking_lot::RwLock::new(None)),
             approval_registry: approval_registry::global(),
             mcp_local_url: None,
             auth_profiles: None,
@@ -3735,7 +3750,7 @@ mod tests {
             device_registry: None,
             pending_pairings: None,
             canvas_store: CanvasStore::new(),
-            mcp_registry: None,
+            mcp_registry: Arc::new(parking_lot::RwLock::new(None)),
             approval_registry: approval_registry::global(),
             mcp_local_url: None,
             auth_profiles: None,
@@ -3819,7 +3834,7 @@ mod tests {
             device_registry: None,
             pending_pairings: None,
             canvas_store: CanvasStore::new(),
-            mcp_registry: None,
+            mcp_registry: Arc::new(parking_lot::RwLock::new(None)),
             approval_registry: approval_registry::global(),
             mcp_local_url: None,
             auth_profiles: None,
@@ -3915,7 +3930,7 @@ mod tests {
             device_registry: None,
             pending_pairings: None,
             canvas_store: CanvasStore::new(),
-            mcp_registry: None,
+            mcp_registry: Arc::new(parking_lot::RwLock::new(None)),
             approval_registry: approval_registry::global(),
             mcp_local_url: None,
             auth_profiles: None,
@@ -3983,7 +3998,7 @@ mod tests {
             device_registry: None,
             pending_pairings: None,
             canvas_store: CanvasStore::new(),
-            mcp_registry: None,
+            mcp_registry: Arc::new(parking_lot::RwLock::new(None)),
             approval_registry: approval_registry::global(),
             mcp_local_url: None,
             auth_profiles: None,
@@ -4056,7 +4071,7 @@ mod tests {
             device_registry: None,
             pending_pairings: None,
             canvas_store: CanvasStore::new(),
-            mcp_registry: None,
+            mcp_registry: Arc::new(parking_lot::RwLock::new(None)),
             approval_registry: approval_registry::global(),
             mcp_local_url: None,
             auth_profiles: None,
@@ -4134,7 +4149,7 @@ mod tests {
             device_registry: None,
             pending_pairings: None,
             canvas_store: CanvasStore::new(),
-            mcp_registry: None,
+            mcp_registry: Arc::new(parking_lot::RwLock::new(None)),
             approval_registry: approval_registry::global(),
             mcp_local_url: None,
             auth_profiles: None,
@@ -4209,7 +4224,7 @@ mod tests {
             device_registry: None,
             pending_pairings: None,
             canvas_store: CanvasStore::new(),
-            mcp_registry: None,
+            mcp_registry: Arc::new(parking_lot::RwLock::new(None)),
             approval_registry: approval_registry::global(),
             mcp_local_url: None,
             auth_profiles: None,

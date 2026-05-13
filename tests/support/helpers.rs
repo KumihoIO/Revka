@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use construct::agent::agent::Agent;
 use construct::agent::dispatcher::{NativeToolDispatcher, XmlToolDispatcher};
 use construct::agent::memory_loader::MemoryLoader;
-use construct::config::MemoryConfig;
+use construct::config::{AgentConfig, MemoryConfig};
 use construct::memory;
 use construct::memory::Memory;
 use construct::observability::{NoopObserver, Observer};
@@ -55,6 +55,24 @@ pub fn build_agent(provider: Box<dyn Provider>, tools: Vec<Box<dyn Tool>>) -> Ag
         .memory(make_memory())
         .observer(make_observer())
         .tool_dispatcher(Box::new(NativeToolDispatcher))
+        .workspace_dir(std::env::temp_dir())
+        .build()
+        .unwrap()
+}
+
+/// Build an agent with `NativeToolDispatcher` and explicit agent config.
+pub fn build_agent_with_config(
+    provider: Box<dyn Provider>,
+    tools: Vec<Box<dyn Tool>>,
+    config: AgentConfig,
+) -> Agent {
+    Agent::builder()
+        .provider(provider)
+        .tools(tools)
+        .memory(make_memory())
+        .observer(make_observer())
+        .tool_dispatcher(Box::new(NativeToolDispatcher))
+        .config(config)
         .workspace_dir(std::env::temp_dir())
         .build()
         .unwrap()

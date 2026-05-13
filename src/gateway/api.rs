@@ -9,9 +9,68 @@ use axum::{
     response::{IntoResponse, Json},
 };
 use serde::Deserialize;
+use std::sync::Arc;
 use uuid::Uuid;
 
 const MASKED_SECRET: &str = "***MASKED***";
+
+fn effective_gateway_mcp_config(config: &crate::config::Config) -> crate::config::McpConfig {
+    let mut injected = config.clone();
+    injected = crate::agent::kumiho::inject_kumiho(injected, false);
+    injected = crate::agent::operator::inject_operator(injected, false);
+    injected.mcp
+}
+
+async fn reconnect_gateway_mcp_registry(
+    state: &AppState,
+    config: &crate::config::Config,
+) -> serde_json::Value {
+    let mcp_config = effective_gateway_mcp_config(config);
+    if !mcp_config.enabled || mcp_config.servers.is_empty() {
+        state.replace_mcp_registry(None);
+        tracing::info!("Gateway MCP registry disabled after config update");
+        return serde_json::json!({
+            "status": "disabled",
+            "servers": 0,
+            "tools": 0,
+        });
+    }
+
+    tracing::info!(
+        "Gateway: reconnecting MCP registry after config update — {} server(s) configured",
+        mcp_config.servers.len()
+    );
+    match crate::tools::McpRegistry::connect_all(&mcp_config.servers).await {
+        Ok(registry) => {
+            let tool_names = registry.tool_names();
+            let server_count = registry.server_count();
+            let tool_count = registry.tool_count();
+            let registry = Arc::new(registry);
+            let kumiho_advanced =
+                crate::agent::kumiho::registry_has_advanced_kumiho_tools(&tool_names);
+            crate::agent::kumiho::warn_if_kumiho_advanced_missing(config, kumiho_advanced);
+            state.replace_mcp_registry(Some(registry));
+            tracing::info!(
+                "Gateway MCP registry reconnected after config update — {} server(s), {} tool(s)",
+                server_count,
+                tool_count
+            );
+            serde_json::json!({
+                "status": "reconnected",
+                "servers": server_count,
+                "tools": tool_count,
+            })
+        }
+        Err(e) => {
+            state.replace_mcp_registry(None);
+            tracing::error!("Gateway MCP registry reconnect failed after config update: {e:#}");
+            serde_json::json!({
+                "status": "error",
+                "error": e.to_string(),
+            })
+        }
+    }
+}
 
 // ── Bearer token auth extractor ─────────────────────────────────
 
@@ -244,15 +303,17 @@ pub async fn handle_api_config_put(
             .into_response();
     }
 
-    // Update in-memory config
-    *state.config.lock() = new_config;
+    // Update in-memory config, then reconnect MCP sidecars from the effective
+    // injected config so stdio env changes take effect without a daemon restart.
+    *state.config.lock() = new_config.clone();
+    let mcp_registry = reconnect_gateway_mcp_registry(&state, &new_config).await;
 
     // Audit log the config change
     if let Some(ref logger) = state.audit_logger {
         let _ = logger.log_config_change("dashboard", "Configuration updated via REST API");
     }
 
-    Json(serde_json::json!({"status": "ok"})).into_response()
+    Json(serde_json::json!({"status": "ok", "mcp_registry": mcp_registry})).into_response()
 }
 
 /// GET /api/tools — list registered tool specs
@@ -2413,7 +2474,7 @@ mod tests {
             pending_pairings: None,
             path_prefix: String::new(),
             canvas_store: crate::tools::canvas::CanvasStore::new(),
-            mcp_registry: None,
+            mcp_registry: Arc::new(parking_lot::RwLock::new(None)),
             approval_registry: crate::gateway::approval_registry::global(),
             mcp_local_url: None,
             auth_profiles: None,
@@ -2431,6 +2492,37 @@ mod tests {
             .expect("response body")
             .to_bytes();
         serde_json::from_slice(&body).expect("valid json response")
+    }
+
+    #[test]
+    fn effective_gateway_mcp_config_injects_memory_env_for_operator() {
+        let mut cfg = crate::config::Config::default();
+        cfg.operator.enabled = true;
+        cfg.gateway.host = "0.0.0.0".to_string();
+        cfg.gateway.port = 4242;
+        cfg.kumiho.memory_project = "CognitiveMemory".to_string();
+        cfg.kumiho.memory_retrieval_limit = 3;
+        cfg.memory.min_relevance_score = 0.7;
+
+        let mcp = effective_gateway_mcp_config(&cfg);
+        let operator = mcp
+            .servers
+            .iter()
+            .find(|server| server.name == crate::agent::operator::OPERATOR_SERVER_NAME)
+            .expect("operator mcp server should be injected");
+
+        assert_eq!(
+            operator.env.get("KUMIHO_MEMORY_RETRIEVAL_LIMIT"),
+            Some(&"3".to_string())
+        );
+        assert_eq!(
+            operator.env.get("CONSTRUCT_MEMORY_MIN_RELEVANCE_SCORE"),
+            Some(&"0.7".to_string())
+        );
+        assert_eq!(
+            operator.env.get("CONSTRUCT_GATEWAY_URL"),
+            Some(&"http://127.0.0.1:4242".to_string())
+        );
     }
 
     #[test]
