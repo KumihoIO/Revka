@@ -31,6 +31,8 @@ jobs:
           toolchain: 1.93.0
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          cache-bin: false
 
       - name: Ensure web/dist placeholder exists
         run: mkdir -p web/dist && touch web/dist/.gitkeep
@@ -56,6 +58,8 @@ jobs:
         with:
           toolchain: 1.93.0
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          cache-bin: false
 
       - name: Ensure web/dist placeholder exists
         run: mkdir -p web/dist && touch web/dist/.gitkeep
@@ -76,6 +80,8 @@ jobs:
           toolchain: 1.93.0
           components: clippy
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          cache-bin: false
 
       - name: Ensure web/dist placeholder exists
         run: mkdir -p web/dist && touch web/dist/.gitkeep
@@ -96,6 +102,8 @@ jobs:
         with:
           toolchain: 1.93.0
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          cache-bin: false
 
       - name: Ensure web/dist placeholder exists
         run: mkdir -p web/dist && touch web/dist/.gitkeep
@@ -137,6 +145,8 @@ jobs:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
         if: runner.os != 'Windows'
+        with:
+          cache-bin: false
 
       - name: Install mold linker
         if: runner.os == 'Linux'
@@ -168,6 +178,8 @@ jobs:
         with:
           toolchain: 1.93.0
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          cache-bin: false
 
       - name: Install system dependencies
         run: sudo apt-get update -qq && sudo apt-get install -y libudev-dev
@@ -213,6 +225,7 @@ jobs:
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
         with:
           prefix-key: feature-matrix-${{ matrix.feature }}
+          cache-bin: false
 
       - name: Ensure web/dist placeholder exists
         run: mkdir -p web/dist && touch web/dist/.gitkeep

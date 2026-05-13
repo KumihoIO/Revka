@@ -291,13 +291,13 @@ async fn handle_socket(
                         let user_msg = crate::providers::ChatMessage::user(&content);
                         let _ = backend.append(&session_key, &user_msg);
                     }
-                    if !ensure_agent_for_session(
+                    if !Box::pin(ensure_agent_for_session(
                         &state,
                         &mut sender,
                         &mut agent,
                         &agent_memory_session_id,
                         &persisted_messages,
-                    )
+                    ))
                     .await
                     {
                         return;
@@ -438,13 +438,13 @@ async fn handle_socket(
                     let _ = backend.append(&session_key, &user_msg);
                 }
 
-                if !ensure_agent_for_session(
+                if !Box::pin(ensure_agent_for_session(
                     &state,
                     &mut sender,
                     &mut agent,
                     &agent_memory_session_id,
                     &persisted_messages,
-                )
+                ))
                 .await
                 {
                     return;
@@ -923,31 +923,28 @@ async fn process_chat_message(
         tokio::select! {
             result = &mut turn_fut => break Some(result),
             event = event_rx.recv() => {
-                match event {
-                    Some(event) => {
-                        let ws_msg = match event {
-                            TurnEvent::Chunk { delta } => {
-                                serde_json::json!({ "type": "chunk", "content": delta })
-                            }
-                            TurnEvent::Thinking { delta } => {
-                                serde_json::json!({ "type": "thinking", "content": delta })
-                            }
-                            TurnEvent::ToolCall { name, args } => {
-                                serde_json::json!({ "type": "tool_call", "name": name, "args": args })
-                            }
-                            TurnEvent::ToolResult { name, output } => {
-                                serde_json::json!({ "type": "tool_result", "name": name, "output": output })
-                            }
-                            TurnEvent::OperatorStatus { phase, detail } => {
-                                serde_json::json!({ "type": "operator_status", "phase": phase, "detail": detail })
-                            }
-                        };
-                        if sender.send(Message::Text(ws_msg.to_string().into())).await.is_err() {
-                            tracing::warn!(session = %session_key, "WebSocket chat send failed during active turn");
-                            break None;
+                if let Some(event) = event {
+                    let ws_msg = match event {
+                        TurnEvent::Chunk { delta } => {
+                            serde_json::json!({ "type": "chunk", "content": delta })
                         }
+                        TurnEvent::Thinking { delta } => {
+                            serde_json::json!({ "type": "thinking", "content": delta })
+                        }
+                        TurnEvent::ToolCall { name, args } => {
+                            serde_json::json!({ "type": "tool_call", "name": name, "args": args })
+                        }
+                        TurnEvent::ToolResult { name, output } => {
+                            serde_json::json!({ "type": "tool_result", "name": name, "output": output })
+                        }
+                        TurnEvent::OperatorStatus { phase, detail } => {
+                            serde_json::json!({ "type": "operator_status", "phase": phase, "detail": detail })
+                        }
+                    };
+                    if sender.send(Message::Text(ws_msg.to_string().into())).await.is_err() {
+                        tracing::warn!(session = %session_key, "WebSocket chat send failed during active turn");
+                        break None;
                     }
-                    None => {}
                 }
             }
             bcast = broadcast_rx.recv() => {
