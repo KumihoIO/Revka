@@ -15,6 +15,8 @@ import asyncio
 import re
 from typing import Any
 
+from ..construct_config import memory_min_relevance_score, memory_retrieval_limit
+
 # Strip question framing from queries before forwarding to engage. The
 # graph engine scores documents against the query terms; question framing
 # words ("do you recall", "tell me about", trailing "?", etc.) match
@@ -40,6 +42,85 @@ def _normalize_query(q: str) -> str:
     out = re.sub(r"[?!.]+\s*$", "", out).strip()
     return out or q
 
+
+def _configured_limit(args: dict[str, Any]) -> int:
+    """Apply Construct's configured memory recall limit as default and cap."""
+    configured = memory_retrieval_limit()
+    raw = args.get("limit")
+    try:
+        requested = int(raw)
+    except (TypeError, ValueError):
+        return configured
+    if requested < 1:
+        return configured
+    return min(requested, configured)
+
+
+def _configured_min_score(args: dict[str, Any]) -> float:
+    """Apply Construct's configured memory relevance score as default floor."""
+    configured = memory_min_relevance_score()
+    raw = args.get("min_score")
+    try:
+        requested = float(raw)
+    except (TypeError, ValueError):
+        return configured
+    if requested < configured:
+        return configured
+    return min(requested, 1.0)
+
+
+def _passes_min_score(memory_result: dict[str, Any], min_score: float) -> bool:
+    score = memory_result.get("score")
+    if score is None:
+        return True
+    try:
+        return float(score) >= min_score
+    except (TypeError, ValueError):
+        return True
+
+
+def _apply_min_score_filter(
+    result: dict[str, Any],
+    *,
+    query: str,
+    min_score: float,
+) -> dict[str, Any]:
+    """Filter engage results and rebuild context for older kumiho-memory."""
+    memories = result.get("results")
+    if not isinstance(memories, list):
+        return result
+
+    filtered = [
+        mem for mem in memories
+        if isinstance(mem, dict) and _passes_min_score(mem, min_score)
+    ]
+    if len(filtered) == len(memories):
+        return result
+
+    result = dict(result)
+    result["results"] = filtered
+    result["source_krefs"] = [m["kref"] for m in filtered if m.get("kref")]
+    result["count"] = len(filtered)
+
+    if not filtered:
+        result["context"] = ""
+        return result
+
+    try:
+        manager = _km_get_manager()
+        result["context"] = manager.build_recalled_context(
+            filtered,
+            query,
+            result.get("recall_mode"),
+        )
+    except Exception:
+        result["context"] = "\n\n".join(
+            str(mem.get("content") or mem.get("summary") or "")
+            for mem in filtered
+            if mem.get("content") or mem.get("summary")
+        )
+    return result
+
 try:
     from kumiho.mcp_server import (
         tool_memory_store,
@@ -61,6 +142,7 @@ except ImportError:
 # the same flow on top of the lower-level kumiho.mcp_server primitives.
 try:
     from kumiho_memory.mcp_tools import (
+        _get_manager as _km_get_manager,
         tool_memory_engage as _km_tool_memory_engage,
         tool_memory_reflect as _km_tool_memory_reflect,
     )
@@ -248,9 +330,18 @@ async def tool_memory_engage_op(args: dict[str, Any]) -> dict[str, Any]:
 
     forwarded = dict(args)
     forwarded["query"] = _normalize_query(forwarded["query"])
+    forwarded["limit"] = _configured_limit(forwarded)
+    forwarded["min_score"] = _configured_min_score(forwarded)
     forwarded.setdefault("graph_augmented", True)
 
-    return await asyncio.to_thread(_km_tool_memory_engage, forwarded)
+    result = await asyncio.to_thread(_km_tool_memory_engage, forwarded)
+    if isinstance(result, dict):
+        return _apply_min_score_filter(
+            result,
+            query=forwarded["query"],
+            min_score=forwarded["min_score"],
+        )
+    return result
 
 
 async def tool_memory_reflect_op(args: dict[str, Any]) -> dict[str, Any]:

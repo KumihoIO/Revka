@@ -27,6 +27,8 @@ _CONFIG_PATH = os.path.expanduser("~/.construct/config.toml")
 _DEFAULT_HARNESS = "Construct"
 _DEFAULT_MEMORY = "CognitiveMemory"
 _DEFAULT_WORKSPACE_DIR = "~/.construct/workspace"
+_DEFAULT_MEMORY_RETRIEVAL_LIMIT = 3
+_DEFAULT_MEMORY_MIN_RELEVANCE_SCORE = 0.4
 
 # Manus step defaults. Overridable per-step via ManusStepConfig and at the
 # user level via [manus] in ~/.construct/config.toml. The api_key value
@@ -41,6 +43,8 @@ _DEFAULT_MANUS = {
 
 _cached_harness: str | None = None
 _cached_memory: str | None = None
+_cached_memory_retrieval_limit: int | None = None
+_cached_memory_min_relevance_score: float | None = None
 _cached_manus: dict | None = None
 _cached_workspace_dir: str | None = None
 
@@ -161,6 +165,72 @@ def memory_project(*, force_reload: bool = False) -> str:
 
     _cached_memory = _DEFAULT_MEMORY
     return _cached_memory
+
+
+def memory_retrieval_limit(*, force_reload: bool = False) -> int:
+    """Return the configured Kumiho memory recall limit.
+
+    Rust passes this to the Operator sidecar as
+    ``KUMIHO_MEMORY_RETRIEVAL_LIMIT``. When the sidecar is run directly,
+    fall back to ``[kumiho].memory_retrieval_limit`` in config.toml and then
+    to Construct's shipped default.
+    """
+    global _cached_memory_retrieval_limit
+    if _cached_memory_retrieval_limit is not None and not force_reload:
+        return _cached_memory_retrieval_limit
+
+    env_value = os.environ.get("KUMIHO_MEMORY_RETRIEVAL_LIMIT")
+    if isinstance(env_value, str) and env_value.strip():
+        try:
+            parsed = int(env_value.strip())
+            if parsed > 0:
+                _cached_memory_retrieval_limit = parsed
+                return _cached_memory_retrieval_limit
+        except ValueError:
+            pass
+
+    kumiho = _read_kumiho_section()
+    value = kumiho.get("memory_retrieval_limit")
+    try:
+        parsed = int(value)
+        if parsed > 0:
+            _cached_memory_retrieval_limit = parsed
+            return _cached_memory_retrieval_limit
+    except (TypeError, ValueError):
+        pass
+
+    _cached_memory_retrieval_limit = _DEFAULT_MEMORY_RETRIEVAL_LIMIT
+    return _cached_memory_retrieval_limit
+
+
+def memory_min_relevance_score(*, force_reload: bool = False) -> float:
+    """Return the configured minimum score for memory context injection."""
+    global _cached_memory_min_relevance_score
+    if _cached_memory_min_relevance_score is not None and not force_reload:
+        return _cached_memory_min_relevance_score
+
+    env_value = os.environ.get("CONSTRUCT_MEMORY_MIN_RELEVANCE_SCORE")
+    if isinstance(env_value, str) and env_value.strip():
+        try:
+            parsed = float(env_value.strip())
+            if 0.0 <= parsed <= 1.0:
+                _cached_memory_min_relevance_score = parsed
+                return _cached_memory_min_relevance_score
+        except ValueError:
+            pass
+
+    memory = _read_section("memory")
+    value = memory.get("min_relevance_score")
+    try:
+        parsed = float(value)
+        if 0.0 <= parsed <= 1.0:
+            _cached_memory_min_relevance_score = parsed
+            return _cached_memory_min_relevance_score
+    except (TypeError, ValueError):
+        pass
+
+    _cached_memory_min_relevance_score = _DEFAULT_MEMORY_MIN_RELEVANCE_SCORE
+    return _cached_memory_min_relevance_score
 
 
 def workspace_dir(*, force_reload: bool = False) -> str:
