@@ -109,6 +109,27 @@ function formatTime(dateStr?: string | null): string {
   }
 }
 
+function isUuidLike(value?: string | null): boolean {
+  return Boolean(value && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value));
+}
+
+function readableAuthor(entity: {
+  author?: string | null;
+  username?: string | null;
+  author_display?: string | null;
+  metadata?: Record<string, string>;
+}): string {
+  const candidates = [
+    entity.author_display,
+    entity.username,
+    entity.metadata?.username,
+    entity.metadata?.updated_by,
+    entity.metadata?.created_by,
+    entity.author,
+  ];
+  return candidates.find((value) => value && !isUuidLike(value)) ?? '--';
+}
+
 /* ------------------------------------------------------------------ */
 /*  Small shared components                                            */
 /* ------------------------------------------------------------------ */
@@ -545,10 +566,19 @@ export default function Assets() {
       if (result.created_revision) {
         const nextRevision = {
           ...result.revision,
+          latest: true,
           published: revisionIsPublished(result.revision),
         };
-        setRevisions((prev) => [nextRevision, ...prev.filter((revision) => revision.kref !== nextRevision.kref)]
-          .sort((a, b) => b.number - a.number));
+        setRevisions((prev) => [
+          nextRevision,
+          ...prev
+            .filter((revision) => revision.kref !== nextRevision.kref)
+            .map((revision) => ({
+              ...revision,
+              latest: false,
+              tags: revision.tags.filter((tag) => tag !== 'latest'),
+            })),
+        ].sort((a, b) => b.number - a.number));
         setSelectedRevision(nextRevision);
         await refreshRevisionDetail(nextRevision, result.artifact.kref);
         showNotice('success', t('assets.toast.artifact_saved_new_revision'));
@@ -812,7 +842,7 @@ export default function Assets() {
                         className="construct-assets-author truncate text-xs font-mono"
                         style={{ color: 'var(--construct-text-faint)' }}
                       >
-                        {item.author || '--'}
+                        {readableAuthor(item)}
                       </span>
                       <span className="construct-assets-created text-right text-xs" style={{ color: 'var(--construct-text-faint)' }}>
                         {formatTime(item.created_at)}
@@ -924,7 +954,7 @@ export default function Assets() {
                 style={{ color: 'var(--construct-text-secondary)' }}
               >
                 <span className="truncate font-mono">
-                  {tpl('assets.by', { author: selectedItem.author || '--' })}
+                  {tpl('assets.by', { author: readableAuthor(selectedItem) })}
                 </span>
                 <span className="shrink-0">{formatDate(selectedItem.created_at)}</span>
               </div>

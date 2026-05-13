@@ -38,6 +38,7 @@ interface ParsedConfig {
     api_url?: string;
     memory_project?: string;
     harness_project?: string;
+    memory_retrieval_limit?: number;
   };
   operator?: {
     enabled?: boolean;
@@ -369,8 +370,9 @@ function buildConfigSections(
         parsedConfig?.memory?.snapshot_enabled,
         parsedConfig?.kumiho?.enabled,
         parsedConfig?.kumiho?.memory_project,
+        parsedConfig?.kumiho?.memory_retrieval_limit,
       ]),
-      paths: ['memory.backend', 'memory.auto_save', 'memory.snapshot_enabled', 'kumiho.enabled', 'kumiho.memory_project', 'kumiho.harness_project'],
+      paths: ['memory.backend', 'memory.auto_save', 'memory.snapshot_enabled', 'kumiho.enabled', 'kumiho.memory_project', 'kumiho.harness_project', 'kumiho.memory_retrieval_limit'],
     },
     {
       id: 'runtime' as const,
@@ -688,6 +690,7 @@ export default function Config() {
                     <ConfigRow label={t('config.summary.snapshots')} value={parsedConfig.memory?.snapshot_enabled} />
                     <ConfigRow label={t('config.summary.kumiho_enabled')} value={parsedConfig.kumiho?.enabled} />
                     <ConfigRow label={t('config.summary.memory_project')} value={parsedConfig.kumiho?.memory_project} />
+                    <ConfigRow label={t('config.summary.retrieval_limit')} value={parsedConfig.kumiho?.memory_retrieval_limit ?? 3} />
                   </ConfigGroup>
 
                   <ConfigGroup title={t('config.summary.safety_cost')}>
@@ -804,6 +807,9 @@ function renderConfigSection(
           </EditableField>
           <EditableField label={t('config.memory.harness_project')}>
             <input className="construct-input" value={parsedConfig.kumiho?.harness_project ?? ''} onChange={(event) => updateField('kumiho', 'harness_project', event.target.value)} />
+          </EditableField>
+          <EditableField label={t('config.memory.retrieval_limit')}>
+            <input className="construct-input" type="number" min={1} max={50} value={parsedConfig.kumiho?.memory_retrieval_limit ?? 3} onChange={(event) => updateField('kumiho', 'memory_retrieval_limit', Number(event.target.value))} />
           </EditableField>
           <EditableField label={t('config.memory.backend')}>
             <input className="construct-input" value={parsedConfig.memory?.backend ?? ''} onChange={(event) => updateField('memory', 'backend', event.target.value)} />

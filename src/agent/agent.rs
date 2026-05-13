@@ -808,7 +808,7 @@ impl Agent {
             .response_cache(response_cache)
             .tool_dispatcher(tool_dispatcher)
             .memory_loader(Box::new(DefaultMemoryLoader::new(
-                5,
+                config.kumiho.memory_retrieval_limit,
                 config.memory.min_relevance_score,
             )))
             .prompt_builder(SystemPromptBuilder::with_defaults())

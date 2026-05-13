@@ -19,6 +19,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 /// Same end-to-end budget as `KumihoClient::TOTAL_BUDGET`. Duplicated here
@@ -60,6 +61,113 @@ fn unreachable() -> Response {
     resp.headers_mut()
         .insert(header::RETRY_AFTER, HeaderValue::from_static("10"));
     resp
+}
+
+fn is_uuid_like(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    if bytes.len() != 36 {
+        return false;
+    }
+    for (idx, byte) in bytes.iter().enumerate() {
+        if matches!(idx, 8 | 13 | 18 | 23) {
+            if *byte != b'-' {
+                return false;
+            }
+            continue;
+        }
+        if !byte.is_ascii_hexdigit() {
+            return false;
+        }
+    }
+    true
+}
+
+fn usable_identity(value: Option<&str>) -> Option<String> {
+    let value = value?.trim();
+    if value.is_empty() || is_uuid_like(value) {
+        None
+    } else {
+        Some(value.to_string())
+    }
+}
+
+fn kumiho_auth_email_path() -> Option<PathBuf> {
+    directories::UserDirs::new().map(|dirs| {
+        dirs.home_dir()
+            .join(".kumiho")
+            .join("kumiho_authentication.json")
+    })
+}
+
+fn current_kumiho_account_email() -> Option<String> {
+    let path = kumiho_auth_email_path()?;
+    let content = std::fs::read_to_string(path).ok()?;
+    let parsed = serde_json::from_str::<serde_json::Value>(&content).ok()?;
+    parsed
+        .get("email")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
+fn display_author_for_object(
+    object: &serde_json::Map<String, serde_json::Value>,
+    fallback_email: Option<&str>,
+) -> Option<String> {
+    usable_identity(object.get("username").and_then(|v| v.as_str()))
+        .or_else(|| {
+            object
+                .get("metadata")
+                .and_then(|v| v.as_object())
+                .and_then(|metadata| {
+                    usable_identity(metadata.get("username").and_then(|v| v.as_str()))
+                        .or_else(|| {
+                            usable_identity(metadata.get("updated_by").and_then(|v| v.as_str()))
+                        })
+                        .or_else(|| {
+                            usable_identity(metadata.get("created_by").and_then(|v| v.as_str()))
+                        })
+                })
+        })
+        .or_else(|| usable_identity(object.get("author").and_then(|v| v.as_str())))
+        .or_else(|| fallback_email.map(str::to_string))
+}
+
+fn enrich_author_display(value: &mut serde_json::Value, fallback_email: Option<&str>) {
+    match value {
+        serde_json::Value::Array(items) => {
+            for item in items {
+                enrich_author_display(item, fallback_email);
+            }
+        }
+        serde_json::Value::Object(object) => {
+            if (object.contains_key("author") || object.contains_key("username"))
+                && !object.contains_key("author_display")
+            {
+                if let Some(display) = display_author_for_object(object, fallback_email) {
+                    object.insert(
+                        "author_display".to_string(),
+                        serde_json::Value::String(display),
+                    );
+                }
+            }
+
+            for item in object.values_mut() {
+                enrich_author_display(item, fallback_email);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn enrich_success_body(body: String) -> String {
+    let Ok(mut value) = serde_json::from_str::<serde_json::Value>(&body) else {
+        return body;
+    };
+    let fallback_email = current_kumiho_account_email();
+    enrich_author_display(&mut value, fallback_email.as_deref());
+    serde_json::to_string(&value).unwrap_or(body)
 }
 
 /// GET /api/kumiho/{*path} — proxy any GET request to Kumiho API.
@@ -161,7 +269,7 @@ pub async fn handle_kumiho_proxy(
                 };
 
                 if code.is_success() {
-                    // Forward the JSON body as-is
+                    let body = enrich_success_body(body);
                     return (
                         code,
                         [(axum::http::header::CONTENT_TYPE, "application/json")],
@@ -339,5 +447,28 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(text).unwrap();
         assert_eq!(parsed["error_code"], "kumiho_upstream_unavailable");
         assert_eq!(parsed["upstream_status"], 502);
+    }
+
+    #[test]
+    fn enrich_author_display_prefers_readable_username() {
+        let mut value = serde_json::json!({
+            "author": "b10101cf-d714-4ddc-a686-8680ef7114d2",
+            "username": "neo@example.com"
+        });
+        enrich_author_display(&mut value, Some("fallback@example.com"));
+        assert_eq!(value["author_display"], "neo@example.com");
+    }
+
+    #[test]
+    fn enrich_author_display_uses_fallback_for_uuid_identity() {
+        let mut value = serde_json::json!([{
+            "author": "b10101cf-d714-4ddc-a686-8680ef7114d2",
+            "username": "b10101cf-d714-4ddc-a686-8680ef7114d2",
+            "metadata": {
+                "created_by": "b10101cf-d714-4ddc-a686-8680ef7114d2"
+            }
+        }]);
+        enrich_author_display(&mut value, Some("neo@example.com"));
+        assert_eq!(value[0]["author_display"], "neo@example.com");
     }
 }

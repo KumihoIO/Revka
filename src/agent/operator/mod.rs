@@ -174,6 +174,10 @@ pub fn inject_operator(mut config: Config, is_internal: bool) -> Config {
             "KUMIHO_HARNESS_PROJECT".to_string(),
             config.kumiho.harness_project.clone(),
         );
+        server.env.insert(
+            "KUMIHO_MEMORY_RETRIEVAL_LIMIT".to_string(),
+            config.kumiho.memory_retrieval_limit.max(1).to_string(),
+        );
         // Pass the gateway URL so the operator can query cost/audit APIs.
         // Use 127.0.0.1 instead of 0.0.0.0 for the operator — 0.0.0.0 is a
         // listen address, not a connect address, and some systems don't route it

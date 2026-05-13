@@ -1029,6 +1029,10 @@ pub struct KumihoConfig {
     /// Kumiho project for skills, operational data, and ClawHub installs.
     #[serde(default = "default_kumiho_harness_project")]
     pub harness_project: String,
+
+    /// Default maximum number of memories returned by Kumiho recall/engage.
+    #[serde(default = "default_kumiho_memory_retrieval_limit")]
+    pub memory_retrieval_limit: usize,
 }
 
 fn default_kumiho_mcp_path() -> String {
@@ -1051,6 +1055,10 @@ fn default_kumiho_harness_project() -> String {
     "Construct".to_string()
 }
 
+fn default_kumiho_memory_retrieval_limit() -> usize {
+    3
+}
+
 impl Default for KumihoConfig {
     fn default() -> Self {
         Self {
@@ -1060,6 +1068,7 @@ impl Default for KumihoConfig {
             api_url: default_kumiho_api_url(),
             memory_project: default_kumiho_memory_project(),
             harness_project: default_kumiho_harness_project(),
+            memory_retrieval_limit: default_kumiho_memory_retrieval_limit(),
         }
     }
 }

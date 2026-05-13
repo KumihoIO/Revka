@@ -882,6 +882,7 @@ prompt into every non-internal agent.
 | `api_url` | `https://api.kumiho.cloud` | Base URL for the Kumiho FastAPI REST API used by the agent-management proxy |
 | `memory_project` | (default) | Project for user memories, sessions, and compactions |
 | `harness_project` | (default) | Project for skills, operational data, and ClawHub installs |
+| `memory_retrieval_limit` | `3` | Default maximum memories returned by Kumiho recall/engage |
 
 Notes:
 

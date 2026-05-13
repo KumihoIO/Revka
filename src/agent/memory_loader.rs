@@ -20,7 +20,7 @@ pub struct DefaultMemoryLoader {
 impl Default for DefaultMemoryLoader {
     fn default() -> Self {
         Self {
-            limit: 5,
+            limit: 3,
             min_relevance_score: 0.4,
         }
     }
