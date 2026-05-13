@@ -1052,8 +1052,7 @@ async fn validate_via_operator(
     );
 
     let registry = state
-        .mcp_registry
-        .as_ref()
+        .mcp_registry()
         .ok_or_else(|| "MCP registry not available — operator not connected".to_string())?;
 
     let fut = registry.call_tool(&tool_name, serde_json::Value::Object(args));
@@ -1519,7 +1518,7 @@ pub async fn handle_run_workflow(
             // asyncio task and returns immediately, so the call should be
             // fast on success.  We still tokio::spawn it as fire-and-forget
             // because we don't want to hold the HTTP handler open at all.
-            if let Some(registry) = state.mcp_registry.clone() {
+            if let Some(registry) = state.mcp_registry() {
                 let tool_name = format!(
                     "{}__run_workflow",
                     crate::agent::operator::OPERATOR_SERVER_NAME
@@ -2035,7 +2034,7 @@ pub async fn handle_approve_workflow_run(
     );
     tool_args.insert("cwd".to_string(), serde_json::Value::String(cwd));
 
-    let mcp_result = if let Some(ref registry) = state.mcp_registry {
+    let mcp_result = if let Some(registry) = state.mcp_registry() {
         let mcp_future = registry.call_tool(&tool_name, serde_json::Value::Object(tool_args));
         match tokio::time::timeout(std::time::Duration::from_secs(30), mcp_future).await {
             Ok(Ok(result_str)) => Ok(result_str),
@@ -2118,7 +2117,7 @@ pub async fn handle_retry_workflow_run(
     );
     tool_args.insert("cwd".to_string(), serde_json::Value::String(cwd));
 
-    let mcp_result = if let Some(ref registry) = state.mcp_registry {
+    let mcp_result = if let Some(registry) = state.mcp_registry() {
         let mcp_future = registry.call_tool(&tool_name, serde_json::Value::Object(tool_args));
         match tokio::time::timeout(std::time::Duration::from_secs(30), mcp_future).await {
             Ok(Ok(result_str)) => Ok(result_str),
@@ -2189,7 +2188,7 @@ pub async fn handle_cancel_workflow_run(
         serde_json::Value::String(run_id.clone()),
     );
 
-    let mcp_result = if let Some(ref registry) = state.mcp_registry {
+    let mcp_result = if let Some(registry) = state.mcp_registry() {
         let mcp_future = registry.call_tool(&tool_name, serde_json::Value::Object(tool_args));
         match tokio::time::timeout(std::time::Duration::from_secs(10), mcp_future).await {
             Ok(Ok(result_str)) => Ok(result_str),
