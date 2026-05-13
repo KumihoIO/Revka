@@ -23,7 +23,11 @@ def _isolate_construct_config(monkeypatch):
     monkeypatch.setattr(construct_config, "_CONFIG_PATH", "/nonexistent/config.toml")
     monkeypatch.setattr(construct_config, "_cached_harness", None)
     monkeypatch.setattr(construct_config, "_cached_memory", None)
+    monkeypatch.setattr(construct_config, "_cached_memory_retrieval_limit", None)
+    monkeypatch.setattr(construct_config, "_cached_memory_min_relevance_score", None)
     monkeypatch.delenv("KUMIHO_MEMORY_PROJECT", raising=False)
+    monkeypatch.delenv("KUMIHO_MEMORY_RETRIEVAL_LIMIT", raising=False)
+    monkeypatch.delenv("CONSTRUCT_MEMORY_MIN_RELEVANCE_SCORE", raising=False)
 
     # Same isolation for the autonomy policy. The user's local
     # ~/.construct/config.toml typically contains workspace_only roots

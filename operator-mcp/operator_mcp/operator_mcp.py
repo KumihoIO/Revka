@@ -25,7 +25,11 @@ from mcp.types import TextContent, Tool
 
 from ._log import _log
 from .cost_tracker import CostTracker
-from .construct_config import memory_project
+from .construct_config import (
+    memory_min_relevance_score,
+    memory_project,
+    memory_retrieval_limit,
+)
 from .kumiho_clients import KumihoAgentPoolClient, KumihoSDKClient, KumihoTeamClient
 from .gateway_client import ConstructGatewayClient
 from .journal import SessionJournal
@@ -60,6 +64,8 @@ app = Server("construct-operator")
 
 @app.list_tools()
 async def list_tools() -> list[Tool]:
+    configured_memory_limit = memory_retrieval_limit()
+    configured_memory_min_score = memory_min_relevance_score()
     return [
         Tool(
             name="create_agent",
@@ -2328,7 +2334,26 @@ async def list_tools() -> list[Tool]:
                     "memory_types": {"type": "array", "items": {"type": "string"}, "description": "Filter by memory_type ('decision','fact','preference',...)"},
                     "keywords": {"type": "array", "items": {"type": "string"}},
                     "topics": {"type": "array", "items": {"type": "string"}},
-                    "limit": {"type": "integer", "default": 5},
+                    "limit": {
+                        "type": "integer",
+                        "default": configured_memory_limit,
+                        "maximum": configured_memory_limit,
+                        "description": (
+                            "Max results to return. Defaults to and is capped by "
+                            "Construct's [kumiho].memory_retrieval_limit."
+                        ),
+                    },
+                    "min_score": {
+                        "type": "number",
+                        "default": configured_memory_min_score,
+                        "minimum": configured_memory_min_score,
+                        "maximum": 1.0,
+                        "description": (
+                            "Minimum relevance score required for results to be included "
+                            "in returned context. Defaults to and is floored by "
+                            "Construct's [memory].min_relevance_score."
+                        ),
+                    },
                     "mode": {"type": "string", "enum": ["search", "latest"], "default": "search"},
                     "memory_item_kind": {"type": "string", "default": "conversation"},
                 },

@@ -178,6 +178,14 @@ pub fn inject_operator(mut config: Config, is_internal: bool) -> Config {
             "KUMIHO_MEMORY_RETRIEVAL_LIMIT".to_string(),
             config.kumiho.memory_retrieval_limit.max(1).to_string(),
         );
+        server.env.insert(
+            "CONSTRUCT_MEMORY_MIN_RELEVANCE_SCORE".to_string(),
+            config
+                .memory
+                .min_relevance_score
+                .clamp(0.0, 1.0)
+                .to_string(),
+        );
         // Pass the gateway URL so the operator can query cost/audit APIs.
         // Use 127.0.0.1 instead of 0.0.0.0 for the operator — 0.0.0.0 is a
         // listen address, not a connect address, and some systems don't route it
