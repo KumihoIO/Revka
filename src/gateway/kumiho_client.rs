@@ -45,6 +45,10 @@ pub fn slugify(name: &str) -> String {
         .join("-")
 }
 
+fn item_kref_without_selectors(kref: &str) -> &str {
+    kref.split_once('?').map_or(kref, |(base, _)| base)
+}
+
 /// Kumiho FastAPI client.
 #[derive(Clone)]
 pub struct KumihoClient {
@@ -64,6 +68,9 @@ pub struct ItemResponse {
     #[serde(default)]
     pub deprecated: bool,
     pub created_at: Option<String>,
+    pub author: Option<String>,
+    pub username: Option<String>,
+    pub author_display: Option<String>,
     #[serde(default)]
     pub metadata: HashMap<String, String>,
 }
@@ -82,6 +89,9 @@ pub struct RevisionResponse {
     #[serde(default)]
     pub deprecated: bool,
     pub created_at: Option<String>,
+    pub author: Option<String>,
+    pub username: Option<String>,
+    pub author_display: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -127,6 +137,9 @@ pub struct ArtifactResponse {
     #[serde(default)]
     pub deprecated: bool,
     pub created_at: Option<String>,
+    pub author: Option<String>,
+    pub username: Option<String>,
+    pub author_display: Option<String>,
     #[serde(default)]
     pub metadata: HashMap<String, String>,
 }
@@ -151,6 +164,9 @@ pub struct SpaceResponse {
     pub name: String,
     pub parent_path: Option<String>,
     pub created_at: Option<String>,
+    pub author: Option<String>,
+    pub username: Option<String>,
+    pub author_display: Option<String>,
 }
 
 // ── Error type ──────────────────────────────────────────────────────────
@@ -817,15 +833,41 @@ impl KumihoClient {
 
     /// Deprecate or restore an item.
     pub async fn deprecate_item(&self, kref: &str, deprecated: bool) -> Result<ItemResponse> {
+        let item_kref = item_kref_without_selectors(kref);
         let resp = self
             .send_no_retry(|| {
                 self.client
                     .post(self.url("/items/deprecate"))
                     .header("X-Kumiho-Token", &self.service_token)
                     .query(&[
-                        ("kref", kref),
+                        ("kref", item_kref),
                         ("deprecated", if deprecated { "true" } else { "false" }),
                     ])
+            })
+            .await?;
+
+        let resp = match self.check_response(resp).await {
+            Ok(resp) => resp,
+            Err(KumihoError::Api { status, .. }) if status == 404 && deprecated => {
+                self.delete_item_with_force(item_kref, false).await?;
+                return self.get_item_by_kref(item_kref).await;
+            }
+            Err(e) => return Err(e),
+        };
+        resp.json::<ItemResponse>()
+            .await
+            .map_err(|e| KumihoError::Decode(e.to_string()))
+    }
+
+    /// Get an item by kref.
+    pub async fn get_item_by_kref(&self, kref: &str) -> Result<ItemResponse> {
+        let item_kref = item_kref_without_selectors(kref);
+        let resp = self
+            .send_with_retry(|| {
+                self.client
+                    .get(self.url("/items/by-kref"))
+                    .header("X-Kumiho-Token", &self.service_token)
+                    .query(&[("kref", item_kref)])
             })
             .await?;
 
@@ -837,12 +879,20 @@ impl KumihoClient {
 
     /// Delete an item (force).
     pub async fn delete_item(&self, kref: &str) -> Result<()> {
+        self.delete_item_with_force(kref, true).await
+    }
+
+    async fn delete_item_with_force(&self, kref: &str, force: bool) -> Result<()> {
+        let item_kref = item_kref_without_selectors(kref);
         let resp = self
             .send_no_retry(|| {
                 self.client
                     .delete(self.url("/items/by-kref"))
                     .header("X-Kumiho-Token", &self.service_token)
-                    .query(&[("kref", kref), ("force", "true")])
+                    .query(&[
+                        ("kref", item_kref),
+                        ("force", if force { "true" } else { "false" }),
+                    ])
             })
             .await?;
 
@@ -944,6 +994,30 @@ impl KumihoClient {
 
         let _ = self.check_response(resp).await?;
         Ok(())
+    }
+
+    /// Deprecate or restore a revision.
+    pub async fn deprecate_revision(
+        &self,
+        revision_kref: &str,
+        deprecated: bool,
+    ) -> Result<RevisionResponse> {
+        let resp = self
+            .send_no_retry(|| {
+                self.client
+                    .post(self.url("/revisions/deprecate"))
+                    .header("X-Kumiho-Token", &self.service_token)
+                    .query(&[
+                        ("kref", revision_kref),
+                        ("deprecated", if deprecated { "true" } else { "false" }),
+                    ])
+            })
+            .await?;
+
+        let resp = self.check_response(resp).await?;
+        resp.json::<RevisionResponse>()
+            .await
+            .map_err(|e| KumihoError::Decode(e.to_string()))
     }
 
     /// Get a revision by tag (e.g. "published").
@@ -1508,6 +1582,47 @@ impl KumihoClient {
             .map_err(|e| KumihoError::Decode(e.to_string()))
     }
 
+    /// Get a specific artifact by artifact kref.
+    pub async fn get_artifact(&self, artifact_kref: &str) -> Result<ArtifactResponse> {
+        let resp = self
+            .send_with_retry(|| {
+                self.client
+                    .get(self.url("/artifacts/by-kref"))
+                    .header("X-Kumiho-Token", &self.service_token)
+                    .query(&[("kref", artifact_kref)])
+            })
+            .await?;
+
+        let resp = self.check_response(resp).await?;
+        resp.json::<ArtifactResponse>()
+            .await
+            .map_err(|e| KumihoError::Decode(e.to_string()))
+    }
+
+    /// Deprecate or restore an artifact.
+    pub async fn deprecate_artifact(
+        &self,
+        artifact_kref: &str,
+        deprecated: bool,
+    ) -> Result<ArtifactResponse> {
+        let resp = self
+            .send_no_retry(|| {
+                self.client
+                    .post(self.url("/artifacts/deprecate"))
+                    .header("X-Kumiho-Token", &self.service_token)
+                    .query(&[
+                        ("kref", artifact_kref),
+                        ("deprecated", if deprecated { "true" } else { "false" }),
+                    ])
+            })
+            .await?;
+
+        let resp = self.check_response(resp).await?;
+        resp.json::<ArtifactResponse>()
+            .await
+            .map_err(|e| KumihoError::Decode(e.to_string()))
+    }
+
     // ── Team convenience methods ───────────────────────────────────
 
     /// List teams in the given `<project>/Teams` space.
@@ -1540,7 +1655,7 @@ mod tests {
     use super::*;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use wiremock::matchers::{method, path};
+    use wiremock::matchers::{method, path, query_param};
     use wiremock::{Mock, MockServer, Respond, ResponseTemplate};
 
     /// Counts each request hit so tests can assert retry-attempt totals.
@@ -1559,6 +1674,81 @@ mod tests {
 
     fn make_client(base_url: &str) -> KumihoClient {
         KumihoClient::new(base_url.to_string(), "test-token".to_string())
+    }
+
+    #[tokio::test]
+    async fn deprecate_item_strips_revision_selectors_from_kref() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/v1/items/deprecate"))
+            .and(query_param("kref", "kref://Project/Skills/example.skill"))
+            .and(query_param("deprecated", "true"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "kref": "kref://Project/Skills/example.skill",
+                "name": "example",
+                "item_name": "example",
+                "kind": "skill",
+                "deprecated": true,
+                "created_at": null,
+                "metadata": {}
+            })))
+            .mount(&server)
+            .await;
+
+        let client = make_client(&server.uri());
+        let item = client
+            .deprecate_item("kref://Project/Skills/example.skill?r=2&a=SKILL.md", true)
+            .await
+            .expect("deprecate item should use the base item kref");
+
+        assert!(item.deprecated);
+        assert_eq!(item.kref, "kref://Project/Skills/example.skill");
+    }
+
+    #[tokio::test]
+    async fn deprecate_item_falls_back_to_soft_delete_when_upstream_set_deprecated_404s() {
+        let server = MockServer::start().await;
+        let item = serde_json::json!({
+            "kref": "kref://Project/Skills/example.skill",
+            "name": "example",
+            "item_name": "example",
+            "kind": "skill",
+            "deprecated": true,
+            "created_at": null,
+            "metadata": {}
+        });
+
+        Mock::given(method("POST"))
+            .and(path("/api/v1/items/deprecate"))
+            .and(query_param("kref", "kref://Project/Skills/example.skill"))
+            .and(query_param("deprecated", "true"))
+            .respond_with(ResponseTemplate::new(404).set_body_string("not found"))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("DELETE"))
+            .and(path("/api/v1/items/by-kref"))
+            .and(query_param("kref", "kref://Project/Skills/example.skill"))
+            .and(query_param("force", "false"))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/v1/items/by-kref"))
+            .and(query_param("kref", "kref://Project/Skills/example.skill"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(item))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let client = make_client(&server.uri());
+        let item = client
+            .deprecate_item("kref://Project/Skills/example.skill", true)
+            .await
+            .expect("deprecate item should fall back to soft delete");
+
+        assert!(item.deprecated);
     }
 
     #[tokio::test]
@@ -1733,6 +1923,18 @@ mod tests {
             Some("application/json")
         ));
         assert!(!looks_like_html_body("plain text", None));
+    }
+
+    #[test]
+    fn item_kref_without_selectors_drops_revision_and_artifact_query() {
+        assert_eq!(
+            item_kref_without_selectors("kref://Project/Skills/example.skill?r=2&a=SKILL.md"),
+            "kref://Project/Skills/example.skill"
+        );
+        assert_eq!(
+            item_kref_without_selectors("kref://Project/Skills/example.skill"),
+            "kref://Project/Skills/example.skill"
+        );
     }
 
     // ── Bounded-retry-time tests (Finding #2) ────────────────────────

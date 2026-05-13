@@ -1298,6 +1298,9 @@ pub async fn handle_update_workflow(
                 kind: "workflow".to_string(),
                 deprecated: false,
                 created_at: None,
+                author: None,
+                username: None,
+                author_display: None,
                 metadata: HashMap::new(),
             };
             let workflow = to_workflow_response(&fallback, Some(&rev));
@@ -1710,6 +1713,9 @@ pub async fn handle_get_workflow_by_revision(
         kind: "workflow".to_string(),
         deprecated: false,
         created_at: rev.created_at.clone(),
+        author: None,
+        username: None,
+        author_display: None,
         metadata: HashMap::new(),
     };
 

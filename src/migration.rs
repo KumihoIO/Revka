@@ -657,6 +657,9 @@ mod tests {
             kind: MEMORY_ITEM_KIND.into(),
             deprecated: false,
             created_at: None,
+            author: None,
+            username: None,
+            author_display: None,
             metadata: HashMap::new(),
         }
     }
