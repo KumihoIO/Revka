@@ -73,7 +73,7 @@ pub(crate) const ARCHITECT_DENIED_TOOLS: &[&str] = &[
 
 const EMPTY_FINAL_AFTER_TOOLS_RETRY_PROMPT: &str = "The previous model response was empty after tool execution. Provide the final answer to the user now, based on the completed tool results. Do not leave the response blank.";
 const EMPTY_FINAL_AFTER_TOOLS_FALLBACK: &str = "I completed tool work, but the model returned an empty final response. Please retry the request or ask me to summarize the latest tool results.";
-const EMPTY_FINAL_FALLBACK: &str =
+pub(crate) const EMPTY_FINAL_FALLBACK: &str =
     "The model returned an empty response. Please retry the request.";
 
 /// True when the current turn's user message carries the Architect

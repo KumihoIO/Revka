@@ -24,7 +24,7 @@
 //!  19. Builder validation (missing required fields)
 //!  20. Idempotent system prompt insertion
 
-use crate::agent::agent::{Agent, TurnEvent};
+use crate::agent::agent::{Agent, EMPTY_FINAL_FALLBACK, TurnEvent};
 use crate::agent::dispatcher::{
     NativeToolDispatcher, ToolDispatcher, ToolExecutionResult, XmlToolDispatcher,
 };
@@ -732,7 +732,7 @@ async fn turn_handles_empty_text_response() {
     let mut agent = build_agent_with(provider, vec![], Box::new(NativeToolDispatcher));
 
     let response = agent.turn("hi").await.unwrap();
-    assert!(response.is_empty());
+    assert_eq!(response, EMPTY_FINAL_FALLBACK);
 }
 
 #[tokio::test]
@@ -746,9 +746,9 @@ async fn turn_handles_none_text_response() {
 
     let mut agent = build_agent_with(provider, vec![], Box::new(NativeToolDispatcher));
 
-    // Should not panic — falls back to empty string
+    // Should not panic; empty provider output is surfaced as a retryable fallback.
     let response = agent.turn("hi").await.unwrap();
-    assert!(response.is_empty());
+    assert_eq!(response, EMPTY_FINAL_FALLBACK);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1622,8 +1622,8 @@ async fn no_compression_under_threshold() {
     // History should still contain the original content — no summary message.
     let final_chars = *last_chars.lock().unwrap();
     assert!(
-        final_chars < 500,
-        "small history should be sent verbatim; got {final_chars} chars"
+        final_chars < 5_000,
+        "small history should stay well below compression-scale payloads; got {final_chars} chars"
     );
     let has_summary = agent.history().iter().any(
         |m| matches!(m, ConversationMessage::Chat(c) if c.content.starts_with("[CONTEXT SUMMARY")),

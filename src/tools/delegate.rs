@@ -1287,6 +1287,14 @@ mod tests {
         agents
     }
 
+    fn fast_failing_background_agents() -> HashMap<String, DelegateAgentConfig> {
+        let mut agents = sample_agents();
+        if let Some(researcher) = agents.get_mut("researcher") {
+            researcher.provider = "invalid-for-test".to_string();
+        }
+        agents
+    }
+
     #[derive(Default)]
     struct EchoTool;
 
@@ -2471,7 +2479,7 @@ mod tests {
         ));
         std::fs::create_dir_all(&workspace).unwrap();
 
-        let tool = DelegateTool::new(sample_agents(), None, test_security())
+        let tool = DelegateTool::new(fast_failing_background_agents(), None, test_security())
             .with_workspace_dir(workspace.clone());
         let result = tool
             .execute(json!({
@@ -2482,14 +2490,20 @@ mod tests {
             .await
             .unwrap();
 
-        // The agent will fail at provider level (ollama not running),
-        // but the background task should be spawned and return a task_id.
+        // The agent will fail at provider creation, but the background task
+        // should still be spawned and return a task_id.
         assert!(result.success);
         assert!(result.output.contains("task_id:"));
         assert!(result.output.contains("Background task started"));
 
-        // Wait a moment for the background task to write its result
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        let task_id = result
+            .output
+            .lines()
+            .find(|l| l.starts_with("task_id:"))
+            .unwrap()
+            .trim_start_matches("task_id: ")
+            .trim();
+        await_bg_task_terminal(&workspace, task_id).await;
 
         // The results directory should exist
         assert!(workspace.join("delegate_results").exists());
@@ -2733,7 +2747,7 @@ mod tests {
         ));
         std::fs::create_dir_all(&workspace).unwrap();
 
-        let tool = DelegateTool::new(sample_agents(), None, test_security())
+        let tool = DelegateTool::new(fast_failing_background_agents(), None, test_security())
             .with_workspace_dir(workspace.clone());
 
         let result = tool
@@ -2773,7 +2787,7 @@ mod tests {
         let bg_result: BackgroundDelegateResult = serde_json::from_str(&content).unwrap();
         assert_eq!(bg_result.task_id, task_id);
         assert_eq!(bg_result.agent, "researcher");
-        // The task will have failed because ollama isn't running, but it should be persisted
+        // The task uses an invalid provider so it fails quickly, but it should be persisted.
         assert!(
             bg_result.status == BackgroundTaskStatus::Completed
                 || bg_result.status == BackgroundTaskStatus::Failed
@@ -2791,7 +2805,7 @@ mod tests {
         ));
         std::fs::create_dir_all(&workspace).unwrap();
 
-        let tool = DelegateTool::new(sample_agents(), None, test_security())
+        let tool = DelegateTool::new(fast_failing_background_agents(), None, test_security())
             .with_workspace_dir(workspace.clone());
 
         // Start background task
@@ -2842,7 +2856,7 @@ mod tests {
         ));
         std::fs::create_dir_all(&workspace).unwrap();
 
-        let tool = DelegateTool::new(sample_agents(), None, test_security())
+        let tool = DelegateTool::new(fast_failing_background_agents(), None, test_security())
             .with_workspace_dir(workspace.clone());
 
         // Start a background task
