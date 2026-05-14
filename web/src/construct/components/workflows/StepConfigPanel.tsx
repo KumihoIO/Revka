@@ -435,6 +435,154 @@ export default function StepConfigPanel({
     setRunToHereOpen(false);
   }, [onRunToHere, data.taskId, runToHereClosureIds]);
 
+  const skillSection = stepType !== 'conditional' &&
+    stepType !== 'human_input' &&
+    stepType !== 'notify' &&
+    stepType !== 'tag' &&
+    stepType !== 'deprecate' ? (
+      <div>
+        <label style={labelStyle}>Skills</label>
+        {data.skills.length > 0 && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 6 }}>
+            {data.skills.map((skill) => (
+              <span
+                key={skill}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 4,
+                  padding: '2px 8px',
+                  borderRadius: 6,
+                  fontSize: 10,
+                  fontWeight: 500,
+                  background: 'var(--pc-accent-glow)',
+                  color: 'var(--pc-accent-light)',
+                  border: '1px solid var(--pc-accent-dim)',
+                }}
+              >
+                {skill}
+                <button
+                  type="button"
+                  onClick={() => removeSkill(skill)}
+                  style={{ background: 'transparent', border: 0, color: 'inherit', cursor: 'pointer', padding: 0 }}
+                >
+                  <X size={10} />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+        <button
+          type="button"
+          onClick={() => setShowSkillPicker(!showSkillPicker)}
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 4,
+            padding: '4px 10px',
+            borderRadius: 8,
+            border: '1px solid var(--pc-accent-dim)',
+            background: showSkillPicker ? 'var(--pc-accent-glow)' : 'transparent',
+            color: 'var(--pc-accent-light)',
+            fontSize: 11,
+            fontWeight: 500,
+            cursor: 'pointer',
+          }}
+        >
+          <Sparkles size={12} />
+          {showSkillPicker ? 'Hide skill picker' : 'Add skills'}
+        </button>
+        {showSkillPicker && (
+          <div
+            style={{
+              marginTop: 8,
+              borderRadius: 10,
+              border: '1px solid var(--pc-border)',
+              background: 'var(--pc-bg-input)',
+              overflow: 'hidden',
+            }}
+          >
+            <div style={{ position: 'relative', padding: 8 }}>
+              <Search
+                size={12}
+                style={{
+                  position: 'absolute',
+                  left: 16,
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  color: 'var(--pc-text-faint)',
+                }}
+              />
+              <input
+                type="text"
+                value={skillSearch}
+                onChange={(e) => setSkillSearch(e.target.value)}
+                placeholder="Search skills…"
+                style={{ ...inputStyle, paddingLeft: 26 }}
+              />
+            </div>
+            <div style={{ maxHeight: 144, overflowY: 'auto' }}>
+              {skillLoading ? (
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 6,
+                    padding: 12,
+                    fontSize: 10,
+                    color: 'var(--pc-text-faint)',
+                  }}
+                >
+                  <Loader2 size={11} className="animate-spin" /> Loading skills…
+                </div>
+              ) : skillSearchResults.length === 0 ? (
+                <p style={{ textAlign: 'center', padding: 12, fontSize: 10, color: 'var(--pc-text-faint)' }}>
+                  {allSkills.length === 0 ? 'No skills available' : 'No matching skills'}
+                </p>
+              ) : (
+                skillSearchResults.slice(0, 20).map((skill) => (
+                  <button
+                    key={skill.kref}
+                    type="button"
+                    onClick={() => addSkill(skill.name)}
+                    style={{
+                      display: 'block',
+                      width: '100%',
+                      textAlign: 'left',
+                      padding: '6px 12px',
+                      fontSize: 11,
+                      border: 0,
+                      background: 'transparent',
+                      color: 'var(--pc-text-secondary)',
+                      cursor: 'pointer',
+                    }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--pc-hover)')}
+                    onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                  >
+                    <div style={{ fontWeight: 500, color: 'var(--pc-text-primary)' }}>{skill.name}</div>
+                    {skill.description && (
+                      <div
+                        style={{
+                          fontSize: 10,
+                          color: 'var(--pc-text-faint)',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {skill.description}
+                      </div>
+                    )}
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    ) : null;
+
   const TypeIcon = typeDef?.icon;
 
   return (
@@ -869,6 +1017,8 @@ export default function StepConfigPanel({
               style={inputStyle}
             />
           </div>
+
+          {skillSection}
 
           {/* Retry */}
           <div style={{ display: 'flex', gap: 8 }}>
@@ -3079,153 +3229,6 @@ export default function StepConfigPanel({
                   })}
                 </div>
                 <p style={helperStyle()}>Suggestions for the operator — final assignment is automatic.</p>
-              </div>
-            )}
-
-          {/* Skills */}
-          {stepType !== 'conditional' &&
-            stepType !== 'human_input' &&
-            stepType !== 'notify' &&
-            stepType !== 'tag' &&
-            stepType !== 'deprecate' && (
-              <div>
-                <label style={labelStyle}>Skills</label>
-                {data.skills.length > 0 && (
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 6 }}>
-                    {data.skills.map((skill) => (
-                      <span
-                        key={skill}
-                        style={{
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: 4,
-                          padding: '2px 8px',
-                          borderRadius: 6,
-                          fontSize: 10,
-                          fontWeight: 500,
-                          background: 'var(--pc-accent-glow)',
-                          color: 'var(--pc-accent-light)',
-                          border: '1px solid var(--pc-accent-dim)',
-                        }}
-                      >
-                        {skill}
-                        <button
-                          type="button"
-                          onClick={() => removeSkill(skill)}
-                          style={{ background: 'transparent', border: 0, color: 'inherit', cursor: 'pointer', padding: 0 }}
-                        >
-                          <X size={10} />
-                        </button>
-                      </span>
-                    ))}
-                  </div>
-                )}
-                <button
-                  onClick={() => setShowSkillPicker(!showSkillPicker)}
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 4,
-                    padding: '4px 10px',
-                    borderRadius: 8,
-                    border: '1px solid var(--pc-accent-dim)',
-                    background: showSkillPicker ? 'var(--pc-accent-glow)' : 'transparent',
-                    color: 'var(--pc-accent-light)',
-                    fontSize: 11,
-                    fontWeight: 500,
-                    cursor: 'pointer',
-                  }}
-                >
-                  <Sparkles size={12} />
-                  {showSkillPicker ? 'Hide skill picker' : 'Add skills'}
-                </button>
-                {showSkillPicker && (
-                  <div
-                    style={{
-                      marginTop: 8,
-                      borderRadius: 10,
-                      border: '1px solid var(--pc-border)',
-                      background: 'var(--pc-bg-input)',
-                      overflow: 'hidden',
-                    }}
-                  >
-                    <div style={{ position: 'relative', padding: 8 }}>
-                      <Search
-                        size={12}
-                        style={{
-                          position: 'absolute',
-                          left: 16,
-                          top: '50%',
-                          transform: 'translateY(-50%)',
-                          color: 'var(--pc-text-faint)',
-                        }}
-                      />
-                      <input
-                        type="text"
-                        value={skillSearch}
-                        onChange={(e) => setSkillSearch(e.target.value)}
-                        placeholder="Search skills…"
-                        style={{ ...inputStyle, paddingLeft: 26 }}
-                      />
-                    </div>
-                    <div style={{ maxHeight: 144, overflowY: 'auto' }}>
-                      {skillLoading ? (
-                        <div
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            gap: 6,
-                            padding: 12,
-                            fontSize: 10,
-                            color: 'var(--pc-text-faint)',
-                          }}
-                        >
-                          <Loader2 size={11} className="animate-spin" /> Loading skills…
-                        </div>
-                      ) : skillSearchResults.length === 0 ? (
-                        <p style={{ textAlign: 'center', padding: 12, fontSize: 10, color: 'var(--pc-text-faint)' }}>
-                          {allSkills.length === 0 ? 'No skills available' : 'No matching skills'}
-                        </p>
-                      ) : (
-                        skillSearchResults.slice(0, 20).map((skill) => (
-                          <button
-                            key={skill.kref}
-                            onClick={() => addSkill(skill.name)}
-                            style={{
-                              display: 'block',
-                              width: '100%',
-                              textAlign: 'left',
-                              padding: '6px 12px',
-                              fontSize: 11,
-                              border: 0,
-                              background: 'transparent',
-                              color: 'var(--pc-text-secondary)',
-                              cursor: 'pointer',
-                            }}
-                            onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--pc-hover)')}
-                            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-                          >
-                            <div style={{ fontWeight: 500, color: 'var(--pc-text-primary)' }}>{skill.name}</div>
-                            {skill.description && (
-                              <div
-                                style={{
-                                  fontSize: 10,
-                                  color: 'var(--pc-text-faint)',
-                                  overflow: 'hidden',
-                                  textOverflow: 'ellipsis',
-                                  whiteSpace: 'nowrap',
-                                }}
-                              >
-                                {skill.description}
-                              </div>
-                            )}
-                          </button>
-                        ))
-                      )}
-                    </div>
-                  </div>
-                )}
               </div>
             )}
 
