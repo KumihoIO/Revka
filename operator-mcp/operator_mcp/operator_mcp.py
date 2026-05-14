@@ -1391,6 +1391,18 @@ async def list_tools() -> list[Tool]:
                             "e.g. `logo-{n}.png`. Overrides the default `<stem>-N` derivation."
                         ),
                     },
+                    "input_images": {
+                        "oneOf": [
+                            {"type": "string"},
+                            {"type": "array", "items": {"type": "string"}},
+                        ],
+                        "description": (
+                            "Optional local image path or list of local image paths to pass "
+                            "to `codex exec --image` as visual references. Operator chat "
+                            "attachments that appear in the prompt as `[IMAGE:/path]` markers "
+                            "are also extracted and forwarded automatically."
+                        ),
+                    },
                     "canvas": {
                         "oneOf": [{"type": "boolean"}, {"type": "string"}],
                         "description": (

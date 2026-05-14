@@ -355,6 +355,135 @@ def test_resolve_paths_batch_custom_pattern(tmp_path):
     assert [p.name for p in paths] == ["frame-1.png", "frame-2.png"]
 
 
+def test_split_prompt_image_markers_extracts_operator_chat_attachments(tmp_path):
+    ref = tmp_path / "reference.png"
+    prompt, images = ci._split_prompt_image_markers(
+        f"make a variation\n[IMAGE:{ref}]\nkeep the silhouette"
+    )
+
+    assert prompt == "make a variation\n\nkeep the silhouette"
+    assert images == [str(ref)]
+
+
+async def test_spawn_codex_image_passes_input_images_to_cli(tmp_path):
+    target = tmp_path / "out.png"
+    ref = tmp_path / "reference.png"
+    ref.write_bytes(b"\x89PNG\r\n\x1a\n")
+    captured: dict = {}
+
+    def _fake_run(cmd, timeout=None):
+        captured["cmd"] = cmd
+        target.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
+        return (0, b"", b"")
+
+    with patch.object(ci, "_run_subprocess_sync", side_effect=_fake_run):
+        out = await ci._spawn_codex_image(
+            "make a variation",
+            target,
+            tmp_path,
+            codex_executable="/fake/codex",
+            input_images=[ref],
+        )
+
+    assert out["ok"] is True
+    cmd = captured["cmd"]
+    assert cmd[0:2] == ["/fake/codex", "exec"]
+    assert "--image" in cmd
+    assert cmd[cmd.index("--image") + 1] == str(ref)
+    assert "attached image file(s)" in cmd[-1]
+
+
+async def test_tool_extracts_prompt_image_markers_and_forwards_to_spawn(fake_gw, tmp_path):
+    target = tmp_path / "fox.png"
+    ref = tmp_path / "reference.png"
+    ref.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
+    captured: dict = {}
+
+    async def _fake_spawn(
+        prompt,
+        output_path,
+        cwd,
+        codex_executable=None,
+        sandbox="workspace-write",
+        input_images=None,
+    ):
+        captured["prompt"] = prompt
+        captured["input_images"] = input_images
+        output_path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
+        return {"ok": True, "path": str(output_path), "size": 100}
+
+    with patch.object(
+        ci,
+        "_check_codex_available",
+        AsyncMock(return_value={"ok": True, "executable": "/fake/codex"}),
+    ), patch.object(ci, "_spawn_codex_image", side_effect=_fake_spawn):
+        out = await ci.tool_generate_image_codex(
+            {
+                "prompt": f"make a fox variation [IMAGE:{ref}]",
+                "output_path": str(target),
+                "register_artifact": False,
+            },
+            fake_gw,
+        )
+
+    assert out["generated"] == 1
+    assert out["input_images"] == [str(ref.resolve(strict=False))]
+    assert captured["prompt"] == "make a fox variation"
+    assert captured["input_images"] == [ref.resolve(strict=False)]
+
+
+async def test_tool_accepts_explicit_input_images_relative_to_cwd(fake_gw, tmp_path):
+    target = tmp_path / "fox.png"
+    ref = tmp_path / "reference.png"
+    ref.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
+    captured: dict = {}
+
+    async def _fake_spawn(
+        prompt,
+        output_path,
+        cwd,
+        codex_executable=None,
+        sandbox="workspace-write",
+        input_images=None,
+    ):
+        captured["input_images"] = input_images
+        output_path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
+        return {"ok": True, "path": str(output_path), "size": 100}
+
+    with patch.object(
+        ci,
+        "_check_codex_available",
+        AsyncMock(return_value={"ok": True, "executable": "/fake/codex"}),
+    ), patch.object(ci, "_spawn_codex_image", side_effect=_fake_spawn):
+        out = await ci.tool_generate_image_codex(
+            {
+                "prompt": "make a fox variation",
+                "output_path": str(target),
+                "cwd": str(tmp_path),
+                "input_images": ["reference.png"],
+                "register_artifact": False,
+            },
+            fake_gw,
+        )
+
+    assert out["generated"] == 1
+    assert captured["input_images"] == [ref.resolve(strict=False)]
+
+
+async def test_tool_rejects_non_local_input_images(fake_gw, tmp_path):
+    out = await ci.tool_generate_image_codex(
+        {
+            "prompt": "make a fox variation",
+            "output_path": str(tmp_path / "fox.png"),
+            "input_images": ["https://example.com/reference.png"],
+            "register_artifact": False,
+        },
+        fake_gw,
+    )
+
+    assert "local file paths" in out.get("error", "")
+
+
 # -------------------------- happy path ------------------------------------
 
 

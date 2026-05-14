@@ -323,6 +323,7 @@ function defaultNodeData(id: string, overrides?: Partial<TaskNodeData>): TaskNod
     imageItemName: '',
     imageOutputPath: '',
     imageOutputPattern: '',
+    imageInputImages: [],
     imageSandbox: '',
     imageCwd: '',
     imageTimeout: 1200,

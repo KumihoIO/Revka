@@ -195,6 +195,7 @@ export interface TaskDefinition {
   image_item_name?: string;
   image_output_path?: string;
   image_output_pattern?: string;
+  image_input_images?: string[];
   image_sandbox?: string;
   image_cwd?: string;
   image_timeout?: number;
@@ -449,6 +450,7 @@ export interface TaskNodeData {
   imageItemName: string;
   imageOutputPath: string;
   imageOutputPattern: string;
+  imageInputImages: string[];
   imageSandbox: string;
   imageCwd: string;
   imageTimeout: number;
@@ -782,6 +784,12 @@ function parseStep(s: YAMLObj): TaskDefinition | null {
     t.image_item_name = asStr(image.item_name);
     t.image_output_path = asStr(image.output_path);
     t.image_output_pattern = asStr(image.output_pattern);
+    const inputImages = asStrArr(image.input_images);
+    if (inputImages) t.image_input_images = inputImages;
+    else {
+      const inputImage = asStr(image.input_images);
+      if (inputImage) t.image_input_images = [inputImage];
+    }
     t.image_sandbox = asStr(image.sandbox);
     t.image_cwd = asStr(image.cwd);
     t.image_timeout = asNum(image.timeout);
@@ -1307,6 +1315,7 @@ export function tasksToFlow(tasks: TaskDefinition[]): { nodes: Node<TaskNodeData
       imageItemName: task.image_item_name || '',
       imageOutputPath: task.image_output_path || '',
       imageOutputPattern: task.image_output_pattern || '',
+      imageInputImages: task.image_input_images || [],
       imageSandbox: task.image_sandbox || '',
       imageCwd: task.image_cwd || '',
       imageTimeout: task.image_timeout || 1200,
@@ -1876,6 +1885,9 @@ export function flowToTasks(nodes: Node<TaskNodeData>[], edges: Edge[]): TaskDef
       if (d.imageItemName) base.image_item_name = d.imageItemName;
       if (d.imageOutputPath) base.image_output_path = d.imageOutputPath;
       if (d.imageOutputPattern) base.image_output_pattern = d.imageOutputPattern;
+      if (Array.isArray(d.imageInputImages) && d.imageInputImages.length > 0) {
+        base.image_input_images = d.imageInputImages;
+      }
       if (d.imageSandbox) base.image_sandbox = d.imageSandbox;
       if (d.imageCwd) base.image_cwd = d.imageCwd;
       if (d.imageTimeout && d.imageTimeout !== 1200) base.image_timeout = d.imageTimeout;
@@ -2238,6 +2250,9 @@ export function tasksToYaml(tasks: TaskDefinition[], meta?: Partial<WorkflowMeta
       if (task.image_item_name) lines.push(`      item_name: ${yamlEscape(task.image_item_name)}`);
       if (task.image_output_path) lines.push(`      output_path: ${yamlEscape(task.image_output_path)}`);
       if (task.image_output_pattern) lines.push(`      output_pattern: ${yamlEscape(task.image_output_pattern)}`);
+      if (task.image_input_images && task.image_input_images.length > 0) {
+        lines.push(`      input_images: [${task.image_input_images.map(yamlEscape).join(', ')}]`);
+      }
       if (task.image_sandbox) lines.push(`      sandbox: ${task.image_sandbox}`);
       if (task.image_cwd) lines.push(`      cwd: ${yamlEscape(task.image_cwd)}`);
       if (task.image_timeout && task.image_timeout !== 1200) lines.push(`      timeout: ${task.image_timeout}`);
