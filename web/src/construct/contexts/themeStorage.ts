@@ -13,6 +13,7 @@ export interface StoredTheme {
   monoFont: MonoFont;
   uiFontSize: number;
   monoFontSize: number;
+  activeSkinId: string | null;
 }
 
 const DEFAULTS: StoredTheme = {
@@ -23,6 +24,7 @@ const DEFAULTS: StoredTheme = {
   monoFont: 'jetbrains',
   uiFontSize: 15,
   monoFontSize: 14,
+  activeSkinId: null,
 };
 
 const validThemes: ThemeMode[] = ['dark', 'light', 'oled', 'system'];
@@ -48,6 +50,9 @@ export function loadStored(): StoredTheme {
       const monoFont: MonoFont = monoFontStacks[parsed.monoFont as MonoFont] ? parsed.monoFont as MonoFont : DEFAULTS.monoFont;
       const uiFontSize = Number.isFinite(parsed.uiFontSize) ? Math.min(20, Math.max(12, Number(parsed.uiFontSize))) : DEFAULTS.uiFontSize;
       const monoFontSize = Number.isFinite(parsed.monoFontSize) ? Math.min(20, Math.max(12, Number(parsed.monoFontSize))) : DEFAULTS.monoFontSize;
+      const activeSkinId = typeof parsed.activeSkinId === 'string' && parsed.activeSkinId.trim()
+        ? parsed.activeSkinId
+        : null;
 
       // Validate or migrate color theme
       let colorTheme: ColorThemeId = DEFAULTS.colorTheme;
@@ -58,7 +63,7 @@ export function loadStored(): StoredTheme {
       }
 
       if (themeValid && accentValid) {
-        return { theme: parsed.theme, accent: parsed.accent, colorTheme, uiFont, monoFont, uiFontSize, monoFontSize };
+        return { theme: parsed.theme, accent: parsed.accent, colorTheme, uiFont, monoFont, uiFontSize, monoFontSize, activeSkinId };
       }
     }
   } catch { /* ignore */ }

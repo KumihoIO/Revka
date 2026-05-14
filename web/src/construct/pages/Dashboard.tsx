@@ -2,6 +2,7 @@ import { RefreshCw, Workflow } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useT } from '@/construct/hooks/useT';
+import { useTheme } from '@/construct/hooks/useTheme';
 import { parseWorkflowYaml, type TaskDefinition } from '@/construct/components/workflows/yamlSync';
 import type {
   AuditVerifyResponse,
@@ -44,6 +45,8 @@ import { deriveBlockedTaskIds, toStepRunInfo } from '../lib/orchestration';
 
 export default function Dashboard() {
   const { t, tpl } = useT();
+  const { getSkinAsset } = useTheme();
+  const dashboardHero = getSkinAsset('dashboardHero');
   const [searchParams, setSearchParams] = useSearchParams();
   const [data, setData] = useState<WorkflowDashboard | null>(null);
   const [status, setStatus] = useState<StatusResponse | null>(null);
@@ -303,6 +306,16 @@ export default function Dashboard() {
           </button>
         )}
       />
+
+      {dashboardHero ? (
+        <Panel className="min-h-[8rem] overflow-hidden p-0" variant="utility">
+          <div
+            className="h-32 w-full bg-cover bg-center"
+            style={{ backgroundImage: `linear-gradient(90deg, var(--construct-bg-panel-strong), transparent 70%), url("${dashboardHero.replace(/"/g, '%22')}")` }}
+            aria-hidden="true"
+          />
+        </Panel>
+      ) : null}
 
       {/* Two-column layout — workflow workspace on the left, single
           stacked rail on the right with the operator's reading order:
