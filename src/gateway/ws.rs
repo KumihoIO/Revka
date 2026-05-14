@@ -157,6 +157,16 @@ pub async fn handle_ws_chat(
 
 /// Gateway session key prefix to avoid collisions with channel sessions.
 const GW_SESSION_PREFIX: &str = "gw_";
+/// Source-aware session id passed into memory/tooling for dashboard chat.
+const DASHBOARD_SESSION_PREFIX: &str = "dashboard_";
+
+fn dashboard_memory_session_id(session_id: &str) -> String {
+    if session_id.starts_with(DASHBOARD_SESSION_PREFIX) {
+        session_id.to_string()
+    } else {
+        format!("{DASHBOARD_SESSION_PREFIX}{session_id}")
+    }
+}
 
 async fn handle_socket(
     socket: WebSocket,
@@ -217,7 +227,7 @@ async fn handle_socket(
     // process it immediately (backward-compatible).
     let mut first_msg_fallback: Option<String> = None;
     let mut agent: Option<crate::agent::Agent> = None;
-    let mut agent_memory_session_id = session_id.clone();
+    let mut agent_memory_session_id = dashboard_memory_session_id(&session_id);
 
     // Wait up to 5 seconds for the first client frame.  Listen-only
     // workflow run viewers may never send a message — the
@@ -236,7 +246,7 @@ async fn handle_socket(
                             );
                             // Override session_id if provided in connect params
                             if let Some(sid) = &cp.session_id {
-                                agent_memory_session_id = sid.clone();
+                                agent_memory_session_id = dashboard_memory_session_id(sid);
                             }
                             let ack = serde_json::json!({
                                 "type": "connected",
@@ -1160,6 +1170,26 @@ mod tests {
     fn extract_ws_token_skips_empty_query_param() {
         let headers = HeaderMap::new();
         assert_eq!(extract_ws_token(&headers, Some("")), None);
+    }
+
+    #[test]
+    fn dashboard_memory_session_id_adds_dashboard_source_prefix() {
+        assert_eq!(
+            dashboard_memory_session_id("operator-main"),
+            "dashboard_operator-main"
+        );
+        assert_eq!(
+            dashboard_memory_session_id("8d43b6ef-0f18-4c3f-b04c-3a03f79e2c72"),
+            "dashboard_8d43b6ef-0f18-4c3f-b04c-3a03f79e2c72"
+        );
+    }
+
+    #[test]
+    fn dashboard_memory_session_id_is_idempotent() {
+        assert_eq!(
+            dashboard_memory_session_id("dashboard_operator-main"),
+            "dashboard_operator-main"
+        );
     }
 
     #[test]

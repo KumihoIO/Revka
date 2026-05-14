@@ -1111,13 +1111,13 @@ export default function AssistantPanel() {
           ...archivedSessionIds,
           ...loadArchivedSessionIds(),
         ]);
-        const gatewaySessions = sessions
-          .filter((session) => session.channel === 'gateway')
+        const dashboardSessions = sessions
+          .filter((session) => session.channel === 'dashboard' || session.channel === 'gateway')
           .filter((session) => !archivedSessionIdsSet.has(session.id))
           .filter((session) => session.message_count > 0)
           .sort((a, b) => new Date(b.last_activity).getTime() - new Date(a.last_activity).getTime())
           .slice(0, MAX_RESTORED_CHAT_TABS);
-        const sessionIdsWithMessages = new Set(gatewaySessions.map((session) => session.id));
+        const sessionIdsWithMessages = new Set(dashboardSessions.map((session) => session.id));
 
         setTabs((prev) => {
           const activeTabs = prev.filter(
@@ -1135,7 +1135,7 @@ export default function AssistantPanel() {
           const seenSessionIds = new Set(
             activeTabs.filter((tab) => tab.type === 'chat').map((tab) => tab.sessionId),
           );
-          const restored = gatewaySessions
+          const restored = dashboardSessions
             .filter((session) => !seenSessionIds.has(session.id))
             .map((session, index): AssistantTab => ({
               id: `chat-${session.id}`,

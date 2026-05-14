@@ -5,8 +5,9 @@
 //! one-per-line as JSON, never modifying old lines. On daemon restart, sessions
 //! are loaded from disk to restore conversation context.
 
-use crate::channels::session_backend::SessionBackend;
+use crate::channels::session_backend::{SessionBackend, SessionMetadata};
 use crate::providers::traits::ChatMessage;
+use chrono::{DateTime, Utc};
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 
@@ -154,6 +155,34 @@ impl SessionBackend for SessionStore {
         self.list_sessions()
     }
 
+    fn list_sessions_with_metadata(&self) -> Vec<SessionMetadata> {
+        self.list_sessions()
+            .into_iter()
+            .map(|key| {
+                let messages = self.load(&key);
+                let path = self.session_path(&key);
+                let metadata = std::fs::metadata(path).ok();
+                let last_activity = metadata
+                    .as_ref()
+                    .and_then(|m| m.modified().ok())
+                    .map(DateTime::<Utc>::from)
+                    .unwrap_or_else(Utc::now);
+                let created_at = metadata
+                    .and_then(|m| m.created().ok())
+                    .map(DateTime::<Utc>::from)
+                    .unwrap_or(last_activity);
+
+                SessionMetadata {
+                    key,
+                    name: None,
+                    created_at,
+                    last_activity,
+                    message_count: messages.len(),
+                }
+            })
+            .collect()
+    }
+
     fn compact(&self, session_key: &str) -> std::io::Result<()> {
         self.compact(session_key)
     }
@@ -228,6 +257,27 @@ mod tests {
         assert_eq!(sessions.len(), 2);
         assert!(sessions.contains(&"discord_bob".to_string()));
         assert!(sessions.contains(&"telegram_alice".to_string()));
+    }
+
+    #[test]
+    fn list_sessions_with_metadata_counts_channel_messages() {
+        let tmp = TempDir::new().unwrap();
+        let store = SessionStore::new(tmp.path()).unwrap();
+
+        store
+            .append("discord_room_alice", &ChatMessage::user("hello"))
+            .unwrap();
+        store
+            .append("discord_room_alice", &ChatMessage::assistant("hi"))
+            .unwrap();
+
+        let sessions = store.list_sessions_with_metadata();
+        let meta = sessions
+            .iter()
+            .find(|session| session.key == "discord_room_alice")
+            .expect("metadata for channel session");
+        assert_eq!(meta.message_count, 2);
+        assert!(meta.last_activity >= meta.created_at);
     }
 
     #[test]

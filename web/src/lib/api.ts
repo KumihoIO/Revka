@@ -420,7 +420,7 @@ export function getSession(id: string): Promise<Session> {
   return apiFetch<Session>(`/api/sessions/${encodeURIComponent(id)}`);
 }
 
-/** Load persisted gateway WebSocket chat transcript for the dashboard Agent Chat. */
+/** Load persisted dashboard WebSocket chat transcript for the dashboard Agent Chat. */
 export function getSessionMessages(id: string): Promise<SessionMessagesResponse> {
   return apiFetch<SessionMessagesResponse>(
     `/api/sessions/${encodeURIComponent(id)}/messages`,
