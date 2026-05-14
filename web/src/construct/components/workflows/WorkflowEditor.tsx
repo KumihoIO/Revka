@@ -30,6 +30,7 @@ import {
 } from 'lucide-react';
 import {
   Background,
+  ConnectionLineType,
   Controls,
   MarkerType,
   MiniMap,
@@ -51,10 +52,17 @@ import {
   GATE_EDGE_STYLES,
   computeAncestorClosure,
   flowToTasks,
+  gateBranchHandle,
+  gateBranchIndex,
+  gateBranchLabel,
+  gateBranchStyle,
+  gateEdgeStyleForHandle,
+  isGateBranchHandle,
   parseWorkflowMeta,
   parseWorkflowYaml,
   tasksToFlow,
   tasksToYaml,
+  type ConditionalBranchDefinition,
   type InputDef,
   type TaskNodeData,
   type WorkflowMeta,
@@ -204,6 +212,61 @@ function formatRelative(iso: string): string {
   return `${hours}h ago`;
 }
 
+function gateHandleLabel(handle: string | null | undefined): string | undefined {
+  if (!isGateBranchHandle(handle)) return undefined;
+  if (handle === 'true' || handle === 'false') return handle;
+  const index = Number(/^branch-(\d+)$/.exec(handle ?? '')?.[1] ?? 0);
+  return index === 0 ? 'true' : `case ${index + 1}`;
+}
+
+function getEditableConditionalBranches(data: TaskNodeData): ConditionalBranchDefinition[] {
+  if (data.conditionalBranches?.length > 0) {
+    return data.conditionalBranches.map((branch) => ({ ...branch }));
+  }
+  const branches: ConditionalBranchDefinition[] = [];
+  if (data.condition || data.onTrueValue) {
+    branches.push({
+      condition: data.condition || '',
+      goto: '',
+      value: data.onTrueValue || undefined,
+    });
+  }
+  if (data.onFalseValue) {
+    branches.push({ condition: 'default', goto: '', value: data.onFalseValue });
+  }
+  return branches.length > 0 ? branches : [
+    { condition: data.condition || '', goto: '', value: data.onTrueValue || undefined },
+    { condition: 'default', goto: '', value: data.onFalseValue || undefined },
+  ];
+}
+
+function conditionalBranchDataPatch(branches: ConditionalBranchDefinition[]): Partial<TaskNodeData> {
+  const firstCase = branches.find((branch) => branch.condition.trim() !== 'default');
+  const fallback = branches.find((branch) => branch.condition.trim() === 'default')
+    ?? branches.find((branch) => branch !== firstCase);
+  return {
+    conditionalBranches: branches,
+    condition: firstCase?.condition ?? '',
+    onTrueValue: firstCase?.value ?? '',
+    onFalseValue: fallback?.value ?? '',
+  };
+}
+
+function setConditionalBranchTarget(
+  data: TaskNodeData,
+  handle: string | null | undefined,
+  target: string,
+): TaskNodeData {
+  const index = gateBranchIndex(handle);
+  if (index === null) return data;
+  const branches = getEditableConditionalBranches(data);
+  while (branches.length <= index) {
+    branches.push({ condition: branches.length === 1 ? 'default' : '', goto: '', value: undefined });
+  }
+  branches[index] = { ...branches[index]!, goto: target };
+  return { ...data, ...conditionalBranchDataPatch(branches) };
+}
+
 // ---------------------------------------------------------------------------
 // Default node data — mirrors legacy editor (must include every TaskNodeData
 // field or React Flow will see undefined).
@@ -225,12 +288,20 @@ function defaultNodeData(id: string, overrides?: Partial<TaskNodeData>): TaskNod
     condition: '',
     onTrueValue: '',
     onFalseValue: '',
+    conditionalBranches: [],
     channel: '',
     channels: [],
     agentType: '',
     role: '',
     prompt: '',
     timeout: 300,
+    agentMaxTurns: 3,
+    agentTools: 'none',
+    agentOutputFields: [],
+    agentQualityEnabled: false,
+    agentQualityThreshold: 0.7,
+    agentQualityCriteria: [],
+    agentQualityModel: 'claude-haiku-4-5-20251001',
     parallelJoin: 'all',
     gotoTarget: '',
     gotoMaxIterations: 3,
@@ -239,6 +310,7 @@ function defaultNodeData(id: string, overrides?: Partial<TaskNodeData>): TaskNod
     groupChatMaxRounds: 8,
     supervisorTask: '',
     supervisorMaxIterations: 5,
+    supervisorTemplates: [],
     shellCommand: '',
     outputFormat: 'markdown',
     entityName: '',
@@ -262,6 +334,10 @@ function defaultNodeData(id: string, overrides?: Partial<TaskNodeData>): TaskNod
     humanApprovalTimeout: 3600,
     humanApprovalChannel: 'dashboard',
     humanApprovalChannelId: '',
+    humanApprovalOnRejectGoto: '',
+    humanApprovalOnRejectMax: 3,
+    humanApprovalApproveKeywords: ['approve', 'approved', 'yes', 'lgtm'],
+    humanApprovalRejectKeywords: ['reject', 'rejected', 'no'],
     outputTemplate: '',
     a2aUrl: '',
     a2aSkillId: '',
@@ -296,9 +372,11 @@ function defaultNodeData(id: string, overrides?: Partial<TaskNodeData>): TaskNod
     forEachMaxIterations: 20,
     notifyMessage: '',
     notifyTitle: '',
+    notifyChannelId: '',
     pythonScript: '',
     pythonCode: '',
     pythonArgs: '',
+    pythonInterpreter: '',
     pythonTimeout: 60,
     pythonAllowFailure: false,
     emailTo: '',
@@ -311,13 +389,19 @@ function defaultNodeData(id: string, overrides?: Partial<TaskNodeData>): TaskNod
     emailReplyTo: '',
     emailTrackClicks: false,
     emailTrackKref: '',
+    emailTrackSecretEnv: '',
     emailTrackBaseUrl: '',
     emailSmtpHost: '',
+    emailSmtpPort: 0,
+    emailSmtpTls: true,
+    emailSmtpUsername: '',
+    emailSmtpPasswordEnv: '',
     emailDryRun: false,
     emailTimeout: 30,
     imagePrompt: '',
     imageCount: 1,
     imageCanvas: true,
+    imageCanvasTarget: '',
     imageRegisterArtifact: true,
     imageSpace: '',
     imageItemName: '',
@@ -374,6 +458,46 @@ interface ContextMenuState {
   flowY: number;
 }
 
+type AgentPickerTarget = NonNullable<OpenAgentPickerDetail['target']>;
+type WorkflowWireStyle = 'default' | 'straight' | 'step';
+
+const WIRE_STYLE_STORAGE_KEY = 'construct.workflowEditor.wireStyle';
+const WIRE_STYLE_OPTIONS: Array<{
+  value: WorkflowWireStyle;
+  label: string;
+  title: string;
+}> = [
+  { value: 'default', label: 'Curved', title: 'Curved Bezier wires' },
+  { value: 'straight', label: 'Straight', title: 'Direct straight wires' },
+  { value: 'step', label: 'Angled', title: 'Right-angle stepped wires' },
+];
+
+const CONNECTION_LINE_TYPE: Record<WorkflowWireStyle, ConnectionLineType> = {
+  default: ConnectionLineType.Bezier,
+  straight: ConnectionLineType.Straight,
+  step: ConnectionLineType.Step,
+};
+
+function readWireStylePreference(): WorkflowWireStyle {
+  if (typeof localStorage === 'undefined') return 'default';
+  try {
+    const saved = localStorage.getItem(WIRE_STYLE_STORAGE_KEY);
+    return WIRE_STYLE_OPTIONS.some((option) => option.value === saved)
+      ? saved as WorkflowWireStyle
+      : 'default';
+  } catch {
+    return 'default';
+  }
+}
+
+function applyWireStyle(edge: Edge, wireStyle: WorkflowWireStyle): Edge {
+  return edge.type === wireStyle ? edge : { ...edge, type: wireStyle };
+}
+
+function applyWireStyleToEdges(edges: Edge[], wireStyle: WorkflowWireStyle): Edge[] {
+  return edges.map((edge) => applyWireStyle(edge, wireStyle));
+}
+
 // ---------------------------------------------------------------------------
 // Inner editor (uses ReactFlow context)
 // ---------------------------------------------------------------------------
@@ -399,6 +523,7 @@ function WorkflowEditorInner({
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [yamlText, setYamlText] = useState(workflow?.definition ?? '');
   const [yamlDirty, setYamlDirty] = useState(false);
+  const [wireStyle, setWireStyle] = useState<WorkflowWireStyle>(readWireStylePreference);
 
   const [workflowMeta, setWorkflowMeta] = useState<WorkflowMeta>({
     name: '',
@@ -432,6 +557,8 @@ function WorkflowEditorInner({
   const [agentPickerState, setAgentPickerState] = useState<{
     taskId: string;
     anchorRect: DOMRect | null;
+    target: AgentPickerTarget;
+    participantIndex?: number;
   } | null>(null);
 
   // Prime the agent roster cache so the picker opens instantly on first click.
@@ -468,11 +595,20 @@ function WorkflowEditorInner({
       /* ignore */
     }
     taskIdCounter.current = tasks.length;
-    return { initialNodes: laidOut, initialEdges: edges };
+    return { initialNodes: laidOut, initialEdges: applyWireStyleToEdges(edges, wireStyle) };
   }, [workflow]);
 
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(WIRE_STYLE_STORAGE_KEY, wireStyle);
+    } catch {
+      /* ignore */
+    }
+    setEdges((eds) => applyWireStyleToEdges(eds, wireStyle));
+  }, [wireStyle, setEdges]);
 
   const selectedNode = useMemo(
     () => (selectedNodeId ? nodes.find((n) => n.id === selectedNodeId) ?? null : null),
@@ -548,24 +684,27 @@ function WorkflowEditorInner({
       // If a source was provided, also create an edge from source → new node.
       // If a target was provided (reverse drop), create an edge new node → target.
       let newEdge: Edge | null = null;
+      let branchSourceHandle: string | null = null;
       if (detail.source?.taskId) {
         const handle = detail.source.handle ?? null;
-        const isBranch = handle === 'true' || handle === 'false';
-        const edgeStyle = isBranch ? GATE_EDGE_STYLES[handle] : GATE_EDGE_STYLES.default;
+        const isBranch = isGateBranchHandle(handle);
+        const edgeStyle = isBranch ? gateEdgeStyleForHandle(handle) : GATE_EDGE_STYLES.default;
         const edgeColor = edgeStyle.stroke;
+        const branchLabel = gateHandleLabel(handle);
+        if (isBranch) branchSourceHandle = handle;
         newEdge = {
           id: `${detail.source.taskId}->${handle ? handle + '->' : ''}${id}`,
           source: detail.source.taskId,
           target: id,
           sourceHandle: handle,
-          type: 'default',
+          type: wireStyle,
           animated: true,
           selectable: true,
           interactionWidth: 20,
           style: edgeStyle,
           markerEnd: { type: MarkerType.ArrowClosed, color: edgeColor },
-          ...(isBranch
-            ? { label: handle, labelStyle: { fill: edgeColor, fontSize: 10, fontWeight: 600 } }
+          ...(branchLabel
+            ? { label: branchLabel, labelStyle: { fill: edgeColor, fontSize: 10, fontWeight: 600 } }
             : {}),
         };
       } else if (detail.target?.taskId) {
@@ -576,7 +715,7 @@ function WorkflowEditorInner({
           source: id,
           target: detail.target.taskId,
           sourceHandle: null,
-          type: 'default',
+          type: wireStyle,
           animated: true,
           selectable: true,
           interactionWidth: 20,
@@ -586,13 +725,20 @@ function WorkflowEditorInner({
       }
 
       setNodes((nds) => {
+        const withBranchTarget = newEdge && branchSourceHandle
+          ? nds.map((n) =>
+              n.id === newEdge!.source
+                ? { ...n, data: setConditionalBranchTarget(n.data as TaskNodeData, branchSourceHandle, id) }
+                : n,
+            )
+          : nds;
         if (newEdge && !newEdge.sourceHandle && newEdge.target === id) {
           // Forward drop: bump dependency count for the new node.
           newNode.data = { ...newNode.data, dependencyCount: 1 };
         }
         // Reverse drop: bump dependency count on the original target.
         if (newEdge && newEdge.source === id && newEdge.target !== id) {
-          return nds
+          return withBranchTarget
             .map((n) =>
               n.id === newEdge!.target
                 ? {
@@ -606,9 +752,9 @@ function WorkflowEditorInner({
             )
             .concat(newNode);
         }
-        return [...nds, newNode];
+        return [...withBranchTarget, newNode];
       });
-      if (newEdge) setEdges((eds) => [...eds, newEdge!]);
+      if (newEdge) setEdges((eds) => [...eds, applyWireStyle(newEdge!, wireStyle)]);
       setSelectedNodeId(id);
 
       // Auto-open agent picker for new agent steps. Wait one frame for xyflow
@@ -626,12 +772,12 @@ function WorkflowEditorInner({
             emitOpenAgentPicker({ taskId: id, anchorRect: rect });
           } else {
             // Fallback — surface a centered picker by setting state directly.
-            setAgentPickerState({ taskId: id, anchorRect: null });
+            setAgentPickerState({ taskId: id, anchorRect: null, target: 'assign' });
           }
         });
       }
     },
-    [getViewportCenter, setNodes, setEdges],
+    [getViewportCenter, setNodes, setEdges, wireStyle],
   );
 
   // ── Subscribe to global add-step events ─────────────────────────────────
@@ -650,7 +796,12 @@ function WorkflowEditorInner({
     const handler = (event: Event) => {
       const ce = event as CustomEvent<OpenAgentPickerDetail>;
       if (!ce.detail) return;
-      setAgentPickerState({ taskId: ce.detail.taskId, anchorRect: ce.detail.anchorRect });
+      setAgentPickerState({
+        taskId: ce.detail.taskId,
+        anchorRect: ce.detail.anchorRect,
+        target: ce.detail.target ?? 'assign',
+        participantIndex: ce.detail.participantIndex,
+      });
     };
     window.addEventListener(OPEN_AGENT_PICKER_EVENT, handler as EventListener);
     return () => window.removeEventListener(OPEN_AGENT_PICKER_EVENT, handler as EventListener);
@@ -759,31 +910,32 @@ function WorkflowEditorInner({
           e.sourceHandle === (connection.sourceHandle ?? null),
       );
       if (exists) return;
-      const branch = connection.sourceHandle as 'true' | 'false' | null;
-      const isBranch = branch === 'true' || branch === 'false';
-      const edgeStyle = isBranch ? GATE_EDGE_STYLES[branch] : GATE_EDGE_STYLES.default;
+      const branch = connection.sourceHandle ?? null;
+      const isBranch = isGateBranchHandle(branch);
+      const edgeStyle = isBranch ? gateEdgeStyleForHandle(branch) : GATE_EDGE_STYLES.default;
       const edgeColor = edgeStyle.stroke;
+      const branchLabel = gateHandleLabel(branch);
 
       const newEdge: Edge = {
         id: `${connection.source}->${branch ? branch + '->' : ''}${connection.target}`,
         source: connection.source,
         sourceHandle: connection.sourceHandle,
         target: connection.target,
-        type: 'default',
+        type: wireStyle,
         animated: true,
         selectable: true,
         interactionWidth: 20,
         style: edgeStyle,
         markerEnd: { type: MarkerType.ArrowClosed, color: edgeColor },
-        ...(isBranch
-          ? { label: branch, labelStyle: { fill: edgeColor, fontSize: 10, fontWeight: 600 } }
+        ...(branchLabel
+          ? { label: branchLabel, labelStyle: { fill: edgeColor, fontSize: 10, fontWeight: 600 } }
           : {}),
       };
-      setEdges((eds) => [...eds, newEdge]);
+      setEdges((eds) => [...eds, applyWireStyle(newEdge, wireStyle)]);
 
       // Auto-insert `${source.output}` into the target's primary text field so
       // the wired edge implies the matching interpolation. Skip when source ===
-      // target (self-loop), when the edge is a conditional branch (true/false
+      // target (self-loop), when the edge is a conditional branch (branch
       // handles route control flow, not data), when the target type has no
       // primary text field, or when the target already references this source
       // somewhere.
@@ -791,6 +943,9 @@ function WorkflowEditorInner({
       const targetId = connection.target;
       setNodes((nds) =>
         nds.map((n) => {
+          if (isBranch && n.id === sourceId) {
+            return { ...n, data: setConditionalBranchTarget(n.data as TaskNodeData, branch, targetId) };
+          }
           if (n.id !== targetId) return n;
           const data = n.data as TaskNodeData;
           let nextData: TaskNodeData = data;
@@ -810,7 +965,7 @@ function WorkflowEditorInner({
         }),
       );
     },
-    [edges, setEdges, setNodes],
+    [edges, setEdges, setNodes, wireStyle],
   );
 
   const onConnectStart = useCallback(
@@ -852,7 +1007,7 @@ function WorkflowEditorInner({
       if (from.handleType === 'source') {
         setPaletteContext({
           position,
-          source: { taskId: from.nodeId, handle: from.handleId as 'true' | 'false' | null },
+          source: { taskId: from.nodeId, handle: from.handleId },
         });
       } else if (from.handleType === 'target') {
         setPaletteContext({
@@ -871,16 +1026,35 @@ function WorkflowEditorInner({
   const onEdgesDelete = useCallback(
     (deletedEdges: Edge[]) => {
       const targetCounts = new Map<string, number>();
-      for (const e of deletedEdges) targetCounts.set(e.target, (targetCounts.get(e.target) || 0) + 1);
+      const clearedBranchIndexes = new Map<string, Set<number>>();
+      for (const e of deletedEdges) {
+        const branchIndex = gateBranchIndex(e.sourceHandle as string | null | undefined);
+        if (branchIndex !== null) {
+          const indexes = clearedBranchIndexes.get(e.source) ?? new Set<number>();
+          indexes.add(branchIndex);
+          clearedBranchIndexes.set(e.source, indexes);
+          continue;
+        }
+        targetCounts.set(e.target, (targetCounts.get(e.target) || 0) + 1);
+      }
       setNodes((nds) =>
         nds.map((n) => {
           const dec = targetCounts.get(n.id);
-          if (!dec) return n;
+          const branchIndexes = clearedBranchIndexes.get(n.id);
+          let nextData = n.data as TaskNodeData;
+          if (branchIndexes && branchIndexes.size > 0) {
+            let branches = getEditableConditionalBranches(nextData);
+            branches = branches.map((branch, index) =>
+              branchIndexes.has(index) ? { ...branch, goto: '' } : branch,
+            );
+            nextData = { ...nextData, ...conditionalBranchDataPatch(branches) };
+          }
+          if (!dec) return nextData === n.data ? n : { ...n, data: nextData };
           return {
             ...n,
             data: {
-              ...n.data,
-              dependencyCount: Math.max(0, (n.data as TaskNodeData).dependencyCount - dec),
+              ...nextData,
+              dependencyCount: Math.max(0, nextData.dependencyCount - dec),
             },
           };
         }),
@@ -924,8 +1098,38 @@ function WorkflowEditorInner({
           n.id === nodeId ? { ...n, data: { ...n.data, ...updates } } : n,
         ),
       );
+      if (updates.conditionalBranches) {
+        setEdges((eds) => {
+          const kept = eds.filter((edge) =>
+            !(edge.source === nodeId && isGateBranchHandle(edge.sourceHandle as string | null | undefined)),
+          );
+          const branchEdges = updates.conditionalBranches!
+            .map((branch, index): Edge | null => {
+              if (!branch.goto) return null;
+              const handle = gateBranchHandle(index);
+              const style = gateBranchStyle(branch, index);
+              const label = gateBranchLabel(branch, index);
+              return {
+                id: `${nodeId}->${handle}->${branch.goto}`,
+                source: nodeId,
+                sourceHandle: handle,
+                target: branch.goto,
+                type: wireStyle,
+                animated: true,
+                selectable: true,
+                interactionWidth: 20,
+                style,
+                markerEnd: { type: MarkerType.ArrowClosed, color: style.stroke },
+                label,
+                labelStyle: { fill: style.stroke, fontSize: 10, fontWeight: 600 },
+              };
+            })
+            .filter((edge): edge is Edge => edge !== null);
+          return [...kept, ...applyWireStyleToEdges(branchEdges, wireStyle)];
+        });
+      }
     },
-    [setNodes],
+    [setNodes, setEdges, wireStyle],
   );
 
   // Atomic step-id rename: keeps node.id, data.taskId, and edge endpoints in
@@ -940,11 +1144,17 @@ function WorkflowEditorInner({
     (oldId: string, newId: string) => {
       if (oldId === newId) return;
       setNodes((nds) =>
-        nds.map((n) =>
-          n.id === oldId
+        nds.map((n) => {
+          const renamed = n.id === oldId
             ? { ...n, id: newId, data: { ...n.data, taskId: newId, label: n.data.label === oldId ? newId : n.data.label } }
-            : n,
-        ),
+            : n;
+          const data = renamed.data as TaskNodeData;
+          if (!data.conditionalBranches?.some((branch) => branch.goto === oldId)) return renamed;
+          const branches = data.conditionalBranches.map((branch) =>
+            branch.goto === oldId ? { ...branch, goto: newId } : branch,
+          );
+          return { ...renamed, data: { ...data, ...conditionalBranchDataPatch(branches) } };
+        }),
       );
       setEdges((eds) =>
         eds.map((e) => {
@@ -966,7 +1176,20 @@ function WorkflowEditorInner({
 
   const handleNodeDelete = useCallback(
     (nodeId: string) => {
-      setNodes((nds) => nds.filter((n) => n.id !== nodeId));
+      setNodes((nds) =>
+        nds
+          .filter((n) => n.id !== nodeId)
+          .map((n) => {
+            const data = n.data as TaskNodeData;
+            if (data.type !== 'conditional' || !data.conditionalBranches?.some((branch) => branch.goto === nodeId)) {
+              return n;
+            }
+            const branches = data.conditionalBranches.map((branch) =>
+              branch.goto === nodeId ? { ...branch, goto: '' } : branch,
+            );
+            return { ...n, data: { ...data, ...conditionalBranchDataPatch(branches) } };
+          }),
+      );
       setEdges((eds) => eds.filter((e) => e.source !== nodeId && e.target !== nodeId));
       if (selectedNodeId === nodeId) setSelectedNodeId(null);
     },
@@ -1009,6 +1232,108 @@ function WorkflowEditorInner({
     [setNodes],
   );
 
+  const getAgentPickerValue = useCallback(
+    (taskId: string, target: AgentPickerTarget, participantIndex?: number): string | undefined => {
+      const data = nodes.find((n) => n.id === taskId)?.data as TaskNodeData | undefined;
+      if (!data) return undefined;
+      switch (target) {
+        case 'assign':
+          return data.assign || undefined;
+        case 'groupChatParticipant':
+          return participantIndex === undefined
+            ? undefined
+            : data.groupChatParticipants?.[participantIndex] || undefined;
+        case 'groupChatModerator':
+          return data.groupChatModerator || undefined;
+        case 'supervisorAgent':
+          return data.supervisorType || undefined;
+        case 'supervisorTemplate':
+          return undefined;
+        case 'handoffTo':
+          return data.handoffTo || undefined;
+        case 'a2aSkill':
+          return data.a2aSkillId || undefined;
+        case 'mapReduceMapper':
+          return data.mapReduceMapper || undefined;
+        case 'mapReduceReducer':
+          return data.mapReduceReducer || undefined;
+      }
+    },
+    [nodes],
+  );
+
+  const applyAgentPickerSelection = useCallback(
+    (state: NonNullable<typeof agentPickerState>, name: string | null) => {
+      const current = nodes.find((n) => n.id === state.taskId)?.data as TaskNodeData | undefined;
+      const picked = name ? poolAgents.find((a) => a.item_name === name) : undefined;
+      if (!current) return;
+
+      if (state.target === 'assign') {
+        if (name === null) {
+          handleNodeUpdate(state.taskId, { assign: '' });
+          return;
+        }
+        handleNodeUpdate(state.taskId, {
+          assign: name,
+          agentType: picked?.agent_type || current.agentType || 'claude',
+          role: picked?.role || current.role || 'coder',
+        });
+        return;
+      }
+
+      if (state.target === 'groupChatParticipant') {
+        const next = [...(current.groupChatParticipants || [])];
+        if (state.participantIndex === undefined) {
+          if (name && !next.includes(name)) next.push(name);
+        } else if (name === null) {
+          next.splice(state.participantIndex, 1);
+        } else {
+          next[state.participantIndex] = name;
+        }
+        handleNodeUpdate(state.taskId, { groupChatParticipants: next.filter(Boolean) });
+        return;
+      }
+
+      if (state.target === 'groupChatModerator') {
+        handleNodeUpdate(state.taskId, { groupChatModerator: name ?? 'claude' });
+        return;
+      }
+
+      if (state.target === 'supervisorAgent') {
+        handleNodeUpdate(state.taskId, { supervisorType: name ?? 'claude' });
+        return;
+      }
+
+      if (state.target === 'supervisorTemplate') {
+        if (!name) return;
+        const next = [...(current.supervisorTemplates || [])];
+        if (!next.includes(name)) next.push(name);
+        handleNodeUpdate(state.taskId, { supervisorTemplates: next });
+        return;
+      }
+
+      if (state.target === 'handoffTo') {
+        handleNodeUpdate(state.taskId, { handoffTo: name ?? 'codex' });
+        return;
+      }
+
+      if (state.target === 'a2aSkill') {
+        handleNodeUpdate(state.taskId, { a2aSkillId: name ?? '' });
+        return;
+      }
+
+      if (state.target === 'mapReduceMapper') {
+        handleNodeUpdate(state.taskId, { mapReduceMapper: name ?? 'claude' });
+        return;
+      }
+
+      if (state.target === 'mapReduceReducer') {
+        handleNodeUpdate(state.taskId, { mapReduceReducer: name ?? 'claude' });
+      }
+    },
+    [handleNodeUpdate, nodes, poolAgents],
+  );
+
   // ── Toolbar actions ─────────────────────────────────────────────────────
   const openPalette = useCallback((position?: { x: number; y: number }) => {
     setPaletteContext(position ? { position } : undefined);
@@ -1047,7 +1372,7 @@ function WorkflowEditorInner({
       const { nodes: rawNodes, edges: newEdges } = tasksToFlow(tasks);
       const laidOut = layoutNodes(rawNodes, newEdges);
       setNodes(laidOut);
-      setEdges(newEdges);
+      setEdges(applyWireStyleToEdges(newEdges, wireStyle));
       setName(meta.name || name);
       setDescription(meta.description || description);
       setTags(meta.tags);
@@ -1066,7 +1391,7 @@ function WorkflowEditorInner({
       const msg = err instanceof Error ? err.message : String(err);
       setError(`Invalid YAML: ${msg}`);
     }
-  }, [yamlText, name, description, setNodes, setEdges]);
+  }, [yamlText, name, description, setNodes, setEdges, wireStyle]);
 
   // Open YAML drawer (used by EditorCommandList row + ⌘I shortcut).
   const openYamlPanel = useCallback(() => {
@@ -1139,7 +1464,7 @@ function WorkflowEditorInner({
         );
 
         setNodes(markedNodes);
-        setEdges(newEdges);
+        setEdges(applyWireStyleToEdges(newEdges, wireStyle));
         setWorkflowMeta(newMeta);
         setName(remote.name ?? event.name);
         setDescription(remote.description ?? '');
@@ -1183,7 +1508,7 @@ function WorkflowEditorInner({
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [nodes, edges, setNodes, setEdges],
+    [nodes, edges, setNodes, setEdges, wireStyle],
   );
 
   // Stable refs so the SSE callback doesn't re-subscribe on every state change.
@@ -1218,7 +1543,7 @@ function WorkflowEditorInner({
         const { nodes: rawNodes, edges: newEdges } = tasksToFlow(newTasks);
         const laidOut = layoutNodes(rawNodes, newEdges);
         setNodes(laidOut);
-        setEdges(newEdges);
+        setEdges(applyWireStyleToEdges(newEdges, wireStyle));
         setWorkflowMeta(newMeta);
         if (newMeta.name) setName(newMeta.name);
         if (newMeta.description) setDescription(newMeta.description);
@@ -1237,7 +1562,7 @@ function WorkflowEditorInner({
         );
       }
     },
-    [setNodes, setEdges],
+    [setNodes, setEdges, wireStyle],
   );
 
   // ── Save ────────────────────────────────────────────────────────────────
@@ -1640,6 +1965,40 @@ function WorkflowEditorInner({
                 ) : null}
               </span>
               <div style={{ flex: 1 }} />
+              <div
+                role="group"
+                aria-label="Wire style"
+                title="Wire style"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  padding: 2,
+                  gap: 2,
+                  borderRadius: 8,
+                  border: '1px solid var(--construct-border-soft)',
+                  background: 'var(--construct-bg-panel)',
+                }}
+              >
+                {WIRE_STYLE_OPTIONS.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => setWireStyle(option.value)}
+                    className="construct-button"
+                    data-variant={wireStyle === option.value ? 'primary' : undefined}
+                    title={option.title}
+                    aria-pressed={wireStyle === option.value}
+                    style={{
+                      padding: '4px 8px',
+                      fontSize: 11,
+                      border: 0,
+                      minWidth: 0,
+                    }}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
               <button
                 type="button"
                 onClick={() => openPalette()}
@@ -1793,13 +2152,14 @@ function WorkflowEditorInner({
                   onNodeDragStop={onNodeDragStop}
                   onPaneClick={onPaneClick}
                   nodeTypes={allNodeTypes}
+                  connectionLineType={CONNECTION_LINE_TYPE[wireStyle]}
                   fitView
                   elementsSelectable
                   edgesFocusable
                   deleteKeyCode={['Backspace', 'Delete']}
                   style={{ background: 'transparent' }}
                   defaultEdgeOptions={{
-                    type: 'default',
+                    type: wireStyle,
                     animated: true,
                     selectable: true,
                     style: GATE_EDGE_STYLES.default,
@@ -1947,27 +2307,17 @@ function WorkflowEditorInner({
         }}
         value={
           agentPickerState
-            ? (nodes.find((n) => n.id === agentPickerState.taskId)?.data as TaskNodeData | undefined)?.assign
+            ? getAgentPickerValue(
+                agentPickerState.taskId,
+                agentPickerState.target,
+                agentPickerState.participantIndex,
+              )
             : undefined
         }
         anchorRect={agentPickerState?.anchorRect ?? null}
         onSelect={(name) => {
           if (!agentPickerState) return;
-          if (name === null) {
-            handleNodeUpdate(agentPickerState.taskId, { assign: '' });
-            return;
-          }
-          // Enrich with agentType + role from the picked roster entry,
-          // matching the behaviour the side-panel mount used to have.
-          const picked = poolAgents.find((a) => a.item_name === name);
-          const current = nodes.find((n) => n.id === agentPickerState.taskId)?.data as
-            | TaskNodeData
-            | undefined;
-          handleNodeUpdate(agentPickerState.taskId, {
-            assign: name,
-            agentType: picked?.agent_type || current?.agentType || 'claude',
-            role: picked?.role || current?.role || 'coder',
-          });
+          applyAgentPickerSelection(agentPickerState, name);
         }}
       />
     </div>

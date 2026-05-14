@@ -540,8 +540,8 @@ class MapReduceStepConfig(BaseModel):
     """Config for 'map_reduce' step type — fan-out / fan-in."""
     task: str  # Overall task description
     splits: list[str]  # Segments to map over (min 2)
-    mapper: Literal["claude", "codex"] = "claude"
-    reducer: Literal["claude", "codex"] = "claude"
+    mapper: str = "claude"   # Agent type or pool template name
+    reducer: str = "claude"  # Agent type or pool template name
     concurrency: int = Field(default=3, ge=1, le=10)
     timeout: float = 300.0
 
@@ -550,7 +550,8 @@ class SupervisorStepConfig(BaseModel):
     """Config for 'supervisor' step type — dynamic delegation loop."""
     task: str  # Task to decompose
     max_iterations: int = Field(default=5, ge=1, le=10)
-    supervisor_type: Literal["claude", "codex"] = "claude"
+    supervisor_type: str = "claude"  # Agent type or pool template name
+    templates: list[str] = Field(default_factory=list)  # Specialist pool allowlist
     timeout: float = 300.0
 
 
@@ -558,7 +559,7 @@ class GroupChatStepConfig(BaseModel):
     """Config for 'group_chat' step type — moderated multi-agent discussion."""
     topic: str
     participants: list[str]  # Agent types or template names (min 2)
-    moderator: Literal["claude", "codex"] = "claude"
+    moderator: str = "claude"  # Agent type or pool template name
     strategy: Literal["round_robin", "moderator_selected"] = "moderator_selected"
     max_rounds: int = Field(default=8, ge=2, le=20)
     timeout: float = 120.0
@@ -567,7 +568,7 @@ class GroupChatStepConfig(BaseModel):
 class HandoffStepConfig(BaseModel):
     """Config for 'handoff' step type — pass context from one agent to another."""
     from_step: str  # Step ID whose agent to hand off from
-    to_agent_type: Literal["claude", "codex"] = "codex"
+    to_agent_type: str = "codex"  # Agent type or pool template name
     reason: str = "Continuing the task"
     task: str = ""  # Specific task for receiver
     timeout: float = 300.0

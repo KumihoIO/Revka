@@ -1,12 +1,34 @@
 import { Handle, Position, type NodeTypes } from '@xyflow/react';
-import type { TaskNodeData } from '@/construct/components/workflows/yamlSync';
+import {
+  gateBranchHandle,
+  gateBranchLabel,
+  gateBranchStyle,
+  type ConditionalBranchDefinition,
+  type TaskNodeData,
+} from '@/construct/components/workflows/yamlSync';
 
 const GATE_COLOR = 'var(--construct-status-warning)';
 const GATE_SOFT = 'color-mix(in srgb, var(--construct-status-warning) 16%, transparent)';
-const TRUE_COLOR = 'var(--construct-status-success)';
-const FALSE_COLOR = 'var(--construct-status-danger)';
+
+function getBranches(data: TaskNodeData): ConditionalBranchDefinition[] {
+  if (data.conditionalBranches?.length > 0) return data.conditionalBranches;
+  const branches: ConditionalBranchDefinition[] = [];
+  if (data.condition || data.onTrueValue) {
+    branches.push({ condition: data.condition || '', goto: '', value: data.onTrueValue || undefined });
+  }
+  if (data.onFalseValue) {
+    branches.push({ condition: 'default', goto: '', value: data.onFalseValue });
+  }
+  return branches.length > 0 ? branches : [
+    { condition: data.condition || '', goto: '', value: data.onTrueValue || undefined },
+    { condition: 'default', goto: '', value: data.onFalseValue || undefined },
+  ];
+}
 
 function GateNode({ data, selected }: { data: TaskNodeData; selected?: boolean }) {
+  const branches = getBranches(data);
+  const primaryCondition = branches.find((branch) => branch.condition.trim() !== 'default')?.condition;
+
   return (
     <div
       className="px-4 py-3 rounded-xl shadow-lg transition-all"
@@ -54,17 +76,17 @@ function GateNode({ data, selected }: { data: TaskNodeData; selected?: boolean }
           className="px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider"
           style={{ background: GATE_SOFT, color: GATE_COLOR }}
         >
-          if / else
+          {branches.length > 2 ? `${branches.length} branches` : 'if / else'}
         </span>
       </div>
 
       {/* Condition */}
-      {data.condition ? (
+      {primaryCondition ? (
         <div
           className="text-[11px] mt-1.5 font-mono truncate"
           style={{ color: 'var(--pc-text-muted)', lineHeight: '1.3' }}
         >
-          {data.condition}
+          {primaryCondition}
         </div>
       ) : (
         <div className="text-[10px] mt-1.5 italic" style={{ color: 'var(--pc-text-faint)' }}>
@@ -83,60 +105,48 @@ function GateNode({ data, selected }: { data: TaskNodeData; selected?: boolean }
       )}
 
       {/* Branch labels + handles */}
-      <div className="flex items-center justify-between mt-2.5 -mx-1">
-        <div className="flex flex-col items-start gap-0.5">
-          <div className="flex items-center gap-1">
-            <div className="w-2.5 h-2.5 rounded-full" style={{ background: TRUE_COLOR }} />
-            <span className="text-[9px] font-semibold uppercase" style={{ color: TRUE_COLOR }}>true</span>
-          </div>
-          {data.onTrueValue && (
-            <span
-              className="text-[9px] font-mono px-1 rounded truncate max-w-[110px]"
-              style={{
-                background: 'color-mix(in srgb, var(--construct-status-success) 14%, transparent)',
-                color: TRUE_COLOR,
-              }}
-              title={`emits: ${data.onTrueValue}`}
-            >
-              = {data.onTrueValue}
-            </span>
-          )}
-        </div>
-        <div className="flex flex-col items-end gap-0.5">
-          <div className="flex items-center gap-1">
-            <span className="text-[9px] font-semibold uppercase" style={{ color: FALSE_COLOR }}>false</span>
-            <div className="w-2.5 h-2.5 rounded-full" style={{ background: FALSE_COLOR }} />
-          </div>
-          {data.onFalseValue && (
-            <span
-              className="text-[9px] font-mono px-1 rounded truncate max-w-[110px]"
-              style={{
-                background: 'color-mix(in srgb, var(--construct-status-danger) 14%, transparent)',
-                color: FALSE_COLOR,
-              }}
-              title={`emits: ${data.onFalseValue}`}
-            >
-              = {data.onFalseValue}
-            </span>
-          )}
-        </div>
+      <div className="flex flex-col gap-1.5 mt-2.5">
+        {branches.map((branch, index) => {
+          const style = gateBranchStyle(branch, index);
+          const label = gateBranchLabel(branch, index);
+          return (
+            <div key={gateBranchHandle(index)} className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1 min-w-0">
+                <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: style.stroke }} />
+                <span className="text-[9px] font-semibold uppercase truncate" style={{ color: style.stroke }}>
+                  {label}
+                </span>
+              </div>
+              {branch.value && (
+                <span
+                  className="text-[9px] font-mono px-1 rounded truncate max-w-[120px]"
+                  style={{
+                    background: 'color-mix(in srgb, var(--construct-status-warning) 14%, transparent)',
+                    color: style.stroke,
+                  }}
+                  title={`emits: ${branch.value}`}
+                >
+                  = {branch.value}
+                </span>
+              )}
+            </div>
+          );
+        })}
       </div>
 
-      {/* True handle (bottom-left) */}
-      <Handle
-        type="source"
-        position={Position.Bottom}
-        id="true"
-        style={{ background: TRUE_COLOR, width: 10, height: 10, left: '25%' }}
-      />
-
-      {/* False handle (bottom-right) */}
-      <Handle
-        type="source"
-        position={Position.Bottom}
-        id="false"
-        style={{ background: FALSE_COLOR, width: 10, height: 10, left: '75%' }}
-      />
+      {branches.map((branch, index) => {
+        const style = gateBranchStyle(branch, index);
+        const left = `${((index + 1) / (branches.length + 1)) * 100}%`;
+        return (
+          <Handle
+            key={gateBranchHandle(index)}
+            type="source"
+            position={Position.Bottom}
+            id={gateBranchHandle(index)}
+            style={{ background: style.stroke, width: 10, height: 10, left }}
+          />
+        );
+      })}
     </div>
   );
 }

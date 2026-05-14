@@ -3719,6 +3719,7 @@ async def _exec_supervisor(step: StepDef, state: WorkflowState, cwd: str) -> Ste
             "cwd": cwd,
             "max_iterations": cfg.max_iterations,
             "supervisor_type": cfg.supervisor_type,
+            "templates": cfg.templates,
             "timeout": cfg.timeout,
         })
         status = result.get("status", "")

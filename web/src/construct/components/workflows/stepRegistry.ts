@@ -127,7 +127,7 @@ export const STEP_TYPES: StepTypeDef[] = [
     label: 'Conditional',
     category: 'control',
     icon: GitBranch,
-    description: 'Branch on an expression — true/false handles route flow.',
+    description: 'Branch on ordered expressions with one handle per route.',
     searchTags: ['if', 'else', 'gate', 'branch', 'condition'],
   },
   {

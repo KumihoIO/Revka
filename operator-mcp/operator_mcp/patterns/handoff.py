@@ -15,7 +15,7 @@ import uuid
 from typing import Any
 
 from .._log import _log
-from ..agent_state import AGENTS, ManagedAgent
+from ..agent_state import AGENTS, ManagedAgent, POOL
 from ..agent_subprocess import compose_agent_prompt, spawn_agent
 from ..failure_classification import (
     agent_not_found,
@@ -94,6 +94,13 @@ You are receiving a handoff from agent "{from_title}" ({from_type}).
 """
 
 
+def _resolve_template(name: str):
+    for tmpl in POOL.list_all():
+        if tmpl.name.lower() == name.lower():
+            return tmpl
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Tool handler
 # ---------------------------------------------------------------------------
@@ -138,8 +145,14 @@ async def tool_handoff_agent(args: dict[str, Any]) -> dict[str, Any]:
 
     from ..policy import load_policy
     policy = load_policy()
-    # Normalize agent_type for policy check
-    effective_type = to_agent_type if to_agent_type in ("claude", "codex") else "claude"
+    receiver_template = _resolve_template(to_agent_type)
+    # Normalize agent_type for policy check. Template names resolve through the
+    # pool so dashboard-selected handoff receivers are not collapsed to claude.
+    effective_type = (
+        receiver_template.agent_type if receiver_template
+        else to_agent_type if to_agent_type in ("claude", "codex")
+        else "claude"
+    )
     policy_failures = policy.preflight_spawn(cwd, effective_type)
     if policy_failures:
         fail = policy_failures[0]
@@ -164,13 +177,32 @@ async def tool_handoff_agent(args: dict[str, Any]) -> dict[str, Any]:
     )
 
     title = f"handoff-from-{from_agent.title[:20]}"
+    receiver_identity = ""
+    receiver_role = "coder"
+    model_override = model
+    if receiver_template:
+        receiver_role = receiver_template.role or "coder"
+        model_override = model or receiver_template.model
+        receiver_identity = "\n".join(
+            part for part in (
+                receiver_template.description,
+                receiver_template.identity,
+                receiver_template.soul,
+                f"Capabilities: {', '.join(receiver_template.capabilities)}" if receiver_template.capabilities else "",
+            ) if part
+        )
+
     full_prompt = compose_agent_prompt(
-        title, "coder", "", [], prompt,
+        receiver_template.name if receiver_template else title,
+        receiver_role,
+        receiver_identity,
+        [],
+        prompt,
     )
 
     to_agent, output = await _spawn_and_wait(
         effective_type, title, cwd, full_prompt,
-        model=model, timeout=timeout,
+        model=model_override, timeout=timeout,
     )
 
     to_output, to_files = _get_agent_output(to_agent.id)
