@@ -346,7 +346,6 @@ impl InterruptOnNewMessageConfig {
 #[derive(Clone)]
 struct ChannelCostTrackingState {
     tracker: Arc<crate::cost::CostTracker>,
-    prices: Arc<HashMap<String, crate::config::schema::ModelPricing>>,
 }
 
 #[derive(Clone)]
@@ -3014,7 +3013,7 @@ async fn process_channel_message(
         scale_cap,
     );
     let cost_tracking_context = ctx.cost_tracking.clone().map(|state| {
-        crate::agent::loop_::ToolLoopCostTrackingContext::new(state.tracker, state.prices)
+        crate::agent::loop_::ToolLoopCostTrackingContext::new(state.tracker, "channel")
     });
     let llm_call_start = Instant::now();
     #[allow(clippy::cast_possible_truncation)]
@@ -5439,10 +5438,7 @@ pub async fn start_channels(config: Config) -> Result<()> {
             config.cost.clone(),
             &config.workspace_dir,
         )
-        .map(|tracker| ChannelCostTrackingState {
-            tracker,
-            prices: Arc::new(config.cost.prices.clone()),
-        }),
+        .map(|tracker| ChannelCostTrackingState { tracker }),
         pacing: config.pacing.clone(),
         max_tool_result_chars: config.agent.max_tool_result_chars,
         context_token_budget: config.agent.max_context_tokens,

@@ -42,68 +42,73 @@ class TestChannelEvent:
 # ---------------------------------------------------------------------------
 
 class TestEventConsumerTranslate:
+    pytestmark = pytest.mark.asyncio
     @pytest.fixture
     def consumer(self, mock_sidecar, mock_gateway):
         return EventConsumer(mock_sidecar, mock_gateway)
 
-    def test_session_started(self, consumer):
+    async def test_session_started(self, consumer):
         raw = {"event": {"type": "session_started", "provider": "claude"}, "timestamp": "ts1"}
-        events = consumer._translate("a1", "Agent", raw)
+        events = await consumer._translate("a1", "Agent", raw)
         assert len(events) == 1
         assert events[0].event_type == "agent.started"
         assert events[0].content["provider"] == "claude"
 
-    def test_status_changed_error(self, consumer):
+    async def test_status_changed_error(self, consumer):
         raw = {"event": {"type": "status_changed", "status": "error"}, "timestamp": "ts2"}
-        events = consumer._translate("a1", "Agent", raw)
+        events = await consumer._translate("a1", "Agent", raw)
         assert len(events) == 1
         assert events[0].event_type == "agent.error"
 
-    def test_status_changed_non_error_ignored(self, consumer):
+    async def test_status_changed_non_error_ignored(self, consumer):
         raw = {"event": {"type": "status_changed", "status": "running"}}
-        events = consumer._translate("a1", "Agent", raw)
+        events = await consumer._translate("a1", "Agent", raw)
         assert len(events) == 0
 
-    def test_turn_completed(self, consumer):
+    async def test_turn_completed(self, consumer):
         raw = {"event": {"type": "turn_completed", "usage": {"input_tokens": 50}}, "timestamp": "ts3"}
-        events = consumer._translate("a1", "Agent", raw)
+        events = await consumer._translate("a1", "Agent", raw)
         assert len(events) == 1
         assert events[0].event_type == "agent.completed"
+        consumer._gateway.record_usage.assert_awaited_once()
+        kwargs = consumer._gateway.record_usage.await_args.kwargs
+        assert kwargs["input_tokens"] == 50
+        assert kwargs["source"] == "sidecar"
 
-    def test_turn_failed(self, consumer):
+    async def test_turn_failed(self, consumer):
         raw = {"event": {"type": "turn_failed", "error": "out of memory"}, "timestamp": "ts4"}
-        events = consumer._translate("a1", "Agent", raw)
+        events = await consumer._translate("a1", "Agent", raw)
         assert len(events) == 1
         assert events[0].event_type == "agent.error"
         assert "out of memory" in events[0].content["error"]
 
-    def test_timeline_significant_tool(self, consumer):
+    async def test_timeline_significant_tool(self, consumer):
         raw = {"event": {"type": "timeline", "item": {"type": "tool_call", "name": "Edit", "status": "ok"}}}
-        events = consumer._translate("a1", "Agent", raw)
+        events = await consumer._translate("a1", "Agent", raw)
         assert len(events) == 1
         assert events[0].event_type == "agent.tool_use"
         assert events[0].content["tool"] == "Edit"
 
-    def test_timeline_insignificant_tool_ignored(self, consumer):
+    async def test_timeline_insignificant_tool_ignored(self, consumer):
         raw = {"event": {"type": "timeline", "item": {"type": "tool_call", "name": "Read", "status": "ok"}}}
-        events = consumer._translate("a1", "Agent", raw)
+        events = await consumer._translate("a1", "Agent", raw)
         assert len(events) == 0
 
-    def test_timeline_permission_tool(self, consumer):
+    async def test_timeline_permission_tool(self, consumer):
         raw = {"event": {"type": "timeline", "item": {"type": "tool_call", "name": "permission:Bash", "args": "rm -rf /"}}}
-        events = consumer._translate("a1", "Agent", raw)
+        events = await consumer._translate("a1", "Agent", raw)
         assert len(events) == 1
         assert events[0].event_type == "agent.permission"
         assert events[0].content["tool"] == "Bash"
 
-    def test_timeline_assistant_message_ignored(self, consumer):
+    async def test_timeline_assistant_message_ignored(self, consumer):
         raw = {"event": {"type": "timeline", "item": {"type": "assistant_message", "text": "hello"}}}
-        events = consumer._translate("a1", "Agent", raw)
+        events = await consumer._translate("a1", "Agent", raw)
         assert len(events) == 0
 
-    def test_unknown_event_ignored(self, consumer):
+    async def test_unknown_event_ignored(self, consumer):
         raw = {"event": {"type": "unknown_thing"}}
-        events = consumer._translate("a1", "Agent", raw)
+        events = await consumer._translate("a1", "Agent", raw)
         assert len(events) == 0
 
 

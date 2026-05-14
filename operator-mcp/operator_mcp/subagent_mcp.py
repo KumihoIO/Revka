@@ -24,6 +24,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
+from operator_mcp.budget_authority import check_agent_budget
 
 _log = lambda msg: print(f"[operator-tools] {msg}", file=sys.stderr, flush=True)
 
@@ -290,6 +291,10 @@ async def _dispatch(name: str, args: dict[str, Any]) -> dict[str, Any]:
         return {"error": "Operator sidecar not available"}
 
     if name == "create_agent":
+        budget_error = await check_agent_budget()
+        if budget_error:
+            return budget_error
+
         expanded_cwd = os.path.realpath(os.path.expanduser(args["cwd"]))
         if not os.path.isdir(expanded_cwd):
             return {"error": f"Directory does not exist: {expanded_cwd}"}
@@ -345,6 +350,9 @@ async def _dispatch(name: str, args: dict[str, Any]) -> dict[str, Any]:
         return {"agent_id": agent_id, "status": "running", "message": "Timed out after 120s"}
 
     if name == "send_agent_prompt":
+        budget_error = await check_agent_budget()
+        if budget_error:
+            return budget_error
         return await sidecar.send_query(args["agent_id"], args["prompt"])
 
     if name == "get_agent_activity":

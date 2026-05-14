@@ -110,18 +110,24 @@ async def tool_system_dashboard(args: dict[str, Any]) -> dict[str, Any]:
     # -- Cost summary --
     if include_costs:
         try:
-            from ..operator_mcp import COST_TRACKER
-            summary = COST_TRACKER.get_summary()
+            from ..operator_mcp import CONSTRUCT_GW
+            summary = await CONSTRUCT_GW.get_cost_summary()
+            if summary is None:
+                raise RuntimeError("gateway budget authority unavailable")
             result["costs"] = {
                 "session_cost_usd": summary.get("session_cost_usd", 0),
-                "session_tokens": summary.get("session_tokens", {}),
                 "daily_cost_usd": summary.get("daily_cost_usd", 0),
                 "monthly_cost_usd": summary.get("monthly_cost_usd", 0),
+                "total_tokens": summary.get("total_tokens", 0),
                 "request_count": summary.get("request_count", 0),
                 "by_model": summary.get("by_model", {}),
+                "by_agent": summary.get("by_agent", {}),
+                "by_source": summary.get("by_source", {}),
+                "budget": summary.get("budget", {}),
+                "source": "gateway",
             }
         except Exception:
-            result["costs"] = {"error": "Cost tracker unavailable"}
+            result["costs"] = {"error": "Gateway budget authority unavailable"}
 
     # -- System health --
     if include_health:

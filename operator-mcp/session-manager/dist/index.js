@@ -267,7 +267,7 @@ function main() {
     const socketArg = process.argv.indexOf("--socket");
     const socketPath = socketArg >= 0 && process.argv[socketArg + 1]
         ? process.argv[socketArg + 1]
-        : `${process.env.HOME}/.construct/operator/session-manager.sock`;
+        : `${process.env.HOME}/.construct/operator_mcp/session-manager.sock`;
     const pidPath = socketPath + ".pid";
     // ---- Singleton guardrail ----
     // If another session manager is alive, exit immediately.

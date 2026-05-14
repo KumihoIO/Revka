@@ -363,6 +363,8 @@ function extractUsage(message) {
         inputTokens: usage.input_tokens,
         outputTokens: usage.output_tokens,
         totalCostUsd: usage.total_cost_usd,
+        model: usage.model ?? usage.model_name ?? message.model ?? message.result?.model,
+        provider: usage.provider ?? message.provider ?? "claude",
     };
 }
 const MAX_RECOVERY_ATTEMPTS = 2;
@@ -408,6 +410,13 @@ export function createClaudeSession(config, onEvent) {
                     }
                     const events = translateMessage(message, turnId, streamState);
                     for (const event of events) {
+                        if (event.type === "turn_completed" && event.usage) {
+                            event.usage = {
+                                ...event.usage,
+                                model: event.usage.model ?? config.model,
+                                provider: event.usage.provider ?? "claude",
+                            };
+                        }
                         accumulatedEvents.push(event);
                         // Accumulate usage
                         if (event.type === "turn_completed" && event.usage) {
@@ -415,6 +424,8 @@ export function createClaudeSession(config, onEvent) {
                                 inputTokens: (handle.usage.inputTokens ?? 0) + (event.usage.inputTokens ?? 0),
                                 outputTokens: (handle.usage.outputTokens ?? 0) + (event.usage.outputTokens ?? 0),
                                 totalCostUsd: (handle.usage.totalCostUsd ?? 0) + (event.usage.totalCostUsd ?? 0),
+                                model: event.usage.model ?? handle.usage.model,
+                                provider: event.usage.provider ?? handle.usage.provider,
                             };
                         }
                         onEvent(event);

@@ -28,7 +28,6 @@ use axum::{
 };
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
-use std::sync::Arc;
 use tracing::debug;
 
 /// Optional connection parameters sent as the first WebSocket message.
@@ -907,10 +906,10 @@ async fn process_chat_message(
     // Scope the tool-loop cost tracker so token usage reported mid-stream
     // (via StreamEvent::Usage) is recorded against the global CostTracker.
     // Without this scope, record_tool_loop_cost_usage is a no-op.
-    let cost_tracking_context = state.cost_tracker.clone().map(|tracker| {
-        let prices = Arc::new(state.config.lock().cost.prices.clone());
-        crate::agent::cost::ToolLoopCostTrackingContext::new(tracker, prices)
-    });
+    let cost_tracking_context = state
+        .cost_tracker
+        .clone()
+        .map(|tracker| crate::agent::cost::ToolLoopCostTrackingContext::new(tracker, "gateway"));
     let turn_fut = crate::agent::loop_::TOOL_LOOP_COST_TRACKING_CONTEXT
         .scope(cost_tracking_context, async {
             agent.turn_streamed(&content_owned, event_tx).await

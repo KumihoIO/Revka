@@ -1,6 +1,5 @@
-use crate::config::schema::ModelPricing;
 use crate::cost::CostTracker;
-use crate::cost::types::{BudgetCheck, TokenUsage as CostTokenUsage};
+use crate::cost::types::{BudgetCheck, CostRecordMetadata};
 use std::sync::Arc;
 
 // ── Cost tracking via task-local ──
@@ -10,15 +9,15 @@ use std::sync::Arc;
 #[derive(Clone)]
 pub(crate) struct ToolLoopCostTrackingContext {
     pub tracker: Arc<CostTracker>,
-    pub prices: Arc<std::collections::HashMap<String, ModelPricing>>,
+    pub source: String,
 }
 
 impl ToolLoopCostTrackingContext {
-    pub(crate) fn new(
-        tracker: Arc<CostTracker>,
-        prices: Arc<std::collections::HashMap<String, ModelPricing>>,
-    ) -> Self {
-        Self { tracker, prices }
+    pub(crate) fn new(tracker: Arc<CostTracker>, source: impl Into<String>) -> Self {
+        Self {
+            tracker,
+            source: source.into(),
+        }
     }
 }
 
@@ -49,65 +48,29 @@ pub(crate) fn record_tool_loop_cost_usage(
             "Cost tracking received zero-token usage; recording request with zero tokens (provider may not be reporting usage)"
         );
     }
-    // Multi-tier model pricing lookup:
-    //   1. Direct name          → "claude-sonnet-4-6"
-    //   2. Provider/model       → "anthropic/claude-sonnet-4-6"
-    //   3. Suffix after `/`     → strip provider prefix from model string
-    //   4. Fuzzy: find a pricing key whose model portion starts with our model's
-    //      base name (e.g. "claude-sonnet-4" matches "anthropic/claude-sonnet-4-20250514").
-    //      This handles short aliases (claude-sonnet-4-6) vs full versioned names.
-    let pricing = ctx
-        .prices
-        .get(model)
-        .or_else(|| ctx.prices.get(&format!("{provider_name}/{model}")))
-        .or_else(|| {
-            model
-                .rsplit_once('/')
-                .and_then(|(_, suffix)| ctx.prices.get(suffix))
-        })
-        .or_else(|| {
-            // Derive a base name by stripping the last `-<digits>` segment for fuzzy matching.
-            // "claude-sonnet-4-6" → base "claude-sonnet-4"
-            // "claude-opus-4-20250514" → base "claude-opus-4"
-            let base = model
-                .rsplit_once('-')
-                .filter(|(_, tail)| tail.chars().all(|c| c.is_ascii_digit()))
-                .map_or(model, |(prefix, _)| prefix);
-            ctx.prices.iter().find_map(|(key, entry)| {
-                // Extract model portion after provider prefix: "anthropic/claude-sonnet-4-..." → "claude-sonnet-4-..."
-                let model_part = key.rsplit_once('/').map_or(key.as_str(), |(_, m)| m);
-                if model_part.starts_with(base) {
-                    Some(entry)
-                } else {
-                    None
-                }
-            })
-        });
-    let cost_usage = CostTokenUsage::new(
+    let metadata = CostRecordMetadata {
+        source: Some(ctx.source),
+        provider: Some(provider_name.to_string()),
+        ..Default::default()
+    };
+
+    match ctx.tracker.record_usage_from_tokens(
+        provider_name,
         model,
         input_tokens,
         output_tokens,
-        pricing.map_or(0.0, |entry| entry.input),
-        pricing.map_or(0.0, |entry| entry.output),
-    );
-
-    if pricing.is_none() {
-        tracing::debug!(
-            provider = provider_name,
-            model,
-            "Cost tracking recorded token usage with zero pricing (no pricing entry found)"
-        );
+        metadata,
+    ) {
+        Ok(cost_usage) => Some((cost_usage.total_tokens, cost_usage.cost_usd)),
+        Err(error) => {
+            tracing::warn!(
+                provider = provider_name,
+                model,
+                "Failed to record cost tracking usage: {error}"
+            );
+            Some((total_tokens, 0.0))
+        }
     }
-
-    if let Err(error) = ctx.tracker.record_usage(cost_usage.clone()) {
-        tracing::warn!(
-            provider = provider_name,
-            model,
-            "Failed to record cost tracking usage: {error}"
-        );
-    }
-
-    Some((cost_usage.total_tokens, cost_usage.cost_usd))
 }
 
 /// Check budget before an LLM call. Returns `None` when no cost tracking

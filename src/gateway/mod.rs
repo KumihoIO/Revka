@@ -1683,6 +1683,7 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
         )
         // Old /api/memory CRUD removed — use Kumiho via /api/memory/graph instead.
         .route("/api/cost", get(api::handle_api_cost))
+        .route("/api/cost/usage", post(api::handle_api_cost_usage))
         .route("/api/audit", get(api::handle_api_audit))
         .route("/api/audit/verify", get(api::handle_api_audit_verify))
         .route("/api/cli-tools", get(api::handle_api_cli_tools))
