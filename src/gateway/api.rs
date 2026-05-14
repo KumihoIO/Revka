@@ -3,6 +3,7 @@
 //! All `/api/*` routes require bearer token authentication (PairingGuard).
 
 use super::AppState;
+use crate::channels::session_backend::SessionBackend;
 use axum::{
     extract::{ConnectInfo, Path, Query, State},
     http::{HeaderMap, StatusCode, header},
@@ -1468,7 +1469,55 @@ fn hydrate_config_for_save(
 
 // ── Session API handlers ─────────────────────────────────────────
 
-/// GET /api/sessions — list gateway sessions
+const GATEWAY_SESSION_KEY_PREFIX: &str = "gw_";
+const DASHBOARD_SESSION_CHANNEL: &str = "dashboard";
+const CHANNEL_SESSION_PREFIXES: &[(&str, &str)] = &[
+    ("nextcloud_talk_", "nextcloud_talk"),
+    ("discord_", "discord"),
+    ("telegram_", "telegram"),
+    ("slack_", "slack"),
+    ("matrix_", "matrix"),
+    ("mattermost_", "mattermost"),
+    ("whatsapp_", "whatsapp"),
+    ("linq_", "linq"),
+    ("wati_", "wati"),
+    ("lark_", "lark"),
+    ("qq_", "qq"),
+];
+
+fn dashboard_session_id_from_key(session_key: &str) -> Option<&str> {
+    session_key.strip_prefix(GATEWAY_SESSION_KEY_PREFIX)
+}
+
+fn gateway_session_key(id: &str) -> String {
+    format!("{GATEWAY_SESSION_KEY_PREFIX}{id}")
+}
+
+fn channel_from_session_key(session_key: &str) -> &str {
+    for (prefix, channel) in CHANNEL_SESSION_PREFIXES {
+        if session_key.starts_with(prefix) {
+            return channel;
+        }
+    }
+
+    session_key
+        .split_once('_')
+        .map(|(channel, _)| channel)
+        .unwrap_or("channel")
+}
+
+fn session_status(
+    now: chrono::DateTime<chrono::Utc>,
+    last_activity: chrono::DateTime<chrono::Utc>,
+) -> &'static str {
+    if (now - last_activity).num_minutes() < 5 {
+        "active"
+    } else {
+        "idle"
+    }
+}
+
+/// GET /api/sessions — list dashboard chat sessions
 pub async fn handle_api_sessions_list(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1487,21 +1536,16 @@ pub async fn handle_api_sessions_list(
 
     let now = chrono::Utc::now();
     let all_metadata = backend.list_sessions_with_metadata();
-    let gw_sessions: Vec<serde_json::Value> = all_metadata
+    let mut sessions: Vec<serde_json::Value> = all_metadata
         .into_iter()
         .filter_map(|meta| {
-            let id = meta.key.strip_prefix("gw_")?;
-            let status = if (now - meta.last_activity).num_minutes() < 5 {
-                "active"
-            } else {
-                "idle"
-            };
+            let id = dashboard_session_id_from_key(&meta.key)?;
             let mut entry = serde_json::json!({
                 "id": id,
-                "channel": "gateway",
+                "channel": DASHBOARD_SESSION_CHANNEL,
                 "started_at": meta.created_at.to_rfc3339(),
                 "last_activity": meta.last_activity.to_rfc3339(),
-                "status": status,
+                "status": session_status(now, meta.last_activity),
                 "message_count": meta.message_count,
             });
             if let Some(name) = meta.name {
@@ -1510,20 +1554,54 @@ pub async fn handle_api_sessions_list(
             Some(entry)
         })
         .collect();
+
+    let (workspace_dir, channel_session_persistence) = {
+        let config = state.config.lock();
+        (
+            config.workspace_dir.clone(),
+            config.channels_config.session_persistence,
+        )
+    };
+    if channel_session_persistence
+        && let Ok(channel_store) = crate::channels::session_store::SessionStore::new(&workspace_dir)
+    {
+        sessions.extend(
+            channel_store
+                .list_sessions_with_metadata()
+                .into_iter()
+                .filter(|meta| dashboard_session_id_from_key(&meta.key).is_none())
+                .map(|meta| {
+                    serde_json::json!({
+                        "id": meta.key,
+                        "channel": channel_from_session_key(&meta.key),
+                        "started_at": meta.created_at.to_rfc3339(),
+                        "last_activity": meta.last_activity.to_rfc3339(),
+                        "status": session_status(now, meta.last_activity),
+                        "message_count": meta.message_count,
+                    })
+                }),
+        );
+    }
+
+    sessions.sort_by(|a, b| {
+        let a_ts = a["last_activity"].as_str().unwrap_or_default();
+        let b_ts = b["last_activity"].as_str().unwrap_or_default();
+        b_ts.cmp(a_ts)
+    });
     let archived_session_ids: Vec<String> = backend
         .list_archived_sessions()
         .into_iter()
-        .filter_map(|meta| meta.key.strip_prefix("gw_").map(ToOwned::to_owned))
+        .filter_map(|meta| dashboard_session_id_from_key(&meta.key).map(ToOwned::to_owned))
         .collect();
 
     Json(serde_json::json!({
-        "sessions": gw_sessions,
+        "sessions": sessions,
         "archived_session_ids": archived_session_ids,
     }))
     .into_response()
 }
 
-/// GET /api/sessions/{id}/messages — load persisted gateway WebSocket chat transcript
+/// GET /api/sessions/{id}/messages — load persisted dashboard chat transcript
 pub async fn handle_api_session_messages(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1542,7 +1620,7 @@ pub async fn handle_api_session_messages(
         .into_response();
     };
 
-    let session_key = format!("gw_{id}");
+    let session_key = gateway_session_key(&id);
     let msgs = backend.load(&session_key);
     let messages: Vec<serde_json::Value> = msgs
         .into_iter()
@@ -1557,7 +1635,7 @@ pub async fn handle_api_session_messages(
     .into_response()
 }
 
-/// DELETE /api/sessions/{id} — archive a gateway session
+/// DELETE /api/sessions/{id} — archive a dashboard chat session
 pub async fn handle_api_session_delete(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1575,7 +1653,7 @@ pub async fn handle_api_session_delete(
             .into_response();
     };
 
-    let session_key = format!("gw_{id}");
+    let session_key = gateway_session_key(&id);
     match backend.archive_session(&session_key) {
         Ok(Some(archived_at)) => Json(serde_json::json!({
             "deleted": true,
@@ -1597,7 +1675,7 @@ pub async fn handle_api_session_delete(
     }
 }
 
-/// PUT /api/sessions/{id} — rename a gateway session
+/// PUT /api/sessions/{id} — rename a dashboard chat session
 pub async fn handle_api_session_rename(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1625,7 +1703,7 @@ pub async fn handle_api_session_rename(
             .into_response();
     }
 
-    let session_key = format!("gw_{id}");
+    let session_key = gateway_session_key(&id);
 
     // Verify the session exists before renaming
     let sessions = backend.list_sessions();
@@ -1668,7 +1746,7 @@ pub async fn handle_api_sessions_running(
     let sessions: Vec<serde_json::Value> = running
         .into_iter()
         .filter_map(|meta| {
-            let session_id = meta.key.strip_prefix("gw_")?;
+            let session_id = dashboard_session_id_from_key(&meta.key)?;
             Some(serde_json::json!({
                 "session_id": session_id,
                 "created_at": meta.created_at.to_rfc3339(),
@@ -1699,7 +1777,7 @@ pub async fn handle_api_session_state(
             .into_response();
     };
 
-    let session_key = format!("gw_{id}");
+    let session_key = gateway_session_key(&id);
     match backend.get_session_state(&session_key) {
         Ok(Some(ss)) => {
             let mut resp = serde_json::json!({
@@ -3145,6 +3223,36 @@ mod tests {
         let headers = HeaderMap::new();
         let err = require_auth(&state, &headers).expect_err("missing creds should fail");
         assert_eq!(err.0, StatusCode::UNAUTHORIZED);
+    }
+
+    #[test]
+    fn dashboard_session_id_from_key_only_accepts_gateway_storage_prefix() {
+        assert_eq!(
+            dashboard_session_id_from_key("gw_operator-main"),
+            Some("operator-main")
+        );
+        assert_eq!(
+            dashboard_session_id_from_key("gw_8d43b6ef-0f18-4c3f-b04c-3a03f79e2c72"),
+            Some("8d43b6ef-0f18-4c3f-b04c-3a03f79e2c72")
+        );
+        assert_eq!(dashboard_session_id_from_key("discord_123_456"), None);
+        assert_eq!(dashboard_session_id_from_key("telegram_chat_alice"), None);
+    }
+
+    #[test]
+    fn gateway_session_key_is_private_dashboard_storage_key() {
+        assert_eq!(gateway_session_key("operator-main"), "gw_operator-main");
+    }
+
+    #[test]
+    fn channel_from_session_key_preserves_connected_channel_source() {
+        assert_eq!(channel_from_session_key("discord_123_456"), "discord");
+        assert_eq!(channel_from_session_key("telegram_chat_alice"), "telegram");
+        assert_eq!(
+            channel_from_session_key("nextcloud_talk_room_alice"),
+            "nextcloud_talk"
+        );
+        assert_eq!(channel_from_session_key("custom_surface_user"), "custom");
     }
 
     #[test]
