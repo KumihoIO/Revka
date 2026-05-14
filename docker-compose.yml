@@ -9,10 +9,10 @@
 
 services:
   construct:
-    image: ghcr.io/KumihoIO/construct-os:latest
+    image: ghcr.io/kumihoio/construct-os:latest
     # For ARM64 environments where the distroless image exits immediately,
     # switch to the Debian compatibility image instead:
-    # image: ghcr.io/KumihoIO/construct-os:debian
+    # image: ghcr.io/kumihoio/construct-os:debian
     # Or build locally (distroless, no shell):
     # build: .
     # Or build the Debian variant (includes bash, git, curl):

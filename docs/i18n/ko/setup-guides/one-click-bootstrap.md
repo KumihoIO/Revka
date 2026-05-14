@@ -93,7 +93,7 @@ curl -fsSL https://raw.githubusercontent.com/KumihoIO/construct-os/main/install.
 
 Podman의 경우 `--userns keep-id`와 `:Z` 볼륨 라벨로 실행되어, 워크스페이스/설정 마운트가 컨테이너 내부에서 쓰기 가능 상태로 유지됩니다.
 
-`--skip-build`를 함께 주면 로컬 이미지 빌드를 건너뜁니다. 이때 인스톨러는 먼저 로컬 Docker 태그(`CONSTRUCT_DOCKER_IMAGE`, 기본값 `construct-bootstrap:local`)를 시도하고, 없으면 `ghcr.io/KumihoIO/construct-os:latest`를 받아 로컬 태그로 붙인 뒤 실행합니다.
+`--skip-build`를 함께 주면 로컬 이미지 빌드를 건너뜁니다. 이때 인스톨러는 먼저 로컬 Docker 태그(`CONSTRUCT_DOCKER_IMAGE`, 기본값 `construct-bootstrap:local`)를 시도하고, 없으면 `ghcr.io/kumihoio/construct-os:latest`를 받아 로컬 태그로 붙인 뒤 실행합니다.
 
 ### Docker / Podman 컨테이너 정지·재시작
 
@@ -200,7 +200,7 @@ CONSTRUCT_API_KEY="sk-..." CONSTRUCT_PROVIDER="openrouter" ./install.sh
 
 - `--install-system-deps`
 - `--install-rust`
-- `--skip-build` (`--docker` 모드: 로컬 이미지가 있으면 사용, 없으면 `ghcr.io/KumihoIO/construct-os:latest`를 받아 옴)
+- `--skip-build` (`--docker` 모드: 로컬 이미지가 있으면 사용, 없으면 `ghcr.io/kumihoio/construct-os:latest`를 받아 옴)
 - `--skip-install`
 - `--provider <id>`
 

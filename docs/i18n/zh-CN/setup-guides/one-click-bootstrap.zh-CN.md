@@ -92,7 +92,7 @@ curl -fsSL https://raw.githubusercontent.com/KumihoIO/construct-os/main/install.
 
 对于 Podman，安装程序会使用 `--userns keep-id` 和 `:Z` 卷标签，确保工作区/配置挂载在容器内保持可写。
 
-如果你添加 `--skip-build` 参数，安装程序会跳过本地镜像构建。它会首先尝试本地 Docker 标签（`CONSTRUCT_DOCKER_IMAGE`，默认：`construct-bootstrap:local`）；如果不存在，会拉取 `ghcr.io/KumihoIO/construct-os:latest` 并在运行前打本地标签。
+如果你添加 `--skip-build` 参数，安装程序会跳过本地镜像构建。它会首先尝试本地 Docker 标签（`CONSTRUCT_DOCKER_IMAGE`，默认：`construct-bootstrap:local`）；如果不存在，会拉取 `ghcr.io/kumihoio/construct-os:latest` 并在运行前打本地标签。
 
 ### 快速引导（非交互式）
 
@@ -110,7 +110,7 @@ CONSTRUCT_API_KEY=\"sk-...\" CONSTRUCT_PROVIDER=\"openrouter\" ./install.sh
 
 - `--install-system-deps`
 - `--install-rust`
-- `--skip-build`（在 `--docker` 模式下：如果存在使用本地镜像，否则拉取 `ghcr.io/KumihoIO/construct-os:latest`）
+- `--skip-build`（在 `--docker` 模式下：如果存在使用本地镜像，否则拉取 `ghcr.io/kumihoio/construct-os:latest`）
 - `--skip-install`
 - `--provider <id>`
 

@@ -99,7 +99,7 @@ workspace/config mounts remain writable inside the container.
 
 If you add `--skip-build`, the installer skips local image build. It first tries the local
 Docker tag (`CONSTRUCT_DOCKER_IMAGE`, default: `construct-bootstrap:local`); if missing,
-it pulls `ghcr.io/KumihoIO/construct-os:latest` and tags it locally before running.
+it pulls `ghcr.io/kumihoio/construct-os:latest` and tags it locally before running.
 
 ### Stopping and restarting a Docker/Podman container
 
@@ -214,7 +214,7 @@ CONSTRUCT_API_KEY="sk-..." CONSTRUCT_PROVIDER="openrouter" ./install.sh
 
 - `--install-system-deps`
 - `--install-rust`
-- `--skip-build` (in `--docker` mode: use local image if present, otherwise pull `ghcr.io/KumihoIO/construct-os:latest`)
+- `--skip-build` (in `--docker` mode: use local image if present, otherwise pull `ghcr.io/kumihoio/construct-os:latest`)
 - `--skip-install`
 - `--provider <id>`
 
