@@ -16,6 +16,7 @@ pub mod operator;
 pub mod personality;
 pub mod prompt;
 pub mod thinking;
+pub mod token_compression;
 pub mod tool_execution;
 
 #[cfg(test)]

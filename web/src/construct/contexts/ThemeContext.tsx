@@ -5,6 +5,14 @@ import type { ThemeMode, AccentColor, UiFont, MonoFont } from './ThemeContextDef
 import { uiFontStacks, monoFontStacks } from './ThemeContextDef';
 import { loadUiFont, loadMonoFont } from './fontLoader';
 import { colorThemeMap, DEFAULT_DARK_THEME, DEFAULT_LIGHT_THEME, type ColorThemeId } from './colorThemes';
+import type { SkinAssetSlot, SkinModeDefinition, SkinSummary } from '@/types/api';
+import {
+  deleteSkin as apiDeleteSkin,
+  getSkins as apiGetSkins,
+  importSkinZip as apiImportSkinZip,
+} from '@/lib/api';
+import { skinAssetPath } from '@/lib/basePath';
+import { useAuth } from '@/hooks/useAuth';
 
 /** Accent-only overrides (applied on top of color theme when user picks a custom accent). */
 const accents: Record<AccentColor, Record<string, string>> = {
@@ -63,6 +71,37 @@ function applyVars(vars: Record<string, string>) {
   }
 }
 
+const pcBridge: Record<string, string[]> = {
+  '--construct-bg-base': ['--pc-bg-base'],
+  '--construct-bg-surface': ['--pc-bg-surface'],
+  '--construct-bg-elevated': ['--pc-bg-elevated', '--pc-bg-code'],
+  '--construct-bg-input': ['--pc-bg-input'],
+  '--construct-bg-shell': ['--pc-bg-sidebar'],
+  '--construct-border-soft': ['--pc-border'],
+  '--construct-border-strong': ['--pc-border-strong'],
+  '--construct-text-primary': ['--pc-text-primary'],
+  '--construct-text-secondary': ['--pc-text-secondary'],
+  '--construct-text-muted': ['--pc-text-muted'],
+  '--construct-text-faint': ['--pc-text-faint'],
+  '--construct-signal-live': ['--pc-accent'],
+  '--construct-signal-selected': ['--pc-accent-light'],
+  '--construct-signal-live-soft': ['--pc-accent-glow'],
+  '--construct-signal-network-soft': ['--pc-hover'],
+  '--construct-border-neutral': ['--pc-separator'],
+};
+
+function bridgePcVars(tokens: Record<string, string>): Record<string, string> {
+  const bridged: Record<string, string> = {};
+  for (const [constructToken, pcTokens] of Object.entries(pcBridge)) {
+    const value = tokens[constructToken];
+    if (!value) continue;
+    for (const pcToken of pcTokens) {
+      bridged[pcToken] = value;
+    }
+  }
+  return bridged;
+}
+
 /** Resolve which color theme to use based on the mode. */
 function resolveColorTheme(mode: ThemeMode, colorTheme: ColorThemeId): ColorThemeId {
   if (mode === 'system') {
@@ -93,6 +132,7 @@ interface ThemeSettings {
   monoFont: MonoFont;
   uiFontSize: number;
   monoFontSize: number;
+  activeSkinId: string | null;
 }
 
 function fontVars(uiFont: UiFont, monoFont: MonoFont, uiFontSize: number, monoFontSize: number) {
@@ -104,7 +144,34 @@ function fontVars(uiFont: UiFont, monoFont: MonoFont, uiFontSize: number, monoFo
   };
 }
 
+function modeForScheme(skin: SkinSummary | null, scheme: 'dark' | 'light' | 'oled'): SkinModeDefinition | null {
+  if (!skin) return null;
+  const preferred = scheme === 'light' ? skin.manifest.modes.light : skin.manifest.modes.dark;
+  return preferred ?? skin.manifest.modes.dark ?? skin.manifest.modes.light ?? null;
+}
+
+function cssUrl(url: string): string {
+  return `url("${url.replace(/"/g, '%22')}")`;
+}
+
+function skinVars(
+  skin: SkinSummary | null,
+  scheme: 'dark' | 'light' | 'oled',
+): Record<string, string> {
+  const mode = modeForScheme(skin, scheme);
+  const tokens = mode?.tokens ?? {};
+  const assets = mode?.assets ?? {};
+  const vars: Record<string, string> = {
+    ...tokens,
+    ...bridgePcVars(tokens),
+    '--construct-skin-shellTexture': assets.shellTexture && skin ? cssUrl(skinAssetPath(skin.id, assets.shellTexture)) : 'none',
+    '--construct-skin-panelDecoration': assets.panelDecoration && skin ? cssUrl(skinAssetPath(skin.id, assets.panelDecoration)) : 'none',
+  };
+  return vars;
+}
+
 export function ThemeProvider({ children }: { children: ReactNode }) {
+  const { isAuthenticated, loading: authLoading } = useAuth();
   const [stored] = useState(loadStored);
   const [theme, setThemeState] = useState<ThemeMode>(stored.theme);
   const [accent, setAccentState] = useState<AccentColor>(stored.accent);
@@ -113,6 +180,9 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const [monoFont, setMonoFontState] = useState<MonoFont>(stored.monoFont);
   const [uiFontSize, setUiFontSizeState] = useState<number>(stored.uiFontSize);
   const [monoFontSize, setMonoFontSizeState] = useState<number>(stored.monoFontSize);
+  const [activeSkinId, setActiveSkinIdState] = useState<string | null>(stored.activeSkinId);
+  const [installedSkins, setInstalledSkins] = useState<SkinSummary[]>([]);
+  const [skinsLoading, setSkinsLoading] = useState(false);
 
   const persist = useCallback((s: ThemeSettings) => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
@@ -123,6 +193,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       monoFont: s.monoFont,
       uiFontSize: s.uiFontSize,
       monoFontSize: s.monoFontSize,
+      activeSkinId: s.activeSkinId,
     }));
   }, []);
 
@@ -130,27 +201,30 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     const resolvedId = resolveColorTheme(s.theme, s.colorTheme);
     const ct = colorThemeMap[resolvedId];
     const themeVars = ct?.vars ?? colorThemeMap[DEFAULT_DARK_THEME].vars;
+    const scheme = resolveThemeScheme(s.theme, s.colorTheme);
+    const activeSkin = installedSkins.find((skin) => skin.id === s.activeSkinId) ?? null;
     // Color theme provides base + its own accent. User accent overrides on top.
     applyVars({
       ...themeVars,
       ...accents[s.accent],
       ...fontVars(s.uiFont, s.monoFont, s.uiFontSize, s.monoFontSize),
+      ...skinVars(activeSkin, scheme),
     });
-  }, []);
+  }, [installedSkins]);
 
   const setTheme = useCallback((t: ThemeMode) => {
     setThemeState(t);
-    const next: ThemeSettings = { theme: t, accent, colorTheme, uiFont, monoFont, uiFontSize, monoFontSize };
+    const next: ThemeSettings = { theme: t, accent, colorTheme, uiFont, monoFont, uiFontSize, monoFontSize, activeSkinId };
     applyAll(next);
     persist(next);
-  }, [accent, colorTheme, uiFont, monoFont, uiFontSize, monoFontSize, applyAll, persist]);
+  }, [accent, colorTheme, uiFont, monoFont, uiFontSize, monoFontSize, activeSkinId, applyAll, persist]);
 
   const setAccent = useCallback((a: AccentColor) => {
     setAccentState(a);
-    const next: ThemeSettings = { theme, accent: a, colorTheme, uiFont, monoFont, uiFontSize, monoFontSize };
+    const next: ThemeSettings = { theme, accent: a, colorTheme, uiFont, monoFont, uiFontSize, monoFontSize, activeSkinId };
     applyAll(next);
     persist(next);
-  }, [theme, colorTheme, uiFont, monoFont, uiFontSize, monoFontSize, applyAll, persist]);
+  }, [theme, colorTheme, uiFont, monoFont, uiFontSize, monoFontSize, activeSkinId, applyAll, persist]);
 
   const setColorTheme = useCallback((c: ColorThemeId) => {
     setColorThemeState(c);
@@ -165,62 +239,144 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       }
       setThemeState(newMode);
     }
-    const next: ThemeSettings = { theme: newMode, accent, colorTheme: c, uiFont, monoFont, uiFontSize, monoFontSize };
+    const next: ThemeSettings = { theme: newMode, accent, colorTheme: c, uiFont, monoFont, uiFontSize, monoFontSize, activeSkinId };
     applyAll(next);
     persist(next);
-  }, [theme, accent, uiFont, monoFont, uiFontSize, monoFontSize, applyAll, persist]);
+  }, [theme, accent, uiFont, monoFont, uiFontSize, monoFontSize, activeSkinId, applyAll, persist]);
 
   const setUiFont = useCallback((f: UiFont) => {
     setUiFontState(f);
     loadUiFont(f);
-    const next: ThemeSettings = { theme, accent, colorTheme, uiFont: f, monoFont, uiFontSize, monoFontSize };
+    const next: ThemeSettings = { theme, accent, colorTheme, uiFont: f, monoFont, uiFontSize, monoFontSize, activeSkinId };
     applyAll(next);
     persist(next);
-  }, [theme, accent, colorTheme, applyAll, persist, monoFont, uiFontSize, monoFontSize]);
+  }, [theme, accent, colorTheme, activeSkinId, applyAll, persist, monoFont, uiFontSize, monoFontSize]);
 
   const setMonoFont = useCallback((f: MonoFont) => {
     setMonoFontState(f);
     loadMonoFont(f);
-    const next: ThemeSettings = { theme, accent, colorTheme, uiFont, monoFont: f, uiFontSize, monoFontSize };
+    const next: ThemeSettings = { theme, accent, colorTheme, uiFont, monoFont: f, uiFontSize, monoFontSize, activeSkinId };
     applyAll(next);
     persist(next);
-  }, [theme, accent, colorTheme, applyAll, persist, uiFont, uiFontSize, monoFontSize]);
+  }, [theme, accent, colorTheme, activeSkinId, applyAll, persist, uiFont, uiFontSize, monoFontSize]);
 
   const setUiFontSize = useCallback((size: number) => {
     const clamped = Math.min(20, Math.max(12, size));
     setUiFontSizeState(clamped);
-    const next: ThemeSettings = { theme, accent, colorTheme, uiFont, monoFont, uiFontSize: clamped, monoFontSize };
+    const next: ThemeSettings = { theme, accent, colorTheme, uiFont, monoFont, uiFontSize: clamped, monoFontSize, activeSkinId };
     applyAll(next);
     persist(next);
-  }, [theme, accent, colorTheme, applyAll, persist, uiFont, monoFont, monoFontSize]);
+  }, [theme, accent, colorTheme, activeSkinId, applyAll, persist, uiFont, monoFont, monoFontSize]);
 
   const setMonoFontSize = useCallback((size: number) => {
     const clamped = Math.min(20, Math.max(12, size));
     setMonoFontSizeState(clamped);
-    const next: ThemeSettings = { theme, accent, colorTheme, uiFont, monoFont, uiFontSize, monoFontSize: clamped };
+    const next: ThemeSettings = { theme, accent, colorTheme, uiFont, monoFont, uiFontSize, monoFontSize: clamped, activeSkinId };
     applyAll(next);
     persist(next);
-  }, [theme, accent, colorTheme, applyAll, persist, uiFont, monoFont, uiFontSize]);
+  }, [theme, accent, colorTheme, activeSkinId, applyAll, persist, uiFont, monoFont, uiFontSize]);
+
+  const setSkin = useCallback((id: string | null) => {
+    const normalized = id && installedSkins.some((skin) => skin.id === id) ? id : null;
+    setActiveSkinIdState(normalized);
+    const next: ThemeSettings = { theme, accent, colorTheme, uiFont, monoFont, uiFontSize, monoFontSize, activeSkinId: normalized };
+    applyAll(next);
+    persist(next);
+  }, [theme, accent, colorTheme, uiFont, monoFont, uiFontSize, monoFontSize, installedSkins, applyAll, persist]);
+
+  const refreshSkins = useCallback(async () => {
+    if (!isAuthenticated) {
+      return;
+    }
+    setSkinsLoading(true);
+    try {
+      const skins = await apiGetSkins();
+      setInstalledSkins(skins);
+      if (activeSkinId && !skins.some((skin) => skin.id === activeSkinId)) {
+        setActiveSkinIdState(null);
+        const next: ThemeSettings = { theme, accent, colorTheme, uiFont, monoFont, uiFontSize, monoFontSize, activeSkinId: null };
+        applyAll(next);
+        persist(next);
+      }
+    } finally {
+      setSkinsLoading(false);
+    }
+  }, [isAuthenticated, activeSkinId, theme, accent, colorTheme, uiFont, monoFont, uiFontSize, monoFontSize, applyAll, persist]);
+
+  const importSkinZip = useCallback(async (file: File) => {
+    const skin = await apiImportSkinZip(file);
+    setInstalledSkins((current) => {
+      const without = current.filter((item) => item.id !== skin.id);
+      return [...without, skin].sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+    });
+    return skin;
+  }, []);
+
+  const deleteSkin = useCallback(async (id: string) => {
+    await apiDeleteSkin(id);
+    setInstalledSkins((current) => current.filter((skin) => skin.id !== id));
+    if (activeSkinId === id) {
+      setActiveSkinIdState(null);
+      const next: ThemeSettings = { theme, accent, colorTheme, uiFont, monoFont, uiFontSize, monoFontSize, activeSkinId: null };
+      applyAll(next);
+      persist(next);
+    }
+  }, [activeSkinId, theme, accent, colorTheme, uiFont, monoFont, uiFontSize, monoFontSize, applyAll, persist]);
 
   useEffect(() => {
-    applyAll({ theme, accent, colorTheme, uiFont, monoFont, uiFontSize, monoFontSize });
+    applyAll({ theme, accent, colorTheme, uiFont, monoFont, uiFontSize, monoFontSize, activeSkinId });
     loadUiFont(uiFont);
     loadMonoFont(monoFont);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
+    if (authLoading || !isAuthenticated) return;
+    void refreshSkins().catch(() => {
+      // The pairing screen may render before API auth is available.
+    });
+  }, [authLoading, isAuthenticated, refreshSkins]);
+
+  useEffect(() => {
+    applyAll({ theme, accent, colorTheme, uiFont, monoFont, uiFontSize, monoFontSize, activeSkinId });
+  }, [installedSkins, activeSkinId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
     if (theme !== 'system') return;
     const mq = window.matchMedia('(prefers-color-scheme: light)');
-    const handler = () => applyAll({ theme, accent, colorTheme, uiFont, monoFont, uiFontSize, monoFontSize });
+    const handler = () => applyAll({ theme, accent, colorTheme, uiFont, monoFont, uiFontSize, monoFontSize, activeSkinId });
     mq.addEventListener('change', handler);
     return () => mq.removeEventListener('change', handler);
-  }, [theme, accent, colorTheme, applyAll, uiFont, monoFont, uiFontSize, monoFontSize]);
+  }, [theme, accent, colorTheme, applyAll, uiFont, monoFont, uiFontSize, monoFontSize, activeSkinId]);
 
   const resolvedTheme = resolveThemeScheme(theme, colorTheme);
+  const activeSkin = installedSkins.find((skin) => skin.id === activeSkinId) ?? null;
+  const activeSkinName = activeSkin?.name ?? null;
+
+  const getSkinAsset = useCallback((slot: SkinAssetSlot): string | null => {
+    const mode = modeForScheme(activeSkin, resolvedTheme);
+    const asset = mode?.assets?.[slot];
+    return activeSkin && asset ? skinAssetPath(activeSkin.id, asset) : null;
+  }, [activeSkin, resolvedTheme]);
 
   const value: ThemeContextValue = {
     theme, accent, colorTheme, uiFont, monoFont, uiFontSize, monoFontSize,
-    resolvedTheme, setTheme, setAccent, setColorTheme, setUiFont, setMonoFont, setUiFontSize, setMonoFontSize,
+    resolvedTheme,
+    activeSkinId,
+    activeSkinName,
+    installedSkins,
+    skinsLoading,
+    setTheme,
+    setAccent,
+    setColorTheme,
+    setUiFont,
+    setMonoFont,
+    setUiFontSize,
+    setMonoFontSize,
+    refreshSkins,
+    setSkin,
+    importSkinZip,
+    deleteSkin,
+    getSkinAsset,
   };
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;

@@ -35,6 +35,18 @@ _STDERR_NOISE_PATTERNS = re.compile(
     re.IGNORECASE,
 )
 
+_TERSE_OUTPUT_CONTRACT = """\
+## Output Contract
+- Concise handoff only: summary, decisions, files, risks, next.
+- Prefer paths/artifact refs over pasted logs or repeated context.
+- Include exact errors only when they affect the next step.
+- No filler, status diary, or tool narration."""
+
+
+def _terse_internal_outputs_enabled() -> bool:
+    raw = os.environ.get("CONSTRUCT_TERSE_INTERNAL_OUTPUTS", "1").strip().lower()
+    return raw not in {"0", "false", "no", "off"}
+
 
 def _is_stderr_noise(line: str) -> bool:
     """Return True if a stderr line is harmless noise, not a real error."""
@@ -361,4 +373,6 @@ def compose_agent_prompt(
             "- If changes include a diff, review it carefully before proceeding"
         )
     parts.append(f"\n## Task\n{task}")
+    if _terse_internal_outputs_enabled():
+        parts.append(_TERSE_OUTPUT_CONTRACT)
     return "\n".join(parts)

@@ -26,6 +26,7 @@ from ..journal import SessionJournal
 from ..kumiho_clients import KumihoAgentPoolClient
 from ..mcp_injection import build_mcp_servers, build_system_prompt
 from ..workflow_context import WorkflowContext
+from ..token_compression import compress_agent_result
 
 # These are set by operator_mcp at startup when the sidecar is available
 _sidecar_client = None  # SessionManagerClient | None
@@ -505,6 +506,7 @@ async def _build_wait_result(agent_id: str, agent: ManagedAgent, *, extra: dict[
     _enrich_from_log(result, agent_id, agent)
     if extra:
         result.update(extra)
+    result = compress_agent_result(result)
 
     # Cache terminal results so future waits are instant and idempotent
     effective_status = extra.get("status", agent.status) if extra else agent.status

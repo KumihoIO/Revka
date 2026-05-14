@@ -2436,6 +2436,10 @@ pub(crate) async fn run_tool_call_loop(
                 }
             }
         }
+        let _ = crate::agent::token_compression::compact_tool_specs(
+            &mut tool_specs,
+            &crate::agent::context_compressor::ContextCompressionConfig::default(),
+        );
         let use_native_tools = provider.supports_native_tools() && !tool_specs.is_empty();
         // Also enable prompt-guided tool injection for non-native providers.
         // Provider::chat() will inject tool instructions into the system prompt
@@ -3456,7 +3460,21 @@ pub(crate) async fn run_tool_call_loop(
                     }
                 }
             }
-            let result_output = truncate_tool_result(&outcome.output, max_tool_result_chars);
+            let command_hint = tool_calls
+                .get(result_index)
+                .and_then(|c| c.arguments.get("command"))
+                .and_then(serde_json::Value::as_str);
+            let compressed = crate::agent::token_compression::compress_tool_output(
+                &tool_name,
+                &outcome.output,
+                max_tool_result_chars,
+                command_hint,
+            );
+            let result_output = if compressed.stats.is_some() {
+                compressed.text
+            } else {
+                truncate_tool_result(&outcome.output, max_tool_result_chars)
+            };
             individual_results.push((tool_call_id, result_output.clone()));
             let _ = writeln!(
                 tool_results,
@@ -3611,16 +3629,22 @@ pub(crate) fn build_tool_instructions(
         .push_str("Continue reasoning with the results until you can give a final answer.\n\n");
     instructions.push_str("### Available Tools\n\n");
 
+    let spec_compression = crate::agent::context_compressor::ContextCompressionConfig::default();
     for tool in tools_registry {
         let desc = tool_descriptions
             .and_then(|td: &ToolDescriptions| td.get(tool.name()))
             .unwrap_or_else(|| tool.description());
+        let mut spec = tool.spec();
+        spec.description = desc.to_string();
+        crate::agent::token_compression::compact_tool_spec(
+            &mut spec,
+            spec_compression.tool_description_max_chars,
+            spec_compression.schema_description_max_chars,
+        );
         let _ = writeln!(
             instructions,
             "**{}**: {}\nParameters: `{}`\n",
-            tool.name(),
-            desc,
-            tool.parameters_schema()
+            spec.name, spec.description, spec.parameters
         );
     }
 
@@ -4231,7 +4255,10 @@ pub async fn run(
                 activated_handle.as_ref(),
                 Some(model_switch_callback.clone()),
                 &config.pacing,
-                config.agent.max_tool_result_chars,
+                crate::agent::context_compressor::effective_live_tool_result_chars(
+                    &config.agent.context_compression,
+                    config.agent.max_tool_result_chars,
+                ),
                 config.agent.max_context_tokens,
                 None, // shared_budget
             )
@@ -4538,7 +4565,10 @@ pub async fn run(
                     activated_handle.as_ref(),
                     Some(model_switch_callback.clone()),
                     &config.pacing,
-                    config.agent.max_tool_result_chars,
+                    crate::agent::context_compressor::effective_live_tool_result_chars(
+                        &config.agent.context_compression,
+                        config.agent.max_tool_result_chars,
+                    ),
                     config.agent.max_context_tokens,
                     None, // shared_budget
                 )

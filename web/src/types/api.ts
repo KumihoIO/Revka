@@ -32,6 +32,36 @@ export interface ToolSpec {
   parameters: any;
 }
 
+export type SkinModeName = 'light' | 'dark';
+export type SkinAssetSlot =
+  | 'brandLogo'
+  | 'operatorAvatar'
+  | 'dashboardHero'
+  | 'shellTexture'
+  | 'panelDecoration';
+
+export interface SkinModeDefinition {
+  tokens?: Record<string, string>;
+  assets?: Partial<Record<SkinAssetSlot, string>>;
+  preview?: string;
+}
+
+export interface SkinManifest {
+  schemaVersion: 1;
+  id: string;
+  name: string;
+  version: string;
+  modes: Partial<Record<SkinModeName, SkinModeDefinition>>;
+}
+
+export interface SkinSummary {
+  id: string;
+  name: string;
+  version: string;
+  manifest: SkinManifest;
+  assetBasePath: string;
+}
+
 export interface CronJob {
   id: string;
   name: string | null;
