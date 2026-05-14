@@ -17,6 +17,7 @@ import Cost from './construct/pages/Cost';
 import Doctor from './construct/pages/Doctor';
 import Integrations from './construct/pages/Integrations';
 import Skills from './construct/pages/Skills';
+import Skins from './construct/pages/Skins';
 import Config from './construct/pages/Config';
 import Cron from './construct/pages/Cron';
 import Tools from './construct/pages/Tools';
@@ -265,6 +266,7 @@ function AppContent() {
             <Route path="/integrations" element={<Integrations />} />
             <Route path="/config" element={<Config />} />
             <Route path="/assets" element={<Assets />} />
+            <Route path="/skins" element={<Skins />} />
             <Route path="/skills" element={<Skills />} />
             <Route path="/logs" element={<Logs />} />
             <Route path="/audit" element={<Audit />} />

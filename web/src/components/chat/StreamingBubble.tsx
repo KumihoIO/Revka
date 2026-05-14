@@ -1,6 +1,7 @@
 import { Bot } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { useTheme } from '@/construct/hooks/useTheme';
 
 interface StreamingBubbleProps {
   content: string;
@@ -12,6 +13,8 @@ interface StreamingBubbleProps {
 
 /** Live-streaming agent response bubble with optional thinking disclosure. */
 export default function StreamingBubble({ content, thinking, richMarkdown, compact }: StreamingBubbleProps) {
+  const { getSkinAsset } = useTheme();
+  const operatorAvatar = getSkinAsset('operatorAvatar');
   const avatarSize = compact ? 'w-7 h-7 rounded-xl' : 'w-9 h-9 rounded-2xl';
   const iconSize = compact ? 'h-3.5 w-3.5' : 'h-4 w-4';
   const bubbleRadius = compact ? 'rounded-xl' : 'rounded-2xl';
@@ -21,10 +24,14 @@ export default function StreamingBubble({ content, thinking, richMarkdown, compa
   return (
     <div className={`flex items-start gap-${compact ? '2.5' : '3'} animate-fade-in`}>
       <div
-        className={`flex-shrink-0 ${avatarSize} flex items-center justify-center border`}
+        className={`flex-shrink-0 ${avatarSize} flex items-center justify-center overflow-hidden border`}
         style={{ background: 'var(--pc-bg-elevated)', borderColor: 'var(--pc-border)' }}
       >
-        <Bot className={iconSize} style={{ color: 'var(--pc-accent)' }} />
+        {operatorAvatar ? (
+          <img src={operatorAvatar} alt="" className="h-full w-full object-cover" draggable={false} />
+        ) : (
+          <Bot className={iconSize} style={{ color: 'var(--pc-accent)' }} />
+        )}
       </div>
       <div
         className={`${bubbleRadius} ${bubblePadding} border ${maxW}`}

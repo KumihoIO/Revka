@@ -525,11 +525,23 @@ Notes:
 | `require_pairing` | `true` | require pairing before bearer auth |
 | `allow_public_bind` | `false` | block accidental public exposure |
 | `path_prefix` | _(none)_ | URL path prefix for reverse-proxy deployments (e.g. `"/construct"`) |
+| `web_root` | _(none)_ | optional filesystem `web/dist` root for gateway-served dashboard assets |
 
 When deploying behind a reverse proxy that maps Construct to a sub-path,
 set `path_prefix` to that sub-path (e.g. `"/construct"`). All gateway
 routes will be served under this prefix. The value must start with `/`
 and must not end with `/`.
+
+Dashboard static asset resolution uses this order:
+
+1. `CONSTRUCT_WEB_ROOT`, when set and non-empty
+2. `gateway.web_root`, when set
+3. embedded `web/dist` in the binary
+4. dashboard unavailable response
+
+`CONSTRUCT_BUILD_WEB=1` opts back into the legacy `build.rs` behavior that
+attempts `npm ci` / `npm run build` during a Rust build. By default, Rust
+builds do not require Node.js.
 
 ## `[tunnel]`
 

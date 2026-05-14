@@ -6,8 +6,12 @@ use std::time::SystemTime;
 fn main() {
     let dist_dir = Path::new("web/dist");
     let web_dir = Path::new("web");
+    let build_web = std::env::var("CONSTRUCT_BUILD_WEB")
+        .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+        .unwrap_or(false);
 
     // Tell Cargo to re-run this script when web sources or bundled assets change.
+    println!("cargo:rerun-if-env-changed=CONSTRUCT_BUILD_WEB");
     println!("cargo:rerun-if-changed=web/src");
     println!("cargo:rerun-if-changed=web/public");
     println!("cargo:rerun-if-changed=web/index.html");
@@ -20,14 +24,11 @@ fn main() {
     println!("cargo:rerun-if-changed=web/vite.config.ts");
     println!("cargo:rerun-if-changed=web/dist");
 
-    // Attempt to build the web frontend if npm is available and web/dist is
-    // missing or stale.  The build is best-effort: when Node.js is not
-    // installed (e.g. CI containers, cross-compilation, minimal dev setups)
-    // we fall back to the existing stub/empty dist directory so the Rust
-    // build still succeeds.
-    let needs_build = web_build_required(web_dir, dist_dir);
-
-    if needs_build
+    // Rust builds are Node-free by default. Official releases should build
+    // web/dist before compiling Rust; developers can opt into the legacy
+    // cargo-triggered web build with CONSTRUCT_BUILD_WEB=1.
+    if build_web
+        && web_build_required(web_dir, dist_dir)
         && web_dir.join("package.json").exists()
         && let Ok(npm) = which_npm()
     {
@@ -82,6 +83,10 @@ fn main() {
                 );
             }
         }
+    } else if !build_web {
+        eprintln!(
+            "cargo:warning=Skipping web frontend build; set CONSTRUCT_BUILD_WEB=1 to build web/dist from build.rs"
+        );
     }
 
     ensure_dist_dir(dist_dir);

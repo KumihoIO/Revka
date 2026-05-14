@@ -13,10 +13,23 @@
   min-height: 100vh;
   color: var(--construct-text-primary);
   background:
+    var(--construct-skin-shellTexture, none),
     radial-gradient(circle at top left, var(--construct-grid-line), transparent 28%),
     radial-gradient(circle at top right, color-mix(in srgb, var(--construct-signal-network) 18%, transparent), transparent 22%),
     linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 18%),
     var(--construct-bg-base);
+  background-size:
+    min(720px, 100vw) auto,
+    auto,
+    auto,
+    auto,
+    auto;
+  background-repeat:
+    repeat,
+    no-repeat,
+    no-repeat,
+    no-repeat,
+    no-repeat;
 }
 
 .construct-shell::before {
@@ -75,7 +88,12 @@
   right: 0.9rem;
   width: 4.5rem;
   height: 4.5rem;
-  background: radial-gradient(circle, color-mix(in srgb, var(--construct-signal-network) 12%, transparent), transparent 72%);
+  background:
+    var(--construct-skin-panelDecoration, none),
+    radial-gradient(circle, color-mix(in srgb, var(--construct-signal-network) 12%, transparent), transparent 72%);
+  background-size: contain, auto;
+  background-repeat: no-repeat;
+  background-position: center;
   pointer-events: none;
   opacity: 0.7;
 }

@@ -1,5 +1,6 @@
 import { createContext } from 'react';
 import type { ColorThemeId } from './colorThemes';
+import type { SkinAssetSlot, SkinSummary } from '@/types/api';
 
 export type ThemeMode = 'system' | 'dark' | 'light' | 'oled';
 export type AccentColor = 'cyan' | 'violet' | 'emerald' | 'amber' | 'rose' | 'blue';
@@ -32,6 +33,10 @@ export interface ThemeContextValue {
   uiFontSize: number;
   monoFontSize: number;
   resolvedTheme: 'dark' | 'light' | 'oled';
+  activeSkinId: string | null;
+  activeSkinName: string | null;
+  installedSkins: SkinSummary[];
+  skinsLoading: boolean;
   setTheme: (t: ThemeMode) => void;
   setAccent: (a: AccentColor) => void;
   setColorTheme: (c: ColorThemeId) => void;
@@ -39,6 +44,11 @@ export interface ThemeContextValue {
   setMonoFont: (f: MonoFont) => void;
   setUiFontSize: (size: number) => void;
   setMonoFontSize: (size: number) => void;
+  refreshSkins: () => Promise<void>;
+  setSkin: (id: string | null) => void;
+  importSkinZip: (file: File) => Promise<SkinSummary>;
+  deleteSkin: (id: string) => Promise<void>;
+  getSkinAsset: (slot: SkinAssetSlot) => string | null;
 }
 
 export const ThemeContext = createContext<ThemeContextValue>({
@@ -50,6 +60,10 @@ export const ThemeContext = createContext<ThemeContextValue>({
   uiFontSize: 15,
   monoFontSize: 14,
   resolvedTheme: 'dark',
+  activeSkinId: null,
+  activeSkinName: null,
+  installedSkins: [],
+  skinsLoading: false,
   setTheme: () => {},
   setAccent: () => {},
   setColorTheme: () => {},
@@ -57,4 +71,11 @@ export const ThemeContext = createContext<ThemeContextValue>({
   setMonoFont: () => {},
   setUiFontSize: () => {},
   setMonoFontSize: () => {},
+  refreshSkins: async () => {},
+  setSkin: () => {},
+  importSkinZip: async () => {
+    throw new Error('Skin import unavailable');
+  },
+  deleteSkin: async () => {},
+  getSkinAsset: () => null,
 });

@@ -56,6 +56,7 @@ Last reviewed: **May 8, 2026**.
 | `docs/reference/api/providers-reference.md` | Current Reference | users/operators |
 | `docs/reference/api/channels-reference.md` | Current Reference | users/operators |
 | `docs/reference/api/config-reference.md` | Current Reference | operators |
+| `docs/reference/ui-skins.md` | Current Reference | contributors/operators |
 | `docs/reference/sop/connectivity.md` | Current SOP | operators |
 | `docs/reference/sop/observability.md` | Current SOP | operators |
 | `docs/reference/sop/cookbook.md` | Current SOP | operators |
