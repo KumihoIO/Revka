@@ -120,10 +120,22 @@ _STEP_DESCRIPTIONS: dict[StepType, str] = {
     StepType.NOTIFY: "Fire-and-forget notification to one or more channels.",
     StepType.OUTPUT: "Emit structured output from the workflow.",
     StepType.A2A: "Send a task to an external A2A agent.",
-    StepType.MAP_REDUCE: "Fan-out / fan-in — map a task across splits, then reduce.",
-    StepType.SUPERVISOR: "Dynamic delegation loop with a supervisor agent.",
-    StepType.GROUP_CHAT: "Moderated multi-agent discussion.",
-    StepType.HANDOFF: "Pass context from one agent to another.",
+    StepType.MAP_REDUCE: (
+        "Fan-out / fan-in across splits. Mapper and reducer may be built-in "
+        "agent types or pool template names."
+    ),
+    StepType.SUPERVISOR: (
+        "Dynamic delegation loop with a supervisor agent and optional "
+        "specialist template allowlist."
+    ),
+    StepType.GROUP_CHAT: (
+        "Moderated multi-agent discussion. Participants and moderator may "
+        "be built-in agent types or pool template names."
+    ),
+    StepType.HANDOFF: (
+        "Pass context from one agent to another. The receiving agent may be "
+        "a built-in type or pool template name."
+    ),
     StepType.RESOLVE: "Deterministic Kumiho entity lookup.",
     StepType.FOR_EACH: "Sequential iteration over a range or list of items.",
     StepType.TAG: "Re-tag an existing Kumiho entity revision.",
@@ -242,12 +254,16 @@ _EXAMPLE_YAML: dict[StepType, str] = {
         "map_reduce:\n"
         "  task: \"summarize chapters\"\n"
         "  splits: [\"ch1\", \"ch2\"]\n"
+        "  mapper: research-template\n"
+        "  reducer: lead-reviewer\n"
     ),
     StepType.SUPERVISOR: (
         "id: sup\n"
         "type: supervisor\n"
         "supervisor:\n"
         "  task: \"plan and execute migration\"\n"
+        "  supervisor_type: lead-architect\n"
+        "  templates: [research-template, implementer-template]\n"
         "  max_iterations: 5\n"
     ),
     StepType.GROUP_CHAT: (
@@ -256,13 +272,14 @@ _EXAMPLE_YAML: dict[StepType, str] = {
         "group_chat:\n"
         "  topic: \"design review\"\n"
         "  participants: [reviewer, coder]\n"
+        "  moderator: lead-architect\n"
     ),
     StepType.HANDOFF: (
         "id: pass\n"
         "type: handoff\n"
         "handoff:\n"
         "  from_step: research\n"
-        "  to_agent_type: codex\n"
+        "  to_agent_type: implementer-template\n"
     ),
     StepType.RESOLVE: (
         "id: lookup\n"

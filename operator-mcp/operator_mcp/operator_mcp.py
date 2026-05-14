@@ -790,7 +790,7 @@ async def list_tools() -> list[Tool]:
                     },
                     "to_agent_type": {
                         "type": "string",
-                        "description": "Agent type for receiver: 'claude' or 'codex' (default 'claude').",
+                        "description": "Receiver agent type or pool template name (default 'claude').",
                         "default": "claude",
                     },
                     "reason": {
@@ -835,11 +835,11 @@ async def list_tools() -> list[Tool]:
                     "participants": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "List of agent types (e.g. ['claude', 'codex', 'claude']). Min 2.",
+                        "description": "List of agent types or pool template names. Min 2.",
                     },
                     "moderator": {
                         "type": "string",
-                        "description": "Agent type for moderator (default 'claude').",
+                        "description": "Moderator agent type or pool template name (default 'claude').",
                         "default": "claude",
                     },
                     "strategy": {
@@ -891,7 +891,7 @@ async def list_tools() -> list[Tool]:
                     "templates": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "Available template names. Defaults to all in pool.",
+                        "description": "Specialist pool template names. Defaults to all in pool.",
                     },
                     "max_iterations": {
                         "type": "integer",
@@ -900,7 +900,7 @@ async def list_tools() -> list[Tool]:
                     },
                     "supervisor_type": {
                         "type": "string",
-                        "description": "Agent type for supervisor (default 'claude').",
+                        "description": "Supervisor agent type or pool template name (default 'claude').",
                         "default": "claude",
                     },
                     "model": {
@@ -937,12 +937,12 @@ async def list_tools() -> list[Tool]:
                     },
                     "mapper": {
                         "type": "string",
-                        "description": "Agent type for mapper agents (default 'claude').",
+                        "description": "Mapper agent type or pool template name (default 'claude').",
                         "default": "claude",
                     },
                     "reducer": {
                         "type": "string",
-                        "description": "Agent type for reducer agent (default 'claude').",
+                        "description": "Reducer agent type or pool template name (default 'claude').",
                         "default": "claude",
                     },
                     "cwd": {

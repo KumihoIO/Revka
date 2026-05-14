@@ -15,7 +15,7 @@ import os
 from typing import Any
 
 from .._log import _log
-from ..agent_state import AGENTS
+from ..agent_state import AGENTS, POOL
 from ..agent_subprocess import compose_agent_prompt
 from ..failure_classification import (
     bad_directory,
@@ -67,6 +67,26 @@ You are a reducer agent synthesizing results from {count} parallel workers.
 # Tool handler
 # ---------------------------------------------------------------------------
 
+def _resolve_template(agent_hint: str):
+    """Return a pool template by name, case-insensitive."""
+    for tmpl in POOL.list_all():
+        if tmpl.name.lower() == agent_hint.lower():
+            return tmpl
+    return None
+
+
+def _template_identity(tmpl) -> str:
+    """Build prompt identity text from an agent pool template."""
+    return "\n".join(
+        part for part in (
+            tmpl.description,
+            tmpl.identity,
+            tmpl.soul,
+            f"Capabilities: {', '.join(tmpl.capabilities)}" if tmpl.capabilities else "",
+        ) if part
+    )
+
+
 async def tool_map_reduce(args: dict[str, Any]) -> dict[str, Any]:
     """Fan out a task to N parallel agents, then aggregate results.
 
@@ -75,8 +95,8 @@ async def tool_map_reduce(args: dict[str, Any]) -> dict[str, Any]:
         splits: List of segments to process in parallel (required, min 2).
             Each split is a string describing one segment (e.g. a file path,
             a section of text, a subtask description).
-        mapper: Agent type for mapper agents (default "claude").
-        reducer: Agent type for reducer agent (default "claude").
+        mapper: Agent type or pool template name for mapper agents (default "claude").
+        reducer: Agent type or pool template name for reducer agent (default "claude").
         cwd: Working directory (required).
         concurrency: Max simultaneous mapper agents (default 3, max 10).
         model: Optional model override.
@@ -89,7 +109,7 @@ async def tool_map_reduce(args: dict[str, Any]) -> dict[str, Any]:
     reducer_type = args.get("reducer", "claude")
     cwd = args.get("cwd", "")
     concurrency = min(args.get("concurrency", 3), 10)
-    model = args.get("model")
+    requested_model = args.get("model")
     timeout = args.get("timeout", 300.0)
     halt_on_failure = args.get("halt_on_failure", False)
 
@@ -109,8 +129,33 @@ async def tool_map_reduce(args: dict[str, Any]) -> dict[str, Any]:
 
     from ..policy import load_policy
     policy = load_policy()
-    effective_mapper = mapper_type if mapper_type in ("claude", "codex") else "claude"
+    mapper_template = _resolve_template(mapper_type)
+    reducer_template = _resolve_template(reducer_type)
+    effective_mapper = (
+        mapper_template.agent_type if mapper_template
+        else mapper_type if mapper_type in ("claude", "codex")
+        else "claude"
+    )
+    effective_reducer = (
+        reducer_template.agent_type if reducer_template
+        else reducer_type if reducer_type in ("claude", "codex")
+        else "claude"
+    )
+    mapper_name = mapper_template.name if mapper_template else "mapper"
+    mapper_role = mapper_template.role if mapper_template else "researcher"
+    mapper_identity = _template_identity(mapper_template) if mapper_template else ""
+    mapper_model = requested_model or (mapper_template.model if mapper_template else None)
+    reducer_name = reducer_template.name if reducer_template else "reducer"
+    reducer_role = reducer_template.role if reducer_template else "researcher"
+    reducer_identity = _template_identity(reducer_template) if reducer_template else ""
+    reducer_model = requested_model or (reducer_template.model if reducer_template else None)
+
     policy_failures = policy.preflight_spawn(cwd, effective_mapper)
+    if policy_failures:
+        fail = policy_failures[0]
+        return policy_denied("cwd", cwd, fail.reason,
+                             policy_rule=fail.policy_rule, suggestion=fail.suggestion)
+    policy_failures = policy.preflight_spawn(cwd, effective_reducer)
     if policy_failures:
         fail = policy_failures[0]
         return policy_denied("cwd", cwd, fail.reason,
@@ -153,8 +198,8 @@ async def tool_map_reduce(args: dict[str, Any]) -> dict[str, Any]:
                 effective_mapper,
                 f"mapper-{idx+1}-of-{total}",
                 cwd,
-                compose_agent_prompt(f"mapper-{idx+1}", "researcher", "", [], prompt),
-                model=model,
+                compose_agent_prompt(f"{mapper_name}-{idx+1}", mapper_role, mapper_identity, [], prompt),
+                model=mapper_model,
                 timeout=timeout,
             )
             agent_output, agent_files = _get_agent_output(agent.id)
@@ -207,13 +252,12 @@ async def tool_map_reduce(args: dict[str, Any]) -> dict[str, Any]:
         mapper_results=results_text[:10000],
     )
 
-    effective_reducer = reducer_type if reducer_type in ("claude", "codex") else "claude"
     reducer_agent, reducer_output = await _spawn_and_wait(
         effective_reducer,
         "reducer",
         cwd,
-        compose_agent_prompt("reducer", "researcher", "", [], reducer_prompt),
-        model=model,
+        compose_agent_prompt(reducer_name, reducer_role, reducer_identity, [], reducer_prompt),
+        model=reducer_model,
         timeout=timeout,
     )
     reducer_text, reducer_files = _get_agent_output(reducer_agent.id)

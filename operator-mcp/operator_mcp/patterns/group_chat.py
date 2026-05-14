@@ -15,7 +15,7 @@ import uuid
 from typing import Any, Callable
 
 from .._log import _log
-from ..agent_state import AGENTS, ManagedAgent
+from ..agent_state import AGENTS, ManagedAgent, POOL
 from ..agent_subprocess import compose_agent_prompt
 from ..failure_classification import classified_error, VALIDATION_ERROR
 from .refinement import _spawn_and_wait, _wait_for_agent
@@ -28,6 +28,45 @@ from .refinement import _spawn_and_wait, _wait_for_agent
 ROUND_ROBIN = "round_robin"
 MODERATOR_SELECTED = "moderator_selected"
 VALID_STRATEGIES = {ROUND_ROBIN, MODERATOR_SELECTED}
+
+
+def _pool_template(name: str):
+    for tmpl in POOL.list_all():
+        if tmpl.name.lower() == name.lower():
+            return tmpl
+    return None
+
+
+def _resolve_agent_descriptor(value: Any, fallback_name: str) -> dict[str, str]:
+    if isinstance(value, dict):
+        name = str(value.get("name") or fallback_name)
+        agent_type = str(value.get("agent_type") or "claude")
+        role = str(value.get("role") or "participant")
+        description = str(value.get("description") or f"Agent type: {agent_type}")
+        return {"name": name, "agent_type": agent_type, "role": role, "description": description}
+
+    hint = str(value or "claude")
+    tmpl = _pool_template(hint)
+    if tmpl:
+        description_parts = [tmpl.description]
+        if tmpl.identity:
+            description_parts.append(tmpl.identity)
+        if tmpl.capabilities:
+            description_parts.append("Capabilities: " + ", ".join(tmpl.capabilities))
+        return {
+            "name": tmpl.name,
+            "agent_type": tmpl.agent_type,
+            "role": tmpl.role,
+            "description": "\n".join(part for part in description_parts if part),
+        }
+
+    agent_type = hint if hint in ("claude", "codex") else "claude"
+    return {
+        "name": fallback_name if hint in ("claude", "codex") else hint,
+        "agent_type": agent_type,
+        "role": "participant",
+        "description": f"Agent type: {agent_type}",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -136,16 +175,20 @@ async def tool_group_chat(
             code="invalid_strategy", category=VALIDATION_ERROR,
         )
 
-    # Normalize participant names
-    participant_names = []
-    participant_types = []
-    for i, p in enumerate(participants):
-        if isinstance(p, dict):
-            participant_names.append(p.get("name", f"participant-{i+1}"))
-            participant_types.append(p.get("agent_type", "claude"))
-        else:
-            participant_names.append(f"participant-{i+1}-{p}")
-            participant_types.append(p if p in ("claude", "codex") else "claude")
+    # Normalize participant names. Strings may be direct agent types
+    # ("claude"/"codex") or pool template names selected in the dashboard.
+    participant_descriptors = [
+        _resolve_agent_descriptor(p, f"participant-{i+1}-{p}")
+        for i, p in enumerate(participants)
+    ]
+    participant_names = [p["name"] for p in participant_descriptors]
+    participant_types = [p["agent_type"] for p in participant_descriptors]
+    participant_roles = [p["role"] for p in participant_descriptors]
+    participant_descriptions = [p["description"] for p in participant_descriptors]
+
+    moderator_descriptor = _resolve_agent_descriptor(moderator_type, "Moderator")
+    moderator_type = moderator_descriptor["agent_type"]
+    moderator_name = moderator_descriptor["name"]
 
     participant_list_str = "\n".join(
         f"- {name} ({ptype})" for name, ptype in zip(participant_names, participant_types)
@@ -179,6 +222,7 @@ async def tool_group_chat(
                     moderator_type, topic, participant_names, participant_list_str,
                     transcript_text, transcript[-1] if transcript else {},
                     max_rounds, cwd, model, timeout,
+                    moderator_name, moderator_descriptor["role"], moderator_descriptor["description"],
                 )
                 if speaker_idx is None:
                     # Moderator signaled end of discussion
@@ -196,7 +240,13 @@ async def tool_group_chat(
             )
             mod_agent, mod_output = await _spawn_and_wait(
                 moderator_type, f"moderator-round{round_num}", cwd,
-                compose_agent_prompt("moderator", "researcher", "", [], mod_prompt),
+                compose_agent_prompt(
+                    moderator_name,
+                    moderator_descriptor["role"],
+                    moderator_descriptor["description"],
+                    [],
+                    mod_prompt,
+                ),
                 model=model, timeout=timeout,
             )
             transcript.append({"speaker": "Moderator", "content": mod_output[:3000], "round": round_num})
@@ -225,18 +275,20 @@ async def tool_group_chat(
         # Participant speaks
         name = participant_names[speaker_idx]
         ptype = participant_types[speaker_idx]
+        prole = participant_roles[speaker_idx]
+        pdesc = participant_descriptions[speaker_idx]
         last_msg = transcript[-1].get("content", "") if transcript else f"Discussion topic: {topic}"
 
         p_prompt = _PARTICIPANT_PROMPT.format(
             name=name,
             topic=topic,
-            role_description=f"Agent type: {ptype}",
+            role_description=pdesc,
             transcript=transcript_text[:4000],
             last_message=last_msg[:2000],
         )
         p_agent, p_output = await _spawn_and_wait(
             ptype, f"{name}-round{round_num}", cwd,
-            compose_agent_prompt(name, "researcher", "", [], p_prompt),
+            compose_agent_prompt(name, prole, pdesc, [], p_prompt),
             model=model, timeout=timeout,
         )
         transcript.append({"speaker": name, "content": p_output[:3000], "round": round_num})
@@ -255,11 +307,21 @@ async def tool_group_chat(
         )
         synth_agent, synth_output = await _spawn_and_wait(
             moderator_type, "moderator-synthesis", cwd,
-            compose_agent_prompt("moderator", "researcher", "", [], synth_prompt),
+            compose_agent_prompt(
+                moderator_name,
+                moderator_descriptor["role"],
+                moderator_descriptor["description"],
+                [],
+                synth_prompt,
+            ),
             model=model, timeout=timeout,
         )
         summary, consensus, conclusion = _parse_synthesis(synth_output)
-        transcript.append({"speaker": "Moderator (synthesis)", "content": synth_output[:3000], "round": rounds_completed + 1})
+        transcript.append({
+            "speaker": "Moderator (synthesis)",
+            "content": synth_output[:3000],
+            "round": rounds_completed + 1,
+        })
         if on_turn:
             on_turn(transcript)
 
@@ -343,6 +405,9 @@ async def _ask_moderator_for_next(
     cwd: str,
     model: str | None,
     timeout: float,
+    moderator_name: str = "moderator",
+    moderator_role: str = "researcher",
+    moderator_description: str = "",
 ) -> int | None:
     """Ask moderator to select next speaker. Returns index or None to end."""
     last_msg = last_entry.get("content", "") if last_entry else ""
@@ -356,7 +421,7 @@ async def _ask_moderator_for_next(
     )
     mod_agent, output = await _spawn_and_wait(
         moderator_type, "moderator-select", cwd,
-        compose_agent_prompt("moderator", "researcher", "", [], prompt),
+        compose_agent_prompt(moderator_name, moderator_role, moderator_description, [], prompt),
         model=model, timeout=timeout,
     )
 
