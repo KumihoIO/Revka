@@ -6,7 +6,7 @@
 
 services:
   construct:
-    image: ghcr.io/KumihoIO/construct-os:latest
+    image: ghcr.io/kumihoio/construct-os:latest
     restart: unless-stopped
     environment:
       - API_KEY=${SERVICE_PASSWORD_APIKEY:-}

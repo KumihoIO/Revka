@@ -8,6 +8,19 @@
 
 use std::path::Path;
 
+/// Deployment-facing files that must use GHCR's lowercase image path.
+const DOCKER_IMAGE_REF_FILES: &[&str] = &[
+    "docker-compose.yml",
+    "install.sh",
+    "marketplace/coolify/construct.yaml",
+    "marketplace/dokploy/blueprints/construct/docker-compose.yml",
+    "marketplace/easypanel/meta.yaml",
+    "marketplace/sync-marketplace-templates.yml",
+    "docs/setup-guides/one-click-bootstrap.md",
+    "docs/i18n/ko/setup-guides/one-click-bootstrap.md",
+    "docs/i18n/zh-CN/setup-guides/one-click-bootstrap.zh-CN.md",
+];
+
 /// Paths that MUST be excluded from Docker build context (security/performance)
 const MUST_EXCLUDE: &[&str] = &[
     ".git",
@@ -30,6 +43,34 @@ const MUST_EXCLUDE: &[&str] = &[
 
 /// Paths that MUST NOT be excluded (required for build)
 const MUST_INCLUDE: &[&str] = &["Cargo.toml", "Cargo.lock", "src/"];
+
+#[test]
+fn docker_image_references_use_lowercase_ghcr_path() {
+    let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+
+    for rel_path in DOCKER_IMAGE_REF_FILES {
+        let path = repo_root.join(rel_path);
+        let content = std::fs::read_to_string(&path)
+            .unwrap_or_else(|err| panic!("failed to read {}: {}", rel_path, err));
+
+        assert!(
+            !content.contains("ghcr.io/KumihoIO/construct-os"),
+            "{} must use lowercase ghcr.io/kumihoio/construct-os; Docker image references are lowercase-only",
+            rel_path
+        );
+    }
+}
+
+#[test]
+fn root_compose_uses_published_lowercase_image_path() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("docker-compose.yml");
+    let content = std::fs::read_to_string(&path).expect("failed to read root docker-compose.yml");
+
+    assert!(
+        content.contains("image: ghcr.io/kumihoio/construct-os:latest"),
+        "root docker-compose.yml must point at the lowercase published GHCR image"
+    );
+}
 
 /// Parse .dockerignore and return all non-comment, non-empty lines
 fn parse_dockerignore(content: &str) -> Vec<String> {

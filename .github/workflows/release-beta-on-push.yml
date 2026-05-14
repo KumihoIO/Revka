@@ -612,6 +612,18 @@ jobs:
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
             "${IMG}@${DIGEST_DEBIAN}"
 
+      - name: Verify public image pull
+        env:
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          set -e
+          IMG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
+          docker logout "${{ env.REGISTRY }}" >/dev/null 2>&1 || true
+          docker buildx imagetools inspect "${IMG}:${TAG}"
+          docker buildx imagetools inspect "${IMG}:beta"
+          docker buildx imagetools inspect "${IMG}:${TAG}-debian"
+          docker buildx imagetools inspect "${IMG}:beta-debian"
+
   # NOTE: marketplace template syncing (Coolify, Dokploy, EasyPanel) used to
   # fire here on every beta push, but that produced ~10 PRs/day which (a)
   # tripped Coolify's `max-daily-forks: 7` anti-spam rule in
