@@ -26,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -46,6 +47,7 @@ from ..gateway_client import ConstructGatewayClient
 # re-resolve PATHEXT on every call. Restart the operator MCP if codex auth
 # or install location changes.
 _CODEX_AVAILABILITY: dict[str, Any] | None = None
+_IMAGE_MARKER_RE = re.compile(r"\[IMAGE:([^\]]+)\]")
 
 
 def _resolve_codex_executable() -> str | None:
@@ -251,7 +253,68 @@ def _resolve_output_paths(
     return paths
 
 
-def _build_codex_prompt(prompt: str, output_path: Path) -> str:
+def _split_prompt_image_markers(prompt: str) -> tuple[str, list[str]]:
+    """Remove local ``[IMAGE:/path]`` markers from prompt and return paths."""
+    image_refs: list[str] = []
+
+    def _replace(match: re.Match[str]) -> str:
+        ref = match.group(1).strip()
+        if ref:
+            image_refs.append(ref)
+        return ""
+
+    cleaned = _IMAGE_MARKER_RE.sub(_replace, prompt).strip()
+    return cleaned, image_refs
+
+
+def _coerce_input_images(value: Any) -> list[str]:
+    """Normalize tool input_images into a list of non-empty strings."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value.strip()] if value.strip() else []
+    if isinstance(value, (list, tuple)):
+        images: list[str] = []
+        for item in value:
+            if isinstance(item, str) and item.strip():
+                images.append(item.strip())
+        return images
+    return []
+
+
+def _resolve_input_images(
+    images: list[str],
+    base_dir: Path,
+) -> tuple[list[Path], str | None]:
+    """Resolve and validate images for ``codex exec --image``."""
+    resolved: list[Path] = []
+    seen: set[str] = set()
+    for raw in images:
+        if raw.startswith(("http://", "https://", "data:")):
+            return [], (
+                "input_images must be local file paths for codex exec --image "
+                f"(got {raw[:80]!r})"
+            )
+        path = Path(os.path.expanduser(raw))
+        if not path.is_absolute():
+            path = base_dir / path
+        try:
+            path = path.resolve(strict=False)
+        except OSError:
+            path = path.absolute()
+        key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        if not path.is_file():
+            return [], f"input image does not exist or is not a file: {path}"
+        resolved.append(path)
+    return resolved, None
+
+
+def _build_codex_prompt(
+    prompt: str, output_path: Path, input_images: list[Path] | None = None
+) -> str:
     """Compose the natural-language prompt for ``codex exec``.
 
     The codex CLI invokes its built-in ``image_generation`` tool when the
@@ -259,8 +322,14 @@ def _build_codex_prompt(prompt: str, output_path: Path) -> str:
     relative path inside the workspace and to report only that path.
     """
     rel = output_path.name
+    reference = (
+        " Use the attached image file(s) passed with --image as visual reference input."
+        if input_images
+        else ""
+    )
     return (
-        f"Use the image_generation tool to create an image for: {prompt!r}. "
+        f"Use the image_generation tool to create an image for: {prompt!r}."
+        f"{reference} "
         f"Save the result as ./{rel} in the current working directory. "
         f"Reply with only the absolute file path on a single line, no other text."
     )
@@ -272,6 +341,7 @@ async def _spawn_codex_image(
     cwd: Path,
     codex_executable: str | None = None,
     sandbox: str = "workspace-write",
+    input_images: list[Path] | None = None,
 ) -> dict[str, Any]:
     """Run a single ``codex exec`` and return success/failure with the path.
 
@@ -307,8 +377,10 @@ async def _spawn_codex_image(
         str(cwd),
         "-o",
         log_path,
-        _build_codex_prompt(prompt, output_path),
     ]
+    for image_path in input_images or []:
+        cmd.extend(["--image", str(image_path)])
+    cmd.append(_build_codex_prompt(prompt, output_path, input_images or []))
     # Run via `asyncio.to_thread(subprocess.run, ...)` rather than
     # `asyncio.create_subprocess_exec`. See `_run_subprocess_sync` for the
     # rationale (Windows + MCP anyio loop hang). Each parallel codex spawn
@@ -428,8 +500,6 @@ async def _push_to_canvas(
     except Exception as exc:
         return {"error": f"canvas push failed: {exc}"}
 
-
-import re
 
 # Default workspace root for kref-mirroring artifact storage. Match Construct's
 # `~/.construct/workspace` convention so the on-disk layout is predictable.
@@ -618,6 +688,10 @@ async def tool_generate_image_codex(
     * ``count`` — optional 1..5, default 1
     * ``output_pattern`` — optional template with ``{n}`` placeholder when
       ``count > 1``; if omitted, derived as ``<stem>-N.<ext>``
+    * ``input_images`` — optional local image path or list of paths to pass to
+      ``codex exec --image`` as visual references. ``[IMAGE:/path]`` markers in
+      ``prompt`` are also extracted and forwarded automatically, which lets
+      Operator chat attachments ride the same path.
     * ``canvas`` — bool or canvas_id string; pushes a gallery frame
     * ``register_artifact`` — bool, default True; creates a Kumiho item +
       revision and lays the PNG(s) out at
@@ -632,9 +706,11 @@ async def tool_generate_image_codex(
       ``danger-full-access`` on Windows per-user npm installs whose
       sandbox helper can't spawn child processes (see ``_default_sandbox``).
     """
-    prompt = (args.get("prompt") or "").strip()
+    raw_prompt = (args.get("prompt") or "").strip()
+    prompt, prompt_images = _split_prompt_image_markers(raw_prompt)
     output_path = (args.get("output_path") or "").strip()
     cwd = args.get("cwd") or "~/.construct/workspace"
+    requested_input_images = _coerce_input_images(args.get("input_images"))
     try:
         count = int(args.get("count", 1))
     except (TypeError, ValueError):
@@ -674,6 +750,13 @@ async def tool_generate_image_codex(
             )
         }
 
+    input_base_dir = Path(os.path.expanduser(cwd))
+    input_images, input_image_error = _resolve_input_images(
+        [*requested_input_images, *prompt_images], input_base_dir
+    )
+    if input_image_error:
+        return {"error": input_image_error}
+
     avail = await _check_codex_available()
     if not avail.get("ok"):
         return {"error": avail.get("error", "codex unavailable")}
@@ -690,6 +773,8 @@ async def tool_generate_image_codex(
     # revision number BEFORE codex writes — no post-hoc move required.
     rev_meta: dict[str, Any] | None = None
     response: dict[str, Any] = {"requested": count}
+    if input_images:
+        response["input_images"] = [str(p) for p in input_images]
     if register:
         derived_item = _derive_item_name(output_path, count, item_name)
         rev_meta = await _create_item_and_revision(
@@ -727,7 +812,16 @@ async def tool_generate_image_codex(
 
     results = await asyncio.gather(
         *(
-            _spawn_codex_image(prompt, p, cwd_path, codex_exe, sandbox=sandbox)
+            _spawn_codex_image(
+                prompt,
+                p,
+                cwd_path,
+                codex_exe,
+                sandbox=sandbox,
+                input_images=input_images,
+            )
+            if input_images
+            else _spawn_codex_image(prompt, p, cwd_path, codex_exe, sandbox=sandbox)
             for p in paths
         ),
         return_exceptions=True,

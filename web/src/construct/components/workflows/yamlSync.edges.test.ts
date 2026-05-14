@@ -337,6 +337,9 @@ steps:
       register_artifact: false
       space: Construct/Marketing/Logos
       item_name: seoul-hero
+      input_images:
+        - /ws/reference-a.png
+        - \${inputs.reference_image}
       output_pattern: panel-{n}.png
       sandbox: workspace-write
       timeout: 900
@@ -349,6 +352,10 @@ steps:
   assert.equal(tasks[0]!.image_register_artifact, false);
   assert.equal(tasks[0]!.image_space, 'Construct/Marketing/Logos');
   assert.equal(tasks[0]!.image_item_name, 'seoul-hero');
+  assert.deepEqual(tasks[0]!.image_input_images, [
+    '/ws/reference-a.png',
+    '${inputs.reference_image}',
+  ]);
   assert.equal(tasks[0]!.image_output_pattern, 'panel-{n}.png');
   assert.equal(tasks[0]!.image_sandbox, 'workspace-write');
   assert.equal(tasks[0]!.image_timeout, 900);
@@ -360,6 +367,10 @@ steps:
   assert.match(back, /count: 2/);
   assert.match(back, /canvas: false/);
   assert.match(back, /register_artifact: false/);
+  assert.match(
+    back,
+    /input_images: \[\/ws\/reference-a.png, "\$\{inputs.reference_image\}"\]/,
+  );
   assert.match(back, /sandbox: workspace-write/);
   assert.match(back, /timeout: 900/);
 });

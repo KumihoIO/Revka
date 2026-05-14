@@ -1222,7 +1222,7 @@ run_docker_bootstrap() {
   local config_mount workspace_mount
   local -a container_run_user_args container_run_namespace_args
   docker_image="${CONSTRUCT_DOCKER_IMAGE:-construct-bootstrap:local}"
-  fallback_image="ghcr.io/KumihoIO/construct-os:latest"
+  fallback_image="ghcr.io/kumihoio/construct-os:latest"
   if [[ "$TEMP_CLONE" == true ]]; then
     default_data_dir="$HOME/.construct-docker"
   else

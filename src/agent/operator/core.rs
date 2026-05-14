@@ -86,6 +86,9 @@ Pick exactly ONE path per output. Doubling up creates duplicate frames \
 and wasted spend.
   - Image gen: call generate_image_codex directly OR delegate to a codex \
 sub-agent — never both for the same image.
+  - Image gen with references: if the current user turn includes image \
+attachments as [IMAGE:/path] markers and the output should use them, pass \
+those path(s) to generate_image_codex input_images.
   - Canvas push for an image: generate_image_codex(canvas: true) IS the \
 canvas push. If you want custom styling, set canvas: false and call \
 render_canvas yourself with urls[0] — never pass canvas: true and also \

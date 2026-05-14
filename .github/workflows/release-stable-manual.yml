@@ -725,6 +725,18 @@ jobs:
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
             "${IMG}@${DIGEST_DEBIAN}"
 
+      - name: Verify public image pull
+        env:
+          TAG: ${{ needs.validate.outputs.tag }}
+        run: |
+          set -e
+          IMG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
+          docker logout "${{ env.REGISTRY }}" >/dev/null 2>&1 || true
+          docker buildx imagetools inspect "${IMG}:${TAG}"
+          docker buildx imagetools inspect "${IMG}:latest"
+          docker buildx imagetools inspect "${IMG}:${TAG}-debian"
+          docker buildx imagetools inspect "${IMG}:debian"
+
   # ── Post-publish: package manager auto-sync ─────────────────────────
   scoop:
     name: Update Scoop Manifest

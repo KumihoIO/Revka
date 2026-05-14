@@ -184,6 +184,8 @@ class ImageStepConfig(BaseModel):
     cwd: str | None = None             # default: ~/.construct/workspace
     count: int = Field(default=1, ge=1, le=5)
     output_pattern: str | None = None  # template with {n} when count > 1
+    # local reference image path(s) forwarded to codex exec --image
+    input_images: list[str] | str | None = None
     canvas: bool | str = True          # bool, or canvas_id string; canvas push is the point
     register_artifact: bool = True
     space: str | None = None           # default "Images" relative to harness; multi-segment OK
