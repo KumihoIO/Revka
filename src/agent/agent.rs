@@ -1045,6 +1045,77 @@ impl Agent {
         (tokens > threshold).then_some((tokens, threshold))
     }
 
+    fn compress_user_message_for_context(&self, user_message: &str) -> String {
+        if !self.config.context_compression.enabled {
+            return user_message.to_string();
+        }
+
+        let max_chars = self.config.context_compression.input_max_chars;
+        let compressed = crate::agent::token_compression::compress_input(user_message, max_chars);
+        if let Some(stats) = compressed.stats {
+            tracing::info!(
+                axis = stats.axis,
+                content_type = stats.content_type,
+                before = stats.original_chars,
+                after = stats.compressed_chars,
+                "token_compression: compressed large user input"
+            );
+        }
+        compressed.text
+    }
+
+    fn compress_tool_output_for_context(
+        &self,
+        tool_name: &str,
+        output: &str,
+        command_hint: Option<&str>,
+    ) -> String {
+        if !self.config.context_compression.enabled
+            || crate::agent::token_compression::should_preserve_json_tool_output(tool_name)
+        {
+            return output.to_string();
+        }
+
+        let max_chars = crate::agent::context_compressor::effective_live_tool_result_chars(
+            &self.config.context_compression,
+            self.config.max_tool_result_chars,
+        );
+        let compressed = crate::agent::token_compression::compress_tool_output(
+            tool_name,
+            output,
+            max_chars,
+            command_hint,
+        );
+        if let Some(stats) = compressed.stats {
+            tracing::info!(
+                tool = tool_name,
+                axis = stats.axis,
+                content_type = stats.content_type,
+                before = stats.original_chars,
+                after = stats.compressed_chars,
+                "token_compression: compressed live tool output"
+            );
+            compressed.text
+        } else {
+            crate::agent::history::truncate_tool_result(output, max_chars)
+        }
+    }
+
+    fn compact_tool_specs_for_context(&self, specs: &mut [ToolSpec]) {
+        if let Some(stats) = crate::agent::token_compression::compact_tool_specs(
+            specs,
+            &self.config.context_compression,
+        ) {
+            tracing::info!(
+                axis = stats.axis,
+                content_type = stats.content_type,
+                before = stats.original_chars,
+                after = stats.compressed_chars,
+                "token_compression: compacted tool schemas"
+            );
+        }
+    }
+
     async fn compress_history_if_needed_streamed(
         &mut self,
         model: &str,
@@ -1172,6 +1243,8 @@ impl Agent {
             operator_enabled: self.operator_enabled,
             kumiho_enabled: self.kumiho_enabled,
             kumiho_memory_advanced_available: self.kumiho_memory_advanced_available,
+            compact_tool_docs: self.config.context_compression.compact_system_tool_docs
+                && self.tool_dispatcher.should_send_tool_specs(),
             mode: crate::agent::prompt::BuilderMode::Daemon,
         };
         let mut prompt = self.prompt_builder.build(&ctx)?;
@@ -1248,6 +1321,12 @@ impl Agent {
         } else {
             format!("Unknown tool: {}", call.name)
         };
+
+        let command_hint = call
+            .arguments
+            .get("command")
+            .and_then(serde_json::Value::as_str);
+        let result = self.compress_tool_output_for_context(&call.name, &result, command_hint);
 
         ToolExecutionResult {
             name: call.name.clone(),
@@ -1353,10 +1432,11 @@ impl Agent {
         let date_str =
             format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}:{second:02} {tz}");
 
+        let compact_user_message = self.compress_user_message_for_context(user_message);
         let enriched = if context.is_empty() {
-            format!("[CURRENT DATE & TIME: {date_str}]\n\n{user_message}")
+            format!("[CURRENT DATE & TIME: {date_str}]\n\n{compact_user_message}")
         } else {
-            format!("[CURRENT DATE & TIME: {date_str}]\n\n{context}\n\n{user_message}")
+            format!("[CURRENT DATE & TIME: {date_str}]\n\n{context}\n\n{compact_user_message}")
         };
 
         self.history
@@ -1449,6 +1529,7 @@ impl Agent {
             // documented Architect contract is to PROPOSE YAML via
             // `propose_workflow_yaml` and let the editor own persistence.
             filter_tool_specs_for_architect(&mut iter_tool_specs, user_message);
+            self.compact_tool_specs_for_context(&mut iter_tool_specs);
 
             let response = match self
                 .provider
@@ -1594,10 +1675,11 @@ impl Agent {
         }
 
         let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S %Z");
+        let compact_user_message = self.compress_user_message_for_context(user_message);
         let enriched = if context.is_empty() {
-            format!("[{now}] {user_message}")
+            format!("[{now}] {compact_user_message}")
         } else {
-            format!("{context}[{now}] {user_message}")
+            format!("{context}[{now}] {compact_user_message}")
         };
 
         self.history
@@ -1704,6 +1786,7 @@ impl Agent {
             // documented Architect contract is to PROPOSE YAML via
             // `propose_workflow_yaml` and let the editor own persistence.
             filter_tool_specs_for_architect(&mut iter_tool_specs, user_message);
+            self.compact_tool_specs_for_context(&mut iter_tool_specs);
 
             let stream_opts = crate::providers::traits::StreamOptions::new(true);
             let mut stream = self.provider.stream_chat(

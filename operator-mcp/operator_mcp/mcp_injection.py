@@ -175,6 +175,18 @@ You are a worker agent spawned by a parent operator agent. Focus entirely \
 on the task you've been given. Be thorough, verify your work, and report \
 results clearly."""
 
+_TERSE_OUTPUT_CONTRACT = """\
+Output contract for operator handoff:
+- Be concise: no filler, no tool narration, no step-by-step diary.
+- Use short sections only when useful: Summary, Decisions, Files, Risks, Next.
+- Prefer file paths, artifact refs, kref/ctx refs, and exact error lines over pasted logs.
+- Do not paste large raw output; summarize it and cite where to inspect it."""
+
+
+def _terse_internal_outputs_enabled() -> bool:
+    raw = os.environ.get("CONSTRUCT_TERSE_INTERNAL_OUTPUTS", "1").strip().lower()
+    return raw not in {"0", "false", "no", "off"}
+
 
 def build_system_prompt(
     *,
@@ -222,6 +234,9 @@ def build_system_prompt(
 
     if template_hint:
         parts.append(f"\n## Context\n{template_hint}")
+
+    if _terse_internal_outputs_enabled():
+        parts.append(_TERSE_OUTPUT_CONTRACT)
 
     # Inject orchestration skills if pattern specified
     if skill_pattern:

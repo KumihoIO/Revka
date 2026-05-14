@@ -133,6 +133,9 @@ pub struct PromptContext<'a> {
     ///
     /// Ignored when `kumiho_enabled` is `false`. See audit rows 1 + 13.
     pub kumiho_memory_advanced_available: bool,
+    /// When true, render only compact tool docs in the system prompt because
+    /// full callable schemas are supplied separately through native tool specs.
+    pub compact_tool_docs: bool,
     /// Render mode — daemon vs channel. See [`BuilderMode`].
     pub mode: BuilderMode<'a>,
 }
@@ -411,7 +414,9 @@ impl PromptSection for ToolsSection {
     }
 
     fn build(&self, ctx: &PromptContext<'_>) -> Result<String> {
-        let compact = matches!(&ctx.mode, BuilderMode::Channel(opts) if opts.compact_context);
+        let channel_name_only =
+            matches!(&ctx.mode, BuilderMode::Channel(opts) if opts.compact_context);
+        let compact_full_docs = ctx.compact_tool_docs && matches!(ctx.tools, PromptTools::Full(_));
 
         if ctx.tools.is_empty() && ctx.dispatcher_instructions.is_empty() {
             return Ok(String::new());
@@ -420,10 +425,23 @@ impl PromptSection for ToolsSection {
         let mut out = String::from("## Tools\n\n");
 
         if !ctx.tools.is_empty() {
-            if compact {
+            if channel_name_only {
                 out.push_str("Available tools: ");
                 out.push_str(&ctx.tools.names().join(", "));
                 out.push_str("\n\n");
+            } else if compact_full_docs {
+                out.push_str("Available tools (call schemas are supplied separately):\n\n");
+                if let PromptTools::Full(tools) = &ctx.tools {
+                    for tool in *tools {
+                        let desc = ctx
+                            .tool_descriptions
+                            .and_then(|td: &ToolDescriptions| td.get(tool.name()))
+                            .unwrap_or_else(|| tool.description());
+                        let desc = crate::agent::token_compression::compact_inline(desc, 180);
+                        let _ = writeln!(out, "- **{}**: {}", tool.name(), desc);
+                    }
+                }
+                out.push('\n');
             } else {
                 match &ctx.tools {
                     PromptTools::Full(tools) => {
@@ -788,6 +806,7 @@ mod tests {
             operator_enabled: false,
             kumiho_enabled: false,
             kumiho_memory_advanced_available: true,
+            compact_tool_docs: false,
             mode: BuilderMode::Daemon,
         }
     }
@@ -812,6 +831,7 @@ mod tests {
             operator_enabled: false,
             kumiho_enabled: false,
             kumiho_memory_advanced_available: true,
+            compact_tool_docs: false,
             mode: BuilderMode::Channel(ChannelOptions::default()),
         }
     }
@@ -1257,6 +1277,19 @@ mod tests {
     }
 
     #[test]
+    fn daemon_compact_tool_docs_omits_inline_parameter_schemas() {
+        let tools: Vec<Box<dyn Tool>> = vec![Box::new(TestTool)];
+        let mut ctx = daemon_ctx(Path::new("/tmp"), &tools, &[], None, "");
+        ctx.compact_tool_docs = true;
+
+        let out = ToolsSection.build(&ctx).unwrap();
+
+        assert!(out.contains("Available tools (call schemas are supplied separately)"));
+        assert!(out.contains("test_tool"));
+        assert!(!out.contains("Parameters:"));
+    }
+
+    #[test]
     fn channel_hardware_section_appears_when_hw_tools_present() {
         let tools: [(&str, &str); 1] = [("gpio_write", "Toggle GPIO")];
         let ctx = channel_ctx(Path::new("/tmp"), &tools, &[]);
@@ -1355,6 +1388,7 @@ mod tests {
             operator_enabled: false,
             kumiho_enabled,
             kumiho_memory_advanced_available: advanced,
+            compact_tool_docs: false,
             mode: BuilderMode::Daemon,
         }
     }
