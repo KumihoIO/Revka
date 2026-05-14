@@ -127,7 +127,41 @@ Notes:
 | `timeout_secs` | `60` | Timeout for the summarization provider call |
 | `identifier_policy` | `strict` | Identifier preservation policy |
 | `tool_result_retrim_chars` | `2000` | Maximum characters retained for older tool results during fast trim |
+| `live_tool_result_max_chars` | `12000` | Maximum characters retained for live tool results before content-aware compression |
+| `input_max_chars` | `24000` | Maximum characters retained for a single large user input before content-aware compression |
+| `compact_tool_schemas` | `true` | Shorten native tool descriptions and JSON-schema metadata before each LLM call |
+| `compact_system_tool_docs` | `true` | Render compact tool docs in the system prompt when native tool schemas are sent separately |
+| `tool_description_max_chars` | `180` | Maximum characters retained for each tool description after schema compaction |
+| `schema_description_max_chars` | `120` | Maximum characters retained for each JSON-schema `description` after schema compaction |
+| `terse_internal_outputs` | `true` | Enable concise output contracts for internal operator/agent handoffs |
 | `tool_result_trim_exempt` | `[]` | Tool names exempt from tool-result trimming |
+
+Construct applies the same content-aware compression layer on four token-heavy axes:
+large pasted input, CLI/shell output, general tool output, and code-search output.
+The implementation is deterministic and zero-LLM: JSON is reduced to schema and
+samples, diffs to file/hunk/change summaries, logs to failure lines plus tail, and
+search output to grouped file hits. For semantic code search, the
+`semantic_code_search` tool uses Semble when installed and falls back to bounded
+local ripgrep results when Semble is unavailable. If neither Semble nor ripgrep
+is on `PATH`, it still performs a bounded built-in literal scan so code search
+remains available in zero-install environments.
+The operator MCP side also compresses oversized agent `last_message` fields in
+wait results while preserving the JSON schema; override that budget with
+`CONSTRUCT_AGENT_RESULT_MAX_CHARS`.
+Base context is reduced separately: native tool-call schemas are compacted
+before provider calls, and system prompts omit duplicated parameter schemas
+when those schemas are already supplied through the provider's tool interface.
+Internal operator/sub-agent prompts use a terse handoff contract; set
+`CONSTRUCT_TERSE_INTERNAL_OUTPUTS=0` to disable the Python operator side.
+Workflow step skills use compact manifests by default when multiple skill refs
+are assigned, avoiding full `SKILL.md` bodies in every agent prompt. Skill
+manifests keep the `kref` pointer, resolved markdown path when available, and a
+hydrate instruction so the agent can call `memory_resolve_kref` or read the
+resolved file only when the compact manifest is insufficient. Use
+`CONSTRUCT_WORKFLOW_SKILL_MAX_CHARS` to adjust the per-skill manifest budget,
+`CONSTRUCT_WORKFLOW_SKILL_CONTEXT_MODE=pointer` to send only krefs/paths, or
+`CONSTRUCT_WORKFLOW_SKILL_CONTEXT_MODE=full` to restore legacy full-inline
+skill context.
 
 ### `tool_filter_groups`
 

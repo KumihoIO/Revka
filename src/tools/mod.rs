@@ -87,6 +87,7 @@ pub mod schedule;
 pub mod schema;
 pub mod screenshot;
 pub mod security_ops;
+pub mod semantic_code_search;
 pub mod sessions;
 pub mod shell;
 pub mod skill_http;
@@ -181,6 +182,7 @@ pub use schedule::ScheduleTool;
 pub use schema::{CleaningStrategy, SchemaCleanr};
 pub use screenshot::ScreenshotTool;
 pub use security_ops::SecurityOpsTool;
+pub use semantic_code_search::SemanticCodeSearchTool;
 pub use sessions::{SessionsHistoryTool, SessionsListTool, SessionsSendTool};
 pub use shell::ShellTool;
 #[allow(unused_imports)]
@@ -289,7 +291,8 @@ pub fn default_tools_with_runtime(
         Box::new(FileWriteTool::new(security.clone())),
         Box::new(FileEditTool::new(security.clone())),
         Box::new(GlobSearchTool::new(security.clone())),
-        Box::new(ContentSearchTool::new(security)),
+        Box::new(ContentSearchTool::new(security.clone())),
+        Box::new(SemanticCodeSearchTool::new(security)),
     ]
 }
 
@@ -407,6 +410,7 @@ pub fn all_tools_with_runtime(
         Arc::new(FileEditTool::new(security.clone())),
         Arc::new(GlobSearchTool::new(security.clone())),
         Arc::new(ContentSearchTool::new(security.clone())),
+        Arc::new(SemanticCodeSearchTool::new(security.clone())),
         Arc::new(CronAddTool::new(config.clone(), security.clone())),
         Arc::new(CronListTool::new(config.clone())),
         Arc::new(CronRemoveTool::new(config.clone(), security.clone())),
@@ -1033,7 +1037,7 @@ mod tests {
     fn default_tools_has_expected_count() {
         let security = Arc::new(SecurityPolicy::default());
         let tools = default_tools(security);
-        assert_eq!(tools.len(), 6);
+        assert_eq!(tools.len(), 7);
     }
 
     #[test]
@@ -1133,6 +1137,7 @@ mod tests {
         assert!(names.contains(&"file_edit"));
         assert!(names.contains(&"glob_search"));
         assert!(names.contains(&"content_search"));
+        assert!(names.contains(&"semantic_code_search"));
     }
 
     #[test]
