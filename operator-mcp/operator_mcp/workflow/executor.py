@@ -697,27 +697,38 @@ def _eval_branch_value(expr: str | None, state: WorkflowState) -> str:
 # ---------------------------------------------------------------------------
 
 async def _resolve_skills_inline(skill_refs: list[str]) -> str:
-    """Pre-resolve skill krefs into inline content.
+    """Pre-resolve skill krefs into compact inline context.
 
-    Fetches skill content from Kumiho or local files so agents get the full
-    text in their prompt instead of opaque kref URIs they'd waste turns
-    trying to fetch via MCP tools.
+    Fetches skill content from Kumiho or local files, then sends a compact
+    manifest by default. This avoids multiplying workflow-step context by
+    every assigned skill. Set CONSTRUCT_WORKFLOW_SKILL_CONTEXT_MODE=pointer to
+    send only krefs/paths, or full to restore legacy full-inline behavior.
     """
+    from ..token_compression import build_skill_pointer_manifest, compress_skill_content
+
     parts: list[str] = []
+    stats: list[dict[str, Any]] = []
+    mode = os.environ.get("CONSTRUCT_WORKFLOW_SKILL_CONTEXT_MODE", "compact").strip().lower()
+    max_chars = int(os.environ.get("CONSTRUCT_WORKFLOW_SKILL_MAX_CHARS", "1600"))
     for ref in skill_refs:
         content = None
+        resolved_path = None
         if ref.startswith("kref://"):
             # Try Kumiho resolve — returns file path on disk
             try:
                 from ..operator_mcp import KUMIHO_SDK
                 if KUMIHO_SDK._available:
-                    file_path = await KUMIHO_SDK.resolve_kref(ref)
-                    if file_path and os.path.exists(file_path):
-                        with open(file_path, "r") as f:
+                    resolved_path = await KUMIHO_SDK.resolve_kref(ref)
+                    if (
+                        mode != "pointer"
+                        and resolved_path
+                        and os.path.exists(resolved_path)
+                    ):
+                        with open(resolved_path, "r", encoding="utf-8") as f:
                             content = f.read()
             except Exception as e:
                 _log(f"skill pre-resolve failed for {ref}: {e}")
-        if not content:
+        if not content and mode != "pointer":
             # Fallback: try as local skill name
             from ..skill_loader import load_skill
             # Strip both the canonical `.skill` suffix and the legacy
@@ -731,14 +742,38 @@ async def _resolve_skills_inline(skill_refs: list[str]) -> str:
             )
             content = load_skill(name)
         if content:
-            # Truncate very large skills to save tokens
-            if len(content) > 8000:
-                content = content[:8000] + "\n\n[... truncated for token efficiency ...]"
+            if mode == "full":
+                if len(content) > 8000:
+                    content = content[:8000] + "\n\n[... truncated for token efficiency ...]"
+            else:
+                content, compressed_stats = compress_skill_content(
+                    ref,
+                    content,
+                    resolved_path=resolved_path,
+                    max_chars=max_chars,
+                )
+                if compressed_stats:
+                    stats.append(compressed_stats)
+            parts.append(content)
+        elif mode == "pointer" or ref.startswith("kref://") or resolved_path:
+            content, pointer_stats = build_skill_pointer_manifest(
+                ref,
+                resolved_path=resolved_path,
+                max_chars=max_chars,
+            )
+            stats.append(pointer_stats)
             parts.append(content)
         else:
             _log(f"skill pre-resolve: could not resolve {ref}, skipping")
     if parts:
-        return "\n## Reference Skills\n\n" + "\n\n---\n\n".join(parts)
+        prefix = "\n## Reference Skills\n\n"
+        if stats:
+            saved = sum(item.get("estimated_tokens_saved", 0) for item in stats)
+            prefix += (
+                f"[Construct skill compression: {len(stats)} skill(s), "
+                f"est_tokens_saved~{saved}]\n\n"
+            )
+        return prefix + "\n\n---\n\n".join(parts)
     return ""
 
 

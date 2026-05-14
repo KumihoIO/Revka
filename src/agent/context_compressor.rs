@@ -44,6 +44,27 @@ fn default_identifier_policy() -> String {
 fn default_tool_result_retrim_chars() -> usize {
     2_000
 }
+fn default_live_tool_result_max_chars() -> usize {
+    12_000
+}
+fn default_input_max_chars() -> usize {
+    24_000
+}
+fn default_compact_tool_schemas() -> bool {
+    true
+}
+fn default_compact_system_tool_docs() -> bool {
+    true
+}
+fn default_tool_description_max_chars() -> usize {
+    180
+}
+fn default_schema_description_max_chars() -> usize {
+    120
+}
+fn default_terse_internal_outputs() -> bool {
+    true
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ContextCompressionConfig {
@@ -80,6 +101,27 @@ pub struct ContextCompressionConfig {
     /// Maximum chars for old tool results during fast-trim pass. Default: `2000`.
     #[serde(default = "default_tool_result_retrim_chars")]
     pub tool_result_retrim_chars: usize,
+    /// Maximum chars for live tool results before content-aware compression. Default: `12000`.
+    #[serde(default = "default_live_tool_result_max_chars")]
+    pub live_tool_result_max_chars: usize,
+    /// Maximum chars for a large single user input before content-aware compression. Default: `24000`.
+    #[serde(default = "default_input_max_chars")]
+    pub input_max_chars: usize,
+    /// Shorten tool descriptions and schema metadata before sending native tool specs. Default: `true`.
+    #[serde(default = "default_compact_tool_schemas")]
+    pub compact_tool_schemas: bool,
+    /// Avoid embedding full tool parameter schemas in system prompts when native tool specs are sent separately. Default: `true`.
+    #[serde(default = "default_compact_system_tool_docs")]
+    pub compact_system_tool_docs: bool,
+    /// Maximum chars retained for tool descriptions in compressed tool specs. Default: `180`.
+    #[serde(default = "default_tool_description_max_chars")]
+    pub tool_description_max_chars: usize,
+    /// Maximum chars retained for JSON-schema description fields in compressed tool specs. Default: `120`.
+    #[serde(default = "default_schema_description_max_chars")]
+    pub schema_description_max_chars: usize,
+    /// Add compact output contracts to internal operator/agent handoffs. Default: `true`.
+    #[serde(default = "default_terse_internal_outputs")]
+    pub terse_internal_outputs: bool,
     /// Tool names exempt from result trimming. Default: `[]`.
     #[serde(default)]
     pub tool_result_trim_exempt: Vec<String>,
@@ -99,8 +141,29 @@ impl Default for ContextCompressionConfig {
             summary_model: None,
             identifier_policy: default_identifier_policy(),
             tool_result_retrim_chars: default_tool_result_retrim_chars(),
+            live_tool_result_max_chars: default_live_tool_result_max_chars(),
+            input_max_chars: default_input_max_chars(),
+            compact_tool_schemas: default_compact_tool_schemas(),
+            compact_system_tool_docs: default_compact_system_tool_docs(),
+            tool_description_max_chars: default_tool_description_max_chars(),
+            schema_description_max_chars: default_schema_description_max_chars(),
+            terse_internal_outputs: default_terse_internal_outputs(),
             tool_result_trim_exempt: Vec::new(),
         }
+    }
+}
+
+pub fn effective_live_tool_result_chars(
+    config: &ContextCompressionConfig,
+    fallback_max_chars: usize,
+) -> usize {
+    if !config.enabled {
+        return fallback_max_chars;
+    }
+    match (fallback_max_chars, config.live_tool_result_max_chars) {
+        (0, _) => 0,
+        (fallback, 0) => fallback,
+        (fallback, live) => fallback.min(live),
     }
 }
 
@@ -411,7 +474,11 @@ impl ContextCompressor {
 
         // Build transcript from the middle section
         let middle = &history[start..end];
-        let transcript = build_transcript(middle, self.config.source_max_chars);
+        let transcript = build_transcript(
+            middle,
+            self.config.source_max_chars,
+            self.config.input_max_chars,
+        );
 
         if transcript.is_empty() {
             return Ok(false);
@@ -558,11 +625,20 @@ fn repair_tool_pairs(messages: &mut Vec<ChatMessage>) {
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn build_transcript(messages: &[ChatMessage], max_chars: usize) -> String {
+fn build_transcript(
+    messages: &[ChatMessage],
+    max_chars: usize,
+    per_message_max_chars: usize,
+) -> String {
     let mut transcript = String::new();
     for msg in messages {
         let role = msg.role.to_uppercase();
-        let _ = writeln!(transcript, "{role}: {}", msg.content.trim());
+        let content = crate::agent::token_compression::compress_transcript_message(
+            msg.role.as_str(),
+            msg.content.trim(),
+            per_message_max_chars,
+        );
+        let _ = writeln!(transcript, "{role}: {}", content.trim());
     }
 
     if transcript.len() > max_chars {
@@ -726,7 +802,7 @@ mod tests {
     #[test]
     fn test_build_transcript() {
         let messages = vec![msg("user", "hello"), msg("assistant", "hi there")];
-        let t = build_transcript(&messages, 10_000);
+        let t = build_transcript(&messages, 10_000, 24_000);
         assert!(t.contains("USER: hello"));
         assert!(t.contains("ASSISTANT: hi there"));
     }
@@ -734,7 +810,7 @@ mod tests {
     #[test]
     fn test_build_transcript_truncates() {
         let messages = vec![msg("user", &"x".repeat(1000))];
-        let t = build_transcript(&messages, 100);
+        let t = build_transcript(&messages, 100, 24_000);
         assert!(t.len() <= 103); // 100 + "..."
     }
 
@@ -757,6 +833,13 @@ mod tests {
         assert_eq!(config.timeout_secs, 60);
         assert!(config.summary_model.is_none());
         assert_eq!(config.identifier_policy, "strict");
+        assert_eq!(config.live_tool_result_max_chars, 12_000);
+        assert_eq!(config.input_max_chars, 24_000);
+        assert!(config.compact_tool_schemas);
+        assert!(config.compact_system_tool_docs);
+        assert_eq!(config.tool_description_max_chars, 180);
+        assert_eq!(config.schema_description_max_chars, 120);
+        assert!(config.terse_internal_outputs);
     }
 
     #[test]
@@ -871,7 +954,33 @@ mod tests {
     fn test_fast_trim_config_defaults() {
         let config = ContextCompressionConfig::default();
         assert_eq!(config.tool_result_retrim_chars, 2_000);
+        assert_eq!(config.live_tool_result_max_chars, 12_000);
+        assert!(config.compact_tool_schemas);
+        assert!(config.compact_system_tool_docs);
         assert!(config.tool_result_trim_exempt.is_empty());
+    }
+
+    #[test]
+    fn test_effective_live_tool_result_chars() {
+        let config = ContextCompressionConfig::default();
+        assert_eq!(effective_live_tool_result_chars(&config, 50_000), 12_000);
+        assert_eq!(effective_live_tool_result_chars(&config, 0), 0);
+
+        let disabled = ContextCompressionConfig {
+            enabled: false,
+            live_tool_result_max_chars: 12_000,
+            ..Default::default()
+        };
+        assert_eq!(effective_live_tool_result_chars(&disabled, 50_000), 50_000);
+
+        let live_disabled = ContextCompressionConfig {
+            live_tool_result_max_chars: 0,
+            ..Default::default()
+        };
+        assert_eq!(
+            effective_live_tool_result_chars(&live_disabled, 50_000),
+            50_000
+        );
     }
 
     #[test]
