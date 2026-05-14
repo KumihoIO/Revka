@@ -19,11 +19,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   ArrowLeft,
+  Clipboard,
   Code,
+  Copy,
   Crosshair,
   LayoutGrid,
   Plus,
   Radio,
+  RefreshCw,
   Wand2,
   X,
   Zap,
@@ -45,7 +48,7 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
-import type { WorkflowDefinition } from '@/types/api';
+import type { WorkflowDefinition, WorkflowRunDetail, WorkflowStepDetail } from '@/types/api';
 import { taskNodeTypes } from '@/components/workflows/TaskNode';
 import { gateNodeTypes } from '@/components/workflows/GateNode';
 import {
@@ -88,7 +91,7 @@ import {
   useWorkflowEvents,
   type WorkflowRevisionPublishedEvent,
 } from './useWorkflowEvents';
-import { fetchWorkflowByRevisionKref, runWorkflow } from '@/lib/api';
+import { fetchWorkflowByRevisionKref, fetchWorkflowRun, runWorkflow } from '@/lib/api';
 import '@/construct/styles/editor-chrome.css';
 
 const allNodeTypes = { ...taskNodeTypes, ...gateNodeTypes };
@@ -448,7 +451,258 @@ function defaultsForType(type: string): Partial<TaskNodeData> {
 }
 
 // ---------------------------------------------------------------------------
-// Right-click context menu
+// Run-to-here log dialog
+// ---------------------------------------------------------------------------
+
+function RunLogDialog({
+  runLog,
+  onClose,
+  onRefresh,
+}: {
+  runLog: RunLogState;
+  onClose: () => void;
+  onRefresh: () => Promise<void>;
+}) {
+  const detail = runLog.detail;
+  const status = detail?.status || runLog.status;
+  const steps = detail?.steps ?? [];
+  const targetStep = steps.find((step) => step.step_id === runLog.targetStepId);
+  const targetOutput = targetStep?.output_preview || compactJson(targetStep?.output_data);
+  const targetError = targetStep?.error || detail?.error || runLog.error;
+  const isLoading = Boolean(runLog.runId && !detail && !runLog.error);
+
+  return (
+    <div
+      role="dialog"
+      aria-label="Run to here log"
+      style={{
+        position: 'fixed',
+        right: 20,
+        bottom: 20,
+        zIndex: 70,
+        width: 'min(440px, calc(100vw - 32px))',
+        maxHeight: 'min(560px, calc(100vh - 96px))',
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
+        borderRadius: 12,
+        border: '1px solid var(--construct-border-strong)',
+        background: 'var(--construct-bg-panel-strong)',
+        boxShadow: '0 18px 48px rgba(0,0,0,0.42)',
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 10,
+          padding: '12px 14px',
+          borderBottom: '1px solid var(--construct-border-soft)',
+        }}
+      >
+        <Crosshair size={14} style={{ color: 'var(--construct-signal-network)' }} />
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--construct-text-primary)' }}>
+            Run to here
+          </div>
+          <div
+            style={{
+              fontSize: 10,
+              color: 'var(--construct-text-faint)',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {runLog.workflowName} · {runLog.targetStepId}
+          </div>
+        </div>
+        <span
+          style={{
+            flexShrink: 0,
+            padding: '3px 8px',
+            borderRadius: 999,
+            border: '1px solid color-mix(in srgb, currentColor 38%, transparent)',
+            color: runStatusColor(status),
+            fontSize: 10,
+            fontWeight: 700,
+            textTransform: 'uppercase',
+            letterSpacing: '0.08em',
+          }}
+        >
+          {status}
+        </span>
+        <button
+          type="button"
+          onClick={() => void onRefresh()}
+          disabled={!runLog.runId}
+          className="construct-button"
+          title="Refresh run log"
+          aria-label="Refresh run log"
+          style={{
+            width: 28,
+            height: 28,
+            padding: 0,
+            justifyContent: 'center',
+            opacity: runLog.runId ? 1 : 0.45,
+          }}
+        >
+          <RefreshCw size={13} />
+        </button>
+        <button
+          type="button"
+          onClick={onClose}
+          className="construct-button"
+          title="Close run log"
+          aria-label="Close run log"
+          style={{ width: 28, height: 28, padding: 0, justifyContent: 'center' }}
+        >
+          <X size={13} />
+        </button>
+      </div>
+
+      <div style={{ overflowY: 'auto', padding: 14, display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: '80px minmax(0, 1fr)',
+            rowGap: 5,
+            columnGap: 10,
+            fontSize: 11,
+          }}
+        >
+          <span style={{ color: 'var(--construct-text-faint)' }}>Run ID</span>
+          <span
+            style={{
+              color: 'var(--construct-text-secondary)',
+              fontFamily: 'var(--pc-font-mono, ui-monospace, monospace)',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {runLog.runId || 'Starting...'}
+          </span>
+          <span style={{ color: 'var(--construct-text-faint)' }}>Started</span>
+          <span style={{ color: 'var(--construct-text-secondary)' }}>
+            {formatRunTimestamp(detail?.started_at || runLog.startedAt)}
+          </span>
+          <span style={{ color: 'var(--construct-text-faint)' }}>Progress</span>
+          <span style={{ color: 'var(--construct-text-secondary)' }}>
+            {detail ? `${detail.steps_completed || '0'} / ${detail.steps_total || steps.length || '?'}` : 'Waiting for run details'}
+          </span>
+        </div>
+
+        {targetError ? (
+          <div
+            style={{
+              padding: 10,
+              borderRadius: 10,
+              border: '1px solid color-mix(in srgb, var(--construct-status-danger) 34%, transparent)',
+              background: 'color-mix(in srgb, var(--construct-status-danger) 10%, transparent)',
+              color: 'var(--construct-status-danger)',
+              fontSize: 11,
+              whiteSpace: 'pre-wrap',
+            }}
+          >
+            {targetError}
+          </div>
+        ) : null}
+
+        <div>
+          <div className="construct-kicker" style={{ marginBottom: 8 }}>Target Output</div>
+          {targetOutput ? (
+            <pre
+              style={{
+                margin: 0,
+                maxHeight: 180,
+                overflow: 'auto',
+                padding: 10,
+                borderRadius: 10,
+                border: '1px solid var(--construct-border-soft)',
+                background: 'var(--pc-bg-code)',
+                color: 'var(--construct-text-secondary)',
+                fontFamily: 'var(--pc-font-mono, ui-monospace, monospace)',
+                fontSize: 11,
+                lineHeight: 1.55,
+                whiteSpace: 'pre-wrap',
+              }}
+            >
+              {targetOutput}
+            </pre>
+          ) : (
+            <div style={{ fontSize: 11, color: 'var(--construct-text-faint)' }}>
+              {isLoading
+                ? 'Waiting for the run log...'
+                : targetStep
+                  ? 'The target step has not produced output yet.'
+                  : 'The target step has not appeared in the run log yet.'}
+            </div>
+          )}
+        </div>
+
+        <div>
+          <div className="construct-kicker" style={{ marginBottom: 8 }}>Steps</div>
+          {steps.length > 0 ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {steps.map((step: WorkflowStepDetail) => (
+                <div
+                  key={step.step_id}
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'minmax(0, 1fr) auto',
+                    alignItems: 'center',
+                    gap: 8,
+                    padding: '7px 9px',
+                    borderRadius: 8,
+                    border: step.step_id === runLog.targetStepId
+                      ? '1px solid color-mix(in srgb, var(--construct-signal-network) 48%, transparent)'
+                      : '1px solid var(--construct-border-soft)',
+                    background: step.step_id === runLog.targetStepId
+                      ? 'color-mix(in srgb, var(--construct-signal-network) 10%, transparent)'
+                      : 'var(--construct-bg-surface)',
+                  }}
+                >
+                  <span
+                    style={{
+                      minWidth: 0,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                      color: 'var(--construct-text-primary)',
+                      fontSize: 11,
+                      fontFamily: 'var(--pc-font-mono, ui-monospace, monospace)',
+                    }}
+                  >
+                    {step.step_id}
+                  </span>
+                  <span
+                    style={{
+                      color: runStatusColor(step.status),
+                      fontSize: 10,
+                      fontWeight: 700,
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.08em',
+                    }}
+                  >
+                    {step.status || 'pending'}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div style={{ fontSize: 11, color: 'var(--construct-text-faint)' }}>
+              {runLog.error || 'No step log entries yet.'}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Editor overlay state
 // ---------------------------------------------------------------------------
 
 interface ContextMenuState {
@@ -458,10 +712,26 @@ interface ContextMenuState {
   flowY: number;
 }
 
+interface RunLogState {
+  open: boolean;
+  workflowName: string;
+  targetStepId: string;
+  status: string;
+  runId?: string;
+  startedAt: string;
+  detail?: WorkflowRunDetail;
+  error?: string;
+}
+
 type AgentPickerTarget = NonNullable<OpenAgentPickerDetail['target']>;
 type WorkflowWireStyle = 'default' | 'straight' | 'step';
 
 const WIRE_STYLE_STORAGE_KEY = 'construct.workflowEditor.wireStyle';
+const DETAILS_PANEL_WIDTH_STORAGE_KEY = 'construct.workflowEditor.detailsPanelWidth';
+const DETAILS_PANEL_MIN_WIDTH = 300;
+const DETAILS_PANEL_MAX_WIDTH = 620;
+const DETAILS_PANEL_DEFAULT_WIDTH = 352;
+const COPY_PASTE_OFFSET = 36;
 const WIRE_STYLE_OPTIONS: Array<{
   value: WorkflowWireStyle;
   label: string;
@@ -498,6 +768,112 @@ function applyWireStyleToEdges(edges: Edge[], wireStyle: WorkflowWireStyle): Edg
   return edges.map((edge) => applyWireStyle(edge, wireStyle));
 }
 
+function clampDetailsPanelWidth(width: number): number {
+  return Math.max(DETAILS_PANEL_MIN_WIDTH, Math.min(DETAILS_PANEL_MAX_WIDTH, Math.round(width)));
+}
+
+function readDetailsPanelWidth(): number {
+  if (typeof localStorage === 'undefined') return DETAILS_PANEL_DEFAULT_WIDTH;
+  try {
+    const saved = Number(localStorage.getItem(DETAILS_PANEL_WIDTH_STORAGE_KEY));
+    return Number.isFinite(saved)
+      ? clampDetailsPanelWidth(saved)
+      : DETAILS_PANEL_DEFAULT_WIDTH;
+  } catch {
+    return DETAILS_PANEL_DEFAULT_WIDTH;
+  }
+}
+
+function taskIdSlug(input: string): string {
+  const slug = input
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return slug || 'step';
+}
+
+function uniqueCopyTaskId(base: string, existingIds: Iterable<string>): string {
+  const existing = new Set(existingIds);
+  const stem = taskIdSlug(`${base || 'step'}-copy`);
+  if (!existing.has(stem)) return stem;
+  let counter = 2;
+  while (existing.has(`${stem}-${counter}`)) counter += 1;
+  return `${stem}-${counter}`;
+}
+
+function cloneTaskData(data: TaskNodeData): TaskNodeData {
+  return JSON.parse(JSON.stringify(data)) as TaskNodeData;
+}
+
+function prepareCopiedTaskData(data: TaskNodeData, newTaskId: string): TaskNodeData {
+  const copy = cloneTaskData(data);
+  const displayName = data.name?.trim()
+    ? `${data.name.trim()} Copy`
+    : newTaskId;
+  return {
+    ...copy,
+    taskId: newTaskId,
+    label: displayName,
+    name: displayName,
+    dependencyCount: 0,
+    conditionalBranches: (copy.conditionalBranches || []).map((branch) => ({
+      ...branch,
+      goto: '',
+    })),
+  };
+}
+
+function withLiveDependencyCounts(
+  nodes: Node<TaskNodeData>[],
+  edges: Edge[],
+): Node<TaskNodeData>[] {
+  const counts = new Map<string, number>();
+  for (const edge of edges) {
+    if (isGateBranchHandle(edge.sourceHandle as string | null | undefined)) continue;
+    counts.set(edge.target, (counts.get(edge.target) || 0) + 1);
+  }
+
+  return nodes.map((node) => {
+    const count = counts.get(node.id) || 0;
+    const data = node.data as TaskNodeData;
+    return data.dependencyCount === count
+      ? node
+      : { ...node, data: { ...data, dependencyCount: count } };
+  });
+}
+
+function isTerminalRunStatus(status: string | undefined): boolean {
+  if (!status) return false;
+  return ['completed', 'failed', 'cancelled', 'canceled', 'error', 'success'].includes(
+    status.toLowerCase(),
+  );
+}
+
+function runStatusColor(status: string | undefined): string {
+  const normalized = (status || '').toLowerCase();
+  if (['completed', 'success'].includes(normalized)) return 'var(--construct-status-success)';
+  if (['failed', 'error', 'cancelled', 'canceled'].includes(normalized)) return 'var(--construct-status-danger)';
+  if (['running', 'starting', 'queued', 'pending'].includes(normalized)) return 'var(--construct-signal-live)';
+  return 'var(--construct-text-faint)';
+}
+
+function formatRunTimestamp(value: string | undefined): string {
+  if (!value) return '';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+}
+
+function compactJson(value: unknown): string | null {
+  if (value == null) return null;
+  try {
+    const text = JSON.stringify(value, null, 2);
+    return text.length > 1800 ? `${text.slice(0, 1800)}\n…` : text;
+  } catch {
+    return null;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Inner editor (uses ReactFlow context)
 // ---------------------------------------------------------------------------
@@ -524,6 +900,17 @@ function WorkflowEditorInner({
   const [yamlText, setYamlText] = useState(workflow?.definition ?? '');
   const [yamlDirty, setYamlDirty] = useState(false);
   const [wireStyle, setWireStyle] = useState<WorkflowWireStyle>(readWireStylePreference);
+  const [detailsPanelWidth, setDetailsPanelWidth] = useState(readDetailsPanelWidth);
+  const [detailsPanelResizing, setDetailsPanelResizing] = useState(false);
+  const detailsResizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
+  const copiedNodeRef = useRef<{
+    data: TaskNodeData;
+    nodeType: string | undefined;
+    position: { x: number; y: number };
+  } | null>(null);
+  const [hasCopiedNode, setHasCopiedNode] = useState(false);
+  const pasteCountRef = useRef(0);
+  const [runLog, setRunLog] = useState<RunLogState | null>(null);
 
   const [workflowMeta, setWorkflowMeta] = useState<WorkflowMeta>({
     name: '',
@@ -600,6 +987,10 @@ function WorkflowEditorInner({
 
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
+  const liveNodes = useMemo(
+    () => withLiveDependencyCounts(nodes as Node<TaskNodeData>[], edges),
+    [nodes, edges],
+  );
 
   useEffect(() => {
     try {
@@ -611,8 +1002,8 @@ function WorkflowEditorInner({
   }, [wireStyle, setEdges]);
 
   const selectedNode = useMemo(
-    () => (selectedNodeId ? nodes.find((n) => n.id === selectedNodeId) ?? null : null),
-    [selectedNodeId, nodes],
+    () => (selectedNodeId ? liveNodes.find((n) => n.id === selectedNodeId) ?? null : null),
+    [selectedNodeId, liveNodes],
   );
 
   // ── DAG context for ${...} expression autocomplete in textareas ─────────
@@ -620,7 +1011,7 @@ function WorkflowEditorInner({
   // parsed workflowMeta; trigger fields are common defaults plus any keys
   // surfaced by the workflow's declared trigger inputMap.
   const dagContext = useMemo(() => {
-    const stepIds = nodes
+    const stepIds = liveNodes
       .map((n) => (n.data as TaskNodeData).taskId)
       .filter((id): id is string => Boolean(id));
     const workflowInputs = workflowMeta.inputs.map((i) => i.name).filter(Boolean);
@@ -635,7 +1026,7 @@ function WorkflowEditorInner({
       new Set([...defaultTriggerFields, ...triggerInputKeys]),
     );
     return { stepIds, workflowInputs, triggerFields };
-  }, [nodes, workflowMeta.inputs, workflowMeta.triggers]);
+  }, [liveNodes, workflowMeta.inputs, workflowMeta.triggers]);
 
   // ── Position helpers ────────────────────────────────────────────────────
   const getViewportCenter = useCallback(() => {
@@ -644,6 +1035,92 @@ function WorkflowEditorInner({
     const rect = el.getBoundingClientRect();
     return screenToFlowPosition({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
   }, [screenToFlowPosition]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(DETAILS_PANEL_WIDTH_STORAGE_KEY, String(detailsPanelWidth));
+    } catch {
+      /* ignore */
+    }
+  }, [detailsPanelWidth]);
+
+  const beginDetailsPanelResize = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      detailsResizeRef.current = {
+        startX: event.clientX,
+        startWidth: detailsPanelWidth,
+      };
+      setDetailsPanelResizing(true);
+    },
+    [detailsPanelWidth],
+  );
+
+  useEffect(() => {
+    if (!detailsPanelResizing) return undefined;
+
+    const onMove = (event: MouseEvent) => {
+      const start = detailsResizeRef.current;
+      if (!start) return;
+      const delta = event.clientX - start.startX;
+      setDetailsPanelWidth(clampDetailsPanelWidth(start.startWidth - delta));
+    };
+
+    const onUp = () => {
+      detailsResizeRef.current = null;
+      setDetailsPanelResizing(false);
+    };
+
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+  }, [detailsPanelResizing]);
+
+  const copySelectedNode = useCallback(() => {
+    if (!selectedNode) return;
+    copiedNodeRef.current = {
+      data: cloneTaskData(selectedNode.data as TaskNodeData),
+      nodeType: selectedNode.type,
+      position: { ...selectedNode.position },
+    };
+    pasteCountRef.current = 0;
+    setHasCopiedNode(true);
+  }, [selectedNode]);
+
+  const pasteCopiedNode = useCallback(
+    (position?: { x: number; y: number }) => {
+      const copied = copiedNodeRef.current;
+      if (!copied) return;
+      pasteCountRef.current += 1;
+      const existingIds = liveNodes.map((node) => (node.data as TaskNodeData).taskId);
+      const originalId = copied.data.taskId || copied.data.name || 'step';
+      const newId = uniqueCopyTaskId(originalId, existingIds);
+      const offset = COPY_PASTE_OFFSET * pasteCountRef.current;
+      const pastePosition = position ?? {
+        x: copied.position.x + offset,
+        y: copied.position.y + offset,
+      };
+      const data = prepareCopiedTaskData(copied.data, newId);
+      const nodeType = data.type === 'conditional' ? 'gateNode' : copied.nodeType || 'taskNode';
+      const nextNode: Node<TaskNodeData> = {
+        id: newId,
+        type: nodeType,
+        position: pastePosition,
+        data,
+      };
+      setNodes((nds) => [...nds, nextNode]);
+      setSelectedNodeId(newId);
+      setContextMenu(null);
+    },
+    [liveNodes, setNodes],
+  );
 
   // ── Persist node positions ──────────────────────────────────────────────
   const onNodeDragStop = useCallback(() => {
@@ -732,26 +1209,6 @@ function WorkflowEditorInner({
                 : n,
             )
           : nds;
-        if (newEdge && !newEdge.sourceHandle && newEdge.target === id) {
-          // Forward drop: bump dependency count for the new node.
-          newNode.data = { ...newNode.data, dependencyCount: 1 };
-        }
-        // Reverse drop: bump dependency count on the original target.
-        if (newEdge && newEdge.source === id && newEdge.target !== id) {
-          return withBranchTarget
-            .map((n) =>
-              n.id === newEdge!.target
-                ? {
-                    ...n,
-                    data: {
-                      ...n.data,
-                      dependencyCount: (n.data as TaskNodeData).dependencyCount + 1,
-                    },
-                  }
-                : n,
-            )
-            .concat(newNode);
-        }
         return [...withBranchTarget, newNode];
       });
       if (newEdge) setEdges((eds) => [...eds, applyWireStyle(newEdge!, wireStyle)]);
@@ -859,7 +1316,7 @@ function WorkflowEditorInner({
   // is declared) can dispatch to the latest callback.
   const openYamlPanelRef = useRef<() => void>(() => {});
 
-  // ── ⌘K / ⌘I / ⌘J shortcuts ──────────────────────────────────────────────
+  // ── ⌘K / ⌘I / ⌘J / copy-paste shortcuts ────────────────────────────────
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
@@ -884,6 +1341,18 @@ function WorkflowEditorInner({
 
       if (inField) return;
 
+      if (mod && event.key.toLowerCase() === 'c' && selectedNodeId) {
+        event.preventDefault();
+        copySelectedNode();
+        return;
+      }
+
+      if (mod && event.key.toLowerCase() === 'v' && hasCopiedNode) {
+        event.preventDefault();
+        pasteCopiedNode();
+        return;
+      }
+
       if (mod && event.key.toLowerCase() === 'k') {
         event.preventDefault();
         setPaletteContext(undefined);
@@ -896,7 +1365,7 @@ function WorkflowEditorInner({
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [isMac]);
+  }, [isMac, selectedNodeId, copySelectedNode, hasCopiedNode, pasteCopiedNode]);
 
   // ── React Flow handlers ─────────────────────────────────────────────────
   const onConnect = useCallback(
@@ -949,9 +1418,6 @@ function WorkflowEditorInner({
           if (n.id !== targetId) return n;
           const data = n.data as TaskNodeData;
           let nextData: TaskNodeData = data;
-          if (!isBranch) {
-            nextData = { ...nextData, dependencyCount: nextData.dependencyCount + 1 };
-          }
           if (sourceId !== targetId && !isBranch) {
             const primaryField = STEP_PRIMARY_TEXT_FIELD[nextData.type];
             if (primaryField && !targetAlreadyReferencesSource(nextData, sourceId)) {
@@ -1025,7 +1491,6 @@ function WorkflowEditorInner({
 
   const onEdgesDelete = useCallback(
     (deletedEdges: Edge[]) => {
-      const targetCounts = new Map<string, number>();
       const clearedBranchIndexes = new Map<string, Set<number>>();
       for (const e of deletedEdges) {
         const branchIndex = gateBranchIndex(e.sourceHandle as string | null | undefined);
@@ -1035,11 +1500,9 @@ function WorkflowEditorInner({
           clearedBranchIndexes.set(e.source, indexes);
           continue;
         }
-        targetCounts.set(e.target, (targetCounts.get(e.target) || 0) + 1);
       }
       setNodes((nds) =>
         nds.map((n) => {
-          const dec = targetCounts.get(n.id);
           const branchIndexes = clearedBranchIndexes.get(n.id);
           let nextData = n.data as TaskNodeData;
           if (branchIndexes && branchIndexes.size > 0) {
@@ -1049,14 +1512,7 @@ function WorkflowEditorInner({
             );
             nextData = { ...nextData, ...conditionalBranchDataPatch(branches) };
           }
-          if (!dec) return nextData === n.data ? n : { ...n, data: nextData };
-          return {
-            ...n,
-            data: {
-              ...nextData,
-              dependencyCount: Math.max(0, nextData.dependencyCount - dec),
-            },
-          };
+          return nextData === n.data ? n : { ...n, data: nextData };
         }),
       );
     },
@@ -1395,11 +1851,11 @@ function WorkflowEditorInner({
 
   // Open YAML drawer (used by EditorCommandList row + ⌘I shortcut).
   const openYamlPanel = useCallback(() => {
-    const tasks = flowToTasks(nodes as Node<TaskNodeData>[], edges);
+    const tasks = flowToTasks(liveNodes, edges);
     setYamlText(tasksToYaml(tasks, { ...workflowMeta, name, description }));
     setYamlDirty(false);
     setShowAdvanced(true);
-  }, [nodes, edges, workflowMeta, name, description]);
+  }, [liveNodes, edges, workflowMeta, name, description]);
   // Keep the ⌘I keydown effect's ref pointed at the latest closure.
   openYamlPanelRef.current = openYamlPanel;
 
@@ -1421,9 +1877,9 @@ function WorkflowEditorInner({
   // re-running it as a memo only when nodes/edges/meta change avoids stale-
   // dirty bugs.
   const currentYaml = useMemo(() => {
-    const tasks = flowToTasks(nodes as Node<TaskNodeData>[], edges);
+    const tasks = flowToTasks(liveNodes, edges);
     return tasksToYaml(tasks, { ...workflowMeta, name, description });
-  }, [nodes, edges, workflowMeta, name, description]);
+  }, [liveNodes, edges, workflowMeta, name, description]);
 
   const dirty = useMemo(() => {
     // No baseline yet (create mode with no edits) — never dirty.
@@ -1446,7 +1902,7 @@ function WorkflowEditorInner({
         const laidOut = layoutNodes(rawNodes, newEdges);
 
         // Compute changed step IDs by comparing serialized step blobs.
-        const oldTasks = flowToTasks(nodes as Node<TaskNodeData>[], edges);
+        const oldTasks = flowToTasks(liveNodes, edges);
         const oldById = new Map(oldTasks.map((t) => [t.id, JSON.stringify(t)]));
         const changedIds = new Set<string>();
         for (const t of newTasks) {
@@ -1508,7 +1964,7 @@ function WorkflowEditorInner({
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [nodes, edges, setNodes, setEdges, wireStyle],
+    [liveNodes, edges, setNodes, setEdges, wireStyle],
   );
 
   // Stable refs so the SSE callback doesn't re-subscribe on every state change.
@@ -1575,13 +2031,13 @@ function WorkflowEditorInner({
     setWarning(null);
     if (!name.trim()) return setError('Workflow name is required.');
     if (!description.trim()) return setError('Workflow description is required.');
-    if (nodes.length === 0) return setError('Add at least one step to the workflow.');
-    if (hasCycle(nodes, edges)) return setError('Cannot save: workflow has cycles.');
+    if (liveNodes.length === 0) return setError('Add at least one step to the workflow.');
+    if (hasCycle(liveNodes, edges)) return setError('Cannot save: workflow has cycles.');
     if (yamlDirty) {
       return setError('Apply the YAML changes to the graph before saving.');
     }
 
-    const tasks = flowToTasks(nodes as Node<TaskNodeData>[], edges);
+    const tasks = flowToTasks(liveNodes, edges);
     const definition = tasksToYaml(tasks, {
       ...workflowMeta,
       name: name.trim(),
@@ -1599,13 +2055,13 @@ function WorkflowEditorInner({
       const message = err instanceof Error ? err.message : 'Save failed.';
       setError(message);
     }
-  }, [name, description, tags, nodes, edges, workflowMeta, yamlDirty, onSave]);
+  }, [name, description, tags, liveNodes, edges, workflowMeta, yamlDirty, onSave]);
 
   // ── Sync YAML when toggling drawer ──────────────────────────────────────
   useEffect(() => {
     if (showAdvanced) {
       if (!yamlDirty) {
-        const tasks = flowToTasks(nodes as Node<TaskNodeData>[], edges);
+        const tasks = flowToTasks(liveNodes, edges);
         setYamlText(tasksToYaml(tasks, { ...workflowMeta, name, description }));
       }
     }
@@ -1616,10 +2072,10 @@ function WorkflowEditorInner({
   // Closure preview is best-effort — backend re-derives authoritatively.
   const computeRunToHereClosure = useCallback(
     (taskId: string) => {
-      const tasks = flowToTasks(nodes as Node<TaskNodeData>[], edges);
+      const tasks = flowToTasks(liveNodes, edges);
       return computeAncestorClosure(tasks, taskId);
     },
-    [nodes, edges],
+    [liveNodes, edges],
   );
 
   const handleRunToHere = useCallback(
@@ -1629,19 +2085,97 @@ function WorkflowEditorInner({
         setError('Save the workflow before using "Run to here".');
         return;
       }
+      setRunLog({
+        open: true,
+        workflowName: wfName,
+        targetStepId: taskId,
+        status: 'starting',
+        startedAt: new Date().toISOString(),
+      });
       try {
-        await runWorkflow(wfName, undefined, undefined, { targetStepId: taskId });
+        const result = await runWorkflow(wfName, undefined, undefined, { targetStepId: taskId });
+        setRunLog((current) => ({
+          open: true,
+          workflowName: result.workflow || current?.workflowName || wfName,
+          targetStepId: taskId,
+          status: result.status || 'running',
+          runId: result.run_id,
+          startedAt: current?.startedAt ?? new Date().toISOString(),
+          detail: current?.detail,
+        }));
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'Run-to-here failed.';
         setError(msg);
+        setRunLog((current) => ({
+          open: true,
+          workflowName: current?.workflowName || wfName,
+          targetStepId: taskId,
+          status: 'failed',
+          startedAt: current?.startedAt ?? new Date().toISOString(),
+          error: msg,
+        }));
       }
     },
     [workflow?.name, name],
   );
 
+  const refreshRunLog = useCallback(async () => {
+    const runId = runLog?.runId;
+    if (!runId) return;
+    try {
+      const detail = await fetchWorkflowRun(runId);
+      setRunLog((current) =>
+        current?.runId === runId
+          ? { ...current, detail, status: detail.status || current.status, error: undefined }
+          : current,
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to load run log.';
+      setRunLog((current) =>
+        current?.runId === runId ? { ...current, error: msg } : current,
+      );
+    }
+  }, [runLog?.runId]);
+
+  const hasRunLogDetail = Boolean(runLog?.detail);
+  useEffect(() => {
+    const runId = runLog?.runId;
+    if (!runLog?.open || !runId) return undefined;
+    if (isTerminalRunStatus(runLog.status) && hasRunLogDetail) return undefined;
+
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const detail = await fetchWorkflowRun(runId);
+        if (cancelled) return;
+        setRunLog((current) =>
+          current?.runId === runId
+            ? { ...current, detail, status: detail.status || current.status, error: undefined }
+            : current,
+        );
+      } catch (err) {
+        if (cancelled) return;
+        const msg = err instanceof Error ? err.message : 'Waiting for run log...';
+        setRunLog((current) =>
+          current?.runId === runId ? { ...current, error: msg } : current,
+        );
+      }
+    };
+
+    void poll();
+    const timer = window.setInterval(() => void poll(), 2000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [runLog?.open, runLog?.runId, runLog?.status, hasRunLogDetail]);
+
   // ── Render ──────────────────────────────────────────────────────────────
-  const isEmpty = nodes.length === 0;
-  const cycleDetected = hasCycle(nodes, edges);
+  const isEmpty = liveNodes.length === 0;
+  const cycleDetected = hasCycle(liveNodes, edges);
+  const runToHereActive = Boolean(
+    runLog?.open && !isTerminalRunStatus(runLog.status),
+  );
 
   return (
     <div
@@ -1933,8 +2467,8 @@ function WorkflowEditorInner({
       <div
         style={{
           display: 'grid',
-          gridTemplateColumns: 'minmax(0, 1fr) 22rem',
-          gap: 12,
+          gridTemplateColumns: `minmax(0, 1fr) 12px ${detailsPanelWidth}px`,
+          gap: 0,
           padding: 12,
           flex: 1,
           minHeight: 0,
@@ -1955,7 +2489,7 @@ function WorkflowEditorInner({
             >
               <div className="construct-kicker">Graph</div>
               <span style={{ fontSize: 11, color: 'var(--construct-text-faint)', marginLeft: 6 }}>
-                {nodes.length} step{nodes.length === 1 ? '' : 's'} · {edges.length} edge
+                {liveNodes.length} step{liveNodes.length === 1 ? '' : 's'} · {edges.length} edge
                 {edges.length === 1 ? '' : 's'}
                 {cycleDetected ? (
                   <>
@@ -1999,6 +2533,42 @@ function WorkflowEditorInner({
                   </button>
                 ))}
               </div>
+              <button
+                type="button"
+                onClick={copySelectedNode}
+                disabled={!selectedNode}
+                className="construct-button"
+                aria-label="Copy selected step"
+                title={`Copy selected step (${isMac ? '⌘' : 'Ctrl'}+C)`}
+                style={{
+                  width: 32,
+                  height: 32,
+                  padding: 0,
+                  justifyContent: 'center',
+                  opacity: selectedNode ? 1 : 0.48,
+                  cursor: selectedNode ? 'pointer' : 'not-allowed',
+                }}
+              >
+                <Copy size={14} />
+              </button>
+              <button
+                type="button"
+                onClick={() => pasteCopiedNode()}
+                disabled={!hasCopiedNode}
+                className="construct-button"
+                aria-label="Paste step"
+                title={`Paste step (${isMac ? '⌘' : 'Ctrl'}+V)`}
+                style={{
+                  width: 32,
+                  height: 32,
+                  padding: 0,
+                  justifyContent: 'center',
+                  opacity: hasCopiedNode ? 1 : 0.48,
+                  cursor: hasCopiedNode ? 'pointer' : 'not-allowed',
+                }}
+              >
+                <Clipboard size={14} />
+              </button>
               <button
                 type="button"
                 onClick={() => openPalette()}
@@ -2140,7 +2710,7 @@ function WorkflowEditorInner({
                 }}
               >
                 <ReactFlow
-                  nodes={nodes}
+                  nodes={liveNodes}
                   edges={edges}
                   onNodesChange={onNodesChange}
                   onEdgesChange={onEdgesChange}
@@ -2177,7 +2747,7 @@ function WorkflowEditorInner({
                       overflow: 'hidden',
                     }}
                   />
-                  {nodes.length > 0 && nodes.length <= 40 && (
+                  {liveNodes.length > 0 && liveNodes.length <= 40 && (
                     <MiniMap
                       position="bottom-right"
                       pannable
@@ -2211,12 +2781,16 @@ function WorkflowEditorInner({
                 {contextMenu && (
                   <ContextMenu
                     state={contextMenu}
-                    canPaste={false}
+                    canPaste={hasCopiedNode}
                     onClose={() => setContextMenu(null)}
                     onAddStep={() => {
                       const ctx = contextMenu;
                       setContextMenu(null);
                       openPalette({ x: ctx.flowX, y: ctx.flowY });
+                    }}
+                    onPaste={() => {
+                      const ctx = contextMenu;
+                      pasteCopiedNode({ x: ctx.flowX, y: ctx.flowY });
                     }}
                     onAutoLayout={() => {
                       setContextMenu(null);
@@ -2234,11 +2808,36 @@ function WorkflowEditorInner({
           </div>
         </Panel>
 
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize step details panel"
+          title="Resize step details panel"
+          onMouseDown={beginDetailsPanelResize}
+          style={{
+            cursor: 'col-resize',
+            display: 'flex',
+            alignItems: 'stretch',
+            justifyContent: 'center',
+            padding: '0 5px',
+          }}
+        >
+          <div
+            style={{
+              width: 2,
+              borderRadius: 999,
+              background: detailsPanelResizing
+                ? 'var(--pc-accent)'
+                : 'var(--construct-border-soft)',
+            }}
+          />
+        </div>
+
         {/* Side panel */}
         {selectedNode ? (
           <StepConfigPanel
             node={selectedNode as Node<TaskNodeData>}
-            existingTaskIds={nodes.map((n) => (n.data as TaskNodeData).taskId)}
+            existingTaskIds={liveNodes.map((n) => (n.data as TaskNodeData).taskId)}
             onUpdate={handleNodeUpdate}
             onRenameStep={handleRenameStep}
             onDelete={handleNodeDelete}
@@ -2250,10 +2849,12 @@ function WorkflowEditorInner({
             dagContext={dagContext}
             onRunToHere={handleRunToHere}
             computeRunToHereClosure={computeRunToHereClosure}
-            runToHereDisabled={(!workflow?.name && !name) || dirty}
+            runToHereDisabled={(!workflow?.name && !name) || dirty || runToHereActive}
             runToHereDisabledReason={
               dirty
                 ? 'Save your edits first — Run to here uses the saved revision.'
+                : runToHereActive
+                  ? 'A Run to here request is already in progress.'
                 : undefined
             }
           />
@@ -2295,6 +2896,14 @@ function WorkflowEditorInner({
         initialPrompt={architectInitialPrompt}
       />
 
+      {runLog?.open ? (
+        <RunLogDialog
+          runLog={runLog}
+          onClose={() => setRunLog(null)}
+          onRefresh={refreshRunLog}
+        />
+      ) : null}
+
       {/* Shared agent picker — single mount for the entire editor.
           Opened by canvas badge clicks, auto-open after creating a new
           agent step, AND the side panel "Choose agent…" button (which
@@ -2333,6 +2942,7 @@ function ContextMenu({
   canPaste,
   onClose,
   onAddStep,
+  onPaste,
   onAutoLayout,
   onFitToView,
   isMac,
@@ -2341,6 +2951,7 @@ function ContextMenu({
   canPaste: boolean;
   onClose: () => void;
   onAddStep: () => void;
+  onPaste: () => void;
   onAutoLayout: () => void;
   onFitToView: () => void;
   isMac: boolean;
@@ -2369,7 +2980,7 @@ function ContextMenu({
       }}
     >
       <ContextMenuItem onClick={onAddStep} label="Add Step" shortcut={`${isMac ? '⌘' : 'Ctrl'} K`} />
-      <ContextMenuItem onClick={() => {}} label="Paste" disabled={!canPaste} />
+      <ContextMenuItem onClick={onPaste} label="Paste Step" shortcut={`${isMac ? '⌘' : 'Ctrl'} V`} disabled={!canPaste} />
       <ContextMenuSeparator />
       <ContextMenuItem onClick={onAutoLayout} label="Auto-layout" />
       <ContextMenuItem onClick={onFitToView} label="Fit to View" />

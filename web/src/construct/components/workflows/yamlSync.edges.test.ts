@@ -24,7 +24,7 @@ import {
   tasksToYaml,
 } from './yamlSync';
 import type { TaskNodeData } from './yamlSync';
-import type { Node } from '@xyflow/react';
+import type { Edge, Node } from '@xyflow/react';
 
 function edgePairs(edges: { source: string; target: string }[]): Set<string> {
   return new Set(edges.map((e) => `${e.source}->${e.target}`));
@@ -148,6 +148,47 @@ steps:
   const { edges } = tasksToFlow(tasks);
   const matches = edges.filter((e) => e.source === 'step_a' && e.target === 'step_b');
   assert.equal(matches.length, 1, `expected exactly one step_a → step_b edge, got ${matches.length}`);
+});
+
+test('flowToTasks derives depends_on from edges, not stale node dependency counts', () => {
+  const yaml = `
+steps:
+  - id: setup
+    type: agent
+    agent:
+      agent_type: claude
+      role: researcher
+      prompt: "Prepare context."
+  - id: consume
+    type: agent
+    agent:
+      agent_type: claude
+      role: summarizer
+      prompt: "Summarize."
+`;
+  const tasks = parseWorkflowYaml(yaml);
+  const { nodes } = tasksToFlow(tasks);
+  const staleNodes = nodes.map((node) =>
+    node.id === 'consume'
+      ? { ...node, data: { ...(node.data as TaskNodeData), dependencyCount: 99 } }
+      : node,
+  ) as Node<TaskNodeData>[];
+
+  const withoutEdge = flowToTasks(staleNodes, []);
+  assert.deepEqual(
+    withoutEdge.find((task) => task.id === 'consume')!.depends_on,
+    [],
+    'stale dependencyCount must not serialize as depends_on',
+  );
+
+  const withEdge = flowToTasks(staleNodes, [
+    { id: 'setup->consume', source: 'setup', target: 'consume' } as Edge,
+  ]);
+  assert.deepEqual(
+    withEdge.find((task) => task.id === 'consume')!.depends_on,
+    ['setup'],
+    'graph edge must serialize as depends_on',
+  );
 });
 
 test('${input.X} / ${trigger.X} / ${env.X} are skipped', () => {
