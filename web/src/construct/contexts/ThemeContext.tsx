@@ -151,6 +151,14 @@ function resolveColorTheme(mode: ThemeMode, colorTheme: ColorThemeId): ColorThem
     return preferLight ? DEFAULT_LIGHT_THEME : DEFAULT_DARK_THEME;
   }
   if (mode === 'oled') return 'oled-black';
+  if (mode === 'light') {
+    const ct = colorThemeMap[colorTheme];
+    return ct?.scheme === 'light' ? colorTheme : DEFAULT_LIGHT_THEME;
+  }
+  if (mode === 'dark') {
+    const ct = colorThemeMap[colorTheme];
+    return ct?.scheme === 'dark' ? colorTheme : DEFAULT_DARK_THEME;
+  }
   return colorTheme;
 }
 
@@ -390,10 +398,13 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   }, [activeSkinId, theme, accent, colorTheme, uiFont, monoFont, uiFontSize, monoFontSize, applyAll, persist]);
 
   useEffect(() => {
-    applyAll({ theme, accent, colorTheme, uiFont, monoFont, uiFontSize, monoFontSize, activeSkinId });
     loadUiFont(uiFont);
     loadMonoFont(monoFont);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    applyAll({ theme, accent, colorTheme, uiFont, monoFont, uiFontSize, monoFontSize, activeSkinId });
+  }, [theme, accent, colorTheme, uiFont, monoFont, uiFontSize, monoFontSize, activeSkinId, applyAll]);
 
   useEffect(() => {
     if (authLoading || !isAuthenticated) return;
@@ -401,10 +412,6 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       // The pairing screen may render before API auth is available.
     });
   }, [authLoading, isAuthenticated, refreshSkins]);
-
-  useEffect(() => {
-    applyAll({ theme, accent, colorTheme, uiFont, monoFont, uiFontSize, monoFontSize, activeSkinId });
-  }, [installedSkins, activeSkinId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (theme !== 'system') return;
