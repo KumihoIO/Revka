@@ -83,7 +83,7 @@ export default function Header({ onOpenMobileNav }: HeaderProps) {
             className="construct-button px-2 py-1 text-xs"
             onClick={toggleAssistant}
             aria-label="Toggle operator"
-            style={open ? { background: 'var(--construct-signal-live-soft)', color: 'var(--construct-signal-live)', borderColor: 'var(--construct-signal-live)' } : undefined}
+            style={open ? { background: 'var(--construct-signal-selected-soft, color-mix(in srgb, var(--construct-signal-selected) 18%, transparent))', color: 'var(--construct-signal-selected)', borderColor: 'var(--construct-signal-selected)' } : undefined}
           >
             <MessageSquare className="h-4 w-4" />
           </button>
@@ -192,7 +192,7 @@ export default function Header({ onOpenMobileNav }: HeaderProps) {
               type="button"
               className="construct-button text-sm"
               onClick={toggleAssistant}
-              style={open ? { background: 'var(--construct-signal-live-soft)', color: 'var(--construct-signal-live)', borderColor: 'var(--construct-signal-live)' } : undefined}
+              style={open ? { background: 'var(--construct-signal-selected-soft, color-mix(in srgb, var(--construct-signal-selected) 18%, transparent))', color: 'var(--construct-signal-selected)', borderColor: 'var(--construct-signal-selected)' } : undefined}
             >
               <MessageSquare className="h-4 w-4" />
               {t('header.operator')}

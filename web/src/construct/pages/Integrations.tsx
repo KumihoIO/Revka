@@ -18,7 +18,7 @@ export default function Integrations() {
   const statusBadge = (status: Integration['status']) => {
     switch (status) {
       case 'Active':
-        return { icon: Check, label: t('integrations.badge.active'), color: 'var(--construct-status-success)', border: 'rgba(125,255,155,0.2)', bg: 'rgba(125,255,155,0.08)' };
+        return { icon: Check, label: t('integrations.badge.active'), color: 'var(--construct-status-success)', border: 'color-mix(in srgb, var(--construct-status-success) 24%, transparent)', bg: 'color-mix(in srgb, var(--construct-status-success) 10%, transparent)' };
       case 'Available':
         return { icon: Zap, label: t('integrations.badge.available'), color: 'var(--construct-signal-network)', border: 'color-mix(in srgb, var(--construct-signal-network) 24%, transparent)', bg: 'color-mix(in srgb, var(--construct-signal-network) 10%, transparent)' };
       case 'ComingSoon':
@@ -89,7 +89,7 @@ export default function Integrations() {
                       style={{
                         borderColor: activeCategory === category ? 'var(--construct-border-strong)' : 'var(--construct-border-soft)',
                         background: activeCategory === category
-                          ? 'color-mix(in srgb, var(--construct-signal-live-soft) 80%, var(--construct-bg-panel-strong))'
+                          ? 'color-mix(in srgb, var(--construct-signal-selected) 14%, var(--construct-bg-panel-strong))'
                           : 'color-mix(in srgb, var(--construct-bg-panel-strong) 94%, transparent)',
                       }}
                     >
@@ -124,7 +124,7 @@ export default function Integrations() {
                       style={{
                         borderColor: selectedIntegration?.name === integration.name ? 'var(--construct-border-strong)' : 'var(--construct-border-soft)',
                         background: selectedIntegration?.name === integration.name
-                          ? 'color-mix(in srgb, var(--construct-signal-network) 10%, var(--construct-bg-panel-strong))'
+                          ? 'color-mix(in srgb, var(--construct-signal-selected) 14%, var(--construct-bg-panel-strong))'
                           : 'color-mix(in srgb, var(--construct-bg-panel-strong) 94%, transparent)',
                       }}
                     >

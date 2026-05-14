@@ -196,7 +196,7 @@ export function RecentRunsRailCard({ runs, onSelectRun, selectedRunId, footer }:
               <StatusPill status={run.status} />
             </div>
             {run.run_id === selectedRunId ? (
-              <div className="mt-2 text-[10px] font-semibold uppercase tracking-[0.14em]" style={{ color: 'var(--construct-signal-live)' }}>
+              <div className="mt-2 text-[10px] font-semibold uppercase tracking-[0.14em]" style={{ color: 'var(--construct-signal-selected)' }}>
                 Active selection
               </div>
             ) : null}

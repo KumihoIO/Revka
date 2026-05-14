@@ -527,7 +527,7 @@ export default function WorkflowRuns() {
                   style={{
                     borderColor: 'var(--construct-border-soft)',
                     background: isActive
-                      ? 'color-mix(in srgb, var(--construct-signal-live-soft) 80%, var(--construct-bg-panel))'
+                      ? 'color-mix(in srgb, var(--construct-signal-selected) 14%, var(--construct-bg-panel))'
                       : 'transparent',
                   }}
                 >
@@ -575,9 +575,9 @@ export default function WorkflowRuns() {
                     disabled={retrying}
                     title={t('runs.action.retry_tooltip')}
                     style={{
-                      background: 'var(--construct-signal-live-soft)',
-                      color: 'var(--construct-signal-live)',
-                      borderColor: 'var(--construct-signal-live)',
+                      background: 'var(--construct-signal-selected-soft, color-mix(in srgb, var(--construct-signal-selected) 18%, transparent))',
+                      color: 'var(--construct-signal-selected)',
+                      borderColor: 'var(--construct-signal-selected)',
                     }}
                   >
                     <RotateCcw className={`h-3.5 w-3.5 ${retrying ? 'animate-spin' : ''}`} />
@@ -904,7 +904,7 @@ export default function WorkflowRuns() {
                     className="flex w-full items-center justify-between gap-2 rounded-[10px] px-3 py-2 text-left transition"
                     style={{
                       background: selectedTask?.id === step.step_id
-                        ? 'var(--construct-signal-live-soft)'
+                        ? 'var(--construct-signal-selected-soft, color-mix(in srgb, var(--construct-signal-selected) 18%, transparent))'
                         : 'transparent',
                     }}
                   >
@@ -940,7 +940,7 @@ function PathModeButton({ label, active, onClick }: { label: string; active: boo
       className="rounded-[12px] border px-3 py-2 text-xs font-semibold transition-colors"
       style={{
         borderColor: active ? 'var(--construct-border-strong)' : 'var(--construct-border-soft)',
-        background: active ? 'var(--construct-signal-live-soft)' : 'color-mix(in srgb, var(--construct-bg-panel-strong) 92%, transparent)',
+        background: active ? 'var(--construct-signal-selected-soft, color-mix(in srgb, var(--construct-signal-selected) 18%, transparent))' : 'color-mix(in srgb, var(--construct-bg-panel-strong) 92%, transparent)',
         color: active ? 'var(--construct-text-primary)' : 'var(--construct-text-secondary)',
       }}
     >

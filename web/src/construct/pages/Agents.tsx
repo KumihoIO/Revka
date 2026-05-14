@@ -241,7 +241,7 @@ export default function Agents() {
                     opacity: agent.deprecated ? 0.68 : 1,
                     borderColor: agent.kref === selectedAgent?.kref ? 'var(--construct-border-strong)' : 'var(--construct-border-soft)',
                     background: agent.kref === selectedAgent?.kref
-                      ? 'color-mix(in srgb, var(--construct-signal-live-soft) 80%, var(--construct-bg-panel-strong))'
+                      ? 'color-mix(in srgb, var(--construct-signal-selected) 14%, var(--construct-bg-panel-strong))'
                       : 'transparent',
                   }}
                   onClick={() => setSelectedAgentKref(agent.kref)}
@@ -306,7 +306,7 @@ export default function Agents() {
                   </div>
                 </div>
                 <span className="rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em]" style={{
-                  background: selectedAgent.deprecated ? 'rgba(255,107,122,0.12)' : 'var(--construct-signal-live-soft)',
+                  background: selectedAgent.deprecated ? 'color-mix(in srgb, var(--construct-status-danger) 12%, transparent)' : 'color-mix(in srgb, var(--construct-status-success) 12%, transparent)',
                   color: selectedAgent.deprecated ? 'var(--construct-status-danger)' : 'var(--construct-status-success)',
                 }}>
                   {selectedAgent.deprecated ? t('agents.status.disabled') : t('agents.status.active')}

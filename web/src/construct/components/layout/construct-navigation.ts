@@ -55,7 +55,6 @@ export const v2NavSections: V2NavSection[] = [
     labelKey: 'nav.section.operations',
     items: [
       { to: '/assets', label: 'Assets', labelKey: 'nav.assets', icon: Database, blurb: 'Artifacts and workflow-adjacent resources', blurbKey: 'nav.assets.blurb' },
-      { to: '/skins', label: 'Skins', labelKey: 'nav.skins', icon: Palette, blurb: 'Token and asset based UI skins', blurbKey: 'nav.skins.blurb' },
       { to: '/skills', label: 'Skills', labelKey: 'nav.skills', icon: Sparkles, blurb: 'Reusable operational capabilities', blurbKey: 'nav.skills.blurb' },
       { to: '/tools', label: 'Tools', labelKey: 'nav.tools', icon: Wrench, blurb: 'Agent tool catalog and CLI binaries', blurbKey: 'nav.tools.blurb' },
       { to: '/integrations', label: 'Integrations', labelKey: 'nav.integrations', icon: Puzzle, blurb: 'Connected systems and channel surfaces', blurbKey: 'nav.integrations.blurb' },
@@ -63,6 +62,7 @@ export const v2NavSections: V2NavSection[] = [
       { to: '/pairing', label: 'Pairing', labelKey: 'nav.pairing', icon: Smartphone, blurb: 'Device enrolment and trust management', blurbKey: 'nav.pairing.blurb' },
       { to: '/config', label: 'Config', labelKey: 'nav.config', icon: Settings, blurb: 'Runtime TOML and operational configuration', blurbKey: 'nav.config.blurb' },
       { to: '/cost', label: 'Cost', labelKey: 'nav.cost', icon: DollarSign, blurb: 'Spend and efficiency by workflow and run', blurbKey: 'nav.cost.blurb' },
+      { to: '/skins', label: 'Skins', labelKey: 'nav.skins', icon: Palette, blurb: 'Token and asset based UI skins', blurbKey: 'nav.skins.blurb' },
     ],
   },
   {
