@@ -59,6 +59,32 @@ def _clear_global_agent_state():
     _agents_handler._terminal_result_cache.clear()
 
 
+@pytest.fixture(autouse=True)
+def _allow_agent_budget_checks(monkeypatch, request):
+    """Agent-handler unit tests should not require a live Rust gateway."""
+    if request.node.path.name == "test_budget_authority.py":
+        yield
+        return
+
+    from operator_mcp import budget_authority
+    from operator_mcp.tool_handlers import agents as _agents_handler
+
+    async def _ok_budget():
+        return None
+
+    async def _ok_check(*_args, **_kwargs):
+        return None
+
+    async def _ok_require(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(_agents_handler, "_check_gateway_budget_before_spawn", _ok_budget)
+    monkeypatch.setattr(_agents_handler, "require_agent_budget", _ok_require)
+    monkeypatch.setattr(budget_authority, "check_agent_budget", _ok_check)
+    monkeypatch.setattr(budget_authority, "require_agent_budget", _ok_require)
+    yield
+
+
 # ---------------------------------------------------------------------------
 # tmp_path-based fixtures for file I/O tests
 # ---------------------------------------------------------------------------

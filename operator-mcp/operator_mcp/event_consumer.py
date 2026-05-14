@@ -20,7 +20,6 @@ from typing import Any
 import json as _json
 
 from ._log import _log
-from .cost_tracker import CostTracker
 from .gateway_client import ConstructGatewayClient
 from .run_log import get_or_create_log
 from .session_manager_client import SessionManagerClient
@@ -96,14 +95,13 @@ class EventConsumer:
         self,
         sidecar: SessionManagerClient,
         gateway: ConstructGatewayClient,
-        cost_tracker: CostTracker | None = None,
     ) -> None:
         self._sidecar = sidecar
         self._gateway = gateway
-        self._cost_tracker = cost_tracker
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._agent_titles: dict[str, str] = {}
         self._agent_models: dict[str, str] = {}  # agent_id → model name for cost tracking
+        self._agent_providers: dict[str, str] = {}
         self._agent_events: dict[str, list[dict[str, Any]]] = {}
         self._callbacks: list[Any] = []
         self._lock = asyncio.Lock()
@@ -296,7 +294,7 @@ class EventConsumer:
 
                 # Translate and dispatch
                 title = self._agent_titles.get(agent_id, agent_id[:8])
-                for ch_event in self._translate(agent_id, title, raw_event):
+                for ch_event in await self._translate(agent_id, title, raw_event):
                     await self._dispatch(ch_event)
 
         except asyncio.CancelledError:
@@ -324,7 +322,7 @@ class EventConsumer:
                     pass
 
                 # Translate to channel events
-                channel_events = self._translate(agent_id, title, raw_event)
+                channel_events = await self._translate(agent_id, title, raw_event)
                 for ch_event in channel_events:
                     await self._dispatch(ch_event)
 
@@ -333,7 +331,7 @@ class EventConsumer:
         except Exception as e:
             _log(f"EventConsumer: stream error for {agent_id}: {e}")
 
-    def _translate(
+    async def _translate(
         self,
         agent_id: str,
         title: str,
@@ -346,9 +344,12 @@ class EventConsumer:
         events: list[ChannelEvent] = []
 
         if ev_type == "session_started":
+            provider = inner.get("provider", "")
+            if provider:
+                self._agent_providers[agent_id] = provider
             events.append(ChannelEvent(
                 "agent.started", agent_id, title,
-                {"provider": inner.get("provider", "")},
+                {"provider": provider},
                 timestamp,
             ))
 
@@ -366,19 +367,37 @@ class EventConsumer:
                 {"usage": usage},
                 timestamp,
             ))
-            # Record usage in local cost tracker
-            if self._cost_tracker and usage:
-                # Model may come from the usage event itself, or from
-                # registration (set_agent_model / subscribe).  The latter
-                # is more reliable because the sidecar often omits the field.
-                model = (
-                    usage.get("model", "")
-                    or self._agent_models.get(agent_id, "")
+            if usage:
+                provider = (
+                    usage.get("provider", "")
+                    or self._agent_providers.get(agent_id, "")
+                    or "sidecar"
                 )
-                self._cost_tracker.record_from_usage_dict(
+                # Model may come from the usage event itself, or from
+                # registration (set_agent_model / subscribe). The latter is
+                # more reliable because sidecars often omit the field.
+                model = usage.get("model", "") or self._agent_models.get(agent_id, "")
+                if not model:
+                    model = f"{provider}/unknown"
+                input_tokens = (
+                    usage.get("inputTokens")
+                    or usage.get("input_tokens")
+                    or usage.get("prompt_tokens")
+                    or 0
+                )
+                output_tokens = (
+                    usage.get("outputTokens")
+                    or usage.get("output_tokens")
+                    or usage.get("completion_tokens")
+                    or 0
+                )
+                await self._gateway.record_usage(
                     agent_id=agent_id,
-                    usage=usage,
                     model=model,
+                    provider=provider,
+                    input_tokens=int(input_tokens or 0),
+                    output_tokens=int(output_tokens or 0),
+                    source="sidecar",
                     agent_title=title,
                 )
 

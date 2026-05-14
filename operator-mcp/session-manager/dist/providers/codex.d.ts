@@ -14,6 +14,7 @@ export interface CodexSessionHandle {
     stdout: string;
     stderr: string;
     usage: AgentUsage;
+    jsonBuffer: string;
 }
 /**
  * Create a Codex agent session via subprocess.

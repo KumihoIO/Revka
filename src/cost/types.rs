@@ -77,15 +77,45 @@ pub struct CostRecord {
     pub usage: TokenUsage,
     /// Session identifier (for grouping)
     pub session_id: String,
+    /// Optional origin metadata for unified runtime + sidecar accounting.
+    #[serde(default)]
+    pub metadata: CostRecordMetadata,
+}
+
+/// Optional metadata attached to a cost record.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CostRecordMetadata {
+    /// Runtime surface that produced the usage, e.g. `gateway`, `channel`, `sidecar`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    /// Provider family when known, e.g. `openai-codex`, `anthropic`, `claude`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    /// Sidecar/operator agent id when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<String>,
+    /// Human-readable sidecar/operator agent title when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_title: Option<String>,
 }
 
 impl CostRecord {
     /// Create a new cost record.
     pub fn new(session_id: impl Into<String>, usage: TokenUsage) -> Self {
+        Self::new_with_metadata(session_id, usage, CostRecordMetadata::default())
+    }
+
+    /// Create a new cost record with origin metadata.
+    pub fn new_with_metadata(
+        session_id: impl Into<String>,
+        usage: TokenUsage,
+        metadata: CostRecordMetadata,
+    ) -> Self {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
             usage,
             session_id: session_id.into(),
+            metadata,
         }
     }
 }
@@ -124,6 +154,15 @@ pub struct CostSummary {
     pub request_count: usize,
     /// Breakdown by model
     pub by_model: std::collections::HashMap<String, ModelStats>,
+    /// Breakdown by sidecar/operator agent id.
+    #[serde(default)]
+    pub by_agent: std::collections::HashMap<String, AgentStats>,
+    /// Breakdown by runtime source.
+    #[serde(default)]
+    pub by_source: std::collections::HashMap<String, SourceStats>,
+    /// Current configured budget status.
+    #[serde(default)]
+    pub budget: BudgetStatus,
 }
 
 /// Statistics for a specific model.
@@ -139,6 +178,77 @@ pub struct ModelStats {
     pub request_count: usize,
 }
 
+/// Statistics for a sidecar/operator agent.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentStats {
+    /// Agent id.
+    pub agent_id: String,
+    /// Latest known human-readable title.
+    pub agent_title: Option<String>,
+    /// Runtime source, e.g. `sidecar`.
+    pub source: Option<String>,
+    /// Total cost for this agent.
+    pub cost_usd: f64,
+    /// Total tokens for this agent.
+    pub total_tokens: u64,
+    /// Number of requests for this agent.
+    pub request_count: usize,
+    /// Breakdown by model for this agent.
+    pub by_model: std::collections::HashMap<String, ModelStats>,
+}
+
+/// Statistics for a runtime source.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SourceStats {
+    /// Runtime source.
+    pub source: String,
+    /// Total cost for this source.
+    pub cost_usd: f64,
+    /// Total tokens for this source.
+    pub total_tokens: u64,
+    /// Number of requests for this source.
+    pub request_count: usize,
+}
+
+/// Configured budget and current utilization.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BudgetStatus {
+    /// Whether cost tracking is enabled.
+    pub enabled: bool,
+    /// Daily spending limit in USD.
+    pub daily_limit_usd: f64,
+    /// Monthly spending limit in USD.
+    pub monthly_limit_usd: f64,
+    /// Warning threshold percentage.
+    pub warn_at_percent: u8,
+    /// Remaining daily budget in USD.
+    pub daily_remaining_usd: f64,
+    /// Remaining monthly budget in USD.
+    pub monthly_remaining_usd: f64,
+    /// Daily budget utilization percentage.
+    pub daily_percent: f64,
+    /// Monthly budget utilization percentage.
+    pub monthly_percent: f64,
+    /// `ok`, `warning`, `exceeded`, or `disabled`.
+    pub state: String,
+}
+
+impl Default for BudgetStatus {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            daily_limit_usd: 0.0,
+            monthly_limit_usd: 0.0,
+            warn_at_percent: 0,
+            daily_remaining_usd: 0.0,
+            monthly_remaining_usd: 0.0,
+            daily_percent: 0.0,
+            monthly_percent: 0.0,
+            state: "disabled".to_string(),
+        }
+    }
+}
+
 impl Default for CostSummary {
     fn default() -> Self {
         Self {
@@ -148,6 +258,9 @@ impl Default for CostSummary {
             total_tokens: 0,
             request_count: 0,
             by_model: std::collections::HashMap::new(),
+            by_agent: std::collections::HashMap::new(),
+            by_source: std::collections::HashMap::new(),
+            budget: BudgetStatus::default(),
         }
     }
 }
@@ -189,5 +302,6 @@ mod tests {
         assert_eq!(record.session_id, "session-123");
         assert!(!record.id.is_empty());
         assert_eq!(record.usage.model, "test/model");
+        assert!(record.metadata.source.is_none());
     }
 }

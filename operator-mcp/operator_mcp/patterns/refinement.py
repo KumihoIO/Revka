@@ -301,6 +301,7 @@ async def _spawn_and_wait(
     auth-profile bindings to expose CONSTRUCT_AUTH_PROFILE_ID without
     injecting it into the system prompt.
     """
+    from ..budget_authority import BudgetGateError, require_agent_budget
     from ..tool_handlers.agents import _try_sidecar_create, _event_consumer
 
     agent_id = str(uuid.uuid4())
@@ -318,15 +319,27 @@ async def _spawn_and_wait(
     # using `claude --print --bare` shares the user's CLI quota instead.
     use_cli = not include_memory and not include_operator
 
+    if use_cli:
+        try:
+            from ..operator_mcp import CONSTRUCT_GW
+            await require_agent_budget(CONSTRUCT_GW)
+        except BudgetGateError as exc:
+            agent.status = "error"
+            return agent, str(exc.response.get("error", exc))
+
     sidecar_info = None
     if not use_cli:
-        sidecar_info = await _try_sidecar_create(
-            agent_id, agent_type, title, cwd, prompt, model=model,
-            max_turns=max_turns,
-            include_memory=include_memory,
-            include_operator=include_operator,
-            env_extra=env_extra,
-        )
+        try:
+            sidecar_info = await _try_sidecar_create(
+                agent_id, agent_type, title, cwd, prompt, model=model,
+                max_turns=max_turns,
+                include_memory=include_memory,
+                include_operator=include_operator,
+                env_extra=env_extra,
+            )
+        except BudgetGateError as exc:
+            agent.status = "error"
+            return agent, str(exc.response.get("error", exc))
     if sidecar_info:
         agent.status = "running"
         agent._sidecar_id = sidecar_info.get("id", "")

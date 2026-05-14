@@ -176,6 +176,7 @@ async def _spawn_and_wait(
     timeout: float = 300.0,
 ) -> tuple[ManagedAgent, str]:
     """Spawn an agent, wait for completion, return (agent, output_text)."""
+    from .budget_authority import BudgetGateError
     from .tool_handlers.agents import _try_sidecar_create, _event_consumer
 
     agent_id = str(uuid.uuid4())
@@ -189,9 +190,13 @@ async def _spawn_and_wait(
     AGENTS[agent_id] = agent
 
     # Try sidecar, fallback to subprocess
-    sidecar_info = await _try_sidecar_create(
-        agent_id, agent_type, title, cwd, prompt, model=model,
-    )
+    try:
+        sidecar_info = await _try_sidecar_create(
+            agent_id, agent_type, title, cwd, prompt, model=model,
+        )
+    except BudgetGateError as exc:
+        agent.status = "error"
+        return agent, str(exc.response.get("error", exc))
     if sidecar_info:
         agent.status = "running"
         agent._sidecar_id = sidecar_info.get("id", "")

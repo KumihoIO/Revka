@@ -1,5 +1,8 @@
-use super::types::{BudgetCheck, CostRecord, CostSummary, ModelStats, TokenUsage, UsagePeriod};
-use crate::config::schema::CostConfig;
+use super::types::{
+    AgentStats, BudgetCheck, BudgetStatus, CostRecord, CostRecordMetadata, CostSummary, ModelStats,
+    SourceStats, TokenUsage, UsagePeriod,
+};
+use crate::config::schema::{CostConfig, ModelPricing};
 use anyhow::{Context, Result, anyhow};
 use chrono::{Datelike, NaiveDate, Utc};
 use parking_lot::{Mutex, MutexGuard};
@@ -108,6 +111,45 @@ impl CostTracker {
 
     /// Record a usage event.
     pub fn record_usage(&self, usage: TokenUsage) -> Result<()> {
+        self.record_usage_with_metadata(usage, CostRecordMetadata::default())
+    }
+
+    /// Record token usage by looking up configured model pricing.
+    pub fn record_usage_from_tokens(
+        &self,
+        provider_name: &str,
+        model: &str,
+        input_tokens: u64,
+        output_tokens: u64,
+        metadata: CostRecordMetadata,
+    ) -> Result<TokenUsage> {
+        let pricing = self.pricing_for(provider_name, model);
+        let usage = TokenUsage::new(
+            model,
+            input_tokens,
+            output_tokens,
+            pricing.map_or(0.0, |entry| entry.input),
+            pricing.map_or(0.0, |entry| entry.output),
+        );
+
+        if pricing.is_none() {
+            tracing::debug!(
+                provider = provider_name,
+                model,
+                "Cost tracking recorded token usage with zero pricing (no pricing entry found)"
+            );
+        }
+
+        self.record_usage_with_metadata(usage.clone(), metadata)?;
+        Ok(usage)
+    }
+
+    /// Record a usage event with origin metadata.
+    pub fn record_usage_with_metadata(
+        &self,
+        usage: TokenUsage,
+        metadata: CostRecordMetadata,
+    ) -> Result<()> {
         if !self.config.enabled {
             return Ok(());
         }
@@ -118,7 +160,7 @@ impl CostTracker {
             ));
         }
 
-        let record = CostRecord::new(&self.session_id, usage);
+        let record = CostRecord::new_with_metadata(&self.session_id, usage, metadata);
 
         // Persist first for durability guarantees.
         {
@@ -131,6 +173,33 @@ impl CostTracker {
         session_costs.push(record);
 
         Ok(())
+    }
+
+    fn pricing_for(&self, provider_name: &str, model: &str) -> Option<&ModelPricing> {
+        self.config
+            .prices
+            .get(model)
+            .or_else(|| self.config.prices.get(&format!("{provider_name}/{model}")))
+            .or_else(|| {
+                model
+                    .rsplit_once('/')
+                    .and_then(|(_, suffix)| self.config.prices.get(suffix))
+            })
+            .or_else(|| {
+                let base = model
+                    .rsplit_once('-')
+                    .filter(|(_, tail)| tail.chars().all(|c| c.is_ascii_digit()))
+                    .map_or(model, |(prefix, _)| prefix);
+
+                self.config.prices.iter().find_map(|(key, entry)| {
+                    let model_part = key.rsplit_once('/').map_or(key.as_str(), |(_, m)| m);
+                    if model_part.starts_with(base) || base.starts_with(model_part) {
+                        Some(entry)
+                    } else {
+                        None
+                    }
+                })
+            })
     }
 
     /// Get the current cost summary.
@@ -151,6 +220,9 @@ impl CostTracker {
             .sum();
         let request_count = session_costs.len();
         let by_model = build_session_model_stats(&session_costs);
+        let by_agent = build_session_agent_stats(&session_costs);
+        let by_source = build_session_source_stats(&session_costs);
+        let budget = self.budget_status(daily_cost, monthly_cost);
 
         Ok(CostSummary {
             session_cost_usd: session_cost,
@@ -159,7 +231,42 @@ impl CostTracker {
             total_tokens,
             request_count,
             by_model,
+            by_agent,
+            by_source,
+            budget,
         })
+    }
+
+    fn budget_status(&self, daily_cost: f64, monthly_cost: f64) -> BudgetStatus {
+        if !self.config.enabled {
+            return BudgetStatus::default();
+        }
+
+        let daily_limit = self.config.daily_limit_usd.max(0.0);
+        let monthly_limit = self.config.monthly_limit_usd.max(0.0);
+        let warn_at_percent = self.config.warn_at_percent.min(100);
+        let daily_percent = percent_used(daily_cost, daily_limit);
+        let monthly_percent = percent_used(monthly_cost, monthly_limit);
+        let warning_threshold = f64::from(warn_at_percent);
+        let state = if daily_cost > daily_limit || monthly_cost > monthly_limit {
+            "exceeded"
+        } else if daily_percent >= warning_threshold || monthly_percent >= warning_threshold {
+            "warning"
+        } else {
+            "ok"
+        };
+
+        BudgetStatus {
+            enabled: true,
+            daily_limit_usd: daily_limit,
+            monthly_limit_usd: monthly_limit,
+            warn_at_percent,
+            daily_remaining_usd: (daily_limit - daily_cost).max(0.0),
+            monthly_remaining_usd: (monthly_limit - monthly_cost).max(0.0),
+            daily_percent,
+            monthly_percent,
+            state: state.to_string(),
+        }
     }
 
     /// Get the daily cost for a specific date.
@@ -237,21 +344,97 @@ fn build_session_model_stats(session_costs: &[CostRecord]) -> HashMap<String, Mo
     let mut by_model: HashMap<String, ModelStats> = HashMap::new();
 
     for record in session_costs {
-        let entry = by_model
-            .entry(record.usage.model.clone())
-            .or_insert_with(|| ModelStats {
-                model: record.usage.model.clone(),
+        add_model_stats(&mut by_model, record);
+    }
+
+    by_model
+}
+
+fn build_session_agent_stats(session_costs: &[CostRecord]) -> HashMap<String, AgentStats> {
+    let mut by_agent: HashMap<String, AgentStats> = HashMap::new();
+
+    for record in session_costs {
+        let Some(agent_id) = record.metadata.agent_id.as_deref() else {
+            continue;
+        };
+        if agent_id.is_empty() {
+            continue;
+        }
+
+        let entry = by_agent
+            .entry(agent_id.to_string())
+            .or_insert_with(|| AgentStats {
+                agent_id: agent_id.to_string(),
+                agent_title: record.metadata.agent_title.clone(),
+                source: record.metadata.source.clone(),
+                cost_usd: 0.0,
+                total_tokens: 0,
+                request_count: 0,
+                by_model: HashMap::new(),
+            });
+
+        if record.metadata.agent_title.is_some() {
+            entry.agent_title = record.metadata.agent_title.clone();
+        }
+        if record.metadata.source.is_some() {
+            entry.source = record.metadata.source.clone();
+        }
+        entry.cost_usd += record.usage.cost_usd;
+        entry.total_tokens += record.usage.total_tokens;
+        entry.request_count += 1;
+        add_model_stats(&mut entry.by_model, record);
+    }
+
+    by_agent
+}
+
+fn build_session_source_stats(session_costs: &[CostRecord]) -> HashMap<String, SourceStats> {
+    let mut by_source: HashMap<String, SourceStats> = HashMap::new();
+
+    for record in session_costs {
+        let source = record
+            .metadata
+            .source
+            .as_deref()
+            .filter(|source| !source.is_empty())
+            .unwrap_or("runtime");
+        let entry = by_source
+            .entry(source.to_string())
+            .or_insert_with(|| SourceStats {
+                source: source.to_string(),
                 cost_usd: 0.0,
                 total_tokens: 0,
                 request_count: 0,
             });
-
         entry.cost_usd += record.usage.cost_usd;
         entry.total_tokens += record.usage.total_tokens;
         entry.request_count += 1;
     }
 
-    by_model
+    by_source
+}
+
+fn add_model_stats(by_model: &mut HashMap<String, ModelStats>, record: &CostRecord) {
+    let entry = by_model
+        .entry(record.usage.model.clone())
+        .or_insert_with(|| ModelStats {
+            model: record.usage.model.clone(),
+            cost_usd: 0.0,
+            total_tokens: 0,
+            request_count: 0,
+        });
+
+    entry.cost_usd += record.usage.cost_usd;
+    entry.total_tokens += record.usage.total_tokens;
+    entry.request_count += 1;
+}
+
+fn percent_used(cost: f64, limit: f64) -> f64 {
+    if limit <= 0.0 {
+        if cost > 0.0 { 100.0 } else { 0.0 }
+    } else {
+        (cost / limit) * 100.0
+    }
 }
 
 /// Persistent storage for cost records.
@@ -474,6 +657,52 @@ mod tests {
         assert_eq!(summary.request_count, 1);
         assert!(summary.session_cost_usd > 0.0);
         assert_eq!(summary.by_model.len(), 1);
+    }
+
+    #[test]
+    fn record_usage_from_tokens_uses_pricing_and_metadata() {
+        let tmp = TempDir::new().unwrap();
+        let mut config = enabled_config();
+        config.prices = HashMap::from([(
+            "openai-codex/gpt-5".to_string(),
+            ModelPricing {
+                input: 1.25,
+                output: 10.0,
+            },
+        )]);
+        let tracker = CostTracker::new(config, tmp.path()).unwrap();
+
+        let usage = tracker
+            .record_usage_from_tokens(
+                "openai-codex",
+                "gpt-5.5",
+                1_000,
+                250,
+                CostRecordMetadata {
+                    source: Some("sidecar".to_string()),
+                    provider: Some("codex".to_string()),
+                    agent_id: Some("agent-1".to_string()),
+                    agent_title: Some("Budget worker".to_string()),
+                },
+            )
+            .unwrap();
+
+        assert_eq!(usage.total_tokens, 1_250);
+        assert!(usage.cost_usd > 0.0);
+
+        let summary = tracker.get_summary().unwrap();
+        assert_eq!(summary.request_count, 1);
+        assert!(summary.by_model.contains_key("gpt-5.5"));
+        assert_eq!(summary.by_source["sidecar"].total_tokens, 1_250);
+        assert_eq!(
+            summary.by_agent["agent-1"].agent_title.as_deref(),
+            Some("Budget worker")
+        );
+        assert_eq!(
+            summary.by_agent["agent-1"].by_model["gpt-5.5"].request_count,
+            1
+        );
+        assert_eq!(summary.budget.state, "ok");
     }
 
     #[test]

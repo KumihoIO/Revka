@@ -13,6 +13,7 @@ from typing import Any, AsyncGenerator
 
 from .._log import _log
 from ..agent_state import AGENTS, ManagedAgent
+from ..budget_authority import BudgetGateError
 from .task_store import A2ATaskStore, A2ATask, COMPLETED, FAILED, CANCELED
 
 
@@ -149,9 +150,15 @@ class A2ATaskHandler:
         # Spawn via sidecar
         full_prompt = compose_agent_prompt("a2a-worker", "coder", "", [], prompt)
 
-        sidecar_info = await _try_sidecar_create(
-            agent_id, agent_type, title, cwd, full_prompt,
-        )
+        try:
+            sidecar_info = await _try_sidecar_create(
+                agent_id, agent_type, title, cwd, full_prompt,
+            )
+        except BudgetGateError as exc:
+            agent.status = "error"
+            task.status = FAILED
+            task.add_history_message("agent", str(exc.response.get("error", exc)))
+            return {"task": task.to_dict(), "budget": exc.response}
         if sidecar_info:
             agent.status = "running"
             agent._sidecar_id = sidecar_info.get("id", "")

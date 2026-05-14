@@ -4000,26 +4000,36 @@ def dry_run_workflow(wf: WorkflowDef, inputs: dict[str, Any]) -> dict[str, Any]:
 # Cost guard — check budget before and during execution
 # ---------------------------------------------------------------------------
 
-def _check_cost_guard(
+async def _check_cost_guard(
     max_cost_usd: float | None = None,
 ) -> str | None:
     """Check if budget allows workflow execution. Returns error string or None."""
-    if max_cost_usd is None:
-        return None
     try:
-        from ..cost_tracker import CostTracker
-        from ..operator_mcp import COST_TRACKER
-        exceeded = COST_TRACKER.check_budget(
-            max_session_usd=max_cost_usd,
-        )
-        if exceeded:
+        from ..operator_mcp import CONSTRUCT_GW
+        summary = await CONSTRUCT_GW.get_cost_summary()
+        if summary is None:
+            if max_cost_usd is None:
+                return None
+            return "Gateway budget authority unavailable"
+
+        budget = summary.get("budget", {}) or {}
+        if budget.get("enabled") and budget.get("state") == "exceeded":
             return (
-                f"Budget exceeded: {exceeded['exceeded']} limit "
-                f"${exceeded['limit_usd']:.2f}, actual ${exceeded['actual_usd']:.2f}"
+                "Budget exceeded: daily/monthly configured limit reached "
+                f"(daily ${summary.get('daily_cost_usd', 0.0):.2f}/"
+                f"${budget.get('daily_limit_usd', 0.0):.2f}, monthly "
+                f"${summary.get('monthly_cost_usd', 0.0):.2f}/"
+                f"${budget.get('monthly_limit_usd', 0.0):.2f})"
+            )
+        if max_cost_usd is not None and summary.get("session_cost_usd", 0.0) >= max_cost_usd:
+            return (
+                "Workflow cost guard exceeded: "
+                f"session ${summary.get('session_cost_usd', 0.0):.2f}/"
+                f"${max_cost_usd:.2f}"
             )
         return None
-    except Exception:
-        return None  # Don't block on cost tracker errors
+    except Exception as exc:
+        return f"Budget check failed: {exc}"
 
 
 # ---------------------------------------------------------------------------
@@ -4347,7 +4357,7 @@ async def execute_workflow(
             cfg.timeout = wf.default_timeout
 
     # Pre-flight cost check
-    cost_err = _check_cost_guard(max_cost_usd)
+    cost_err = await _check_cost_guard(max_cost_usd)
     if cost_err:
         return WorkflowState(
             workflow_name=wf.name,
@@ -4491,7 +4501,7 @@ async def execute_workflow(
                 break
 
             # Mid-execution cost guard
-            cost_err = _check_cost_guard(max_cost_usd)
+            cost_err = await _check_cost_guard(max_cost_usd)
             if cost_err:
                 state.status = WorkflowStatus.FAILED
                 state.error = f"Cost guard (mid-run): {cost_err}"

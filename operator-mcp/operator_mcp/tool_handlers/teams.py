@@ -13,6 +13,7 @@ from .._log import _log
 from ..construct_config import harness_project
 from ..agent_state import AGENTS, ManagedAgent
 from ..agent_subprocess import compose_agent_prompt, spawn_with_retry, _TEAM_SPAWN_STAGGER_SECS
+from ..budget_authority import BudgetGateError
 from ..failure_classification import (
     team_not_found, bad_directory, missing_cwd, graph_invalid, spawn_failed,
     upstream_stage_failed, classified_error, policy_denied,
@@ -751,6 +752,7 @@ async def _record_wave_outcomes(
             # Attach files as named artifacts (relative path as name, absolute as location)
             for fpath in files:
                 artifact_name = _relativize(fpath, cwd)
+                budget_error = ""
                 try:
                     await sdk.create_artifact(rev_kref, artifact_name, fpath)
                 except Exception as e:
@@ -1111,17 +1113,25 @@ async def tool_spawn_team(args: dict[str, Any], team_client: KumihoTeamClient, j
                     await asyncio.sleep(_TEAM_SPAWN_STAGGER_SECS)
 
                 # Try sidecar first (supports model selection), fallback to subprocess
-                sidecar_info = await _try_sidecar_create(
-                    agent_id, agent_type, title, expanded_cwd, adapted_prompt,
-                    model=model,
-                )
+                budget_error = ""
+                try:
+                    sidecar_info = await _try_sidecar_create(
+                        agent_id, agent_type, title, expanded_cwd, adapted_prompt,
+                        model=model,
+                    )
+                except BudgetGateError as exc:
+                    agent.status = "error"
+                    sidecar_info = None
+                    ok = False
+                    budget_error = str(exc.response.get("error", exc))
+                    _log(f"spawn_team: budget gate blocked {agent_id[:8]}: {budget_error}")
                 if sidecar_info:
                     ok = True
                     agent.status = "running"
                     agent._sidecar_id = sidecar_info.get("id", "")
                     if _event_consumer and agent._sidecar_id:
                         await _event_consumer.subscribe(agent._sidecar_id, title)
-                else:
+                elif agent.status != "error":
                     ok = await spawn_with_retry(agent, adapted_prompt, journal)
 
                 info: dict[str, Any] = {
@@ -1147,7 +1157,7 @@ async def tool_spawn_team(args: dict[str, Any], team_client: KumihoTeamClient, j
                 else:
                     # Rollback: remove from AGENTS since agent never ran
                     AGENTS.pop(agent_id, None)
-                    info["error"] = agent.stderr_buffer[-300:] if agent.stderr_buffer else "unknown"
+                    info["error"] = budget_error or (agent.stderr_buffer[-300:] if agent.stderr_buffer else "unknown")
                     failed.append(info)
                     tracker.record_agent_failed(wave_num, agent_id)
 

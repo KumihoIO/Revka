@@ -9665,7 +9665,6 @@ Let me check the result."#;
         use super::{
             TOOL_LOOP_COST_TRACKING_CONTEXT, ToolLoopCostTrackingContext, run_tool_call_loop,
         };
-        use crate::config::schema::ModelPricing;
         use crate::cost::CostTracker;
         use crate::observability::noop::NoopObserver;
         use std::collections::HashMap;
@@ -9691,16 +9690,13 @@ Let me check the result."#;
         };
         cost_config.prices = HashMap::from([(
             "mock-model".to_string(),
-            ModelPricing {
+            crate::config::schema::ModelPricing {
                 input: 3.0,
                 output: 15.0,
             },
         )]);
         let tracker = Arc::new(CostTracker::new(cost_config.clone(), workspace.path()).unwrap());
-        let ctx = ToolLoopCostTrackingContext::new(
-            Arc::clone(&tracker),
-            Arc::new(cost_config.prices.clone()),
-        );
+        let ctx = ToolLoopCostTrackingContext::new(Arc::clone(&tracker), "test");
         let mut history = vec![ChatMessage::system("test"), ChatMessage::user("hello")];
 
         let result = TOOL_LOOP_COST_TRACKING_CONTEXT
@@ -9748,10 +9744,8 @@ Let me check the result."#;
         use super::{
             TOOL_LOOP_COST_TRACKING_CONTEXT, ToolLoopCostTrackingContext, run_tool_call_loop,
         };
-        use crate::config::schema::ModelPricing;
         use crate::cost::CostTracker;
         use crate::observability::noop::NoopObserver;
-        use std::collections::HashMap;
 
         let provider = ScriptedProvider::from_text_responses(vec!["should not reach this"]);
         let observer = NoopObserver;
@@ -9773,16 +9767,7 @@ Let me check the result."#;
             ))
             .unwrap();
 
-        let ctx = ToolLoopCostTrackingContext::new(
-            Arc::clone(&tracker),
-            Arc::new(HashMap::from([(
-                "mock-model".to_string(),
-                ModelPricing {
-                    input: 1.0,
-                    output: 1.0,
-                },
-            )])),
-        );
+        let ctx = ToolLoopCostTrackingContext::new(Arc::clone(&tracker), "test");
         let mut history = vec![ChatMessage::system("test"), ChatMessage::user("hello")];
 
         let err = TOOL_LOOP_COST_TRACKING_CONTEXT
