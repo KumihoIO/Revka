@@ -12,7 +12,9 @@
 //! common case. Instead, URLs carry an HMAC-SHA256 signature and an
 //! expiry in the query string:
 //!
-//!     /workspace/<rel-path>?exp=<unix-ts>&sig=<hex-sha256-hmac>
+//! ```text
+//! /workspace/<rel-path>?exp=<unix-ts>&sig=<hex-sha256-hmac>
+//! ```
 //!
 //! The signing key is the gateway's `service_token` — already shared with
 //! operator-mcp (read from `~/.construct/service-token`), so tools can
