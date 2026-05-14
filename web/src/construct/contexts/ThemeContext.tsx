@@ -71,6 +71,18 @@ function applyVars(vars: Record<string, string>) {
   }
 }
 
+let appliedSkinVarNames = new Set<string>();
+
+function clearStaleSkinVars(nextVars: Record<string, string>) {
+  const root = document.documentElement;
+  for (const name of appliedSkinVarNames) {
+    if (!(name in nextVars)) {
+      root.style.removeProperty(name);
+    }
+  }
+  appliedSkinVarNames = new Set(Object.keys(nextVars));
+}
+
 const pcBridge: Record<string, string[]> = {
   '--construct-bg-base': ['--pc-bg-base'],
   '--construct-bg-surface': ['--pc-bg-surface'],
@@ -90,6 +102,23 @@ const pcBridge: Record<string, string[]> = {
   '--construct-border-neutral': ['--pc-separator'],
 };
 
+function hexToRgbTriplet(value: string): string | null {
+  const raw = value.trim().toLowerCase();
+  if (!raw.startsWith('#')) return null;
+  const hex = raw.slice(1);
+  if (hex.length === 3 || hex.length === 4) {
+    const [r, g, b] = hex.slice(0, 3).split('').map((part) => parseInt(part + part, 16));
+    return [r, g, b].every((part) => Number.isFinite(part)) ? `${r}, ${g}, ${b}` : null;
+  }
+  if (hex.length === 6 || hex.length === 8) {
+    const r = parseInt(hex.slice(0, 2), 16);
+    const g = parseInt(hex.slice(2, 4), 16);
+    const b = parseInt(hex.slice(4, 6), 16);
+    return [r, g, b].every((part) => Number.isFinite(part)) ? `${r}, ${g}, ${b}` : null;
+  }
+  return null;
+}
+
 function bridgePcVars(tokens: Record<string, string>): Record<string, string> {
   const bridged: Record<string, string> = {};
   for (const [constructToken, pcTokens] of Object.entries(pcBridge)) {
@@ -98,6 +127,14 @@ function bridgePcVars(tokens: Record<string, string>): Record<string, string> {
     for (const pcToken of pcTokens) {
       bridged[pcToken] = value;
     }
+  }
+  const live = tokens['--construct-signal-live'];
+  if (live) {
+    const rgb = hexToRgbTriplet(live);
+    if (rgb) bridged['--pc-accent-rgb'] = rgb;
+    bridged['--pc-accent-dim'] = `color-mix(in srgb, ${live} 30%, transparent)`;
+    bridged['--pc-accent-glow'] = tokens['--construct-signal-live-soft'] ?? `color-mix(in srgb, ${live} 12%, transparent)`;
+    bridged['--pc-accent-glow-strong'] = `color-mix(in srgb, ${live} 22%, transparent)`;
   }
   return bridged;
 }
@@ -119,6 +156,7 @@ function resolveColorTheme(mode: ThemeMode, colorTheme: ColorThemeId): ColorThem
 
 function resolveThemeScheme(mode: ThemeMode, colorTheme: ColorThemeId): 'dark' | 'light' | 'oled' {
   if (mode === 'oled') return 'oled';
+  if (mode === 'light' || mode === 'dark') return mode;
   const resolved = resolveColorTheme(mode, colorTheme);
   const ct = colorThemeMap[resolved];
   return ct?.scheme ?? 'dark';
@@ -154,12 +192,38 @@ function cssUrl(url: string): string {
   return `url("${url.replace(/"/g, '%22')}")`;
 }
 
+function deriveSkinTokenVars(tokens: Record<string, string>): Record<string, string> {
+  const derived: Record<string, string> = {};
+  const live = tokens['--construct-signal-live'];
+  const network = tokens['--construct-signal-network'];
+  const selected = tokens['--construct-signal-selected'] ?? live;
+
+  if (live && !tokens['--construct-signal-live-soft']) {
+    derived['--construct-signal-live-soft'] = `color-mix(in srgb, ${live} 16%, transparent)`;
+  }
+  if (network && !tokens['--construct-signal-network-soft']) {
+    derived['--construct-signal-network-soft'] = `color-mix(in srgb, ${network} 14%, transparent)`;
+  }
+  if (selected && !tokens['--construct-signal-selected-soft']) {
+    derived['--construct-signal-selected-soft'] = `color-mix(in srgb, ${selected} 18%, transparent)`;
+  }
+  if (selected && !tokens['--construct-hover-surface']) {
+    derived['--construct-hover-surface'] = `color-mix(in srgb, ${selected} 10%, var(--construct-bg-surface))`;
+  }
+
+  return derived;
+}
+
 function skinVars(
   skin: SkinSummary | null,
   scheme: 'dark' | 'light' | 'oled',
 ): Record<string, string> {
   const mode = modeForScheme(skin, scheme);
-  const tokens = mode?.tokens ?? {};
+  const authoredTokens = mode?.tokens ?? {};
+  const tokens = {
+    ...deriveSkinTokenVars(authoredTokens),
+    ...authoredTokens,
+  };
   const assets = mode?.assets ?? {};
   const vars: Record<string, string> = {
     ...tokens,
@@ -203,12 +267,14 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     const themeVars = ct?.vars ?? colorThemeMap[DEFAULT_DARK_THEME].vars;
     const scheme = resolveThemeScheme(s.theme, s.colorTheme);
     const activeSkin = installedSkins.find((skin) => skin.id === s.activeSkinId) ?? null;
+    const activeSkinVars = skinVars(activeSkin, scheme);
+    clearStaleSkinVars(activeSkinVars);
     // Color theme provides base + its own accent. User accent overrides on top.
     applyVars({
       ...themeVars,
       ...accents[s.accent],
       ...fontVars(s.uiFont, s.monoFont, s.uiFontSize, s.monoFontSize),
-      ...skinVars(activeSkin, scheme),
+      ...activeSkinVars,
     });
   }, [installedSkins]);
 

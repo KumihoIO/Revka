@@ -275,18 +275,18 @@ export default function Skills() {
                       opacity: skill.deprecated ? 0.65 : 1,
                       borderColor: skill.kref === selectedSkillKref ? 'var(--construct-border-strong)' : 'var(--construct-border-soft)',
                       background: skill.kref === selectedSkillKref
-                        ? 'color-mix(in srgb, var(--construct-signal-live-soft) 80%, var(--construct-bg-panel-strong))'
+                        ? 'color-mix(in srgb, var(--construct-signal-selected) 14%, var(--construct-bg-panel-strong))'
                         : 'color-mix(in srgb, var(--construct-bg-panel-strong) 94%, transparent)',
                     }}
                   >
                     <div className="flex items-start gap-3">
-                      <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px]" style={{ background: 'rgba(114,216,255,0.12)', color: 'var(--construct-signal-network)' }}>
+                      <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px]" style={{ background: 'color-mix(in srgb, var(--construct-signal-network) 12%, transparent)', color: 'var(--construct-signal-network)' }}>
                         <Sparkles className="h-4 w-4" />
                       </div>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-start justify-between gap-2">
                           <div className="text-sm font-semibold leading-5" style={{ color: 'var(--construct-text-primary)' }}>{skill.name}</div>
-                          <span className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em]" style={{ background: skill.deprecated ? 'rgba(255,107,122,0.12)' : 'rgba(125,255,155,0.12)', color: skill.deprecated ? 'var(--construct-status-warning)' : 'var(--construct-status-success)' }}>
+                          <span className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em]" style={{ background: skill.deprecated ? 'color-mix(in srgb, var(--construct-status-warning) 12%, transparent)' : 'color-mix(in srgb, var(--construct-status-success) 12%, transparent)', color: skill.deprecated ? 'var(--construct-status-warning)' : 'var(--construct-status-success)' }}>
                             {skill.deprecated ? t('skills.status.deprecated') : t('skills.status.active')}
                           </span>
                         </div>
@@ -317,7 +317,7 @@ export default function Skills() {
                   </div>
                 </div>
                 <span className="rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em]" style={{
-                  background: selectedSkill.deprecated ? 'rgba(255,107,122,0.12)' : 'var(--construct-signal-live-soft)',
+                  background: selectedSkill.deprecated ? 'color-mix(in srgb, var(--construct-status-warning) 12%, transparent)' : 'color-mix(in srgb, var(--construct-status-success) 12%, transparent)',
                   color: selectedSkill.deprecated ? 'var(--construct-status-warning)' : 'var(--construct-status-success)',
                 }}>
                   {selectedSkill.deprecated ? t('skills.status.deprecated') : t('skills.status.active')}
@@ -325,7 +325,7 @@ export default function Skills() {
               </div>
 
               <div className="flex flex-wrap gap-2">
-                <span className="rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em]" style={{ background: 'var(--construct-signal-live-soft)', color: 'var(--construct-signal-live)' }}>
+                <span className="rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em]" style={{ background: 'var(--construct-signal-selected-soft, color-mix(in srgb, var(--construct-signal-selected) 18%, transparent))', color: 'var(--construct-signal-selected)' }}>
                   {selectedSkill.domain}
                 </span>
                 {selectedSkill.tags.map((tag) => (

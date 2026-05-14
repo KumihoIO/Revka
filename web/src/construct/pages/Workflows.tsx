@@ -489,7 +489,7 @@ export default function Workflows() {
                       style={{
                         borderColor: 'var(--construct-border-soft)',
                         background: isActive
-                          ? 'color-mix(in srgb, var(--construct-signal-live-soft) 80%, var(--construct-bg-panel))'
+                          ? 'color-mix(in srgb, var(--construct-signal-selected) 14%, var(--construct-bg-panel))'
                           : 'transparent',
                       }}
                       onClick={() => {
@@ -505,7 +505,9 @@ export default function Workflows() {
                         <span
                           className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase"
                           style={{
-                            background: workflow.deprecated ? 'rgba(255,107,122,0.12)' : 'rgba(125,255,155,0.12)',
+                            background: workflow.deprecated
+                              ? 'color-mix(in srgb, var(--construct-status-danger) 12%, transparent)'
+                              : 'color-mix(in srgb, var(--construct-status-success) 12%, transparent)',
                             color: workflow.deprecated ? 'var(--construct-status-danger)' : 'var(--construct-status-success)',
                           }}
                         >

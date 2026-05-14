@@ -155,12 +155,10 @@ export default function Canvas() {
   };
 
   const viewportBackground = resolvedTheme === 'light'
-    ? 'linear-gradient(180deg, rgba(255,255,255,0.65), rgba(240,247,242,0.92))'
-    : 'linear-gradient(180deg, rgba(8,17,13,0.96), rgba(5,10,9,0.98))';
+    ? 'linear-gradient(180deg, color-mix(in srgb, var(--construct-bg-surface) 74%, transparent), var(--construct-bg-base))'
+    : 'linear-gradient(180deg, color-mix(in srgb, var(--construct-bg-surface) 92%, transparent), var(--construct-bg-base))';
 
-  const viewportGrid = resolvedTheme === 'light'
-    ? 'rgba(63, 175, 104, 0.06)'
-    : 'rgba(125, 255, 155, 0.05)';
+  const viewportGrid = 'var(--construct-grid-line)';
 
   const currentFrameTime = currentFrame ? new Date(currentFrame.timestamp).toLocaleString() : '--';
 
@@ -186,7 +184,7 @@ export default function Canvas() {
                 className="construct-status-pill"
                 style={{
                   color: connected ? 'var(--construct-status-success)' : 'var(--construct-status-danger)',
-                  background: connected ? 'rgba(125,255,155,0.12)' : 'rgba(255,107,122,0.12)',
+                  background: connected ? 'color-mix(in srgb, var(--construct-status-success) 12%, transparent)' : 'color-mix(in srgb, var(--construct-status-danger) 12%, transparent)',
                   borderColor: 'transparent',
                 }}
               >
@@ -256,7 +254,7 @@ export default function Canvas() {
                     <div className="flex items-center justify-between gap-2">
                       <span className="truncate text-sm font-medium" style={{ color: 'var(--construct-text-primary)' }}>{id}</span>
                       {id === canvasId ? (
-                        <span className="text-[10px] font-semibold uppercase tracking-[0.14em]" style={{ color: 'var(--construct-signal-live)' }}>
+                        <span className="text-[10px] font-semibold uppercase tracking-[0.14em]" style={{ color: 'var(--construct-signal-selected)' }}>
                           {t('canvas.active')}
                         </span>
                       ) : null}

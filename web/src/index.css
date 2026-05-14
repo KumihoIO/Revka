@@ -90,12 +90,12 @@ html {
 }
 
 body {
-  background-color: var(--pc-bg-base);
+  background-color: var(--construct-bg-base, var(--pc-bg-base));
   background-image:
-    linear-gradient(rgba(125, 255, 155, 0.035) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(125, 255, 155, 0.035) 1px, transparent 1px),
-    radial-gradient(circle at 20% 10%, rgba(125, 255, 155, 0.09), transparent 42%),
-    radial-gradient(circle at 80% 90%, rgba(125, 255, 155, 0.05), transparent 38%);
+    linear-gradient(var(--construct-grid-line, color-mix(in srgb, var(--pc-accent) 4%, transparent)) 1px, transparent 1px),
+    linear-gradient(90deg, var(--construct-grid-line, color-mix(in srgb, var(--pc-accent) 4%, transparent)) 1px, transparent 1px),
+    radial-gradient(circle at 20% 10%, color-mix(in srgb, var(--construct-signal-live, var(--pc-accent)) 10%, transparent), transparent 42%),
+    radial-gradient(circle at 80% 90%, color-mix(in srgb, var(--construct-signal-network, var(--pc-accent-light)) 8%, transparent), transparent 38%);
   background-size: 48px 48px, 48px 48px, 100% 100%, 100% 100%;
   background-attachment: fixed;
   color: var(--pc-text-primary);
@@ -117,7 +117,7 @@ body {
   isolation: isolate;
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 18%),
-    linear-gradient(120deg, rgba(var(--pc-accent-rgb), 0.04), transparent 34%);
+    linear-gradient(120deg, color-mix(in srgb, var(--construct-signal-live, var(--pc-accent)) 5%, transparent), transparent 34%);
 }
 
 .shell-app::before,
@@ -136,7 +136,7 @@ body {
   right: -8rem;
   width: 22rem;
   height: 22rem;
-  background: radial-gradient(circle, rgba(var(--pc-accent-rgb), 0.18), transparent 68%);
+  background: radial-gradient(circle, color-mix(in srgb, var(--construct-signal-live, var(--pc-accent)) 20%, transparent), transparent 68%);
 }
 
 .shell-app::after {
@@ -144,7 +144,7 @@ body {
   bottom: -5rem;
   width: 24rem;
   height: 24rem;
-  background: radial-gradient(circle, rgba(34, 211, 238, 0.14), transparent 70%);
+  background: radial-gradient(circle, color-mix(in srgb, var(--construct-signal-network, var(--pc-accent-light)) 16%, transparent), transparent 70%);
 }
 
 .shell-main {
