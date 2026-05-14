@@ -84,6 +84,16 @@ class TestSchema:
         with pytest.raises(Exception):
             ImageStepConfig(prompt="x", sandbox="bogus")  # type: ignore[arg-type]
 
+    def test_input_images_accepts_string_or_list(self):
+        assert (
+            ImageStepConfig(prompt="x", input_images="/ws/ref.png").input_images
+            == "/ws/ref.png"
+        )
+        assert ImageStepConfig(
+            prompt="x",
+            input_images=["/ws/ref-a.png", "/ws/ref-b.png"],
+        ).input_images == ["/ws/ref-a.png", "/ws/ref-b.png"]
+
 
 # ── Validator ───────────────────────────────────────────────────────
 
@@ -119,9 +129,17 @@ class TestExecutor:
     and inspect the args passed in plus the StepResult shape."""
 
     async def test_calls_tool_with_interpolated_prompt(self):
-        cfg = ImageStepConfig(prompt="render: ${inputs.subject}")
+        cfg = ImageStepConfig(
+            prompt="render: ${inputs.subject}",
+            input_images=["${inputs.reference_image}"],
+        )
         step = _step(cfg)
-        state = _state(inputs={"subject": "Seoul Station 2040"})
+        state = _state(
+            inputs={
+                "subject": "Seoul Station 2040",
+                "reference_image": "/ws/reference.png",
+            }
+        )
 
         captured: dict = {}
 
@@ -156,6 +174,7 @@ class TestExecutor:
         assert captured["count"] == 1
         assert captured["canvas"] is True
         assert captured["register_artifact"] is True
+        assert captured["input_images"] == ["/ws/reference.png"]
         assert captured["cwd"] == "/ws"
 
     async def test_maps_response_into_output_data(self):

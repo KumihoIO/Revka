@@ -1452,6 +1452,20 @@ export default function StepConfigPanel({
                   style={monoInputStyle}
                 />
               </div>
+              <div>
+                <label style={labelStyle}>Input image paths</label>
+                <textarea
+                  value={(data.imageInputImages || []).join('\n')}
+                  onChange={(e) => onUpdate(node.id, {
+                    imageInputImages: e.target.value
+                      .split(/\r?\n|,/)
+                      .map((item) => item.trim())
+                      .filter(Boolean),
+                  })}
+                  placeholder="/workspace/reference.png"
+                  style={{ ...monoInputStyle, minHeight: 72, resize: 'vertical' }}
+                />
+              </div>
               <div style={{ display: 'flex', gap: 16, paddingTop: 8, borderTop: '1px solid var(--pc-border)' }}>
                 <Checkbox
                   checked={data.imageCanvas !== false}

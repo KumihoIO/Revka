@@ -1755,6 +1755,14 @@ async def _exec_image(step: StepDef, state: WorkflowState, cwd: str) -> StepResu
         "dry_run": False,
     }
 
+    input_images: list[str] | str | None = None
+    if isinstance(cfg.input_images, str):
+        input_images = interpolate(cfg.input_images, state)
+    elif cfg.input_images:
+        input_images = [interpolate(path, state) for path in cfg.input_images]
+    if input_images:
+        input_data["input_images"] = input_images
+
     if not prompt.strip():
         return StepResult(
             step_id=step.id,
@@ -1790,6 +1798,8 @@ async def _exec_image(step: StepDef, state: WorkflowState, cwd: str) -> StepResu
         args["cwd"] = cwd
     if cfg.output_pattern:
         args["output_pattern"] = cfg.output_pattern
+    if input_images:
+        args["input_images"] = input_images
     if cfg.space:
         args["space"] = cfg.space
     if item_name:
