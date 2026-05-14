@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useLocation } from 'react-router-dom';
-import { Loader2, Menu, MessageSquare, MonitorCog, MoonStar, ShieldAlert, ShieldCheck, SunMedium } from 'lucide-react';
+import { Loader2, Menu, MessageSquare, MonitorCog, MoonStar, Palette, ShieldAlert, ShieldCheck, SunMedium } from 'lucide-react';
 import { useTheme } from '@/construct/hooks/useTheme';
 import { useT } from '@/construct/hooks/useT';
 import { verifyAuditChain } from '@/lib/api';
@@ -17,7 +17,7 @@ interface HeaderProps {
 
 export default function Header({ onOpenMobileNav }: HeaderProps) {
   const location = useLocation();
-  const { theme, resolvedTheme, setTheme } = useTheme();
+  const { theme, resolvedTheme, setTheme, activeSkinName } = useTheme();
   const { open, toggleAssistant } = useV2Assistant();
   const { t } = useT();
   const meta = v2RouteMeta[location.pathname];
@@ -56,6 +56,12 @@ export default function Header({ onOpenMobileNav }: HeaderProps) {
             <div className="construct-kicker text-[10px]">Construct v{CONSTRUCT_VERSION}</div>
             <h1 className="construct-title mt-0.5 truncate text-lg">{title}</h1>
           </div>
+          {activeSkinName ? (
+            <span className="construct-status-pill max-w-[8rem] truncate px-2 py-1 text-[10px]" title={activeSkinName}>
+              <Palette className="h-3.5 w-3.5 shrink-0" />
+              <span className="truncate">{activeSkinName}</span>
+            </span>
+          ) : null}
           <ApprovalBadge />
           <button
             type="button"
@@ -101,6 +107,12 @@ export default function Header({ onOpenMobileNav }: HeaderProps) {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <ApprovalBadge />
+            {activeSkinName ? (
+              <span className="construct-status-pill max-w-[14rem]" title={activeSkinName}>
+                <Palette className="h-3.5 w-3.5 shrink-0" />
+                <span className="truncate">{activeSkinName}</span>
+              </span>
+            ) : null}
             {/* Single combined health pill — runtime + trust state read
                 from a single glance instead of two adjacent pills both
                 saying "ok". Keeps the trust-verified accent on the icon

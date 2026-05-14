@@ -5,6 +5,7 @@ import { v2NavSections } from './construct-navigation';
 import { appAssetPath } from '@/lib/basePath';
 import { CONSTRUCT_VERSION } from '@/lib/version';
 import { useT } from '@/construct/hooks/useT';
+import { useTheme } from '@/construct/hooks/useTheme';
 
 const APP_ICON_SRC = appAssetPath('favicon-192.png');
 
@@ -27,6 +28,8 @@ interface SidebarProps {
 export default function Sidebar({ mobileOpen = false, onCloseMobile }: SidebarProps) {
   const [collapsed, setCollapsed] = useState<boolean>(readInitialCollapsed);
   const { t } = useT();
+  const { getSkinAsset } = useTheme();
+  const brandLogo = getSkinAsset('brandLogo') ?? APP_ICON_SRC;
 
   useEffect(() => {
     try {
@@ -62,11 +65,14 @@ export default function Sidebar({ mobileOpen = false, onCloseMobile }: SidebarPr
       {collapsed ? (
         <div className="flex flex-col items-center gap-3">
           <img
-            src={APP_ICON_SRC}
+            src={brandLogo}
             alt="Construct"
             title="Construct"
             className="h-11 w-11 rounded-[14px] object-contain"
             draggable={false}
+            onError={(event) => {
+              event.currentTarget.src = APP_ICON_SRC;
+            }}
           />
           <button
             type="button"
@@ -82,10 +88,13 @@ export default function Sidebar({ mobileOpen = false, onCloseMobile }: SidebarPr
         <div className="construct-panel p-4">
           <div className="flex items-center gap-3">
             <img
-              src={APP_ICON_SRC}
+              src={brandLogo}
               alt="Construct"
               className="h-11 w-11 rounded-[14px] object-contain"
               draggable={false}
+              onError={(event) => {
+                event.currentTarget.src = APP_ICON_SRC;
+              }}
             />
             <div className="min-w-0 flex-1">
               <div className="construct-kicker">Construct</div>

@@ -2289,6 +2289,12 @@ pub struct GatewayConfig {
     #[serde(default)]
     pub path_prefix: Option<String>,
 
+    /// Optional filesystem root for the web dashboard build.
+    /// When set, gateway static routes serve files from this directory before
+    /// falling back to the embedded `web/dist` bundle.
+    #[serde(default)]
+    pub web_root: Option<String>,
+
     /// Maximum distinct client keys tracked by gateway rate limiter maps.
     #[serde(default = "default_gateway_rate_limit_max_keys")]
     pub rate_limit_max_keys: usize,
@@ -2366,6 +2372,7 @@ impl Default for GatewayConfig {
             webhook_rate_limit_per_minute: default_webhook_rate_limit(),
             trust_forwarded_headers: false,
             path_prefix: None,
+            web_root: None,
             rate_limit_max_keys: default_gateway_rate_limit_max_keys(),
             idempotency_ttl_secs: default_idempotency_ttl_secs(),
             idempotency_max_keys: default_gateway_idempotency_max_keys(),
@@ -13020,6 +13027,7 @@ channel_ids = ["C123", "D456"]
             webhook_rate_limit_per_minute: 80,
             trust_forwarded_headers: true,
             path_prefix: Some("/construct".into()),
+            web_root: Some("/tmp/construct-web".into()),
             rate_limit_max_keys: 2048,
             idempotency_ttl_secs: 600,
             idempotency_max_keys: 4096,
@@ -13039,6 +13047,7 @@ channel_ids = ["C123", "D456"]
         assert_eq!(parsed.webhook_rate_limit_per_minute, 80);
         assert!(parsed.trust_forwarded_headers);
         assert_eq!(parsed.path_prefix.as_deref(), Some("/construct"));
+        assert_eq!(parsed.web_root.as_deref(), Some("/tmp/construct-web"));
         assert_eq!(parsed.rate_limit_max_keys, 2048);
         assert_eq!(parsed.idempotency_ttl_secs, 600);
         assert_eq!(parsed.idempotency_max_keys, 4096);
