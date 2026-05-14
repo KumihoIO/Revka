@@ -7,10 +7,10 @@ license = "MIT OR Apache-2.0"
 publish = false
 
 [build-dependencies]
-tauri-build = { version = "2.0", features = [] }
+tauri-build = { version = "2.6.1", features = [] }
 
 [dependencies]
-tauri = { version = "2.11", features = ["tray-icon", "image-png"] }
+tauri = { version = "2.11.1", features = ["tray-icon", "image-png"] }
 tauri-plugin-shell = "2.0"
 tauri-plugin-store = "2.0"
 tauri-plugin-single-instance = "2.0"
