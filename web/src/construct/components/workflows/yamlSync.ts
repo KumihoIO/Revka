@@ -1975,6 +1975,12 @@ export function flowToTasks(nodes: Node<TaskNodeData>[], edges: Edge[]): TaskDef
   }
 
   for (const edge of edges) {
+    const edgeData = edge.data as Record<string, unknown> | undefined;
+    // Interpolation edges are inferred from text fields and regenerated on
+    // load. Persisting them as depends_on mutates hand-authored YAML and can
+    // reintroduce deleted cycle edges on save/reopen.
+    if (edgeData?.inferred === 'interpolation') continue;
+
     // Edges from a parallel parent define child membership (→ parallel.steps).
     // Process before the synthetic-skip so round-tripping a YAML that already
     // has `parallel.steps` preserves the list.
@@ -1988,7 +1994,7 @@ export function flowToTasks(nodes: Node<TaskNodeData>[], edges: Edge[]): TaskDef
       continue;
     }
     // Skip other synthetic edges (for_each chain) — these are visual only
-    if ((edge.data as Record<string, unknown>)?.synthetic) continue;
+    if (edgeData?.synthetic) continue;
     const branchIndex = gateBranchIndex(edge.sourceHandle as string | null | undefined);
     if (branchIndex !== null) {
       const branches = branchTargets.get(edge.source) ?? new Map<number, string>();

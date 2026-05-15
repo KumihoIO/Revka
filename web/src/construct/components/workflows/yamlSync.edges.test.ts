@@ -150,6 +150,35 @@ steps:
   assert.equal(matches.length, 1, `expected exactly one step_a → step_b edge, got ${matches.length}`);
 });
 
+test('flowToTasks does not persist interpolation-only inferred edges as depends_on', () => {
+  const yaml = `
+steps:
+  - id: step_a
+    type: agent
+    agent:
+      prompt: "Do A."
+  - id: step_b
+    type: agent
+    agent:
+      prompt: "Use \${step_a.output}"
+`;
+  const tasks = parseWorkflowYaml(yaml);
+  const { nodes, edges } = tasksToFlow(tasks);
+  const inferred = edges.find((edge) => edge.source === 'step_a' && edge.target === 'step_b');
+  assert.equal(
+    (inferred?.data as Record<string, unknown> | undefined)?.inferred,
+    'interpolation',
+    'expected the visual edge to be marked as interpolation-inferred',
+  );
+
+  const roundTripped = flowToTasks(nodes as Node<TaskNodeData>[], edges);
+  assert.deepEqual(
+    roundTripped.find((task) => task.id === 'step_b')!.depends_on,
+    [],
+    'interpolation-only edges must not become saved depends_on entries',
+  );
+});
+
 test('flowToTasks derives depends_on from edges, not stale node dependency counts', () => {
   const yaml = `
 steps:

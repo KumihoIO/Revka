@@ -198,6 +198,56 @@ function targetAlreadyReferencesSource(data: TaskNodeData, sourceId: string): bo
   return false;
 }
 
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function removeSourceReferencesFromText(value: string, sourceId: string): string {
+  if (!value) return value;
+  const tokenRegex = new RegExp(
+    `\\$\\{${escapeRegex(sourceId)}(?:\\.[a-zA-Z_][a-zA-Z0-9_.-]*)?\\}`,
+    'g',
+  );
+  if (!tokenRegex.test(value)) return value;
+
+  const eol = value.includes('\r\n') ? '\r\n' : '\n';
+  const lines = value.split(/\r?\n/);
+  const nextLines: string[] = [];
+  for (const line of lines) {
+    tokenRegex.lastIndex = 0;
+    if (!tokenRegex.test(line)) {
+      nextLines.push(line);
+      continue;
+    }
+
+    tokenRegex.lastIndex = 0;
+    const cleaned = line.replace(tokenRegex, '').replace(/[ \t]+$/g, '');
+    if (cleaned.trim().length > 0) {
+      nextLines.push(cleaned);
+    }
+  }
+
+  let next = nextLines
+    .join(eol)
+    .replace(/(\r?\n){3,}/g, `${eol}${eol}`);
+  while (next.startsWith(eol)) next = next.slice(eol.length);
+  while (next.endsWith(eol)) next = next.slice(0, -eol.length);
+  return next;
+}
+
+function removeSourceReferencesFromNodeData(data: TaskNodeData, sourceId: string): TaskNodeData {
+  let nextData: TaskNodeData = data;
+  for (const field of TASK_INTERPOLATION_FIELDS) {
+    const value = nextData[field];
+    if (typeof value !== 'string' || !value) continue;
+    const cleaned = removeSourceReferencesFromText(value, sourceId);
+    if (cleaned !== value) {
+      nextData = { ...nextData, [field]: cleaned };
+    }
+  }
+  return nextData;
+}
+
 // ---------------------------------------------------------------------------
 // Time helpers
 // ---------------------------------------------------------------------------
@@ -1585,6 +1635,7 @@ function WorkflowEditorInner({
   const onEdgesDelete = useCallback(
     (deletedEdges: Edge[]) => {
       const clearedBranchIndexes = new Map<string, Set<number>>();
+      const referenceRemovals = new Map<string, Set<string>>();
       for (const e of deletedEdges) {
         const branchIndex = gateBranchIndex(e.sourceHandle as string | null | undefined);
         if (branchIndex !== null) {
@@ -1593,10 +1644,15 @@ function WorkflowEditorInner({
           clearedBranchIndexes.set(e.source, indexes);
           continue;
         }
+        if ((e.data as Record<string, unknown> | undefined)?.synthetic) continue;
+        const sources = referenceRemovals.get(e.target) ?? new Set<string>();
+        sources.add(e.source);
+        referenceRemovals.set(e.target, sources);
       }
       setNodes((nds) =>
         nds.map((n) => {
           const branchIndexes = clearedBranchIndexes.get(n.id);
+          const sourceRefsToRemove = referenceRemovals.get(n.id);
           let nextData = n.data as TaskNodeData;
           if (branchIndexes && branchIndexes.size > 0) {
             let branches = getEditableConditionalBranches(nextData);
@@ -1604,6 +1660,11 @@ function WorkflowEditorInner({
               branchIndexes.has(index) ? { ...branch, goto: '' } : branch,
             );
             nextData = { ...nextData, ...conditionalBranchDataPatch(branches) };
+          }
+          if (sourceRefsToRemove && sourceRefsToRemove.size > 0) {
+            for (const sourceId of sourceRefsToRemove) {
+              nextData = removeSourceReferencesFromNodeData(nextData, sourceId);
+            }
           }
           return nextData === n.data ? n : { ...n, data: nextData };
         }),
