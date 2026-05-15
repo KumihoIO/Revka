@@ -219,6 +219,22 @@ class TestResolve:
         assert result.output_data["found"] is False
         assert "matched_kref" not in result.output_data
 
+    async def test_blank_kind_is_optional_when_missing_allowed(self):
+        cfg = ResolveStepConfig(kind="", tag="x", fail_if_missing=False)
+        step = StepDef(id="r", type=StepType.RESOLVE, resolve=cfg)
+        result = await _exec_resolve(step, _state())
+        assert result.status == "completed"
+        assert result.input_data["kind"] == ""
+        assert result.output_data == {"found": False}
+
+    async def test_blank_kind_still_fails_when_required(self):
+        cfg = ResolveStepConfig(kind="", tag="x", fail_if_missing=True)
+        step = StepDef(id="r", type=StepType.RESOLVE, resolve=cfg)
+        result = await _exec_resolve(step, _state())
+        assert result.status == "failed"
+        assert result.input_data["kind"] == ""
+        assert result.error == "resolve step requires 'kind'"
+
 
 # ── _exec_output ───────────────────────────────────────────────────
 

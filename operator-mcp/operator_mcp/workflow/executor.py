@@ -2032,8 +2032,6 @@ async def _exec_output(step: StepDef, state: WorkflowState) -> StepResult:
 async def _exec_resolve(step: StepDef, state: WorkflowState) -> StepResult:
     """Resolve a Kumiho entity by kind+tag — deterministic, no LLM."""
     cfg: ResolveStepConfig = step.resolve or ResolveStepConfig(kind="")
-    if not cfg.kind:
-        return StepResult(step_id=step.id, status="failed", error="resolve step requires 'kind'")
 
     # Capture interpolated query parameters for run-view UI.
     resolved_kind = interpolate(cfg.kind, state)
@@ -2048,6 +2046,20 @@ async def _exec_resolve(step: StepDef, state: WorkflowState) -> StepResult:
         "mode": cfg.mode,
         "fail_if_missing": cfg.fail_if_missing,
     }
+    if not resolved_kind.strip():
+        if cfg.fail_if_missing:
+            return StepResult(
+                step_id=step.id,
+                status="failed",
+                error="resolve step requires 'kind'",
+                input_data=input_data,
+            )
+        return StepResult(
+            step_id=step.id,
+            status="completed",
+            output_data={"found": False},
+            input_data=input_data,
+        )
 
     try:
         from operator_mcp.workflow.memory import resolve_entity
