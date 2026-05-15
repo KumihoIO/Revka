@@ -67,11 +67,21 @@
 }
 
 .editor-chrome .react-flow,
-.editor-chrome .react-flow__pane,
+.editor-chrome .react-flow__pane {
+  background: var(--construct-bg-surface);
+}
+
 .editor-chrome .react-flow__renderer,
 .editor-chrome .react-flow__viewport,
-.editor-chrome .react-flow__container {
-  background: var(--construct-bg-surface);
+.editor-chrome .react-flow__container,
+.editor-chrome .react-flow__selectionpane,
+.editor-chrome .react-flow__connectionline {
+  background: transparent;
+}
+
+.editor-chrome .react-flow__selection {
+  border: 1px solid color-mix(in srgb, var(--pc-accent) 70%, transparent);
+  background: color-mix(in srgb, var(--pc-accent) 12%, transparent);
 }
 
 .editor-chrome .react-flow__attribution {

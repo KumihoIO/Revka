@@ -36,7 +36,7 @@ function parseListInput(value: string): string[] {
 
 function defaultConditionalBranches(data: TaskNodeData): ConditionalBranchDefinition[] {
   if (data.conditionalBranches?.length > 0) {
-    return data.conditionalBranches;
+    return data.conditionalBranches.map((branch) => ({ ...branch }));
   }
 
   const branches: ConditionalBranchDefinition[] = [];

@@ -80,6 +80,12 @@ class QualityCheckConfig(BaseModel):
     model: str = "claude-haiku-4-5-20251001"    # Lightweight model for scoring
 
 
+class StepPosition(BaseModel):
+    """Layout-only position used by the dashboard workflow editor/viewers."""
+    x: float
+    y: float
+
+
 class AgentStepConfig(BaseModel):
     """Config for 'agent' step type."""
     agent_type: Literal["claude", "codex"] = "claude"
@@ -610,6 +616,7 @@ class StepDef(BaseModel):
     name: str = ""
     type: StepType = StepType.AGENT
     depends_on: list[str] = Field(default_factory=list)
+    position: StepPosition | None = None  # Layout-only; ignored by executor.
 
     # Editor-compatible fields — influence agent selection & prompt
     action: str = ""

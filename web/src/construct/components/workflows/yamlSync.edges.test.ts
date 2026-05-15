@@ -150,6 +150,35 @@ steps:
   assert.equal(matches.length, 1, `expected exactly one step_a → step_b edge, got ${matches.length}`);
 });
 
+test('flowToTasks does not persist interpolation-only inferred edges as depends_on', () => {
+  const yaml = `
+steps:
+  - id: step_a
+    type: agent
+    agent:
+      prompt: "Do A."
+  - id: step_b
+    type: agent
+    agent:
+      prompt: "Use \${step_a.output}"
+`;
+  const tasks = parseWorkflowYaml(yaml);
+  const { nodes, edges } = tasksToFlow(tasks);
+  const inferred = edges.find((edge) => edge.source === 'step_a' && edge.target === 'step_b');
+  assert.equal(
+    (inferred?.data as Record<string, unknown> | undefined)?.inferred,
+    'interpolation',
+    'expected the visual edge to be marked as interpolation-inferred',
+  );
+
+  const roundTripped = flowToTasks(nodes as Node<TaskNodeData>[], edges);
+  assert.deepEqual(
+    roundTripped.find((task) => task.id === 'step_b')!.depends_on,
+    [],
+    'interpolation-only edges must not become saved depends_on entries',
+  );
+});
+
 test('flowToTasks derives depends_on from edges, not stale node dependency counts', () => {
   const yaml = `
 steps:
@@ -189,6 +218,37 @@ steps:
     ['setup'],
     'graph edge must serialize as depends_on',
   );
+});
+
+test('for_each parent-to-child edge is membership, not a serialized dependency', () => {
+  const yaml = `
+steps:
+  - id: loop
+    type: for_each
+    for_each:
+      range: "1..2"
+      variable: item
+      steps: [body]
+  - id: body
+    type: agent
+    depends_on: [loop]
+    agent:
+      prompt: "Use \${item}"
+`;
+  const tasks = parseWorkflowYaml(yaml);
+  const { nodes, edges } = tasksToFlow(tasks);
+  const regularParentEdge = edges.find((edge) =>
+    edge.source === 'loop'
+    && edge.target === 'body'
+    && !(edge.data as Record<string, unknown> | undefined)?.synthetic,
+  );
+  assert.equal(regularParentEdge, undefined, 'for_each parent must not become a real body dependency edge');
+
+  const roundTripped = flowToTasks(nodes as Node<TaskNodeData>[], [
+    ...edges,
+    { id: 'manual-loop-body', source: 'loop', target: 'body' } as Edge,
+  ]);
+  assert.deepEqual(roundTripped.find((task) => task.id === 'body')!.depends_on, []);
 });
 
 test('${input.X} / ${trigger.X} / ${env.X} are skipped', () => {
