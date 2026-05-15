@@ -167,13 +167,18 @@ export function buildWorkflowEdgeStyle({
     ? 'TRUE'
     : edge.sourceHandle === 'false'
       ? 'FALSE'
-      : undefined;
+      : typeof edge.label === 'string'
+        ? edge.label
+        : undefined;
 
   return {
     animated: sourceStatus === 'running' || targetStatus === 'running',
     label,
     labelStyle: label ? {
-      fill: edge.sourceHandle === 'false' ? 'var(--construct-status-danger)' : 'var(--construct-status-success)',
+      ...(edge.labelStyle ?? {}),
+      fill: edge.sourceHandle === 'false'
+        ? 'var(--construct-status-danger)'
+        : (edge.labelStyle as CSSProperties | undefined)?.fill ?? 'var(--construct-status-success)',
       fontSize: 10,
       fontWeight: 700,
     } : undefined,

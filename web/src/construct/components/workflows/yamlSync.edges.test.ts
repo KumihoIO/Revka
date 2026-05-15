@@ -25,7 +25,7 @@ import {
 } from './yamlSync';
 import { hasCycle as hasLegacyCycle } from '../../../components/teams/graphHelpers';
 import { hasCycle as hasConstructCycle } from '../../lib/graphHelpers';
-import { deriveBlockedTaskIds, deriveDependencyChainIds } from '../../lib/orchestration';
+import { buildWorkflowEdgeStyle, deriveBlockedTaskIds, deriveDependencyChainIds } from '../../lib/orchestration';
 import type { TaskNodeData } from './yamlSync';
 import type { Edge, Node } from '@xyflow/react';
 
@@ -332,6 +332,43 @@ steps:
     }),
     ['consumer'],
   );
+});
+
+test('run viewer preserves canonical conditional branch labels on styled edges', () => {
+  const yaml = `
+steps:
+  - id: gate
+    type: conditional
+    conditional:
+      branches:
+        - condition: "\${producer.output_data.status} == 'PASS'"
+          goto: pass_target
+        - condition: default
+          goto: fallback_target
+  - id: pass_target
+    type: shell
+    shell:
+      command: "echo pass"
+  - id: fallback_target
+    type: shell
+    shell:
+      command: "echo fallback"
+  - id: producer
+    type: shell
+    shell:
+      command: "echo status"
+`;
+  const tasks = parseWorkflowYaml(yaml);
+  const { edges } = tasksToFlow(tasks);
+  const fallbackBranch = edges.find((edge) => edge.source === 'gate' && edge.sourceHandle === 'branch-1');
+  assert.ok(fallbackBranch, 'expected canonical branch-1 edge');
+
+  const styled = buildWorkflowEdgeStyle({
+    edge: fallbackBranch,
+    tasksById: new Map(tasks.map((task) => [task.id, task])),
+  });
+  assert.equal(styled.label, 'default');
+  assert.equal((styled.labelStyle as { fill?: string }).fill, 'var(--construct-status-danger)');
 });
 
 test('full architect example: 5 steps, expected edge set', () => {

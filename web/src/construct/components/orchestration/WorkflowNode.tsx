@@ -1,6 +1,12 @@
 import { Handle, Position, useUpdateNodeInternals, type NodeTypes } from '@xyflow/react';
 import { useEffect, useRef } from 'react';
-import type { TaskNodeData } from '@/construct/components/workflows/yamlSync';
+import {
+  gateBranchHandle,
+  gateBranchLabel,
+  gateBranchStyle,
+  type ConditionalBranchDefinition,
+  type TaskNodeData,
+} from '@/construct/components/workflows/yamlSync';
 import { workflowActionTone, workflowStatusTone } from '../../lib/orchestration';
 
 // Tells React Flow to re-measure this node and re-anchor handles + MiniMap
@@ -153,9 +159,26 @@ function WorkflowNode({
   );
 }
 
+function getGateBranches(data: TaskNodeData): ConditionalBranchDefinition[] {
+  if (data.conditionalBranches?.length > 0) return data.conditionalBranches;
+  const branches: ConditionalBranchDefinition[] = [];
+  if (data.condition || data.onTrueValue) {
+    branches.push({ condition: data.condition || '', goto: '', value: data.onTrueValue || undefined });
+  }
+  if (data.onFalseValue) {
+    branches.push({ condition: 'default', goto: '', value: data.onFalseValue || undefined });
+  }
+  return branches.length > 0 ? branches : [
+    { condition: data.condition || '', goto: '', value: data.onTrueValue || undefined },
+    { condition: 'default', goto: '', value: data.onFalseValue || undefined },
+  ];
+}
+
 function GateNodeV2({ id, data, selected }: { id: string; data: TaskNodeData; selected?: boolean }) {
   const accent = 'var(--construct-status-warning)';
   const ref = useNodeAutoSize(id);
+  const branches = getGateBranches(data);
+  const primaryCondition = branches.find((branch) => branch.condition.trim() !== 'default')?.condition;
 
   return (
     <div
@@ -183,16 +206,40 @@ function GateNodeV2({ id, data, selected }: { id: string; data: TaskNodeData; se
             {data.name || data.taskId}
           </div>
           <div className="mt-1 text-[11px] font-mono" style={{ color: 'var(--construct-text-secondary)' }}>
-            {data.condition || 'No condition set'}
+            {primaryCondition || data.condition || 'No condition set'}
           </div>
         </div>
       </div>
-      <div className="mt-3 flex items-center justify-between text-[10px] font-semibold uppercase tracking-[0.12em]">
-        <span style={{ color: 'var(--construct-status-success)' }}>true</span>
-        <span style={{ color: 'var(--construct-status-danger)' }}>false</span>
+      <div className="mt-3 flex flex-col gap-1.5 text-[10px] font-semibold uppercase tracking-[0.12em]">
+        {branches.map((branch, index) => {
+          const style = gateBranchStyle(branch, index);
+          return (
+            <div key={gateBranchHandle(index)} className="flex items-center justify-between gap-2">
+              <span className="truncate" style={{ color: style.stroke }}>
+                {gateBranchLabel(branch, index)}
+              </span>
+              {branch.value ? (
+                <span className="truncate font-mono normal-case tracking-normal" style={{ color: style.stroke }}>
+                  {branch.value}
+                </span>
+              ) : null}
+            </div>
+          );
+        })}
       </div>
-      <Handle type="source" position={Position.Bottom} id="true" style={{ left: '28%', background: 'var(--construct-status-success)', width: 9, height: 9 }} />
-      <Handle type="source" position={Position.Bottom} id="false" style={{ left: '72%', background: 'var(--construct-status-danger)', width: 9, height: 9 }} />
+      {branches.map((branch, index) => {
+        const style = gateBranchStyle(branch, index);
+        const left = `${((index + 1) / (branches.length + 1)) * 100}%`;
+        return (
+          <Handle
+            key={gateBranchHandle(index)}
+            type="source"
+            position={Position.Bottom}
+            id={gateBranchHandle(index)}
+            style={{ left, background: style.stroke, width: 9, height: 9 }}
+          />
+        );
+      })}
     </div>
   );
 }
