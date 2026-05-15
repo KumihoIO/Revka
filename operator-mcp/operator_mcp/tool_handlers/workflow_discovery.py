@@ -20,6 +20,7 @@ from .._log import _log
 from ..workflow.schema import (
     A2AStepConfig,
     AgentStepConfig,
+    ComputeStepConfig,
     ConditionalStepConfig,
     DeprecateStepConfig,
     EmailStepConfig,
@@ -52,6 +53,7 @@ _STEP_CONFIG_CLASS: dict[StepType, type[BaseModel]] = {
     StepType.AGENT: AgentStepConfig,
     StepType.SHELL: ShellStepConfig,
     StepType.PYTHON: PythonStepConfig,
+    StepType.COMPUTE: ComputeStepConfig,
     StepType.EMAIL: EmailStepConfig,
     StepType.IMAGE: ImageStepConfig,
     StepType.CONDITIONAL: ConditionalStepConfig,
@@ -77,6 +79,7 @@ _STEP_LABELS: dict[StepType, str] = {
     StepType.AGENT: "Agent",
     StepType.SHELL: "Shell",
     StepType.PYTHON: "Python",
+    StepType.COMPUTE: "Compute",
     StepType.EMAIL: "Email",
     StepType.IMAGE: "Image",
     StepType.CONDITIONAL: "Conditional",
@@ -102,6 +105,7 @@ _STEP_DESCRIPTIONS: dict[StepType, str] = {
     StepType.AGENT: "Spawn a Construct agent (claude/codex) with a prompt.",
     StepType.SHELL: "Run a shell command.",
     StepType.PYTHON: "Invoke a Python script with JSON I/O.",
+    StepType.COMPUTE: "Evaluate sandboxed expressions into typed output_data fields.",
     StepType.EMAIL: "Send an outbound email via SMTP.",
     StepType.IMAGE: (
         "Generate image(s) via the codex CLI's image_generation tool, "
@@ -168,6 +172,16 @@ _EXAMPLE_YAML: dict[StepType, str] = {
         "  code: |\n"
         "    import json, sys\n"
         "    print(json.dumps({\"ok\": True}))\n"
+    ),
+    StepType.COMPUTE: (
+        "id: next_arc_context\n"
+        "type: compute\n"
+        "compute:\n"
+        "  outputs:\n"
+        "    arc_number: \"${{ int(arc_loader.output_data.metadata.arc_number) + 1 }}\"\n"
+        "    start: \"${{ int(arc_loader.output_data.metadata.end) + 1 }}\"\n"
+        "    end: \"${{ outputs.start + 5 }}\"\n"
+        "    episode_range: \"${{ outputs.start }}..${{ outputs.end }}\"\n"
     ),
     StepType.EMAIL: (
         "id: send\n"

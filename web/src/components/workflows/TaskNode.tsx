@@ -30,6 +30,7 @@ const ACTION_TONES: Record<string, ActionTone> = {
   agent: 'network',
   parallel: 'network',
   shell: 'muted',
+  compute: 'accent',
   goto: 'warning',
   output: 'live',
   conditional: 'warning',

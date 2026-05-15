@@ -6,6 +6,7 @@ conditional branching, parallel execution, and checkpoint support.
 Step types:
   - agent: Spawn a Construct agent (claude/codex) with a prompt.
   - shell: Run a shell command.
+  - compute: Evaluate sandboxed expressions into typed outputs.
   - conditional: Branch based on expressions over prior step outputs.
   - parallel: Run multiple sub-steps concurrently with join strategies.
   - goto: Jump to another step (loop support with max_iterations guard).
@@ -29,6 +30,7 @@ class StepType(str, Enum):
     AGENT = "agent"
     SHELL = "shell"
     PYTHON = "python"
+    COMPUTE = "compute"
     EMAIL = "email"
     IMAGE = "image"
     CONDITIONAL = "conditional"
@@ -253,6 +255,17 @@ class PythonStepConfig(BaseModel):
                 "`code` (inline source)"
             )
         return self
+
+
+class ComputeStepConfig(BaseModel):
+    """Config for 'compute' step type — evaluate deterministic expressions.
+
+    Values in ``outputs`` may contain explicit ``${{ ... }}`` expressions.
+    A value that is exactly one expression returns the evaluator's typed
+    result; expressions embedded inside a larger string are stringified.
+    Existing ``${...}`` placeholders remain plain string interpolation.
+    """
+    outputs: dict[str, Any] = Field(default_factory=dict)
 
 
 class ConditionalBranch(BaseModel):
@@ -598,6 +611,7 @@ ACTION_DEFAULTS: dict[str, dict[str, str]] = {
     "gate":        {"type": "conditional",  "role": "",      "agent_type": ""},
     "human_input": {"type": "human_input",  "role": "",      "agent_type": ""},
     "resolve":     {"type": "resolve"},
+    "compute":     {"type": "compute"},
 }
 
 
@@ -629,6 +643,7 @@ class StepDef(BaseModel):
     agent: AgentStepConfig | None = None
     shell: ShellStepConfig | None = None
     python: PythonStepConfig | None = None
+    compute: ComputeStepConfig | None = None
     email: EmailStepConfig | None = None
     image: ImageStepConfig | None = None
     conditional: ConditionalStepConfig | None = None

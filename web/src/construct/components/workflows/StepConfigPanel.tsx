@@ -436,6 +436,7 @@ export default function StepConfigPanel({
   }, [onRunToHere, data.taskId, runToHereClosureIds]);
 
   const skillSection = stepType !== 'conditional' &&
+    stepType !== 'compute' &&
     stepType !== 'human_input' &&
     stepType !== 'notify' &&
     stepType !== 'tag' &&
@@ -1760,6 +1761,96 @@ export default function StepConfigPanel({
                   />
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* ── Compute ── */}
+          {stepType === 'compute' && (
+            <div style={sectionShellStyle}>
+              <div style={sectionTitleStyle}>Compute Outputs</div>
+              {Object.entries(data.computeOutputs || {}).map(([key, value], index) => (
+                <div
+                  key={`${key}-${index}`}
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'minmax(92px, 0.45fr) minmax(0, 1fr) auto',
+                    gap: 6,
+                    alignItems: 'start',
+                  }}
+                >
+                  <div>
+                    <label style={labelStyle}>Key</label>
+                    <input
+                      type="text"
+                      value={key}
+                      onChange={(e) => {
+                        const nextKey = e.target.value.trim();
+                        const next = { ...(data.computeOutputs || {}) };
+                        delete next[key];
+                        if (nextKey) next[nextKey] = value;
+                        onUpdate(node.id, { computeOutputs: next });
+                      }}
+                      placeholder="start"
+                      spellCheck={false}
+                      style={monoInputStyle}
+                    />
+                  </div>
+                  <div>
+                    <label style={labelStyle}>Value</label>
+                    <ExpressionTextarea
+                      value={value}
+                      onChange={(nextValue) => onUpdate(node.id, {
+                        computeOutputs: {
+                          ...(data.computeOutputs || {}),
+                          [key]: nextValue,
+                        },
+                      })}
+                      rows={2}
+                      placeholder="${{ int(inputs.end) + 1 }}"
+                      style={monoInputStyle}
+                      stepIds={dagStepIds}
+                      workflowInputs={dagInputs}
+                      triggerFields={dagTriggerFields}
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    className="construct-icon-button"
+                    title="Remove output"
+                    aria-label="Remove output"
+                    onClick={() => {
+                      const next = { ...(data.computeOutputs || {}) };
+                      delete next[key];
+                      onUpdate(node.id, { computeOutputs: next });
+                    }}
+                    style={{ width: 28, height: 28, marginTop: 18 }}
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              ))}
+              <button
+                type="button"
+                className="construct-button"
+                onClick={() => {
+                  const current = data.computeOutputs || {};
+                  let key = 'value';
+                  let suffix = 2;
+                  while (Object.prototype.hasOwnProperty.call(current, key)) {
+                    key = `value_${suffix}`;
+                    suffix += 1;
+                  }
+                  onUpdate(node.id, {
+                    computeOutputs: {
+                      ...current,
+                      [key]: '${{ 1 }}',
+                    },
+                  });
+                }}
+                style={{ justifyContent: 'center' }}
+              >
+                + Output
+              </button>
             </div>
           )}
 

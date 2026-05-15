@@ -37,6 +37,7 @@ from .schema import (
     QualityCheckConfig,
     ShellStepConfig,
     PythonStepConfig,
+    ComputeStepConfig,
     EmailStepConfig,
     ImageStepConfig,
     A2AStepConfig,
@@ -59,7 +60,9 @@ from .validator import validate_workflow
 # Variable interpolation
 # ---------------------------------------------------------------------------
 
-_VAR_RE = re.compile(r"\$\{([^}]+)\}")
+_VAR_RE = re.compile(r"\$\{(?!\{)([^}]+)\}")
+_EXPR_TEMPLATE_RE = re.compile(r"\$\{\{\s*(.*?)\s*\}\}", re.DOTALL)
+_COMPUTE_OUTPUT_KEY_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
 
 
 def interpolate(template: str, state: WorkflowState) -> str:
@@ -84,6 +87,8 @@ def interpolate(template: str, state: WorkflowState) -> str:
       - ${env.VAR}               — environment variable
       - ${run_id}                — workflow run ID
     """
+    template = _interpolate_expr_placeholders(template, state, strict=False)
+
     def _resolve(match: re.Match) -> str:
         ref = match.group(1)
         parts = ref.split(".", 1)
@@ -486,7 +491,10 @@ def _sanitize_hyphenated_refs(expr: str, alias_map: dict[str, str]) -> str:
     return "".join(out)
 
 
-def _build_eval_names(state: WorkflowState) -> tuple[dict[str, Any], dict[str, str]]:
+def _build_eval_names(
+    state: WorkflowState,
+    extra_names: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], dict[str, str]]:
     """Build a `names` dict for simpleeval mirroring interpolation namespaces.
 
     EvalWithCompoundTypes resolves dotted access on dicts via attribute
@@ -549,6 +557,14 @@ def _build_eval_names(state: WorkflowState) -> tuple[dict[str, Any], dict[str, s
     # `env` intentionally NOT filtered — env vars commonly contain underscores
     # but never dunders, and existing workflows reference ${env.VAR} freely.
     names["env"] = dict(os.environ)
+    if extra_names:
+        for key, value in extra_names.items():
+            if not isinstance(key, str) or not key or key.startswith("_"):
+                continue
+            if isinstance(value, dict):
+                names[key] = _safe_keys(value)
+            else:
+                names[key] = value
     return names, alias_map
 
 
@@ -588,7 +604,11 @@ def _interpolate_for_expr(expr: str, state: WorkflowState) -> str:
     return _VAR_RE.sub(_sub, expr)
 
 
-def _eval_expression(expr: str, state: WorkflowState) -> Any:
+def _eval_expression(
+    expr: str,
+    state: WorkflowState,
+    extra_names: dict[str, Any] | None = None,
+) -> Any:
     """Evaluate an expression and return the raw result.
 
     Pipeline: preprocess workflow-syntax sugar → interpolate any leftover
@@ -610,7 +630,7 @@ def _eval_expression(expr: str, state: WorkflowState) -> Any:
     if "${" in pre:
         pre = _interpolate_for_expr(pre, state)
 
-    names, alias_map = _build_eval_names(state)
+    names, alias_map = _build_eval_names(state, extra_names=extra_names)
     # Hyphenated step IDs (e.g. ``zeroclaw-resolve``) aren't valid Python
     # identifiers; AST parses them as subtraction. Rewrite bare references
     # to their underscored aliases (``zeroclaw_resolve``) — `_build_eval_names`
@@ -620,6 +640,25 @@ def _eval_expression(expr: str, state: WorkflowState) -> Any:
     # Whitelisted safe functions for workflow expressions. Kept tiny on
     # purpose — these handle the 99% case (case-insensitive matching,
     # length checks, type coercion) without exposing arbitrary Python.
+    def _safe_format(value: Any, spec: Any = "") -> str:
+        return format(value, str(spec))
+
+    def _safe_pad(value: Any, width: Any, char: Any = "0") -> str:
+        width_i = int(width)
+        if width_i < 0 or width_i > 1000:
+            raise InvalidExpression("pad width must be between 0 and 1000")
+        fill = str(char or "0")[:1]
+        return str(value).rjust(width_i, fill)
+
+    def _safe_range(*args: Any) -> list[int]:
+        if not 1 <= len(args) <= 3:
+            raise InvalidExpression("range() expects 1 to 3 arguments")
+        ints = [int(a) for a in args]
+        r = range(*ints)
+        if len(r) > 10000:
+            raise InvalidExpression("range() result exceeds workflow safety cap (10000)")
+        return list(r)
+
     safe_functions: dict[str, Any] = {
         "lower": lambda s: str(s).lower() if s is not None else "",
         "upper": lambda s: str(s).upper() if s is not None else "",
@@ -628,6 +667,11 @@ def _eval_expression(expr: str, state: WorkflowState) -> Any:
         "int": int,
         "float": float,
         "bool": bool,
+        "format": _safe_format,
+        "pad": _safe_pad,
+        "range": _safe_range,
+        "add": lambda a, b: a + b,
+        "eq": lambda a, b: a == b,
     }
     evaluator = EvalWithCompoundTypes(names=names, functions=safe_functions)
     # Cap exponentiation hard. simpleeval's module-level safe_power defaults
@@ -662,6 +706,75 @@ def _eval_expression(expr: str, state: WorkflowState) -> Any:
         _log(f"workflow: expression eval failed ({type(exc).__name__}): "
              f"{expr!r} → {pre!r}: {exc}")
         raise
+
+
+def _expr_value_to_text(value: Any) -> str:
+    """String form for expression results embedded inside a larger template."""
+    if value is None:
+        return ""
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False, default=str)
+    return str(value)
+
+
+def _interpolate_expr_placeholders(
+    template: str,
+    state: WorkflowState,
+    *,
+    strict: bool,
+    extra_names: dict[str, Any] | None = None,
+) -> str:
+    """Replace explicit ``${{ ... }}`` expression placeholders in text."""
+    if "${{" not in template:
+        return template
+
+    def _sub(match: re.Match) -> str:
+        expr = match.group(1)
+        try:
+            return _expr_value_to_text(
+                _eval_expression(expr, state, extra_names=extra_names)
+            )
+        except Exception:
+            if strict:
+                raise
+            return match.group(0)
+
+    return _EXPR_TEMPLATE_RE.sub(_sub, template)
+
+
+def _eval_compute_value(
+    value: Any,
+    state: WorkflowState,
+    outputs: dict[str, Any],
+) -> Any:
+    """Evaluate one compute output value.
+
+    Exact ``${{ expr }}`` values preserve the typed expression result. Mixed
+    strings stringify expression fragments, then apply legacy ``${...}``
+    interpolation. Lists and dicts are evaluated recursively.
+    """
+    extra_names = {"outputs": outputs}
+
+    if isinstance(value, str):
+        stripped = value.strip()
+        matches = list(_EXPR_TEMPLATE_RE.finditer(stripped))
+        if len(matches) == 1 and matches[0].span() == (0, len(stripped)):
+            return _eval_expression(matches[0].group(1), state, extra_names=extra_names)
+        text = _interpolate_expr_placeholders(
+            value,
+            state,
+            strict=True,
+            extra_names=extra_names,
+        )
+        return interpolate(text, state) if "${" in text else text
+    if isinstance(value, list):
+        return [_eval_compute_value(item, state, outputs) for item in value]
+    if isinstance(value, dict):
+        return {
+            str(k): _eval_compute_value(v, state, outputs)
+            for k, v in value.items()
+        }
+    return value
 
 
 def _eval_condition(expr: str, state: WorkflowState) -> bool:
@@ -1928,6 +2041,54 @@ async def _exec_image(step: StepDef, state: WorkflowState, cwd: str) -> StepResu
         input_data=input_data,
         output_data=output_data,
         files_touched=list(files),
+    )
+
+
+async def _exec_compute(step: StepDef, state: WorkflowState) -> StepResult:
+    """Execute a compute step — deterministic typed expression outputs."""
+    cfg: ComputeStepConfig | None = step.compute
+    input_data: dict[str, Any] = {
+        "outputs": cfg.outputs if cfg else {},
+    }
+    if cfg is None:
+        return StepResult(
+            step_id=step.id,
+            status="failed",
+            error="compute step missing config",
+            input_data=input_data,
+        )
+    if not cfg.outputs:
+        return StepResult(
+            step_id=step.id,
+            status="failed",
+            error="compute step requires at least one output",
+            input_data=input_data,
+        )
+
+    outputs: dict[str, Any] = {}
+    try:
+        for key, raw_value in cfg.outputs.items():
+            if not _COMPUTE_OUTPUT_KEY_RE.fullmatch(str(key)):
+                raise ValueError(
+                    "compute output keys must start with a letter and contain "
+                    f"only letters, digits, and underscores: {key!r}"
+                )
+            outputs[str(key)] = _eval_compute_value(raw_value, state, outputs)
+    except Exception as exc:
+        return StepResult(
+            step_id=step.id,
+            status="failed",
+            error=f"compute failed: {exc}",
+            input_data=input_data,
+            output_data=outputs,
+        )
+
+    return StepResult(
+        step_id=step.id,
+        status="completed",
+        output=json.dumps(outputs, ensure_ascii=False, default=str),
+        input_data=input_data,
+        output_data=outputs,
     )
 
 
@@ -3892,6 +4053,11 @@ def dry_run_workflow(wf: WorkflowDef, inputs: dict[str, Any]) -> dict[str, Any]:
                     entry["code_preview"] = (cfg.code or "")[:100]
                 entry["timeout"] = cfg.timeout
 
+        elif step.type == StepType.COMPUTE:
+            cfg = step.compute
+            if cfg:
+                entry["outputs"] = list(cfg.outputs.keys())
+
         elif step.type == StepType.EMAIL:
             cfg = step.email
             if cfg:
@@ -4920,6 +5086,8 @@ async def _dispatch_step(
             return await _exec_shell(step, state, cwd)
         elif step.type == StepType.PYTHON:
             return await _exec_python(step, state, cwd)
+        elif step.type == StepType.COMPUTE:
+            return await _exec_compute(step, state)
         elif step.type == StepType.EMAIL:
             return await _exec_email(step, state)
         elif step.type == StepType.IMAGE:

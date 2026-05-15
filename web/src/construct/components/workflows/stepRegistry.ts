@@ -11,6 +11,7 @@ import {
   Archive,
   Bell,
   Bot,
+  Calculator,
   CheckCircle,
   Crown,
   FileCode,
@@ -95,6 +96,14 @@ export const STEP_TYPES: StepTypeDef[] = [
     icon: FileCode,
     description: 'Run a Python script or inline code with JSON in/out.',
     searchTags: ['script', 'code', 'py', 'subprocess'],
+  },
+  {
+    type: 'compute',
+    label: 'Compute',
+    category: 'execution',
+    icon: Calculator,
+    description: 'Evaluate safe expressions into typed output fields.',
+    searchTags: ['math', 'expression', 'transform', 'calculate', 'derive'],
   },
   {
     type: 'output',

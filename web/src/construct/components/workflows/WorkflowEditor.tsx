@@ -461,6 +461,7 @@ function defaultNodeData(id: string, overrides?: Partial<TaskNodeData>): TaskNod
     pythonInterpreter: '',
     pythonTimeout: 60,
     pythonAllowFailure: false,
+    computeOutputs: {},
     emailTo: '',
     emailSubject: '',
     emailBody: '',
@@ -526,6 +527,9 @@ function defaultNodeData(id: string, overrides?: Partial<TaskNodeData>): TaskNod
 // canonical executor identifier (matches StepType in operator schema) and is
 // the only step-kind field stored on the node going forward.
 function defaultsForType(type: string): Partial<TaskNodeData> {
+  if (type === 'compute') {
+    return { type, computeOutputs: { value: '${{ 1 }}' } };
+  }
   return { type };
 }
 

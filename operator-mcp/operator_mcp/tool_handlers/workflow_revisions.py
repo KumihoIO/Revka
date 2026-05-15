@@ -106,8 +106,10 @@ _INTERPOLATED_FIELDS: dict[str, list[tuple[str, str]]] = {
 }
 
 
-# ${id.field} or ${id} — capture the leading id only.
-_VAR_REF_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_-]*)(?:\.[^}]*)?\}")
+# ${id.field} or ${id} — capture the leading id only. Explicit ${{ ... }}
+# compute expressions are handled by the workflow loader/validator, not this
+# legacy string-interpolation scanner.
+_VAR_REF_PATTERN = re.compile(r"\$\{(?!\{)([A-Za-z_][A-Za-z0-9_-]*)(?:\.[^}]*)?\}")
 
 
 def _exact_id_pattern(step_id: str) -> re.Pattern[str]:
@@ -466,7 +468,10 @@ def _scan_broken_refs(state: dict[str, Any]) -> list[tuple[str, str, str]]:
     """Walk every interpolated text field, find ${id.…} references, and return
     a list of (containing_step_id, field_label, missing_id) for refs whose
     leading id does not resolve to a known step or builtin namespace."""
-    builtins = {"inputs", "loop", "env", "trigger", "for_each", "previous"}
+    builtins = {
+        "inputs", "loop", "env", "trigger", "for_each", "previous",
+        "outputs", "run_id", "rejection",
+    }
     valid_ids = _all_step_ids(state)
     out: list[tuple[str, str, str]] = []
     for s in state.get("steps", []):
