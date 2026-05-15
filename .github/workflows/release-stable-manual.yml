@@ -725,17 +725,58 @@ jobs:
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
             "${IMG}@${DIGEST_DEBIAN}"
 
+      # GHCR package visibility is an external setting and may take time to
+      # propagate after push. The authenticated push and signature checks above
+      # remain blocking; this anonymous pull check is advisory by default. Set
+      # the repository variable REQUIRE_PUBLIC_GHCR_PULL=true to make it strict.
       - name: Verify public image pull
         env:
           TAG: ${{ needs.validate.outputs.tag }}
+          REQUIRE_PUBLIC_GHCR_PULL: ${{ vars.REQUIRE_PUBLIC_GHCR_PULL || 'false' }}
         run: |
-          set -e
+          set -u
           IMG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
           docker logout "${{ env.REGISTRY }}" >/dev/null 2>&1 || true
-          docker buildx imagetools inspect "${IMG}:${TAG}"
-          docker buildx imagetools inspect "${IMG}:latest"
-          docker buildx imagetools inspect "${IMG}:${TAG}-debian"
-          docker buildx imagetools inspect "${IMG}:debian"
+
+          refs=(
+            "${IMG}:${TAG}"
+            "${IMG}:latest"
+            "${IMG}:${TAG}-debian"
+            "${IMG}:debian"
+          )
+          failures=()
+
+          for ref in "${refs[@]}"; do
+            verified=false
+            for attempt in 1 2 3 4 5; do
+              if docker buildx imagetools inspect "$ref"; then
+                verified=true
+                break
+              fi
+
+              if [ "$attempt" -lt 5 ]; then
+                sleep_for=$((attempt * 15))
+                echo "::notice::Anonymous public pull check failed for ${ref}; retrying in ${sleep_for}s (${attempt}/5)"
+                sleep "$sleep_for"
+              fi
+            done
+
+            if [ "$verified" != true ]; then
+              failures+=("$ref")
+            fi
+          done
+
+          if [ "${#failures[@]}" -gt 0 ]; then
+            printf 'Anonymous public pull verification failed for:\n'
+            printf ' - %s\n' "${failures[@]}"
+
+            if [ "${REQUIRE_PUBLIC_GHCR_PULL,,}" = "true" ]; then
+              echo "::error::Set the GHCR package visibility to public, or unset REQUIRE_PUBLIC_GHCR_PULL to make this advisory."
+              exit 1
+            fi
+
+            echo "::warning::GHCR rejected anonymous pulls. The image was already pushed and signature-verified with credentials; public visibility may still be private or propagating."
+          fi
 
   # ── Post-publish: package manager auto-sync ─────────────────────────
   scoop:
