@@ -9,6 +9,7 @@ Later sources override earlier ones (project > user > builtin).
 """
 from __future__ import annotations
 
+import ast
 import os
 import re
 import sys
@@ -48,7 +49,7 @@ from operator_mcp.workflow.event_listener import get_trigger_registry
 
 _STEP_REF_RE = re.compile(r"\$\{(?!\{)([a-zA-Z_][a-zA-Z0-9_-]*)(?:\.[a-zA-Z_][a-zA-Z0-9_.-]*)?\}")
 _EXPR_TEMPLATE_RE = re.compile(r"\$\{\{\s*(.*?)\s*\}\}", re.DOTALL)
-_EXPR_REF_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_-]*)\s*\.")
+_EXPR_ROOT_FALLBACK_RE = re.compile(r"(?<![A-Za-z0-9_.])([A-Za-z_][A-Za-z0-9_-]*)\s*\.")
 
 # Namespaces that are NOT step references — workflow-scope, runtime-scope,
 # or loop-iteration-scope. Mirrors the executor's interpolate() resolver
@@ -65,6 +66,32 @@ _NON_STEP_NAMESPACES = frozenset({
     "run_id",                   # workflow run id
     "outputs",                  # workflow-level outputs (frontend convention)
 })
+
+
+def _extract_expr_ref_namespaces(expr: str) -> set[str]:
+    """Return root namespaces from attribute chains in a ${{ ... }} expression.
+
+    Regex token scans see every dotted segment (``output_data.metadata``) as a
+    possible step id. Parsing the expression lets us keep only the root object
+    (``arc_loader`` in ``arc_loader.output_data.metadata.end``).
+    """
+    if not isinstance(expr, str) or not expr:
+        return set()
+    try:
+        tree = ast.parse(expr, mode="eval")
+    except SyntaxError:
+        return {m.group(1) for m in _EXPR_ROOT_FALLBACK_RE.finditer(expr)}
+
+    refs: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Attribute):
+            continue
+        root: ast.AST = node
+        while isinstance(root, ast.Attribute):
+            root = root.value
+        if isinstance(root, ast.Name):
+            refs.add(root.id)
+    return refs
 
 
 def _scan_step_for_refs(step: StepDef) -> set[str]:
@@ -86,8 +113,7 @@ def _scan_step_for_refs(step: StepDef) -> set[str]:
                 continue
             refs.add(ns)
         for m in _EXPR_TEMPLATE_RE.finditer(text):
-            for expr_ref in _EXPR_REF_RE.finditer(m.group(1)):
-                ns = expr_ref.group(1)
+            for ns in _extract_expr_ref_namespaces(m.group(1)):
                 if ns in _NON_STEP_NAMESPACES:
                     continue
                 refs.add(ns)

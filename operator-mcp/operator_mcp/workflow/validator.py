@@ -14,6 +14,7 @@ Validates:
 """
 from __future__ import annotations
 
+import ast
 import re
 from typing import Any
 
@@ -99,7 +100,7 @@ class ValidationResult:
 _VAR_PATTERN = re.compile(r"\$\{(?!\{)([^}]+)\}")
 _STEP_REF_RE = re.compile(r"\$\{(?!\{)([a-zA-Z_][a-zA-Z0-9_-]*)(?:\.[a-zA-Z_][a-zA-Z0-9_.-]*)?\}")
 _EXPR_TEMPLATE_RE = re.compile(r"\$\{\{\s*(.*?)\s*\}\}", re.DOTALL)
-_EXPR_REF_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_-]*)\s*\.")
+_EXPR_ROOT_FALLBACK_RE = re.compile(r"(?<![A-Za-z0-9_.])([A-Za-z_][A-Za-z0-9_-]*)\s*\.")
 
 
 def _extract_var_refs(text: str) -> list[str]:
@@ -122,7 +123,19 @@ def _extract_expr_ref_namespaces(text: str) -> set[str]:
         return set()
     refs: set[str] = set()
     for expr in _EXPR_TEMPLATE_RE.finditer(text):
-        refs.update(m.group(1) for m in _EXPR_REF_RE.finditer(expr.group(1)))
+        try:
+            tree = ast.parse(expr.group(1), mode="eval")
+        except SyntaxError:
+            refs.update(m.group(1) for m in _EXPR_ROOT_FALLBACK_RE.finditer(expr.group(1)))
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Attribute):
+                continue
+            root: ast.AST = node
+            while isinstance(root, ast.Attribute):
+                root = root.value
+            if isinstance(root, ast.Name):
+                refs.add(root.id)
     return refs
 
 

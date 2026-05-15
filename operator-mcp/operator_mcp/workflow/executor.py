@@ -641,7 +641,16 @@ def _eval_expression(
     # purpose — these handle the 99% case (case-insensitive matching,
     # length checks, type coercion) without exposing arbitrary Python.
     def _safe_format(value: Any, spec: Any = "") -> str:
-        return format(value, str(spec))
+        spec_s = str(spec)
+        if len(spec_s) > 120:
+            raise InvalidExpression("format spec is too long")
+        for digits in re.findall(r"\d+", spec_s):
+            if int(digits) > 1000:
+                raise InvalidExpression("format width/precision must be <= 1000")
+        rendered = format(value, spec_s)
+        if len(rendered) > 10000:
+            raise InvalidExpression("format result exceeds workflow safety cap (10000)")
+        return rendered
 
     def _safe_pad(value: Any, width: Any, char: Any = "0") -> str:
         width_i = int(width)

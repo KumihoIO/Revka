@@ -111,5 +111,26 @@ steps:
     compute = wf.step_by_id("next-arc-context")
 
     assert result.valid, result.errors
+    assert result.warnings == []
     assert compute is not None
     assert compute.depends_on == ["arc-loader"]
+
+
+@pytest.mark.asyncio
+async def test_compute_rejects_unbounded_format_specs() -> None:
+    state = WorkflowState(workflow_name="wf", run_id="run-1")
+    step = StepDef(
+        id="bad-format",
+        type=StepType.COMPUTE,
+        compute=ComputeStepConfig(
+            outputs={
+                "bad": "${{ format('x', '>1000001') }}",
+            }
+        ),
+    )
+
+    result = await _exec_compute(step, state)
+
+    assert result.status == "failed"
+    assert result.output_data == {}
+    assert "format width/precision" in (result.error or "")

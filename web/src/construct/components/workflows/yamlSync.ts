@@ -1834,7 +1834,50 @@ const NON_STEP_REF_IDS = new Set([
  *  expressions or pipes — LLMs use simple references. */
 const STEP_REF_REGEX = /\$\{(?!\{)([a-zA-Z_][a-zA-Z0-9_-]*)(?:\.[a-zA-Z_][a-zA-Z0-9_.-]*)?\}/g;
 const EXPR_TEMPLATE_REGEX = /\$\{\{\s*([\s\S]*?)\s*\}\}/g;
-const EXPR_REF_REGEX = /\b([A-Za-z_][A-Za-z0-9_-]*)\s*\./g;
+
+function isExprIdentStart(ch: string): boolean {
+  return /[A-Za-z_]/.test(ch);
+}
+
+function isExprIdentPart(ch: string): boolean {
+  return /[A-Za-z0-9_-]/.test(ch);
+}
+
+function extractExpressionRootRefs(body: string): string[] {
+  const refs = new Set<string>();
+  let quote: string | null = null;
+  for (let i = 0; i < body.length;) {
+    const ch = body[i]!;
+    if (quote) {
+      if (ch === '\\') {
+        i += 2;
+        continue;
+      }
+      if (ch === quote) quote = null;
+      i += 1;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      i += 1;
+      continue;
+    }
+    if (!isExprIdentStart(ch)) {
+      i += 1;
+      continue;
+    }
+    const start = i;
+    i += 1;
+    while (i < body.length && isExprIdentPart(body[i]!)) i += 1;
+    const ident = body.slice(start, i);
+    const prev = start > 0 ? body[start - 1]! : '';
+    if (prev && /[A-Za-z0-9_.]/.test(prev)) continue;
+    let j = i;
+    while (j < body.length && /\s/.test(body[j]!)) j += 1;
+    if (body[j] === '.') refs.add(ident);
+  }
+  return [...refs];
+}
 
 function addStepRefsFromText(value: string, nodeIds: Set<string>, refs: Set<string>, aliasToId: Map<string, string>): void {
   STEP_REF_REGEX.lastIndex = 0;
@@ -1851,10 +1894,7 @@ function addStepRefsFromText(value: string, nodeIds: Set<string>, refs: Set<stri
   let expr: RegExpExecArray | null;
   while ((expr = EXPR_TEMPLATE_REGEX.exec(value)) !== null) {
     const body = expr[1] ?? '';
-    EXPR_REF_REGEX.lastIndex = 0;
-    let ref: RegExpExecArray | null;
-    while ((ref = EXPR_REF_REGEX.exec(body)) !== null) {
-      const rawId = ref[1]!;
+    for (const rawId of extractExpressionRootRefs(body)) {
       const id = aliasToId.get(rawId) ?? rawId;
       if (NON_STEP_REF_IDS.has(rawId)) continue;
       if (!nodeIds.has(id)) continue;

@@ -167,6 +167,39 @@ steps:
   assert.match(roundTripped, /start: "\$\{\{ int\(arc_loader\.output_data\.end\) \+ 1 \}\}"/);
 });
 
+test('compute expression dependency edges only use root step refs', () => {
+  const yaml = `
+steps:
+  - id: arc-loader
+    type: output
+    output:
+      format: json
+      template: '{"end": 6}'
+  - id: output_data
+    type: output
+    output:
+      format: json
+      template: '{}'
+  - id: metadata
+    type: output
+    output:
+      format: json
+      template: '{}'
+  - id: next-arc-context
+    type: compute
+    compute:
+      outputs:
+        start: "\${{ int(arc_loader.output_data.metadata.end) + 1 }}"
+`;
+  const tasks = parseWorkflowYaml(yaml);
+  const { edges } = tasksToFlow(tasks);
+  const pairs = edgePairs(edges);
+
+  assert.ok(pairs.has('arc-loader->next-arc-context'));
+  assert.ok(!pairs.has('output_data->next-arc-context'));
+  assert.ok(!pairs.has('metadata->next-arc-context'));
+});
+
 test('explicit depends_on and ${step.output} for the same source dedup to one edge', () => {
   const yaml = `
 steps:
