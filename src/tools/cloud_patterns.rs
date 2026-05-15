@@ -164,7 +164,7 @@ impl CloudPatternsTool {
             })
             .collect();
 
-        scored.sort_by(|a, b| b.1.cmp(&a.1));
+        scored.sort_by_key(|b| std::cmp::Reverse(b.1));
 
         // Built-in IaC examples are AWS Terraform only; include them only when
         // the cloud filter is unset or explicitly "aws".

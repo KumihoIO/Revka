@@ -233,7 +233,7 @@ mod tests {
 
     #[test]
     fn resolve_filesystem_path_rejects_symlink_escape() {
-        let root = tempfile::tempdir().unwrap();
+        let _root = tempfile::tempdir().unwrap();
         let outside = tempfile::tempdir().unwrap();
         let outside_file = outside.path().join("secret.txt");
         fs::write(&outside_file, "secret").unwrap();
