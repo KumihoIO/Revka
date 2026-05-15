@@ -21,7 +21,7 @@ from ..failure_classification import (
 )
 from ..run_log import get_or_create_log, get_log, load_log_from_disk, list_run_logs
 from ..agent_subprocess import spawn_agent
-from ..budget_authority import BudgetGateError, check_agent_budget, require_agent_budget
+from ..budget_authority import check_agent_budget, require_agent_budget
 from ..journal import SessionJournal
 from ..kumiho_clients import KumihoAgentPoolClient
 from ..mcp_injection import build_mcp_servers, build_system_prompt
@@ -72,6 +72,7 @@ async def _try_sidecar_create(
     clean_build: bool = False,
     node_env: str = "development",
     env_extra: dict[str, str] | None = None,
+    skip_budget_check: bool = False,
 ) -> dict[str, Any] | None:
     """Try to create an agent via the sidecar. Returns None if unavailable.
 
@@ -86,8 +87,9 @@ async def _try_sidecar_create(
     Set both to False for single-turn workflow agents that just need to
     read a prompt and write output — avoids tool-loop token waste.
     """
-    from ..operator_mcp import CONSTRUCT_GW
-    await require_agent_budget(CONSTRUCT_GW)
+    if not skip_budget_check:
+        from ..operator_mcp import CONSTRUCT_GW
+        await require_agent_budget(CONSTRUCT_GW)
 
     if _sidecar_client is None:
         return None
@@ -220,6 +222,11 @@ async def tool_create_agent(args: dict[str, Any], journal: SessionJournal, pool_
     elif tmpl and tmpl.system_hint and not initial_prompt:
         initial_prompt = tmpl.system_hint
 
+    if initial_prompt:
+        budget_error = await _check_gateway_budget_before_spawn()
+        if budget_error:
+            return budget_error
+
     if tmpl:
         POOL.record_use(tmpl.name)
 
@@ -305,20 +312,18 @@ async def tool_create_agent(args: dict[str, Any], journal: SessionJournal, pool_
     # Try sidecar first, fallback to subprocess
     sidecar_info = None
     if initial_prompt:
-        try:
-            sidecar_info = await _try_sidecar_create(
-                agent_id, agent_type, title, cwd, initial_prompt,
-                role_identity=role_identity,
-                template_hint=template_hint,
-                model=model,
-                cached_params=cached_params,
-                allowed_tools=allowed_tools,
-                max_turns=max_turns,
-                clean_build=clean_build,
-                node_env=node_env,
-            )
-        except BudgetGateError as exc:
-            return exc.response
+        sidecar_info = await _try_sidecar_create(
+            agent_id, agent_type, title, cwd, initial_prompt,
+            role_identity=role_identity,
+            template_hint=template_hint,
+            model=model,
+            cached_params=cached_params,
+            allowed_tools=allowed_tools,
+            max_turns=max_turns,
+            clean_build=clean_build,
+            node_env=node_env,
+            skip_budget_check=True,
+        )
         if sidecar_info:
             agent.status = "running"
             agent._sidecar_id = sidecar_info.get("id", "")
