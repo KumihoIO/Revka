@@ -1636,6 +1636,7 @@ function WorkflowEditorInner({
     (deletedEdges: Edge[]) => {
       const clearedBranchIndexes = new Map<string, Set<number>>();
       const referenceRemovals = new Map<string, Set<string>>();
+      const deletedSyntheticEdges: Array<Pick<Edge, 'source' | 'target'>> = [];
       for (const e of deletedEdges) {
         const branchIndex = gateBranchIndex(e.sourceHandle as string | null | undefined);
         if (branchIndex !== null) {
@@ -1644,7 +1645,10 @@ function WorkflowEditorInner({
           clearedBranchIndexes.set(e.source, indexes);
           continue;
         }
-        if ((e.data as Record<string, unknown> | undefined)?.synthetic) continue;
+        if ((e.data as Record<string, unknown> | undefined)?.synthetic) {
+          deletedSyntheticEdges.push({ source: e.source, target: e.target });
+          continue;
+        }
         const sources = referenceRemovals.get(e.target) ?? new Set<string>();
         sources.add(e.source);
         referenceRemovals.set(e.target, sources);
@@ -1664,6 +1668,20 @@ function WorkflowEditorInner({
           if (sourceRefsToRemove && sourceRefsToRemove.size > 0) {
             for (const sourceId of sourceRefsToRemove) {
               nextData = removeSourceReferencesFromNodeData(nextData, sourceId);
+            }
+          }
+          if (deletedSyntheticEdges.length > 0 && nextData.type === 'for_each' && nextData.forEachSteps.length > 0) {
+            let nextSteps = nextData.forEachSteps;
+            for (const edge of deletedSyntheticEdges) {
+              const targetIndex = nextSteps.indexOf(edge.target);
+              if (targetIndex < 0) continue;
+              const removesFirstBodyStep = edge.source === n.id && targetIndex === 0;
+              const removesSequentialBodyStep = targetIndex > 0 && nextSteps[targetIndex - 1] === edge.source;
+              if (!removesFirstBodyStep && !removesSequentialBodyStep) continue;
+              nextSteps = nextSteps.filter((_, index) => index !== targetIndex);
+            }
+            if (nextSteps !== nextData.forEachSteps) {
+              nextData = { ...nextData, forEachSteps: nextSteps };
             }
           }
           return nextData === n.data ? n : { ...n, data: nextData };

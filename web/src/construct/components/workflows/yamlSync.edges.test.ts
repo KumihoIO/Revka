@@ -23,6 +23,9 @@ import {
   tasksToFlow,
   tasksToYaml,
 } from './yamlSync';
+import { hasCycle as hasLegacyCycle } from '../../../components/teams/graphHelpers';
+import { hasCycle as hasConstructCycle } from '../../lib/graphHelpers';
+import { deriveBlockedTaskIds, deriveDependencyChainIds } from '../../lib/orchestration';
 import type { TaskNodeData } from './yamlSync';
 import type { Edge, Node } from '@xyflow/react';
 
@@ -251,6 +254,40 @@ steps:
   assert.deepEqual(roundTripped.find((task) => task.id === 'body')!.depends_on, []);
 });
 
+test('synthetic for_each sequence edges do not count as editor DAG cycles', () => {
+  const yaml = `
+steps:
+  - id: loop
+    type: for_each
+    for_each:
+      range: "1..2"
+      steps: [gate, body, emit]
+  - id: gate
+    type: agent
+    depends_on: [emit]
+    agent:
+      prompt: "Gate after emit"
+  - id: body
+    type: agent
+    agent:
+      prompt: "Body"
+  - id: emit
+    type: output
+    depends_on: [body]
+    output:
+      format: markdown
+      template: "\${body.output}"
+`;
+  const tasks = parseWorkflowYaml(yaml);
+  const { nodes, edges } = tasksToFlow(tasks);
+  assert.ok(
+    edges.some((edge) => (edge.data as Record<string, unknown> | undefined)?.synthetic),
+    'expected for_each to create visual-only synthetic edges',
+  );
+  assert.equal(hasLegacyCycle(nodes, edges), false);
+  assert.equal(hasConstructCycle(nodes, edges), false);
+});
+
 test('${input.X} / ${trigger.X} / ${env.X} are skipped', () => {
   const yaml = `
 steps:
@@ -265,6 +302,36 @@ steps:
   const { edges } = tasksToFlow(tasks);
   // The only_step shouldn't reference itself or any non-existent step.
   assert.equal(edges.length, 0, 'expected zero edges for input/trigger/env-only references');
+});
+
+test('run viewer dependency paths include interpolation-only connected nodes', () => {
+  const yaml = `
+steps:
+  - id: producer
+    type: agent
+    agent:
+      prompt: "Produce data."
+  - id: consumer
+    type: output
+    output:
+      format: markdown
+      template: "\${producer.output}"
+`;
+  const tasks = parseWorkflowYaml(yaml);
+  assert.deepEqual(
+    deriveDependencyChainIds({ startTaskIds: ['consumer'], tasks }).sort(),
+    ['consumer', 'producer'],
+  );
+  assert.deepEqual(
+    deriveBlockedTaskIds({
+      tasks,
+      stepResults: {
+        producer: { status: 'failed' },
+        consumer: { status: 'pending' },
+      },
+    }),
+    ['consumer'],
+  );
 });
 
 test('full architect example: 5 steps, expected edge set', () => {

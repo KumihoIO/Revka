@@ -1,6 +1,10 @@
 import type { CSSProperties } from 'react';
 import type { Edge } from '@xyflow/react';
-import type { StepRunInfo, TaskDefinition } from '@/construct/components/workflows/yamlSync';
+import {
+  tasksToFlow,
+  type StepRunInfo,
+  type TaskDefinition,
+} from '@/construct/components/workflows/yamlSync';
 import type { WorkflowStepDetail } from '@/types/api';
 
 export function normalizeWorkflowStepStatus(status: string): StepRunInfo['status'] {
@@ -130,6 +134,18 @@ export function workflowStatusTone(status?: string): string {
   }
 }
 
+function buildIncomingTaskEdgeMap(tasks: TaskDefinition[]): Map<string, string[]> {
+  const taskMap = new Map(tasks.map((task) => [task.id, task]));
+  const incomingByTarget = new Map<string, string[]>();
+  for (const edge of tasksToFlow(tasks).edges) {
+    if (!taskMap.has(edge.source) || !taskMap.has(edge.target)) continue;
+    const incoming = incomingByTarget.get(edge.target) ?? [];
+    if (!incoming.includes(edge.source)) incoming.push(edge.source);
+    incomingByTarget.set(edge.target, incoming);
+  }
+  return incomingByTarget;
+}
+
 export function buildWorkflowEdgeStyle({
   edge,
   tasksById,
@@ -181,6 +197,7 @@ export function deriveBlockedTaskIds({
   stepResults: Record<string, StepRunInfo>;
 }): string[] {
   const blocked = new Set<string>();
+  const incomingByTarget = buildIncomingTaskEdgeMap(tasks);
   const failed = new Set(
     Object.entries(stepResults)
       .filter(([, result]) => result.status === 'failed')
@@ -194,7 +211,8 @@ export function deriveBlockedTaskIds({
       if (blocked.has(task.id) || failed.has(task.id)) continue;
       const status = stepResults[task.id]?.status;
       if (status !== 'pending') continue;
-      const isBlocked = task.depends_on.some((dependencyId) => failed.has(dependencyId) || blocked.has(dependencyId));
+      const isBlocked = (incomingByTarget.get(task.id) ?? [])
+        .some((dependencyId) => failed.has(dependencyId) || blocked.has(dependencyId));
       if (isBlocked) {
         blocked.add(task.id);
         changed = true;
@@ -212,7 +230,7 @@ export function deriveDependencyChainIds({
   startTaskIds: string[];
   tasks: TaskDefinition[];
 }): string[] {
-  const taskMap = new Map(tasks.map((task) => [task.id, task]));
+  const incomingByTarget = buildIncomingTaskEdgeMap(tasks);
   const visited = new Set<string>();
   const stack = [...startTaskIds];
 
@@ -220,9 +238,7 @@ export function deriveDependencyChainIds({
     const taskId = stack.pop();
     if (!taskId || visited.has(taskId)) continue;
     visited.add(taskId);
-    const task = taskMap.get(taskId);
-    if (!task) continue;
-    for (const dependencyId of task.depends_on) {
+    for (const dependencyId of incomingByTarget.get(taskId) ?? []) {
       stack.push(dependencyId);
     }
   }
