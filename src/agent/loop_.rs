@@ -3308,7 +3308,7 @@ pub(crate) async fn run_tool_call_loop(
         for ((idx, call), outcome) in executable_indices
             .iter()
             .zip(executable_calls.iter())
-            .zip(executed_outcomes.into_iter())
+            .zip(executed_outcomes)
         {
             runtime_trace::record_event(
                 "tool_call_result",

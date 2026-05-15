@@ -2290,7 +2290,7 @@ async fn create_discord_thread(
     name: &str,
 ) -> Option<String> {
     let url =
-        format!("https://discord.com/api/v10/channels/{channel_id}/messages/{message_id}/threads",);
+        format!("https://discord.com/api/v10/channels/{channel_id}/messages/{message_id}/threads");
     let client = reqwest::Client::new();
     match client
         .post(&url)

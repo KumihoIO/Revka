@@ -781,11 +781,7 @@ pub fn scrub_secret_patterns(input: &str) -> String {
 
     for prefix in PREFIXES {
         let mut search_from = 0;
-        loop {
-            let Some(rel) = scrubbed[search_from..].find(prefix) else {
-                break;
-            };
-
+        while let Some(rel) = scrubbed[search_from..].find(prefix) {
             let start = search_from + rel;
             let content_start = start + prefix.len();
             let end = token_end(&scrubbed, content_start);
@@ -1129,7 +1125,7 @@ fn create_provider_with_url_and_options(
     // Pre-flight: catch obvious API-key / provider mismatches early.
     if let Some(key_value) = key {
         let is_custom = name.starts_with("custom:") || name.starts_with("anthropic-custom:");
-        let has_custom_url = api_url.map(str::trim).filter(|u| !u.is_empty()).is_some();
+        let has_custom_url = api_url.map(str::trim).is_some_and(|u| !u.is_empty());
         if !is_custom && !has_custom_url {
             if let Some(likely_provider) = check_api_key_prefix(name, key_value) {
                 let visible = &key_value[..key_value.len().min(8)];
