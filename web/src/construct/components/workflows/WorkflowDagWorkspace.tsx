@@ -1,7 +1,14 @@
 import { useMemo } from 'react';
 import type { ReactNode } from 'react';
 import type { Edge, Node, NodeMouseHandler } from '@xyflow/react';
-import { parseWorkflowYaml, tasksToFlow, type StepRunInfo, type TaskDefinition, type TaskNodeData } from '@/construct/components/workflows/yamlSync';
+import {
+  hasPersistedTaskPositions,
+  parseWorkflowYaml,
+  tasksToFlow,
+  type StepRunInfo,
+  type TaskDefinition,
+  type TaskNodeData,
+} from '@/construct/components/workflows/yamlSync';
 import { layoutNodes } from '@/construct/lib/graphHelpers';
 import GraphCanvas from '../orchestration/GraphCanvas';
 import { workflowEdgeTypesV2 } from '../orchestration/WorkflowEdge';
@@ -53,9 +60,13 @@ export default function WorkflowDagWorkspace({
         (data as TaskNodeData & { blocked?: boolean; failing?: boolean; running?: boolean }).running = running.has(data.taskId);
       }
     }
+    const positionedNodes = hasPersistedTaskPositions(parsed)
+      ? flow.nodes
+      : layoutNodes(flow.nodes, flow.edges);
+
     return {
       tasks: parsed,
-      nodes: layoutNodes(flow.nodes, flow.edges).map((node) => ({
+      nodes: positionedNodes.map((node) => ({
         ...node,
         selected: node.id === selectedTaskId,
         hidden: hidden.has(node.id),

@@ -10,7 +10,97 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { parseWorkflowYaml, tasksToFlow, flowToTasks, tasksToYaml, type TaskDefinition } from '../yamlSync';
+import {
+  flowToTasks,
+  hasPersistedTaskPositions,
+  parseWorkflowMeta,
+  parseWorkflowYaml,
+  tasksToFlow,
+  tasksToYaml,
+  type TaskDefinition,
+} from '../yamlSync';
+
+test('workflow step positions round-trip through YAML and flow nodes', () => {
+  const yaml = `
+steps:
+  - id: a
+    type: agent
+    position:
+      x: 123.45
+      y: -67.89
+    agent:
+      prompt: "A"
+  - id: b
+    type: shell
+    depends_on: [a]
+    position:
+      x: 444
+      y: 222.125
+    shell:
+      command: "echo b"
+`;
+
+  const tasks = parseWorkflowYaml(yaml);
+  assert.equal(hasPersistedTaskPositions(tasks), true);
+  assert.deepEqual(tasks[0]!.position, { x: 123.45, y: -67.89 });
+
+  const { nodes, edges } = tasksToFlow(tasks);
+  assert.deepEqual(nodes.find((node) => node.id === 'a')!.position, { x: 123.45, y: -67.89 });
+  assert.deepEqual(nodes.find((node) => node.id === 'b')!.position, { x: 444, y: 222.125 });
+
+  nodes[0]!.position = { x: 300.333, y: 400.666 };
+  const roundTrippedTasks = flowToTasks(nodes, edges);
+  assert.deepEqual(roundTrippedTasks[0]!.position, { x: 300.33, y: 400.67 });
+
+  const emitted = tasksToYaml(roundTrippedTasks);
+  assert.match(emitted, /position:\n      x: 300\.33\n      y: 400\.67/);
+  assert.deepEqual(parseWorkflowYaml(emitted)[0]!.position, { x: 300.33, y: 400.67 });
+});
+
+test('workflows without YAML positions are detectable for auto-layout fallback', () => {
+  const tasks = parseWorkflowYaml(`
+steps:
+  - id: a
+    type: agent
+    agent:
+      prompt: "A"
+`);
+  assert.equal(hasPersistedTaskPositions(tasks), false);
+});
+
+test('workflow inputs with blank names are omitted from emitted and parsed metadata', () => {
+  const tasks: TaskDefinition[] = [{
+    id: 'a',
+    name: 'a',
+    description: '',
+    type: 'agent',
+    agent_hints: [],
+    skills: [],
+    depends_on: [],
+    prompt: 'A',
+  }];
+
+  const emitted = tasksToYaml(tasks, {
+    name: 'blank-inputs',
+    version: '1.0',
+    description: '',
+    tags: [],
+    triggers: [],
+    inputs: [
+      { name: '', type: 'string', required: true, default: 'stale', description: 'stale' },
+      { name: 'topic', type: 'string', required: true, default: '', description: 'Topic' },
+    ],
+    outputs: [],
+    defaultCwd: '',
+    defaultTimeout: 300,
+    maxTotalTime: 3600,
+    checkpoint: true,
+  });
+
+  assert.doesNotMatch(emitted, /- name:\s*\n/);
+  assert.match(emitted, /name: topic/);
+  assert.deepEqual(parseWorkflowMeta(emitted).inputs.map((input) => input.name), ['topic']);
+});
 
 test('canonical conditional.branches populates flat fields + edges', () => {
   const yaml = `
@@ -115,6 +205,38 @@ steps:
   assert.match(emitted, /condition: default/);
   const reparsed = parseWorkflowYaml(emitted).find((t) => t.id === 'gate')!;
   assert.deepEqual(reparsed.conditional_branches, gate.conditional_branches);
+});
+
+test('conditional branch with blank condition persists as default when it has a target', () => {
+  const tasks: TaskDefinition[] = [
+    {
+      id: 'gate',
+      name: 'gate',
+      description: '',
+      type: 'conditional',
+      agent_hints: [],
+      skills: [],
+      depends_on: [],
+      conditional_branches: [{ condition: '', goto: 'done' }],
+    },
+    {
+      id: 'done',
+      name: 'done',
+      description: '',
+      type: 'output',
+      agent_hints: [],
+      skills: [],
+      depends_on: [],
+    },
+  ];
+
+  const emitted = tasksToYaml(tasks);
+  assert.match(emitted, /condition: default/);
+
+  const reparsed = parseWorkflowYaml(emitted).find((t) => t.id === 'gate')!;
+  assert.deepEqual(reparsed.conditional_branches, [
+    { condition: 'default', goto: 'done', value: undefined },
+  ]);
 });
 
 test('legacy flat condition + on_true + on_false also populates fields', () => {

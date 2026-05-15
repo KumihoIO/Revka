@@ -31,6 +31,11 @@ export interface ConditionalBranchDefinition {
   value?: string;
 }
 
+export interface WorkflowNodePosition {
+  x: number;
+  y: number;
+}
+
 export interface TaskDefinition {
   id: string;
   name: string;
@@ -42,6 +47,8 @@ export interface TaskDefinition {
   agent_hints: string[];
   skills: string[];
   depends_on: string[];
+  /** Layout-only editor/viewer position. Runtime ignores this field. */
+  position?: WorkflowNodePosition;
   params?: Record<string, string>;
   /** When true, executor skips the step and passes inputs straight through as output_data */
   disabled?: boolean;
@@ -663,6 +670,40 @@ const asStrArr = (v: YAMLValue): string[] | undefined => {
   return out;
 };
 
+const asPosition = (v: YAMLValue): WorkflowNodePosition | undefined => {
+  if (!isObj(v)) return undefined;
+  const x = asNum(v.x);
+  const y = asNum(v.y);
+  if (x === undefined || y === undefined) return undefined;
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return undefined;
+  return { x, y };
+};
+
+const roundPositionCoordinate = (value: number): number => {
+  if (!Number.isFinite(value)) return 0;
+  const rounded = Math.round(value * 100) / 100;
+  return Object.is(rounded, -0) ? 0 : rounded;
+};
+
+const normalizeNodePosition = (position: Node['position']): WorkflowNodePosition => ({
+  x: roundPositionCoordinate(position?.x ?? 0),
+  y: roundPositionCoordinate(position?.y ?? 0),
+});
+
+function normalizeConditionalBranch(branch: ConditionalBranchDefinition): ConditionalBranchDefinition {
+  const goto = branch.goto.trim();
+  const condition = branch.condition.trim() || (goto ? 'default' : '');
+  return {
+    condition,
+    goto,
+    value: branch.value?.trim() || undefined,
+  };
+}
+
+export function hasPersistedTaskPositions(tasks: TaskDefinition[]): boolean {
+  return tasks.some((task) => task.position !== undefined);
+}
+
 export function parseWorkflowYaml(yamlText: string): TaskDefinition[] {
   const doc = YAML.load(yamlText);
   if (!isObj(doc)) return [];
@@ -720,6 +761,7 @@ function parseStep(s: YAMLObj): TaskDefinition | null {
     agent_hints,
     skills,
     depends_on,
+    position: asPosition(s.position),
     params: paramCount > 0 ? ({ _count: String(paramCount) } as Record<string, string>) : undefined,
     assign: asStr(s.assign),
     disabled: asBool(s.disabled),
@@ -1045,8 +1087,12 @@ function parseStep(s: YAMLObj): TaskDefinition | null {
       const cText = asStr(br.condition);
       const gText = asStr(br.goto);
       const vText = asStr(br.value);
-      if (!cText || !gText) continue;
-      branches.push({ condition: cText, goto: gText, value: vText || undefined });
+      if (!gText) continue;
+      branches.push(normalizeConditionalBranch({
+        condition: cText ?? '',
+        goto: gText,
+        value: vText || undefined,
+      }));
     }
     if (branches.length > 0) {
       t.conditional_branches = branches;
@@ -1182,7 +1228,7 @@ export function parseWorkflowMeta(yaml: string): WorkflowMeta {
               }
               i++;
             }
-            meta.inputs.push(input);
+            if (input.name) meta.inputs.push(input);
             continue;
           }
           if (it && !il.match(/^\s/) && !it.startsWith('#')) break;
@@ -1290,28 +1336,24 @@ export function gateEdgeStyleForHandle(handle: string | null | undefined): typeo
 function normalizeConditionalBranches(task: Pick<TaskDefinition, 'condition' | 'on_true' | 'on_false' | 'on_true_value' | 'on_false_value' | 'conditional_branches'>): ConditionalBranchDefinition[] {
   if (task.conditional_branches && task.conditional_branches.length > 0) {
     return task.conditional_branches
-      .map((branch) => ({
-        condition: branch.condition.trim(),
-        goto: branch.goto.trim(),
-        value: branch.value?.trim() || undefined,
-      }))
-      .filter((branch) => branch.condition && branch.goto);
+      .map(normalizeConditionalBranch)
+      .filter((branch) => branch.goto);
   }
 
   const branches: ConditionalBranchDefinition[] = [];
   if (task.condition && task.on_true) {
-    branches.push({
+    branches.push(normalizeConditionalBranch({
       condition: task.condition,
       goto: task.on_true,
       value: task.on_true_value || undefined,
-    });
+    }));
   }
   if (task.on_false) {
-    branches.push({
+    branches.push(normalizeConditionalBranch({
       condition: 'default',
       goto: task.on_false,
       value: task.on_false_value || undefined,
-    });
+    }));
   }
   return branches;
 }
@@ -1342,7 +1384,7 @@ export function tasksToFlow(tasks: TaskDefinition[]): { nodes: Node<TaskNodeData
   const nodes: Node<TaskNodeData>[] = tasks.map((task, i) => ({
     id: task.id,
     type: isGate(task) ? 'gateNode' : 'taskNode',
-    position: { x: 0, y: i * 150 },
+    position: task.position ?? { x: 0, y: i * 150 },
     width: isGate(task) ? 220 : 280,
     // Initial height hint — required for the MiniMap to render rectangles
     // before nodes are measured. The actual rendered card uses minHeight
@@ -1545,16 +1587,26 @@ export function tasksToFlow(tasks: TaskDefinition[]): { nodes: Node<TaskNodeData
 
   // Build a map of for_each step → children for edge rewriting
   const forEachChildrenMap = new Map<string, string[]>();
+  const forEachChildParentMap = new Map<string, string>();
   for (const task of tasks) {
     if (task.for_each_steps && task.for_each_steps.length > 0) {
       const validChildren = task.for_each_steps.filter((c) => nodeIds.has(c));
-      if (validChildren.length > 0) forEachChildrenMap.set(task.id, validChildren);
+      if (validChildren.length > 0) {
+        forEachChildrenMap.set(task.id, validChildren);
+        for (const child of validChildren) {
+          forEachChildParentMap.set(child, task.id);
+        }
+      }
     }
   }
 
   // Normal dependency edges (with parallel/for_each fan-out rewriting)
   for (const task of tasks) {
     for (const dep of task.depends_on) {
+      // A for_each wrapper already owns its body steps through for_each.steps.
+      // Treat an accidental body depends_on: [wrapper] as membership, not a
+      // real dependency, or save/reload can create backend circular validation.
+      if (forEachChildParentMap.get(task.id) === dep) continue;
       // If dep is a parallel step, replace with edges from each parallel child
       const children = parallelChildrenMap.get(dep);
       if (children) {
@@ -1690,6 +1742,7 @@ export function tasksToFlow(tasks: TaskDefinition[]): { nodes: Node<TaskNodeData
     const refs = collectStepRefs(task, nodeIds);
     for (const ref of refs) {
       if (ref === task.id) continue; // ignore self-references
+      if (forEachChildParentMap.get(task.id) === ref) continue;
       pushEdge({
         id: `ref:${ref}->${task.id}`,
         source: ref,
@@ -1913,6 +1966,13 @@ export function flowToTasks(nodes: Node<TaskNodeData>[], edges: Edge[]): TaskDef
     nodes.filter((n) => n.data.type === 'parallel').map((n) => n.id),
   );
   const nodeIdToTaskId = new Map(nodes.map((n) => [n.id, n.data.taskId]));
+  const forEachChildParent = new Map<string, string>();
+  for (const node of nodes) {
+    if (node.data.type !== 'for_each') continue;
+    for (const childTaskId of node.data.forEachSteps ?? []) {
+      forEachChildParent.set(childTaskId, node.id);
+    }
+  }
 
   for (const edge of edges) {
     // Edges from a parallel parent define child membership (→ parallel.steps).
@@ -1939,6 +1999,8 @@ export function flowToTasks(nodes: Node<TaskNodeData>[], edges: Edge[]): TaskDef
     } else if (edge.sourceHandle === 'false') {
       falseBranch.set(edge.source, edge.target);
     } else {
+      const targetTaskId = nodeIdToTaskId.get(edge.target) ?? edge.target;
+      if (forEachChildParent.get(targetTaskId) === edge.source) continue;
       const deps = depsMap.get(edge.target) || [];
       deps.push(edge.source);
       depsMap.set(edge.target, deps);
@@ -1983,12 +2045,8 @@ export function flowToTasks(nodes: Node<TaskNodeData>[], edges: Edge[]): TaskDef
           }
 
           return branches
-            .map((branch) => ({
-              condition: branch.condition.trim(),
-              goto: branch.goto.trim(),
-              value: branch.value?.trim() || undefined,
-            }))
-            .filter((branch) => branch.condition && branch.goto);
+            .map(normalizeConditionalBranch)
+            .filter((branch) => branch.goto);
         })()
       : [];
     const flatBranches = flattenConditionalBranches(conditionalBranches);
@@ -2000,6 +2058,7 @@ export function flowToTasks(nodes: Node<TaskNodeData>[], edges: Edge[]): TaskDef
       agent_hints: d.agentHints,
       skills: d.skills,
       depends_on: depsMap.get(node.id) || [],
+      position: normalizeNodePosition(node.position),
       condition: st === 'conditional' ? flatBranches.condition : undefined,
       on_true: st === 'conditional' ? flatBranches.on_true : undefined,
       on_false: st === 'conditional' ? flatBranches.on_false : undefined,
@@ -2265,11 +2324,12 @@ export function tasksToYaml(tasks: TaskDefinition[], meta?: Partial<WorkflowMeta
     }
   }
   // Inputs
-  if (meta?.inputs && meta.inputs.length > 0) {
+  const workflowInputs = (meta?.inputs ?? []).filter((inp) => inp.name.trim());
+  if (workflowInputs.length > 0) {
     lines.push('');
     lines.push('inputs:');
-    for (const inp of meta.inputs) {
-      lines.push(`  - name: ${inp.name}`);
+    for (const inp of workflowInputs) {
+      lines.push(`  - name: ${inp.name.trim()}`);
       if (inp.type !== 'string') lines.push(`    type: ${inp.type}`);
       if (!inp.required) lines.push(`    required: false`);
       if (inp.default) lines.push(`    default: ${yamlEscape(inp.default)}`);
@@ -2304,6 +2364,11 @@ export function tasksToYaml(tasks: TaskDefinition[], meta?: Partial<WorkflowMeta
     // with `action:` is still parsed and migrated to `type` on load).
     const stepType = task.type || 'agent';
     lines.push(`    type: ${stepType}`);
+    if (task.position) {
+      lines.push(`    position:`);
+      lines.push(`      x: ${roundPositionCoordinate(task.position.x)}`);
+      lines.push(`      y: ${roundPositionCoordinate(task.position.y)}`);
+    }
     if (task.description) {
       lines.push(`    description: ${yamlEscape(task.description)}`);
     }

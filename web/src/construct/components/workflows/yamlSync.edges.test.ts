@@ -191,6 +191,37 @@ steps:
   );
 });
 
+test('for_each parent-to-child edge is membership, not a serialized dependency', () => {
+  const yaml = `
+steps:
+  - id: loop
+    type: for_each
+    for_each:
+      range: "1..2"
+      variable: item
+      steps: [body]
+  - id: body
+    type: agent
+    depends_on: [loop]
+    agent:
+      prompt: "Use \${item}"
+`;
+  const tasks = parseWorkflowYaml(yaml);
+  const { nodes, edges } = tasksToFlow(tasks);
+  const regularParentEdge = edges.find((edge) =>
+    edge.source === 'loop'
+    && edge.target === 'body'
+    && !(edge.data as Record<string, unknown> | undefined)?.synthetic,
+  );
+  assert.equal(regularParentEdge, undefined, 'for_each parent must not become a real body dependency edge');
+
+  const roundTripped = flowToTasks(nodes as Node<TaskNodeData>[], [
+    ...edges,
+    { id: 'manual-loop-body', source: 'loop', target: 'body' } as Edge,
+  ]);
+  assert.deepEqual(roundTripped.find((task) => task.id === 'body')!.depends_on, []);
+});
+
 test('${input.X} / ${trigger.X} / ${env.X} are skipped', () => {
   const yaml = `
 steps:

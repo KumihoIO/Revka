@@ -111,6 +111,16 @@ class TestBridgeLegacyFlat:
 
 
 class TestBridgePassthrough:
+    def test_layout_position_preserved_in_model_dump(self) -> None:
+        step = StepDef.model_validate({
+            "id": "draft",
+            "type": "agent",
+            "position": {"x": 120.5, "y": -44},
+            "agent": {"prompt": "draft"},
+        })
+        dumped = step.model_dump(exclude_none=True)
+        assert dumped["position"] == {"x": 120.5, "y": -44.0}
+
     def test_canonical_unchanged(self) -> None:
         step = StepDef.model_validate({
             "id": "gate",
@@ -258,6 +268,21 @@ class TestWorkflowEnd2End:
         gate = wf.step_by_id("gate")
         assert gate is not None
         assert "review" in gate.depends_on
+
+    def test_layout_position_survives_full_workflow_load(self) -> None:
+        wf = load_workflow_from_dict(_wf([
+            {
+                "id": "draft",
+                "type": "agent",
+                "position": {"x": 320, "y": 180.25},
+                "agent": {"prompt": "draft"},
+            },
+        ]))
+        step = wf.step_by_id("draft")
+        assert step is not None
+        assert step.position is not None
+        assert step.position.x == 320
+        assert step.position.y == 180.25
 
 
 class TestUserBlogPostSnippet:

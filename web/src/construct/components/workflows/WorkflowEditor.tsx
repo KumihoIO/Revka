@@ -60,6 +60,7 @@ import {
   gateBranchLabel,
   gateBranchStyle,
   gateEdgeStyleForHandle,
+  hasPersistedTaskPositions,
   isGateBranchHandle,
   parseWorkflowMeta,
   parseWorkflowYaml,
@@ -67,8 +68,10 @@ import {
   tasksToYaml,
   type ConditionalBranchDefinition,
   type InputDef,
+  type TaskDefinition,
   type TaskNodeData,
   type WorkflowMeta,
+  type WorkflowNodePosition,
 } from '@/construct/components/workflows/yamlSync';
 import { hasCycle, layoutNodes } from '@/components/teams/graphHelpers';
 
@@ -253,6 +256,32 @@ function conditionalBranchDataPatch(branches: ConditionalBranchDefinition[]): Pa
     onTrueValue: firstCase?.value ?? '',
     onFalseValue: fallback?.value ?? '',
   };
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function rewriteStepRefsInValue(value: unknown, oldId: string, newId: string): unknown {
+  if (typeof value === 'string') {
+    const refPattern = new RegExp(`\\$\\{${escapeRegExp(oldId)}(?=\\.|\\})`, 'g');
+    return value.replace(refPattern, `\${${newId}`);
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => rewriteStepRefsInValue(item, oldId, newId));
+  }
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+      out[key] = rewriteStepRefsInValue(child, oldId, newId);
+    }
+    return out;
+  }
+  return value;
+}
+
+function rewriteStepRefsInTaskData(data: TaskNodeData, oldId: string, newId: string): TaskNodeData {
+  return rewriteStepRefsInValue(data, oldId, newId) as TaskNodeData;
 }
 
 function setConditionalBranchTarget(
@@ -768,6 +797,73 @@ function applyWireStyleToEdges(edges: Edge[], wireStyle: WorkflowWireStyle): Edg
   return edges.map((edge) => applyWireStyle(edge, wireStyle));
 }
 
+function isValidWorkflowPosition(value: unknown): value is WorkflowNodePosition {
+  if (!value || typeof value !== 'object') return false;
+  const pos = value as Partial<WorkflowNodePosition>;
+  return Number.isFinite(pos.x) && Number.isFinite(pos.y);
+}
+
+function applyWorkflowLayout(
+  tasks: TaskDefinition[],
+  nodes: Node<TaskNodeData>[],
+  edges: Edge[],
+): Node<TaskNodeData>[] {
+  return hasPersistedTaskPositions(tasks)
+    ? nodes
+    : layoutNodes(nodes, edges) as Node<TaskNodeData>[];
+}
+
+function applyStoredWorkflowPositions(
+  workflowName: string,
+  tasks: TaskDefinition[],
+  nodes: Node<TaskNodeData>[],
+): Node<TaskNodeData>[] {
+  if (hasPersistedTaskPositions(tasks) || !workflowName || typeof localStorage === 'undefined') {
+    return nodes;
+  }
+
+  try {
+    const saved = JSON.parse(localStorage.getItem(`wf-positions:${workflowName}`) || '{}') as Record<string, unknown>;
+    if (Object.keys(saved).length === 0) return nodes;
+    return nodes.map((node) => {
+      const position = saved[node.id];
+      return isValidWorkflowPosition(position)
+        ? { ...node, position: { x: position.x, y: position.y } }
+        : node;
+    });
+  } catch {
+    return nodes;
+  }
+}
+
+function nodesForWorkflowTasks(
+  workflowName: string,
+  tasks: TaskDefinition[],
+  nodes: Node<TaskNodeData>[],
+  edges: Edge[],
+): Node<TaskNodeData>[] {
+  return applyStoredWorkflowPositions(
+    workflowName,
+    tasks,
+    applyWorkflowLayout(tasks, nodes, edges),
+  );
+}
+
+function normalizeWorkflowDefinitionForEditor(
+  definition: string,
+  metaOverrides: Partial<WorkflowMeta>,
+  workflowNameForPositions: string,
+): string {
+  const tasks = parseWorkflowYaml(definition);
+  const meta = parseWorkflowMeta(definition);
+  const { nodes: rawNodes, edges } = tasksToFlow(tasks);
+  const positionedNodes = nodesForWorkflowTasks(workflowNameForPositions, tasks, rawNodes, edges);
+  return tasksToYaml(flowToTasks(positionedNodes, edges), {
+    ...meta,
+    ...metaOverrides,
+  });
+}
+
 function clampDetailsPanelWidth(width: number): number {
   return Math.max(DETAILS_PANEL_MIN_WIDTH, Math.min(DETAILS_PANEL_MAX_WIDTH, Math.round(width)));
 }
@@ -957,6 +1053,7 @@ function WorkflowEditorInner({
   const connectionMade = useRef(false);
   const { screenToFlowPosition, fitView } = useReactFlow();
   const canvasRef = useRef<HTMLDivElement>(null);
+  const lastPointerFlowPositionRef = useRef<WorkflowNodePosition | null>(null);
 
   // Parse initial workflow definition.
   const { initialNodes, initialEdges } = useMemo(() => {
@@ -965,24 +1062,9 @@ function WorkflowEditorInner({
     const meta = parseWorkflowMeta(workflow.definition);
     setWorkflowMeta(meta);
     const { nodes: rawNodes, edges } = tasksToFlow(tasks);
-    const laidOut = layoutNodes(rawNodes, edges);
-    const savedKey = `wf-positions:${workflow.name}`;
-    try {
-      const saved = JSON.parse(localStorage.getItem(savedKey) || '{}') as Record<
-        string,
-        { x: number; y: number }
-      >;
-      if (Object.keys(saved).length > 0) {
-        for (const n of laidOut) {
-          const s = saved[n.id];
-          if (s) n.position = { x: s.x, y: s.y };
-        }
-      }
-    } catch {
-      /* ignore */
-    }
+    const positioned = nodesForWorkflowTasks(workflow.name, tasks, rawNodes, edges);
     taskIdCounter.current = tasks.length;
-    return { initialNodes: laidOut, initialEdges: applyWireStyleToEdges(edges, wireStyle) };
+    return { initialNodes: positioned, initialEdges: applyWireStyleToEdges(edges, wireStyle) };
   }, [workflow]);
 
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
@@ -1035,6 +1117,15 @@ function WorkflowEditorInner({
     const rect = el.getBoundingClientRect();
     return screenToFlowPosition({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
   }, [screenToFlowPosition]);
+
+  const rememberPointerFlowPosition = useCallback(
+    (clientX: number, clientY: number): WorkflowNodePosition => {
+      const position = screenToFlowPosition({ x: clientX, y: clientY });
+      lastPointerFlowPositionRef.current = position;
+      return position;
+    },
+    [screenToFlowPosition],
+  );
 
   useEffect(() => {
     try {
@@ -1102,11 +1193,16 @@ function WorkflowEditorInner({
       const existingIds = liveNodes.map((node) => (node.data as TaskNodeData).taskId);
       const originalId = copied.data.taskId || copied.data.name || 'step';
       const newId = uniqueCopyTaskId(originalId, existingIds);
-      const offset = COPY_PASTE_OFFSET * pasteCountRef.current;
-      const pastePosition = position ?? {
-        x: copied.position.x + offset,
-        y: copied.position.y + offset,
-      };
+      const pointerPosition = position ? null : lastPointerFlowPositionRef.current;
+      const pointerOffset = COPY_PASTE_OFFSET * Math.max(0, pasteCountRef.current - 1);
+      const fallbackOffset = COPY_PASTE_OFFSET * pasteCountRef.current;
+      const pastePosition = position
+        ?? (pointerPosition
+          ? { x: pointerPosition.x + pointerOffset, y: pointerPosition.y + pointerOffset }
+          : {
+              x: copied.position.x + fallbackOffset,
+              y: copied.position.y + fallbackOffset,
+            });
       const data = prepareCopiedTaskData(copied.data, newId);
       const nodeType = data.type === 'conditional' ? 'gateNode' : copied.nodeType || 'taskNode';
       const nextNode: Node<TaskNodeData> = {
@@ -1283,13 +1379,10 @@ function WorkflowEditorInner({
       return;
     }
     try {
-      const parsed = parseWorkflowYaml(workflow.definition);
-      const meta = parseWorkflowMeta(workflow.definition);
-      const normalized = tasksToYaml(parsed, {
-        ...meta,
+      const normalized = normalizeWorkflowDefinitionForEditor(workflow.definition, {
         name: workflow.name,
         description: workflow.description,
-      });
+      }, workflow.name);
       initialYamlRef.current = normalized;
       setLastSyncedYaml(normalized);
     } catch {
@@ -1464,7 +1557,7 @@ function WorkflowEditorInner({
       const touch = 'changedTouches' in event ? (event as TouchEvent).changedTouches?.[0] : null;
       const clientX = touch ? touch.clientX : (event as MouseEvent).clientX;
       const clientY = touch ? touch.clientY : (event as MouseEvent).clientY;
-      const position = screenToFlowPosition({ x: clientX, y: clientY });
+      const position = rememberPointerFlowPosition(clientX, clientY);
 
       // Forward: source-handle drop → new node is wired AS A DOWNSTREAM
       // dependency of the dragged-from node (source → new).
@@ -1486,7 +1579,7 @@ function WorkflowEditorInner({
       setChangeTypeFor(null);
       setPaletteOpen(true);
     },
-    [screenToFlowPosition],
+    [rememberPointerFlowPosition],
   );
 
   const onEdgesDelete = useCallback(
@@ -1532,18 +1625,17 @@ function WorkflowEditorInner({
   const onPaneContextMenu = useCallback(
     (event: React.MouseEvent | MouseEvent) => {
       event.preventDefault();
-      const flowPos = screenToFlowPosition({
-        x: (event as MouseEvent).clientX,
-        y: (event as MouseEvent).clientY,
-      });
+      const clientX = (event as MouseEvent).clientX;
+      const clientY = (event as MouseEvent).clientY;
+      const flowPos = rememberPointerFlowPosition(clientX, clientY);
       setContextMenu({
-        screenX: (event as MouseEvent).clientX,
-        screenY: (event as MouseEvent).clientY,
+        screenX: clientX,
+        screenY: clientY,
         flowX: flowPos.x,
         flowY: flowPos.y,
       });
     },
-    [screenToFlowPosition],
+    [rememberPointerFlowPosition],
   );
 
   // ── Side panel updates ──────────────────────────────────────────────────
@@ -1588,22 +1680,26 @@ function WorkflowEditorInner({
     [setNodes, setEdges, wireStyle],
   );
 
-  // Atomic step-id rename: keeps node.id, data.taskId, and edge endpoints in
-  // lockstep so depends_on round-trips correctly.
-  //
-  // Known gap (P1.5a, intentional): does NOT rewrite `${old_id.output}`
-  // references buried inside other steps' fields (prompts, conditions, etc.).
-  // Users editing a Step ID see only the dependency wires move; if they had
-  // typed `${test-agent.output}` into a downstream prompt, that string keeps
-  // the old name. Surfacing those references in the panel is P1.5b/c work.
+  // Atomic step-id rename: keeps node.id, data.taskId, edge endpoints, and
+  // `${step_id.*}` references in lockstep so validator dependency checks keep
+  // seeing the same upstream step after a save/reopen.
   const handleRenameStep = useCallback(
     (oldId: string, newId: string) => {
       if (oldId === newId) return;
       setNodes((nds) =>
         nds.map((n) => {
+          const rewrittenData = rewriteStepRefsInTaskData(n.data as TaskNodeData, oldId, newId);
           const renamed = n.id === oldId
-            ? { ...n, id: newId, data: { ...n.data, taskId: newId, label: n.data.label === oldId ? newId : n.data.label } }
-            : n;
+            ? {
+                ...n,
+                id: newId,
+                data: {
+                  ...rewrittenData,
+                  taskId: newId,
+                  label: rewrittenData.label === oldId ? newId : rewrittenData.label,
+                },
+              }
+            : { ...n, data: rewrittenData };
           const data = renamed.data as TaskNodeData;
           if (!data.conditionalBranches?.some((branch) => branch.goto === oldId)) return renamed;
           const branches = data.conditionalBranches.map((branch) =>
@@ -1826,17 +1922,19 @@ function WorkflowEditorInner({
       const meta = parseWorkflowMeta(yamlText);
       setWorkflowMeta(meta);
       const { nodes: rawNodes, edges: newEdges } = tasksToFlow(tasks);
-      const laidOut = layoutNodes(rawNodes, newEdges);
-      setNodes(laidOut);
+      const nextName = meta.name || name;
+      const nextDescription = meta.description || description;
+      const positioned = nodesForWorkflowTasks(nextName, tasks, rawNodes, newEdges);
+      setNodes(positioned);
       setEdges(applyWireStyleToEdges(newEdges, wireStyle));
-      setName(meta.name || name);
-      setDescription(meta.description || description);
+      setName(nextName);
+      setDescription(nextDescription);
       setTags(meta.tags);
       taskIdCounter.current = tasks.length;
-      setYamlText(tasksToYaml(tasks, {
+      setYamlText(tasksToYaml(flowToTasks(positioned, newEdges), {
         ...meta,
-        name: meta.name || name,
-        description: meta.description || description,
+        name: nextName,
+        description: nextDescription,
       }));
       setYamlDirty(false);
       setShowAdvanced(false);
@@ -1899,13 +1997,16 @@ function WorkflowEditorInner({
         const newTasks = parseWorkflowYaml(newDefinition);
         const newMeta = parseWorkflowMeta(newDefinition);
         const { nodes: rawNodes, edges: newEdges } = tasksToFlow(newTasks);
-        const laidOut = layoutNodes(rawNodes, newEdges);
+        const nextName = remote.name ?? event.name;
+        const nextDescription = remote.description ?? '';
+        const positioned = nodesForWorkflowTasks(nextName, newTasks, rawNodes, newEdges);
+        const positionedTasks = flowToTasks(positioned, newEdges);
 
         // Compute changed step IDs by comparing serialized step blobs.
         const oldTasks = flowToTasks(liveNodes, edges);
         const oldById = new Map(oldTasks.map((t) => [t.id, JSON.stringify(t)]));
         const changedIds = new Set<string>();
-        for (const t of newTasks) {
+        for (const t of positionedTasks) {
           const prev = oldById.get(t.id);
           if (prev === undefined || prev !== JSON.stringify(t)) {
             changedIds.add(t.id);
@@ -1913,7 +2014,7 @@ function WorkflowEditorInner({
         }
 
         // Mark changed nodes; clear after 1.2s.
-        const markedNodes = laidOut.map((n) =>
+        const markedNodes = positioned.map((n) =>
           changedIds.has(n.id)
             ? { ...n, data: { ...(n.data as TaskNodeData), justUpdated: true } }
             : n,
@@ -1922,16 +2023,16 @@ function WorkflowEditorInner({
         setNodes(markedNodes);
         setEdges(applyWireStyleToEdges(newEdges, wireStyle));
         setWorkflowMeta(newMeta);
-        setName(remote.name ?? event.name);
-        setDescription(remote.description ?? '');
+        setName(nextName);
+        setDescription(nextDescription);
         setYamlDirty(false);
         // Normalize the baseline through the same pipeline the dirty check
         // uses (parse → tasksToYaml) so a clean apply doesn't immediately
         // register as "dirty" because of formatting differences.
-        const normalized = tasksToYaml(newTasks, {
+        const normalized = tasksToYaml(positionedTasks, {
           ...newMeta,
-          name: remote.name ?? event.name,
-          description: remote.description ?? '',
+          name: nextName,
+          description: nextDescription,
         });
         setLastSyncedYaml(normalized);
         initialYamlRef.current = normalized;
@@ -1997,8 +2098,9 @@ function WorkflowEditorInner({
         const newTasks = parseWorkflowYaml(newYaml);
         const newMeta = parseWorkflowMeta(newYaml);
         const { nodes: rawNodes, edges: newEdges } = tasksToFlow(newTasks);
-        const laidOut = layoutNodes(rawNodes, newEdges);
-        setNodes(laidOut);
+        const nextName = newMeta.name || name;
+        const positioned = nodesForWorkflowTasks(nextName, newTasks, rawNodes, newEdges);
+        setNodes(positioned);
         setEdges(applyWireStyleToEdges(newEdges, wireStyle));
         setWorkflowMeta(newMeta);
         if (newMeta.name) setName(newMeta.name);
@@ -2018,7 +2120,7 @@ function WorkflowEditorInner({
         );
       }
     },
-    [setNodes, setEdges, wireStyle],
+    [name, setNodes, setEdges, wireStyle],
   );
 
   // ── Save ────────────────────────────────────────────────────────────────
@@ -2702,6 +2804,12 @@ function WorkflowEditorInner({
               <div
                 ref={canvasRef}
                 style={{ flex: 1, position: 'relative', background: 'var(--construct-bg-surface)' }}
+                onMouseMove={(e) => {
+                  rememberPointerFlowPosition(e.clientX, e.clientY);
+                }}
+                onMouseDown={(e) => {
+                  rememberPointerFlowPosition(e.clientX, e.clientY);
+                }}
                 onContextMenu={(e) => {
                   // Only handle when right-clicking on the empty pane.
                   const target = e.target as HTMLElement;
@@ -3306,6 +3414,7 @@ function WorkflowSettingsPanel({
                     <option value="list">list</option>
                   </select>
                   <button
+                    type="button"
                     onClick={() => setMeta((m) => ({ ...m, inputs: m.inputs.filter((_, i) => i !== ii) }))}
                     style={{
                       background: 'transparent',
