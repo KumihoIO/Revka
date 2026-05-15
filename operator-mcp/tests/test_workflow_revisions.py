@@ -16,6 +16,7 @@ from operator_mcp.tool_handlers.workflow_revisions import (
     SkippedReason,
     _apply_rename_step,
     _exact_id_pattern,
+    _scan_broken_refs,
     tool_revise_workflow,
 )
 
@@ -268,3 +269,55 @@ def test_rename_step_rewrites_only_exact_refs():
     assert consumer["depends_on"] == ["renamed", "old-2"]
     # Exact ${old.…} got rewritten; ${old-2.…} did NOT.
     assert consumer["agent"]["prompt"] == "use ${renamed.output} and also ${old-2.output} together"
+
+
+def test_rename_step_rewrites_compute_expression_alias_refs():
+    state: dict[str, Any] = {
+        "name": "rename-compute-test",
+        "steps": [
+            {"id": "arc-loader", "type": "resolve", "resolve": {"kind": "arc"}},
+            {
+                "id": "next-arc-context",
+                "type": "compute",
+                "depends_on": ["arc-loader"],
+                "compute": {
+                    "outputs": {
+                        "start": "${{ int(arc_loader.output_data.metadata.end) + 1 }}",
+                        "raw": "${{ arc-loader.output_data.end }}",
+                        "literal": "${{ 'arc_loader.output_data.end' }}",
+                    }
+                },
+            },
+        ],
+    }
+    from operator_mcp.tool_handlers.workflow_revisions import RevisionOp, RevisionOpType
+
+    op = RevisionOp(op=RevisionOpType.RENAME_STEP, step_id="arc-loader", new_id="arc-source")
+    _apply_rename_step(state, op)
+
+    compute = state["steps"][1]
+    assert compute["depends_on"] == ["arc-source"]
+    assert compute["compute"]["outputs"]["start"] == "${{ int(arc_source.output_data.metadata.end) + 1 }}"
+    assert compute["compute"]["outputs"]["raw"] == "${{ arc_source.output_data.end }}"
+    assert compute["compute"]["outputs"]["literal"] == "${{ 'arc_loader.output_data.end' }}"
+    assert _scan_broken_refs(state) == []
+
+
+def test_scan_broken_refs_ignores_nested_compute_expression_fields():
+    state: dict[str, Any] = {
+        "name": "compute-scan-test",
+        "steps": [
+            {"id": "arc-loader", "type": "resolve", "resolve": {"kind": "arc"}},
+            {
+                "id": "next-arc-context",
+                "type": "compute",
+                "compute": {
+                    "outputs": {
+                        "start": "${{ int(arc_loader.output_data.metadata.end) + 1 }}",
+                    }
+                },
+            },
+        ],
+    }
+
+    assert _scan_broken_refs(state) == []

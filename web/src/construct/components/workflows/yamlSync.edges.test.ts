@@ -130,6 +130,76 @@ steps:
   );
 });
 
+test('compute outputs round-trip and infer expression dependency edges', () => {
+  const yaml = `
+steps:
+  - id: arc-loader
+    type: output
+    output:
+      format: json
+      template: '{"end": 6}'
+  - id: next-arc-context
+    type: compute
+    compute:
+      outputs:
+        start: "\${{ int(arc_loader.output_data.end) + 1 }}"
+        end: "\${{ outputs.start + 5 }}"
+        episode_range: "\${{ outputs.start }}..\${{ outputs.end }}"
+`;
+  const tasks = parseWorkflowYaml(yaml);
+  const compute = tasks.find((task) => task.id === 'next-arc-context')!;
+  assert.deepEqual(compute.compute_outputs, {
+    start: '${{ int(arc_loader.output_data.end) + 1 }}',
+    end: '${{ outputs.start + 5 }}',
+    episode_range: '${{ outputs.start }}..${{ outputs.end }}',
+  });
+
+  const { nodes, edges } = tasksToFlow(tasks);
+  const pairs = edgePairs(edges);
+  assert.ok(
+    pairs.has('arc-loader->next-arc-context'),
+    'expected expression reference to infer arc-loader → next-arc-context',
+  );
+
+  const roundTripped = tasksToYaml(flowToTasks(nodes as Node<TaskNodeData>[], edges));
+  assert.match(roundTripped, /type: compute/);
+  assert.match(roundTripped, /compute:\n      outputs:/);
+  assert.match(roundTripped, /start: "\$\{\{ int\(arc_loader\.output_data\.end\) \+ 1 \}\}"/);
+});
+
+test('compute expression dependency edges only use root step refs', () => {
+  const yaml = `
+steps:
+  - id: arc-loader
+    type: output
+    output:
+      format: json
+      template: '{"end": 6}'
+  - id: output_data
+    type: output
+    output:
+      format: json
+      template: '{}'
+  - id: metadata
+    type: output
+    output:
+      format: json
+      template: '{}'
+  - id: next-arc-context
+    type: compute
+    compute:
+      outputs:
+        start: "\${{ int(arc_loader.output_data.metadata.end) + 1 }}"
+`;
+  const tasks = parseWorkflowYaml(yaml);
+  const { edges } = tasksToFlow(tasks);
+  const pairs = edgePairs(edges);
+
+  assert.ok(pairs.has('arc-loader->next-arc-context'));
+  assert.ok(!pairs.has('output_data->next-arc-context'));
+  assert.ok(!pairs.has('metadata->next-arc-context'));
+});
+
 test('explicit depends_on and ${step.output} for the same source dedup to one edge', () => {
   const yaml = `
 steps:

@@ -312,10 +312,71 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+function isExprIdentStart(ch: string): boolean {
+  return /[A-Za-z_]/.test(ch);
+}
+
+function isExprIdentPart(ch: string): boolean {
+  return /[A-Za-z0-9_-]/.test(ch);
+}
+
+function rewriteExpressionStepAliases(value: string, oldId: string, newId: string): string {
+  if (!value.includes('${{')) return value;
+  const oldAlias = oldId.replace(/-/g, '_');
+  const newAlias = newId.replace(/-/g, '_');
+  const oldNames = new Set([oldId, oldAlias]);
+  if (oldNames.size === 1 && oldNames.has(newAlias)) return value;
+
+  const rewriteBody = (body: string): string => {
+    let out = '';
+    let quote: string | null = null;
+    for (let i = 0; i < body.length;) {
+      const ch = body[i]!;
+      if (quote) {
+        out += ch;
+        if (ch === '\\' && i + 1 < body.length) {
+          out += body[i + 1]!;
+          i += 2;
+          continue;
+        }
+        if (ch === quote) quote = null;
+        i += 1;
+        continue;
+      }
+      if (ch === '"' || ch === "'") {
+        quote = ch;
+        out += ch;
+        i += 1;
+        continue;
+      }
+      if (!isExprIdentStart(ch)) {
+        out += ch;
+        i += 1;
+        continue;
+      }
+      const start = i;
+      i += 1;
+      while (i < body.length && isExprIdentPart(body[i]!)) i += 1;
+      const ident = body.slice(start, i);
+      const prev = start > 0 ? body[start - 1]! : '';
+      let j = i;
+      while (j < body.length && /\s/.test(body[j]!)) j += 1;
+      const isRootAttribute = (!prev || !/[A-Za-z0-9_.]/.test(prev)) && body[j] === '.';
+      out += isRootAttribute && oldNames.has(ident) ? newAlias : ident;
+    }
+    return out;
+  };
+
+  return value.replace(/\$\{\{\s*([\s\S]*?)\s*\}\}/g, (match, body: string) => {
+    const rewritten = rewriteBody(body);
+    return rewritten === body ? match : '${{ ' + rewritten + ' }}';
+  });
+}
+
 function rewriteStepRefsInValue(value: unknown, oldId: string, newId: string): unknown {
   if (typeof value === 'string') {
     const refPattern = new RegExp(`\\$\\{${escapeRegExp(oldId)}(?=\\.|\\})`, 'g');
-    return value.replace(refPattern, `\${${newId}`);
+    return rewriteExpressionStepAliases(value.replace(refPattern, `\${${newId}`), oldId, newId);
   }
   if (Array.isArray(value)) {
     return value.map((item) => rewriteStepRefsInValue(item, oldId, newId));
@@ -461,6 +522,7 @@ function defaultNodeData(id: string, overrides?: Partial<TaskNodeData>): TaskNod
     pythonInterpreter: '',
     pythonTimeout: 60,
     pythonAllowFailure: false,
+    computeOutputs: {},
     emailTo: '',
     emailSubject: '',
     emailBody: '',
@@ -526,6 +588,9 @@ function defaultNodeData(id: string, overrides?: Partial<TaskNodeData>): TaskNod
 // canonical executor identifier (matches StepType in operator schema) and is
 // the only step-kind field stored on the node going forward.
 function defaultsForType(type: string): Partial<TaskNodeData> {
+  if (type === 'compute') {
+    return { type, computeOutputs: { value: '${{ 1 }}' } };
+  }
   return { type };
 }
 

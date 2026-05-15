@@ -205,6 +205,8 @@ export interface TaskDefinition {
   python_interpreter?: string;
   python_timeout?: number;
   python_allow_failure?: boolean;
+  // --- Compute step (see operator_mcp/workflow/schema.py::ComputeStepConfig) ---
+  compute_outputs?: Record<string, string>;
   // --- Email step (see operator_mcp/workflow/schema.py::EmailStepConfig) ---
   email_to?: string;
   email_subject?: string;
@@ -482,6 +484,8 @@ export interface TaskNodeData {
   pythonInterpreter: string;
   pythonTimeout: number;
   pythonAllowFailure: boolean;
+  // Compute step
+  computeOutputs: Record<string, string>;
   // Email step
   emailTo: string;
   emailSubject: string;
@@ -608,7 +612,7 @@ export const ACTION_TO_TYPE: Record<string, string> = {
   a2a: 'a2a', resolve: 'resolve', for_each: 'for_each',
   human_approval: 'human_approval',
   // New step types — see operator_mcp/workflow/schema.py
-  python: 'python', email: 'email',
+  python: 'python', compute: 'compute', email: 'email',
   tag: 'tag', deprecate: 'deprecate',
   manus: 'manus',
 };
@@ -857,6 +861,16 @@ function parseStep(s: YAMLObj): TaskDefinition | null {
     t.python_timeout = asNum(python.timeout);
     t.python_allow_failure = asBool(python.allow_failure);
     if (asStr(python.auth)) t.auth = asStr(python.auth);
+  }
+
+  const compute = isObj(s.compute) ? s.compute : undefined;
+  if (compute && isObj(compute.outputs)) {
+    const outputs: Record<string, string> = {};
+    for (const [k, v] of Object.entries(compute.outputs)) {
+      const sv = asStr(v);
+      if (sv !== undefined) outputs[k] = sv;
+    }
+    if (Object.keys(outputs).length > 0) t.compute_outputs = outputs;
   }
 
   const email = isObj(s.email) ? s.email : undefined;
@@ -1499,6 +1513,7 @@ export function tasksToFlow(tasks: TaskDefinition[]): { nodes: Node<TaskNodeData
       pythonInterpreter: task.python_interpreter || '',
       pythonTimeout: task.python_timeout || 60,
       pythonAllowFailure: task.python_allow_failure || false,
+      computeOutputs: task.compute_outputs || {},
       emailTo: task.email_to || '',
       emailSubject: task.email_subject || '',
       emailBody: task.email_body || '',
@@ -1779,6 +1794,10 @@ const INTERPOLATION_TEXT_FIELDS: ReadonlyArray<keyof TaskDefinition> = [
   'email_bcc',
   'image_prompt',
   'output_template',
+  'entity_name',
+  'entity_kind',
+  'entity_tag',
+  'entity_space',
   'condition',
   'goto_condition',
   'human_input_message',
@@ -1795,26 +1814,119 @@ const INTERPOLATION_TEXT_FIELDS: ReadonlyArray<keyof TaskDefinition> = [
 ];
 
 /** IDs that look like step refs but are actually workflow-scope sources. */
-const NON_STEP_REF_IDS = new Set(['input', 'trigger', 'env', 'inputs', 'outputs', 'context']);
+const NON_STEP_REF_IDS = new Set([
+  'input',
+  'inputs',
+  'trigger',
+  'env',
+  'outputs',
+  'context',
+  'loop',
+  'for_each',
+  'previous',
+  'rejection',
+  'run_id',
+]);
 
 /** Match `${step_id}` and `${step_id.field}` (and `${step_id.field.subfield}`).
  *  step_id matches the YAML id rule: starts with a letter or underscore,
  *  then letters/digits/underscores/hyphens. We don't try to handle nested
  *  expressions or pipes — LLMs use simple references. */
-const STEP_REF_REGEX = /\$\{([a-zA-Z_][a-zA-Z0-9_-]*)(?:\.[a-zA-Z_][a-zA-Z0-9_.-]*)?\}/g;
+const STEP_REF_REGEX = /\$\{(?!\{)([a-zA-Z_][a-zA-Z0-9_-]*)(?:\.[a-zA-Z_][a-zA-Z0-9_.-]*)?\}/g;
+const EXPR_TEMPLATE_REGEX = /\$\{\{\s*([\s\S]*?)\s*\}\}/g;
+
+function isExprIdentStart(ch: string): boolean {
+  return /[A-Za-z_]/.test(ch);
+}
+
+function isExprIdentPart(ch: string): boolean {
+  return /[A-Za-z0-9_-]/.test(ch);
+}
+
+function extractExpressionRootRefs(body: string): string[] {
+  const refs = new Set<string>();
+  let quote: string | null = null;
+  for (let i = 0; i < body.length;) {
+    const ch = body[i]!;
+    if (quote) {
+      if (ch === '\\') {
+        i += 2;
+        continue;
+      }
+      if (ch === quote) quote = null;
+      i += 1;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      i += 1;
+      continue;
+    }
+    if (!isExprIdentStart(ch)) {
+      i += 1;
+      continue;
+    }
+    const start = i;
+    i += 1;
+    while (i < body.length && isExprIdentPart(body[i]!)) i += 1;
+    const ident = body.slice(start, i);
+    const prev = start > 0 ? body[start - 1]! : '';
+    if (prev && /[A-Za-z0-9_.]/.test(prev)) continue;
+    let j = i;
+    while (j < body.length && /\s/.test(body[j]!)) j += 1;
+    if (body[j] === '.') refs.add(ident);
+  }
+  return [...refs];
+}
+
+function addStepRefsFromText(value: string, nodeIds: Set<string>, refs: Set<string>, aliasToId: Map<string, string>): void {
+  STEP_REF_REGEX.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = STEP_REF_REGEX.exec(value)) !== null) {
+    const rawId = m[1]!;
+    const id = aliasToId.get(rawId) ?? rawId;
+    if (NON_STEP_REF_IDS.has(rawId)) continue;
+    if (!nodeIds.has(id)) continue;
+    refs.add(id);
+  }
+
+  EXPR_TEMPLATE_REGEX.lastIndex = 0;
+  let expr: RegExpExecArray | null;
+  while ((expr = EXPR_TEMPLATE_REGEX.exec(value)) !== null) {
+    const body = expr[1] ?? '';
+    for (const rawId of extractExpressionRootRefs(body)) {
+      const id = aliasToId.get(rawId) ?? rawId;
+      if (NON_STEP_REF_IDS.has(rawId)) continue;
+      if (!nodeIds.has(id)) continue;
+      refs.add(id);
+    }
+  }
+}
 
 function collectStepRefs(task: TaskDefinition, nodeIds: Set<string>): Set<string> {
   const refs = new Set<string>();
+  const aliasToId = new Map<string, string>();
+  for (const id of nodeIds) {
+    const alias = id.replace(/-/g, '_');
+    if (alias !== id && !nodeIds.has(alias)) aliasToId.set(alias, id);
+  }
   for (const field of INTERPOLATION_TEXT_FIELDS) {
     const value = task[field];
     if (typeof value !== 'string' || !value) continue;
-    STEP_REF_REGEX.lastIndex = 0;
-    let m: RegExpExecArray | null;
-    while ((m = STEP_REF_REGEX.exec(value)) !== null) {
-      const id = m[1]!;
-      if (NON_STEP_REF_IDS.has(id)) continue;
-      if (!nodeIds.has(id)) continue;
-      refs.add(id);
+    addStepRefsFromText(value, nodeIds, refs, aliasToId);
+  }
+  if (task.compute_outputs) {
+    for (const value of Object.values(task.compute_outputs)) {
+      if (typeof value === 'string' && value) {
+        addStepRefsFromText(value, nodeIds, refs, aliasToId);
+      }
+    }
+  }
+  if (task.entity_metadata) {
+    for (const value of Object.values(task.entity_metadata)) {
+      if (typeof value === 'string' && value) {
+        addStepRefsFromText(value, nodeIds, refs, aliasToId);
+      }
     }
   }
   return refs;
@@ -2149,6 +2261,9 @@ export function flowToTasks(nodes: Node<TaskNodeData>[], edges: Edge[]): TaskDef
       if (d.pythonInterpreter) base.python_interpreter = d.pythonInterpreter;
       if (d.pythonTimeout && d.pythonTimeout !== 60) base.python_timeout = d.pythonTimeout;
       if (d.pythonAllowFailure) base.python_allow_failure = true;
+    }
+    if (st === 'compute') {
+      if (Object.keys(d.computeOutputs).length > 0) base.compute_outputs = d.computeOutputs;
     }
     if (st === 'email') {
       if (d.emailTo) base.email_to = d.emailTo;
@@ -2522,6 +2637,13 @@ export function tasksToYaml(tasks: TaskDefinition[], meta?: Partial<WorkflowMeta
       if (task.python_timeout && task.python_timeout !== 60) lines.push(`      timeout: ${task.python_timeout}`);
       if (task.python_allow_failure) lines.push(`      allow_failure: true`);
       if (task.auth) lines.push(`      auth: ${yamlEscape(task.auth)}`);
+    }
+    if (stepType === 'compute') {
+      lines.push(`    compute:`);
+      lines.push(`      outputs:`);
+      for (const [key, value] of Object.entries(task.compute_outputs || {})) {
+        lines.push(`        ${key}: ${yamlEscape(String(value))}`);
+      }
     }
     if (stepType === 'email') {
       lines.push(`    email:`);

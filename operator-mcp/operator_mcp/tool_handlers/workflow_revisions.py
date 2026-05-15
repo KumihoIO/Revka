@@ -8,6 +8,7 @@ which creates a revision and tags it 'published'). We never edit in place.
 """
 from __future__ import annotations
 
+import ast
 import os
 import re
 from enum import Enum
@@ -106,14 +107,100 @@ _INTERPOLATED_FIELDS: dict[str, list[tuple[str, str]]] = {
 }
 
 
-# ${id.field} or ${id} — capture the leading id only.
-_VAR_REF_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_-]*)(?:\.[^}]*)?\}")
+# ${id.field} or ${id} — capture the leading id only. Explicit ${{ ... }}
+# compute expressions are handled by the workflow loader/validator, not this
+# legacy string-interpolation scanner.
+_VAR_REF_PATTERN = re.compile(r"\$\{(?!\{)([A-Za-z_][A-Za-z0-9_-]*)(?:\.[^}]*)?\}")
+_EXPR_TEMPLATE_PATTERN = re.compile(r"\$\{\{\s*(.*?)\s*\}\}", re.DOTALL)
+_EXPR_ROOT_FALLBACK_PATTERN = re.compile(r"(?<![A-Za-z0-9_.])([A-Za-z_][A-Za-z0-9_-]*)\s*\.")
 
 
 def _exact_id_pattern(step_id: str) -> re.Pattern[str]:
     """Pattern that matches ${<step_id>} or ${<step_id>.field…} but NOT
     ${<step_id>-suffix.…}. Word-boundary guard via explicit char class."""
     return re.compile(r"\$\{" + re.escape(step_id) + r"(\.[^}]*)?\}")
+
+
+def _rewrite_expr_step_aliases(text: str, old_id: str, new_id: str) -> str:
+    old_alias = old_id.replace("-", "_")
+    new_alias = new_id.replace("-", "_")
+    old_names = {old_id, old_alias}
+    if old_names == {new_alias} or "${{" not in text:
+        return text
+
+    def _is_ident_start(ch: str) -> bool:
+        return ch == "_" or ("A" <= ch <= "Z") or ("a" <= ch <= "z")
+
+    def _is_ident_part(ch: str) -> bool:
+        return _is_ident_start(ch) or ("0" <= ch <= "9") or ch == "-"
+
+    def _rewrite_body(body: str) -> str:
+        out: list[str] = []
+        i = 0
+        quote: str | None = None
+        while i < len(body):
+            ch = body[i]
+            if quote is not None:
+                out.append(ch)
+                if ch == "\\" and i + 1 < len(body):
+                    out.append(body[i + 1])
+                    i += 2
+                    continue
+                if ch == quote:
+                    quote = None
+                i += 1
+                continue
+            if ch == "'" or ch == '"':
+                quote = ch
+                out.append(ch)
+                i += 1
+                continue
+            if not _is_ident_start(ch):
+                out.append(ch)
+                i += 1
+                continue
+            start = i
+            i += 1
+            while i < len(body) and _is_ident_part(body[i]):
+                i += 1
+            ident = body[start:i]
+            prev_ok = start == 0 or not (body[start - 1].isalnum() or body[start - 1] in "_.")
+            j = i
+            while j < len(body) and body[j].isspace():
+                j += 1
+            is_root_attr = prev_ok and j < len(body) and body[j] == "."
+            out.append(new_alias if is_root_attr and ident in old_names else ident)
+        return "".join(out)
+
+    def _rewrite(match: re.Match[str]) -> str:
+        body = match.group(1)
+        new_body = _rewrite_body(body)
+        if new_body == body:
+            return match.group(0)
+        return "${{ " + new_body + " }}"
+
+    return _EXPR_TEMPLATE_PATTERN.sub(_rewrite, text)
+
+
+def _extract_expr_ref_namespaces(text: str) -> set[str]:
+    refs: set[str] = set()
+    if not isinstance(text, str) or "${{" not in text:
+        return refs
+    for expr in _EXPR_TEMPLATE_PATTERN.finditer(text):
+        try:
+            tree = ast.parse(expr.group(1), mode="eval")
+        except SyntaxError:
+            refs.update(m.group(1) for m in _EXPR_ROOT_FALLBACK_PATTERN.finditer(expr.group(1)))
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Attribute):
+                continue
+            root: ast.AST = node
+            while isinstance(root, ast.Attribute):
+                root = root.value
+            if isinstance(root, ast.Name):
+                refs.add(root.id)
+    return refs
 
 
 # ---------------------------------------------------------------------------
@@ -151,6 +238,16 @@ def _iter_text_field_holders(step: dict[str, Any]):
                 def _set(new_val: str, _br=br):
                     _br["condition"] = new_val
                 yield sid, f"conditional.branches[{bi}].condition", br["condition"], _set
+    # Compute outputs are a map of output key -> expression/string value.
+    compute = step.get("compute")
+    if isinstance(compute, dict):
+        outputs = compute.get("outputs")
+        if isinstance(outputs, dict):
+            for key, val in outputs.items():
+                if isinstance(val, str):
+                    def _set(new_val: str, _outputs=outputs, _key=key):
+                        _outputs[_key] = new_val
+                    yield sid, f"compute.outputs.{key}", val, _set
     # Generic per-type fields
     for type_key, fields in _INTERPOLATED_FIELDS.items():
         cfg = step.get(type_key)
@@ -407,6 +504,7 @@ def _apply_rename_step(state: dict[str, Any], op: RevisionOp) -> None:
         # Rewrite ${old_id.…} → ${new_id.…} in interpolated text fields
         for _sid, _label, val, setter in _iter_text_field_holders(s):
             new_val = pat.sub(lambda m: "${" + new_id + (m.group(1) or "") + "}", val)
+            new_val = _rewrite_expr_step_aliases(new_val, old_id, new_id)
             if new_val != val:
                 setter(new_val)
 
@@ -466,14 +564,26 @@ def _scan_broken_refs(state: dict[str, Any]) -> list[tuple[str, str, str]]:
     """Walk every interpolated text field, find ${id.…} references, and return
     a list of (containing_step_id, field_label, missing_id) for refs whose
     leading id does not resolve to a known step or builtin namespace."""
-    builtins = {"inputs", "loop", "env", "trigger", "for_each", "previous"}
+    builtins = {
+        "inputs", "loop", "env", "trigger", "for_each", "previous",
+        "outputs", "run_id", "rejection",
+    }
     valid_ids = _all_step_ids(state)
+    alias_to_id = {
+        sid.replace("-", "_"): sid
+        for sid in valid_ids
+        if "-" in sid and sid.replace("-", "_") not in valid_ids
+    }
     out: list[tuple[str, str, str]] = []
     for s in state.get("steps", []):
         for sid, label, val, _setter in _iter_text_field_holders(s):
             for m in _VAR_REF_PATTERN.finditer(val):
                 ref_id = m.group(1)
                 if ref_id in builtins or ref_id in valid_ids:
+                    continue
+                out.append((sid, label, ref_id))
+            for ref_id in _extract_expr_ref_namespaces(val):
+                if ref_id in builtins or alias_to_id.get(ref_id, ref_id) in valid_ids:
                     continue
                 out.append((sid, label, ref_id))
     return out

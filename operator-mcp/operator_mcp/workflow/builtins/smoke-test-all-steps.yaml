@@ -51,6 +51,16 @@ steps:
         json.dump(payload, sys.stdout)
       timeout: 10
 
+  - id: compute_seed_context
+    name: "Compute — derive typed fields"
+    type: compute
+    compute:
+      outputs:
+        score_percent: "${{ int(seed.output_data.score * 100) }}"
+        item_count: "${{ len(seed.output_data.items) }}"
+        next_index: "${{ outputs.item_count + 1 }}"
+        score_label: "score-${{ outputs.score_percent }}"
+
   # -------------------------------------------------------------------------
   # Phase 2 — Shell at top level (allow_failure so a missing /bin/sh on the
   # CI runner can't fail the run). Demonstrates `${seed.output_data.*}`
@@ -60,7 +70,7 @@ steps:
     name: "Shell — echo greeting"
     type: shell
     shell:
-      command: 'echo "shell saw greeting=${inputs.greeting} score=${seed.output_data.score}"'
+      command: 'echo "shell saw greeting=${inputs.greeting} score=${seed.output_data.score} percent=${compute_seed_context.output_data.score_percent}"'
       timeout: 10
       allow_failure: true
 
@@ -454,6 +464,9 @@ steps:
 
         ## Phase 1 — seed
         - `seed` (python): ${seed.status}
+        - `compute_seed_context` (compute): ${compute_seed_context.status}
+          - score_percent: ${compute_seed_context.output_data.score_percent}
+          - score_label: ${compute_seed_context.output_data.score_label}
 
         ## Phase 2 — shell + interpolation (auto-deps via ${seed.*})
         - `shell_echo`: ${shell_echo.status}
