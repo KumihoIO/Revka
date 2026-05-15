@@ -30,6 +30,8 @@ export interface AgentUsage {
   inputTokens?: number;
   outputTokens?: number;
   totalCostUsd?: number;
+  model?: string;
+  provider?: string;
 }
 
 export interface AgentSessionConfig {

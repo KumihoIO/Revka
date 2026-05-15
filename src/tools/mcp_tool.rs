@@ -126,23 +126,19 @@ fn coerce_string_numerics(
                     }
                     _ => {}
                 },
-                "array" => {
+                "array" if s.starts_with('[') => {
                     // Try parsing the string as a JSON array
-                    if s.starts_with('[') {
-                        if let Ok(arr) = serde_json::from_str::<serde_json::Value>(s) {
-                            if arr.is_array() {
-                                map.insert(key.clone(), arr);
-                            }
+                    if let Ok(arr) = serde_json::from_str::<serde_json::Value>(s) {
+                        if arr.is_array() {
+                            map.insert(key.clone(), arr);
                         }
                     }
                 }
-                "object" => {
+                "object" if s.starts_with('{') => {
                     // Try parsing the string as a JSON object
-                    if s.starts_with('{') {
-                        if let Ok(obj) = serde_json::from_str::<serde_json::Value>(s) {
-                            if obj.is_object() {
-                                map.insert(key.clone(), obj);
-                            }
+                    if let Ok(obj) = serde_json::from_str::<serde_json::Value>(s) {
+                        if obj.is_object() {
+                            map.insert(key.clone(), obj);
                         }
                     }
                 }

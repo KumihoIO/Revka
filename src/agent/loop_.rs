@@ -2019,6 +2019,7 @@ pub(crate) fn is_model_switch_requested(err: &anyhow::Error) -> Option<(String, 
 struct StreamedChatOutcome {
     response_text: String,
     tool_calls: Vec<ToolCall>,
+    usage: Option<crate::providers::traits::TokenUsage>,
     forwarded_live_deltas: bool,
 }
 
@@ -2077,9 +2078,20 @@ async fn consume_provider_streaming_response(
                 // They are forwarded to the gateway via turn_streamed but
                 // do not affect the agent's tool dispatch loop.
             }
-            StreamEvent::Usage(_) => {
-                // Usage is recorded by the tool-call loop from the non-streaming
-                // fallback ChatResponse; streamed usage is consumed by turn_streamed.
+            StreamEvent::Usage(usage) => {
+                // Providers may emit usage in multiple streaming events; keep
+                // the latest non-empty value for each field so cost tracking
+                // sees the same data shape as non-streaming responses.
+                let acc = outcome.usage.get_or_insert_with(Default::default);
+                if let Some(v) = usage.input_tokens {
+                    acc.input_tokens = Some(v);
+                }
+                if let Some(v) = usage.output_tokens {
+                    acc.output_tokens = Some(v);
+                }
+                if let Some(v) = usage.cached_input_tokens {
+                    acc.cached_input_tokens = Some(v);
+                }
             }
             StreamEvent::TextDelta(chunk) => {
                 if chunk.delta.is_empty() {
@@ -2436,6 +2448,10 @@ pub(crate) async fn run_tool_call_loop(
                 }
             }
         }
+        let _ = crate::agent::token_compression::compact_tool_specs(
+            &mut tool_specs,
+            &crate::agent::context_compressor::ContextCompressionConfig::default(),
+        );
         let use_native_tools = provider.supports_native_tools() && !tool_specs.is_empty();
         // Also enable prompt-guided tool injection for non-native providers.
         // Provider::chat() will inject tool instructions into the system prompt
@@ -2587,7 +2603,7 @@ pub(crate) async fn run_tool_call_loop(
                     Ok(crate::providers::ChatResponse {
                         text: Some(streamed.response_text),
                         tool_calls: streamed.tool_calls,
-                        usage: None,
+                        usage: streamed.usage,
                         reasoning_content: None,
                     })
                 }
@@ -3292,7 +3308,7 @@ pub(crate) async fn run_tool_call_loop(
         for ((idx, call), outcome) in executable_indices
             .iter()
             .zip(executable_calls.iter())
-            .zip(executed_outcomes.into_iter())
+            .zip(executed_outcomes)
         {
             runtime_trace::record_event(
                 "tool_call_result",
@@ -3456,7 +3472,21 @@ pub(crate) async fn run_tool_call_loop(
                     }
                 }
             }
-            let result_output = truncate_tool_result(&outcome.output, max_tool_result_chars);
+            let command_hint = tool_calls
+                .get(result_index)
+                .and_then(|c| c.arguments.get("command"))
+                .and_then(serde_json::Value::as_str);
+            let compressed = crate::agent::token_compression::compress_tool_output(
+                &tool_name,
+                &outcome.output,
+                max_tool_result_chars,
+                command_hint,
+            );
+            let result_output = if compressed.stats.is_some() {
+                compressed.text
+            } else {
+                truncate_tool_result(&outcome.output, max_tool_result_chars)
+            };
             individual_results.push((tool_call_id, result_output.clone()));
             let _ = writeln!(
                 tool_results,
@@ -3611,16 +3641,22 @@ pub(crate) fn build_tool_instructions(
         .push_str("Continue reasoning with the results until you can give a final answer.\n\n");
     instructions.push_str("### Available Tools\n\n");
 
+    let spec_compression = crate::agent::context_compressor::ContextCompressionConfig::default();
     for tool in tools_registry {
         let desc = tool_descriptions
             .and_then(|td: &ToolDescriptions| td.get(tool.name()))
             .unwrap_or_else(|| tool.description());
+        let mut spec = tool.spec();
+        spec.description = desc.to_string();
+        crate::agent::token_compression::compact_tool_spec(
+            &mut spec,
+            spec_compression.tool_description_max_chars,
+            spec_compression.schema_description_max_chars,
+        );
         let _ = writeln!(
             instructions,
             "**{}**: {}\nParameters: `{}`\n",
-            tool.name(),
-            desc,
-            tool.parameters_schema()
+            spec.name, spec.description, spec.parameters
         );
     }
 
@@ -4231,7 +4267,10 @@ pub async fn run(
                 activated_handle.as_ref(),
                 Some(model_switch_callback.clone()),
                 &config.pacing,
-                config.agent.max_tool_result_chars,
+                crate::agent::context_compressor::effective_live_tool_result_chars(
+                    &config.agent.context_compression,
+                    config.agent.max_tool_result_chars,
+                ),
                 config.agent.max_context_tokens,
                 None, // shared_budget
             )
@@ -4538,7 +4577,10 @@ pub async fn run(
                     activated_handle.as_ref(),
                     Some(model_switch_callback.clone()),
                     &config.pacing,
-                    config.agent.max_tool_result_chars,
+                    crate::agent::context_compressor::effective_live_tool_result_chars(
+                        &config.agent.context_compression,
+                        config.agent.max_tool_result_chars,
+                    ),
                     config.agent.max_context_tokens,
                     None, // shared_budget
                 )
@@ -5486,7 +5528,9 @@ mod tests {
     use crate::observability::NoopObserver;
     use crate::providers::ChatResponse;
     use crate::providers::router::{Route, RouterProvider};
-    use crate::providers::traits::{ProviderCapabilities, StreamChunk, StreamEvent, StreamOptions};
+    use crate::providers::traits::{
+        ProviderCapabilities, StreamChunk, StreamEvent, StreamOptions, TokenUsage,
+    };
     use tempfile::TempDir;
 
     struct NonVisionProvider {
@@ -5688,6 +5732,71 @@ mod tests {
             Box::pin(futures_util::stream::iter(vec![
                 Ok(StreamChunk::delta(response)),
                 Ok(StreamChunk::final_chunk()),
+            ]))
+        }
+    }
+
+    struct UsageStreamingProvider {
+        usage: TokenUsage,
+        stream_calls: Arc<AtomicUsize>,
+        chat_calls: Arc<AtomicUsize>,
+    }
+
+    impl UsageStreamingProvider {
+        fn new(usage: TokenUsage) -> Self {
+            Self {
+                usage,
+                stream_calls: Arc::new(AtomicUsize::new(0)),
+                chat_calls: Arc::new(AtomicUsize::new(0)),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl Provider for UsageStreamingProvider {
+        async fn chat_with_system(
+            &self,
+            _system_prompt: Option<&str>,
+            _message: &str,
+            _model: &str,
+            _temperature: f64,
+        ) -> anyhow::Result<String> {
+            anyhow::bail!("chat_with_system should not be used in usage stream tests");
+        }
+
+        async fn chat(
+            &self,
+            _request: ChatRequest<'_>,
+            _model: &str,
+            _temperature: f64,
+        ) -> anyhow::Result<ChatResponse> {
+            self.chat_calls.fetch_add(1, Ordering::SeqCst);
+            anyhow::bail!("chat should not be called when usage streaming succeeds")
+        }
+
+        fn supports_streaming(&self) -> bool {
+            true
+        }
+
+        fn stream_chat(
+            &self,
+            _request: ChatRequest<'_>,
+            _model: &str,
+            _temperature: f64,
+            options: StreamOptions,
+        ) -> futures_util::stream::BoxStream<
+            'static,
+            crate::providers::traits::StreamResult<StreamEvent>,
+        > {
+            self.stream_calls.fetch_add(1, Ordering::SeqCst);
+            if !options.enabled {
+                return Box::pin(futures_util::stream::empty());
+            }
+
+            Box::pin(futures_util::stream::iter(vec![
+                Ok(StreamEvent::TextDelta(StreamChunk::delta("done"))),
+                Ok(StreamEvent::Usage(self.usage.clone())),
+                Ok(StreamEvent::Final),
             ]))
         }
     }
@@ -9635,7 +9744,6 @@ Let me check the result."#;
         use super::{
             TOOL_LOOP_COST_TRACKING_CONTEXT, ToolLoopCostTrackingContext, run_tool_call_loop,
         };
-        use crate::config::schema::ModelPricing;
         use crate::cost::CostTracker;
         use crate::observability::noop::NoopObserver;
         use std::collections::HashMap;
@@ -9661,16 +9769,13 @@ Let me check the result."#;
         };
         cost_config.prices = HashMap::from([(
             "mock-model".to_string(),
-            ModelPricing {
+            crate::config::schema::ModelPricing {
                 input: 3.0,
                 output: 15.0,
             },
         )]);
         let tracker = Arc::new(CostTracker::new(cost_config.clone(), workspace.path()).unwrap());
-        let ctx = ToolLoopCostTrackingContext::new(
-            Arc::clone(&tracker),
-            Arc::new(cost_config.prices.clone()),
-        );
+        let ctx = ToolLoopCostTrackingContext::new(Arc::clone(&tracker), "test");
         let mut history = vec![ChatMessage::system("test"), ChatMessage::user("hello")];
 
         let result = TOOL_LOOP_COST_TRACKING_CONTEXT
@@ -9714,14 +9819,86 @@ Let me check the result."#;
     }
 
     #[tokio::test]
+    async fn cost_tracking_records_streamed_usage_when_scoped() {
+        use super::{
+            TOOL_LOOP_COST_TRACKING_CONTEXT, ToolLoopCostTrackingContext, run_tool_call_loop,
+        };
+        use crate::cost::CostTracker;
+        use crate::observability::noop::NoopObserver;
+        use std::collections::HashMap;
+
+        let provider = UsageStreamingProvider::new(TokenUsage {
+            input_tokens: Some(1_000),
+            output_tokens: Some(200),
+            cached_input_tokens: None,
+        });
+        let observer = NoopObserver;
+        let workspace = tempfile::TempDir::new().unwrap();
+        let mut cost_config = crate::config::CostConfig {
+            enabled: true,
+            ..crate::config::CostConfig::default()
+        };
+        cost_config.prices = HashMap::from([(
+            "mock-model".to_string(),
+            crate::config::schema::ModelPricing {
+                input: 3.0,
+                output: 15.0,
+            },
+        )]);
+        let tracker = Arc::new(CostTracker::new(cost_config.clone(), workspace.path()).unwrap());
+        let ctx = ToolLoopCostTrackingContext::new(Arc::clone(&tracker), "test");
+        let mut history = vec![ChatMessage::system("test"), ChatMessage::user("hello")];
+        let (tx, _rx) = tokio::sync::mpsc::channel::<DraftEvent>(16);
+
+        let result = TOOL_LOOP_COST_TRACKING_CONTEXT
+            .scope(
+                Some(ctx),
+                run_tool_call_loop(
+                    &provider,
+                    &mut history,
+                    &[],
+                    &observer,
+                    "mock-provider",
+                    "mock-model",
+                    0.0,
+                    true,
+                    None,
+                    "test",
+                    None,
+                    &crate::config::MultimodalConfig::default(),
+                    2,
+                    None,
+                    Some(tx),
+                    None,
+                    &[],
+                    &[],
+                    None,
+                    None,
+                    &crate::config::PacingConfig::default(),
+                    0,
+                    0,
+                    None,
+                ),
+            )
+            .await
+            .expect("streaming tool loop should succeed");
+
+        assert_eq!(result, "done");
+        assert_eq!(provider.stream_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(provider.chat_calls.load(Ordering::SeqCst), 0);
+        let summary = tracker.get_summary().unwrap();
+        assert_eq!(summary.request_count, 1);
+        assert_eq!(summary.total_tokens, 1_200);
+        assert!(summary.session_cost_usd > 0.0);
+    }
+
+    #[tokio::test]
     async fn cost_tracking_enforces_budget() {
         use super::{
             TOOL_LOOP_COST_TRACKING_CONTEXT, ToolLoopCostTrackingContext, run_tool_call_loop,
         };
-        use crate::config::schema::ModelPricing;
         use crate::cost::CostTracker;
         use crate::observability::noop::NoopObserver;
-        use std::collections::HashMap;
 
         let provider = ScriptedProvider::from_text_responses(vec!["should not reach this"]);
         let observer = NoopObserver;
@@ -9743,16 +9920,7 @@ Let me check the result."#;
             ))
             .unwrap();
 
-        let ctx = ToolLoopCostTrackingContext::new(
-            Arc::clone(&tracker),
-            Arc::new(HashMap::from([(
-                "mock-model".to_string(),
-                ModelPricing {
-                    input: 1.0,
-                    output: 1.0,
-                },
-            )])),
-        );
+        let ctx = ToolLoopCostTrackingContext::new(Arc::clone(&tracker), "test");
         let mut history = vec![ChatMessage::system("test"), ChatMessage::user("hello")];
 
         let err = TOOL_LOOP_COST_TRACKING_CONTEXT

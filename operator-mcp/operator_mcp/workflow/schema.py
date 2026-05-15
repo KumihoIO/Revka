@@ -6,6 +6,7 @@ conditional branching, parallel execution, and checkpoint support.
 Step types:
   - agent: Spawn a Construct agent (claude/codex) with a prompt.
   - shell: Run a shell command.
+  - compute: Evaluate sandboxed expressions into typed outputs.
   - conditional: Branch based on expressions over prior step outputs.
   - parallel: Run multiple sub-steps concurrently with join strategies.
   - goto: Jump to another step (loop support with max_iterations guard).
@@ -29,6 +30,7 @@ class StepType(str, Enum):
     AGENT = "agent"
     SHELL = "shell"
     PYTHON = "python"
+    COMPUTE = "compute"
     EMAIL = "email"
     IMAGE = "image"
     CONDITIONAL = "conditional"
@@ -78,6 +80,12 @@ class QualityCheckConfig(BaseModel):
     threshold: float = Field(default=0.7, ge=0.0, le=1.0)  # Minimum score to pass
     criteria: list[str] = Field(default_factory=list)  # What to check, e.g. ["on_mandate", "depth", "language_ko"]
     model: str = "claude-haiku-4-5-20251001"    # Lightweight model for scoring
+
+
+class StepPosition(BaseModel):
+    """Layout-only position used by the dashboard workflow editor/viewers."""
+    x: float
+    y: float
 
 
 class AgentStepConfig(BaseModel):
@@ -247,6 +255,17 @@ class PythonStepConfig(BaseModel):
                 "`code` (inline source)"
             )
         return self
+
+
+class ComputeStepConfig(BaseModel):
+    """Config for 'compute' step type — evaluate deterministic expressions.
+
+    Values in ``outputs`` may contain explicit ``${{ ... }}`` expressions.
+    A value that is exactly one expression returns the evaluator's typed
+    result; expressions embedded inside a larger string are stringified.
+    Existing ``${...}`` placeholders remain plain string interpolation.
+    """
+    outputs: dict[str, Any] = Field(default_factory=dict)
 
 
 class ConditionalBranch(BaseModel):
@@ -540,8 +559,8 @@ class MapReduceStepConfig(BaseModel):
     """Config for 'map_reduce' step type — fan-out / fan-in."""
     task: str  # Overall task description
     splits: list[str]  # Segments to map over (min 2)
-    mapper: Literal["claude", "codex"] = "claude"
-    reducer: Literal["claude", "codex"] = "claude"
+    mapper: str = "claude"   # Agent type or pool template name
+    reducer: str = "claude"  # Agent type or pool template name
     concurrency: int = Field(default=3, ge=1, le=10)
     timeout: float = 300.0
 
@@ -550,7 +569,8 @@ class SupervisorStepConfig(BaseModel):
     """Config for 'supervisor' step type — dynamic delegation loop."""
     task: str  # Task to decompose
     max_iterations: int = Field(default=5, ge=1, le=10)
-    supervisor_type: Literal["claude", "codex"] = "claude"
+    supervisor_type: str = "claude"  # Agent type or pool template name
+    templates: list[str] = Field(default_factory=list)  # Specialist pool allowlist
     timeout: float = 300.0
 
 
@@ -558,7 +578,7 @@ class GroupChatStepConfig(BaseModel):
     """Config for 'group_chat' step type — moderated multi-agent discussion."""
     topic: str
     participants: list[str]  # Agent types or template names (min 2)
-    moderator: Literal["claude", "codex"] = "claude"
+    moderator: str = "claude"  # Agent type or pool template name
     strategy: Literal["round_robin", "moderator_selected"] = "moderator_selected"
     max_rounds: int = Field(default=8, ge=2, le=20)
     timeout: float = 120.0
@@ -567,7 +587,7 @@ class GroupChatStepConfig(BaseModel):
 class HandoffStepConfig(BaseModel):
     """Config for 'handoff' step type — pass context from one agent to another."""
     from_step: str  # Step ID whose agent to hand off from
-    to_agent_type: Literal["claude", "codex"] = "codex"
+    to_agent_type: str = "codex"  # Agent type or pool template name
     reason: str = "Continuing the task"
     task: str = ""  # Specific task for receiver
     timeout: float = 300.0
@@ -591,6 +611,7 @@ ACTION_DEFAULTS: dict[str, dict[str, str]] = {
     "gate":        {"type": "conditional",  "role": "",      "agent_type": ""},
     "human_input": {"type": "human_input",  "role": "",      "agent_type": ""},
     "resolve":     {"type": "resolve"},
+    "compute":     {"type": "compute"},
 }
 
 
@@ -609,6 +630,7 @@ class StepDef(BaseModel):
     name: str = ""
     type: StepType = StepType.AGENT
     depends_on: list[str] = Field(default_factory=list)
+    position: StepPosition | None = None  # Layout-only; ignored by executor.
 
     # Editor-compatible fields — influence agent selection & prompt
     action: str = ""
@@ -621,6 +643,7 @@ class StepDef(BaseModel):
     agent: AgentStepConfig | None = None
     shell: ShellStepConfig | None = None
     python: PythonStepConfig | None = None
+    compute: ComputeStepConfig | None = None
     email: EmailStepConfig | None = None
     image: ImageStepConfig | None = None
     conditional: ConditionalStepConfig | None = None

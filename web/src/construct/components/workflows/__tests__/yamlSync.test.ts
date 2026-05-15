@@ -10,7 +10,97 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { parseWorkflowYaml, tasksToFlow, flowToTasks, tasksToYaml, type TaskDefinition } from '../yamlSync';
+import {
+  flowToTasks,
+  hasPersistedTaskPositions,
+  parseWorkflowMeta,
+  parseWorkflowYaml,
+  tasksToFlow,
+  tasksToYaml,
+  type TaskDefinition,
+} from '../yamlSync';
+
+test('workflow step positions round-trip through YAML and flow nodes', () => {
+  const yaml = `
+steps:
+  - id: a
+    type: agent
+    position:
+      x: 123.45
+      y: -67.89
+    agent:
+      prompt: "A"
+  - id: b
+    type: shell
+    depends_on: [a]
+    position:
+      x: 444
+      y: 222.125
+    shell:
+      command: "echo b"
+`;
+
+  const tasks = parseWorkflowYaml(yaml);
+  assert.equal(hasPersistedTaskPositions(tasks), true);
+  assert.deepEqual(tasks[0]!.position, { x: 123.45, y: -67.89 });
+
+  const { nodes, edges } = tasksToFlow(tasks);
+  assert.deepEqual(nodes.find((node) => node.id === 'a')!.position, { x: 123.45, y: -67.89 });
+  assert.deepEqual(nodes.find((node) => node.id === 'b')!.position, { x: 444, y: 222.125 });
+
+  nodes[0]!.position = { x: 300.333, y: 400.666 };
+  const roundTrippedTasks = flowToTasks(nodes, edges);
+  assert.deepEqual(roundTrippedTasks[0]!.position, { x: 300.33, y: 400.67 });
+
+  const emitted = tasksToYaml(roundTrippedTasks);
+  assert.match(emitted, /position:\n      x: 300\.33\n      y: 400\.67/);
+  assert.deepEqual(parseWorkflowYaml(emitted)[0]!.position, { x: 300.33, y: 400.67 });
+});
+
+test('workflows without YAML positions are detectable for auto-layout fallback', () => {
+  const tasks = parseWorkflowYaml(`
+steps:
+  - id: a
+    type: agent
+    agent:
+      prompt: "A"
+`);
+  assert.equal(hasPersistedTaskPositions(tasks), false);
+});
+
+test('workflow inputs with blank names are omitted from emitted and parsed metadata', () => {
+  const tasks: TaskDefinition[] = [{
+    id: 'a',
+    name: 'a',
+    description: '',
+    type: 'agent',
+    agent_hints: [],
+    skills: [],
+    depends_on: [],
+    prompt: 'A',
+  }];
+
+  const emitted = tasksToYaml(tasks, {
+    name: 'blank-inputs',
+    version: '1.0',
+    description: '',
+    tags: [],
+    triggers: [],
+    inputs: [
+      { name: '', type: 'string', required: true, default: 'stale', description: 'stale' },
+      { name: 'topic', type: 'string', required: true, default: '', description: 'Topic' },
+    ],
+    outputs: [],
+    defaultCwd: '',
+    defaultTimeout: 300,
+    maxTotalTime: 3600,
+    checkpoint: true,
+  });
+
+  assert.doesNotMatch(emitted, /- name:\s*\n/);
+  assert.match(emitted, /name: topic/);
+  assert.deepEqual(parseWorkflowMeta(emitted).inputs.map((input) => input.name), ['topic']);
+});
 
 test('canonical conditional.branches populates flat fields + edges', () => {
   const yaml = `
@@ -46,11 +136,107 @@ steps:
   assert.equal(gate!.on_false, 'archive');
   assert.equal(gate!.on_true_value, 'high');
   assert.equal(gate!.on_false_value, 'low');
+  assert.deepEqual(gate!.conditional_branches, [
+    { condition: '${research.score} > 0.5', goto: 'publish', value: 'high' },
+    { condition: 'default', goto: 'archive', value: 'low' },
+  ]);
 
   const { edges } = tasksToFlow(tasks);
   const pairs = new Set(edges.map((e) => `${e.source}->${e.target}`));
   assert.ok(pairs.has('gate-1->publish'), 'gate→true edge present');
   assert.ok(pairs.has('gate-1->archive'), 'gate→false edge present');
+});
+
+test('multi-branch conditional branches survive parse flow and YAML emit', () => {
+  const yaml = `
+steps:
+  - id: gate
+    type: conditional
+    conditional:
+      branches:
+        - condition: "\${score} >= 0.8"
+          goto: publish
+          value: "high"
+        - condition: "\${score} >= 0.5"
+          goto: revise
+          value: "medium"
+        - condition: "default"
+          goto: archive
+          value: "low"
+  - id: publish
+    type: agent
+    agent:
+      prompt: "Publish"
+  - id: revise
+    type: agent
+    agent:
+      prompt: "Revise"
+  - id: archive
+    type: agent
+    agent:
+      prompt: "Archive"
+`;
+  const tasks = parseWorkflowYaml(yaml);
+  const gate = tasks.find((t) => t.id === 'gate')!;
+  assert.deepEqual(gate.conditional_branches, [
+    { condition: '${score} >= 0.8', goto: 'publish', value: 'high' },
+    { condition: '${score} >= 0.5', goto: 'revise', value: 'medium' },
+    { condition: 'default', goto: 'archive', value: 'low' },
+  ]);
+
+  const { nodes, edges } = tasksToFlow(tasks);
+  const branchEdges = edges
+    .filter((edge) => edge.source === 'gate')
+    .map((edge) => `${edge.sourceHandle}->${edge.target}`);
+  assert.deepEqual(branchEdges, [
+    'branch-0->publish',
+    'branch-1->revise',
+    'branch-2->archive',
+  ]);
+  assert.equal(nodes.find((node) => node.id === 'gate')!.data.conditionalBranches.length, 3);
+
+  const roundTrippedTasks = flowToTasks(nodes, edges);
+  const roundTrippedGate = roundTrippedTasks.find((t) => t.id === 'gate')!;
+  assert.deepEqual(roundTrippedGate.conditional_branches, gate.conditional_branches);
+
+  const emitted = tasksToYaml(roundTrippedTasks);
+  assert.match(emitted, /condition: "\$\{score\} >= 0\.8"/);
+  assert.match(emitted, /condition: "\$\{score\} >= 0\.5"/);
+  assert.match(emitted, /condition: default/);
+  const reparsed = parseWorkflowYaml(emitted).find((t) => t.id === 'gate')!;
+  assert.deepEqual(reparsed.conditional_branches, gate.conditional_branches);
+});
+
+test('conditional branch with blank condition persists as default when it has a target', () => {
+  const tasks: TaskDefinition[] = [
+    {
+      id: 'gate',
+      name: 'gate',
+      description: '',
+      type: 'conditional',
+      agent_hints: [],
+      skills: [],
+      depends_on: [],
+      conditional_branches: [{ condition: '', goto: 'done' }],
+    },
+    {
+      id: 'done',
+      name: 'done',
+      description: '',
+      type: 'output',
+      agent_hints: [],
+      skills: [],
+      depends_on: [],
+    },
+  ];
+
+  const emitted = tasksToYaml(tasks);
+  assert.match(emitted, /condition: default/);
+
+  const reparsed = parseWorkflowYaml(emitted).find((t) => t.id === 'gate')!;
+  assert.deepEqual(reparsed.conditional_branches, [
+    { condition: 'default', goto: 'done', value: undefined },
+  ]);
 });
 
 test('legacy flat condition + on_true + on_false also populates fields', () => {
@@ -358,6 +544,212 @@ steps:
   assert.ok(pairs.has('parallel-drafts->draft-long'), 'parallel→child');
   assert.ok(pairs.has('draft-short->final-output'), 'output template ref');
   assert.ok(pairs.has('draft-long->final-output'), 'output template ref');
+});
+
+test('coordination steps round-trip pool agent assignments through UI flow fields', () => {
+  const yaml = `
+steps:
+  - id: chat
+    type: group_chat
+    group_chat:
+      topic: "Review the launch plan"
+      participants: [reviewer-template, codex]
+      moderator: lead-template
+      strategy: round_robin
+      max_rounds: 4
+      timeout: 90
+  - id: supervise
+    type: supervisor
+    supervisor:
+      task: "Coordinate implementation"
+      supervisor_type: lead-template
+      templates: [reviewer-template, coder-template]
+      max_iterations: 4
+      timeout: 240
+  - id: pass
+    type: handoff
+    handoff:
+      from_step: chat
+      to_agent_type: coder-template
+      reason: "Implementation is ready"
+      task: "Apply the accepted plan"
+      timeout: 180
+  - id: remote
+    type: a2a
+    a2a:
+      url: "https://agent.example.com"
+      skill_id: remote-template
+      message: "Run the external check"
+      timeout: 120
+  - id: reduce
+    type: map_reduce
+    map_reduce:
+      task: "Summarize modules"
+      splits: ["api", "web"]
+      mapper: researcher-template
+      reducer: synth-template
+      concurrency: 2
+      timeout: 200
+`;
+  const tasks1 = parseWorkflowYaml(yaml);
+  assert.equal(tasks1.length, 5);
+
+  const chat1 = tasks1.find((t) => t.id === 'chat')!;
+  assert.deepEqual(chat1.group_chat_participants, ['reviewer-template', 'codex']);
+  assert.equal(chat1.group_chat_moderator, 'lead-template');
+
+  const sup1 = tasks1.find((t) => t.id === 'supervise')!;
+  assert.equal(sup1.supervisor_type, 'lead-template');
+  assert.deepEqual(sup1.supervisor_templates, ['reviewer-template', 'coder-template']);
+
+  const handoff1 = tasks1.find((t) => t.id === 'pass')!;
+  assert.equal(handoff1.handoff_to, 'coder-template');
+
+  const mr1 = tasks1.find((t) => t.id === 'reduce')!;
+  assert.equal(mr1.map_reduce_mapper, 'researcher-template');
+  assert.equal(mr1.map_reduce_reducer, 'synth-template');
+
+  const { nodes, edges } = tasksToFlow(tasks1);
+  assert.equal(nodes.find((n) => n.id === 'chat')!.data.groupChatModerator, 'lead-template');
+  assert.deepEqual(
+    nodes.find((n) => n.id === 'supervise')!.data.supervisorTemplates,
+    ['reviewer-template', 'coder-template'],
+  );
+  assert.equal(nodes.find((n) => n.id === 'pass')!.data.handoffTo, 'coder-template');
+  assert.equal(nodes.find((n) => n.id === 'remote')!.data.a2aSkillId, 'remote-template');
+  assert.equal(nodes.find((n) => n.id === 'reduce')!.data.mapReduceMapper, 'researcher-template');
+  assert.equal(nodes.find((n) => n.id === 'reduce')!.data.mapReduceReducer, 'synth-template');
+
+  const yaml2 = tasksToYaml(flowToTasks(nodes, edges));
+  const tasks2 = parseWorkflowYaml(yaml2);
+  assert.deepEqual(tasks2.find((t) => t.id === 'chat')!.group_chat_participants, ['reviewer-template', 'codex']);
+  assert.equal(tasks2.find((t) => t.id === 'chat')!.group_chat_moderator, 'lead-template');
+  assert.equal(tasks2.find((t) => t.id === 'supervise')!.supervisor_type, 'lead-template');
+  assert.deepEqual(tasks2.find((t) => t.id === 'supervise')!.supervisor_templates, ['reviewer-template', 'coder-template']);
+  assert.equal(tasks2.find((t) => t.id === 'pass')!.handoff_to, 'coder-template');
+  assert.equal(tasks2.find((t) => t.id === 'remote')!.a2a_skill_id, 'remote-template');
+  assert.equal(tasks2.find((t) => t.id === 'reduce')!.map_reduce_mapper, 'researcher-template');
+  assert.equal(tasks2.find((t) => t.id === 'reduce')!.map_reduce_reducer, 'synth-template');
+});
+
+test('step config parity fields round-trip through parse, flow, emit, parse', () => {
+  const yaml = `
+steps:
+  - id: agent-full
+    type: agent
+    agent:
+      agent_type: codex
+      role: coder
+      prompt: "Produce JSON"
+      max_turns: 6
+      tools: memory
+      output_fields: [summary, score]
+      quality_check:
+        enabled: true
+        threshold: 0.85
+        criteria: [accurate, concise]
+        model: judge-model
+  - id: approval
+    type: human_approval
+    human_approval:
+      channel: discord
+      channel_id: "ops-room"
+      message: "Approve?"
+      timeout: 7200
+      on_reject_goto: fix
+      on_reject_max: 2
+      approve_keywords: [ship, approve]
+      reject_keywords: [block, reject]
+  - id: notify
+    type: notify
+    notify:
+      channels: [dashboard, slack]
+      channel_id: "alerts"
+      title: "Done"
+      message: "Workflow completed"
+  - id: python
+    type: python
+    python:
+      python: "/opt/python/bin/python3"
+      code: "print('ok')"
+      timeout: 45
+  - id: email
+    type: email
+    email:
+      to: "ops@example.com"
+      subject: "Report"
+      body: "Plain text"
+      body_html: "<b>Report</b>"
+      reply_to: "reply@example.com"
+      track_secret_env: "TRACKING_SECRET"
+      smtp_host: "smtp.example.com"
+      smtp_port: 2525
+      smtp_tls: false
+      smtp_username: "smtp-user"
+      smtp_password_env: "SMTP_PASS"
+  - id: image
+    type: image
+    image:
+      prompt: "Generate dashboard concept"
+      canvas: launch-board
+      cwd: "/tmp/work"
+      input_images: ["/tmp/ref.png"]
+  - id: manus
+    type: manus
+    manus:
+      prompt: "Research competitors"
+      enable_skills: [browse, code]
+      force_skills: [browse]
+      project_id: "project-42"
+`;
+  const tasks1 = parseWorkflowYaml(yaml);
+  const { nodes, edges } = tasksToFlow(tasks1);
+  const yaml2 = tasksToYaml(flowToTasks(nodes, edges));
+  const tasks2 = parseWorkflowYaml(yaml2);
+
+  const agent = tasks2.find((t) => t.id === 'agent-full')!;
+  assert.equal(agent.agent_max_turns, 6);
+  assert.equal(agent.agent_tools, 'memory');
+  assert.deepEqual(agent.agent_output_fields, ['summary', 'score']);
+  assert.equal(agent.agent_quality_enabled, true);
+  assert.equal(agent.agent_quality_threshold, 0.85);
+  assert.deepEqual(agent.agent_quality_criteria, ['accurate', 'concise']);
+  assert.equal(agent.agent_quality_model, 'judge-model');
+
+  const approval = tasks2.find((t) => t.id === 'approval')!;
+  assert.equal(approval.human_approval_channel, 'discord');
+  assert.equal(approval.human_approval_channel_id, 'ops-room');
+  assert.equal(approval.human_approval_on_reject_goto, 'fix');
+  assert.equal(approval.human_approval_on_reject_max, 2);
+  assert.deepEqual(approval.human_approval_approve_keywords, ['ship', 'approve']);
+  assert.deepEqual(approval.human_approval_reject_keywords, ['block', 'reject']);
+
+  const notify = tasks2.find((t) => t.id === 'notify')!;
+  assert.deepEqual(notify.channels, ['dashboard', 'slack']);
+  assert.equal(notify.notify_channel_id, 'alerts');
+
+  const python = tasks2.find((t) => t.id === 'python')!;
+  assert.equal(python.python_interpreter, '/opt/python/bin/python3');
+
+  const email = tasks2.find((t) => t.id === 'email')!;
+  assert.equal(email.email_body_html, '<b>Report</b>');
+  assert.equal(email.email_reply_to, 'reply@example.com');
+  assert.equal(email.email_track_secret_env, 'TRACKING_SECRET');
+  assert.equal(email.email_smtp_port, 2525);
+  assert.equal(email.email_smtp_tls, false);
+  assert.equal(email.email_smtp_username, 'smtp-user');
+  assert.equal(email.email_smtp_password_env, 'SMTP_PASS');
+
+  const image = tasks2.find((t) => t.id === 'image')!;
+  assert.equal(image.image_canvas, 'launch-board');
+  assert.equal(image.image_canvas_target, 'launch-board');
+  assert.equal(image.image_cwd, '/tmp/work');
+  assert.deepEqual(image.image_input_images, ['/tmp/ref.png']);
+
+  const manus = tasks2.find((t) => t.id === 'manus')!;
+  assert.deepEqual(manus.manus_enable_skills, ['browse', 'code']);
+  assert.deepEqual(manus.manus_force_skills, ['browse']);
+  assert.equal(manus.manus_project_id, 'project-42');
 });
 
 test('manus step: full-fields round-trip preserves all manus_* fields and schema-as-object', () => {

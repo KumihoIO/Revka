@@ -24,7 +24,6 @@ from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
 from ._log import _log
-from .cost_tracker import CostTracker
 from .construct_config import (
     memory_min_relevance_score,
     memory_project,
@@ -46,10 +45,8 @@ KUMIHO_POOL = KumihoAgentPoolClient()
 KUMIHO_TEAMS = KumihoTeamClient()
 CONSTRUCT_GW = ConstructGatewayClient()
 JOURNAL = SessionJournal()
-COST_TRACKER = CostTracker()
-COST_TRACKER.set_session_id(JOURNAL.session_id)
 SIDECAR = SessionManagerClient()
-EVENT_CONSUMER = EventConsumer(SIDECAR, CONSTRUCT_GW, COST_TRACKER)
+EVENT_CONSUMER = EventConsumer(SIDECAR, CONSTRUCT_GW)
 WORKFLOW_CTX = WorkflowContext(JOURNAL.session_id)
 
 
@@ -793,7 +790,7 @@ async def list_tools() -> list[Tool]:
                     },
                     "to_agent_type": {
                         "type": "string",
-                        "description": "Agent type for receiver: 'claude' or 'codex' (default 'claude').",
+                        "description": "Receiver agent type or pool template name (default 'claude').",
                         "default": "claude",
                     },
                     "reason": {
@@ -838,11 +835,11 @@ async def list_tools() -> list[Tool]:
                     "participants": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "List of agent types (e.g. ['claude', 'codex', 'claude']). Min 2.",
+                        "description": "List of agent types or pool template names. Min 2.",
                     },
                     "moderator": {
                         "type": "string",
-                        "description": "Agent type for moderator (default 'claude').",
+                        "description": "Moderator agent type or pool template name (default 'claude').",
                         "default": "claude",
                     },
                     "strategy": {
@@ -894,7 +891,7 @@ async def list_tools() -> list[Tool]:
                     "templates": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "Available template names. Defaults to all in pool.",
+                        "description": "Specialist pool template names. Defaults to all in pool.",
                     },
                     "max_iterations": {
                         "type": "integer",
@@ -903,7 +900,7 @@ async def list_tools() -> list[Tool]:
                     },
                     "supervisor_type": {
                         "type": "string",
-                        "description": "Agent type for supervisor (default 'claude').",
+                        "description": "Supervisor agent type or pool template name (default 'claude').",
                         "default": "claude",
                     },
                     "model": {
@@ -940,12 +937,12 @@ async def list_tools() -> list[Tool]:
                     },
                     "mapper": {
                         "type": "string",
-                        "description": "Agent type for mapper agents (default 'claude').",
+                        "description": "Mapper agent type or pool template name (default 'claude').",
                         "default": "claude",
                     },
                     "reducer": {
                         "type": "string",
-                        "description": "Agent type for reducer agent (default 'claude').",
+                        "description": "Reducer agent type or pool template name (default 'claude').",
                         "default": "claude",
                     },
                     "cwd": {
@@ -2926,31 +2923,15 @@ async def _dispatch(name: str, args: dict[str, Any]) -> dict[str, Any]:
 
     # -- Budget --
     if name == "get_budget_status":
-        # Local tracker is always available
-        local = COST_TRACKER.get_summary()
-        result: dict[str, Any] = {
-            "session_cost_usd": local["session_cost_usd"],
-            "session_tokens": local["session_tokens"],
-            "session_requests": local["session_requests"],
-            "daily_cost_usd": local["daily_cost_usd"],
-            "daily_tokens": local["daily_tokens"],
-            "monthly_cost_usd": local["monthly_cost_usd"],
-            "monthly_tokens": local["monthly_tokens"],
-            "total_tokens": local["total_tokens"],
-            "request_count": local["request_count"],
-            "by_model": local["by_model"],
-            "by_agent": local["by_agent"],
-            "source": "local",
-        }
-        # Enrich with gateway data if available
         gw_cost = await CONSTRUCT_GW.get_cost_summary()
-        if gw_cost:
-            result["gateway"] = {
-                "session_cost_usd": gw_cost.get("session_cost_usd", 0.0),
-                "daily_cost_usd": gw_cost.get("daily_cost_usd", 0.0),
-                "monthly_cost_usd": gw_cost.get("monthly_cost_usd", 0.0),
+        if not gw_cost:
+            return {
+                "error": "Gateway budget authority unavailable",
+                "source": "gateway",
+                "budget": {"state": "unknown", "enabled": False},
             }
-            result["source"] = "local+gateway"
+        result: dict[str, Any] = dict(gw_cost)
+        result["source"] = "gateway"
         gw_status = await CONSTRUCT_GW.get_status()
         if gw_status:
             result["provider"] = gw_status.get("provider")

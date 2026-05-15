@@ -13,10 +13,23 @@
   min-height: 100vh;
   color: var(--construct-text-primary);
   background:
+    var(--construct-skin-shellTexture, none),
     radial-gradient(circle at top left, var(--construct-grid-line), transparent 28%),
     radial-gradient(circle at top right, color-mix(in srgb, var(--construct-signal-network) 18%, transparent), transparent 22%),
     linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 18%),
     var(--construct-bg-base);
+  background-size:
+    min(720px, 100vw) auto,
+    auto,
+    auto,
+    auto,
+    auto;
+  background-repeat:
+    repeat,
+    no-repeat,
+    no-repeat,
+    no-repeat,
+    no-repeat;
 }
 
 .construct-shell::before {
@@ -38,7 +51,7 @@
   inset: 0;
   pointer-events: none;
   background:
-    linear-gradient(180deg, rgba(125, 255, 155, 0.025), transparent 22%, transparent 78%, rgba(114, 216, 255, 0.025)),
+    linear-gradient(180deg, color-mix(in srgb, var(--construct-signal-live) 3%, transparent), transparent 22%, transparent 78%, color-mix(in srgb, var(--construct-signal-network) 3%, transparent)),
     repeating-linear-gradient(180deg, rgba(255, 255, 255, 0.018) 0 1px, transparent 1px 4px);
   opacity: 0.2;
   mix-blend-mode: soft-light;
@@ -64,7 +77,7 @@
   inset: 0 auto auto 0;
   height: 1px;
   width: 100%;
-  background: linear-gradient(90deg, var(--construct-signal-live-soft), transparent 70%);
+  background: linear-gradient(90deg, var(--construct-signal-selected-soft, color-mix(in srgb, var(--construct-signal-selected) 18%, transparent)), transparent 70%);
   pointer-events: none;
 }
 
@@ -75,7 +88,12 @@
   right: 0.9rem;
   width: 4.5rem;
   height: 4.5rem;
-  background: radial-gradient(circle, color-mix(in srgb, var(--construct-signal-network) 12%, transparent), transparent 72%);
+  background:
+    var(--construct-skin-panelDecoration, none),
+    radial-gradient(circle, color-mix(in srgb, var(--construct-signal-network) 12%, transparent), transparent 72%);
+  background-size: contain, auto;
+  background-repeat: no-repeat;
+  background-position: center;
   pointer-events: none;
   opacity: 0.7;
 }
@@ -152,14 +170,16 @@
 }
 
 .construct-sidebar-link:hover {
-  border-color: var(--construct-border-soft);
-  background: var(--construct-signal-live-soft);
+  border-color: color-mix(in srgb, var(--construct-signal-selected) 24%, var(--construct-border-soft));
+  background: var(--construct-hover-surface, color-mix(in srgb, var(--construct-signal-selected) 10%, var(--construct-bg-surface)));
   color: var(--construct-text-primary);
 }
 
 .construct-sidebar-link[data-active='true'] {
-  border-color: var(--construct-border-strong);
-  background: linear-gradient(135deg, var(--construct-signal-live-soft), transparent 80%);
+  border-color: color-mix(in srgb, var(--construct-signal-selected) 44%, var(--construct-border-strong));
+  background:
+    linear-gradient(135deg, var(--construct-signal-selected-soft, color-mix(in srgb, var(--construct-signal-selected) 18%, transparent)), transparent 80%),
+    var(--construct-bg-surface);
   color: var(--construct-text-primary);
 }
 
@@ -184,8 +204,8 @@
 }
 
 .construct-sidebar-collapse-btn:hover {
-  border-color: var(--construct-border-strong);
-  background: var(--construct-signal-live-soft);
+  border-color: color-mix(in srgb, var(--construct-signal-selected) 24%, var(--construct-border-strong));
+  background: var(--construct-hover-surface, color-mix(in srgb, var(--construct-signal-selected) 10%, var(--construct-bg-surface)));
   color: var(--construct-text-primary);
 }
 
@@ -222,13 +242,23 @@
 
 .construct-button:hover {
   border-color: var(--construct-border-strong);
+  background: var(--construct-hover-surface, color-mix(in srgb, var(--construct-signal-selected) 10%, var(--construct-bg-surface)));
   color: var(--construct-text-primary);
 }
 
 .construct-button[data-variant='primary'] {
-  border-color: color-mix(in srgb, var(--construct-signal-live) 40%, transparent);
-  background: linear-gradient(135deg, var(--construct-signal-live-soft), transparent 85%);
+  border-color: color-mix(in srgb, var(--construct-signal-live) 52%, var(--construct-border-strong));
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--construct-signal-live) 28%, transparent), transparent 70%),
+    linear-gradient(135deg, var(--construct-signal-live-soft), var(--construct-bg-surface) 92%);
   color: var(--construct-text-primary);
+}
+
+.construct-button[data-variant='primary']:hover {
+  border-color: color-mix(in srgb, var(--construct-signal-live) 68%, var(--construct-border-strong));
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--construct-signal-live) 36%, transparent), transparent 68%),
+    linear-gradient(135deg, var(--construct-signal-live-soft), var(--construct-bg-elevated) 88%);
 }
 
 .construct-table {
@@ -359,7 +389,9 @@
 }
 
 .construct-theme-toggle-button[data-active='true'] {
-  background: linear-gradient(135deg, var(--construct-signal-live-soft), transparent 85%);
+  background:
+    linear-gradient(135deg, var(--construct-signal-selected-soft, color-mix(in srgb, var(--construct-signal-selected) 18%, transparent)), transparent 82%),
+    var(--construct-bg-surface);
   color: var(--construct-text-primary);
 }
 
@@ -404,7 +436,9 @@
 }
 
 .construct-tab-button[data-active='true'] {
-  background: linear-gradient(135deg, var(--construct-signal-network-soft), transparent 85%);
+  background:
+    linear-gradient(135deg, var(--construct-signal-selected-soft, color-mix(in srgb, var(--construct-signal-selected) 18%, transparent)), transparent 82%),
+    var(--construct-bg-surface);
   color: var(--construct-text-primary);
 }
 
@@ -500,17 +534,17 @@
 }
 
 .construct-run-selection-card:hover {
-  border-color: color-mix(in srgb, var(--construct-signal-network) 24%, var(--construct-border-soft));
-  background: color-mix(in srgb, var(--construct-signal-live-soft) 70%, transparent);
+  border-color: color-mix(in srgb, var(--construct-signal-selected) 24%, var(--construct-border-soft));
+  background: var(--construct-hover-surface, color-mix(in srgb, var(--construct-signal-selected) 10%, var(--construct-bg-surface)));
 }
 
 .construct-run-selection-card[data-active='true'] {
-  border-color: color-mix(in srgb, var(--construct-signal-live) 38%, var(--construct-border-strong));
+  border-color: color-mix(in srgb, var(--construct-signal-selected) 42%, var(--construct-border-strong));
   background:
-    linear-gradient(135deg, color-mix(in srgb, var(--construct-signal-live) 12%, transparent), transparent 60%),
-    color-mix(in srgb, var(--construct-signal-live-soft) 78%, transparent);
+    linear-gradient(135deg, color-mix(in srgb, var(--construct-signal-selected) 16%, transparent), transparent 60%),
+    var(--construct-signal-selected-soft, color-mix(in srgb, var(--construct-signal-selected) 18%, transparent));
   box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, var(--construct-signal-live) 12%, transparent),
+    inset 0 0 0 1px color-mix(in srgb, var(--construct-signal-selected) 12%, transparent),
     0 12px 24px rgba(0, 0, 0, 0.14);
   transform: translateY(-1px);
 }
@@ -521,7 +555,7 @@
   inset: 0 auto 0 0;
   width: 3px;
   border-radius: 999px;
-  background: linear-gradient(180deg, var(--construct-signal-live), var(--construct-signal-network));
+  background: linear-gradient(180deg, var(--construct-signal-selected), var(--construct-signal-network));
 }
 
 .construct-selection-card {
@@ -536,8 +570,8 @@
 }
 
 .construct-selection-card:hover {
-  border-color: color-mix(in srgb, var(--construct-signal-network) 24%, var(--construct-border-soft));
-  background: color-mix(in srgb, var(--construct-bg-panel-strong) 94%, transparent);
+  border-color: color-mix(in srgb, var(--construct-signal-selected) 24%, var(--construct-border-soft));
+  background: var(--construct-hover-surface, color-mix(in srgb, var(--construct-signal-selected) 10%, var(--construct-bg-panel-strong)));
 }
 
 .construct-selection-card[data-active='true'] {
@@ -557,19 +591,19 @@
 }
 
 .construct-selection-card[data-accent='workflow'][data-active='true'] {
-  color: var(--construct-signal-live);
-  border-color: color-mix(in srgb, var(--construct-signal-live) 38%, var(--construct-border-strong));
+  color: var(--construct-signal-selected);
+  border-color: color-mix(in srgb, var(--construct-signal-selected) 42%, var(--construct-border-strong));
   background:
-    linear-gradient(135deg, color-mix(in srgb, var(--construct-signal-live) 12%, transparent), transparent 60%),
-    color-mix(in srgb, var(--construct-signal-live-soft) 76%, transparent);
+    linear-gradient(135deg, color-mix(in srgb, var(--construct-signal-selected) 16%, transparent), transparent 60%),
+    var(--construct-signal-selected-soft, color-mix(in srgb, var(--construct-signal-selected) 18%, transparent));
 }
 
 .construct-selection-card[data-accent='team'][data-active='true'] {
-  color: var(--construct-signal-network);
-  border-color: color-mix(in srgb, var(--construct-signal-network) 38%, var(--construct-border-strong));
+  color: var(--construct-signal-selected);
+  border-color: color-mix(in srgb, var(--construct-signal-selected) 42%, var(--construct-border-strong));
   background:
-    linear-gradient(135deg, color-mix(in srgb, var(--construct-signal-network) 12%, transparent), transparent 60%),
-    color-mix(in srgb, var(--construct-signal-network-soft) 78%, transparent);
+    linear-gradient(135deg, color-mix(in srgb, var(--construct-signal-selected) 16%, transparent), transparent 60%),
+    var(--construct-signal-selected-soft, color-mix(in srgb, var(--construct-signal-selected) 18%, transparent));
 }
 
 @keyframes v2NoticeIn {

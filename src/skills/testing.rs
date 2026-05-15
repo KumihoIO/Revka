@@ -255,7 +255,7 @@ pub fn print_results(results: &[SkillTestResult]) {
                 r.tests_run,
             );
             for f in &r.failures {
-                println!("    command:  {}", console::style(&f.command).dim(),);
+                println!("    command:  {}", console::style(&f.command).dim());
                 println!(
                     "    expected: exit={}, pattern={}",
                     f.expected_exit, f.expected_pattern,

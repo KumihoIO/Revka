@@ -23,8 +23,11 @@ import {
   tasksToFlow,
   tasksToYaml,
 } from './yamlSync';
+import { hasCycle as hasLegacyCycle } from '../../../components/teams/graphHelpers';
+import { hasCycle as hasConstructCycle } from '../../lib/graphHelpers';
+import { buildWorkflowEdgeStyle, deriveBlockedTaskIds, deriveDependencyChainIds } from '../../lib/orchestration';
 import type { TaskNodeData } from './yamlSync';
-import type { Node } from '@xyflow/react';
+import type { Edge, Node } from '@xyflow/react';
 
 function edgePairs(edges: { source: string; target: string }[]): Set<string> {
   return new Set(edges.map((e) => `${e.source}->${e.target}`));
@@ -127,6 +130,76 @@ steps:
   );
 });
 
+test('compute outputs round-trip and infer expression dependency edges', () => {
+  const yaml = `
+steps:
+  - id: arc-loader
+    type: output
+    output:
+      format: json
+      template: '{"end": 6}'
+  - id: next-arc-context
+    type: compute
+    compute:
+      outputs:
+        start: "\${{ int(arc_loader.output_data.end) + 1 }}"
+        end: "\${{ outputs.start + 5 }}"
+        episode_range: "\${{ outputs.start }}..\${{ outputs.end }}"
+`;
+  const tasks = parseWorkflowYaml(yaml);
+  const compute = tasks.find((task) => task.id === 'next-arc-context')!;
+  assert.deepEqual(compute.compute_outputs, {
+    start: '${{ int(arc_loader.output_data.end) + 1 }}',
+    end: '${{ outputs.start + 5 }}',
+    episode_range: '${{ outputs.start }}..${{ outputs.end }}',
+  });
+
+  const { nodes, edges } = tasksToFlow(tasks);
+  const pairs = edgePairs(edges);
+  assert.ok(
+    pairs.has('arc-loader->next-arc-context'),
+    'expected expression reference to infer arc-loader → next-arc-context',
+  );
+
+  const roundTripped = tasksToYaml(flowToTasks(nodes as Node<TaskNodeData>[], edges));
+  assert.match(roundTripped, /type: compute/);
+  assert.match(roundTripped, /compute:\n      outputs:/);
+  assert.match(roundTripped, /start: "\$\{\{ int\(arc_loader\.output_data\.end\) \+ 1 \}\}"/);
+});
+
+test('compute expression dependency edges only use root step refs', () => {
+  const yaml = `
+steps:
+  - id: arc-loader
+    type: output
+    output:
+      format: json
+      template: '{"end": 6}'
+  - id: output_data
+    type: output
+    output:
+      format: json
+      template: '{}'
+  - id: metadata
+    type: output
+    output:
+      format: json
+      template: '{}'
+  - id: next-arc-context
+    type: compute
+    compute:
+      outputs:
+        start: "\${{ int(arc_loader.output_data.metadata.end) + 1 }}"
+`;
+  const tasks = parseWorkflowYaml(yaml);
+  const { edges } = tasksToFlow(tasks);
+  const pairs = edgePairs(edges);
+
+  assert.ok(pairs.has('arc-loader->next-arc-context'));
+  assert.ok(!pairs.has('output_data->next-arc-context'));
+  assert.ok(!pairs.has('metadata->next-arc-context'));
+});
+
 test('explicit depends_on and ${step.output} for the same source dedup to one edge', () => {
   const yaml = `
 steps:
@@ -150,6 +223,141 @@ steps:
   assert.equal(matches.length, 1, `expected exactly one step_a → step_b edge, got ${matches.length}`);
 });
 
+test('flowToTasks does not persist interpolation-only inferred edges as depends_on', () => {
+  const yaml = `
+steps:
+  - id: step_a
+    type: agent
+    agent:
+      prompt: "Do A."
+  - id: step_b
+    type: agent
+    agent:
+      prompt: "Use \${step_a.output}"
+`;
+  const tasks = parseWorkflowYaml(yaml);
+  const { nodes, edges } = tasksToFlow(tasks);
+  const inferred = edges.find((edge) => edge.source === 'step_a' && edge.target === 'step_b');
+  assert.equal(
+    (inferred?.data as Record<string, unknown> | undefined)?.inferred,
+    'interpolation',
+    'expected the visual edge to be marked as interpolation-inferred',
+  );
+
+  const roundTripped = flowToTasks(nodes as Node<TaskNodeData>[], edges);
+  assert.deepEqual(
+    roundTripped.find((task) => task.id === 'step_b')!.depends_on,
+    [],
+    'interpolation-only edges must not become saved depends_on entries',
+  );
+});
+
+test('flowToTasks derives depends_on from edges, not stale node dependency counts', () => {
+  const yaml = `
+steps:
+  - id: setup
+    type: agent
+    agent:
+      agent_type: claude
+      role: researcher
+      prompt: "Prepare context."
+  - id: consume
+    type: agent
+    agent:
+      agent_type: claude
+      role: summarizer
+      prompt: "Summarize."
+`;
+  const tasks = parseWorkflowYaml(yaml);
+  const { nodes } = tasksToFlow(tasks);
+  const staleNodes = nodes.map((node) =>
+    node.id === 'consume'
+      ? { ...node, data: { ...(node.data as TaskNodeData), dependencyCount: 99 } }
+      : node,
+  ) as Node<TaskNodeData>[];
+
+  const withoutEdge = flowToTasks(staleNodes, []);
+  assert.deepEqual(
+    withoutEdge.find((task) => task.id === 'consume')!.depends_on,
+    [],
+    'stale dependencyCount must not serialize as depends_on',
+  );
+
+  const withEdge = flowToTasks(staleNodes, [
+    { id: 'setup->consume', source: 'setup', target: 'consume' } as Edge,
+  ]);
+  assert.deepEqual(
+    withEdge.find((task) => task.id === 'consume')!.depends_on,
+    ['setup'],
+    'graph edge must serialize as depends_on',
+  );
+});
+
+test('for_each parent-to-child edge is membership, not a serialized dependency', () => {
+  const yaml = `
+steps:
+  - id: loop
+    type: for_each
+    for_each:
+      range: "1..2"
+      variable: item
+      steps: [body]
+  - id: body
+    type: agent
+    depends_on: [loop]
+    agent:
+      prompt: "Use \${item}"
+`;
+  const tasks = parseWorkflowYaml(yaml);
+  const { nodes, edges } = tasksToFlow(tasks);
+  const regularParentEdge = edges.find((edge) =>
+    edge.source === 'loop'
+    && edge.target === 'body'
+    && !(edge.data as Record<string, unknown> | undefined)?.synthetic,
+  );
+  assert.equal(regularParentEdge, undefined, 'for_each parent must not become a real body dependency edge');
+
+  const roundTripped = flowToTasks(nodes as Node<TaskNodeData>[], [
+    ...edges,
+    { id: 'manual-loop-body', source: 'loop', target: 'body' } as Edge,
+  ]);
+  assert.deepEqual(roundTripped.find((task) => task.id === 'body')!.depends_on, []);
+});
+
+test('synthetic for_each sequence edges do not count as editor DAG cycles', () => {
+  const yaml = `
+steps:
+  - id: loop
+    type: for_each
+    for_each:
+      range: "1..2"
+      steps: [gate, body, emit]
+  - id: gate
+    type: agent
+    depends_on: [emit]
+    agent:
+      prompt: "Gate after emit"
+  - id: body
+    type: agent
+    agent:
+      prompt: "Body"
+  - id: emit
+    type: output
+    depends_on: [body]
+    output:
+      format: markdown
+      template: "\${body.output}"
+`;
+  const tasks = parseWorkflowYaml(yaml);
+  const { nodes, edges } = tasksToFlow(tasks);
+  assert.ok(
+    edges.some((edge) => (edge.data as Record<string, unknown> | undefined)?.synthetic),
+    'expected for_each to create visual-only synthetic edges',
+  );
+  assert.equal(hasLegacyCycle(nodes, edges), false);
+  assert.equal(hasConstructCycle(nodes, edges), false);
+});
+
 test('${input.X} / ${trigger.X} / ${env.X} are skipped', () => {
   const yaml = `
 steps:
@@ -164,6 +372,73 @@ steps:
   const { edges } = tasksToFlow(tasks);
   // The only_step shouldn't reference itself or any non-existent step.
   assert.equal(edges.length, 0, 'expected zero edges for input/trigger/env-only references');
+});
+
+test('run viewer dependency paths include interpolation-only connected nodes', () => {
+  const yaml = `
+steps:
+  - id: producer
+    type: agent
+    agent:
+      prompt: "Produce data."
+  - id: consumer
+    type: output
+    output:
+      format: markdown
+      template: "\${producer.output}"
+`;
+  const tasks = parseWorkflowYaml(yaml);
+  assert.deepEqual(
+    deriveDependencyChainIds({ startTaskIds: ['consumer'], tasks }).sort(),
+    ['consumer', 'producer'],
+  );
+  assert.deepEqual(
+    deriveBlockedTaskIds({
+      tasks,
+      stepResults: {
+        producer: { status: 'failed' },
+        consumer: { status: 'pending' },
+      },
+    }),
+    ['consumer'],
+  );
+});
+
+test('run viewer preserves canonical conditional branch labels on styled edges', () => {
+  const yaml = `
+steps:
+  - id: gate
+    type: conditional
+    conditional:
+      branches:
+        - condition: "\${producer.output_data.status} == 'PASS'"
+          goto: pass_target
+        - condition: default
+          goto: fallback_target
+  - id: pass_target
+    type: shell
+    shell:
+      command: "echo pass"
+  - id: fallback_target
+    type: shell
+    shell:
+      command: "echo fallback"
+  - id: producer
+    type: shell
+    shell:
+      command: "echo status"
+`;
+  const tasks = parseWorkflowYaml(yaml);
+  const { edges } = tasksToFlow(tasks);
+  const fallbackBranch = edges.find((edge) => edge.source === 'gate' && edge.sourceHandle === 'branch-1');
+  assert.ok(fallbackBranch, 'expected canonical branch-1 edge');
+
+  const styled = buildWorkflowEdgeStyle({
+    edge: fallbackBranch,
+    tasksById: new Map(tasks.map((task) => [task.id, task])),
+  });
+  assert.equal(styled.label, 'default');
+  assert.equal((styled.labelStyle as { fill?: string }).fill, 'var(--construct-status-danger)');
 });
 
 test('full architect example: 5 steps, expected edge set', () => {

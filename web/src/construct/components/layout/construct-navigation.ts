@@ -10,6 +10,7 @@ import {
   Workflow,
   Wrench,
   Puzzle,
+  Palette,
   Database,
   Sparkles,
   Settings,
@@ -61,6 +62,7 @@ export const v2NavSections: V2NavSection[] = [
       { to: '/pairing', label: 'Pairing', labelKey: 'nav.pairing', icon: Smartphone, blurb: 'Device enrolment and trust management', blurbKey: 'nav.pairing.blurb' },
       { to: '/config', label: 'Config', labelKey: 'nav.config', icon: Settings, blurb: 'Runtime TOML and operational configuration', blurbKey: 'nav.config.blurb' },
       { to: '/cost', label: 'Cost', labelKey: 'nav.cost', icon: DollarSign, blurb: 'Spend and efficiency by workflow and run', blurbKey: 'nav.cost.blurb' },
+      { to: '/skins', label: 'Skins', labelKey: 'nav.skins', icon: Palette, blurb: 'Token and asset based UI skins', blurbKey: 'nav.skins.blurb' },
     ],
   },
   {

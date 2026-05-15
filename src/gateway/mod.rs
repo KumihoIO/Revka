@@ -22,6 +22,7 @@ pub mod api_pairing;
 #[cfg(feature = "plugins-wasm")]
 pub mod api_plugins;
 pub mod api_skills;
+pub mod api_skins;
 pub mod api_teams;
 #[cfg(feature = "webauthn")]
 pub mod api_webauthn;
@@ -1629,6 +1630,25 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
             Duration::from_secs(30),
         ));
 
+    // UI skin ZIP imports use the same 25 MiB upload floor as chat
+    // attachments, with separate timeout/body layers so the global small-JSON
+    // API cap stays unchanged.
+    let skins_router = Router::new()
+        .route("/api/skins", get(api_skins::handle_list_skins))
+        .route("/api/skins/import", post(api_skins::handle_import_skin))
+        .route("/api/skins/{id}", delete(api_skins::handle_delete_skin))
+        .route(
+            "/api/skins/{id}/assets/{*path}",
+            get(api_skins::handle_skin_asset),
+        )
+        .with_state(state.clone())
+        .layer(DefaultBodyLimit::disable())
+        .layer(RequestBodyLimitLayer::new(api_skins::SKIN_ZIP_MAX_BODY))
+        .layer(TimeoutLayer::with_status_code(
+            StatusCode::REQUEST_TIMEOUT,
+            Duration::from_secs(120),
+        ));
+
     // Build router with middleware
     let inner = Router::new()
         // ── Admin routes (for CLI management) ──
@@ -1683,6 +1703,7 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
         )
         // Old /api/memory CRUD removed — use Kumiho via /api/memory/graph instead.
         .route("/api/cost", get(api::handle_api_cost))
+        .route("/api/cost/usage", post(api::handle_api_cost_usage))
         .route("/api/audit", get(api::handle_api_audit))
         .route("/api/audit/verify", get(api::handle_api_audit_verify))
         .route("/api/cli-tools", get(api::handle_api_cli_tools))
@@ -1868,6 +1889,10 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
     // Merge Asset Browser write router (has its own bounded JSON body limit,
     // outside the global 64 KiB cap).
     let inner = inner.merge(asset_router);
+
+    // Merge UI skin routes (ZIP import has its own 25 MiB body limit + 120s
+    // timeout; skin asset reads share the same storage-safe resolver).
+    let inner = inner.merge(skins_router);
 
     // Nest under path prefix when configured (axum strips prefix before routing).
     // nest() at "/prefix" handles both "/prefix" and "/prefix/*" but not "/prefix/"

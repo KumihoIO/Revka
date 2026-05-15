@@ -61,6 +61,8 @@ export function hasCycle(nodes: Node[], edges: Edge[]): boolean {
     inDegree.set(id, 0);
   }
   for (const e of edges) {
+    const edgeData = e.data as Record<string, unknown> | undefined;
+    if (edgeData?.synthetic) continue;
     adj.get(e.source)?.push(e.target);
     inDegree.set(e.target, (inDegree.get(e.target) ?? 0) + 1);
   }

@@ -507,7 +507,7 @@ impl DelegateTool {
             Err(e) => Ok(ToolResult {
                 success: false,
                 output: String::new(),
-                error: Some(format!("Agent '{agent_name}' failed: {e}",)),
+                error: Some(format!("Agent '{agent_name}' failed: {e}")),
             }),
         }
     }
@@ -1032,6 +1032,7 @@ impl DelegateTool {
             operator_enabled: false,
             kumiho_enabled: false,
             kumiho_memory_advanced_available: false,
+            compact_tool_docs: false,
             mode: crate::agent::prompt::BuilderMode::Daemon,
         };
 

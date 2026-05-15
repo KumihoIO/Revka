@@ -19,17 +19,21 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   ArrowLeft,
+  Clipboard,
   Code,
+  Copy,
   Crosshair,
   LayoutGrid,
   Plus,
   Radio,
+  RefreshCw,
   Wand2,
   X,
   Zap,
 } from 'lucide-react';
 import {
   Background,
+  ConnectionLineType,
   Controls,
   MarkerType,
   MiniMap,
@@ -44,20 +48,30 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
-import type { WorkflowDefinition } from '@/types/api';
+import type { WorkflowDefinition, WorkflowRunDetail, WorkflowStepDetail } from '@/types/api';
 import { taskNodeTypes } from '@/components/workflows/TaskNode';
 import { gateNodeTypes } from '@/components/workflows/GateNode';
 import {
   GATE_EDGE_STYLES,
   computeAncestorClosure,
   flowToTasks,
+  gateBranchHandle,
+  gateBranchIndex,
+  gateBranchLabel,
+  gateBranchStyle,
+  gateEdgeStyleForHandle,
+  hasPersistedTaskPositions,
+  isGateBranchHandle,
   parseWorkflowMeta,
   parseWorkflowYaml,
   tasksToFlow,
   tasksToYaml,
+  type ConditionalBranchDefinition,
   type InputDef,
+  type TaskDefinition,
   type TaskNodeData,
   type WorkflowMeta,
+  type WorkflowNodePosition,
 } from '@/construct/components/workflows/yamlSync';
 import { hasCycle, layoutNodes } from '@/components/teams/graphHelpers';
 
@@ -80,7 +94,7 @@ import {
   useWorkflowEvents,
   type WorkflowRevisionPublishedEvent,
 } from './useWorkflowEvents';
-import { fetchWorkflowByRevisionKref, runWorkflow } from '@/lib/api';
+import { fetchWorkflowByRevisionKref, fetchWorkflowRun, runWorkflow } from '@/lib/api';
 import '@/construct/styles/editor-chrome.css';
 
 const allNodeTypes = { ...taskNodeTypes, ...gateNodeTypes };
@@ -184,6 +198,56 @@ function targetAlreadyReferencesSource(data: TaskNodeData, sourceId: string): bo
   return false;
 }
 
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function removeSourceReferencesFromText(value: string, sourceId: string): string {
+  if (!value) return value;
+  const tokenRegex = new RegExp(
+    `\\$\\{${escapeRegex(sourceId)}(?:\\.[a-zA-Z_][a-zA-Z0-9_.-]*)?\\}`,
+    'g',
+  );
+  if (!tokenRegex.test(value)) return value;
+
+  const eol = value.includes('\r\n') ? '\r\n' : '\n';
+  const lines = value.split(/\r?\n/);
+  const nextLines: string[] = [];
+  for (const line of lines) {
+    tokenRegex.lastIndex = 0;
+    if (!tokenRegex.test(line)) {
+      nextLines.push(line);
+      continue;
+    }
+
+    tokenRegex.lastIndex = 0;
+    const cleaned = line.replace(tokenRegex, '').replace(/[ \t]+$/g, '');
+    if (cleaned.trim().length > 0) {
+      nextLines.push(cleaned);
+    }
+  }
+
+  let next = nextLines
+    .join(eol)
+    .replace(/(\r?\n){3,}/g, `${eol}${eol}`);
+  while (next.startsWith(eol)) next = next.slice(eol.length);
+  while (next.endsWith(eol)) next = next.slice(0, -eol.length);
+  return next;
+}
+
+function removeSourceReferencesFromNodeData(data: TaskNodeData, sourceId: string): TaskNodeData {
+  let nextData: TaskNodeData = data;
+  for (const field of TASK_INTERPOLATION_FIELDS) {
+    const value = nextData[field];
+    if (typeof value !== 'string' || !value) continue;
+    const cleaned = removeSourceReferencesFromText(value, sourceId);
+    if (cleaned !== value) {
+      nextData = { ...nextData, [field]: cleaned };
+    }
+  }
+  return nextData;
+}
+
 // ---------------------------------------------------------------------------
 // Time helpers
 // ---------------------------------------------------------------------------
@@ -202,6 +266,148 @@ function formatRelative(iso: string): string {
   if (minutes < 60) return `${minutes}m ago`;
   const hours = Math.round(minutes / 60);
   return `${hours}h ago`;
+}
+
+function gateHandleLabel(handle: string | null | undefined): string | undefined {
+  if (!isGateBranchHandle(handle)) return undefined;
+  if (handle === 'true' || handle === 'false') return handle;
+  const index = Number(/^branch-(\d+)$/.exec(handle ?? '')?.[1] ?? 0);
+  return index === 0 ? 'true' : `case ${index + 1}`;
+}
+
+function getEditableConditionalBranches(data: TaskNodeData): ConditionalBranchDefinition[] {
+  if (data.conditionalBranches?.length > 0) {
+    return data.conditionalBranches.map((branch) => ({ ...branch }));
+  }
+  const branches: ConditionalBranchDefinition[] = [];
+  if (data.condition || data.onTrueValue) {
+    branches.push({
+      condition: data.condition || '',
+      goto: '',
+      value: data.onTrueValue || undefined,
+    });
+  }
+  if (data.onFalseValue) {
+    branches.push({ condition: 'default', goto: '', value: data.onFalseValue });
+  }
+  return branches.length > 0 ? branches : [
+    { condition: data.condition || '', goto: '', value: data.onTrueValue || undefined },
+    { condition: 'default', goto: '', value: data.onFalseValue || undefined },
+  ];
+}
+
+function conditionalBranchDataPatch(branches: ConditionalBranchDefinition[]): Partial<TaskNodeData> {
+  const firstCase = branches.find((branch) => branch.condition.trim() !== 'default');
+  const fallback = branches.find((branch) => branch.condition.trim() === 'default')
+    ?? branches.find((branch) => branch !== firstCase);
+  return {
+    conditionalBranches: branches,
+    condition: firstCase?.condition ?? '',
+    onTrueValue: firstCase?.value ?? '',
+    onFalseValue: fallback?.value ?? '',
+  };
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function isExprIdentStart(ch: string): boolean {
+  return /[A-Za-z_]/.test(ch);
+}
+
+function isExprIdentPart(ch: string): boolean {
+  return /[A-Za-z0-9_-]/.test(ch);
+}
+
+function rewriteExpressionStepAliases(value: string, oldId: string, newId: string): string {
+  if (!value.includes('${{')) return value;
+  const oldAlias = oldId.replace(/-/g, '_');
+  const newAlias = newId.replace(/-/g, '_');
+  const oldNames = new Set([oldId, oldAlias]);
+  if (oldNames.size === 1 && oldNames.has(newAlias)) return value;
+
+  const rewriteBody = (body: string): string => {
+    let out = '';
+    let quote: string | null = null;
+    for (let i = 0; i < body.length;) {
+      const ch = body[i]!;
+      if (quote) {
+        out += ch;
+        if (ch === '\\' && i + 1 < body.length) {
+          out += body[i + 1]!;
+          i += 2;
+          continue;
+        }
+        if (ch === quote) quote = null;
+        i += 1;
+        continue;
+      }
+      if (ch === '"' || ch === "'") {
+        quote = ch;
+        out += ch;
+        i += 1;
+        continue;
+      }
+      if (!isExprIdentStart(ch)) {
+        out += ch;
+        i += 1;
+        continue;
+      }
+      const start = i;
+      i += 1;
+      while (i < body.length && isExprIdentPart(body[i]!)) i += 1;
+      const ident = body.slice(start, i);
+      const prev = start > 0 ? body[start - 1]! : '';
+      let j = i;
+      while (j < body.length && /\s/.test(body[j]!)) j += 1;
+      const isRootAttribute = (!prev || !/[A-Za-z0-9_.]/.test(prev)) && body[j] === '.';
+      out += isRootAttribute && oldNames.has(ident) ? newAlias : ident;
+    }
+    return out;
+  };
+
+  return value.replace(/\$\{\{\s*([\s\S]*?)\s*\}\}/g, (match, body: string) => {
+    const rewritten = rewriteBody(body);
+    return rewritten === body ? match : '${{ ' + rewritten + ' }}';
+  });
+}
+
+function rewriteStepRefsInValue(value: unknown, oldId: string, newId: string): unknown {
+  if (typeof value === 'string') {
+    const refPattern = new RegExp(`\\$\\{${escapeRegExp(oldId)}(?=\\.|\\})`, 'g');
+    return rewriteExpressionStepAliases(value.replace(refPattern, `\${${newId}`), oldId, newId);
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => rewriteStepRefsInValue(item, oldId, newId));
+  }
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+      out[key] = rewriteStepRefsInValue(child, oldId, newId);
+    }
+    return out;
+  }
+  return value;
+}
+
+function rewriteStepRefsInTaskData(data: TaskNodeData, oldId: string, newId: string): TaskNodeData {
+  return rewriteStepRefsInValue(data, oldId, newId) as TaskNodeData;
+}
+
+function setConditionalBranchTarget(
+  data: TaskNodeData,
+  handle: string | null | undefined,
+  target: string,
+): TaskNodeData {
+  const index = gateBranchIndex(handle);
+  if (index === null) return data;
+  const branches = getEditableConditionalBranches(data);
+  while (branches.length <= index) {
+    branches.push({ condition: branches.length === 1 ? 'default' : '', goto: '', value: undefined });
+  }
+  branches[index] = { ...branches[index]!, goto: target };
+  return { ...data, ...conditionalBranchDataPatch(branches) };
 }
 
 // ---------------------------------------------------------------------------
@@ -225,12 +431,20 @@ function defaultNodeData(id: string, overrides?: Partial<TaskNodeData>): TaskNod
     condition: '',
     onTrueValue: '',
     onFalseValue: '',
+    conditionalBranches: [],
     channel: '',
     channels: [],
     agentType: '',
     role: '',
     prompt: '',
     timeout: 300,
+    agentMaxTurns: 3,
+    agentTools: 'none',
+    agentOutputFields: [],
+    agentQualityEnabled: false,
+    agentQualityThreshold: 0.7,
+    agentQualityCriteria: [],
+    agentQualityModel: 'claude-haiku-4-5-20251001',
     parallelJoin: 'all',
     gotoTarget: '',
     gotoMaxIterations: 3,
@@ -239,6 +453,7 @@ function defaultNodeData(id: string, overrides?: Partial<TaskNodeData>): TaskNod
     groupChatMaxRounds: 8,
     supervisorTask: '',
     supervisorMaxIterations: 5,
+    supervisorTemplates: [],
     shellCommand: '',
     outputFormat: 'markdown',
     entityName: '',
@@ -262,6 +477,10 @@ function defaultNodeData(id: string, overrides?: Partial<TaskNodeData>): TaskNod
     humanApprovalTimeout: 3600,
     humanApprovalChannel: 'dashboard',
     humanApprovalChannelId: '',
+    humanApprovalOnRejectGoto: '',
+    humanApprovalOnRejectMax: 3,
+    humanApprovalApproveKeywords: ['approve', 'approved', 'yes', 'lgtm'],
+    humanApprovalRejectKeywords: ['reject', 'rejected', 'no'],
     outputTemplate: '',
     a2aUrl: '',
     a2aSkillId: '',
@@ -296,11 +515,14 @@ function defaultNodeData(id: string, overrides?: Partial<TaskNodeData>): TaskNod
     forEachMaxIterations: 20,
     notifyMessage: '',
     notifyTitle: '',
+    notifyChannelId: '',
     pythonScript: '',
     pythonCode: '',
     pythonArgs: '',
+    pythonInterpreter: '',
     pythonTimeout: 60,
     pythonAllowFailure: false,
+    computeOutputs: {},
     emailTo: '',
     emailSubject: '',
     emailBody: '',
@@ -311,13 +533,19 @@ function defaultNodeData(id: string, overrides?: Partial<TaskNodeData>): TaskNod
     emailReplyTo: '',
     emailTrackClicks: false,
     emailTrackKref: '',
+    emailTrackSecretEnv: '',
     emailTrackBaseUrl: '',
     emailSmtpHost: '',
+    emailSmtpPort: 0,
+    emailSmtpTls: true,
+    emailSmtpUsername: '',
+    emailSmtpPasswordEnv: '',
     emailDryRun: false,
     emailTimeout: 30,
     imagePrompt: '',
     imageCount: 1,
     imageCanvas: true,
+    imageCanvasTarget: '',
     imageRegisterArtifact: true,
     imageSpace: '',
     imageItemName: '',
@@ -360,11 +588,265 @@ function defaultNodeData(id: string, overrides?: Partial<TaskNodeData>): TaskNod
 // canonical executor identifier (matches StepType in operator schema) and is
 // the only step-kind field stored on the node going forward.
 function defaultsForType(type: string): Partial<TaskNodeData> {
+  if (type === 'compute') {
+    return { type, computeOutputs: { value: '${{ 1 }}' } };
+  }
   return { type };
 }
 
 // ---------------------------------------------------------------------------
-// Right-click context menu
+// Run-to-here log dialog
+// ---------------------------------------------------------------------------
+
+function RunLogDialog({
+  runLog,
+  onClose,
+  onRefresh,
+}: {
+  runLog: RunLogState;
+  onClose: () => void;
+  onRefresh: () => Promise<void>;
+}) {
+  const detail = runLog.detail;
+  const status = detail?.status || runLog.status;
+  const steps = detail?.steps ?? [];
+  const targetStep = steps.find((step) => step.step_id === runLog.targetStepId);
+  const targetOutput = targetStep?.output_preview || compactJson(targetStep?.output_data);
+  const targetError = targetStep?.error || detail?.error || runLog.error;
+  const isLoading = Boolean(runLog.runId && !detail && !runLog.error);
+
+  return (
+    <div
+      role="dialog"
+      aria-label="Run to here log"
+      style={{
+        position: 'fixed',
+        right: 20,
+        bottom: 20,
+        zIndex: 70,
+        width: 'min(440px, calc(100vw - 32px))',
+        maxHeight: 'min(560px, calc(100vh - 96px))',
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
+        borderRadius: 12,
+        border: '1px solid var(--construct-border-strong)',
+        background: 'var(--construct-bg-panel-strong)',
+        boxShadow: '0 18px 48px rgba(0,0,0,0.42)',
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 10,
+          padding: '12px 14px',
+          borderBottom: '1px solid var(--construct-border-soft)',
+        }}
+      >
+        <Crosshair size={14} style={{ color: 'var(--construct-signal-network)' }} />
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--construct-text-primary)' }}>
+            Run to here
+          </div>
+          <div
+            style={{
+              fontSize: 10,
+              color: 'var(--construct-text-faint)',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {runLog.workflowName} · {runLog.targetStepId}
+          </div>
+        </div>
+        <span
+          style={{
+            flexShrink: 0,
+            padding: '3px 8px',
+            borderRadius: 999,
+            border: '1px solid color-mix(in srgb, currentColor 38%, transparent)',
+            color: runStatusColor(status),
+            fontSize: 10,
+            fontWeight: 700,
+            textTransform: 'uppercase',
+            letterSpacing: '0.08em',
+          }}
+        >
+          {status}
+        </span>
+        <button
+          type="button"
+          onClick={() => void onRefresh()}
+          disabled={!runLog.runId}
+          className="construct-button"
+          title="Refresh run log"
+          aria-label="Refresh run log"
+          style={{
+            width: 28,
+            height: 28,
+            padding: 0,
+            justifyContent: 'center',
+            opacity: runLog.runId ? 1 : 0.45,
+          }}
+        >
+          <RefreshCw size={13} />
+        </button>
+        <button
+          type="button"
+          onClick={onClose}
+          className="construct-button"
+          title="Close run log"
+          aria-label="Close run log"
+          style={{ width: 28, height: 28, padding: 0, justifyContent: 'center' }}
+        >
+          <X size={13} />
+        </button>
+      </div>
+
+      <div style={{ overflowY: 'auto', padding: 14, display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: '80px minmax(0, 1fr)',
+            rowGap: 5,
+            columnGap: 10,
+            fontSize: 11,
+          }}
+        >
+          <span style={{ color: 'var(--construct-text-faint)' }}>Run ID</span>
+          <span
+            style={{
+              color: 'var(--construct-text-secondary)',
+              fontFamily: 'var(--pc-font-mono, ui-monospace, monospace)',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {runLog.runId || 'Starting...'}
+          </span>
+          <span style={{ color: 'var(--construct-text-faint)' }}>Started</span>
+          <span style={{ color: 'var(--construct-text-secondary)' }}>
+            {formatRunTimestamp(detail?.started_at || runLog.startedAt)}
+          </span>
+          <span style={{ color: 'var(--construct-text-faint)' }}>Progress</span>
+          <span style={{ color: 'var(--construct-text-secondary)' }}>
+            {detail ? `${detail.steps_completed || '0'} / ${detail.steps_total || steps.length || '?'}` : 'Waiting for run details'}
+          </span>
+        </div>
+
+        {targetError ? (
+          <div
+            style={{
+              padding: 10,
+              borderRadius: 10,
+              border: '1px solid color-mix(in srgb, var(--construct-status-danger) 34%, transparent)',
+              background: 'color-mix(in srgb, var(--construct-status-danger) 10%, transparent)',
+              color: 'var(--construct-status-danger)',
+              fontSize: 11,
+              whiteSpace: 'pre-wrap',
+            }}
+          >
+            {targetError}
+          </div>
+        ) : null}
+
+        <div>
+          <div className="construct-kicker" style={{ marginBottom: 8 }}>Target Output</div>
+          {targetOutput ? (
+            <pre
+              style={{
+                margin: 0,
+                maxHeight: 180,
+                overflow: 'auto',
+                padding: 10,
+                borderRadius: 10,
+                border: '1px solid var(--construct-border-soft)',
+                background: 'var(--pc-bg-code)',
+                color: 'var(--construct-text-secondary)',
+                fontFamily: 'var(--pc-font-mono, ui-monospace, monospace)',
+                fontSize: 11,
+                lineHeight: 1.55,
+                whiteSpace: 'pre-wrap',
+              }}
+            >
+              {targetOutput}
+            </pre>
+          ) : (
+            <div style={{ fontSize: 11, color: 'var(--construct-text-faint)' }}>
+              {isLoading
+                ? 'Waiting for the run log...'
+                : targetStep
+                  ? 'The target step has not produced output yet.'
+                  : 'The target step has not appeared in the run log yet.'}
+            </div>
+          )}
+        </div>
+
+        <div>
+          <div className="construct-kicker" style={{ marginBottom: 8 }}>Steps</div>
+          {steps.length > 0 ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {steps.map((step: WorkflowStepDetail) => (
+                <div
+                  key={step.step_id}
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'minmax(0, 1fr) auto',
+                    alignItems: 'center',
+                    gap: 8,
+                    padding: '7px 9px',
+                    borderRadius: 8,
+                    border: step.step_id === runLog.targetStepId
+                      ? '1px solid color-mix(in srgb, var(--construct-signal-network) 48%, transparent)'
+                      : '1px solid var(--construct-border-soft)',
+                    background: step.step_id === runLog.targetStepId
+                      ? 'color-mix(in srgb, var(--construct-signal-network) 10%, transparent)'
+                      : 'var(--construct-bg-surface)',
+                  }}
+                >
+                  <span
+                    style={{
+                      minWidth: 0,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                      color: 'var(--construct-text-primary)',
+                      fontSize: 11,
+                      fontFamily: 'var(--pc-font-mono, ui-monospace, monospace)',
+                    }}
+                  >
+                    {step.step_id}
+                  </span>
+                  <span
+                    style={{
+                      color: runStatusColor(step.status),
+                      fontSize: 10,
+                      fontWeight: 700,
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.08em',
+                    }}
+                  >
+                    {step.status || 'pending'}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div style={{ fontSize: 11, color: 'var(--construct-text-faint)' }}>
+              {runLog.error || 'No step log entries yet.'}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Editor overlay state
 // ---------------------------------------------------------------------------
 
 interface ContextMenuState {
@@ -372,6 +854,235 @@ interface ContextMenuState {
   screenY: number;
   flowX: number;
   flowY: number;
+}
+
+interface RunLogState {
+  open: boolean;
+  workflowName: string;
+  targetStepId: string;
+  status: string;
+  runId?: string;
+  startedAt: string;
+  detail?: WorkflowRunDetail;
+  error?: string;
+}
+
+type AgentPickerTarget = NonNullable<OpenAgentPickerDetail['target']>;
+type WorkflowWireStyle = 'default' | 'straight' | 'step';
+
+const WIRE_STYLE_STORAGE_KEY = 'construct.workflowEditor.wireStyle';
+const DETAILS_PANEL_WIDTH_STORAGE_KEY = 'construct.workflowEditor.detailsPanelWidth';
+const DETAILS_PANEL_MIN_WIDTH = 300;
+const DETAILS_PANEL_MAX_WIDTH = 620;
+const DETAILS_PANEL_DEFAULT_WIDTH = 352;
+const COPY_PASTE_OFFSET = 36;
+const WIRE_STYLE_OPTIONS: Array<{
+  value: WorkflowWireStyle;
+  label: string;
+  title: string;
+}> = [
+  { value: 'default', label: 'Curved', title: 'Curved Bezier wires' },
+  { value: 'straight', label: 'Straight', title: 'Direct straight wires' },
+  { value: 'step', label: 'Angled', title: 'Right-angle stepped wires' },
+];
+
+const CONNECTION_LINE_TYPE: Record<WorkflowWireStyle, ConnectionLineType> = {
+  default: ConnectionLineType.Bezier,
+  straight: ConnectionLineType.Straight,
+  step: ConnectionLineType.Step,
+};
+
+function readWireStylePreference(): WorkflowWireStyle {
+  if (typeof localStorage === 'undefined') return 'default';
+  try {
+    const saved = localStorage.getItem(WIRE_STYLE_STORAGE_KEY);
+    return WIRE_STYLE_OPTIONS.some((option) => option.value === saved)
+      ? saved as WorkflowWireStyle
+      : 'default';
+  } catch {
+    return 'default';
+  }
+}
+
+function applyWireStyle(edge: Edge, wireStyle: WorkflowWireStyle): Edge {
+  return edge.type === wireStyle ? edge : { ...edge, type: wireStyle };
+}
+
+function applyWireStyleToEdges(edges: Edge[], wireStyle: WorkflowWireStyle): Edge[] {
+  return edges.map((edge) => applyWireStyle(edge, wireStyle));
+}
+
+function isValidWorkflowPosition(value: unknown): value is WorkflowNodePosition {
+  if (!value || typeof value !== 'object') return false;
+  const pos = value as Partial<WorkflowNodePosition>;
+  return Number.isFinite(pos.x) && Number.isFinite(pos.y);
+}
+
+function applyWorkflowLayout(
+  tasks: TaskDefinition[],
+  nodes: Node<TaskNodeData>[],
+  edges: Edge[],
+): Node<TaskNodeData>[] {
+  return hasPersistedTaskPositions(tasks)
+    ? nodes
+    : layoutNodes(nodes, edges) as Node<TaskNodeData>[];
+}
+
+function applyStoredWorkflowPositions(
+  workflowName: string,
+  tasks: TaskDefinition[],
+  nodes: Node<TaskNodeData>[],
+): Node<TaskNodeData>[] {
+  if (hasPersistedTaskPositions(tasks) || !workflowName || typeof localStorage === 'undefined') {
+    return nodes;
+  }
+
+  try {
+    const saved = JSON.parse(localStorage.getItem(`wf-positions:${workflowName}`) || '{}') as Record<string, unknown>;
+    if (Object.keys(saved).length === 0) return nodes;
+    return nodes.map((node) => {
+      const position = saved[node.id];
+      return isValidWorkflowPosition(position)
+        ? { ...node, position: { x: position.x, y: position.y } }
+        : node;
+    });
+  } catch {
+    return nodes;
+  }
+}
+
+function nodesForWorkflowTasks(
+  workflowName: string,
+  tasks: TaskDefinition[],
+  nodes: Node<TaskNodeData>[],
+  edges: Edge[],
+): Node<TaskNodeData>[] {
+  return applyStoredWorkflowPositions(
+    workflowName,
+    tasks,
+    applyWorkflowLayout(tasks, nodes, edges),
+  );
+}
+
+function normalizeWorkflowDefinitionForEditor(
+  definition: string,
+  metaOverrides: Partial<WorkflowMeta>,
+  workflowNameForPositions: string,
+): string {
+  const tasks = parseWorkflowYaml(definition);
+  const meta = parseWorkflowMeta(definition);
+  const { nodes: rawNodes, edges } = tasksToFlow(tasks);
+  const positionedNodes = nodesForWorkflowTasks(workflowNameForPositions, tasks, rawNodes, edges);
+  return tasksToYaml(flowToTasks(positionedNodes, edges), {
+    ...meta,
+    ...metaOverrides,
+  });
+}
+
+function clampDetailsPanelWidth(width: number): number {
+  return Math.max(DETAILS_PANEL_MIN_WIDTH, Math.min(DETAILS_PANEL_MAX_WIDTH, Math.round(width)));
+}
+
+function readDetailsPanelWidth(): number {
+  if (typeof localStorage === 'undefined') return DETAILS_PANEL_DEFAULT_WIDTH;
+  try {
+    const saved = Number(localStorage.getItem(DETAILS_PANEL_WIDTH_STORAGE_KEY));
+    return Number.isFinite(saved)
+      ? clampDetailsPanelWidth(saved)
+      : DETAILS_PANEL_DEFAULT_WIDTH;
+  } catch {
+    return DETAILS_PANEL_DEFAULT_WIDTH;
+  }
+}
+
+function taskIdSlug(input: string): string {
+  const slug = input
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return slug || 'step';
+}
+
+function uniqueCopyTaskId(base: string, existingIds: Iterable<string>): string {
+  const existing = new Set(existingIds);
+  const stem = taskIdSlug(`${base || 'step'}-copy`);
+  if (!existing.has(stem)) return stem;
+  let counter = 2;
+  while (existing.has(`${stem}-${counter}`)) counter += 1;
+  return `${stem}-${counter}`;
+}
+
+function cloneTaskData(data: TaskNodeData): TaskNodeData {
+  return JSON.parse(JSON.stringify(data)) as TaskNodeData;
+}
+
+function prepareCopiedTaskData(data: TaskNodeData, newTaskId: string): TaskNodeData {
+  const copy = cloneTaskData(data);
+  const displayName = data.name?.trim()
+    ? `${data.name.trim()} Copy`
+    : newTaskId;
+  return {
+    ...copy,
+    taskId: newTaskId,
+    label: displayName,
+    name: displayName,
+    dependencyCount: 0,
+    conditionalBranches: (copy.conditionalBranches || []).map((branch) => ({
+      ...branch,
+      goto: '',
+    })),
+  };
+}
+
+function withLiveDependencyCounts(
+  nodes: Node<TaskNodeData>[],
+  edges: Edge[],
+): Node<TaskNodeData>[] {
+  const counts = new Map<string, number>();
+  for (const edge of edges) {
+    if (isGateBranchHandle(edge.sourceHandle as string | null | undefined)) continue;
+    counts.set(edge.target, (counts.get(edge.target) || 0) + 1);
+  }
+
+  return nodes.map((node) => {
+    const count = counts.get(node.id) || 0;
+    const data = node.data as TaskNodeData;
+    return data.dependencyCount === count
+      ? node
+      : { ...node, data: { ...data, dependencyCount: count } };
+  });
+}
+
+function isTerminalRunStatus(status: string | undefined): boolean {
+  if (!status) return false;
+  return ['completed', 'failed', 'cancelled', 'canceled', 'error', 'success'].includes(
+    status.toLowerCase(),
+  );
+}
+
+function runStatusColor(status: string | undefined): string {
+  const normalized = (status || '').toLowerCase();
+  if (['completed', 'success'].includes(normalized)) return 'var(--construct-status-success)';
+  if (['failed', 'error', 'cancelled', 'canceled'].includes(normalized)) return 'var(--construct-status-danger)';
+  if (['running', 'starting', 'queued', 'pending'].includes(normalized)) return 'var(--construct-signal-live)';
+  return 'var(--construct-text-faint)';
+}
+
+function formatRunTimestamp(value: string | undefined): string {
+  if (!value) return '';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+}
+
+function compactJson(value: unknown): string | null {
+  if (value == null) return null;
+  try {
+    const text = JSON.stringify(value, null, 2);
+    return text.length > 1800 ? `${text.slice(0, 1800)}\n…` : text;
+  } catch {
+    return null;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -399,6 +1110,18 @@ function WorkflowEditorInner({
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [yamlText, setYamlText] = useState(workflow?.definition ?? '');
   const [yamlDirty, setYamlDirty] = useState(false);
+  const [wireStyle, setWireStyle] = useState<WorkflowWireStyle>(readWireStylePreference);
+  const [detailsPanelWidth, setDetailsPanelWidth] = useState(readDetailsPanelWidth);
+  const [detailsPanelResizing, setDetailsPanelResizing] = useState(false);
+  const detailsResizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
+  const copiedNodeRef = useRef<{
+    data: TaskNodeData;
+    nodeType: string | undefined;
+    position: { x: number; y: number };
+  } | null>(null);
+  const [hasCopiedNode, setHasCopiedNode] = useState(false);
+  const pasteCountRef = useRef(0);
+  const [runLog, setRunLog] = useState<RunLogState | null>(null);
 
   const [workflowMeta, setWorkflowMeta] = useState<WorkflowMeta>({
     name: '',
@@ -432,6 +1155,8 @@ function WorkflowEditorInner({
   const [agentPickerState, setAgentPickerState] = useState<{
     taskId: string;
     anchorRect: DOMRect | null;
+    target: AgentPickerTarget;
+    participantIndex?: number;
   } | null>(null);
 
   // Prime the agent roster cache so the picker opens instantly on first click.
@@ -443,6 +1168,7 @@ function WorkflowEditorInner({
   const connectionMade = useRef(false);
   const { screenToFlowPosition, fitView } = useReactFlow();
   const canvasRef = useRef<HTMLDivElement>(null);
+  const lastPointerFlowPositionRef = useRef<WorkflowNodePosition | null>(null);
 
   // Parse initial workflow definition.
   const { initialNodes, initialEdges } = useMemo(() => {
@@ -451,32 +1177,30 @@ function WorkflowEditorInner({
     const meta = parseWorkflowMeta(workflow.definition);
     setWorkflowMeta(meta);
     const { nodes: rawNodes, edges } = tasksToFlow(tasks);
-    const laidOut = layoutNodes(rawNodes, edges);
-    const savedKey = `wf-positions:${workflow.name}`;
-    try {
-      const saved = JSON.parse(localStorage.getItem(savedKey) || '{}') as Record<
-        string,
-        { x: number; y: number }
-      >;
-      if (Object.keys(saved).length > 0) {
-        for (const n of laidOut) {
-          const s = saved[n.id];
-          if (s) n.position = { x: s.x, y: s.y };
-        }
-      }
-    } catch {
-      /* ignore */
-    }
+    const positioned = nodesForWorkflowTasks(workflow.name, tasks, rawNodes, edges);
     taskIdCounter.current = tasks.length;
-    return { initialNodes: laidOut, initialEdges: edges };
+    return { initialNodes: positioned, initialEdges: applyWireStyleToEdges(edges, wireStyle) };
   }, [workflow]);
 
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
+  const liveNodes = useMemo(
+    () => withLiveDependencyCounts(nodes as Node<TaskNodeData>[], edges),
+    [nodes, edges],
+  );
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(WIRE_STYLE_STORAGE_KEY, wireStyle);
+    } catch {
+      /* ignore */
+    }
+    setEdges((eds) => applyWireStyleToEdges(eds, wireStyle));
+  }, [wireStyle, setEdges]);
 
   const selectedNode = useMemo(
-    () => (selectedNodeId ? nodes.find((n) => n.id === selectedNodeId) ?? null : null),
-    [selectedNodeId, nodes],
+    () => (selectedNodeId ? liveNodes.find((n) => n.id === selectedNodeId) ?? null : null),
+    [selectedNodeId, liveNodes],
   );
 
   // ── DAG context for ${...} expression autocomplete in textareas ─────────
@@ -484,7 +1208,7 @@ function WorkflowEditorInner({
   // parsed workflowMeta; trigger fields are common defaults plus any keys
   // surfaced by the workflow's declared trigger inputMap.
   const dagContext = useMemo(() => {
-    const stepIds = nodes
+    const stepIds = liveNodes
       .map((n) => (n.data as TaskNodeData).taskId)
       .filter((id): id is string => Boolean(id));
     const workflowInputs = workflowMeta.inputs.map((i) => i.name).filter(Boolean);
@@ -499,7 +1223,7 @@ function WorkflowEditorInner({
       new Set([...defaultTriggerFields, ...triggerInputKeys]),
     );
     return { stepIds, workflowInputs, triggerFields };
-  }, [nodes, workflowMeta.inputs, workflowMeta.triggers]);
+  }, [liveNodes, workflowMeta.inputs, workflowMeta.triggers]);
 
   // ── Position helpers ────────────────────────────────────────────────────
   const getViewportCenter = useCallback(() => {
@@ -508,6 +1232,106 @@ function WorkflowEditorInner({
     const rect = el.getBoundingClientRect();
     return screenToFlowPosition({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
   }, [screenToFlowPosition]);
+
+  const rememberPointerFlowPosition = useCallback(
+    (clientX: number, clientY: number): WorkflowNodePosition => {
+      const position = screenToFlowPosition({ x: clientX, y: clientY });
+      lastPointerFlowPositionRef.current = position;
+      return position;
+    },
+    [screenToFlowPosition],
+  );
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(DETAILS_PANEL_WIDTH_STORAGE_KEY, String(detailsPanelWidth));
+    } catch {
+      /* ignore */
+    }
+  }, [detailsPanelWidth]);
+
+  const beginDetailsPanelResize = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      detailsResizeRef.current = {
+        startX: event.clientX,
+        startWidth: detailsPanelWidth,
+      };
+      setDetailsPanelResizing(true);
+    },
+    [detailsPanelWidth],
+  );
+
+  useEffect(() => {
+    if (!detailsPanelResizing) return undefined;
+
+    const onMove = (event: MouseEvent) => {
+      const start = detailsResizeRef.current;
+      if (!start) return;
+      const delta = event.clientX - start.startX;
+      setDetailsPanelWidth(clampDetailsPanelWidth(start.startWidth - delta));
+    };
+
+    const onUp = () => {
+      detailsResizeRef.current = null;
+      setDetailsPanelResizing(false);
+    };
+
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+  }, [detailsPanelResizing]);
+
+  const copySelectedNode = useCallback(() => {
+    if (!selectedNode) return;
+    copiedNodeRef.current = {
+      data: cloneTaskData(selectedNode.data as TaskNodeData),
+      nodeType: selectedNode.type,
+      position: { ...selectedNode.position },
+    };
+    pasteCountRef.current = 0;
+    setHasCopiedNode(true);
+  }, [selectedNode]);
+
+  const pasteCopiedNode = useCallback(
+    (position?: { x: number; y: number }) => {
+      const copied = copiedNodeRef.current;
+      if (!copied) return;
+      pasteCountRef.current += 1;
+      const existingIds = liveNodes.map((node) => (node.data as TaskNodeData).taskId);
+      const originalId = copied.data.taskId || copied.data.name || 'step';
+      const newId = uniqueCopyTaskId(originalId, existingIds);
+      const pointerPosition = position ? null : lastPointerFlowPositionRef.current;
+      const pointerOffset = COPY_PASTE_OFFSET * Math.max(0, pasteCountRef.current - 1);
+      const fallbackOffset = COPY_PASTE_OFFSET * pasteCountRef.current;
+      const pastePosition = position
+        ?? (pointerPosition
+          ? { x: pointerPosition.x + pointerOffset, y: pointerPosition.y + pointerOffset }
+          : {
+              x: copied.position.x + fallbackOffset,
+              y: copied.position.y + fallbackOffset,
+            });
+      const data = prepareCopiedTaskData(copied.data, newId);
+      const nodeType = data.type === 'conditional' ? 'gateNode' : copied.nodeType || 'taskNode';
+      const nextNode: Node<TaskNodeData> = {
+        id: newId,
+        type: nodeType,
+        position: pastePosition,
+        data,
+      };
+      setNodes((nds) => [...nds, nextNode]);
+      setSelectedNodeId(newId);
+      setContextMenu(null);
+    },
+    [liveNodes, setNodes],
+  );
 
   // ── Persist node positions ──────────────────────────────────────────────
   const onNodeDragStop = useCallback(() => {
@@ -548,24 +1372,27 @@ function WorkflowEditorInner({
       // If a source was provided, also create an edge from source → new node.
       // If a target was provided (reverse drop), create an edge new node → target.
       let newEdge: Edge | null = null;
+      let branchSourceHandle: string | null = null;
       if (detail.source?.taskId) {
         const handle = detail.source.handle ?? null;
-        const isBranch = handle === 'true' || handle === 'false';
-        const edgeStyle = isBranch ? GATE_EDGE_STYLES[handle] : GATE_EDGE_STYLES.default;
+        const isBranch = isGateBranchHandle(handle);
+        const edgeStyle = isBranch ? gateEdgeStyleForHandle(handle) : GATE_EDGE_STYLES.default;
         const edgeColor = edgeStyle.stroke;
+        const branchLabel = gateHandleLabel(handle);
+        if (isBranch) branchSourceHandle = handle;
         newEdge = {
           id: `${detail.source.taskId}->${handle ? handle + '->' : ''}${id}`,
           source: detail.source.taskId,
           target: id,
           sourceHandle: handle,
-          type: 'default',
+          type: wireStyle,
           animated: true,
           selectable: true,
           interactionWidth: 20,
           style: edgeStyle,
           markerEnd: { type: MarkerType.ArrowClosed, color: edgeColor },
-          ...(isBranch
-            ? { label: handle, labelStyle: { fill: edgeColor, fontSize: 10, fontWeight: 600 } }
+          ...(branchLabel
+            ? { label: branchLabel, labelStyle: { fill: edgeColor, fontSize: 10, fontWeight: 600 } }
             : {}),
         };
       } else if (detail.target?.taskId) {
@@ -576,7 +1403,7 @@ function WorkflowEditorInner({
           source: id,
           target: detail.target.taskId,
           sourceHandle: null,
-          type: 'default',
+          type: wireStyle,
           animated: true,
           selectable: true,
           interactionWidth: 20,
@@ -586,29 +1413,16 @@ function WorkflowEditorInner({
       }
 
       setNodes((nds) => {
-        if (newEdge && !newEdge.sourceHandle && newEdge.target === id) {
-          // Forward drop: bump dependency count for the new node.
-          newNode.data = { ...newNode.data, dependencyCount: 1 };
-        }
-        // Reverse drop: bump dependency count on the original target.
-        if (newEdge && newEdge.source === id && newEdge.target !== id) {
-          return nds
-            .map((n) =>
-              n.id === newEdge!.target
-                ? {
-                    ...n,
-                    data: {
-                      ...n.data,
-                      dependencyCount: (n.data as TaskNodeData).dependencyCount + 1,
-                    },
-                  }
+        const withBranchTarget = newEdge && branchSourceHandle
+          ? nds.map((n) =>
+              n.id === newEdge!.source
+                ? { ...n, data: setConditionalBranchTarget(n.data as TaskNodeData, branchSourceHandle, id) }
                 : n,
             )
-            .concat(newNode);
-        }
-        return [...nds, newNode];
+          : nds;
+        return [...withBranchTarget, newNode];
       });
-      if (newEdge) setEdges((eds) => [...eds, newEdge!]);
+      if (newEdge) setEdges((eds) => [...eds, applyWireStyle(newEdge!, wireStyle)]);
       setSelectedNodeId(id);
 
       // Auto-open agent picker for new agent steps. Wait one frame for xyflow
@@ -626,12 +1440,12 @@ function WorkflowEditorInner({
             emitOpenAgentPicker({ taskId: id, anchorRect: rect });
           } else {
             // Fallback — surface a centered picker by setting state directly.
-            setAgentPickerState({ taskId: id, anchorRect: null });
+            setAgentPickerState({ taskId: id, anchorRect: null, target: 'assign' });
           }
         });
       }
     },
-    [getViewportCenter, setNodes, setEdges],
+    [getViewportCenter, setNodes, setEdges, wireStyle],
   );
 
   // ── Subscribe to global add-step events ─────────────────────────────────
@@ -650,7 +1464,12 @@ function WorkflowEditorInner({
     const handler = (event: Event) => {
       const ce = event as CustomEvent<OpenAgentPickerDetail>;
       if (!ce.detail) return;
-      setAgentPickerState({ taskId: ce.detail.taskId, anchorRect: ce.detail.anchorRect });
+      setAgentPickerState({
+        taskId: ce.detail.taskId,
+        anchorRect: ce.detail.anchorRect,
+        target: ce.detail.target ?? 'assign',
+        participantIndex: ce.detail.participantIndex,
+      });
     };
     window.addEventListener(OPEN_AGENT_PICKER_EVENT, handler as EventListener);
     return () => window.removeEventListener(OPEN_AGENT_PICKER_EVENT, handler as EventListener);
@@ -675,13 +1494,10 @@ function WorkflowEditorInner({
       return;
     }
     try {
-      const parsed = parseWorkflowYaml(workflow.definition);
-      const meta = parseWorkflowMeta(workflow.definition);
-      const normalized = tasksToYaml(parsed, {
-        ...meta,
+      const normalized = normalizeWorkflowDefinitionForEditor(workflow.definition, {
         name: workflow.name,
         description: workflow.description,
-      });
+      }, workflow.name);
       initialYamlRef.current = normalized;
       setLastSyncedYaml(normalized);
     } catch {
@@ -708,7 +1524,7 @@ function WorkflowEditorInner({
   // is declared) can dispatch to the latest callback.
   const openYamlPanelRef = useRef<() => void>(() => {});
 
-  // ── ⌘K / ⌘I / ⌘J shortcuts ──────────────────────────────────────────────
+  // ── ⌘K / ⌘I / ⌘J / copy-paste shortcuts ────────────────────────────────
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
@@ -733,6 +1549,18 @@ function WorkflowEditorInner({
 
       if (inField) return;
 
+      if (mod && event.key.toLowerCase() === 'c' && selectedNodeId) {
+        event.preventDefault();
+        copySelectedNode();
+        return;
+      }
+
+      if (mod && event.key.toLowerCase() === 'v' && hasCopiedNode) {
+        event.preventDefault();
+        pasteCopiedNode();
+        return;
+      }
+
       if (mod && event.key.toLowerCase() === 'k') {
         event.preventDefault();
         setPaletteContext(undefined);
@@ -745,7 +1573,7 @@ function WorkflowEditorInner({
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [isMac]);
+  }, [isMac, selectedNodeId, copySelectedNode, hasCopiedNode, pasteCopiedNode]);
 
   // ── React Flow handlers ─────────────────────────────────────────────────
   const onConnect = useCallback(
@@ -759,31 +1587,32 @@ function WorkflowEditorInner({
           e.sourceHandle === (connection.sourceHandle ?? null),
       );
       if (exists) return;
-      const branch = connection.sourceHandle as 'true' | 'false' | null;
-      const isBranch = branch === 'true' || branch === 'false';
-      const edgeStyle = isBranch ? GATE_EDGE_STYLES[branch] : GATE_EDGE_STYLES.default;
+      const branch = connection.sourceHandle ?? null;
+      const isBranch = isGateBranchHandle(branch);
+      const edgeStyle = isBranch ? gateEdgeStyleForHandle(branch) : GATE_EDGE_STYLES.default;
       const edgeColor = edgeStyle.stroke;
+      const branchLabel = gateHandleLabel(branch);
 
       const newEdge: Edge = {
         id: `${connection.source}->${branch ? branch + '->' : ''}${connection.target}`,
         source: connection.source,
         sourceHandle: connection.sourceHandle,
         target: connection.target,
-        type: 'default',
+        type: wireStyle,
         animated: true,
         selectable: true,
         interactionWidth: 20,
         style: edgeStyle,
         markerEnd: { type: MarkerType.ArrowClosed, color: edgeColor },
-        ...(isBranch
-          ? { label: branch, labelStyle: { fill: edgeColor, fontSize: 10, fontWeight: 600 } }
+        ...(branchLabel
+          ? { label: branchLabel, labelStyle: { fill: edgeColor, fontSize: 10, fontWeight: 600 } }
           : {}),
       };
-      setEdges((eds) => [...eds, newEdge]);
+      setEdges((eds) => [...eds, applyWireStyle(newEdge, wireStyle)]);
 
       // Auto-insert `${source.output}` into the target's primary text field so
       // the wired edge implies the matching interpolation. Skip when source ===
-      // target (self-loop), when the edge is a conditional branch (true/false
+      // target (self-loop), when the edge is a conditional branch (branch
       // handles route control flow, not data), when the target type has no
       // primary text field, or when the target already references this source
       // somewhere.
@@ -791,12 +1620,12 @@ function WorkflowEditorInner({
       const targetId = connection.target;
       setNodes((nds) =>
         nds.map((n) => {
+          if (isBranch && n.id === sourceId) {
+            return { ...n, data: setConditionalBranchTarget(n.data as TaskNodeData, branch, targetId) };
+          }
           if (n.id !== targetId) return n;
           const data = n.data as TaskNodeData;
           let nextData: TaskNodeData = data;
-          if (!isBranch) {
-            nextData = { ...nextData, dependencyCount: nextData.dependencyCount + 1 };
-          }
           if (sourceId !== targetId && !isBranch) {
             const primaryField = STEP_PRIMARY_TEXT_FIELD[nextData.type];
             if (primaryField && !targetAlreadyReferencesSource(nextData, sourceId)) {
@@ -810,7 +1639,7 @@ function WorkflowEditorInner({
         }),
       );
     },
-    [edges, setEdges, setNodes],
+    [edges, setEdges, setNodes, wireStyle],
   );
 
   const onConnectStart = useCallback(
@@ -843,7 +1672,7 @@ function WorkflowEditorInner({
       const touch = 'changedTouches' in event ? (event as TouchEvent).changedTouches?.[0] : null;
       const clientX = touch ? touch.clientX : (event as MouseEvent).clientX;
       const clientY = touch ? touch.clientY : (event as MouseEvent).clientY;
-      const position = screenToFlowPosition({ x: clientX, y: clientY });
+      const position = rememberPointerFlowPosition(clientX, clientY);
 
       // Forward: source-handle drop → new node is wired AS A DOWNSTREAM
       // dependency of the dragged-from node (source → new).
@@ -852,7 +1681,7 @@ function WorkflowEditorInner({
       if (from.handleType === 'source') {
         setPaletteContext({
           position,
-          source: { taskId: from.nodeId, handle: from.handleId as 'true' | 'false' | null },
+          source: { taskId: from.nodeId, handle: from.handleId },
         });
       } else if (from.handleType === 'target') {
         setPaletteContext({
@@ -865,24 +1694,62 @@ function WorkflowEditorInner({
       setChangeTypeFor(null);
       setPaletteOpen(true);
     },
-    [screenToFlowPosition],
+    [rememberPointerFlowPosition],
   );
 
   const onEdgesDelete = useCallback(
     (deletedEdges: Edge[]) => {
-      const targetCounts = new Map<string, number>();
-      for (const e of deletedEdges) targetCounts.set(e.target, (targetCounts.get(e.target) || 0) + 1);
+      const clearedBranchIndexes = new Map<string, Set<number>>();
+      const referenceRemovals = new Map<string, Set<string>>();
+      const deletedSyntheticEdges: Array<Pick<Edge, 'source' | 'target'>> = [];
+      for (const e of deletedEdges) {
+        const branchIndex = gateBranchIndex(e.sourceHandle as string | null | undefined);
+        if (branchIndex !== null) {
+          const indexes = clearedBranchIndexes.get(e.source) ?? new Set<number>();
+          indexes.add(branchIndex);
+          clearedBranchIndexes.set(e.source, indexes);
+          continue;
+        }
+        if ((e.data as Record<string, unknown> | undefined)?.synthetic) {
+          deletedSyntheticEdges.push({ source: e.source, target: e.target });
+          continue;
+        }
+        const sources = referenceRemovals.get(e.target) ?? new Set<string>();
+        sources.add(e.source);
+        referenceRemovals.set(e.target, sources);
+      }
       setNodes((nds) =>
         nds.map((n) => {
-          const dec = targetCounts.get(n.id);
-          if (!dec) return n;
-          return {
-            ...n,
-            data: {
-              ...n.data,
-              dependencyCount: Math.max(0, (n.data as TaskNodeData).dependencyCount - dec),
-            },
-          };
+          const branchIndexes = clearedBranchIndexes.get(n.id);
+          const sourceRefsToRemove = referenceRemovals.get(n.id);
+          let nextData = n.data as TaskNodeData;
+          if (branchIndexes && branchIndexes.size > 0) {
+            let branches = getEditableConditionalBranches(nextData);
+            branches = branches.map((branch, index) =>
+              branchIndexes.has(index) ? { ...branch, goto: '' } : branch,
+            );
+            nextData = { ...nextData, ...conditionalBranchDataPatch(branches) };
+          }
+          if (sourceRefsToRemove && sourceRefsToRemove.size > 0) {
+            for (const sourceId of sourceRefsToRemove) {
+              nextData = removeSourceReferencesFromNodeData(nextData, sourceId);
+            }
+          }
+          if (deletedSyntheticEdges.length > 0 && nextData.type === 'for_each' && nextData.forEachSteps.length > 0) {
+            let nextSteps = nextData.forEachSteps;
+            for (const edge of deletedSyntheticEdges) {
+              const targetIndex = nextSteps.indexOf(edge.target);
+              if (targetIndex < 0) continue;
+              const removesFirstBodyStep = edge.source === n.id && targetIndex === 0;
+              const removesSequentialBodyStep = targetIndex > 0 && nextSteps[targetIndex - 1] === edge.source;
+              if (!removesFirstBodyStep && !removesSequentialBodyStep) continue;
+              nextSteps = nextSteps.filter((_, index) => index !== targetIndex);
+            }
+            if (nextSteps !== nextData.forEachSteps) {
+              nextData = { ...nextData, forEachSteps: nextSteps };
+            }
+          }
+          return nextData === n.data ? n : { ...n, data: nextData };
         }),
       );
     },
@@ -902,18 +1769,17 @@ function WorkflowEditorInner({
   const onPaneContextMenu = useCallback(
     (event: React.MouseEvent | MouseEvent) => {
       event.preventDefault();
-      const flowPos = screenToFlowPosition({
-        x: (event as MouseEvent).clientX,
-        y: (event as MouseEvent).clientY,
-      });
+      const clientX = (event as MouseEvent).clientX;
+      const clientY = (event as MouseEvent).clientY;
+      const flowPos = rememberPointerFlowPosition(clientX, clientY);
       setContextMenu({
-        screenX: (event as MouseEvent).clientX,
-        screenY: (event as MouseEvent).clientY,
+        screenX: clientX,
+        screenY: clientY,
         flowX: flowPos.x,
         flowY: flowPos.y,
       });
     },
-    [screenToFlowPosition],
+    [rememberPointerFlowPosition],
   );
 
   // ── Side panel updates ──────────────────────────────────────────────────
@@ -924,27 +1790,67 @@ function WorkflowEditorInner({
           n.id === nodeId ? { ...n, data: { ...n.data, ...updates } } : n,
         ),
       );
+      if (updates.conditionalBranches) {
+        setEdges((eds) => {
+          const kept = eds.filter((edge) =>
+            !(edge.source === nodeId && isGateBranchHandle(edge.sourceHandle as string | null | undefined)),
+          );
+          const branchEdges = updates.conditionalBranches!
+            .map((branch, index): Edge | null => {
+              if (!branch.goto) return null;
+              const handle = gateBranchHandle(index);
+              const style = gateBranchStyle(branch, index);
+              const label = gateBranchLabel(branch, index);
+              return {
+                id: `${nodeId}->${handle}->${branch.goto}`,
+                source: nodeId,
+                sourceHandle: handle,
+                target: branch.goto,
+                type: wireStyle,
+                animated: true,
+                selectable: true,
+                interactionWidth: 20,
+                style,
+                markerEnd: { type: MarkerType.ArrowClosed, color: style.stroke },
+                label,
+                labelStyle: { fill: style.stroke, fontSize: 10, fontWeight: 600 },
+              };
+            })
+            .filter((edge): edge is Edge => edge !== null);
+          return [...kept, ...applyWireStyleToEdges(branchEdges, wireStyle)];
+        });
+      }
     },
-    [setNodes],
+    [setNodes, setEdges, wireStyle],
   );
 
-  // Atomic step-id rename: keeps node.id, data.taskId, and edge endpoints in
-  // lockstep so depends_on round-trips correctly.
-  //
-  // Known gap (P1.5a, intentional): does NOT rewrite `${old_id.output}`
-  // references buried inside other steps' fields (prompts, conditions, etc.).
-  // Users editing a Step ID see only the dependency wires move; if they had
-  // typed `${test-agent.output}` into a downstream prompt, that string keeps
-  // the old name. Surfacing those references in the panel is P1.5b/c work.
+  // Atomic step-id rename: keeps node.id, data.taskId, edge endpoints, and
+  // `${step_id.*}` references in lockstep so validator dependency checks keep
+  // seeing the same upstream step after a save/reopen.
   const handleRenameStep = useCallback(
     (oldId: string, newId: string) => {
       if (oldId === newId) return;
       setNodes((nds) =>
-        nds.map((n) =>
-          n.id === oldId
-            ? { ...n, id: newId, data: { ...n.data, taskId: newId, label: n.data.label === oldId ? newId : n.data.label } }
-            : n,
-        ),
+        nds.map((n) => {
+          const rewrittenData = rewriteStepRefsInTaskData(n.data as TaskNodeData, oldId, newId);
+          const renamed = n.id === oldId
+            ? {
+                ...n,
+                id: newId,
+                data: {
+                  ...rewrittenData,
+                  taskId: newId,
+                  label: rewrittenData.label === oldId ? newId : rewrittenData.label,
+                },
+              }
+            : { ...n, data: rewrittenData };
+          const data = renamed.data as TaskNodeData;
+          if (!data.conditionalBranches?.some((branch) => branch.goto === oldId)) return renamed;
+          const branches = data.conditionalBranches.map((branch) =>
+            branch.goto === oldId ? { ...branch, goto: newId } : branch,
+          );
+          return { ...renamed, data: { ...data, ...conditionalBranchDataPatch(branches) } };
+        }),
       );
       setEdges((eds) =>
         eds.map((e) => {
@@ -966,7 +1872,20 @@ function WorkflowEditorInner({
 
   const handleNodeDelete = useCallback(
     (nodeId: string) => {
-      setNodes((nds) => nds.filter((n) => n.id !== nodeId));
+      setNodes((nds) =>
+        nds
+          .filter((n) => n.id !== nodeId)
+          .map((n) => {
+            const data = n.data as TaskNodeData;
+            if (data.type !== 'conditional' || !data.conditionalBranches?.some((branch) => branch.goto === nodeId)) {
+              return n;
+            }
+            const branches = data.conditionalBranches.map((branch) =>
+              branch.goto === nodeId ? { ...branch, goto: '' } : branch,
+            );
+            return { ...n, data: { ...data, ...conditionalBranchDataPatch(branches) } };
+          }),
+      );
       setEdges((eds) => eds.filter((e) => e.source !== nodeId && e.target !== nodeId));
       if (selectedNodeId === nodeId) setSelectedNodeId(null);
     },
@@ -1009,6 +1928,108 @@ function WorkflowEditorInner({
     [setNodes],
   );
 
+  const getAgentPickerValue = useCallback(
+    (taskId: string, target: AgentPickerTarget, participantIndex?: number): string | undefined => {
+      const data = nodes.find((n) => n.id === taskId)?.data as TaskNodeData | undefined;
+      if (!data) return undefined;
+      switch (target) {
+        case 'assign':
+          return data.assign || undefined;
+        case 'groupChatParticipant':
+          return participantIndex === undefined
+            ? undefined
+            : data.groupChatParticipants?.[participantIndex] || undefined;
+        case 'groupChatModerator':
+          return data.groupChatModerator || undefined;
+        case 'supervisorAgent':
+          return data.supervisorType || undefined;
+        case 'supervisorTemplate':
+          return undefined;
+        case 'handoffTo':
+          return data.handoffTo || undefined;
+        case 'a2aSkill':
+          return data.a2aSkillId || undefined;
+        case 'mapReduceMapper':
+          return data.mapReduceMapper || undefined;
+        case 'mapReduceReducer':
+          return data.mapReduceReducer || undefined;
+      }
+    },
+    [nodes],
+  );
+
+  const applyAgentPickerSelection = useCallback(
+    (state: NonNullable<typeof agentPickerState>, name: string | null) => {
+      const current = nodes.find((n) => n.id === state.taskId)?.data as TaskNodeData | undefined;
+      const picked = name ? poolAgents.find((a) => a.item_name === name) : undefined;
+      if (!current) return;
+
+      if (state.target === 'assign') {
+        if (name === null) {
+          handleNodeUpdate(state.taskId, { assign: '' });
+          return;
+        }
+        handleNodeUpdate(state.taskId, {
+          assign: name,
+          agentType: picked?.agent_type || current.agentType || 'claude',
+          role: picked?.role || current.role || 'coder',
+        });
+        return;
+      }
+
+      if (state.target === 'groupChatParticipant') {
+        const next = [...(current.groupChatParticipants || [])];
+        if (state.participantIndex === undefined) {
+          if (name && !next.includes(name)) next.push(name);
+        } else if (name === null) {
+          next.splice(state.participantIndex, 1);
+        } else {
+          next[state.participantIndex] = name;
+        }
+        handleNodeUpdate(state.taskId, { groupChatParticipants: next.filter(Boolean) });
+        return;
+      }
+
+      if (state.target === 'groupChatModerator') {
+        handleNodeUpdate(state.taskId, { groupChatModerator: name ?? 'claude' });
+        return;
+      }
+
+      if (state.target === 'supervisorAgent') {
+        handleNodeUpdate(state.taskId, { supervisorType: name ?? 'claude' });
+        return;
+      }
+
+      if (state.target === 'supervisorTemplate') {
+        if (!name) return;
+        const next = [...(current.supervisorTemplates || [])];
+        if (!next.includes(name)) next.push(name);
+        handleNodeUpdate(state.taskId, { supervisorTemplates: next });
+        return;
+      }
+
+      if (state.target === 'handoffTo') {
+        handleNodeUpdate(state.taskId, { handoffTo: name ?? 'codex' });
+        return;
+      }
+
+      if (state.target === 'a2aSkill') {
+        handleNodeUpdate(state.taskId, { a2aSkillId: name ?? '' });
+        return;
+      }
+
+      if (state.target === 'mapReduceMapper') {
+        handleNodeUpdate(state.taskId, { mapReduceMapper: name ?? 'claude' });
+        return;
+      }
+
+      if (state.target === 'mapReduceReducer') {
+        handleNodeUpdate(state.taskId, { mapReduceReducer: name ?? 'claude' });
+      }
+    },
+    [handleNodeUpdate, nodes, poolAgents],
+  );
+
   // ── Toolbar actions ─────────────────────────────────────────────────────
   const openPalette = useCallback((position?: { x: number; y: number }) => {
     setPaletteContext(position ? { position } : undefined);
@@ -1045,17 +2066,19 @@ function WorkflowEditorInner({
       const meta = parseWorkflowMeta(yamlText);
       setWorkflowMeta(meta);
       const { nodes: rawNodes, edges: newEdges } = tasksToFlow(tasks);
-      const laidOut = layoutNodes(rawNodes, newEdges);
-      setNodes(laidOut);
-      setEdges(newEdges);
-      setName(meta.name || name);
-      setDescription(meta.description || description);
+      const nextName = meta.name || name;
+      const nextDescription = meta.description || description;
+      const positioned = nodesForWorkflowTasks(nextName, tasks, rawNodes, newEdges);
+      setNodes(positioned);
+      setEdges(applyWireStyleToEdges(newEdges, wireStyle));
+      setName(nextName);
+      setDescription(nextDescription);
       setTags(meta.tags);
       taskIdCounter.current = tasks.length;
-      setYamlText(tasksToYaml(tasks, {
+      setYamlText(tasksToYaml(flowToTasks(positioned, newEdges), {
         ...meta,
-        name: meta.name || name,
-        description: meta.description || description,
+        name: nextName,
+        description: nextDescription,
       }));
       setYamlDirty(false);
       setShowAdvanced(false);
@@ -1066,15 +2089,15 @@ function WorkflowEditorInner({
       const msg = err instanceof Error ? err.message : String(err);
       setError(`Invalid YAML: ${msg}`);
     }
-  }, [yamlText, name, description, setNodes, setEdges]);
+  }, [yamlText, name, description, setNodes, setEdges, wireStyle]);
 
   // Open YAML drawer (used by EditorCommandList row + ⌘I shortcut).
   const openYamlPanel = useCallback(() => {
-    const tasks = flowToTasks(nodes as Node<TaskNodeData>[], edges);
+    const tasks = flowToTasks(liveNodes, edges);
     setYamlText(tasksToYaml(tasks, { ...workflowMeta, name, description }));
     setYamlDirty(false);
     setShowAdvanced(true);
-  }, [nodes, edges, workflowMeta, name, description]);
+  }, [liveNodes, edges, workflowMeta, name, description]);
   // Keep the ⌘I keydown effect's ref pointed at the latest closure.
   openYamlPanelRef.current = openYamlPanel;
 
@@ -1096,9 +2119,9 @@ function WorkflowEditorInner({
   // re-running it as a memo only when nodes/edges/meta change avoids stale-
   // dirty bugs.
   const currentYaml = useMemo(() => {
-    const tasks = flowToTasks(nodes as Node<TaskNodeData>[], edges);
+    const tasks = flowToTasks(liveNodes, edges);
     return tasksToYaml(tasks, { ...workflowMeta, name, description });
-  }, [nodes, edges, workflowMeta, name, description]);
+  }, [liveNodes, edges, workflowMeta, name, description]);
 
   const dirty = useMemo(() => {
     // No baseline yet (create mode with no edits) — never dirty.
@@ -1118,13 +2141,16 @@ function WorkflowEditorInner({
         const newTasks = parseWorkflowYaml(newDefinition);
         const newMeta = parseWorkflowMeta(newDefinition);
         const { nodes: rawNodes, edges: newEdges } = tasksToFlow(newTasks);
-        const laidOut = layoutNodes(rawNodes, newEdges);
+        const nextName = remote.name ?? event.name;
+        const nextDescription = remote.description ?? '';
+        const positioned = nodesForWorkflowTasks(nextName, newTasks, rawNodes, newEdges);
+        const positionedTasks = flowToTasks(positioned, newEdges);
 
         // Compute changed step IDs by comparing serialized step blobs.
-        const oldTasks = flowToTasks(nodes as Node<TaskNodeData>[], edges);
+        const oldTasks = flowToTasks(liveNodes, edges);
         const oldById = new Map(oldTasks.map((t) => [t.id, JSON.stringify(t)]));
         const changedIds = new Set<string>();
-        for (const t of newTasks) {
+        for (const t of positionedTasks) {
           const prev = oldById.get(t.id);
           if (prev === undefined || prev !== JSON.stringify(t)) {
             changedIds.add(t.id);
@@ -1132,25 +2158,25 @@ function WorkflowEditorInner({
         }
 
         // Mark changed nodes; clear after 1.2s.
-        const markedNodes = laidOut.map((n) =>
+        const markedNodes = positioned.map((n) =>
           changedIds.has(n.id)
             ? { ...n, data: { ...(n.data as TaskNodeData), justUpdated: true } }
             : n,
         );
 
         setNodes(markedNodes);
-        setEdges(newEdges);
+        setEdges(applyWireStyleToEdges(newEdges, wireStyle));
         setWorkflowMeta(newMeta);
-        setName(remote.name ?? event.name);
-        setDescription(remote.description ?? '');
+        setName(nextName);
+        setDescription(nextDescription);
         setYamlDirty(false);
         // Normalize the baseline through the same pipeline the dirty check
         // uses (parse → tasksToYaml) so a clean apply doesn't immediately
         // register as "dirty" because of formatting differences.
-        const normalized = tasksToYaml(newTasks, {
+        const normalized = tasksToYaml(positionedTasks, {
           ...newMeta,
-          name: remote.name ?? event.name,
-          description: remote.description ?? '',
+          name: nextName,
+          description: nextDescription,
         });
         setLastSyncedYaml(normalized);
         initialYamlRef.current = normalized;
@@ -1183,7 +2209,7 @@ function WorkflowEditorInner({
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [nodes, edges, setNodes, setEdges],
+    [liveNodes, edges, setNodes, setEdges, wireStyle],
   );
 
   // Stable refs so the SSE callback doesn't re-subscribe on every state change.
@@ -1216,9 +2242,10 @@ function WorkflowEditorInner({
         const newTasks = parseWorkflowYaml(newYaml);
         const newMeta = parseWorkflowMeta(newYaml);
         const { nodes: rawNodes, edges: newEdges } = tasksToFlow(newTasks);
-        const laidOut = layoutNodes(rawNodes, newEdges);
-        setNodes(laidOut);
-        setEdges(newEdges);
+        const nextName = newMeta.name || name;
+        const positioned = nodesForWorkflowTasks(nextName, newTasks, rawNodes, newEdges);
+        setNodes(positioned);
+        setEdges(applyWireStyleToEdges(newEdges, wireStyle));
         setWorkflowMeta(newMeta);
         if (newMeta.name) setName(newMeta.name);
         if (newMeta.description) setDescription(newMeta.description);
@@ -1237,7 +2264,7 @@ function WorkflowEditorInner({
         );
       }
     },
-    [setNodes, setEdges],
+    [name, setNodes, setEdges, wireStyle],
   );
 
   // ── Save ────────────────────────────────────────────────────────────────
@@ -1250,13 +2277,13 @@ function WorkflowEditorInner({
     setWarning(null);
     if (!name.trim()) return setError('Workflow name is required.');
     if (!description.trim()) return setError('Workflow description is required.');
-    if (nodes.length === 0) return setError('Add at least one step to the workflow.');
-    if (hasCycle(nodes, edges)) return setError('Cannot save: workflow has cycles.');
+    if (liveNodes.length === 0) return setError('Add at least one step to the workflow.');
+    if (hasCycle(liveNodes, edges)) return setError('Cannot save: workflow has cycles.');
     if (yamlDirty) {
       return setError('Apply the YAML changes to the graph before saving.');
     }
 
-    const tasks = flowToTasks(nodes as Node<TaskNodeData>[], edges);
+    const tasks = flowToTasks(liveNodes, edges);
     const definition = tasksToYaml(tasks, {
       ...workflowMeta,
       name: name.trim(),
@@ -1274,13 +2301,13 @@ function WorkflowEditorInner({
       const message = err instanceof Error ? err.message : 'Save failed.';
       setError(message);
     }
-  }, [name, description, tags, nodes, edges, workflowMeta, yamlDirty, onSave]);
+  }, [name, description, tags, liveNodes, edges, workflowMeta, yamlDirty, onSave]);
 
   // ── Sync YAML when toggling drawer ──────────────────────────────────────
   useEffect(() => {
     if (showAdvanced) {
       if (!yamlDirty) {
-        const tasks = flowToTasks(nodes as Node<TaskNodeData>[], edges);
+        const tasks = flowToTasks(liveNodes, edges);
         setYamlText(tasksToYaml(tasks, { ...workflowMeta, name, description }));
       }
     }
@@ -1291,10 +2318,10 @@ function WorkflowEditorInner({
   // Closure preview is best-effort — backend re-derives authoritatively.
   const computeRunToHereClosure = useCallback(
     (taskId: string) => {
-      const tasks = flowToTasks(nodes as Node<TaskNodeData>[], edges);
+      const tasks = flowToTasks(liveNodes, edges);
       return computeAncestorClosure(tasks, taskId);
     },
-    [nodes, edges],
+    [liveNodes, edges],
   );
 
   const handleRunToHere = useCallback(
@@ -1304,19 +2331,97 @@ function WorkflowEditorInner({
         setError('Save the workflow before using "Run to here".');
         return;
       }
+      setRunLog({
+        open: true,
+        workflowName: wfName,
+        targetStepId: taskId,
+        status: 'starting',
+        startedAt: new Date().toISOString(),
+      });
       try {
-        await runWorkflow(wfName, undefined, undefined, { targetStepId: taskId });
+        const result = await runWorkflow(wfName, undefined, undefined, { targetStepId: taskId });
+        setRunLog((current) => ({
+          open: true,
+          workflowName: result.workflow || current?.workflowName || wfName,
+          targetStepId: taskId,
+          status: result.status || 'running',
+          runId: result.run_id,
+          startedAt: current?.startedAt ?? new Date().toISOString(),
+          detail: current?.detail,
+        }));
       } catch (err) {
         const msg = err instanceof Error ? err.message : 'Run-to-here failed.';
         setError(msg);
+        setRunLog((current) => ({
+          open: true,
+          workflowName: current?.workflowName || wfName,
+          targetStepId: taskId,
+          status: 'failed',
+          startedAt: current?.startedAt ?? new Date().toISOString(),
+          error: msg,
+        }));
       }
     },
     [workflow?.name, name],
   );
 
+  const refreshRunLog = useCallback(async () => {
+    const runId = runLog?.runId;
+    if (!runId) return;
+    try {
+      const detail = await fetchWorkflowRun(runId);
+      setRunLog((current) =>
+        current?.runId === runId
+          ? { ...current, detail, status: detail.status || current.status, error: undefined }
+          : current,
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to load run log.';
+      setRunLog((current) =>
+        current?.runId === runId ? { ...current, error: msg } : current,
+      );
+    }
+  }, [runLog?.runId]);
+
+  const hasRunLogDetail = Boolean(runLog?.detail);
+  useEffect(() => {
+    const runId = runLog?.runId;
+    if (!runLog?.open || !runId) return undefined;
+    if (isTerminalRunStatus(runLog.status) && hasRunLogDetail) return undefined;
+
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const detail = await fetchWorkflowRun(runId);
+        if (cancelled) return;
+        setRunLog((current) =>
+          current?.runId === runId
+            ? { ...current, detail, status: detail.status || current.status, error: undefined }
+            : current,
+        );
+      } catch (err) {
+        if (cancelled) return;
+        const msg = err instanceof Error ? err.message : 'Waiting for run log...';
+        setRunLog((current) =>
+          current?.runId === runId ? { ...current, error: msg } : current,
+        );
+      }
+    };
+
+    void poll();
+    const timer = window.setInterval(() => void poll(), 2000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [runLog?.open, runLog?.runId, runLog?.status, hasRunLogDetail]);
+
   // ── Render ──────────────────────────────────────────────────────────────
-  const isEmpty = nodes.length === 0;
-  const cycleDetected = hasCycle(nodes, edges);
+  const isEmpty = liveNodes.length === 0;
+  const cycleDetected = hasCycle(liveNodes, edges);
+  const runToHereActive = Boolean(
+    runLog?.open && !isTerminalRunStatus(runLog.status),
+  );
 
   return (
     <div
@@ -1608,8 +2713,8 @@ function WorkflowEditorInner({
       <div
         style={{
           display: 'grid',
-          gridTemplateColumns: 'minmax(0, 1fr) 22rem',
-          gap: 12,
+          gridTemplateColumns: `minmax(0, 1fr) 12px ${detailsPanelWidth}px`,
+          gap: 0,
           padding: 12,
           flex: 1,
           minHeight: 0,
@@ -1630,7 +2735,7 @@ function WorkflowEditorInner({
             >
               <div className="construct-kicker">Graph</div>
               <span style={{ fontSize: 11, color: 'var(--construct-text-faint)', marginLeft: 6 }}>
-                {nodes.length} step{nodes.length === 1 ? '' : 's'} · {edges.length} edge
+                {liveNodes.length} step{liveNodes.length === 1 ? '' : 's'} · {edges.length} edge
                 {edges.length === 1 ? '' : 's'}
                 {cycleDetected ? (
                   <>
@@ -1640,6 +2745,76 @@ function WorkflowEditorInner({
                 ) : null}
               </span>
               <div style={{ flex: 1 }} />
+              <div
+                role="group"
+                aria-label="Wire style"
+                title="Wire style"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  padding: 2,
+                  gap: 2,
+                  borderRadius: 8,
+                  border: '1px solid var(--construct-border-soft)',
+                  background: 'var(--construct-bg-panel)',
+                }}
+              >
+                {WIRE_STYLE_OPTIONS.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => setWireStyle(option.value)}
+                    className="construct-button"
+                    data-variant={wireStyle === option.value ? 'primary' : undefined}
+                    title={option.title}
+                    aria-pressed={wireStyle === option.value}
+                    style={{
+                      padding: '4px 8px',
+                      fontSize: 11,
+                      border: 0,
+                      minWidth: 0,
+                    }}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+              <button
+                type="button"
+                onClick={copySelectedNode}
+                disabled={!selectedNode}
+                className="construct-button"
+                aria-label="Copy selected step"
+                title={`Copy selected step (${isMac ? '⌘' : 'Ctrl'}+C)`}
+                style={{
+                  width: 32,
+                  height: 32,
+                  padding: 0,
+                  justifyContent: 'center',
+                  opacity: selectedNode ? 1 : 0.48,
+                  cursor: selectedNode ? 'pointer' : 'not-allowed',
+                }}
+              >
+                <Copy size={14} />
+              </button>
+              <button
+                type="button"
+                onClick={() => pasteCopiedNode()}
+                disabled={!hasCopiedNode}
+                className="construct-button"
+                aria-label="Paste step"
+                title={`Paste step (${isMac ? '⌘' : 'Ctrl'}+V)`}
+                style={{
+                  width: 32,
+                  height: 32,
+                  padding: 0,
+                  justifyContent: 'center',
+                  opacity: hasCopiedNode ? 1 : 0.48,
+                  cursor: hasCopiedNode ? 'pointer' : 'not-allowed',
+                }}
+              >
+                <Clipboard size={14} />
+              </button>
               <button
                 type="button"
                 onClick={() => openPalette()}
@@ -1773,6 +2948,12 @@ function WorkflowEditorInner({
               <div
                 ref={canvasRef}
                 style={{ flex: 1, position: 'relative', background: 'var(--construct-bg-surface)' }}
+                onMouseMove={(e) => {
+                  rememberPointerFlowPosition(e.clientX, e.clientY);
+                }}
+                onMouseDown={(e) => {
+                  rememberPointerFlowPosition(e.clientX, e.clientY);
+                }}
                 onContextMenu={(e) => {
                   // Only handle when right-clicking on the empty pane.
                   const target = e.target as HTMLElement;
@@ -1781,7 +2962,7 @@ function WorkflowEditorInner({
                 }}
               >
                 <ReactFlow
-                  nodes={nodes}
+                  nodes={liveNodes}
                   edges={edges}
                   onNodesChange={onNodesChange}
                   onEdgesChange={onEdgesChange}
@@ -1793,13 +2974,14 @@ function WorkflowEditorInner({
                   onNodeDragStop={onNodeDragStop}
                   onPaneClick={onPaneClick}
                   nodeTypes={allNodeTypes}
+                  connectionLineType={CONNECTION_LINE_TYPE[wireStyle]}
                   fitView
                   elementsSelectable
                   edgesFocusable
                   deleteKeyCode={['Backspace', 'Delete']}
                   style={{ background: 'transparent' }}
                   defaultEdgeOptions={{
-                    type: 'default',
+                    type: wireStyle,
                     animated: true,
                     selectable: true,
                     style: GATE_EDGE_STYLES.default,
@@ -1817,7 +2999,7 @@ function WorkflowEditorInner({
                       overflow: 'hidden',
                     }}
                   />
-                  {nodes.length > 0 && nodes.length <= 40 && (
+                  {liveNodes.length > 0 && liveNodes.length <= 40 && (
                     <MiniMap
                       position="bottom-right"
                       pannable
@@ -1851,12 +3033,16 @@ function WorkflowEditorInner({
                 {contextMenu && (
                   <ContextMenu
                     state={contextMenu}
-                    canPaste={false}
+                    canPaste={hasCopiedNode}
                     onClose={() => setContextMenu(null)}
                     onAddStep={() => {
                       const ctx = contextMenu;
                       setContextMenu(null);
                       openPalette({ x: ctx.flowX, y: ctx.flowY });
+                    }}
+                    onPaste={() => {
+                      const ctx = contextMenu;
+                      pasteCopiedNode({ x: ctx.flowX, y: ctx.flowY });
                     }}
                     onAutoLayout={() => {
                       setContextMenu(null);
@@ -1874,11 +3060,36 @@ function WorkflowEditorInner({
           </div>
         </Panel>
 
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize step details panel"
+          title="Resize step details panel"
+          onMouseDown={beginDetailsPanelResize}
+          style={{
+            cursor: 'col-resize',
+            display: 'flex',
+            alignItems: 'stretch',
+            justifyContent: 'center',
+            padding: '0 5px',
+          }}
+        >
+          <div
+            style={{
+              width: 2,
+              borderRadius: 999,
+              background: detailsPanelResizing
+                ? 'var(--pc-accent)'
+                : 'var(--construct-border-soft)',
+            }}
+          />
+        </div>
+
         {/* Side panel */}
         {selectedNode ? (
           <StepConfigPanel
             node={selectedNode as Node<TaskNodeData>}
-            existingTaskIds={nodes.map((n) => (n.data as TaskNodeData).taskId)}
+            existingTaskIds={liveNodes.map((n) => (n.data as TaskNodeData).taskId)}
             onUpdate={handleNodeUpdate}
             onRenameStep={handleRenameStep}
             onDelete={handleNodeDelete}
@@ -1890,10 +3101,12 @@ function WorkflowEditorInner({
             dagContext={dagContext}
             onRunToHere={handleRunToHere}
             computeRunToHereClosure={computeRunToHereClosure}
-            runToHereDisabled={(!workflow?.name && !name) || dirty}
+            runToHereDisabled={(!workflow?.name && !name) || dirty || runToHereActive}
             runToHereDisabledReason={
               dirty
                 ? 'Save your edits first — Run to here uses the saved revision.'
+                : runToHereActive
+                  ? 'A Run to here request is already in progress.'
                 : undefined
             }
           />
@@ -1935,6 +3148,14 @@ function WorkflowEditorInner({
         initialPrompt={architectInitialPrompt}
       />
 
+      {runLog?.open ? (
+        <RunLogDialog
+          runLog={runLog}
+          onClose={() => setRunLog(null)}
+          onRefresh={refreshRunLog}
+        />
+      ) : null}
+
       {/* Shared agent picker — single mount for the entire editor.
           Opened by canvas badge clicks, auto-open after creating a new
           agent step, AND the side panel "Choose agent…" button (which
@@ -1947,27 +3168,17 @@ function WorkflowEditorInner({
         }}
         value={
           agentPickerState
-            ? (nodes.find((n) => n.id === agentPickerState.taskId)?.data as TaskNodeData | undefined)?.assign
+            ? getAgentPickerValue(
+                agentPickerState.taskId,
+                agentPickerState.target,
+                agentPickerState.participantIndex,
+              )
             : undefined
         }
         anchorRect={agentPickerState?.anchorRect ?? null}
         onSelect={(name) => {
           if (!agentPickerState) return;
-          if (name === null) {
-            handleNodeUpdate(agentPickerState.taskId, { assign: '' });
-            return;
-          }
-          // Enrich with agentType + role from the picked roster entry,
-          // matching the behaviour the side-panel mount used to have.
-          const picked = poolAgents.find((a) => a.item_name === name);
-          const current = nodes.find((n) => n.id === agentPickerState.taskId)?.data as
-            | TaskNodeData
-            | undefined;
-          handleNodeUpdate(agentPickerState.taskId, {
-            assign: name,
-            agentType: picked?.agent_type || current?.agentType || 'claude',
-            role: picked?.role || current?.role || 'coder',
-          });
+          applyAgentPickerSelection(agentPickerState, name);
         }}
       />
     </div>
@@ -1983,6 +3194,7 @@ function ContextMenu({
   canPaste,
   onClose,
   onAddStep,
+  onPaste,
   onAutoLayout,
   onFitToView,
   isMac,
@@ -1991,6 +3203,7 @@ function ContextMenu({
   canPaste: boolean;
   onClose: () => void;
   onAddStep: () => void;
+  onPaste: () => void;
   onAutoLayout: () => void;
   onFitToView: () => void;
   isMac: boolean;
@@ -2019,7 +3232,7 @@ function ContextMenu({
       }}
     >
       <ContextMenuItem onClick={onAddStep} label="Add Step" shortcut={`${isMac ? '⌘' : 'Ctrl'} K`} />
-      <ContextMenuItem onClick={() => {}} label="Paste" disabled={!canPaste} />
+      <ContextMenuItem onClick={onPaste} label="Paste Step" shortcut={`${isMac ? '⌘' : 'Ctrl'} V`} disabled={!canPaste} />
       <ContextMenuSeparator />
       <ContextMenuItem onClick={onAutoLayout} label="Auto-layout" />
       <ContextMenuItem onClick={onFitToView} label="Fit to View" />
@@ -2345,6 +3558,7 @@ function WorkflowSettingsPanel({
                     <option value="list">list</option>
                   </select>
                   <button
+                    type="button"
                     onClick={() => setMeta((m) => ({ ...m, inputs: m.inputs.filter((_, i) => i !== ii) }))}
                     style={{
                       background: 'transparent',

@@ -656,7 +656,7 @@ export default function Assets() {
                   onClick={() => handleProjectSelect(project.name)}
                   style={{
                     color: project.name === selectedProject ? 'var(--construct-text-primary)' : 'var(--construct-text-secondary)',
-                    background: project.name === selectedProject ? 'var(--construct-signal-live-soft)' : 'transparent',
+                    background: project.name === selectedProject ? 'var(--construct-signal-selected-soft, color-mix(in srgb, var(--construct-signal-selected) 18%, transparent))' : 'transparent',
                   }}
                 >
                   {project.name}
@@ -708,9 +708,9 @@ export default function Assets() {
         <div
           className="flex items-center gap-2 rounded-[8px] border px-3 py-2 text-sm"
           style={{
-            borderColor: notice.tone === 'success' ? 'rgba(125,255,155,0.24)' : 'rgba(255,107,122,0.24)',
+            borderColor: notice.tone === 'success' ? 'color-mix(in srgb, var(--construct-status-success) 24%, transparent)' : 'color-mix(in srgb, var(--construct-status-danger) 24%, transparent)',
             color: notice.tone === 'success' ? 'var(--construct-status-success)' : 'var(--construct-status-danger)',
-            background: notice.tone === 'success' ? 'rgba(125,255,155,0.08)' : 'rgba(255,107,122,0.08)',
+            background: notice.tone === 'success' ? 'color-mix(in srgb, var(--construct-status-success) 8%, transparent)' : 'color-mix(in srgb, var(--construct-status-danger) 8%, transparent)',
           }}
         >
           {notice.tone === 'success' ? <Check className="h-4 w-4 shrink-0" /> : <AlertTriangle className="h-4 w-4 shrink-0" />}
@@ -814,7 +814,7 @@ export default function Assets() {
                       style={{
                         borderColor: 'var(--construct-border-soft)',
                         background: isActive
-                          ? 'color-mix(in srgb, var(--construct-signal-live-soft) 80%, var(--construct-bg-panel))'
+                          ? 'color-mix(in srgb, var(--construct-signal-selected) 14%, var(--construct-bg-panel))'
                           : 'transparent',
                         opacity: item.deprecated ? 0.6 : 1,
                       }}
@@ -1007,10 +1007,10 @@ export default function Assets() {
                             className="flex w-full items-center justify-between gap-2 rounded-[10px] px-3 py-2 text-left transition"
                             style={{
                               background: isRevActive
-                                ? 'var(--construct-signal-live-soft)'
+                                ? 'var(--construct-signal-selected-soft, color-mix(in srgb, var(--construct-signal-selected) 18%, transparent))'
                                 : 'color-mix(in srgb, var(--construct-bg-elevated) 50%, transparent)',
                               borderLeft: isRevActive
-                                ? '2px solid var(--construct-signal-live)'
+                                ? '2px solid var(--construct-signal-selected)'
                                 : '2px solid transparent',
                             }}
                           >
@@ -1079,7 +1079,7 @@ export default function Assets() {
                           style={{
                             background:
                               selectedArtifact?.kref === artifact.kref
-                                ? 'var(--construct-signal-live-soft)'
+                                ? 'var(--construct-signal-selected-soft, color-mix(in srgb, var(--construct-signal-selected) 18%, transparent))'
                                 : 'color-mix(in srgb, var(--construct-bg-elevated) 50%, transparent)',
                             opacity: artifact.deprecated ? 0.62 : 1,
                           }}

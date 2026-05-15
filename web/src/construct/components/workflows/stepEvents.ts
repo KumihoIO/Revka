@@ -10,7 +10,7 @@ export interface AddStepDetail {
   /** Optional canvas (flow) coordinates. Defaults to viewport center. */
   position?: { x: number; y: number };
   /** When emitted from a noodle-drop, the source node + handle to wire from. */
-  source?: { taskId: string; handle?: 'true' | 'false' | null };
+  source?: { taskId: string; handle?: string | null };
   /** When emitted from a reverse-noodle-drop (target handle dragged onto
    *  empty canvas), the target node id to wire INTO. The new node becomes
    *  the upstream source: `new node → target node`. */
@@ -33,10 +33,23 @@ export function emitAddStep(detail: AddStepDetail): void {
 // ---------------------------------------------------------------------------
 
 export interface OpenAgentPickerDetail {
-  /** Node id of the step to assign. The editor uses this to write `assign`. */
+  /** Node id of the step to update. */
   taskId: string;
   /** Bounding rect of the trigger element — used to anchor the popover. */
   anchorRect: DOMRect;
+  /** Which step field the selected pool agent should write to. */
+  target?:
+    | 'assign'
+    | 'groupChatParticipant'
+    | 'groupChatModerator'
+    | 'supervisorAgent'
+    | 'supervisorTemplate'
+    | 'handoffTo'
+    | 'a2aSkill'
+    | 'mapReduceMapper'
+    | 'mapReduceReducer';
+  /** Existing participant index to replace; omitted means append. */
+  participantIndex?: number;
 }
 
 export const OPEN_AGENT_PICKER_EVENT = 'construct:open-agent-picker';

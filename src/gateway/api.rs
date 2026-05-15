@@ -767,9 +767,124 @@ pub async fn handle_api_cost(
                 "total_tokens": 0,
                 "request_count": 0,
                 "by_model": {},
+                "by_agent": {},
+                "by_source": {},
+                "budget": {
+                    "enabled": false,
+                    "daily_limit_usd": 0.0,
+                    "monthly_limit_usd": 0.0,
+                    "warn_at_percent": 0,
+                    "daily_remaining_usd": 0.0,
+                    "monthly_remaining_usd": 0.0,
+                    "daily_percent": 0.0,
+                    "monthly_percent": 0.0,
+                    "state": "disabled",
+                },
             }
         }))
         .into_response()
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CostUsageIngestRequest {
+    pub model: String,
+    #[serde(default)]
+    pub provider: Option<String>,
+    #[serde(default)]
+    pub input_tokens: Option<u64>,
+    #[serde(default)]
+    pub output_tokens: Option<u64>,
+    #[serde(default)]
+    pub source: Option<String>,
+    #[serde(default)]
+    pub agent_id: Option<String>,
+    #[serde(default)]
+    pub agent_title: Option<String>,
+}
+
+/// POST /api/cost/usage — trusted sidecar/runtime token-usage ingestion.
+///
+/// Requires the gateway service token because this endpoint mutates the
+/// process-global cost ledger used for budget enforcement.
+pub async fn handle_api_cost_usage(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(payload): Json<CostUsageIngestRequest>,
+) -> impl IntoResponse {
+    if !service_token_matches(&state, &headers) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({
+                "error": "Unauthorized — present X-Construct-Service-Token"
+            })),
+        )
+            .into_response();
+    }
+
+    let model = payload.model.trim();
+    if model.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "model is required"})),
+        )
+            .into_response();
+    }
+
+    let Some(ref tracker) = state.cost_tracker else {
+        return Json(serde_json::json!({
+            "recorded": false,
+            "reason": "cost tracking disabled"
+        }))
+        .into_response();
+    };
+
+    let provider = payload
+        .provider
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("sidecar");
+    let source = payload
+        .source
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("sidecar");
+    let metadata = crate::cost::types::CostRecordMetadata {
+        source: Some(source.to_string()),
+        provider: Some(provider.to_string()),
+        agent_id: payload
+            .agent_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string),
+        agent_title: payload
+            .agent_title
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string),
+    };
+
+    match tracker.record_usage_from_tokens(
+        provider,
+        model,
+        payload.input_tokens.unwrap_or(0),
+        payload.output_tokens.unwrap_or(0),
+        metadata,
+    ) {
+        Ok(usage) => Json(serde_json::json!({
+            "recorded": true,
+            "usage": usage,
+        }))
+        .into_response(),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"error": format!("Cost usage ingest failed: {error}")})),
+        )
+            .into_response(),
     }
 }
 
@@ -2175,7 +2290,7 @@ async fn create_discord_thread(
     name: &str,
 ) -> Option<String> {
     let url =
-        format!("https://discord.com/api/v10/channels/{channel_id}/messages/{message_id}/threads",);
+        format!("https://discord.com/api/v10/channels/{channel_id}/messages/{message_id}/threads");
     let client = reqwest::Client::new();
     match client
         .post(&url)
@@ -3215,6 +3330,64 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(SERVICE_TOKEN_HEADER, "SERVICE-TOKEN".parse().unwrap());
         assert!(require_auth(&state, &headers).is_ok());
+    }
+
+    #[tokio::test]
+    async fn cost_usage_ingest_requires_service_token_and_records_metadata() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let mut config = crate::config::Config {
+            workspace_dir: tmp.path().join("workspace"),
+            config_path: tmp.path().join("config.toml"),
+            ..crate::config::Config::default()
+        };
+        config.cost.enabled = true;
+        config.cost.prices = std::collections::HashMap::from([(
+            "openai-codex/gpt-5".to_string(),
+            crate::config::schema::ModelPricing {
+                input: 1.0,
+                output: 2.0,
+            },
+        )]);
+        std::fs::create_dir_all(&config.workspace_dir).unwrap();
+        let tracker = Arc::new(
+            crate::cost::CostTracker::new(config.cost.clone(), &config.workspace_dir).unwrap(),
+        );
+        let mut state = test_state(config);
+        state.cost_tracker = Some(Arc::clone(&tracker));
+        state.service_token = Arc::<str>::from("SERVICE-TOKEN");
+
+        let response = handle_api_cost_usage(
+            State(state),
+            {
+                let mut headers = HeaderMap::new();
+                headers.insert(SERVICE_TOKEN_HEADER, "SERVICE-TOKEN".parse().unwrap());
+                headers
+            },
+            Json(CostUsageIngestRequest {
+                model: "gpt-5.5".to_string(),
+                provider: Some("openai-codex".to_string()),
+                input_tokens: Some(1000),
+                output_tokens: Some(500),
+                source: Some("sidecar".to_string()),
+                agent_id: Some("agent-1".to_string()),
+                agent_title: Some("Worker".to_string()),
+            }),
+        )
+        .await
+        .into_response();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let json = response_json(response).await;
+        assert_eq!(json["recorded"], true);
+        assert!(json["usage"]["cost_usd"].as_f64().unwrap_or_default() > 0.0);
+
+        let summary = tracker.get_summary().unwrap();
+        assert_eq!(summary.request_count, 1);
+        assert_eq!(summary.by_source["sidecar"].request_count, 1);
+        assert_eq!(
+            summary.by_agent["agent-1"].agent_title.as_deref(),
+            Some("Worker")
+        );
     }
 
     #[test]

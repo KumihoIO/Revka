@@ -14,6 +14,7 @@ Validates:
 """
 from __future__ import annotations
 
+import ast
 import re
 from typing import Any
 
@@ -93,12 +94,13 @@ class ValidationResult:
 # Variable reference pattern
 # ---------------------------------------------------------------------------
 
-_VAR_PATTERN = re.compile(r"\$\{([^}]+)\}")
-
 # Mirrors loader._STEP_REF_RE — matches ${step_id} or ${step_id.path}.
 # Duplicated rather than imported to avoid coupling the validator to
 # loader internals; the patterns must stay in sync.
-_STEP_REF_RE = re.compile(r"\$\{([a-zA-Z_][a-zA-Z0-9_-]*)(?:\.[a-zA-Z_][a-zA-Z0-9_.-]*)?\}")
+_VAR_PATTERN = re.compile(r"\$\{(?!\{)([^}]+)\}")
+_STEP_REF_RE = re.compile(r"\$\{(?!\{)([a-zA-Z_][a-zA-Z0-9_-]*)(?:\.[a-zA-Z_][a-zA-Z0-9_.-]*)?\}")
+_EXPR_TEMPLATE_RE = re.compile(r"\$\{\{\s*(.*?)\s*\}\}", re.DOTALL)
+_EXPR_ROOT_FALLBACK_RE = re.compile(r"(?<![A-Za-z0-9_.])([A-Za-z_][A-Za-z0-9_-]*)\s*\.")
 
 
 def _extract_var_refs(text: str) -> list[str]:
@@ -110,7 +112,31 @@ def _extract_step_ref_namespaces(text: str) -> set[str]:
     """Return the set of leading namespaces in ${X} / ${X.field} refs."""
     if not isinstance(text, str) or not text:
         return set()
-    return {m.group(1) for m in _STEP_REF_RE.finditer(text)}
+    refs = {m.group(1) for m in _STEP_REF_RE.finditer(text)}
+    refs.update(_extract_expr_ref_namespaces(text))
+    return refs
+
+
+def _extract_expr_ref_namespaces(text: str) -> set[str]:
+    """Return leading namespaces from explicit ${{ ... }} expressions."""
+    if not isinstance(text, str) or not text:
+        return set()
+    refs: set[str] = set()
+    for expr in _EXPR_TEMPLATE_RE.finditer(text):
+        try:
+            tree = ast.parse(expr.group(1), mode="eval")
+        except SyntaxError:
+            refs.update(m.group(1) for m in _EXPR_ROOT_FALLBACK_RE.finditer(expr.group(1)))
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Attribute):
+                continue
+            root: ast.AST = node
+            while isinstance(root, ast.Attribute):
+                root = root.value
+            if isinstance(root, ast.Name):
+                refs.add(root.id)
+    return refs
 
 
 # ---------------------------------------------------------------------------
@@ -194,6 +220,23 @@ def _check_step_configs(wf: WorkflowDef, valid_ids: set[str],
         elif step.type == StepType.IMAGE:
             if config is None or not getattr(config, "prompt", ""):
                 result.add_error("'image' step missing prompt", step.id, "image")
+
+        elif step.type == StepType.COMPUTE:
+            if config is None:
+                result.add_error("'compute' step missing config", step.id, "compute")
+            else:
+                outputs = getattr(config, "outputs", {})
+                if not isinstance(outputs, dict) or not outputs:
+                    result.add_error("'compute' step needs at least one output", step.id, "compute")
+                else:
+                    for key in outputs:
+                        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", str(key)):
+                            result.add_error(
+                                "compute output keys must start with a letter and contain "
+                                f"only letters, digits, and underscores: '{key}'",
+                                step.id,
+                                "compute.outputs",
+                            )
 
         elif step.type == StepType.CONDITIONAL:
             if config is None:
@@ -446,7 +489,15 @@ def _check_agent_unused_depends(
         # `_exec_agent` calls `interpolate(cfg.prompt, state)`); `role`,
         # `model`, `template`, etc. are passed verbatim. Scan only the
         # field that runtime expansion will actually consume.
-        referenced = _extract_step_ref_namespaces(cfg.prompt)
+        alias_to_id = {
+            sid.replace("-", "_"): sid
+            for sid in valid_ids
+            if "-" in sid and sid.replace("-", "_") not in valid_ids
+        }
+        referenced = {
+            alias_to_id.get(ref, ref)
+            for ref in _extract_step_ref_namespaces(cfg.prompt)
+        }
 
         for dep in step.depends_on:
             # Skip deps that don't resolve to a real step — `_check_dependencies`
@@ -472,7 +523,15 @@ def _check_variable_refs(wf: WorkflowDef, valid_ids: set[str],
 
     Known namespaces: inputs, loop, env. Step references must match valid_ids.
     """
-    builtin_namespaces = {"inputs", "loop", "env", "trigger", "for_each", "previous"}
+    builtin_namespaces = {
+        "inputs", "loop", "env", "trigger", "for_each", "previous",
+        "outputs", "run_id", "rejection",
+    }
+    alias_to_id = {
+        sid.replace("-", "_"): sid
+        for sid in valid_ids
+        if "-" in sid and sid.replace("-", "_") not in valid_ids
+    }
 
     for step in wf.steps:
         # Collect all string fields that might have variable refs
@@ -510,9 +569,17 @@ def _check_variable_refs(wf: WorkflowDef, valid_ids: set[str],
                 namespace = parts[0]
                 if namespace in builtin_namespaces:
                     continue
-                if namespace not in valid_ids:
+                if alias_to_id.get(namespace, namespace) not in valid_ids:
                     result.add_warning(
                         f"Variable reference '${{{ref}}}' — step '{namespace}' not found",
+                        step.id,
+                    )
+            for namespace in _extract_expr_ref_namespaces(text):
+                if namespace in builtin_namespaces:
+                    continue
+                if alias_to_id.get(namespace, namespace) not in valid_ids:
+                    result.add_warning(
+                        f"Expression reference '{namespace}.*' — step '{namespace}' not found",
                         step.id,
                     )
 

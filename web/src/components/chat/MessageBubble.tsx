@@ -5,6 +5,7 @@ import remarkGfm from 'remark-gfm';
 import type { ChatMessage } from './types';
 import { operatorPhaseColor } from './chat-utils';
 import { ThinkingTrace, OperatorTrace } from './TraceDisclosure';
+import { useTheme } from '@/construct/hooks/useTheme';
 
 // ---------------------------------------------------------------------------
 // Operator badge — compact inline status for orchestration events
@@ -118,6 +119,8 @@ interface MessageBubbleProps {
 }
 
 export default function MessageBubble({ msg, richMarkdown = false, copyable = false, compact = false, animationDelay }: MessageBubbleProps) {
+  const { getSkinAsset } = useTheme();
+  const operatorAvatar = getSkinAsset('operatorAvatar');
   const [copied, setCopied] = useState(false);
 
   const handleCopy = useCallback(() => {
@@ -154,7 +157,7 @@ export default function MessageBubble({ msg, richMarkdown = false, copyable = fa
     >
       {/* Avatar */}
       <div
-        className={`flex-shrink-0 ${avatarSize} flex items-center justify-center border`}
+        className={`flex-shrink-0 ${avatarSize} flex items-center justify-center overflow-hidden border`}
         style={{
           background: isUser ? 'var(--pc-accent)' : 'var(--pc-bg-elevated)',
           borderColor: isUser ? 'var(--pc-accent)' : 'var(--pc-border)',
@@ -162,7 +165,9 @@ export default function MessageBubble({ msg, richMarkdown = false, copyable = fa
       >
         {isUser
           ? <User className={`${iconSize} text-white`} />
-          : <Bot className={iconSize} style={{ color: 'var(--pc-accent)' }} />
+          : operatorAvatar
+            ? <img src={operatorAvatar} alt="" className="h-full w-full object-cover" draggable={false} />
+            : <Bot className={iconSize} style={{ color: 'var(--pc-accent)' }} />
         }
       </div>
 

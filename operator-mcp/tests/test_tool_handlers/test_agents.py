@@ -155,6 +155,28 @@ class TestToolCreateAgent:
             assert result["type"] == "codex"
             assert result["template"] == "test-tmpl"
 
+    async def test_budget_denial_does_not_register_agent(self, journal, mock_pool_client, tmp_path, monkeypatch):
+        async def deny_budget():
+            return {
+                "error": "Budget exceeded",
+                "code": "budget_exceeded",
+                "source": "gateway",
+            }
+
+        import operator_mcp.tool_handlers.agents as mod
+        monkeypatch.setattr(mod, "_check_gateway_budget_before_spawn", deny_budget)
+
+        result = await tool_create_agent({
+            "title": "Denied Agent",
+            "initial_prompt": "Do work",
+            "cwd": str(tmp_path),
+        }, journal, mock_pool_client)
+
+        assert result["code"] == "budget_exceeded"
+        assert "agent_id" not in result
+        assert AGENTS == {}
+        assert journal.load_history() == []
+
 
 # ---------------------------------------------------------------------------
 # tool_wait_for_agent

@@ -32,6 +32,36 @@ export interface ToolSpec {
   parameters: any;
 }
 
+export type SkinModeName = 'light' | 'dark';
+export type SkinAssetSlot =
+  | 'brandLogo'
+  | 'operatorAvatar'
+  | 'dashboardHero'
+  | 'shellTexture'
+  | 'panelDecoration';
+
+export interface SkinModeDefinition {
+  tokens?: Record<string, string>;
+  assets?: Partial<Record<SkinAssetSlot, string>>;
+  preview?: string;
+}
+
+export interface SkinManifest {
+  schemaVersion: 1;
+  id: string;
+  name: string;
+  version: string;
+  modes: Partial<Record<SkinModeName, SkinModeDefinition>>;
+}
+
+export interface SkinSummary {
+  id: string;
+  name: string;
+  version: string;
+  manifest: SkinManifest;
+  assetBasePath: string;
+}
+
 export interface CronJob {
   id: string;
   name: string | null;
@@ -80,6 +110,9 @@ export interface CostSummary {
   total_tokens: number;
   request_count: number;
   by_model: Record<string, ModelStats>;
+  by_agent?: Record<string, AgentStats>;
+  by_source?: Record<string, SourceStats>;
+  budget?: BudgetStatus;
 }
 
 export interface ModelStats {
@@ -87,6 +120,35 @@ export interface ModelStats {
   cost_usd: number;
   total_tokens: number;
   request_count: number;
+}
+
+export interface AgentStats {
+  agent_id: string;
+  agent_title?: string | null;
+  source?: string | null;
+  cost_usd: number;
+  total_tokens: number;
+  request_count: number;
+  by_model: Record<string, ModelStats>;
+}
+
+export interface SourceStats {
+  source: string;
+  cost_usd: number;
+  total_tokens: number;
+  request_count: number;
+}
+
+export interface BudgetStatus {
+  enabled: boolean;
+  daily_limit_usd: number;
+  monthly_limit_usd: number;
+  warn_at_percent: number;
+  daily_remaining_usd: number;
+  monthly_remaining_usd: number;
+  daily_percent: number;
+  monthly_percent: number;
+  state: 'ok' | 'warning' | 'exceeded' | 'disabled' | string;
 }
 
 export interface AuditEvent {

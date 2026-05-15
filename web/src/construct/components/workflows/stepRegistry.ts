@@ -11,6 +11,7 @@ import {
   Archive,
   Bell,
   Bot,
+  Calculator,
   CheckCircle,
   Crown,
   FileCode,
@@ -97,6 +98,14 @@ export const STEP_TYPES: StepTypeDef[] = [
     searchTags: ['script', 'code', 'py', 'subprocess'],
   },
   {
+    type: 'compute',
+    label: 'Compute',
+    category: 'execution',
+    icon: Calculator,
+    description: 'Evaluate safe expressions into typed output fields.',
+    searchTags: ['math', 'expression', 'transform', 'calculate', 'derive'],
+  },
+  {
     type: 'output',
     label: 'Output',
     category: 'execution',
@@ -127,7 +136,7 @@ export const STEP_TYPES: StepTypeDef[] = [
     label: 'Conditional',
     category: 'control',
     icon: GitBranch,
-    description: 'Branch on an expression — true/false handles route flow.',
+    description: 'Branch on ordered expressions with one handle per route.',
     searchTags: ['if', 'else', 'gate', 'branch', 'condition'],
   },
   {

@@ -6,6 +6,114 @@
  */
 import { spawn } from "node:child_process";
 const log = (msg) => process.stderr.write(`[session-mgr:codex] ${msg}\n`);
+function asNumber(value) {
+    if (typeof value === "number" && Number.isFinite(value))
+        return value;
+    if (typeof value === "string" && value.trim()) {
+        const parsed = Number(value);
+        if (Number.isFinite(parsed))
+            return parsed;
+    }
+    return undefined;
+}
+function asString(value) {
+    if (typeof value === "string" && value.trim())
+        return value.trim();
+    return undefined;
+}
+function usageFromCandidate(candidate) {
+    if (!candidate || typeof candidate !== "object")
+        return undefined;
+    const inputTokens = asNumber(candidate.inputTokens ??
+        candidate.input_tokens ??
+        candidate.prompt_tokens ??
+        candidate.promptTokens);
+    const outputTokens = asNumber(candidate.outputTokens ??
+        candidate.output_tokens ??
+        candidate.completion_tokens ??
+        candidate.completionTokens);
+    const totalCostUsd = asNumber(candidate.totalCostUsd ??
+        candidate.total_cost_usd ??
+        candidate.costUsd ??
+        candidate.cost_usd);
+    if (inputTokens === undefined && outputTokens === undefined && totalCostUsd === undefined) {
+        return undefined;
+    }
+    const model = asString(candidate.model ??
+        candidate.model_name ??
+        candidate.modelName ??
+        candidate.info?.model);
+    const provider = asString(candidate.provider ??
+        candidate.provider_name ??
+        candidate.providerName ??
+        candidate.info?.provider);
+    return { inputTokens, outputTokens, totalCostUsd, model, provider };
+}
+function withEventMetadata(usage, event) {
+    return {
+        ...usage,
+        model: usage.model ??
+            asString(event?.model ?? event?.model_name ?? event?.modelName) ??
+            asString(event?.response?.model ?? event?.data?.model ?? event?.info?.model),
+        provider: usage.provider ??
+            asString(event?.provider ?? event?.provider_name ?? event?.providerName) ??
+            asString(event?.response?.provider ?? event?.data?.provider ?? event?.info?.provider),
+    };
+}
+function extractUsage(event) {
+    const candidates = [
+        event?.usage,
+        event?.token_usage,
+        event?.tokenUsage,
+        event?.total_token_usage,
+        event?.totalTokenUsage,
+        event?.info?.usage,
+        event?.info?.token_usage,
+        event?.info?.total_token_usage,
+        event?.event?.usage,
+        event?.response?.usage,
+        event?.data?.usage,
+    ];
+    for (const candidate of candidates) {
+        const usage = usageFromCandidate(candidate);
+        if (usage)
+            return withEventMetadata(usage, event);
+    }
+    const usage = usageFromCandidate(event);
+    return usage ? withEventMetadata(usage, event) : undefined;
+}
+function mergeUsage(current, next) {
+    return {
+        inputTokens: next.inputTokens ?? current.inputTokens,
+        outputTokens: next.outputTokens ?? current.outputTokens,
+        totalCostUsd: next.totalCostUsd ?? current.totalCostUsd,
+        model: next.model ?? current.model,
+        provider: next.provider ?? current.provider,
+    };
+}
+function extractTimelineText(event) {
+    const type = String(event?.type ?? event?.event?.type ?? "");
+    const candidates = [
+        event?.message,
+        event?.text,
+        event?.delta,
+        event?.content,
+        event?.item?.text,
+        event?.event?.message,
+        event?.event?.text,
+        event?.data?.message,
+        event?.data?.text,
+    ];
+    const text = candidates.find((value) => typeof value === "string" && value.length > 0);
+    if (!text)
+        return "";
+    if (type && !/message|delta|output|response/i.test(type))
+        return "";
+    return text;
+}
+function hasUsage(usage) {
+    return usage.inputTokens !== undefined || usage.outputTokens !== undefined || usage.totalCostUsd !== undefined;
+}
 /**
  * Create a Codex agent session via subprocess.
  */
@@ -18,6 +126,7 @@ export function createCodexSession(config, onEvent) {
         stdout: "",
         stderr: "",
         usage: {},
+        jsonBuffer: "",
     };
     const runPrompt = (prompt) => {
         const turnId = `turn-${++handle.turnSeq}`;
@@ -25,8 +134,17 @@ export function createCodexSession(config, onEvent) {
         onEvent({ type: "status_changed", status: "running" });
         handle.stdout = "";
         handle.stderr = "";
-        const args = ["exec", "--full-auto", "--skip-git-repo-check", prompt];
-        log(`Spawning codex: ${args.slice(0, 3).join(" ")}... (${prompt.length} chars)`);
+        handle.usage = {
+            model: config.model,
+            provider: "codex",
+        };
+        handle.jsonBuffer = "";
+        const args = ["exec", "--json", "--full-auto", "--skip-git-repo-check"];
+        if (config.model) {
+            args.push("--model", config.model);
+        }
+        args.push(prompt);
+        log(`Spawning codex: ${args.slice(0, 4).join(" ")}... (${prompt.length} chars)`);
         const proc = spawn("codex", args, {
             cwd: config.cwd,
             stdio: ["ignore", "pipe", "pipe"],
@@ -36,7 +154,32 @@ export function createCodexSession(config, onEvent) {
         proc.stdout?.on("data", (chunk) => {
             const text = chunk.toString("utf-8");
             handle.stdout += text;
-            onEvent({ type: "timeline", item: { type: "assistant_message", text } });
+            handle.jsonBuffer += text;
+            const lines = handle.jsonBuffer.split(/\r?\n/);
+            handle.jsonBuffer = lines.pop() ?? "";
+            for (const line of lines) {
+                const trimmed = line.trim();
+                if (!trimmed)
+                    continue;
+                try {
+                    const event = JSON.parse(trimmed);
+                    const usage = extractUsage(event);
+                    if (usage) {
+                        handle.usage = mergeUsage(handle.usage, {
+                            ...usage,
+                            model: usage.model ?? config.model,
+                            provider: usage.provider ?? "codex",
+                        });
+                    }
+                    const timelineText = extractTimelineText(event);
+                    if (timelineText) {
+                        onEvent({ type: "timeline", item: { type: "assistant_message", text: timelineText } });
+                    }
+                }
+                catch {
+                    onEvent({ type: "timeline", item: { type: "assistant_message", text: line } });
+                }
+            }
         });
         proc.stderr?.on("data", (chunk) => {
             const text = chunk.toString("utf-8");
@@ -47,7 +190,33 @@ export function createCodexSession(config, onEvent) {
             if (handle.closed)
                 return;
             if (code === 0) {
-                onEvent({ type: "turn_completed", turnId });
+                const tail = handle.jsonBuffer.trim();
+                if (tail) {
+                    try {
+                        const event = JSON.parse(tail);
+                        const usage = extractUsage(event);
+                        if (usage) {
+                            handle.usage = mergeUsage(handle.usage, {
+                                ...usage,
+                                model: usage.model ?? config.model,
+                                provider: usage.provider ?? "codex",
+                            });
+                        }
+                        const timelineText = extractTimelineText(event);
+                        if (timelineText) {
+                            onEvent({ type: "timeline", item: { type: "assistant_message", text: timelineText } });
+                        }
+                    }
+                    catch {
+                        onEvent({ type: "timeline", item: { type: "assistant_message", text: tail } });
+                    }
+                }
+                handle.jsonBuffer = "";
+                onEvent({
+                    type: "turn_completed",
+                    turnId,
+                    usage: hasUsage(handle.usage) ? handle.usage : undefined,
+                });
                 onEvent({ type: "status_changed", status: "idle" });
             }
             else {

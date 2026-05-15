@@ -25,6 +25,17 @@ import type { Node, Edge } from '@xyflow/react';
 // Types
 // ---------------------------------------------------------------------------
 
+export interface ConditionalBranchDefinition {
+  condition: string;
+  goto: string;
+  value?: string;
+}
+
+export interface WorkflowNodePosition {
+  x: number;
+  y: number;
+}
+
 export interface TaskDefinition {
   id: string;
   name: string;
@@ -36,6 +47,8 @@ export interface TaskDefinition {
   agent_hints: string[];
   skills: string[];
   depends_on: string[];
+  /** Layout-only editor/viewer position. Runtime ignores this field. */
+  position?: WorkflowNodePosition;
   params?: Record<string, string>;
   /** When true, executor skips the step and passes inputs straight through as output_data */
   disabled?: boolean;
@@ -49,6 +62,8 @@ export interface TaskDefinition {
   condition?: string;
   on_true?: string;
   on_false?: string;
+  /** Canonical conditional.branches entries, preserved in order. */
+  conditional_branches?: ConditionalBranchDefinition[];
   /** Optional value expressions for the true/false branches. When the gate
    *  matches a branch, the runtime evaluates this expression with the same
    *  simpleeval-based evaluator used for `condition` and emits the result
@@ -72,6 +87,17 @@ export interface TaskDefinition {
   prompt?: string;
   /** Agent step: timeout */
   timeout?: number;
+  /** Agent step: max LLM turns */
+  agent_max_turns?: number;
+  /** Agent step: MCP tool injection level */
+  agent_tools?: 'all' | 'memory' | 'none';
+  /** Agent step: expected JSON output fields */
+  agent_output_fields?: string[];
+  /** Agent step: quality-check block */
+  agent_quality_enabled?: boolean;
+  agent_quality_threshold?: number;
+  agent_quality_criteria?: string[];
+  agent_quality_model?: string;
   /** Goto step: target */
   goto_target?: string;
   /** Goto step: max iterations */
@@ -86,6 +112,8 @@ export interface TaskDefinition {
   supervisor_task?: string;
   /** Supervisor: max iterations */
   supervisor_max_iterations?: number;
+  /** Supervisor: available specialist template names */
+  supervisor_templates?: string[];
   /** Shell: command */
   shell_command?: string;
   /** Output: format */
@@ -98,8 +126,8 @@ export interface TaskDefinition {
   entity_metadata?: Record<string, string>;
   /** Handoff: from_step */
   handoff_from?: string;
-  /** Handoff: to agent type */
-  handoff_to?: 'claude' | 'codex';
+  /** Handoff: to agent type or template name */
+  handoff_to?: string;
   /** Handoff: reason */
   handoff_reason?: string;
   // --- Step common: retry ---
@@ -122,6 +150,10 @@ export interface TaskDefinition {
   human_approval_timeout?: number;
   human_approval_channel?: string;
   human_approval_channel_id?: string;
+  human_approval_on_reject_goto?: string;
+  human_approval_on_reject_max?: number;
+  human_approval_approve_keywords?: string[];
+  human_approval_reject_keywords?: string[];
   // --- Output: template ---
   output_template?: string;
   // --- A2A: full config ---
@@ -165,12 +197,16 @@ export interface TaskDefinition {
   // --- Notify: first-class message/title ---
   notify_message?: string;
   notify_title?: string;
+  notify_channel_id?: string;
   // --- Python step (see operator_mcp/workflow/schema.py::PythonStepConfig) ---
   python_script?: string;
   python_code?: string;
   python_args?: string;
+  python_interpreter?: string;
   python_timeout?: number;
   python_allow_failure?: boolean;
+  // --- Compute step (see operator_mcp/workflow/schema.py::ComputeStepConfig) ---
+  compute_outputs?: Record<string, string>;
   // --- Email step (see operator_mcp/workflow/schema.py::EmailStepConfig) ---
   email_to?: string;
   email_subject?: string;
@@ -182,14 +218,20 @@ export interface TaskDefinition {
   email_reply_to?: string;
   email_track_clicks?: boolean;
   email_track_kref?: string;
+  email_track_secret_env?: string;
   email_track_base_url?: string;
   email_smtp_host?: string;
+  email_smtp_port?: number;
+  email_smtp_tls?: boolean;
+  email_smtp_username?: string;
+  email_smtp_password_env?: string;
   email_dry_run?: boolean;
   email_timeout?: number;
   // --- Image step (see operator_mcp/workflow/schema.py::ImageStepConfig) ---
   image_prompt?: string;
   image_count?: number;
   image_canvas?: boolean | string;
+  image_canvas_target?: string;
   image_register_artifact?: boolean;
   image_space?: string;
   image_item_name?: string;
@@ -330,6 +372,8 @@ export interface TaskNodeData {
   /** Gate-only: optional value expression emitted on `output` when the
    *  false branch matches. See TaskDefinition.on_false_value. */
   onFalseValue: string;
+  /** Gate-only: canonical conditional.branches entries, preserved in order. */
+  conditionalBranches: ConditionalBranchDefinition[];
   /** Human-input channel */
   channel: string;
   /** Notify channels (multi-select) */
@@ -339,6 +383,13 @@ export interface TaskNodeData {
   role: string;
   prompt: string;
   timeout: number;
+  agentMaxTurns: number;
+  agentTools: 'all' | 'memory' | 'none';
+  agentOutputFields: string[];
+  agentQualityEnabled: boolean;
+  agentQualityThreshold: number;
+  agentQualityCriteria: string[];
+  agentQualityModel: string;
   parallelJoin: string;
   gotoTarget: string;
   gotoMaxIterations: number;
@@ -347,6 +398,7 @@ export interface TaskNodeData {
   groupChatMaxRounds: number;
   supervisorTask: string;
   supervisorMaxIterations: number;
+  supervisorTemplates: string[];
   shellCommand: string;
   outputFormat: string;
   entityName: string;
@@ -377,6 +429,10 @@ export interface TaskNodeData {
   humanApprovalTimeout: number;
   humanApprovalChannel: string;
   humanApprovalChannelId: string;
+  humanApprovalOnRejectGoto: string;
+  humanApprovalOnRejectMax: number;
+  humanApprovalApproveKeywords: string[];
+  humanApprovalRejectKeywords: string[];
   // Output
   outputTemplate: string;
   // A2A
@@ -420,12 +476,16 @@ export interface TaskNodeData {
   // Notify — first-class message/title
   notifyMessage: string;
   notifyTitle: string;
+  notifyChannelId: string;
   // Python step
   pythonScript: string;
   pythonCode: string;
   pythonArgs: string;
+  pythonInterpreter: string;
   pythonTimeout: number;
   pythonAllowFailure: boolean;
+  // Compute step
+  computeOutputs: Record<string, string>;
   // Email step
   emailTo: string;
   emailSubject: string;
@@ -437,14 +497,20 @@ export interface TaskNodeData {
   emailReplyTo: string;
   emailTrackClicks: boolean;
   emailTrackKref: string;
+  emailTrackSecretEnv: string;
   emailTrackBaseUrl: string;
   emailSmtpHost: string;
+  emailSmtpPort: number;
+  emailSmtpTls: boolean;
+  emailSmtpUsername: string;
+  emailSmtpPasswordEnv: string;
   emailDryRun: boolean;
   emailTimeout: number;
   // Image step
   imagePrompt: string;
   imageCount: number;
   imageCanvas: boolean;
+  imageCanvasTarget: string;
   imageRegisterArtifact: boolean;
   imageSpace: string;
   imageItemName: string;
@@ -546,7 +612,7 @@ export const ACTION_TO_TYPE: Record<string, string> = {
   a2a: 'a2a', resolve: 'resolve', for_each: 'for_each',
   human_approval: 'human_approval',
   // New step types — see operator_mcp/workflow/schema.py
-  python: 'python', email: 'email',
+  python: 'python', compute: 'compute', email: 'email',
   tag: 'tag', deprecate: 'deprecate',
   manus: 'manus',
 };
@@ -608,6 +674,40 @@ const asStrArr = (v: YAMLValue): string[] | undefined => {
   return out;
 };
 
+const asPosition = (v: YAMLValue): WorkflowNodePosition | undefined => {
+  if (!isObj(v)) return undefined;
+  const x = asNum(v.x);
+  const y = asNum(v.y);
+  if (x === undefined || y === undefined) return undefined;
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return undefined;
+  return { x, y };
+};
+
+const roundPositionCoordinate = (value: number): number => {
+  if (!Number.isFinite(value)) return 0;
+  const rounded = Math.round(value * 100) / 100;
+  return Object.is(rounded, -0) ? 0 : rounded;
+};
+
+const normalizeNodePosition = (position: Node['position']): WorkflowNodePosition => ({
+  x: roundPositionCoordinate(position?.x ?? 0),
+  y: roundPositionCoordinate(position?.y ?? 0),
+});
+
+function normalizeConditionalBranch(branch: ConditionalBranchDefinition): ConditionalBranchDefinition {
+  const goto = branch.goto.trim();
+  const condition = branch.condition.trim() || (goto ? 'default' : '');
+  return {
+    condition,
+    goto,
+    value: branch.value?.trim() || undefined,
+  };
+}
+
+export function hasPersistedTaskPositions(tasks: TaskDefinition[]): boolean {
+  return tasks.some((task) => task.position !== undefined);
+}
+
 export function parseWorkflowYaml(yamlText: string): TaskDefinition[] {
   const doc = YAML.load(yamlText);
   if (!isObj(doc)) return [];
@@ -665,6 +765,7 @@ function parseStep(s: YAMLObj): TaskDefinition | null {
     agent_hints,
     skills,
     depends_on,
+    position: asPosition(s.position),
     params: paramCount > 0 ? ({ _count: String(paramCount) } as Record<string, string>) : undefined,
     assign: asStr(s.assign),
     disabled: asBool(s.disabled),
@@ -690,6 +791,17 @@ function parseStep(s: YAMLObj): TaskDefinition | null {
     t.prompt = asStr(agent.prompt);
     t.timeout = asNum(agent.timeout);
     t.model = asStr(agent.model);
+    t.agent_max_turns = asNum(agent.max_turns);
+    const tools = asStr(agent.tools);
+    if (tools === 'all' || tools === 'memory' || tools === 'none') t.agent_tools = tools;
+    t.agent_output_fields = asStrArr(agent.output_fields);
+    const quality = isObj(agent.quality_check) ? agent.quality_check : undefined;
+    if (quality) {
+      t.agent_quality_enabled = asBool(quality.enabled);
+      t.agent_quality_threshold = asNum(quality.threshold);
+      t.agent_quality_criteria = asStrArr(quality.criteria);
+      t.agent_quality_model = asStr(quality.model);
+    }
     if (asStr(agent.auth)) t.auth = asStr(agent.auth);
   }
 
@@ -723,6 +835,7 @@ function parseStep(s: YAMLObj): TaskDefinition | null {
     t.supervisor_task = asStr(supervisor.task);
     t.supervisor_max_iterations = asNum(supervisor.max_iterations);
     t.supervisor_type = asStr(supervisor.supervisor_type);
+    t.supervisor_templates = asStrArr(supervisor.templates);
     t.supervisor_timeout = asNum(supervisor.timeout);
   }
 
@@ -744,9 +857,20 @@ function parseStep(s: YAMLObj): TaskDefinition | null {
     else if (pyArgs !== undefined && pyArgs !== null) {
       try { t.python_args = JSON.stringify(pyArgs); } catch { /* ignore */ }
     }
+    t.python_interpreter = asStr(python.python);
     t.python_timeout = asNum(python.timeout);
     t.python_allow_failure = asBool(python.allow_failure);
     if (asStr(python.auth)) t.auth = asStr(python.auth);
+  }
+
+  const compute = isObj(s.compute) ? s.compute : undefined;
+  if (compute && isObj(compute.outputs)) {
+    const outputs: Record<string, string> = {};
+    for (const [k, v] of Object.entries(compute.outputs)) {
+      const sv = asStr(v);
+      if (sv !== undefined) outputs[k] = sv;
+    }
+    if (Object.keys(outputs).length > 0) t.compute_outputs = outputs;
   }
 
   const email = isObj(s.email) ? s.email : undefined;
@@ -765,8 +889,13 @@ function parseStep(s: YAMLObj): TaskDefinition | null {
     t.email_reply_to = asStr(email.reply_to);
     t.email_track_clicks = asBool(email.track_clicks);
     t.email_track_kref = asStr(email.track_kref);
+    t.email_track_secret_env = asStr(email.track_secret_env);
     t.email_track_base_url = asStr(email.track_base_url);
     t.email_smtp_host = asStr(email.smtp_host);
+    t.email_smtp_port = asNum(email.smtp_port);
+    t.email_smtp_tls = asBool(email.smtp_tls);
+    t.email_smtp_username = asStr(email.smtp_username);
+    t.email_smtp_password_env = asStr(email.smtp_password_env);
     t.email_dry_run = asBool(email.dry_run);
     t.email_timeout = asNum(email.timeout);
     if (asStr(email.auth)) t.auth = asStr(email.auth);
@@ -778,7 +907,10 @@ function parseStep(s: YAMLObj): TaskDefinition | null {
     t.image_count = asNum(image.count);
     const canvas = image.canvas;
     if (typeof canvas === 'boolean') t.image_canvas = canvas;
-    else if (typeof canvas === 'string') t.image_canvas = canvas;
+    else if (typeof canvas === 'string') {
+      t.image_canvas = canvas;
+      t.image_canvas_target = canvas;
+    }
     t.image_register_artifact = asBool(image.register_artifact);
     t.image_space = asStr(image.space);
     t.image_item_name = asStr(image.item_name);
@@ -817,6 +949,7 @@ function parseStep(s: YAMLObj): TaskDefinition | null {
   if (notify) {
     const ch = asStrArr(notify.channels);
     if (ch && ch.length) t.channels = dedupChannels(ch);
+    t.notify_channel_id = asStr(notify.channel_id);
     t.notify_message = asStr(notify.message);
     t.notify_title = asStr(notify.title);
   }
@@ -824,7 +957,7 @@ function parseStep(s: YAMLObj): TaskDefinition | null {
   const handoff = isObj(s.handoff) ? s.handoff : undefined;
   if (handoff) {
     t.handoff_from = asStr(handoff.from_step);
-    t.handoff_to = asStr(handoff.to_agent_type) as 'claude' | 'codex' | undefined;
+    t.handoff_to = asStr(handoff.to_agent_type);
     t.handoff_reason = asStr(handoff.reason);
     t.handoff_task = asStr(handoff.task);
     t.handoff_timeout = asNum(handoff.timeout);
@@ -843,6 +976,10 @@ function parseStep(s: YAMLObj): TaskDefinition | null {
     t.human_approval_timeout = asNum(humanApproval.timeout);
     t.human_approval_channel = asStr(humanApproval.channel);
     t.human_approval_channel_id = asStr(humanApproval.channel_id);
+    t.human_approval_on_reject_goto = asStr(humanApproval.on_reject_goto);
+    t.human_approval_on_reject_max = asNum(humanApproval.on_reject_max);
+    t.human_approval_approve_keywords = asStrArr(humanApproval.approve_keywords);
+    t.human_approval_reject_keywords = asStrArr(humanApproval.reject_keywords);
   }
 
   const a2a = isObj(s.a2a) ? s.a2a : undefined;
@@ -954,37 +1091,26 @@ function parseStep(s: YAMLObj): TaskDefinition | null {
   }
 
   // Conditional canonical form — `conditional.branches: [{condition, goto, value?}, ...]`.
-  // Map first non-default branch → flat `condition` / `on_true` / `on_true_value`.
-  // Map the `default` branch (or the second, fallback) → `on_false` / `on_false_value`.
-  // The editor's gate node has only true/false handles so beyond two branches
-  // we drop the rest — same constraint as the previous parser.
+  // Preserve every branch for the editor, while also populating the legacy
+  // flat fields used by older true/false gate surfaces.
   const conditional = isObj(s.conditional) ? s.conditional : undefined;
   if (conditional && Array.isArray(conditional.branches)) {
-    let trueAssigned = false;
-    let falseAssigned = false;
+    const branches: ConditionalBranchDefinition[] = [];
     for (const br of conditional.branches) {
       if (!isObj(br)) continue;
       const cText = asStr(br.condition);
       const gText = asStr(br.goto);
       const vText = asStr(br.value);
-      if (!cText || !gText) continue;
-      if (cText === 'default') {
-        if (!falseAssigned) {
-          t.on_false = gText;
-          if (vText) t.on_false_value = vText;
-          falseAssigned = true;
-        }
-      } else if (!trueAssigned) {
-        t.condition = cText;
-        t.on_true = gText;
-        if (vText) t.on_true_value = vText;
-        trueAssigned = true;
-      } else if (!falseAssigned) {
-        // No explicit default — second branch becomes the false branch.
-        t.on_false = gText;
-        if (vText) t.on_false_value = vText;
-        falseAssigned = true;
-      }
+      if (!gText) continue;
+      branches.push(normalizeConditionalBranch({
+        condition: cText ?? '',
+        goto: gText,
+        value: vText || undefined,
+      }));
+    }
+    if (branches.length > 0) {
+      t.conditional_branches = branches;
+      Object.assign(t, flattenConditionalBranches(branches));
     }
   }
 
@@ -1116,7 +1242,7 @@ export function parseWorkflowMeta(yaml: string): WorkflowMeta {
               }
               i++;
             }
-            meta.inputs.push(input);
+            if (input.name) meta.inputs.push(input);
             continue;
           }
           if (it && !il.match(/^\s/) && !it.startsWith('#')) break;
@@ -1187,20 +1313,99 @@ export const GATE_EDGE_STYLES = {
   default: { stroke: 'var(--construct-status-warning)', strokeWidth: 2 },
 } as const;
 
+export function gateBranchHandle(index: number): string {
+  return `branch-${index}`;
+}
+
+export function gateBranchIndex(handle: string | null | undefined): number | null {
+  if (!handle) return null;
+  if (handle === 'true') return 0;
+  if (handle === 'false') return 1;
+  const match = /^branch-(\d+)$/.exec(handle);
+  return match ? Number(match[1]) : null;
+}
+
+export function isGateBranchHandle(handle: string | null | undefined): boolean {
+  return handle === 'true' || handle === 'false' || gateBranchIndex(handle) !== null;
+}
+
+export function gateBranchLabel(branch: ConditionalBranchDefinition, index: number): string {
+  if (branch.condition.trim() === 'default') return 'default';
+  if (index === 0) return 'true';
+  return `case ${index + 1}`;
+}
+
+export function gateBranchStyle(branch: ConditionalBranchDefinition, index: number): typeof GATE_EDGE_STYLES[keyof typeof GATE_EDGE_STYLES] {
+  if (branch.condition.trim() === 'default') return GATE_EDGE_STYLES.false;
+  if (index === 0) return GATE_EDGE_STYLES.true;
+  return GATE_EDGE_STYLES.default;
+}
+
+export function gateEdgeStyleForHandle(handle: string | null | undefined): typeof GATE_EDGE_STYLES[keyof typeof GATE_EDGE_STYLES] {
+  if (handle === 'true') return GATE_EDGE_STYLES.true;
+  if (handle === 'false') return GATE_EDGE_STYLES.false;
+  return gateBranchIndex(handle) !== null ? GATE_EDGE_STYLES.default : GATE_EDGE_STYLES.default;
+}
+
+function normalizeConditionalBranches(task: Pick<TaskDefinition, 'condition' | 'on_true' | 'on_false' | 'on_true_value' | 'on_false_value' | 'conditional_branches'>): ConditionalBranchDefinition[] {
+  if (task.conditional_branches && task.conditional_branches.length > 0) {
+    return task.conditional_branches
+      .map(normalizeConditionalBranch)
+      .filter((branch) => branch.goto);
+  }
+
+  const branches: ConditionalBranchDefinition[] = [];
+  if (task.condition && task.on_true) {
+    branches.push(normalizeConditionalBranch({
+      condition: task.condition,
+      goto: task.on_true,
+      value: task.on_true_value || undefined,
+    }));
+  }
+  if (task.on_false) {
+    branches.push(normalizeConditionalBranch({
+      condition: 'default',
+      goto: task.on_false,
+      value: task.on_false_value || undefined,
+    }));
+  }
+  return branches;
+}
+
+function flattenConditionalBranches(branches: ConditionalBranchDefinition[]): {
+  condition?: string;
+  on_true?: string;
+  on_false?: string;
+  on_true_value?: string;
+  on_false_value?: string;
+} {
+  const firstCase = branches.find((branch) => branch.condition !== 'default');
+  const fallback = branches.find((branch) => branch.condition === 'default')
+    ?? branches.find((branch) => branch !== firstCase);
+
+  return {
+    condition: firstCase?.condition,
+    on_true: firstCase?.goto,
+    on_false: fallback?.goto,
+    on_true_value: firstCase?.value,
+    on_false_value: fallback?.value,
+  };
+}
+
 export function tasksToFlow(tasks: TaskDefinition[]): { nodes: Node<TaskNodeData>[]; edges: Edge[] } {
   const isGate = (t: TaskDefinition) => t.type === 'conditional';
 
   const nodes: Node<TaskNodeData>[] = tasks.map((task, i) => ({
     id: task.id,
     type: isGate(task) ? 'gateNode' : 'taskNode',
-    position: { x: 0, y: i * 150 },
+    position: task.position ?? { x: 0, y: i * 150 },
     width: isGate(task) ? 220 : 280,
     // Initial height hint — required for the MiniMap to render rectangles
     // before nodes are measured. The actual rendered card uses minHeight
     // and grows past this; WorkflowNode.tsx calls useUpdateNodeInternals
     // via a ResizeObserver so React Flow re-anchors handles + redraws
     // the MiniMap to the measured dimensions whenever the card resizes.
-    height: isGate(task) ? 96 : 140,
+    height: isGate(task) ? Math.max(96, 86 + normalizeConditionalBranches(task).length * 24) : 140,
     data: {
       label: task.name || task.id,
       taskId: task.id,
@@ -1217,12 +1422,20 @@ export function tasksToFlow(tasks: TaskDefinition[]): { nodes: Node<TaskNodeData
       condition: task.condition || '',
       onTrueValue: task.on_true_value || '',
       onFalseValue: task.on_false_value || '',
+      conditionalBranches: normalizeConditionalBranches(task),
       channel: task.channel || '',
       channels: task.channels || [],
       agentType: task.agent_type || '',
       role: task.role || '',
       prompt: task.prompt || '',
       timeout: task.timeout || 300,
+      agentMaxTurns: task.agent_max_turns ?? 3,
+      agentTools: task.agent_tools ?? 'none',
+      agentOutputFields: task.agent_output_fields || [],
+      agentQualityEnabled: task.agent_quality_enabled ?? false,
+      agentQualityThreshold: task.agent_quality_threshold ?? 0.7,
+      agentQualityCriteria: task.agent_quality_criteria || [],
+      agentQualityModel: task.agent_quality_model || 'claude-haiku-4-5-20251001',
       parallelJoin: task.parallel_join || 'all',
       gotoTarget: task.goto_target || '',
       gotoMaxIterations: task.goto_max_iterations || 3,
@@ -1231,6 +1444,7 @@ export function tasksToFlow(tasks: TaskDefinition[]): { nodes: Node<TaskNodeData
       groupChatMaxRounds: task.group_chat_max_rounds || 8,
       supervisorTask: task.supervisor_task || '',
       supervisorMaxIterations: task.supervisor_max_iterations || 5,
+      supervisorTemplates: task.supervisor_templates || [],
       shellCommand: task.shell_command || '',
       outputFormat: task.output_format || 'markdown',
       entityName: task.entity_name || '',
@@ -1254,6 +1468,10 @@ export function tasksToFlow(tasks: TaskDefinition[]): { nodes: Node<TaskNodeData
       humanApprovalTimeout: task.human_approval_timeout || 3600,
       humanApprovalChannel: task.human_approval_channel || 'dashboard',
       humanApprovalChannelId: task.human_approval_channel_id || '',
+      humanApprovalOnRejectGoto: task.human_approval_on_reject_goto || '',
+      humanApprovalOnRejectMax: task.human_approval_on_reject_max || 3,
+      humanApprovalApproveKeywords: task.human_approval_approve_keywords || ['approve', 'approved', 'yes', 'lgtm'],
+      humanApprovalRejectKeywords: task.human_approval_reject_keywords || ['reject', 'rejected', 'no'],
       outputTemplate: task.output_template || '',
       a2aUrl: task.a2a_url || '',
       a2aSkillId: task.a2a_skill_id || '',
@@ -1288,11 +1506,14 @@ export function tasksToFlow(tasks: TaskDefinition[]): { nodes: Node<TaskNodeData
       forEachMaxIterations: task.for_each_max_iterations || 20,
       notifyMessage: task.notify_message || '',
       notifyTitle: task.notify_title || '',
+      notifyChannelId: task.notify_channel_id || '',
       pythonScript: task.python_script || '',
       pythonCode: task.python_code || '',
       pythonArgs: task.python_args || '',
+      pythonInterpreter: task.python_interpreter || '',
       pythonTimeout: task.python_timeout || 60,
       pythonAllowFailure: task.python_allow_failure || false,
+      computeOutputs: task.compute_outputs || {},
       emailTo: task.email_to || '',
       emailSubject: task.email_subject || '',
       emailBody: task.email_body || '',
@@ -1303,13 +1524,19 @@ export function tasksToFlow(tasks: TaskDefinition[]): { nodes: Node<TaskNodeData
       emailReplyTo: task.email_reply_to || '',
       emailTrackClicks: task.email_track_clicks || false,
       emailTrackKref: task.email_track_kref || '',
+      emailTrackSecretEnv: task.email_track_secret_env || '',
       emailTrackBaseUrl: task.email_track_base_url || '',
       emailSmtpHost: task.email_smtp_host || '',
+      emailSmtpPort: task.email_smtp_port || 0,
+      emailSmtpTls: task.email_smtp_tls ?? true,
+      emailSmtpUsername: task.email_smtp_username || '',
+      emailSmtpPasswordEnv: task.email_smtp_password_env || '',
       emailDryRun: task.email_dry_run || false,
       emailTimeout: task.email_timeout || 30,
       imagePrompt: task.image_prompt || '',
       imageCount: task.image_count ?? 1,
       imageCanvas: task.image_canvas !== false,
+      imageCanvasTarget: task.image_canvas_target || (typeof task.image_canvas === 'string' ? task.image_canvas : ''),
       imageRegisterArtifact: task.image_register_artifact !== false,
       imageSpace: task.image_space || '',
       imageItemName: task.image_item_name || '',
@@ -1358,7 +1585,7 @@ export function tasksToFlow(tasks: TaskDefinition[]): { nodes: Node<TaskNodeData
   // ${ref.output} interpolation) all want to add it.
   const seenEdges = new Set<string>();
   const pushEdge = (edge: Edge): void => {
-    const key = `${edge.source}->${edge.target}`;
+    const key = `${edge.source}:${edge.sourceHandle ?? ''}->${edge.target}`;
     if (seenEdges.has(key)) return;
     seenEdges.add(key);
     edges.push(edge);
@@ -1375,16 +1602,26 @@ export function tasksToFlow(tasks: TaskDefinition[]): { nodes: Node<TaskNodeData
 
   // Build a map of for_each step → children for edge rewriting
   const forEachChildrenMap = new Map<string, string[]>();
+  const forEachChildParentMap = new Map<string, string>();
   for (const task of tasks) {
     if (task.for_each_steps && task.for_each_steps.length > 0) {
       const validChildren = task.for_each_steps.filter((c) => nodeIds.has(c));
-      if (validChildren.length > 0) forEachChildrenMap.set(task.id, validChildren);
+      if (validChildren.length > 0) {
+        forEachChildrenMap.set(task.id, validChildren);
+        for (const child of validChildren) {
+          forEachChildParentMap.set(child, task.id);
+        }
+      }
     }
   }
 
   // Normal dependency edges (with parallel/for_each fan-out rewriting)
   for (const task of tasks) {
     for (const dep of task.depends_on) {
+      // A for_each wrapper already owns its body steps through for_each.steps.
+      // Treat an accidental body depends_on: [wrapper] as membership, not a
+      // real dependency, or save/reload can create backend circular validation.
+      if (forEachChildParentMap.get(task.id) === dep) continue;
       // If dep is a parallel step, replace with edges from each parallel child
       const children = parallelChildrenMap.get(dep);
       if (children) {
@@ -1483,39 +1720,29 @@ export function tasksToFlow(tasks: TaskDefinition[]): { nodes: Node<TaskNodeData
     }
   }
 
-  // Gate branch edges (on_true / on_false)
+  // Gate branch edges (canonical conditional.branches, including multi-branch gates)
   for (const task of tasks) {
     if (!isGate(task)) continue;
-    if (task.on_true && nodeIds.has(task.on_true)) {
+    const branches = normalizeConditionalBranches(task);
+    branches.forEach((branch, index) => {
+      if (!nodeIds.has(branch.goto)) return;
+      const handle = gateBranchHandle(index);
+      const style = gateBranchStyle(branch, index);
+      const label = gateBranchLabel(branch, index);
       pushEdge({
-        id: `${task.id}->true->${task.on_true}`,
+        id: `${task.id}->${handle}->${branch.goto}`,
         source: task.id,
-        sourceHandle: 'true',
-        target: task.on_true,
+        sourceHandle: handle,
+        target: branch.goto,
         type: 'default',
         animated: true,
         selectable: true,
         interactionWidth: 20,
-        style: GATE_EDGE_STYLES.true,
-        label: 'true',
-        labelStyle: { fill: 'var(--construct-status-success)', fontSize: 10, fontWeight: 600 },
+        style,
+        label,
+        labelStyle: { fill: style.stroke, fontSize: 10, fontWeight: 600 },
       });
-    }
-    if (task.on_false && nodeIds.has(task.on_false)) {
-      pushEdge({
-        id: `${task.id}->false->${task.on_false}`,
-        source: task.id,
-        sourceHandle: 'false',
-        target: task.on_false,
-        type: 'default',
-        animated: true,
-        selectable: true,
-        interactionWidth: 20,
-        style: GATE_EDGE_STYLES.false,
-        label: 'false',
-        labelStyle: { fill: 'var(--construct-status-danger)', fontSize: 10, fontWeight: 600 },
-      });
-    }
+    });
   }
 
   // Inferred dependency edges from `${step_id.<field>}` interpolations in
@@ -1530,6 +1757,7 @@ export function tasksToFlow(tasks: TaskDefinition[]): { nodes: Node<TaskNodeData
     const refs = collectStepRefs(task, nodeIds);
     for (const ref of refs) {
       if (ref === task.id) continue; // ignore self-references
+      if (forEachChildParentMap.get(task.id) === ref) continue;
       pushEdge({
         id: `ref:${ref}->${task.id}`,
         source: ref,
@@ -1566,6 +1794,10 @@ const INTERPOLATION_TEXT_FIELDS: ReadonlyArray<keyof TaskDefinition> = [
   'email_bcc',
   'image_prompt',
   'output_template',
+  'entity_name',
+  'entity_kind',
+  'entity_tag',
+  'entity_space',
   'condition',
   'goto_condition',
   'human_input_message',
@@ -1582,26 +1814,119 @@ const INTERPOLATION_TEXT_FIELDS: ReadonlyArray<keyof TaskDefinition> = [
 ];
 
 /** IDs that look like step refs but are actually workflow-scope sources. */
-const NON_STEP_REF_IDS = new Set(['input', 'trigger', 'env', 'inputs', 'outputs', 'context']);
+const NON_STEP_REF_IDS = new Set([
+  'input',
+  'inputs',
+  'trigger',
+  'env',
+  'outputs',
+  'context',
+  'loop',
+  'for_each',
+  'previous',
+  'rejection',
+  'run_id',
+]);
 
 /** Match `${step_id}` and `${step_id.field}` (and `${step_id.field.subfield}`).
  *  step_id matches the YAML id rule: starts with a letter or underscore,
  *  then letters/digits/underscores/hyphens. We don't try to handle nested
  *  expressions or pipes — LLMs use simple references. */
-const STEP_REF_REGEX = /\$\{([a-zA-Z_][a-zA-Z0-9_-]*)(?:\.[a-zA-Z_][a-zA-Z0-9_.-]*)?\}/g;
+const STEP_REF_REGEX = /\$\{(?!\{)([a-zA-Z_][a-zA-Z0-9_-]*)(?:\.[a-zA-Z_][a-zA-Z0-9_.-]*)?\}/g;
+const EXPR_TEMPLATE_REGEX = /\$\{\{\s*([\s\S]*?)\s*\}\}/g;
+
+function isExprIdentStart(ch: string): boolean {
+  return /[A-Za-z_]/.test(ch);
+}
+
+function isExprIdentPart(ch: string): boolean {
+  return /[A-Za-z0-9_-]/.test(ch);
+}
+
+function extractExpressionRootRefs(body: string): string[] {
+  const refs = new Set<string>();
+  let quote: string | null = null;
+  for (let i = 0; i < body.length;) {
+    const ch = body[i]!;
+    if (quote) {
+      if (ch === '\\') {
+        i += 2;
+        continue;
+      }
+      if (ch === quote) quote = null;
+      i += 1;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      i += 1;
+      continue;
+    }
+    if (!isExprIdentStart(ch)) {
+      i += 1;
+      continue;
+    }
+    const start = i;
+    i += 1;
+    while (i < body.length && isExprIdentPart(body[i]!)) i += 1;
+    const ident = body.slice(start, i);
+    const prev = start > 0 ? body[start - 1]! : '';
+    if (prev && /[A-Za-z0-9_.]/.test(prev)) continue;
+    let j = i;
+    while (j < body.length && /\s/.test(body[j]!)) j += 1;
+    if (body[j] === '.') refs.add(ident);
+  }
+  return [...refs];
+}
+
+function addStepRefsFromText(value: string, nodeIds: Set<string>, refs: Set<string>, aliasToId: Map<string, string>): void {
+  STEP_REF_REGEX.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = STEP_REF_REGEX.exec(value)) !== null) {
+    const rawId = m[1]!;
+    const id = aliasToId.get(rawId) ?? rawId;
+    if (NON_STEP_REF_IDS.has(rawId)) continue;
+    if (!nodeIds.has(id)) continue;
+    refs.add(id);
+  }
+
+  EXPR_TEMPLATE_REGEX.lastIndex = 0;
+  let expr: RegExpExecArray | null;
+  while ((expr = EXPR_TEMPLATE_REGEX.exec(value)) !== null) {
+    const body = expr[1] ?? '';
+    for (const rawId of extractExpressionRootRefs(body)) {
+      const id = aliasToId.get(rawId) ?? rawId;
+      if (NON_STEP_REF_IDS.has(rawId)) continue;
+      if (!nodeIds.has(id)) continue;
+      refs.add(id);
+    }
+  }
+}
 
 function collectStepRefs(task: TaskDefinition, nodeIds: Set<string>): Set<string> {
   const refs = new Set<string>();
+  const aliasToId = new Map<string, string>();
+  for (const id of nodeIds) {
+    const alias = id.replace(/-/g, '_');
+    if (alias !== id && !nodeIds.has(alias)) aliasToId.set(alias, id);
+  }
   for (const field of INTERPOLATION_TEXT_FIELDS) {
     const value = task[field];
     if (typeof value !== 'string' || !value) continue;
-    STEP_REF_REGEX.lastIndex = 0;
-    let m: RegExpExecArray | null;
-    while ((m = STEP_REF_REGEX.exec(value)) !== null) {
-      const id = m[1]!;
-      if (NON_STEP_REF_IDS.has(id)) continue;
-      if (!nodeIds.has(id)) continue;
-      refs.add(id);
+    addStepRefsFromText(value, nodeIds, refs, aliasToId);
+  }
+  if (task.compute_outputs) {
+    for (const value of Object.values(task.compute_outputs)) {
+      if (typeof value === 'string' && value) {
+        addStepRefsFromText(value, nodeIds, refs, aliasToId);
+      }
+    }
+  }
+  if (task.entity_metadata) {
+    for (const value of Object.values(task.entity_metadata)) {
+      if (typeof value === 'string' && value) {
+        addStepRefsFromText(value, nodeIds, refs, aliasToId);
+      }
     }
   }
   return refs;
@@ -1740,11 +2065,12 @@ export function computeAncestorClosure(tasks: TaskDefinition[], targetId: string
 // ---------------------------------------------------------------------------
 
 export function flowToTasks(nodes: Node<TaskNodeData>[], edges: Edge[]): TaskDefinition[] {
-  // Regular dependency edges (no sourceHandle or sourceHandle is not true/false)
+  // Regular dependency edges (no sourceHandle or sourceHandle is not a gate branch)
   const depsMap = new Map<string, string[]>();
   // Gate branch edges
   const trueBranch = new Map<string, string>();  // gateId → target
   const falseBranch = new Map<string, string>(); // gateId → target
+  const branchTargets = new Map<string, Map<number, string>>(); // gateId → branch index → target
   // Parallel children: parallel_node_id → [child_task_ids in edge order]
   const parallelChildren = new Map<string, string[]>();
 
@@ -1752,8 +2078,21 @@ export function flowToTasks(nodes: Node<TaskNodeData>[], edges: Edge[]): TaskDef
     nodes.filter((n) => n.data.type === 'parallel').map((n) => n.id),
   );
   const nodeIdToTaskId = new Map(nodes.map((n) => [n.id, n.data.taskId]));
+  const forEachChildParent = new Map<string, string>();
+  for (const node of nodes) {
+    if (node.data.type !== 'for_each') continue;
+    for (const childTaskId of node.data.forEachSteps ?? []) {
+      forEachChildParent.set(childTaskId, node.id);
+    }
+  }
 
   for (const edge of edges) {
+    const edgeData = edge.data as Record<string, unknown> | undefined;
+    // Interpolation edges are inferred from text fields and regenerated on
+    // load. Persisting them as depends_on mutates hand-authored YAML and can
+    // reintroduce deleted cycle edges on save/reopen.
+    if (edgeData?.inferred === 'interpolation') continue;
+
     // Edges from a parallel parent define child membership (→ parallel.steps).
     // Process before the synthetic-skip so round-tripping a YAML that already
     // has `parallel.steps` preserves the list.
@@ -1767,12 +2106,19 @@ export function flowToTasks(nodes: Node<TaskNodeData>[], edges: Edge[]): TaskDef
       continue;
     }
     // Skip other synthetic edges (for_each chain) — these are visual only
-    if ((edge.data as Record<string, unknown>)?.synthetic) continue;
-    if (edge.sourceHandle === 'true') {
+    if (edgeData?.synthetic) continue;
+    const branchIndex = gateBranchIndex(edge.sourceHandle as string | null | undefined);
+    if (branchIndex !== null) {
+      const branches = branchTargets.get(edge.source) ?? new Map<number, string>();
+      branches.set(branchIndex, edge.target);
+      branchTargets.set(edge.source, branches);
+    } else if (edge.sourceHandle === 'true') {
       trueBranch.set(edge.source, edge.target);
     } else if (edge.sourceHandle === 'false') {
       falseBranch.set(edge.source, edge.target);
     } else {
+      const targetTaskId = nodeIdToTaskId.get(edge.target) ?? edge.target;
+      if (forEachChildParent.get(targetTaskId) === edge.source) continue;
       const deps = depsMap.get(edge.target) || [];
       deps.push(edge.source);
       depsMap.set(edge.target, deps);
@@ -1782,6 +2128,46 @@ export function flowToTasks(nodes: Node<TaskNodeData>[], edges: Edge[]): TaskDef
   return nodes.map((node) => {
     const d = node.data;
     const st = d.type || 'agent';
+    const conditionalBranches = st === 'conditional'
+      ? (() => {
+          const branches = (d.conditionalBranches && d.conditionalBranches.length > 0
+            ? d.conditionalBranches
+            : [
+                ...(d.condition
+                  ? [{ condition: d.condition, goto: '', value: d.onTrueValue || undefined }]
+                  : []),
+                ...(d.onFalseValue
+                  ? [{ condition: 'default', goto: '', value: d.onFalseValue }]
+                  : []),
+              ]).map((branch) => ({ ...branch }));
+
+          const indexedTargets = branchTargets.get(node.id);
+          if (indexedTargets) {
+            for (const [index, target] of indexedTargets) {
+              if (branches[index]) branches[index] = { ...branches[index]!, goto: target };
+            }
+          }
+
+          const trueTarget = trueBranch.get(node.id);
+          if (trueTarget) {
+            const idx = branches.findIndex((branch) => branch.condition !== 'default');
+            if (idx >= 0) branches[idx] = { ...branches[idx]!, goto: trueTarget };
+            else branches.unshift({ condition: d.condition || 'true', goto: trueTarget, value: d.onTrueValue || undefined });
+          }
+
+          const falseTarget = falseBranch.get(node.id);
+          if (falseTarget) {
+            const idx = branches.findIndex((branch) => branch.condition === 'default');
+            if (idx >= 0) branches[idx] = { ...branches[idx]!, goto: falseTarget };
+            else branches.push({ condition: 'default', goto: falseTarget, value: d.onFalseValue || undefined });
+          }
+
+          return branches
+            .map(normalizeConditionalBranch)
+            .filter((branch) => branch.goto);
+        })()
+      : [];
+    const flatBranches = flattenConditionalBranches(conditionalBranches);
     const base: TaskDefinition = {
       id: d.taskId,
       name: d.name,
@@ -1790,11 +2176,15 @@ export function flowToTasks(nodes: Node<TaskNodeData>[], edges: Edge[]): TaskDef
       agent_hints: d.agentHints,
       skills: d.skills,
       depends_on: depsMap.get(node.id) || [],
-      condition: st === 'conditional' ? d.condition : undefined,
-      on_true: trueBranch.get(node.id),
-      on_false: falseBranch.get(node.id),
-      on_true_value: st === 'conditional' && d.onTrueValue ? d.onTrueValue : undefined,
-      on_false_value: st === 'conditional' && d.onFalseValue ? d.onFalseValue : undefined,
+      position: normalizeNodePosition(node.position),
+      condition: st === 'conditional' ? flatBranches.condition : undefined,
+      on_true: st === 'conditional' ? flatBranches.on_true : undefined,
+      on_false: st === 'conditional' ? flatBranches.on_false : undefined,
+      conditional_branches: st === 'conditional' && conditionalBranches.length > 0
+        ? conditionalBranches
+        : undefined,
+      on_true_value: st === 'conditional' ? flatBranches.on_true_value : undefined,
+      on_false_value: st === 'conditional' ? flatBranches.on_false_value : undefined,
       channel: st === 'human_input' && d.channel
         ? d.channel as TaskDefinition['channel']
         : undefined,
@@ -1803,6 +2193,7 @@ export function flowToTasks(nodes: Node<TaskNodeData>[], edges: Edge[]): TaskDef
         : undefined,
       notify_message: st === 'notify' && d.notifyMessage ? d.notifyMessage : undefined,
       notify_title: st === 'notify' && d.notifyTitle ? d.notifyTitle : undefined,
+      notify_channel_id: st === 'notify' && d.notifyChannelId ? d.notifyChannelId : undefined,
       retry: d.retry > 0 ? d.retry : undefined,
       retry_delay: d.retryDelay !== 5 ? d.retryDelay : undefined,
       disabled: d.disabled === true ? true : undefined,
@@ -1820,6 +2211,15 @@ export function flowToTasks(nodes: Node<TaskNodeData>[], edges: Edge[]): TaskDef
       if (d.assign) base.assign = d.assign;
       if (d.template) base.template = d.template;
       if (d.model) base.model = d.model;
+      if (d.agentMaxTurns && d.agentMaxTurns !== 3) base.agent_max_turns = d.agentMaxTurns;
+      if (d.agentTools && d.agentTools !== 'none') base.agent_tools = d.agentTools;
+      if (d.agentOutputFields?.length) base.agent_output_fields = d.agentOutputFields;
+      if (d.agentQualityEnabled) {
+        base.agent_quality_enabled = true;
+        base.agent_quality_threshold = d.agentQualityThreshold || 0.7;
+        if (d.agentQualityCriteria?.length) base.agent_quality_criteria = d.agentQualityCriteria;
+        if (d.agentQualityModel) base.agent_quality_model = d.agentQualityModel;
+      }
     }
     if (st === 'parallel') {
       base.parallel_join = (d.parallelJoin || 'all') as TaskDefinition['parallel_join'];
@@ -1846,6 +2246,7 @@ export function flowToTasks(nodes: Node<TaskNodeData>[], edges: Edge[]): TaskDef
       if (d.supervisorTask) base.supervisor_task = d.supervisorTask;
       if (d.supervisorMaxIterations) base.supervisor_max_iterations = d.supervisorMaxIterations;
       if (d.supervisorType !== 'claude') base.supervisor_type = d.supervisorType;
+      if (d.supervisorTemplates?.length) base.supervisor_templates = d.supervisorTemplates;
       if (d.supervisorTimeout !== 300) base.supervisor_timeout = d.supervisorTimeout;
     }
     if (st === 'shell') {
@@ -1857,8 +2258,12 @@ export function flowToTasks(nodes: Node<TaskNodeData>[], edges: Edge[]): TaskDef
       if (d.pythonScript) base.python_script = d.pythonScript;
       if (d.pythonCode) base.python_code = d.pythonCode;
       if (d.pythonArgs) base.python_args = d.pythonArgs;
+      if (d.pythonInterpreter) base.python_interpreter = d.pythonInterpreter;
       if (d.pythonTimeout && d.pythonTimeout !== 60) base.python_timeout = d.pythonTimeout;
       if (d.pythonAllowFailure) base.python_allow_failure = true;
+    }
+    if (st === 'compute') {
+      if (Object.keys(d.computeOutputs).length > 0) base.compute_outputs = d.computeOutputs;
     }
     if (st === 'email') {
       if (d.emailTo) base.email_to = d.emailTo;
@@ -1871,14 +2276,20 @@ export function flowToTasks(nodes: Node<TaskNodeData>[], edges: Edge[]): TaskDef
       if (d.emailReplyTo) base.email_reply_to = d.emailReplyTo;
       if (d.emailTrackClicks) base.email_track_clicks = true;
       if (d.emailTrackKref) base.email_track_kref = d.emailTrackKref;
+      if (d.emailTrackSecretEnv) base.email_track_secret_env = d.emailTrackSecretEnv;
       if (d.emailTrackBaseUrl) base.email_track_base_url = d.emailTrackBaseUrl;
       if (d.emailSmtpHost) base.email_smtp_host = d.emailSmtpHost;
+      if (d.emailSmtpPort) base.email_smtp_port = d.emailSmtpPort;
+      if (d.emailSmtpTls === false) base.email_smtp_tls = false;
+      if (d.emailSmtpUsername) base.email_smtp_username = d.emailSmtpUsername;
+      if (d.emailSmtpPasswordEnv) base.email_smtp_password_env = d.emailSmtpPasswordEnv;
       if (d.emailDryRun) base.email_dry_run = true;
       if (d.emailTimeout && d.emailTimeout !== 30) base.email_timeout = d.emailTimeout;
     }
     if (st === 'image') {
       if (d.imagePrompt) base.image_prompt = d.imagePrompt;
       if (d.imageCount && d.imageCount !== 1) base.image_count = d.imageCount;
+      if (d.imageCanvasTarget) base.image_canvas = d.imageCanvasTarget;
       if (d.imageCanvas === false) base.image_canvas = false;
       if (d.imageRegisterArtifact === false) base.image_register_artifact = false;
       if (d.imageSpace) base.image_space = d.imageSpace;
@@ -1903,7 +2314,7 @@ export function flowToTasks(nodes: Node<TaskNodeData>[], edges: Edge[]): TaskDef
     }
     if (st === 'handoff') {
       if (d.handoffFrom) base.handoff_from = d.handoffFrom;
-      if (d.handoffTo) base.handoff_to = d.handoffTo as 'claude' | 'codex';
+      if (d.handoffTo) base.handoff_to = d.handoffTo;
       if (d.handoffReason) base.handoff_reason = d.handoffReason;
       if (d.handoffTask) base.handoff_task = d.handoffTask;
       if (d.handoffTimeout !== 300) base.handoff_timeout = d.handoffTimeout;
@@ -1917,6 +2328,10 @@ export function flowToTasks(nodes: Node<TaskNodeData>[], edges: Edge[]): TaskDef
       if (d.humanApprovalTimeout && d.humanApprovalTimeout !== 3600) base.human_approval_timeout = d.humanApprovalTimeout;
       if (d.humanApprovalChannel && d.humanApprovalChannel !== 'dashboard') base.human_approval_channel = d.humanApprovalChannel;
       if (d.humanApprovalChannelId) base.human_approval_channel_id = d.humanApprovalChannelId;
+      if (d.humanApprovalOnRejectGoto) base.human_approval_on_reject_goto = d.humanApprovalOnRejectGoto;
+      if (d.humanApprovalOnRejectMax && d.humanApprovalOnRejectMax !== 3) base.human_approval_on_reject_max = d.humanApprovalOnRejectMax;
+      if (d.humanApprovalApproveKeywords?.length) base.human_approval_approve_keywords = d.humanApprovalApproveKeywords;
+      if (d.humanApprovalRejectKeywords?.length) base.human_approval_reject_keywords = d.humanApprovalRejectKeywords;
     }
     if (st === 'a2a') {
       if (d.a2aUrl) base.a2a_url = d.a2aUrl;
@@ -2030,11 +2445,12 @@ export function tasksToYaml(tasks: TaskDefinition[], meta?: Partial<WorkflowMeta
     }
   }
   // Inputs
-  if (meta?.inputs && meta.inputs.length > 0) {
+  const workflowInputs = (meta?.inputs ?? []).filter((inp) => inp.name.trim());
+  if (workflowInputs.length > 0) {
     lines.push('');
     lines.push('inputs:');
-    for (const inp of meta.inputs) {
-      lines.push(`  - name: ${inp.name}`);
+    for (const inp of workflowInputs) {
+      lines.push(`  - name: ${inp.name.trim()}`);
       if (inp.type !== 'string') lines.push(`    type: ${inp.type}`);
       if (!inp.required) lines.push(`    required: false`);
       if (inp.default) lines.push(`    default: ${yamlEscape(inp.default)}`);
@@ -2069,6 +2485,11 @@ export function tasksToYaml(tasks: TaskDefinition[], meta?: Partial<WorkflowMeta
     // with `action:` is still parsed and migrated to `type` on load).
     const stepType = task.type || 'agent';
     lines.push(`    type: ${stepType}`);
+    if (task.position) {
+      lines.push(`    position:`);
+      lines.push(`      x: ${roundPositionCoordinate(task.position.x)}`);
+      lines.push(`      y: ${roundPositionCoordinate(task.position.y)}`);
+    }
     if (task.description) {
       lines.push(`    description: ${yamlEscape(task.description)}`);
     }
@@ -2082,18 +2503,12 @@ export function tasksToYaml(tasks: TaskDefinition[], meta?: Partial<WorkflowMeta
     // with what the validator + executor consume directly.
     if (stepType === 'conditional') {
       const branches: string[] = [];
-      if (task.on_true && task.condition) {
-        branches.push(`      - condition: ${yamlEscape(task.condition)}`);
-        branches.push(`        goto: ${task.on_true}`);
-        if (task.on_true_value) {
-          branches.push(`        value: ${yamlEscape(task.on_true_value)}`);
-        }
-      }
-      if (task.on_false) {
-        branches.push(`      - condition: "default"`);
-        branches.push(`        goto: ${task.on_false}`);
-        if (task.on_false_value) {
-          branches.push(`        value: ${yamlEscape(task.on_false_value)}`);
+      for (const branch of normalizeConditionalBranches(task)) {
+        if (!branch.condition || !branch.goto) continue;
+        branches.push(`      - condition: ${yamlEscape(branch.condition)}`);
+        branches.push(`        goto: ${branch.goto}`);
+        if (branch.value) {
+          branches.push(`        value: ${yamlEscape(branch.value)}`);
         }
       }
       if (branches.length > 0) {
@@ -2105,9 +2520,12 @@ export function tasksToYaml(tasks: TaskDefinition[], meta?: Partial<WorkflowMeta
     if (stepType === 'human_input' && task.channel) {
       lines.push(`    channel: ${task.channel}`);
     }
-    if (stepType === 'notify' && task.channels && task.channels.length > 0) {
+    if (
+      stepType === 'notify'
+      && ((task.channels && task.channels.length > 0) || task.notify_message || task.notify_title || task.notify_channel_id)
+    ) {
       lines.push(`    notify:`);
-      lines.push(`      channels: [${dedupChannels(task.channels).join(', ')}]`);
+      lines.push(`      channels: [${dedupChannels(task.channels || ['dashboard']).join(', ')}]`);
       const notifyMessage = task.notify_message || '';
       if (notifyMessage) {
         if (notifyMessage.includes('\n')) {
@@ -2119,6 +2537,7 @@ export function tasksToYaml(tasks: TaskDefinition[], meta?: Partial<WorkflowMeta
       }
       const notifyTitle = task.notify_title || '';
       if (notifyTitle) lines.push(`      title: ${yamlEscape(notifyTitle)}`);
+      if (task.notify_channel_id) lines.push(`      channel_id: ${yamlEscape(task.notify_channel_id)}`);
     }
     // Executor-specific nested blocks
     if (stepType === 'agent' && (task.agent_type || task.role || task.prompt || task.template || task.auth)) {
@@ -2142,6 +2561,22 @@ export function tasksToYaml(tasks: TaskDefinition[], meta?: Partial<WorkflowMeta
       }
       if (task.timeout && task.timeout !== 300) lines.push(`      timeout: ${task.timeout}`);
       if (task.model) lines.push(`      model: ${task.model}`);
+      if (task.agent_max_turns && task.agent_max_turns !== 3) lines.push(`      max_turns: ${task.agent_max_turns}`);
+      if (task.agent_tools && task.agent_tools !== 'none') lines.push(`      tools: ${task.agent_tools}`);
+      if (task.agent_output_fields?.length) {
+        lines.push(`      output_fields: [${task.agent_output_fields.map(yamlEscape).join(', ')}]`);
+      }
+      if (task.agent_quality_enabled) {
+        lines.push(`      quality_check:`);
+        lines.push(`        enabled: true`);
+        if (task.agent_quality_threshold !== undefined && task.agent_quality_threshold !== 0.7) {
+          lines.push(`        threshold: ${task.agent_quality_threshold}`);
+        }
+        if (task.agent_quality_criteria?.length) {
+          lines.push(`        criteria: [${task.agent_quality_criteria.map(yamlEscape).join(', ')}]`);
+        }
+        if (task.agent_quality_model) lines.push(`        model: ${task.agent_quality_model}`);
+      }
       if (task.auth) lines.push(`      auth: ${yamlEscape(task.auth)}`);
     }
     if (stepType === 'parallel') {
@@ -2174,6 +2609,9 @@ export function tasksToYaml(tasks: TaskDefinition[], meta?: Partial<WorkflowMeta
       if (task.supervisor_task) lines.push(`      task: ${yamlEscape(task.supervisor_task)}`);
       if (task.supervisor_max_iterations) lines.push(`      max_iterations: ${task.supervisor_max_iterations}`);
       if (task.supervisor_type && task.supervisor_type !== 'claude') lines.push(`      supervisor_type: ${task.supervisor_type}`);
+      if (task.supervisor_templates?.length) {
+        lines.push(`      templates: [${task.supervisor_templates.map(yamlEscape).join(', ')}]`);
+      }
       if (task.supervisor_timeout && task.supervisor_timeout !== 300) lines.push(`      timeout: ${task.supervisor_timeout}`);
     }
     if (stepType === 'shell') {
@@ -2195,9 +2633,17 @@ export function tasksToYaml(tasks: TaskDefinition[], meta?: Partial<WorkflowMeta
         }
       }
       if (task.python_args) lines.push(`      args: ${task.python_args}`);
+      if (task.python_interpreter) lines.push(`      python: ${yamlEscape(task.python_interpreter)}`);
       if (task.python_timeout && task.python_timeout !== 60) lines.push(`      timeout: ${task.python_timeout}`);
       if (task.python_allow_failure) lines.push(`      allow_failure: true`);
       if (task.auth) lines.push(`      auth: ${yamlEscape(task.auth)}`);
+    }
+    if (stepType === 'compute') {
+      lines.push(`    compute:`);
+      lines.push(`      outputs:`);
+      for (const [key, value] of Object.entries(task.compute_outputs || {})) {
+        lines.push(`        ${key}: ${yamlEscape(String(value))}`);
+      }
     }
     if (stepType === 'email') {
       lines.push(`    email:`);
@@ -2212,8 +2658,12 @@ export function tasksToYaml(tasks: TaskDefinition[], meta?: Partial<WorkflowMeta
         }
       }
       if (task.email_body_html) {
-        lines.push(`      body_html: |`);
-        for (const hl of task.email_body_html.split('\n')) lines.push(`        ${hl}`);
+        if (task.email_body_html.includes('\n')) {
+          lines.push(`      body_html: |`);
+          for (const hl of task.email_body_html.split('\n')) lines.push(`        ${hl}`);
+        } else {
+          lines.push(`      body_html: ${yamlEscape(task.email_body_html)}`);
+        }
       }
       if (task.email_from) lines.push(`      from_address: ${yamlEscape(task.email_from)}`);
       if (task.email_cc) {
@@ -2227,8 +2677,13 @@ export function tasksToYaml(tasks: TaskDefinition[], meta?: Partial<WorkflowMeta
       if (task.email_reply_to) lines.push(`      reply_to: ${yamlEscape(task.email_reply_to)}`);
       if (task.email_track_clicks) lines.push(`      track_clicks: true`);
       if (task.email_track_kref) lines.push(`      track_kref: ${yamlEscape(task.email_track_kref)}`);
+      if (task.email_track_secret_env) lines.push(`      track_secret_env: ${yamlEscape(task.email_track_secret_env)}`);
       if (task.email_track_base_url) lines.push(`      track_base_url: ${yamlEscape(task.email_track_base_url)}`);
       if (task.email_smtp_host) lines.push(`      smtp_host: ${yamlEscape(task.email_smtp_host)}`);
+      if (task.email_smtp_port) lines.push(`      smtp_port: ${task.email_smtp_port}`);
+      if (task.email_smtp_tls === false) lines.push(`      smtp_tls: false`);
+      if (task.email_smtp_username) lines.push(`      smtp_username: ${yamlEscape(task.email_smtp_username)}`);
+      if (task.email_smtp_password_env) lines.push(`      smtp_password_env: ${yamlEscape(task.email_smtp_password_env)}`);
       if (task.email_dry_run) lines.push(`      dry_run: true`);
       if (task.email_timeout && task.email_timeout !== 30) lines.push(`      timeout: ${task.email_timeout}`);
       if (task.auth) lines.push(`      auth: ${yamlEscape(task.auth)}`);
@@ -2244,7 +2699,9 @@ export function tasksToYaml(tasks: TaskDefinition[], meta?: Partial<WorkflowMeta
         }
       }
       if (task.image_count && task.image_count !== 1) lines.push(`      count: ${task.image_count}`);
-      if (task.image_canvas === false) lines.push(`      canvas: false`);
+      if (typeof task.image_canvas === 'string' && task.image_canvas) lines.push(`      canvas: ${yamlEscape(task.image_canvas)}`);
+      else if (task.image_canvas_target) lines.push(`      canvas: ${yamlEscape(task.image_canvas_target)}`);
+      else if (task.image_canvas === false) lines.push(`      canvas: false`);
       if (task.image_register_artifact === false) lines.push(`      register_artifact: false`);
       if (task.image_space) lines.push(`      space: ${yamlEscape(task.image_space)}`);
       if (task.image_item_name) lines.push(`      item_name: ${yamlEscape(task.image_item_name)}`);
@@ -2319,6 +2776,16 @@ export function tasksToYaml(tasks: TaskDefinition[], meta?: Partial<WorkflowMeta
         }
       }
       if (task.human_approval_timeout && task.human_approval_timeout !== 3600) lines.push(`      timeout: ${task.human_approval_timeout}`);
+      if (task.human_approval_on_reject_goto) lines.push(`      on_reject_goto: ${task.human_approval_on_reject_goto}`);
+      if (task.human_approval_on_reject_max && task.human_approval_on_reject_max !== 3) {
+        lines.push(`      on_reject_max: ${task.human_approval_on_reject_max}`);
+      }
+      if (task.human_approval_approve_keywords?.length) {
+        lines.push(`      approve_keywords: [${task.human_approval_approve_keywords.map(yamlEscape).join(', ')}]`);
+      }
+      if (task.human_approval_reject_keywords?.length) {
+        lines.push(`      reject_keywords: [${task.human_approval_reject_keywords.map(yamlEscape).join(', ')}]`);
+      }
     }
     if (stepType === 'a2a') {
       lines.push(`    a2a:`);

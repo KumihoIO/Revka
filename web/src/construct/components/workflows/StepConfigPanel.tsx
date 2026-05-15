@@ -9,7 +9,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Crosshair, Link2, Link2Off, Loader2, Lock, Search, Sparkles, Trash2, X } from 'lucide-react';
 import type { Node } from '@xyflow/react';
-import { type TaskNodeData } from '@/construct/components/workflows/yamlSync';
+import { type ConditionalBranchDefinition, type TaskNodeData } from '@/construct/components/workflows/yamlSync';
 import type { SkillDefinition } from '@/types/api';
 import { fetchSkills, getChannels } from '@/lib/api';
 import Panel from '@/construct/components/ui/Panel';
@@ -25,6 +25,58 @@ import { slugify as slugifyShared, uniqueSlug } from './slugify';
 const AUTH_ELIGIBLE_STEP_TYPES = new Set(['agent', 'shell', 'python', 'email', 'a2a']);
 
 const AGENT_HINT_OPTIONS = ['coder', 'researcher', 'reviewer'];
+const BUILTIN_AGENT_OPTIONS = ['claude', 'codex'] as const;
+
+function parseListInput(value: string): string[] {
+  return value
+    .split(/\r?\n|,/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function defaultConditionalBranches(data: TaskNodeData): ConditionalBranchDefinition[] {
+  if (data.conditionalBranches?.length > 0) {
+    return data.conditionalBranches.map((branch) => ({ ...branch }));
+  }
+
+  const branches: ConditionalBranchDefinition[] = [];
+  if (data.condition || data.onTrueValue) {
+    branches.push({
+      condition: data.condition || '',
+      goto: '',
+      value: data.onTrueValue || undefined,
+    });
+  }
+  if (data.onFalseValue) {
+    branches.push({
+      condition: 'default',
+      goto: '',
+      value: data.onFalseValue,
+    });
+  }
+  return branches.length > 0 ? branches : [
+    { condition: '', goto: '', value: undefined },
+    { condition: 'default', goto: '', value: undefined },
+  ];
+}
+
+function conditionalBranchUpdates(branches: ConditionalBranchDefinition[]): Partial<TaskNodeData> {
+  const normalized = branches.map((branch) => ({
+    condition: branch.condition,
+    goto: branch.goto,
+    value: branch.value || undefined,
+  }));
+  const firstCase = normalized.find((branch) => branch.condition.trim() !== 'default');
+  const fallback = normalized.find((branch) => branch.condition.trim() === 'default')
+    ?? normalized.find((branch) => branch !== firstCase);
+
+  return {
+    conditionalBranches: normalized,
+    condition: firstCase?.condition ?? '',
+    onTrueValue: firstCase?.value ?? '',
+    onFalseValue: fallback?.value ?? '',
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Step ID helpers — Name → slug-id link
@@ -150,6 +202,20 @@ export default function StepConfigPanel({
   const data = node.data;
   const stepType = data.type ?? 'agent';
   const typeDef = STEP_TYPES_BY_TYPE[stepType];
+  const conditionalBranches = useMemo(
+    () => defaultConditionalBranches(data),
+    [data],
+  );
+  const conditionalTargetOptions = useMemo(
+    () => existingTaskIds.filter((taskId) => taskId !== data.taskId),
+    [existingTaskIds, data.taskId],
+  );
+  const updateConditionalBranches = useCallback(
+    (branches: ConditionalBranchDefinition[]) => {
+      onUpdate(node.id, conditionalBranchUpdates(branches));
+    },
+    [node.id, onUpdate],
+  );
 
   // ── Name → Step ID slug-link state ──────────────────────────────────────
   // Compute initial linked state on mount: a step is "linked" if its current
@@ -322,6 +388,31 @@ export default function StepConfigPanel({
     [node.id, data.channels, onUpdate],
   );
 
+  const openPoolAgentPicker = useCallback(
+    (
+      target:
+        | 'assign'
+        | 'groupChatParticipant'
+        | 'groupChatModerator'
+        | 'supervisorAgent'
+        | 'supervisorTemplate'
+        | 'handoffTo'
+        | 'a2aSkill'
+        | 'mapReduceMapper'
+        | 'mapReduceReducer',
+      event: React.MouseEvent<HTMLElement>,
+      participantIndex?: number,
+    ) => {
+      emitOpenAgentPicker({
+        taskId: node.id,
+        anchorRect: event.currentTarget.getBoundingClientRect(),
+        target,
+        participantIndex,
+      });
+    },
+    [node.id],
+  );
+
   // ── Run-to-here popover ────────────────────────────────────────────────
   // Opens a confirmation popover listing the ancestor closure that would
   // execute. Closure preview is purely best-effort — the backend
@@ -343,6 +434,155 @@ export default function StepConfigPanel({
     onRunToHere(data.taskId, runToHereClosureIds);
     setRunToHereOpen(false);
   }, [onRunToHere, data.taskId, runToHereClosureIds]);
+
+  const skillSection = stepType !== 'conditional' &&
+    stepType !== 'compute' &&
+    stepType !== 'human_input' &&
+    stepType !== 'notify' &&
+    stepType !== 'tag' &&
+    stepType !== 'deprecate' ? (
+      <div>
+        <label style={labelStyle}>Skills</label>
+        {data.skills.length > 0 && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 6 }}>
+            {data.skills.map((skill) => (
+              <span
+                key={skill}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 4,
+                  padding: '2px 8px',
+                  borderRadius: 6,
+                  fontSize: 10,
+                  fontWeight: 500,
+                  background: 'var(--pc-accent-glow)',
+                  color: 'var(--pc-accent-light)',
+                  border: '1px solid var(--pc-accent-dim)',
+                }}
+              >
+                {skill}
+                <button
+                  type="button"
+                  onClick={() => removeSkill(skill)}
+                  style={{ background: 'transparent', border: 0, color: 'inherit', cursor: 'pointer', padding: 0 }}
+                >
+                  <X size={10} />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+        <button
+          type="button"
+          onClick={() => setShowSkillPicker(!showSkillPicker)}
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 4,
+            padding: '4px 10px',
+            borderRadius: 8,
+            border: '1px solid var(--pc-accent-dim)',
+            background: showSkillPicker ? 'var(--pc-accent-glow)' : 'transparent',
+            color: 'var(--pc-accent-light)',
+            fontSize: 11,
+            fontWeight: 500,
+            cursor: 'pointer',
+          }}
+        >
+          <Sparkles size={12} />
+          {showSkillPicker ? 'Hide skill picker' : 'Add skills'}
+        </button>
+        {showSkillPicker && (
+          <div
+            style={{
+              marginTop: 8,
+              borderRadius: 10,
+              border: '1px solid var(--pc-border)',
+              background: 'var(--pc-bg-input)',
+              overflow: 'hidden',
+            }}
+          >
+            <div style={{ position: 'relative', padding: 8 }}>
+              <Search
+                size={12}
+                style={{
+                  position: 'absolute',
+                  left: 16,
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  color: 'var(--pc-text-faint)',
+                }}
+              />
+              <input
+                type="text"
+                value={skillSearch}
+                onChange={(e) => setSkillSearch(e.target.value)}
+                placeholder="Search skills…"
+                style={{ ...inputStyle, paddingLeft: 26 }}
+              />
+            </div>
+            <div style={{ maxHeight: 144, overflowY: 'auto' }}>
+              {skillLoading ? (
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 6,
+                    padding: 12,
+                    fontSize: 10,
+                    color: 'var(--pc-text-faint)',
+                  }}
+                >
+                  <Loader2 size={11} className="animate-spin" /> Loading skills…
+                </div>
+              ) : skillSearchResults.length === 0 ? (
+                <p style={{ textAlign: 'center', padding: 12, fontSize: 10, color: 'var(--pc-text-faint)' }}>
+                  {allSkills.length === 0 ? 'No skills available' : 'No matching skills'}
+                </p>
+              ) : (
+                skillSearchResults.slice(0, 20).map((skill) => (
+                  <button
+                    key={skill.kref}
+                    type="button"
+                    onClick={() => addSkill(skill.name)}
+                    style={{
+                      display: 'block',
+                      width: '100%',
+                      textAlign: 'left',
+                      padding: '6px 12px',
+                      fontSize: 11,
+                      border: 0,
+                      background: 'transparent',
+                      color: 'var(--pc-text-secondary)',
+                      cursor: 'pointer',
+                    }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--pc-hover)')}
+                    onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                  >
+                    <div style={{ fontWeight: 500, color: 'var(--pc-text-primary)' }}>{skill.name}</div>
+                    {skill.description && (
+                      <div
+                        style={{
+                          fontSize: 10,
+                          color: 'var(--pc-text-faint)',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {skill.description}
+                      </div>
+                    )}
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    ) : null;
 
   const TypeIcon = typeDef?.icon;
 
@@ -671,42 +911,99 @@ export default function StepConfigPanel({
                   border: '1px solid color-mix(in srgb, var(--construct-status-warning) 36%, transparent)',
                 }}
               >
-                If / Else Gate
+                Conditional Gate
               </span>
-              <label style={labelStyle}>Condition</label>
-              <textarea
-                value={data.condition || ''}
-                onChange={(e) => onUpdate(node.id, { condition: e.target.value })}
-                placeholder="e.g. review.status == 'passed'"
-                rows={2}
-                style={monoInputStyle}
-              />
-              <p style={helperStyle()}>Wire the green (true) and red (false) handles to branch targets.</p>
-
-              {/* Optional branch values — emitted on the gate's `output` so
-                  downstream steps can read `${gate.output}`. Multi-branch
-                  workflows should edit YAML directly. */}
-              <label style={labelStyle}>True branch value (optional)</label>
-              <input
-                type="text"
-                value={data.onTrueValue || ''}
-                onChange={(e) => onUpdate(node.id, { onTrueValue: e.target.value })}
-                placeholder="e.g. 'approved' or review.output_data.score"
-                style={monoInputStyle}
-              />
-              <label style={labelStyle}>False branch value (optional)</label>
-              <input
-                type="text"
-                value={data.onFalseValue || ''}
-                onChange={(e) => onUpdate(node.id, { onFalseValue: e.target.value })}
-                placeholder="e.g. 'rejected'"
-                style={monoInputStyle}
-              />
-              <p style={helperStyle()}>
-                When the matching branch fires, this expression's result becomes the
-                gate's <code>output</code>. Same syntax as <code>condition</code> —
-                literals, name refs, ternary all work.
-              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {conditionalBranches.map((branch, index) => (
+                  <div
+                    key={`branch-${index}`}
+                    style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 6,
+                      padding: 10,
+                      borderRadius: 8,
+                      border: '1px solid var(--pc-border)',
+                      background: 'var(--pc-bg-panel)',
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                      <span style={{ ...sectionTitleStyle, color: 'var(--pc-text-muted)' }}>
+                        Branch {index + 1}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (conditionalBranches.length <= 1) {
+                            updateConditionalBranches([{ condition: '', goto: '', value: undefined }]);
+                            return;
+                          }
+                          updateConditionalBranches(conditionalBranches.filter((_, i) => i !== index));
+                        }}
+                        className="construct-icon-button"
+                        title="Remove branch"
+                        aria-label="Remove branch"
+                        style={{ width: 24, height: 24 }}
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                    <label style={labelStyle}>Condition</label>
+                    <textarea
+                      value={branch.condition}
+                      onChange={(e) => {
+                        const next = conditionalBranches.map((item, i) =>
+                          i === index ? { ...item, condition: e.target.value } : item,
+                        );
+                        updateConditionalBranches(next);
+                      }}
+                      placeholder={index === conditionalBranches.length - 1 ? 'default' : "e.g. review.status == 'passed'"}
+                      rows={2}
+                      style={monoInputStyle}
+                    />
+                    <label style={labelStyle}>Target Step</label>
+                    <select
+                      value={branch.goto}
+                      onChange={(e) => {
+                        const next = conditionalBranches.map((item, i) =>
+                          i === index ? { ...item, goto: e.target.value } : item,
+                        );
+                        updateConditionalBranches(next);
+                      }}
+                      style={inputStyle}
+                    >
+                      <option value="">Select target...</option>
+                      {conditionalTargetOptions.map((taskId) => (
+                        <option key={taskId} value={taskId}>{taskId}</option>
+                      ))}
+                    </select>
+                    <label style={labelStyle}>Output Value (optional)</label>
+                    <input
+                      type="text"
+                      value={branch.value || ''}
+                      onChange={(e) => {
+                        const next = conditionalBranches.map((item, i) =>
+                          i === index ? { ...item, value: e.target.value || undefined } : item,
+                        );
+                        updateConditionalBranches(next);
+                      }}
+                      placeholder="e.g. 'approved' or review.output_data.score"
+                      style={monoInputStyle}
+                    />
+                  </div>
+                ))}
+              </div>
+              <button
+                type="button"
+                className="construct-button"
+                onClick={() => updateConditionalBranches([
+                  ...conditionalBranches,
+                  { condition: '', goto: '', value: undefined },
+                ])}
+                style={{ justifyContent: 'center' }}
+              >
+                + Branch
+              </button>
             </div>
           )}
 
@@ -721,6 +1018,8 @@ export default function StepConfigPanel({
               style={inputStyle}
             />
           </div>
+
+          {skillSection}
 
           {/* Retry */}
           <div style={{ display: 'flex', gap: 8 }}>
@@ -760,10 +1059,7 @@ export default function StepConfigPanel({
                 <button
                   type="button"
                   onClick={(e) => {
-                    emitOpenAgentPicker({
-                      taskId: node.id,
-                      anchorRect: e.currentTarget.getBoundingClientRect(),
-                    });
+                    openPoolAgentPicker('assign', e);
                   }}
                   style={{
                     ...monoInputStyle,
@@ -843,6 +1139,89 @@ export default function StepConfigPanel({
                   placeholder="e.g. claude-sonnet-4-5-20250514"
                   style={monoInputStyle}
                 />
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                <div>
+                  <label style={labelStyle}>Max Turns</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={200}
+                    value={data.agentMaxTurns ?? 3}
+                    onChange={(e) => onUpdate(node.id, { agentMaxTurns: parseInt(e.target.value) || 3 })}
+                    style={inputStyle}
+                  />
+                </div>
+                <div>
+                  <label style={labelStyle}>Tools</label>
+                  <select
+                    value={data.agentTools || 'none'}
+                    onChange={(e) => onUpdate(node.id, { agentTools: e.target.value as 'all' | 'memory' | 'none' })}
+                    style={inputStyle}
+                  >
+                    <option value="none">none</option>
+                    <option value="memory">memory</option>
+                    <option value="all">all</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label style={labelStyle}>Output Fields</label>
+                <input
+                  type="text"
+                  value={(data.agentOutputFields || []).join(', ')}
+                  onChange={(e) => onUpdate(node.id, { agentOutputFields: parseListInput(e.target.value) })}
+                  placeholder="summary, decision, files_touched"
+                  style={monoInputStyle}
+                />
+              </div>
+
+              <div style={{ paddingTop: 8, borderTop: '1px solid var(--pc-border)' }}>
+                <Checkbox
+                  checked={data.agentQualityEnabled || false}
+                  onChange={(v) => onUpdate(node.id, { agentQualityEnabled: v })}
+                  label="Quality check"
+                />
+                {data.agentQualityEnabled && (
+                  <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                      <div>
+                        <label style={labelStyle}>Threshold</label>
+                        <input
+                          type="number"
+                          min={0}
+                          max={1}
+                          step={0.05}
+                          value={data.agentQualityThreshold ?? 0.7}
+                          onChange={(e) => onUpdate(node.id, { agentQualityThreshold: parseFloat(e.target.value) || 0.7 })}
+                          style={inputStyle}
+                        />
+                      </div>
+                      <div>
+                        <label style={labelStyle}>Validator Model</label>
+                        <input
+                          type="text"
+                          value={data.agentQualityModel || ''}
+                          onChange={(e) => onUpdate(node.id, { agentQualityModel: e.target.value })}
+                          placeholder="claude-haiku-4-5-20251001"
+                          style={monoInputStyle}
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label style={labelStyle}>Criteria</label>
+                      <input
+                        type="text"
+                        value={(data.agentQualityCriteria || []).join(', ')}
+                        onChange={(e) => onUpdate(node.id, { agentQualityCriteria: parseListInput(e.target.value) })}
+                        placeholder="on_mandate, depth, language_ko"
+                        style={monoInputStyle}
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div>
@@ -1033,18 +1412,74 @@ export default function StepConfigPanel({
               </div>
               <div>
                 <label style={labelStyle}>Participants</label>
-                <input
-                  type="text"
-                  value={(data.groupChatParticipants || []).join(', ')}
-                  onChange={(e) =>
-                    onUpdate(node.id, {
-                      groupChatParticipants: e.target.value.split(',').map((s) => s.trim()).filter(Boolean),
-                    })
-                  }
-                  placeholder="claude, codex"
-                  style={monoInputStyle}
-                />
-                <p style={helperStyle()}>Comma-separated agent types or template names.</p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {(data.groupChatParticipants || []).map((participant, index) => (
+                    <div key={`${participant}-${index}`} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                      <button
+                        type="button"
+                        onClick={(e) => openPoolAgentPicker('groupChatParticipant', e, index)}
+                        style={{ ...monoInputStyle, flex: 1, textAlign: 'left', cursor: 'pointer' }}
+                        title="Click to replace with a pool agent"
+                      >
+                        {participant}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onUpdate(node.id, {
+                          groupChatParticipants: (data.groupChatParticipants || []).filter((_, i) => i !== index),
+                        })}
+                        style={{
+                          padding: '5px 8px',
+                          borderRadius: 6,
+                          border: '1px solid var(--construct-border-soft)',
+                          background: 'transparent',
+                          color: 'var(--construct-status-danger)',
+                          cursor: 'pointer',
+                        }}
+                        title="Remove participant"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                    {BUILTIN_AGENT_OPTIONS.map((agentType) => (
+                      <button
+                        key={agentType}
+                        type="button"
+                        onClick={() => onUpdate(node.id, {
+                          groupChatParticipants: [...(data.groupChatParticipants || []), agentType],
+                        })}
+                        style={{
+                          padding: '4px 8px',
+                          borderRadius: 6,
+                          border: '1px solid var(--construct-border-soft)',
+                          background: 'transparent',
+                          color: 'var(--pc-text-primary)',
+                          fontSize: 11,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        + {agentType}
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={(e) => openPoolAgentPicker('groupChatParticipant', e)}
+                      style={{
+                        padding: '4px 8px',
+                        borderRadius: 6,
+                        border: '1px solid var(--pc-accent-dim)',
+                        background: 'var(--pc-accent-glow)',
+                        color: 'var(--pc-accent-light)',
+                        fontSize: 11,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      + Pool agent
+                    </button>
+                  </div>
+                </div>
               </div>
               <div>
                 <label style={labelStyle}>Max Rounds</label>
@@ -1060,14 +1495,34 @@ export default function StepConfigPanel({
               <div style={{ display: 'flex', gap: 8 }}>
                 <div style={{ flex: 1 }}>
                   <label style={labelStyle}>Moderator</label>
-                  <select
-                    value={data.groupChatModerator}
-                    onChange={(e) => onUpdate(node.id, { groupChatModerator: e.target.value })}
-                    style={inputStyle}
+                  <button
+                    type="button"
+                    onClick={(e) => openPoolAgentPicker('groupChatModerator', e)}
+                    style={{ ...monoInputStyle, textAlign: 'left', cursor: 'pointer' }}
+                    title="Pick a moderator pool agent"
                   >
-                    <option value="claude">Claude</option>
-                    <option value="codex">Codex</option>
-                  </select>
+                    {data.groupChatModerator || 'claude'}
+                  </button>
+                  <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+                    {BUILTIN_AGENT_OPTIONS.map((agentType) => (
+                      <button
+                        key={agentType}
+                        type="button"
+                        onClick={() => onUpdate(node.id, { groupChatModerator: agentType })}
+                        style={{
+                          padding: '2px 6px',
+                          borderRadius: 6,
+                          border: '1px solid var(--construct-border-soft)',
+                          background: (data.groupChatModerator || 'claude') === agentType ? 'var(--pc-accent-glow)' : 'transparent',
+                          color: 'var(--pc-text-primary)',
+                          fontSize: 10,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        {agentType}
+                      </button>
+                    ))}
+                  </div>
                 </div>
                 <div style={{ flex: 1 }}>
                   <label style={labelStyle}>Strategy</label>
@@ -1121,15 +1576,35 @@ export default function StepConfigPanel({
               </div>
               <div style={{ display: 'flex', gap: 8 }}>
                 <div style={{ flex: 1 }}>
-                  <label style={labelStyle}>Agent Type</label>
-                  <select
-                    value={data.supervisorType}
-                    onChange={(e) => onUpdate(node.id, { supervisorType: e.target.value })}
-                    style={inputStyle}
+                  <label style={labelStyle}>Supervisor Agent</label>
+                  <button
+                    type="button"
+                    onClick={(e) => openPoolAgentPicker('supervisorAgent', e)}
+                    style={{ ...monoInputStyle, textAlign: 'left', cursor: 'pointer' }}
+                    title="Pick the supervisor controller from the pool"
                   >
-                    <option value="claude">Claude</option>
-                    <option value="codex">Codex</option>
-                  </select>
+                    {data.supervisorType || 'claude'}
+                  </button>
+                  <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+                    {BUILTIN_AGENT_OPTIONS.map((agentType) => (
+                      <button
+                        key={agentType}
+                        type="button"
+                        onClick={() => onUpdate(node.id, { supervisorType: agentType })}
+                        style={{
+                          padding: '2px 6px',
+                          borderRadius: 6,
+                          border: '1px solid var(--construct-border-soft)',
+                          background: (data.supervisorType || 'claude') === agentType ? 'var(--pc-accent-glow)' : 'transparent',
+                          color: 'var(--pc-text-primary)',
+                          fontSize: 10,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        {agentType}
+                      </button>
+                    ))}
+                  </div>
                 </div>
                 <div style={{ flex: 1 }}>
                   <label style={labelStyle}>Timeout (s)</label>
@@ -1140,6 +1615,48 @@ export default function StepConfigPanel({
                     onChange={(e) => onUpdate(node.id, { supervisorTimeout: parseInt(e.target.value) || 300 })}
                     style={inputStyle}
                   />
+                </div>
+              </div>
+              <div>
+                <label style={labelStyle}>Specialist Pool</label>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {(data.supervisorTemplates || []).map((template, index) => (
+                    <div key={`${template}-${index}`} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                      <input type="text" readOnly value={template} style={{ ...monoInputStyle, flex: 1 }} />
+                      <button
+                        type="button"
+                        onClick={() => onUpdate(node.id, {
+                          supervisorTemplates: (data.supervisorTemplates || []).filter((_, i) => i !== index),
+                        })}
+                        style={{
+                          padding: '5px 8px',
+                          borderRadius: 6,
+                          border: '1px solid var(--construct-border-soft)',
+                          background: 'transparent',
+                          color: 'var(--construct-status-danger)',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={(e) => openPoolAgentPicker('supervisorTemplate', e)}
+                    style={{
+                      alignSelf: 'flex-start',
+                      padding: '4px 8px',
+                      borderRadius: 6,
+                      border: '1px solid var(--pc-accent-dim)',
+                      background: 'var(--pc-accent-glow)',
+                      color: 'var(--pc-accent-light)',
+                      fontSize: 11,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    + Pool agent
+                  </button>
                 </div>
               </div>
             </div>
@@ -1215,6 +1732,16 @@ export default function StepConfigPanel({
                   style={monoInputStyle}
                 />
               </div>
+              <div>
+                <label style={labelStyle}>Python Interpreter</label>
+                <input
+                  type="text"
+                  value={data.pythonInterpreter || ''}
+                  onChange={(e) => onUpdate(node.id, { pythonInterpreter: e.target.value })}
+                  placeholder="optional: /path/to/.venv/bin/python"
+                  style={monoInputStyle}
+                />
+              </div>
               <div style={{ display: 'flex', gap: 8 }}>
                 <div style={{ flex: 1 }}>
                   <label style={labelStyle}>Timeout (s)</label>
@@ -1234,6 +1761,96 @@ export default function StepConfigPanel({
                   />
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* ── Compute ── */}
+          {stepType === 'compute' && (
+            <div style={sectionShellStyle}>
+              <div style={sectionTitleStyle}>Compute Outputs</div>
+              {Object.entries(data.computeOutputs || {}).map(([key, value], index) => (
+                <div
+                  key={`${key}-${index}`}
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'minmax(92px, 0.45fr) minmax(0, 1fr) auto',
+                    gap: 6,
+                    alignItems: 'start',
+                  }}
+                >
+                  <div>
+                    <label style={labelStyle}>Key</label>
+                    <input
+                      type="text"
+                      value={key}
+                      onChange={(e) => {
+                        const nextKey = e.target.value.trim();
+                        const next = { ...(data.computeOutputs || {}) };
+                        delete next[key];
+                        if (nextKey) next[nextKey] = value;
+                        onUpdate(node.id, { computeOutputs: next });
+                      }}
+                      placeholder="start"
+                      spellCheck={false}
+                      style={monoInputStyle}
+                    />
+                  </div>
+                  <div>
+                    <label style={labelStyle}>Value</label>
+                    <ExpressionTextarea
+                      value={value}
+                      onChange={(nextValue) => onUpdate(node.id, {
+                        computeOutputs: {
+                          ...(data.computeOutputs || {}),
+                          [key]: nextValue,
+                        },
+                      })}
+                      rows={2}
+                      placeholder="${{ int(inputs.end) + 1 }}"
+                      style={monoInputStyle}
+                      stepIds={dagStepIds}
+                      workflowInputs={dagInputs}
+                      triggerFields={dagTriggerFields}
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    className="construct-icon-button"
+                    title="Remove output"
+                    aria-label="Remove output"
+                    onClick={() => {
+                      const next = { ...(data.computeOutputs || {}) };
+                      delete next[key];
+                      onUpdate(node.id, { computeOutputs: next });
+                    }}
+                    style={{ width: 28, height: 28, marginTop: 18 }}
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              ))}
+              <button
+                type="button"
+                className="construct-button"
+                onClick={() => {
+                  const current = data.computeOutputs || {};
+                  let key = 'value';
+                  let suffix = 2;
+                  while (Object.prototype.hasOwnProperty.call(current, key)) {
+                    key = `value_${suffix}`;
+                    suffix += 1;
+                  }
+                  onUpdate(node.id, {
+                    computeOutputs: {
+                      ...current,
+                      [key]: '${{ 1 }}',
+                    },
+                  });
+                }}
+                style={{ justifyContent: 'center' }}
+              >
+                + Output
+              </button>
             </div>
           )}
 
@@ -1275,12 +1892,35 @@ export default function StepConfigPanel({
                 />
               </div>
               <div>
+                <label style={labelStyle}>Body HTML</label>
+                <ExpressionTextarea
+                  value={data.emailBodyHtml || ''}
+                  onChange={(next) => onUpdate(node.id, { emailBodyHtml: next })}
+                  rows={5}
+                  placeholder="<p>Optional HTML body</p>"
+                  style={monoInputStyle}
+                  stepIds={dagStepIds}
+                  workflowInputs={dagInputs}
+                  triggerFields={dagTriggerFields}
+                />
+              </div>
+              <div>
                 <label style={labelStyle}>From (override)</label>
                 <input
                   type="text"
                   value={data.emailFrom || ''}
                   onChange={(e) => onUpdate(node.id, { emailFrom: e.target.value })}
                   placeholder="default: from config.toml"
+                  style={inputStyle}
+                />
+              </div>
+              <div>
+                <label style={labelStyle}>Reply-To</label>
+                <input
+                  type="text"
+                  value={data.emailReplyTo || ''}
+                  onChange={(e) => onUpdate(node.id, { emailReplyTo: e.target.value })}
+                  placeholder="optional reply-to address"
                   style={inputStyle}
                 />
               </div>
@@ -1323,6 +1963,16 @@ export default function StepConfigPanel({
                       />
                     </div>
                     <div>
+                      <label style={labelStyle}>Track secret env</label>
+                      <input
+                        type="text"
+                        value={data.emailTrackSecretEnv || ''}
+                        onChange={(e) => onUpdate(node.id, { emailTrackSecretEnv: e.target.value })}
+                        placeholder="CLICK_TRACKING_SECRET"
+                        style={monoInputStyle}
+                      />
+                    </div>
+                    <div>
                       <label style={labelStyle}>Track base URL</label>
                       <input
                         type="text"
@@ -1334,6 +1984,59 @@ export default function StepConfigPanel({
                     </div>
                   </div>
                 )}
+              </div>
+              <div style={{ paddingTop: 8, borderTop: '1px solid var(--pc-border)' }}>
+                <div style={{ ...sectionTitleStyle, marginBottom: 8 }}>SMTP Overrides</div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                  <div>
+                    <label style={labelStyle}>SMTP Host</label>
+                    <input
+                      type="text"
+                      value={data.emailSmtpHost || ''}
+                      onChange={(e) => onUpdate(node.id, { emailSmtpHost: e.target.value })}
+                      placeholder="smtp.example.com"
+                      style={monoInputStyle}
+                    />
+                  </div>
+                  <div>
+                    <label style={labelStyle}>SMTP Port</label>
+                    <input
+                      type="number"
+                      min={1}
+                      value={data.emailSmtpPort || ''}
+                      onChange={(e) => onUpdate(node.id, { emailSmtpPort: parseInt(e.target.value) || 0 })}
+                      placeholder="465"
+                      style={inputStyle}
+                    />
+                  </div>
+                  <div>
+                    <label style={labelStyle}>SMTP Username</label>
+                    <input
+                      type="text"
+                      value={data.emailSmtpUsername || ''}
+                      onChange={(e) => onUpdate(node.id, { emailSmtpUsername: e.target.value })}
+                      placeholder="optional username override"
+                      style={inputStyle}
+                    />
+                  </div>
+                  <div>
+                    <label style={labelStyle}>Password Env</label>
+                    <input
+                      type="text"
+                      value={data.emailSmtpPasswordEnv || ''}
+                      onChange={(e) => onUpdate(node.id, { emailSmtpPasswordEnv: e.target.value })}
+                      placeholder="SMTP_PASSWORD"
+                      style={monoInputStyle}
+                    />
+                  </div>
+                </div>
+                <div style={{ marginTop: 8 }}>
+                  <Checkbox
+                    checked={data.emailSmtpTls ?? true}
+                    onChange={(v) => onUpdate(node.id, { emailSmtpTls: v })}
+                    label="Use TLS"
+                  />
+                </div>
               </div>
               <div style={{ display: 'flex', gap: 8, paddingTop: 8, borderTop: '1px solid var(--pc-border)' }}>
                 <div style={{ flex: 1 }}>
@@ -1443,6 +2146,16 @@ export default function StepConfigPanel({
                 />
               </div>
               <div>
+                <label style={labelStyle}>Working Directory</label>
+                <input
+                  type="text"
+                  value={data.imageCwd || ''}
+                  onChange={(e) => onUpdate(node.id, { imageCwd: e.target.value })}
+                  placeholder="default: ~/.construct/workspace"
+                  style={monoInputStyle}
+                />
+              </div>
+              <div>
                 <label style={labelStyle}>Output pattern (count &gt; 1)</label>
                 <input
                   type="text"
@@ -1478,6 +2191,18 @@ export default function StepConfigPanel({
                   label="Register Kumiho artifact"
                 />
               </div>
+              {data.imageCanvas !== false && (
+                <div>
+                  <label style={labelStyle}>Canvas ID</label>
+                  <input
+                    type="text"
+                    value={data.imageCanvasTarget || ''}
+                    onChange={(e) => onUpdate(node.id, { imageCanvasTarget: e.target.value })}
+                    placeholder="optional canvas id; blank uses default"
+                    style={monoInputStyle}
+                  />
+                </div>
+              )}
             </div>
           )}
 
@@ -1623,15 +2348,35 @@ export default function StepConfigPanel({
                 />
               </div>
               <div>
-                <label style={labelStyle}>To Agent Type</label>
-                <select
-                  value={data.handoffTo || 'codex'}
-                  onChange={(e) => onUpdate(node.id, { handoffTo: e.target.value })}
-                  style={inputStyle}
+                <label style={labelStyle}>Receiving Agent</label>
+                <button
+                  type="button"
+                  onClick={(e) => openPoolAgentPicker('handoffTo', e)}
+                  style={{ ...monoInputStyle, textAlign: 'left', cursor: 'pointer' }}
+                  title="Pick the receiving agent from the pool"
                 >
-                  <option value="claude">claude</option>
-                  <option value="codex">codex</option>
-                </select>
+                  {data.handoffTo || 'codex'}
+                </button>
+                <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+                  {BUILTIN_AGENT_OPTIONS.map((agentType) => (
+                    <button
+                      key={agentType}
+                      type="button"
+                      onClick={() => onUpdate(node.id, { handoffTo: agentType })}
+                      style={{
+                        padding: '2px 6px',
+                        borderRadius: 6,
+                        border: '1px solid var(--construct-border-soft)',
+                        background: (data.handoffTo || 'codex') === agentType ? 'var(--pc-accent-glow)' : 'transparent',
+                        color: 'var(--pc-text-primary)',
+                        fontSize: 10,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      {agentType}
+                    </button>
+                  ))}
+                </div>
               </div>
               <div>
                 <label style={labelStyle}>Reason</label>
@@ -1755,6 +2500,49 @@ export default function StepConfigPanel({
                   style={inputStyle}
                 />
               </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                <div>
+                  <label style={labelStyle}>On Reject Goto</label>
+                  <input
+                    type="text"
+                    value={data.humanApprovalOnRejectGoto}
+                    onChange={(e) => onUpdate(node.id, { humanApprovalOnRejectGoto: e.target.value })}
+                    placeholder="optional step id"
+                    style={monoInputStyle}
+                  />
+                </div>
+                <div>
+                  <label style={labelStyle}>On Reject Max</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={10}
+                    value={data.humanApprovalOnRejectMax ?? 3}
+                    onChange={(e) => onUpdate(node.id, { humanApprovalOnRejectMax: parseInt(e.target.value) || 3 })}
+                    style={inputStyle}
+                  />
+                </div>
+              </div>
+              <div>
+                <label style={labelStyle}>Approve Keywords</label>
+                <input
+                  type="text"
+                  value={(data.humanApprovalApproveKeywords || []).join(', ')}
+                  onChange={(e) => onUpdate(node.id, { humanApprovalApproveKeywords: parseListInput(e.target.value) })}
+                  placeholder="approve, approved, yes, lgtm"
+                  style={monoInputStyle}
+                />
+              </div>
+              <div>
+                <label style={labelStyle}>Reject Keywords</label>
+                <input
+                  type="text"
+                  value={(data.humanApprovalRejectKeywords || []).join(', ')}
+                  onChange={(e) => onUpdate(node.id, { humanApprovalRejectKeywords: parseListInput(e.target.value) })}
+                  placeholder="reject, rejected, no"
+                  style={monoInputStyle}
+                />
+              </div>
             </div>
           )}
 
@@ -1813,6 +2601,32 @@ export default function StepConfigPanel({
                 />
                 <p style={helperStyle()}>Comma-separated connector ids enabled for this task.</p>
               </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                <div>
+                  <label style={labelStyle}>Enable Skills</label>
+                  <input
+                    type="text"
+                    defaultValue={(data.manusEnableSkills || []).join(', ')}
+                    onBlur={(e) =>
+                      onUpdate(node.id, { manusEnableSkills: parseListInput(e.target.value) })
+                    }
+                    placeholder="skill ids"
+                    style={monoInputStyle}
+                  />
+                </div>
+                <div>
+                  <label style={labelStyle}>Force Skills</label>
+                  <input
+                    type="text"
+                    defaultValue={(data.manusForceSkills || []).join(', ')}
+                    onBlur={(e) =>
+                      onUpdate(node.id, { manusForceSkills: parseListInput(e.target.value) })
+                    }
+                    placeholder="required skill ids"
+                    style={monoInputStyle}
+                  />
+                </div>
+              </div>
               <div>
                 <label style={labelStyle}>Title (optional)</label>
                 <input
@@ -1821,6 +2635,16 @@ export default function StepConfigPanel({
                   onChange={(e) => onUpdate(node.id, { manusTitle: e.target.value })}
                   placeholder="Robotics startup scan — Seoul"
                   style={inputStyle}
+                />
+              </div>
+              <div>
+                <label style={labelStyle}>Project ID</label>
+                <input
+                  type="text"
+                  value={data.manusProjectId || ''}
+                  onChange={(e) => onUpdate(node.id, { manusProjectId: e.target.value })}
+                  placeholder="optional Manus project id"
+                  style={monoInputStyle}
                 />
               </div>
               <div style={{ display: 'flex', gap: 8 }}>
@@ -2030,13 +2854,31 @@ export default function StepConfigPanel({
               </div>
               <div>
                 <label style={labelStyle}>Skill ID</label>
-                <input
-                  type="text"
-                  value={data.a2aSkillId}
-                  onChange={(e) => onUpdate(node.id, { a2aSkillId: e.target.value })}
-                  placeholder="Optional skill ID"
-                  style={monoInputStyle}
-                />
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <input
+                    type="text"
+                    value={data.a2aSkillId}
+                    onChange={(e) => onUpdate(node.id, { a2aSkillId: e.target.value })}
+                    placeholder="Optional skill ID"
+                    style={{ ...monoInputStyle, flex: 1 }}
+                  />
+                  <button
+                    type="button"
+                    onClick={(e) => openPoolAgentPicker('a2aSkill', e)}
+                    style={{
+                      padding: '6px 8px',
+                      borderRadius: 8,
+                      border: '1px solid var(--pc-accent-dim)',
+                      background: 'var(--pc-accent-glow)',
+                      color: 'var(--pc-accent-light)',
+                      fontSize: 11,
+                      cursor: 'pointer',
+                    }}
+                    title="Use a pool-agent template name as the A2A skill id"
+                  >
+                    Pool
+                  </button>
+                </div>
               </div>
               <div>
                 <label style={labelStyle}>Message</label>
@@ -2169,26 +3011,62 @@ export default function StepConfigPanel({
               <div style={{ display: 'flex', gap: 8 }}>
                 <div style={{ flex: 1 }}>
                   <label style={labelStyle}>Mapper</label>
-                  <select
-                    value={data.mapReduceMapper}
-                    onChange={(e) => onUpdate(node.id, { mapReduceMapper: e.target.value })}
-                    style={inputStyle}
+                  <button
+                    type="button"
+                    onClick={(e) => openPoolAgentPicker('mapReduceMapper', e)}
+                    style={{ ...monoInputStyle, textAlign: 'left', cursor: 'pointer' }}
                   >
-                    <option value="claude">Claude</option>
-                    <option value="codex">Codex</option>
-                  </select>
+                    {data.mapReduceMapper || 'claude'}
+                  </button>
                 </div>
                 <div style={{ flex: 1 }}>
                   <label style={labelStyle}>Reducer</label>
-                  <select
-                    value={data.mapReduceReducer}
-                    onChange={(e) => onUpdate(node.id, { mapReduceReducer: e.target.value })}
-                    style={inputStyle}
+                  <button
+                    type="button"
+                    onClick={(e) => openPoolAgentPicker('mapReduceReducer', e)}
+                    style={{ ...monoInputStyle, textAlign: 'left', cursor: 'pointer' }}
                   >
-                    <option value="claude">Claude</option>
-                    <option value="codex">Codex</option>
-                  </select>
+                    {data.mapReduceReducer || 'claude'}
+                  </button>
                 </div>
+              </div>
+              <div style={{ display: 'flex', gap: 6 }}>
+                {BUILTIN_AGENT_OPTIONS.map((agentType) => (
+                  <button
+                    key={`mapper-${agentType}`}
+                    type="button"
+                    onClick={() => onUpdate(node.id, { mapReduceMapper: agentType })}
+                    style={{
+                      padding: '2px 6px',
+                      borderRadius: 6,
+                      border: '1px solid var(--construct-border-soft)',
+                      background: (data.mapReduceMapper || 'claude') === agentType ? 'var(--pc-accent-glow)' : 'transparent',
+                      color: 'var(--pc-text-primary)',
+                      fontSize: 10,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    mapper {agentType}
+                  </button>
+                ))}
+                {BUILTIN_AGENT_OPTIONS.map((agentType) => (
+                  <button
+                    key={`reducer-${agentType}`}
+                    type="button"
+                    onClick={() => onUpdate(node.id, { mapReduceReducer: agentType })}
+                    style={{
+                      padding: '2px 6px',
+                      borderRadius: 6,
+                      border: '1px solid var(--construct-border-soft)',
+                      background: (data.mapReduceReducer || 'claude') === agentType ? 'var(--pc-accent-glow)' : 'transparent',
+                      color: 'var(--pc-text-primary)',
+                      fontSize: 10,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    reducer {agentType}
+                  </button>
+                ))}
               </div>
               <div style={{ display: 'flex', gap: 8 }}>
                 <div style={{ flex: 1 }}>
@@ -2246,6 +3124,16 @@ export default function StepConfigPanel({
                   })}
                 </div>
                 <p style={helperStyle()}>Select one or more channels to broadcast to.</p>
+              </div>
+              <div>
+                <label style={labelStyle}>Channel ID Override</label>
+                <input
+                  type="text"
+                  value={data.notifyChannelId ?? ''}
+                  onChange={(e) => onUpdate(node.id, { notifyChannelId: e.target.value })}
+                  placeholder="optional channel/thread/chat id"
+                  style={monoInputStyle}
+                />
               </div>
               <div>
                 <label style={labelStyle}>Notify Title</label>
@@ -2432,153 +3320,6 @@ export default function StepConfigPanel({
                   })}
                 </div>
                 <p style={helperStyle()}>Suggestions for the operator — final assignment is automatic.</p>
-              </div>
-            )}
-
-          {/* Skills */}
-          {stepType !== 'conditional' &&
-            stepType !== 'human_input' &&
-            stepType !== 'notify' &&
-            stepType !== 'tag' &&
-            stepType !== 'deprecate' && (
-              <div>
-                <label style={labelStyle}>Skills</label>
-                {data.skills.length > 0 && (
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 6 }}>
-                    {data.skills.map((skill) => (
-                      <span
-                        key={skill}
-                        style={{
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: 4,
-                          padding: '2px 8px',
-                          borderRadius: 6,
-                          fontSize: 10,
-                          fontWeight: 500,
-                          background: 'var(--pc-accent-glow)',
-                          color: 'var(--pc-accent-light)',
-                          border: '1px solid var(--pc-accent-dim)',
-                        }}
-                      >
-                        {skill}
-                        <button
-                          type="button"
-                          onClick={() => removeSkill(skill)}
-                          style={{ background: 'transparent', border: 0, color: 'inherit', cursor: 'pointer', padding: 0 }}
-                        >
-                          <X size={10} />
-                        </button>
-                      </span>
-                    ))}
-                  </div>
-                )}
-                <button
-                  onClick={() => setShowSkillPicker(!showSkillPicker)}
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 4,
-                    padding: '4px 10px',
-                    borderRadius: 8,
-                    border: '1px solid var(--pc-accent-dim)',
-                    background: showSkillPicker ? 'var(--pc-accent-glow)' : 'transparent',
-                    color: 'var(--pc-accent-light)',
-                    fontSize: 11,
-                    fontWeight: 500,
-                    cursor: 'pointer',
-                  }}
-                >
-                  <Sparkles size={12} />
-                  {showSkillPicker ? 'Hide skill picker' : 'Add skills'}
-                </button>
-                {showSkillPicker && (
-                  <div
-                    style={{
-                      marginTop: 8,
-                      borderRadius: 10,
-                      border: '1px solid var(--pc-border)',
-                      background: 'var(--pc-bg-input)',
-                      overflow: 'hidden',
-                    }}
-                  >
-                    <div style={{ position: 'relative', padding: 8 }}>
-                      <Search
-                        size={12}
-                        style={{
-                          position: 'absolute',
-                          left: 16,
-                          top: '50%',
-                          transform: 'translateY(-50%)',
-                          color: 'var(--pc-text-faint)',
-                        }}
-                      />
-                      <input
-                        type="text"
-                        value={skillSearch}
-                        onChange={(e) => setSkillSearch(e.target.value)}
-                        placeholder="Search skills…"
-                        style={{ ...inputStyle, paddingLeft: 26 }}
-                      />
-                    </div>
-                    <div style={{ maxHeight: 144, overflowY: 'auto' }}>
-                      {skillLoading ? (
-                        <div
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            gap: 6,
-                            padding: 12,
-                            fontSize: 10,
-                            color: 'var(--pc-text-faint)',
-                          }}
-                        >
-                          <Loader2 size={11} className="animate-spin" /> Loading skills…
-                        </div>
-                      ) : skillSearchResults.length === 0 ? (
-                        <p style={{ textAlign: 'center', padding: 12, fontSize: 10, color: 'var(--pc-text-faint)' }}>
-                          {allSkills.length === 0 ? 'No skills available' : 'No matching skills'}
-                        </p>
-                      ) : (
-                        skillSearchResults.slice(0, 20).map((skill) => (
-                          <button
-                            key={skill.kref}
-                            onClick={() => addSkill(skill.name)}
-                            style={{
-                              display: 'block',
-                              width: '100%',
-                              textAlign: 'left',
-                              padding: '6px 12px',
-                              fontSize: 11,
-                              border: 0,
-                              background: 'transparent',
-                              color: 'var(--pc-text-secondary)',
-                              cursor: 'pointer',
-                            }}
-                            onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--pc-hover)')}
-                            onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-                          >
-                            <div style={{ fontWeight: 500, color: 'var(--pc-text-primary)' }}>{skill.name}</div>
-                            {skill.description && (
-                              <div
-                                style={{
-                                  fontSize: 10,
-                                  color: 'var(--pc-text-faint)',
-                                  overflow: 'hidden',
-                                  textOverflow: 'ellipsis',
-                                  whiteSpace: 'nowrap',
-                                }}
-                              >
-                                {skill.description}
-                              </div>
-                            )}
-                          </button>
-                        ))
-                      )}
-                    </div>
-                  </div>
-                )}
               </div>
             )}
 

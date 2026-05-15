@@ -1242,10 +1242,7 @@ impl KumihoClient {
             std::collections::HashSet::with_capacity(primary_results.len() + legacy_results.len());
         let mut merged: Vec<SearchResult> =
             Vec::with_capacity(primary_results.len() + legacy_results.len());
-        for r in primary_results
-            .into_iter()
-            .chain(legacy_results.into_iter())
-        {
+        for r in primary_results.into_iter().chain(legacy_results) {
             if seen.insert(r.item.kref.clone()) {
                 merged.push(r);
             }

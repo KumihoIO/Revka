@@ -44,6 +44,8 @@ export class AgentManager {
                     inputTokens: (session.usage.inputTokens ?? 0) + (event.usage.inputTokens ?? 0),
                     outputTokens: (session.usage.outputTokens ?? 0) + (event.usage.outputTokens ?? 0),
                     totalCostUsd: (session.usage.totalCostUsd ?? 0) + (event.usage.totalCostUsd ?? 0),
+                    model: event.usage.model ?? session.usage.model,
+                    provider: event.usage.provider ?? session.usage.provider,
                 };
             }
             this.emitter.emit(id, event);
@@ -92,6 +94,15 @@ export class AgentManager {
                 session.events.push(event);
                 if (event.type === "status_changed")
                     session.status = event.status;
+                if (event.type === "turn_completed" && event.usage) {
+                    session.usage = {
+                        inputTokens: (session.usage.inputTokens ?? 0) + (event.usage.inputTokens ?? 0),
+                        outputTokens: (session.usage.outputTokens ?? 0) + (event.usage.outputTokens ?? 0),
+                        totalCostUsd: (session.usage.totalCostUsd ?? 0) + (event.usage.totalCostUsd ?? 0),
+                        model: event.usage.model ?? session.usage.model,
+                        provider: event.usage.provider ?? session.usage.provider,
+                    };
+                }
                 this.emitter.emit(agentId, event);
             });
         }
@@ -100,6 +111,15 @@ export class AgentManager {
                 session.events.push(event);
                 if (event.type === "status_changed")
                     session.status = event.status;
+                if (event.type === "turn_completed" && event.usage) {
+                    session.usage = {
+                        inputTokens: (session.usage.inputTokens ?? 0) + (event.usage.inputTokens ?? 0),
+                        outputTokens: (session.usage.outputTokens ?? 0) + (event.usage.outputTokens ?? 0),
+                        totalCostUsd: (session.usage.totalCostUsd ?? 0) + (event.usage.totalCostUsd ?? 0),
+                        model: event.usage.model ?? session.usage.model,
+                        provider: event.usage.provider ?? session.usage.provider,
+                    };
+                }
                 this.emitter.emit(agentId, event);
             });
         }

@@ -9,6 +9,7 @@ Later sources override earlier ones (project > user > builtin).
 """
 from __future__ import annotations
 
+import ast
 import os
 import re
 import sys
@@ -46,7 +47,9 @@ from operator_mcp.workflow.event_listener import get_trigger_registry
 # adds inferred deps in place. No-ops for refs to non-existent steps
 # (validator catches those separately) and self-references.
 
-_STEP_REF_RE = re.compile(r"\$\{([a-zA-Z_][a-zA-Z0-9_-]*)(?:\.[a-zA-Z_][a-zA-Z0-9_.-]*)?\}")
+_STEP_REF_RE = re.compile(r"\$\{(?!\{)([a-zA-Z_][a-zA-Z0-9_-]*)(?:\.[a-zA-Z_][a-zA-Z0-9_.-]*)?\}")
+_EXPR_TEMPLATE_RE = re.compile(r"\$\{\{\s*(.*?)\s*\}\}", re.DOTALL)
+_EXPR_ROOT_FALLBACK_RE = re.compile(r"(?<![A-Za-z0-9_.])([A-Za-z_][A-Za-z0-9_-]*)\s*\.")
 
 # Namespaces that are NOT step references — workflow-scope, runtime-scope,
 # or loop-iteration-scope. Mirrors the executor's interpolate() resolver
@@ -63,6 +66,32 @@ _NON_STEP_NAMESPACES = frozenset({
     "run_id",                   # workflow run id
     "outputs",                  # workflow-level outputs (frontend convention)
 })
+
+
+def _extract_expr_ref_namespaces(expr: str) -> set[str]:
+    """Return root namespaces from attribute chains in a ${{ ... }} expression.
+
+    Regex token scans see every dotted segment (``output_data.metadata``) as a
+    possible step id. Parsing the expression lets us keep only the root object
+    (``arc_loader`` in ``arc_loader.output_data.metadata.end``).
+    """
+    if not isinstance(expr, str) or not expr:
+        return set()
+    try:
+        tree = ast.parse(expr, mode="eval")
+    except SyntaxError:
+        return {m.group(1) for m in _EXPR_ROOT_FALLBACK_RE.finditer(expr)}
+
+    refs: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Attribute):
+            continue
+        root: ast.AST = node
+        while isinstance(root, ast.Attribute):
+            root = root.value
+        if isinstance(root, ast.Name):
+            refs.add(root.id)
+    return refs
 
 
 def _scan_step_for_refs(step: StepDef) -> set[str]:
@@ -83,6 +112,11 @@ def _scan_step_for_refs(step: StepDef) -> set[str]:
             if ns in _NON_STEP_NAMESPACES:
                 continue
             refs.add(ns)
+        for m in _EXPR_TEMPLATE_RE.finditer(text):
+            for ns in _extract_expr_ref_namespaces(m.group(1)):
+                if ns in _NON_STEP_NAMESPACES:
+                    continue
+                refs.add(ns)
 
     def _scan_value(value: Any) -> None:
         # Recurse into dict values and list items so dict/list-shaped
@@ -109,6 +143,9 @@ def _scan_step_for_refs(step: StepDef) -> set[str]:
         _scan_text(step.python.code)
         _scan_text(step.python.script)
         _scan_value(step.python.args)
+    # compute — output expressions can reference upstream step data.
+    if step.compute is not None:
+        _scan_value(step.compute.outputs)
     # email
     if step.email is not None:
         _scan_value(step.email.to)
@@ -200,6 +237,11 @@ def _infer_depends_on(wf: WorkflowDef) -> None:
     no inferred edge rather than creating a validator-rejected one.
     """
     known_ids = {s.id for s in wf.steps}
+    alias_to_id = {
+        sid.replace("-", "_"): sid
+        for sid in known_ids
+        if "-" in sid and sid.replace("-", "_") not in known_ids
+    }
 
     # Map child step id -> (parallel parent id, parent's depends_on set).
     # Used to suppress inferences that would violate the parallel-group rule.
@@ -218,7 +260,8 @@ def _infer_depends_on(wf: WorkflowDef) -> None:
         existing_set = set(existing)
         added: list[str] = []
         parent_info = parent_of.get(step.id)
-        for ref in refs:
+        for raw_ref in refs:
+            ref = alias_to_id.get(raw_ref, raw_ref)
             if ref == step.id:
                 continue  # self-reference — skip silently
             if ref not in known_ids:

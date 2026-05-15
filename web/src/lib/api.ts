@@ -38,6 +38,7 @@ import type {
   KumihoArtifact,
   KumihoItem,
   KumihoRevision,
+  SkinSummary,
 } from '../types/api';
 import { clearToken, getToken, setToken } from './auth';
 import { apiOrigin, basePath } from './basePath';
@@ -191,6 +192,30 @@ export function putConfig(toml: string): Promise<void> {
     method: 'PUT',
     headers: { 'Content-Type': 'application/toml' },
     body: toml,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// UI Skins
+// ---------------------------------------------------------------------------
+
+export function getSkins(): Promise<SkinSummary[]> {
+  return apiFetch<SkinSummary[] | { skins: SkinSummary[] }>('/api/skins').then((data) =>
+    unwrapField(data, 'skins'),
+  );
+}
+
+export function importSkinZip(file: File): Promise<SkinSummary> {
+  return apiFetch<SkinSummary | { skin: SkinSummary }>('/api/skins/import', {
+    method: 'POST',
+    headers: { 'Content-Type': file.type || 'application/zip' },
+    body: file,
+  }).then((data) => unwrapField(data, 'skin'));
+}
+
+export function deleteSkin(id: string): Promise<void> {
+  return apiFetch<void>(`/api/skins/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
   });
 }
 

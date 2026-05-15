@@ -27,3 +27,13 @@ export function appAssetPath(asset: string): string {
   const prefix = appAssetPrefix.replace(/\/+$/, '');
   return prefix ? `${prefix}/${normalizedAsset}` : `/${normalizedAsset}`;
 }
+
+export function skinAssetPath(skinId: string, assetPath: string): string {
+  const normalizedSkinId = encodeURIComponent(skinId);
+  const normalizedAsset = assetPath
+    .replace(/^\/+/, '')
+    .split('/')
+    .map((part) => encodeURIComponent(part))
+    .join('/');
+  return `${apiOrigin}${basePath}/api/skins/${normalizedSkinId}/assets/${normalizedAsset}`;
+}

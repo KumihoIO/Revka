@@ -37,6 +37,7 @@ from .schema import (
     QualityCheckConfig,
     ShellStepConfig,
     PythonStepConfig,
+    ComputeStepConfig,
     EmailStepConfig,
     ImageStepConfig,
     A2AStepConfig,
@@ -59,7 +60,9 @@ from .validator import validate_workflow
 # Variable interpolation
 # ---------------------------------------------------------------------------
 
-_VAR_RE = re.compile(r"\$\{([^}]+)\}")
+_VAR_RE = re.compile(r"\$\{(?!\{)([^}]+)\}")
+_EXPR_TEMPLATE_RE = re.compile(r"\$\{\{\s*(.*?)\s*\}\}", re.DOTALL)
+_COMPUTE_OUTPUT_KEY_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
 
 
 def interpolate(template: str, state: WorkflowState) -> str:
@@ -84,6 +87,8 @@ def interpolate(template: str, state: WorkflowState) -> str:
       - ${env.VAR}               — environment variable
       - ${run_id}                — workflow run ID
     """
+    template = _interpolate_expr_placeholders(template, state, strict=False)
+
     def _resolve(match: re.Match) -> str:
         ref = match.group(1)
         parts = ref.split(".", 1)
@@ -486,7 +491,10 @@ def _sanitize_hyphenated_refs(expr: str, alias_map: dict[str, str]) -> str:
     return "".join(out)
 
 
-def _build_eval_names(state: WorkflowState) -> tuple[dict[str, Any], dict[str, str]]:
+def _build_eval_names(
+    state: WorkflowState,
+    extra_names: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], dict[str, str]]:
     """Build a `names` dict for simpleeval mirroring interpolation namespaces.
 
     EvalWithCompoundTypes resolves dotted access on dicts via attribute
@@ -549,6 +557,14 @@ def _build_eval_names(state: WorkflowState) -> tuple[dict[str, Any], dict[str, s
     # `env` intentionally NOT filtered — env vars commonly contain underscores
     # but never dunders, and existing workflows reference ${env.VAR} freely.
     names["env"] = dict(os.environ)
+    if extra_names:
+        for key, value in extra_names.items():
+            if not isinstance(key, str) or not key or key.startswith("_"):
+                continue
+            if isinstance(value, dict):
+                names[key] = _safe_keys(value)
+            else:
+                names[key] = value
     return names, alias_map
 
 
@@ -588,7 +604,11 @@ def _interpolate_for_expr(expr: str, state: WorkflowState) -> str:
     return _VAR_RE.sub(_sub, expr)
 
 
-def _eval_expression(expr: str, state: WorkflowState) -> Any:
+def _eval_expression(
+    expr: str,
+    state: WorkflowState,
+    extra_names: dict[str, Any] | None = None,
+) -> Any:
     """Evaluate an expression and return the raw result.
 
     Pipeline: preprocess workflow-syntax sugar → interpolate any leftover
@@ -610,7 +630,7 @@ def _eval_expression(expr: str, state: WorkflowState) -> Any:
     if "${" in pre:
         pre = _interpolate_for_expr(pre, state)
 
-    names, alias_map = _build_eval_names(state)
+    names, alias_map = _build_eval_names(state, extra_names=extra_names)
     # Hyphenated step IDs (e.g. ``zeroclaw-resolve``) aren't valid Python
     # identifiers; AST parses them as subtraction. Rewrite bare references
     # to their underscored aliases (``zeroclaw_resolve``) — `_build_eval_names`
@@ -620,6 +640,34 @@ def _eval_expression(expr: str, state: WorkflowState) -> Any:
     # Whitelisted safe functions for workflow expressions. Kept tiny on
     # purpose — these handle the 99% case (case-insensitive matching,
     # length checks, type coercion) without exposing arbitrary Python.
+    def _safe_format(value: Any, spec: Any = "") -> str:
+        spec_s = str(spec)
+        if len(spec_s) > 120:
+            raise InvalidExpression("format spec is too long")
+        for digits in re.findall(r"\d+", spec_s):
+            if int(digits) > 1000:
+                raise InvalidExpression("format width/precision must be <= 1000")
+        rendered = format(value, spec_s)
+        if len(rendered) > 10000:
+            raise InvalidExpression("format result exceeds workflow safety cap (10000)")
+        return rendered
+
+    def _safe_pad(value: Any, width: Any, char: Any = "0") -> str:
+        width_i = int(width)
+        if width_i < 0 or width_i > 1000:
+            raise InvalidExpression("pad width must be between 0 and 1000")
+        fill = str(char or "0")[:1]
+        return str(value).rjust(width_i, fill)
+
+    def _safe_range(*args: Any) -> list[int]:
+        if not 1 <= len(args) <= 3:
+            raise InvalidExpression("range() expects 1 to 3 arguments")
+        ints = [int(a) for a in args]
+        r = range(*ints)
+        if len(r) > 10000:
+            raise InvalidExpression("range() result exceeds workflow safety cap (10000)")
+        return list(r)
+
     safe_functions: dict[str, Any] = {
         "lower": lambda s: str(s).lower() if s is not None else "",
         "upper": lambda s: str(s).upper() if s is not None else "",
@@ -628,6 +676,11 @@ def _eval_expression(expr: str, state: WorkflowState) -> Any:
         "int": int,
         "float": float,
         "bool": bool,
+        "format": _safe_format,
+        "pad": _safe_pad,
+        "range": _safe_range,
+        "add": lambda a, b: a + b,
+        "eq": lambda a, b: a == b,
     }
     evaluator = EvalWithCompoundTypes(names=names, functions=safe_functions)
     # Cap exponentiation hard. simpleeval's module-level safe_power defaults
@@ -664,6 +717,75 @@ def _eval_expression(expr: str, state: WorkflowState) -> Any:
         raise
 
 
+def _expr_value_to_text(value: Any) -> str:
+    """String form for expression results embedded inside a larger template."""
+    if value is None:
+        return ""
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False, default=str)
+    return str(value)
+
+
+def _interpolate_expr_placeholders(
+    template: str,
+    state: WorkflowState,
+    *,
+    strict: bool,
+    extra_names: dict[str, Any] | None = None,
+) -> str:
+    """Replace explicit ``${{ ... }}`` expression placeholders in text."""
+    if "${{" not in template:
+        return template
+
+    def _sub(match: re.Match) -> str:
+        expr = match.group(1)
+        try:
+            return _expr_value_to_text(
+                _eval_expression(expr, state, extra_names=extra_names)
+            )
+        except Exception:
+            if strict:
+                raise
+            return match.group(0)
+
+    return _EXPR_TEMPLATE_RE.sub(_sub, template)
+
+
+def _eval_compute_value(
+    value: Any,
+    state: WorkflowState,
+    outputs: dict[str, Any],
+) -> Any:
+    """Evaluate one compute output value.
+
+    Exact ``${{ expr }}`` values preserve the typed expression result. Mixed
+    strings stringify expression fragments, then apply legacy ``${...}``
+    interpolation. Lists and dicts are evaluated recursively.
+    """
+    extra_names = {"outputs": outputs}
+
+    if isinstance(value, str):
+        stripped = value.strip()
+        matches = list(_EXPR_TEMPLATE_RE.finditer(stripped))
+        if len(matches) == 1 and matches[0].span() == (0, len(stripped)):
+            return _eval_expression(matches[0].group(1), state, extra_names=extra_names)
+        text = _interpolate_expr_placeholders(
+            value,
+            state,
+            strict=True,
+            extra_names=extra_names,
+        )
+        return interpolate(text, state) if "${" in text else text
+    if isinstance(value, list):
+        return [_eval_compute_value(item, state, outputs) for item in value]
+    if isinstance(value, dict):
+        return {
+            str(k): _eval_compute_value(v, state, outputs)
+            for k, v in value.items()
+        }
+    return value
+
+
 def _eval_condition(expr: str, state: WorkflowState) -> bool:
     """Evaluate a branch condition. Returns False on any failure (logged)."""
     if not expr or expr.strip().lower() == "default":
@@ -697,27 +819,38 @@ def _eval_branch_value(expr: str | None, state: WorkflowState) -> str:
 # ---------------------------------------------------------------------------
 
 async def _resolve_skills_inline(skill_refs: list[str]) -> str:
-    """Pre-resolve skill krefs into inline content.
+    """Pre-resolve skill krefs into compact inline context.
 
-    Fetches skill content from Kumiho or local files so agents get the full
-    text in their prompt instead of opaque kref URIs they'd waste turns
-    trying to fetch via MCP tools.
+    Fetches skill content from Kumiho or local files, then sends a compact
+    manifest by default. This avoids multiplying workflow-step context by
+    every assigned skill. Set CONSTRUCT_WORKFLOW_SKILL_CONTEXT_MODE=pointer to
+    send only krefs/paths, or full to restore legacy full-inline behavior.
     """
+    from ..token_compression import build_skill_pointer_manifest, compress_skill_content
+
     parts: list[str] = []
+    stats: list[dict[str, Any]] = []
+    mode = os.environ.get("CONSTRUCT_WORKFLOW_SKILL_CONTEXT_MODE", "compact").strip().lower()
+    max_chars = int(os.environ.get("CONSTRUCT_WORKFLOW_SKILL_MAX_CHARS", "1600"))
     for ref in skill_refs:
         content = None
+        resolved_path = None
         if ref.startswith("kref://"):
             # Try Kumiho resolve — returns file path on disk
             try:
                 from ..operator_mcp import KUMIHO_SDK
                 if KUMIHO_SDK._available:
-                    file_path = await KUMIHO_SDK.resolve_kref(ref)
-                    if file_path and os.path.exists(file_path):
-                        with open(file_path, "r") as f:
+                    resolved_path = await KUMIHO_SDK.resolve_kref(ref)
+                    if (
+                        mode != "pointer"
+                        and resolved_path
+                        and os.path.exists(resolved_path)
+                    ):
+                        with open(resolved_path, "r", encoding="utf-8") as f:
                             content = f.read()
             except Exception as e:
                 _log(f"skill pre-resolve failed for {ref}: {e}")
-        if not content:
+        if not content and mode != "pointer":
             # Fallback: try as local skill name
             from ..skill_loader import load_skill
             # Strip both the canonical `.skill` suffix and the legacy
@@ -731,14 +864,38 @@ async def _resolve_skills_inline(skill_refs: list[str]) -> str:
             )
             content = load_skill(name)
         if content:
-            # Truncate very large skills to save tokens
-            if len(content) > 8000:
-                content = content[:8000] + "\n\n[... truncated for token efficiency ...]"
+            if mode == "full":
+                if len(content) > 8000:
+                    content = content[:8000] + "\n\n[... truncated for token efficiency ...]"
+            else:
+                content, compressed_stats = compress_skill_content(
+                    ref,
+                    content,
+                    resolved_path=resolved_path,
+                    max_chars=max_chars,
+                )
+                if compressed_stats:
+                    stats.append(compressed_stats)
+            parts.append(content)
+        elif mode == "pointer" or ref.startswith("kref://") or resolved_path:
+            content, pointer_stats = build_skill_pointer_manifest(
+                ref,
+                resolved_path=resolved_path,
+                max_chars=max_chars,
+            )
+            stats.append(pointer_stats)
             parts.append(content)
         else:
             _log(f"skill pre-resolve: could not resolve {ref}, skipping")
     if parts:
-        return "\n## Reference Skills\n\n" + "\n\n---\n\n".join(parts)
+        prefix = "\n## Reference Skills\n\n"
+        if stats:
+            saved = sum(item.get("estimated_tokens_saved", 0) for item in stats)
+            prefix += (
+                f"[Construct skill compression: {len(stats)} skill(s), "
+                f"est_tokens_saved~{saved}]\n\n"
+            )
+        return prefix + "\n\n---\n\n".join(parts)
     return ""
 
 
@@ -1896,6 +2053,54 @@ async def _exec_image(step: StepDef, state: WorkflowState, cwd: str) -> StepResu
     )
 
 
+async def _exec_compute(step: StepDef, state: WorkflowState) -> StepResult:
+    """Execute a compute step — deterministic typed expression outputs."""
+    cfg: ComputeStepConfig | None = step.compute
+    input_data: dict[str, Any] = {
+        "outputs": cfg.outputs if cfg else {},
+    }
+    if cfg is None:
+        return StepResult(
+            step_id=step.id,
+            status="failed",
+            error="compute step missing config",
+            input_data=input_data,
+        )
+    if not cfg.outputs:
+        return StepResult(
+            step_id=step.id,
+            status="failed",
+            error="compute step requires at least one output",
+            input_data=input_data,
+        )
+
+    outputs: dict[str, Any] = {}
+    try:
+        for key, raw_value in cfg.outputs.items():
+            if not _COMPUTE_OUTPUT_KEY_RE.fullmatch(str(key)):
+                raise ValueError(
+                    "compute output keys must start with a letter and contain "
+                    f"only letters, digits, and underscores: {key!r}"
+                )
+            outputs[str(key)] = _eval_compute_value(raw_value, state, outputs)
+    except Exception as exc:
+        return StepResult(
+            step_id=step.id,
+            status="failed",
+            error=f"compute failed: {exc}",
+            input_data=input_data,
+            output_data=outputs,
+        )
+
+    return StepResult(
+        step_id=step.id,
+        status="completed",
+        output=json.dumps(outputs, ensure_ascii=False, default=str),
+        input_data=input_data,
+        output_data=outputs,
+    )
+
+
 async def _exec_output(step: StepDef, state: WorkflowState) -> StepResult:
     """Execute an output step — render template with interpolation."""
     cfg: OutputStepConfig = step.output  # type: ignore
@@ -1997,8 +2202,6 @@ async def _exec_output(step: StepDef, state: WorkflowState) -> StepResult:
 async def _exec_resolve(step: StepDef, state: WorkflowState) -> StepResult:
     """Resolve a Kumiho entity by kind+tag — deterministic, no LLM."""
     cfg: ResolveStepConfig = step.resolve or ResolveStepConfig(kind="")
-    if not cfg.kind:
-        return StepResult(step_id=step.id, status="failed", error="resolve step requires 'kind'")
 
     # Capture interpolated query parameters for run-view UI.
     resolved_kind = interpolate(cfg.kind, state)
@@ -2013,6 +2216,20 @@ async def _exec_resolve(step: StepDef, state: WorkflowState) -> StepResult:
         "mode": cfg.mode,
         "fail_if_missing": cfg.fail_if_missing,
     }
+    if not resolved_kind.strip():
+        if cfg.fail_if_missing:
+            return StepResult(
+                step_id=step.id,
+                status="failed",
+                error="resolve step requires 'kind'",
+                input_data=input_data,
+            )
+        return StepResult(
+            step_id=step.id,
+            status="completed",
+            output_data={"found": False},
+            input_data=input_data,
+        )
 
     try:
         from operator_mcp.workflow.memory import resolve_entity
@@ -3684,6 +3901,7 @@ async def _exec_supervisor(step: StepDef, state: WorkflowState, cwd: str) -> Ste
             "cwd": cwd,
             "max_iterations": cfg.max_iterations,
             "supervisor_type": cfg.supervisor_type,
+            "templates": cfg.templates,
             "timeout": cfg.timeout,
         })
         status = result.get("status", "")
@@ -3844,6 +4062,11 @@ def dry_run_workflow(wf: WorkflowDef, inputs: dict[str, Any]) -> dict[str, Any]:
                     entry["code_preview"] = (cfg.code or "")[:100]
                 entry["timeout"] = cfg.timeout
 
+        elif step.type == StepType.COMPUTE:
+            cfg = step.compute
+            if cfg:
+                entry["outputs"] = list(cfg.outputs.keys())
+
         elif step.type == StepType.EMAIL:
             cfg = step.email
             if cfg:
@@ -3965,26 +4188,36 @@ def dry_run_workflow(wf: WorkflowDef, inputs: dict[str, Any]) -> dict[str, Any]:
 # Cost guard — check budget before and during execution
 # ---------------------------------------------------------------------------
 
-def _check_cost_guard(
+async def _check_cost_guard(
     max_cost_usd: float | None = None,
 ) -> str | None:
     """Check if budget allows workflow execution. Returns error string or None."""
-    if max_cost_usd is None:
-        return None
     try:
-        from ..cost_tracker import CostTracker
-        from ..operator_mcp import COST_TRACKER
-        exceeded = COST_TRACKER.check_budget(
-            max_session_usd=max_cost_usd,
-        )
-        if exceeded:
+        from ..operator_mcp import CONSTRUCT_GW
+        summary = await CONSTRUCT_GW.get_cost_summary()
+        if summary is None:
+            if max_cost_usd is None:
+                return None
+            return "Gateway budget authority unavailable"
+
+        budget = summary.get("budget", {}) or {}
+        if budget.get("enabled") and budget.get("state") == "exceeded":
             return (
-                f"Budget exceeded: {exceeded['exceeded']} limit "
-                f"${exceeded['limit_usd']:.2f}, actual ${exceeded['actual_usd']:.2f}"
+                "Budget exceeded: daily/monthly configured limit reached "
+                f"(daily ${summary.get('daily_cost_usd', 0.0):.2f}/"
+                f"${budget.get('daily_limit_usd', 0.0):.2f}, monthly "
+                f"${summary.get('monthly_cost_usd', 0.0):.2f}/"
+                f"${budget.get('monthly_limit_usd', 0.0):.2f})"
+            )
+        if max_cost_usd is not None and summary.get("session_cost_usd", 0.0) >= max_cost_usd:
+            return (
+                "Workflow cost guard exceeded: "
+                f"session ${summary.get('session_cost_usd', 0.0):.2f}/"
+                f"${max_cost_usd:.2f}"
             )
         return None
-    except Exception:
-        return None  # Don't block on cost tracker errors
+    except Exception as exc:
+        return f"Budget check failed: {exc}"
 
 
 # ---------------------------------------------------------------------------
@@ -4312,7 +4545,7 @@ async def execute_workflow(
             cfg.timeout = wf.default_timeout
 
     # Pre-flight cost check
-    cost_err = _check_cost_guard(max_cost_usd)
+    cost_err = await _check_cost_guard(max_cost_usd)
     if cost_err:
         return WorkflowState(
             workflow_name=wf.name,
@@ -4456,7 +4689,7 @@ async def execute_workflow(
                 break
 
             # Mid-execution cost guard
-            cost_err = _check_cost_guard(max_cost_usd)
+            cost_err = await _check_cost_guard(max_cost_usd)
             if cost_err:
                 state.status = WorkflowStatus.FAILED
                 state.error = f"Cost guard (mid-run): {cost_err}"
@@ -4862,6 +5095,8 @@ async def _dispatch_step(
             return await _exec_shell(step, state, cwd)
         elif step.type == StepType.PYTHON:
             return await _exec_python(step, state, cwd)
+        elif step.type == StepType.COMPUTE:
+            return await _exec_compute(step, state)
         elif step.type == StepType.EMAIL:
             return await _exec_email(step, state)
         elif step.type == StepType.IMAGE:

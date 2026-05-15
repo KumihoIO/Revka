@@ -57,12 +57,15 @@ class ConstructGatewayClient:
 
     def _headers(self) -> dict[str, str]:
         h: dict[str, str] = {"Accept": "application/json"}
+        latest_token = _read_service_token()
+        if latest_token:
+            self.service_token = latest_token
         if self.service_token:
             h["X-Construct-Service-Token"] = self.service_token
         return h
 
     async def get_cost_summary(self) -> dict[str, Any] | None:
-        """Get current cost summary (session, daily, monthly, by-model)."""
+        """Get current cost summary from the Rust gateway budget authority."""
         if not self._available:
             return None
         try:
@@ -76,6 +79,48 @@ class ConstructGatewayClient:
                 return data.get("cost", data)
         except Exception as e:
             _log(f"Gateway cost query failed: {e}")
+            return None
+
+    async def record_usage(
+        self,
+        *,
+        model: str,
+        provider: str = "",
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        source: str = "sidecar",
+        agent_id: str = "",
+        agent_title: str = "",
+    ) -> dict[str, Any] | None:
+        """Record token usage in the Rust gateway cost tracker."""
+        if not self._available:
+            return None
+        clean_model = (model or "").strip()
+        if not clean_model:
+            _log("Gateway usage ingest skipped: missing model")
+            return None
+        payload: dict[str, Any] = {
+            "model": clean_model,
+            "provider": (provider or "sidecar").strip(),
+            "input_tokens": max(0, int(input_tokens or 0)),
+            "output_tokens": max(0, int(output_tokens or 0)),
+            "source": source or "sidecar",
+        }
+        if agent_id:
+            payload["agent_id"] = agent_id
+        if agent_title:
+            payload["agent_title"] = agent_title
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.post(
+                    f"{self.gateway_url}/api/cost/usage",
+                    headers=self._headers(),
+                    json=payload,
+                )
+                resp.raise_for_status()
+                return resp.json()
+        except Exception as e:
+            _log(f"Gateway usage ingest failed: {e}")
             return None
 
     async def get_status(self) -> dict[str, Any] | None:

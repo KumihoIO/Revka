@@ -143,6 +143,14 @@ def _resolve_agent_type(agent_hint: str) -> str:
     return "claude"
 
 
+def _resolve_template(agent_hint: str):
+    """Return a pool template by name, case-insensitive."""
+    for tmpl in POOL.list_all():
+        if tmpl.name.lower() == agent_hint.lower():
+            return tmpl
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Trust-informed agent selection
 # ---------------------------------------------------------------------------
@@ -185,8 +193,29 @@ async def tool_supervisor_run(args: dict[str, Any]) -> dict[str, Any]:
     templates = args.get("templates", [])
     max_iterations = min(args.get("max_iterations", 5), 10)
     supervisor_type = args.get("supervisor_type", "claude")
-    model = args.get("model")
+    requested_model = args.get("model")
     timeout = args.get("timeout", 300.0)
+    supervisor_template = _resolve_template(supervisor_type)
+    supervisor_model = requested_model
+    supervisor_role = "architect"
+    supervisor_identity = ""
+    supervisor_name = "supervisor"
+    if supervisor_template:
+        supervisor_type = supervisor_template.agent_type
+        supervisor_model = requested_model or supervisor_template.model
+        supervisor_role = supervisor_template.role or "architect"
+        supervisor_name = supervisor_template.name
+        supervisor_identity = "\n".join(
+            part for part in (
+                supervisor_template.description,
+                supervisor_template.identity,
+                supervisor_template.soul,
+                (
+                    f"Capabilities: {', '.join(supervisor_template.capabilities)}"
+                    if supervisor_template.capabilities else ""
+                ),
+            ) if part
+        )
 
     if not task:
         return classified_error("task is required", code="missing_task", category=VALIDATION_ERROR)
@@ -218,7 +247,10 @@ async def tool_supervisor_run(args: dict[str, Any]) -> dict[str, Any]:
     for iteration in range(1, max_iterations + 1):
         _log(f"supervisor: iteration {iteration}/{max_iterations}")
 
-        work_str = "\n".join(f"[Step {i+1}] {w}" for i, w in enumerate(work_history)) if work_history else "(No work done yet)"
+        work_str = (
+            "\n".join(f"[Step {i+1}] {w}" for i, w in enumerate(work_history))
+            if work_history else "(No work done yet)"
+        )
 
         # Ask supervisor what to do next
         analyze_prompt = _SUPERVISOR_ANALYZE_PROMPT.format(
@@ -229,8 +261,8 @@ async def tool_supervisor_run(args: dict[str, Any]) -> dict[str, Any]:
         from ..agent_subprocess import compose_agent_prompt
         sup_agent, sup_output = await _spawn_and_wait(
             supervisor_type, f"supervisor-iter{iteration}", cwd,
-            compose_agent_prompt("supervisor", "architect", "", [], analyze_prompt),
-            model=model, timeout=timeout,
+            compose_agent_prompt(supervisor_name, supervisor_role, supervisor_identity, [], analyze_prompt),
+            model=supervisor_model, timeout=timeout,
         )
 
         decision = _parse_supervisor_action(sup_output)
@@ -260,6 +292,23 @@ async def tool_supervisor_run(args: dict[str, Any]) -> dict[str, Any]:
             agent_hint = decision["agent"]
             subtask = decision["subtask"]
             agent_type = _resolve_agent_type(agent_hint)
+            spec_template = _resolve_template(agent_hint)
+            spec_role = spec_template.role if spec_template else "coder"
+            spec_identity = ""
+            spec_model = requested_model
+            if spec_template:
+                spec_model = requested_model or spec_template.model
+                spec_identity = "\n".join(
+                    part for part in (
+                        spec_template.description,
+                        spec_template.identity,
+                        spec_template.soul,
+                        (
+                            f"Capabilities: {', '.join(spec_template.capabilities)}"
+                            if spec_template.capabilities else ""
+                        ),
+                    ) if part
+                )
 
             # Policy check
             policy_failures = policy.preflight_spawn(cwd, agent_type)
@@ -279,8 +328,14 @@ async def tool_supervisor_run(args: dict[str, Any]) -> dict[str, Any]:
             )
             spec_agent, spec_output = await _spawn_and_wait(
                 agent_type, f"specialist-{agent_hint[:15]}-iter{iteration}", cwd,
-                compose_agent_prompt(f"specialist-{iteration}", "coder", "", [], spec_prompt),
-                model=model, timeout=timeout,
+                compose_agent_prompt(
+                    spec_template.name if spec_template else f"specialist-{iteration}",
+                    spec_role,
+                    spec_identity,
+                    [],
+                    spec_prompt,
+                ),
+                model=spec_model, timeout=timeout,
             )
 
             spec_text, spec_files = _get_agent_output(spec_agent.id)

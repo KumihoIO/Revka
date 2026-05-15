@@ -346,7 +346,6 @@ impl InterruptOnNewMessageConfig {
 #[derive(Clone)]
 struct ChannelCostTrackingState {
     tracker: Arc<crate::cost::CostTracker>,
-    prices: Arc<HashMap<String, crate::config::schema::ModelPricing>>,
 }
 
 #[derive(Clone)]
@@ -3014,7 +3013,7 @@ async fn process_channel_message(
         scale_cap,
     );
     let cost_tracking_context = ctx.cost_tracking.clone().map(|state| {
-        crate::agent::loop_::ToolLoopCostTrackingContext::new(state.tracker, state.prices)
+        crate::agent::loop_::ToolLoopCostTrackingContext::new(state.tracker, "channel")
     });
     let llm_call_start = Instant::now();
     #[allow(clippy::cast_possible_truncation)]
@@ -3779,6 +3778,7 @@ pub fn assemble_channel_system_prompt(
         // so the in-builder section stays empty here.
         kumiho_enabled: false,
         kumiho_memory_advanced_available: true,
+        compact_tool_docs: false,
         mode: BuilderMode::Channel(opts),
     };
 
@@ -5439,12 +5439,12 @@ pub async fn start_channels(config: Config) -> Result<()> {
             config.cost.clone(),
             &config.workspace_dir,
         )
-        .map(|tracker| ChannelCostTrackingState {
-            tracker,
-            prices: Arc::new(config.cost.prices.clone()),
-        }),
+        .map(|tracker| ChannelCostTrackingState { tracker }),
         pacing: config.pacing.clone(),
-        max_tool_result_chars: config.agent.max_tool_result_chars,
+        max_tool_result_chars: crate::agent::context_compressor::effective_live_tool_result_chars(
+            &config.agent.context_compression,
+            config.agent.max_tool_result_chars,
+        ),
         context_token_budget: config.agent.max_context_tokens,
         audit_logger,
         debouncer: Arc::new(debounce::MessageDebouncer::new(Duration::from_millis(

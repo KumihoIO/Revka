@@ -204,7 +204,7 @@ export default function Teams() {
                   style={{
                     borderColor: team.kref === selectedTeam?.kref ? 'var(--construct-border-strong)' : 'var(--construct-border-soft)',
                     background: team.kref === selectedTeam?.kref
-                      ? 'color-mix(in srgb, var(--construct-signal-network) 10%, var(--construct-bg-panel-strong))'
+                      ? 'color-mix(in srgb, var(--construct-signal-selected) 14%, var(--construct-bg-panel-strong))'
                       : 'transparent',
                   }}
                   onClick={() => {
@@ -220,7 +220,7 @@ export default function Teams() {
                         {tpl('teams.members_suffix', { members: team.members.length || team.member_count || 0, edges: team.edges.length || team.edge_count || 0 })}
                       </div>
                     </div>
-                    <span className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em]" style={{ background: team.deprecated ? 'rgba(255,107,122,0.12)' : 'rgba(125,255,155,0.12)', color: team.deprecated ? 'var(--construct-status-danger)' : 'var(--construct-status-success)' }}>
+                    <span className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em]" style={{ background: team.deprecated ? 'color-mix(in srgb, var(--construct-status-danger) 12%, transparent)' : 'color-mix(in srgb, var(--construct-status-success) 12%, transparent)', color: team.deprecated ? 'var(--construct-status-danger)' : 'var(--construct-status-success)' }}>
                       {team.deprecated ? t('teams.status.off') : t('teams.status.live')}
                     </span>
                   </div>
@@ -250,7 +250,7 @@ export default function Teams() {
                 <div className="flex items-center gap-2">
                   <div className="text-sm font-semibold" style={{ color: 'var(--construct-text-primary)' }}>{selectedTeam.name}</div>
                   <span className="rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em]" style={{
-                    background: selectedTeam.deprecated ? 'rgba(255,107,122,0.12)' : 'var(--construct-signal-live-soft)',
+                    background: selectedTeam.deprecated ? 'color-mix(in srgb, var(--construct-status-danger) 12%, transparent)' : 'color-mix(in srgb, var(--construct-status-success) 12%, transparent)',
                     color: selectedTeam.deprecated ? 'var(--construct-status-danger)' : 'var(--construct-status-success)',
                   }}>
                     {selectedTeam.deprecated ? t('teams.status.deprecated') : t('teams.status.active')}
