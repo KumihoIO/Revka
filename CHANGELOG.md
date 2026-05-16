@@ -3,7 +3,85 @@
 All notable changes to Construct are recorded here. Dates are ISO 8601 (UTC).
 Version numbers follow CalVer (`YYYY.M.D`).
 
-## [Unreleased] — Open-source preparation
+## [Unreleased]
+
+- No unreleased changes yet.
+
+## [2026.5.11] - 2026-05-16
+
+### Highlights
+
+- Promoted the 2026.5.11 mainline release with the workflow editor, viewer,
+  runtime, and Operator changes needed for larger production DAGs.
+- Added first-class workflow `compute` steps for deterministic math and
+  transform outputs, including expression parsing, typed `output_data`, schema
+  coverage, validator integration, and executor tests.
+- Reworked workflow graph synchronization so conditional, `for_each`, `goto`,
+  branch, and dependency edges round-trip through YAML without phantom cycles,
+  disappearing connected nodes, or stale editor-generated links.
+- Added runtime support for token compression and budget authority so long
+  Operator and agent runs can preserve useful context while staying inside
+  configured limits.
+- Added Construct UI skins and theme plumbing, including the gateway API,
+  dashboard route, documentation, and front-end polish for the app chrome.
+
+### Workflow Authoring & Runtime
+
+- Added `compute` workflow execution with sandboxed arithmetic expressions,
+  dependency validation, schema bridging, fixture coverage, and focused tests
+  for output propagation.
+- Fixed workflow YAML sync for conditionals, `for_each` loops, goto steps,
+  branch values, generated edges, and editor revision round-trips.
+- Improved workflow discovery, revision loading, DAG rendering, and run-view
+  wiring so viewer/editor state stays aligned with the saved workflow.
+- Tightened step input data handling and smoke coverage across all built-in
+  workflow step types.
+
+### Operator, Agents, And Cost Controls
+
+- Added Rust and Operator-side token compression paths, with tests for
+  compression behavior and progress reporting.
+- Replaced the older Operator cost tracker path with budget authority
+  primitives and updated event consumption, gateway client, review loop, and
+  subprocess handling around it.
+- Improved group chat, handoff, map-reduce, refinement, supervisor, teams, and
+  agent tool handlers for richer workflow orchestration.
+- Preserved operator chat session source tracking and fixed image input
+  delivery for Codex image generation.
+- Added semantic code search tooling and MCP transport/deferred-tool polish.
+
+### Dashboard And Desktop
+
+- Added the Skins page, skin API types, app navigation entries, and gateway
+  routes for UI skin management.
+- Refined workflow editor panels, DAG workspace behavior, run pages, graph
+  helpers, and orchestration node rendering.
+- Improved streaming chat bubble rendering, theme storage, app base-path
+  handling, and dashboard static-file fallback behavior.
+- Bumped the desktop app metadata to 2026.5.11 alongside the Rust package
+  version.
+
+### Security, Packaging, And CI
+
+- Addressed dependency security alerts and added vendored security patches for
+  affected transitive dependencies used by the desktop stack.
+- Normalized GHCR image references to lowercase for Docker release jobs and
+  marketplace templates.
+- Made GHCR anonymous public-pull verification retrying and advisory by
+  default after authenticated Docker push and cosign signature verification;
+  set `REQUIRE_PUBLIC_GHCR_PULL=true` to restore strict public-pull gating.
+- Updated release, PR check, marketplace, install, Docker, and package metadata
+  for the 2026.5.11 promotion.
+
+### Documentation
+
+- Added UI skins documentation and navigation entries.
+- Expanded the config reference with newly exposed runtime configuration.
+- Refreshed dashboard development documentation and maintainer inventory.
+- Kept the open-source preparation notes below as part of this release because
+  they are still relevant to the 2026.5.11 public distribution boundary.
+
+### Open-source Preparation
 
 ### Rebranding & attribution
 
