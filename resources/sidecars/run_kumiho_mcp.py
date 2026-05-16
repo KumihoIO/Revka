@@ -28,6 +28,10 @@ def main() -> int:
         )
         return 127
 
+    # Older Construct binaries may still inject KUMIHO_AUTO_CONFIGURE at
+    # sidecar launch. Keep endpoint discovery out of the pre-initialize path.
+    os.environ.pop("KUMIHO_AUTO_CONFIGURE", None)
+
     argv = [str(interp), "-m", "kumiho.mcp_server", *sys.argv[1:]]
     os.execv(str(interp), argv)
 

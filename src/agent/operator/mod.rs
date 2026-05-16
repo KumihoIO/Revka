@@ -89,8 +89,10 @@ pub fn operator_mcp_server_config(cfg: &OperatorConfig) -> McpServerConfig {
             env.insert("KUMIHO_AUTH_TOKEN".to_string(), token);
         }
     }
-    // Enable Kumiho SDK auto-configure (uses cached credentials from ~/.kumiho/).
-    env.insert("KUMIHO_AUTO_CONFIGURE".to_string(), "1".to_string());
+    // Do not force Kumiho auto-configure at process launch. Some Kumiho
+    // discovery paths perform network refresh before the MCP server can answer
+    // `initialize`; Operator keeps Kumiho setup lazy so workflow tools still
+    // register when the control plane is temporarily unavailable.
     // Forward gateway URL so the operator can query cost/audit APIs. Auth
     // uses the service token at ~/.construct/service-token (read directly by
     // operator-mcp's gateway_client), so no token env-forwarding is needed.
@@ -418,6 +420,15 @@ mod tests {
             .filter(|s| s.name == OPERATOR_SERVER_NAME)
             .count();
         assert_eq!(count_after_once, count_after_twice);
+    }
+
+    #[test]
+    fn operator_mcp_server_config_does_not_force_kumiho_auto_configure() {
+        let server = operator_mcp_server_config(&OperatorConfig::default());
+        assert!(
+            !server.env.contains_key("KUMIHO_AUTO_CONFIGURE"),
+            "Operator MCP must answer initialize before Kumiho network discovery"
+        );
     }
 
     #[test]

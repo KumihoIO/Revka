@@ -11,11 +11,19 @@ Contains:
 from __future__ import annotations
 
 import asyncio
+import os
 from typing import Any
 
 from ._log import _log
 from .construct_config import harness_project
 
+_KUMIHO_IMPORT_ERROR: BaseException | None = None
+
+# kumiho.mcp_server performs auto-configuration at import time when this env var
+# is set. That can refresh network credentials before the Operator MCP server
+# has answered `initialize`, which makes the whole sidecar unavailable. Keep
+# auto-config lazy by suppressing it only while importing the tool functions.
+_AUTO_CONFIGURE = os.environ.pop("KUMIHO_AUTO_CONFIGURE", None)
 try:
     from kumiho.mcp_server import (
         _ensure_configured,
@@ -50,16 +58,21 @@ try:
         from kumiho.mcp_server import tool_batch_get_revisions
     except ImportError:
         tool_batch_get_revisions = None  # type: ignore[assignment]
-except ImportError:
+except Exception as exc:
     _HAS_KUMIHO = False
+    _KUMIHO_IMPORT_ERROR = exc
+except SystemExit as exc:
+    _HAS_KUMIHO = False
+    _KUMIHO_IMPORT_ERROR = exc
+finally:
+    if _AUTO_CONFIGURE is not None:
+        os.environ["KUMIHO_AUTO_CONFIGURE"] = _AUTO_CONFIGURE
 
 try:
     import httpx
     _HAS_HTTPX = True
 except ImportError:
     _HAS_HTTPX = False
-
-import os
 
 
 # ---------------------------------------------------------------------------
@@ -83,14 +96,22 @@ class KumihoSDKClient:
             return
         self._initialized = True
         if not _HAS_KUMIHO:
-            _log("Kumiho not available (kumiho package not installed)")
+            detail = f": {_KUMIHO_IMPORT_ERROR}" if _KUMIHO_IMPORT_ERROR else ""
+            _log(
+                "Kumiho not available "
+                f"(kumiho package not installed or failed to import{detail})"
+            )
             return
         try:
             ok = _ensure_configured()
             self._available = ok
             if ok:
                 _log("Kumiho client connected (shared venv)")
+        except SystemExit as e:
+            self._available = False
+            _log(f"Kumiho init exited during auto-configure: {e}")
         except Exception as e:
+            self._available = False
             _log(f"Kumiho init failed: {e}")
 
     # -- Generic Kumiho operations (async wrappers around tool functions) ---

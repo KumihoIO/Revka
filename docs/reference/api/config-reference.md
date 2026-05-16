@@ -638,7 +638,7 @@ Required when `provider = "custom"` — bring-your-own tunnel binary.
 | `workspace_only` | `true` | reject absolute path inputs unless explicitly disabled |
 | `allowed_commands` | _required for shell execution_ | allowlist of executable names, explicit executable paths, or `"*"` |
 | `forbidden_paths` | built-in protected list | explicit path denylist (system paths + sensitive dotdirs by default) |
-| `allowed_roots` | `[]` | additional roots allowed outside workspace after canonicalization |
+| `allowed_roots` | `["~/.construct/workflows"]` | additional roots allowed outside workspace after canonicalization |
 | `max_actions_per_hour` | `20` | per-policy action budget |
 | `max_cost_per_day_cents` | `500` | per-policy spend guardrail |
 | `require_approval_for_medium_risk` | `true` | approval gate for medium-risk commands (see [Command Risk Classification](../../security/command-risk-classification.md)) |
