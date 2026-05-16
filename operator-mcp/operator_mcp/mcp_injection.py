@@ -79,7 +79,9 @@ def kumiho_memory_config() -> dict[str, Any] | None:
 
     # Forward the same env the Rust daemon forwards when it spawns kumiho —
     # see src/agent/kumiho.rs::kumiho_mcp_server_config for the canonical set.
-    env: dict[str, str] = {"KUMIHO_AUTO_CONFIGURE": "1"}
+    # Auto-configure is intentionally not enabled by default: it can perform
+    # network credential refresh before the MCP initialize handshake.
+    env: dict[str, str] = {}
     for key in (
         "KUMIHO_AUTH_TOKEN",
         "KUMIHO_SERVICE_TOKEN",

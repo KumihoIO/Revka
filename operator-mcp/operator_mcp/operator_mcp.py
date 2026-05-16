@@ -3026,8 +3026,10 @@ async def _background_init() -> None:
     """Heavy service initialization — runs as a background task so it does
     not block the MCP initialize handshake."""
 
-    # Lazy-init Kumiho SDK (network I/O for endpoint discovery)
-    KUMIHO_SDK._lazy_init()
+    # Lazy-init Kumiho SDK off the event loop. Endpoint discovery may perform
+    # network credential refresh, and it must not block MCP tools/list after
+    # the initialize handshake.
+    await asyncio.to_thread(KUMIHO_SDK._lazy_init)
 
     # Wire sidecar + event consumer into agent handlers
     from .tool_handlers.agents import set_sidecar, set_workflow_context

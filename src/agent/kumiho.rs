@@ -354,8 +354,9 @@ pub fn kumiho_mcp_server_config(kumiho_cfg: &KumihoConfig) -> McpServerConfig {
             env.insert("KUMIHO_CONTROL_PLANE_URL".to_string(), url);
         }
     }
-    // Enable auto-configure so the MCP server discovers endpoints.
-    env.insert("KUMIHO_AUTO_CONFIGURE".to_string(), "1".to_string());
+    // Do not force auto-configure before the MCP handshake. Endpoint discovery
+    // may refresh network credentials; doing that at process launch can prevent
+    // the sidecar from answering `initialize` and removes all memory tools.
 
     // Forward LLM API keys so the MCP server's built-in summarizer
     // (MemorySummarizer) can condense engage results before returning them.
@@ -792,6 +793,10 @@ mod tests {
                 .get("KUMIHO_MEMORY_RETRIEVAL_LIMIT")
                 .map(|s| s.as_str()),
             Some("7")
+        );
+        assert!(
+            !server.env.contains_key("KUMIHO_AUTO_CONFIGURE"),
+            "Kumiho MCP must answer initialize before network discovery"
         );
     }
 
