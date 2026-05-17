@@ -358,12 +358,20 @@ async def persist_workflow_run(
         # Attach disk artifacts to the Kumiho revision so they're discoverable
         # via the graph (not just via the metadata artifact_path field).
         if rev_kref:
+            attached_artifact_paths: set[str] = set()
             for sid, sr in step_results.items():
                 art = sr.get("output_data", {}).get("artifact_path", "")
                 if art and os.path.exists(art):
+                    canonical_art = os.path.realpath(art)
+                    if canonical_art in attached_artifact_paths:
+                        continue
+                    attached_artifact_paths.add(canonical_art)
+                    artifact_name = os.path.basename(art) or f"{sid}.md"
                     try:
                         await KUMIHO_SDK.create_artifact(
-                            rev_kref, f"{sid}.md", art,
+                            rev_kref,
+                            artifact_name,
+                            art,
                         )
                     except Exception as e:
                         _log(f"workflow_memory: artifact attach failed for step={sid}: {e}")
