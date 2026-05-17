@@ -37,6 +37,10 @@ export function toStepRunInfo(step: WorkflowStepDetail): StepRunInfo {
     template_name: step.template_name,
     skills: step.skills,
     transcript: step.transcript,
+    error: step.error,
+    output_preview: step.output_preview,
+    input_data: step.input_data,
+    output_data: step.output_data,
   };
 }
 

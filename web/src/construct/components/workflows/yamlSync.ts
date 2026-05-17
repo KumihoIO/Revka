@@ -124,6 +124,7 @@ export interface TaskDefinition {
   entity_tag?: string;
   entity_space?: string;
   entity_metadata?: Record<string, string>;
+  metadata_target?: string;
   /** Handoff: from_step */
   handoff_from?: string;
   /** Handoff: to agent type or template name */
@@ -185,6 +186,7 @@ export interface TaskDefinition {
   resolve_space?: string;
   resolve_mode?: string;        // "latest" | "all"
   resolve_fields?: string[];
+  resolve_metadata_source?: string;
   resolve_fail_if_missing?: boolean;
   // --- ForEach: sequential loop ---
   for_each_steps?: string[];
@@ -315,6 +317,10 @@ export interface StepRunInfo {
   approval_message?: string;
   approve_keywords?: string[];
   reject_keywords?: string[];
+  error?: string;
+  output_preview?: string;
+  input_data?: Record<string, unknown>;
+  output_data?: Record<string, unknown>;
 }
 
 /** Infer agent_type and role from type + hints (mirrors Python ACTION_DEFAULTS).
@@ -406,6 +412,7 @@ export interface TaskNodeData {
   entityTag: string;
   entitySpace: string;
   entityMetadata: Record<string, string>;
+  entityMetadataTarget: string;
   handoffFrom: string;
   handoffTo: string;
   handoffReason: string;
@@ -464,6 +471,7 @@ export interface TaskNodeData {
   resolveSpace: string;
   resolveMode: string;
   resolveFields: string[];
+  resolveMetadataSource: string;
   resolveFailIfMissing: boolean;
   // ForEach
   forEachSteps: string[];
@@ -563,6 +571,7 @@ export interface TriggerDef {
   onKind: string;
   onTag: string;
   onNamePattern: string;
+  onSpace: string;
   inputMap: Record<string, string>;
 }
 
@@ -935,6 +944,7 @@ function parseStep(s: YAMLObj): TaskDefinition | null {
     t.entity_kind = asStr(output.entity_kind);
     t.entity_tag = asStr(output.entity_tag);
     t.entity_space = asStr(output.entity_space);
+    t.metadata_target = asStr(output.metadata_target);
     if (isObj(output.entity_metadata)) {
       const meta: Record<string, string> = {};
       for (const [k, v] of Object.entries(output.entity_metadata)) {
@@ -1020,6 +1030,7 @@ function parseStep(s: YAMLObj): TaskDefinition | null {
     t.resolve_space = asStr(resolve.space);
     t.resolve_mode = asStr(resolve.mode);
     t.resolve_fields = asStrArr(resolve.fields);
+    t.resolve_metadata_source = asStr(resolve.metadata_source);
     t.resolve_fail_if_missing = asBool(resolve.fail_if_missing);
   }
 
@@ -1173,7 +1184,7 @@ export function parseWorkflowMeta(yaml: string): WorkflowMeta {
           const tl = lines[i]!;
           const tt = tl.trim();
           if (tt.startsWith('- on_kind:') || tt.startsWith('- cron:')) {
-            const trigger: TriggerDef = { onKind: '', onTag: 'ready', onNamePattern: '', inputMap: {} };
+            const trigger: TriggerDef = { onKind: '', onTag: 'ready', onNamePattern: '', onSpace: '', inputMap: {} };
             if (tt.startsWith('- on_kind:')) {
               trigger.onKind = tt.replace(/^-\s*on_kind:\s*/, '').replace(/["']/g, '').trim();
             } else if (tt.startsWith('- cron:')) {
@@ -1190,6 +1201,7 @@ export function parseWorkflowMeta(yaml: string): WorkflowMeta {
                 const tv = (tm[2] ?? '').trim().replace(/^["']|["']$/g, '');
                 if (tk === 'on_tag') trigger.onTag = tv;
                 else if (tk === 'on_name_pattern') trigger.onNamePattern = tv;
+                else if (tk === 'on_space') trigger.onSpace = tv;
                 else if (tk === 'on_kind') trigger.onKind = tv;
                 else if (tk === 'cron') trigger.inputMap.__cron = tv;
                 else if (tk === 'input_map') {
@@ -1452,6 +1464,7 @@ export function tasksToFlow(tasks: TaskDefinition[]): { nodes: Node<TaskNodeData
       entityTag: task.entity_tag || '',
       entitySpace: task.entity_space || '',
       entityMetadata: task.entity_metadata || {},
+      entityMetadataTarget: task.metadata_target || 'item',
       handoffFrom: task.handoff_from || '',
       handoffTo: task.handoff_to || '',
       handoffReason: task.handoff_reason || '',
@@ -1496,6 +1509,7 @@ export function tasksToFlow(tasks: TaskDefinition[]): { nodes: Node<TaskNodeData
       resolveSpace: task.resolve_space ?? '',
       resolveMode: task.resolve_mode ?? 'latest',
       resolveFields: task.resolve_fields ?? [],
+      resolveMetadataSource: task.resolve_metadata_source ?? 'revision',
       resolveFailIfMissing: task.resolve_fail_if_missing ?? true,
       forEachSteps: task.for_each_steps || [],
       forEachRange: task.for_each_range || '',
@@ -1798,6 +1812,10 @@ const INTERPOLATION_TEXT_FIELDS: ReadonlyArray<keyof TaskDefinition> = [
   'entity_kind',
   'entity_tag',
   'entity_space',
+  'resolve_kind',
+  'resolve_tag',
+  'resolve_name_pattern',
+  'resolve_space',
   'condition',
   'goto_condition',
   'human_input_message',
@@ -2311,6 +2329,9 @@ export function flowToTasks(nodes: Node<TaskNodeData>[], edges: Edge[]): TaskDef
       if (d.entityTag) base.entity_tag = d.entityTag;
       if (d.entitySpace) base.entity_space = d.entitySpace;
       if (Object.keys(d.entityMetadata).length > 0) base.entity_metadata = d.entityMetadata;
+      if (d.entityMetadataTarget && d.entityMetadataTarget !== 'item') {
+        base.metadata_target = d.entityMetadataTarget;
+      }
     }
     if (st === 'handoff') {
       if (d.handoffFrom) base.handoff_from = d.handoffFrom;
@@ -2354,6 +2375,9 @@ export function flowToTasks(nodes: Node<TaskNodeData>[], edges: Edge[]): TaskDef
       if (d.resolveSpace) base.resolve_space = d.resolveSpace;
       if (d.resolveMode) base.resolve_mode = d.resolveMode;
       if (d.resolveFields?.length) base.resolve_fields = d.resolveFields;
+      if (d.resolveMetadataSource && d.resolveMetadataSource !== 'revision') {
+        base.resolve_metadata_source = d.resolveMetadataSource;
+      }
       if (d.resolveFailIfMissing === false) base.resolve_fail_if_missing = false;
     }
     if (st === 'for_each') {
@@ -2435,6 +2459,7 @@ export function tasksToYaml(tasks: TaskDefinition[], meta?: Partial<WorkflowMeta
       }
       if (t.onTag && t.onTag !== 'ready') lines.push(`    on_tag: ${yamlEscape(t.onTag)}`);
       if (t.onNamePattern) lines.push(`    on_name_pattern: ${yamlEscape(t.onNamePattern)}`);
+      if (t.onSpace) lines.push(`    on_space: ${yamlEscape(t.onSpace)}`);
       const mapEntries = Object.entries(t.inputMap).filter(([k]) => k !== '__cron');
       if (mapEntries.length > 0) {
         lines.push('    input_map:');
@@ -2731,6 +2756,9 @@ export function tasksToYaml(tasks: TaskDefinition[], meta?: Partial<WorkflowMeta
       if (task.entity_kind) lines.push(`      entity_kind: ${yamlEscape(task.entity_kind)}`);
       if (task.entity_tag) lines.push(`      entity_tag: ${yamlEscape(task.entity_tag)}`);
       if (task.entity_space) lines.push(`      entity_space: ${yamlEscape(task.entity_space)}`);
+      if (task.metadata_target && task.metadata_target !== 'item') {
+        lines.push(`      metadata_target: ${yamlEscape(task.metadata_target)}`);
+      }
       if (task.entity_metadata && Object.keys(task.entity_metadata).length > 0) {
         lines.push(`      entity_metadata:`);
         for (const [mk, mv] of Object.entries(task.entity_metadata)) {
@@ -2813,6 +2841,9 @@ export function tasksToYaml(tasks: TaskDefinition[], meta?: Partial<WorkflowMeta
       lines.push(`      name_pattern: "${task.resolve_name_pattern || ''}"`);
       lines.push(`      space: "${task.resolve_space || ''}"`);
       lines.push(`      mode: "${task.resolve_mode || 'latest'}"`);
+      if (task.resolve_metadata_source && task.resolve_metadata_source !== 'revision') {
+        lines.push(`      metadata_source: ${yamlEscape(task.resolve_metadata_source)}`);
+      }
       if (task.resolve_fields?.length) {
         lines.push(`      fields: [${task.resolve_fields.map(f => `"${f}"`).join(', ')}]`);
       } else {

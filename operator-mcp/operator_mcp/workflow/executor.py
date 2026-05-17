@@ -2131,6 +2131,7 @@ async def _exec_output(step: StepDef, state: WorkflowState) -> StepResult:
         "entity_tag": cfg.entity_tag,
         "entity_space": cfg.entity_space or "",
         "entity_name": interpolate(cfg.entity_name, state) if cfg.entity_name else "",
+        "metadata_target": cfg.metadata_target,
     }
 
     result = StepResult(
@@ -2138,7 +2139,11 @@ async def _exec_output(step: StepDef, state: WorkflowState) -> StepResult:
         status="completed",
         output=rendered[:6000],
         input_data=input_data,
-        output_data={"format": cfg.format, "entity_registered": False},
+        output_data={
+            "format": cfg.format,
+            "entity_registered": False,
+            "entity_metadata_target": cfg.metadata_target,
+        },
     )
 
     # Entity production — register output as a Kumiho entity
@@ -2168,6 +2173,7 @@ async def _exec_output(step: StepDef, state: WorkflowState) -> StepResult:
             entity_tag=cfg.entity_tag,
             entity_space=cfg.entity_space,
             entity_metadata=resolved_metadata,
+            metadata_target=cfg.metadata_target,
             content=rendered,
             content_format=cfg.format,
             workflow_name=state.workflow_name,
@@ -2185,6 +2191,10 @@ async def _exec_output(step: StepDef, state: WorkflowState) -> StepResult:
         result.output_data["entity_name"] = entity_name
         result.output_data["entity_kind"] = cfg.entity_kind
         result.output_data["entity_tag"] = cfg.entity_tag
+        result.output_data["entity_metadata_target"] = entity_result.get(
+            "metadata_target",
+            cfg.metadata_target,
+        )
         result.output_data["entity_registered"] = True
         result.output_data["entity_tag_applied"] = bool(
             entity_result.get("tag_applied", False)
@@ -2231,6 +2241,7 @@ async def _exec_resolve(step: StepDef, state: WorkflowState) -> StepResult:
         "name_pattern": resolved_name_pattern,
         "space": resolved_space,
         "mode": cfg.mode,
+        "metadata_source": cfg.metadata_source,
         "fail_if_missing": cfg.fail_if_missing,
     }
     if not resolved_kind.strip():
@@ -2256,6 +2267,7 @@ async def _exec_resolve(step: StepDef, state: WorkflowState) -> StepResult:
             name_pattern=resolved_name_pattern,
             space=resolved_space,
             mode=cfg.mode,
+            metadata_source=cfg.metadata_source,
         )
     except Exception as exc:
         if cfg.fail_if_missing:
@@ -2288,6 +2300,13 @@ async def _exec_resolve(step: StepDef, state: WorkflowState) -> StepResult:
         # the rest of the metadata blob.
         output_data["matched_kref"] = matched_kref
         output_data["matched_name"] = matched_name
+        output_data["metadata_source"] = entity.get("metadata_source", cfg.metadata_source)
+        if isinstance(entity.get("item_metadata"), dict):
+            output_data["item_metadata"] = entity["item_metadata"]
+        if isinstance(entity.get("revision_metadata"), dict):
+            output_data["revision_metadata"] = entity["revision_metadata"]
+        if isinstance(entity.get("artifact_metadata"), dict):
+            output_data["artifact_metadata"] = entity["artifact_metadata"]
         # Extract metadata
         meta = entity.get("metadata", {})
         if cfg.fields:
@@ -2303,6 +2322,18 @@ async def _exec_resolve(step: StepDef, state: WorkflowState) -> StepResult:
         # Agents in max_turns=1 mode can't fetch kref content, so we
         # inline the artifact text as output_data["artifact_content"].
         art_path = meta.get("artifact_path", "")
+        artifact = entity.get("artifact", {}) if isinstance(entity.get("artifact"), dict) else {}
+        if artifact:
+            artifact_location = artifact.get("location", "")
+            if artifact.get("kref"):
+                output_data["artifact_kref"] = artifact.get("kref")
+            if artifact.get("name"):
+                output_data["artifact_name"] = artifact.get("name")
+            if artifact_location:
+                output_data["artifact_location"] = artifact_location
+                if not art_path:
+                    art_path = artifact_location
+                    output_data["artifact_path"] = art_path
         if art_path and os.path.isfile(art_path):
             try:
                 with open(art_path, "r", encoding="utf-8") as fh:
@@ -2315,6 +2346,7 @@ async def _exec_resolve(step: StepDef, state: WorkflowState) -> StepResult:
         output_data["found"] = True
         output_data["count"] = len(entities)
         output_data["entities"] = entities
+        output_data["metadata_source"] = cfg.metadata_source
         # Build a formatted summary for agent prompts
         lines = []
         for ent in entities:
@@ -5313,9 +5345,9 @@ def _exec_conditional(step: StepDef, state: WorkflowState) -> StepResult:
             output = _eval_branch_value(branch.value, state)
             break
 
-    # Cache the matched goto on the workflow state, NOT on output_data.
-    # Stashing it in output_data would expose it via ${gate.output_data.*}
-    # interpolation and as a name in the simpleeval evaluator.
+    # Cache executor routing on workflow state. The public output_data below
+    # records user-facing diagnostics, but not the private scheduler sentinel
+    # older builds stored as ``__matched_goto__``.
     if matched_goto is not None:
         state.conditional_routes[step.id] = matched_goto
     else:
@@ -5341,7 +5373,19 @@ def _exec_conditional(step: StepDef, state: WorkflowState) -> StepResult:
         "matched_condition": matched_condition,
         "matched_value_expr": matched_value_expr,
     }
+    if matched_idx >= 0:
+        input_data["matched_branch_label"] = (
+            "default"
+            if matched_condition.strip().lower() == "default"
+            else f"branch {matched_idx + 1}"
+        )
     output_data: dict[str, Any] = {}
+    if matched_idx >= 0:
+        output_data["matched_branch_index"] = matched_idx
+        output_data["matched_branch_label"] = input_data["matched_branch_label"]
+        output_data["matched_condition"] = matched_condition
+        output_data["matched_value_expr"] = matched_value_expr
+        output_data["matched_output"] = output
     if matched_goto is not None:
         output_data["matched_goto"] = matched_goto
 

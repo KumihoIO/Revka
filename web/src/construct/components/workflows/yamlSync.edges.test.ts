@@ -104,6 +104,30 @@ steps:
   );
 });
 
+test('resolve space interpolation emits a referenced → resolve edge', () => {
+  const yaml = `
+steps:
+  - id: space_source
+    type: output
+    output:
+      format: json
+      template: '{"space": "Construct/Reports"}'
+  - id: resolve_latest
+    type: resolve
+    resolve:
+      kind: report
+      tag: published
+      space: "Construct/\${space_source.output_data.space}"
+`;
+  const tasks = parseWorkflowYaml(yaml);
+  const { edges } = tasksToFlow(tasks);
+  const pairs = edgePairs(edges);
+  assert.ok(
+    pairs.has('space_source->resolve_latest'),
+    'expected resolve space interpolation to create a visual dependency edge',
+  );
+});
+
 test('${step.output} in output template emits an edge', () => {
   const yaml = `
 steps:

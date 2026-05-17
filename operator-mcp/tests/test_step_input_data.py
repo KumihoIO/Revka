@@ -201,11 +201,35 @@ class TestResolve:
             "name_pattern": "",
             "space": "",
             "mode": "latest",
+            "metadata_source": "revision",
             "fail_if_missing": True,
         }
         assert result.output_data["found"] is True
         assert result.output_data["matched_kref"] == "kref:item:def"
         assert result.output_data["matched_name"] == "MyEntity"
+        assert result.output_data["metadata_source"] == "revision"
+
+    async def test_passes_metadata_source_to_resolver(self):
+        calls: dict[str, Any] = {}
+
+        async def fake_resolve(**kwargs):
+            calls.update(kwargs)
+            return {
+                "kref": "kref:rev:abc",
+                "item_kref": "kref:item:def",
+                "name": "MyEntity",
+                "metadata": {"foo": "bar"},
+                "metadata_source": kwargs["metadata_source"],
+            }
+
+        cfg = ResolveStepConfig(kind="report", metadata_source="item")
+        step = StepDef(id="r", type=StepType.RESOLVE, resolve=cfg)
+        with patch("operator_mcp.workflow.memory.resolve_entity", fake_resolve):
+            result = await _exec_resolve(step, _state())
+
+        assert calls["metadata_source"] == "item"
+        assert result.input_data["metadata_source"] == "item"
+        assert result.output_data["metadata_source"] == "item"
 
     async def test_captures_query_on_miss(self):
         async def fake_resolve(**kwargs):
@@ -236,6 +260,27 @@ class TestResolve:
         assert result.input_data["kind"] == ""
         assert result.error == "resolve step requires 'kind'"
 
+    async def test_interpolates_space_expression(self):
+        calls: dict[str, Any] = {}
+
+        async def fake_resolve(**kwargs):
+            calls.update(kwargs)
+            return None
+
+        cfg = ResolveStepConfig(
+            kind="report",
+            tag="published",
+            space="Construct/${{ lower(inputs.team) }}/${inputs.suffix}",
+            fail_if_missing=False,
+        )
+        step = StepDef(id="r", type=StepType.RESOLVE, resolve=cfg)
+        with patch("operator_mcp.workflow.memory.resolve_entity", fake_resolve):
+            result = await _exec_resolve(step, _state(inputs={"team": "OPS", "suffix": "Inbox"}))
+
+        assert result.status == "completed"
+        assert result.input_data["space"] == "Construct/ops/Inbox"
+        assert calls["space"] == "Construct/ops/Inbox"
+
 
 # ── _exec_output ───────────────────────────────────────────────────
 
@@ -251,7 +296,9 @@ class TestOutput:
         assert result.input_data["format"] == "markdown"
         assert result.input_data["template_preview"] == "hello ${inputs.name}"
         assert result.input_data["entity_kind"] == ""
+        assert result.input_data["metadata_target"] == "item"
         assert result.output_data["entity_registered"] is False
+        assert result.output_data["entity_metadata_target"] == "item"
 
     async def test_caps_template_preview_at_500_chars(self):
         big = "X" * 1000
@@ -273,6 +320,7 @@ class TestOutput:
         async def fake_publish_workflow_entity(**kwargs):
             assert kwargs["content"] == "# Q1"
             assert kwargs["content_format"] == "markdown"
+            assert kwargs["metadata_target"] == "item"
             return {
                 "item_kref": "kref://Construct/WorkflowOutputs/report.report",
                 "revision_kref": "kref://Construct/WorkflowOutputs/report.report?r=7",
@@ -282,6 +330,7 @@ class TestOutput:
                 "artifact_error": "",
                 "tag_applied": True,
                 "tag_error": "",
+                "metadata_target": "item",
             }
 
         with patch(
@@ -293,8 +342,44 @@ class TestOutput:
         assert result.status == "completed"
         assert result.output_data["entity_registered"] is True
         assert result.output_data["entity_artifact_attached"] is True
+        assert result.output_data["entity_metadata_target"] == "item"
         assert result.output_data["artifact_path"] == "/tmp/publish.md"
         assert result.output_data["entity_artifact_kref"].endswith("#a1")
+
+    async def test_entity_output_passes_metadata_target(self):
+        cfg = OutputStepConfig(
+            format="markdown",
+            template="# report",
+            entity_name="report",
+            entity_kind="report",
+            metadata_target="revision",
+            entity_metadata={"topic": "Q1"},
+        )
+        step = StepDef(id="publish", type=StepType.OUTPUT, output=cfg)
+
+        async def fake_publish_workflow_entity(**kwargs):
+            assert kwargs["metadata_target"] == "revision"
+            return {
+                "item_kref": "kref://Construct/WorkflowOutputs/report.report",
+                "revision_kref": "kref://Construct/WorkflowOutputs/report.report?r=7",
+                "artifact_path": "/tmp/publish.md",
+                "artifact_kref": "kref://Construct/WorkflowOutputs/report.report?r=7#a1",
+                "artifact_attached": True,
+                "artifact_error": "",
+                "tag_applied": True,
+                "tag_error": "",
+                "metadata_target": "revision",
+            }
+
+        with patch(
+            "operator_mcp.workflow.memory.publish_workflow_entity",
+            fake_publish_workflow_entity,
+        ):
+            result = await _exec_output(step, _state())
+
+        assert result.status == "completed"
+        assert result.input_data["metadata_target"] == "revision"
+        assert result.output_data["entity_metadata_target"] == "revision"
 
     async def test_entity_output_fails_when_artifact_attach_fails(self):
         cfg = OutputStepConfig(
@@ -365,6 +450,12 @@ class TestConditional:
         assert result.input_data["matched_branch_index"] == 0
         assert result.input_data["matched_condition"] == "default"
         assert result.input_data["matched_value_expr"] == "'matched'"
+        assert result.input_data["matched_branch_label"] == "default"
+        assert result.output_data["matched_branch_index"] == 0
+        assert result.output_data["matched_branch_label"] == "default"
+        assert result.output_data["matched_condition"] == "default"
+        assert result.output_data["matched_value_expr"] == "'matched'"
+        assert result.output_data["matched_output"] == "matched"
         assert result.output_data["matched_goto"] == "end"
 
 

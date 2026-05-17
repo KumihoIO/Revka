@@ -2284,6 +2284,19 @@ export default function StepConfigPanel({
                     />
                   </div>
                   <div>
+                    <label style={labelStyle}>Metadata Target</label>
+                    <select
+                      value={data.entityMetadataTarget || 'item'}
+                      onChange={(e) => onUpdate(node.id, { entityMetadataTarget: e.target.value })}
+                      style={inputStyle}
+                    >
+                      <option value="item">item</option>
+                      <option value="revision">revision</option>
+                      <option value="artifact">artifact</option>
+                    </select>
+                    <p style={helperStyle()}>Item keeps trigger auto-mapping; revision is the resolve default.</p>
+                  </div>
+                  <div>
                     <label style={labelStyle}>Metadata</label>
                     {Object.entries(data.entityMetadata || {}).map(([mk, mv]) => (
                       <div key={mk} style={{ display: 'flex', gap: 4, alignItems: 'center', marginBottom: 4 }}>
@@ -2908,42 +2921,54 @@ export default function StepConfigPanel({
               <div style={sectionTitleStyle}>Resolve Config</div>
               <div>
                 <label style={labelStyle}>Entity Kind</label>
-                <input
-                  type="text"
+                <ExpressionTextarea
                   value={data.resolveKind || ''}
-                  onChange={(e) => onUpdate(node.id, { resolveKind: e.target.value })}
+                  onChange={(next) => onUpdate(node.id, { resolveKind: next })}
                   placeholder="e.g. qs-episode-draft"
+                  rows={1}
                   style={monoInputStyle}
+                  stepIds={dagStepIds}
+                  workflowInputs={dagInputs}
+                  triggerFields={dagTriggerFields}
                 />
               </div>
               <div>
                 <label style={labelStyle}>Tag</label>
-                <input
-                  type="text"
+                <ExpressionTextarea
                   value={data.resolveTag || 'published'}
-                  onChange={(e) => onUpdate(node.id, { resolveTag: e.target.value })}
+                  onChange={(next) => onUpdate(node.id, { resolveTag: next })}
                   placeholder="published"
+                  rows={1}
                   style={monoInputStyle}
+                  stepIds={dagStepIds}
+                  workflowInputs={dagInputs}
+                  triggerFields={dagTriggerFields}
                 />
               </div>
               <div>
                 <label style={labelStyle}>Name Pattern</label>
-                <input
-                  type="text"
+                <ExpressionTextarea
                   value={data.resolveNamePattern || ''}
-                  onChange={(e) => onUpdate(node.id, { resolveNamePattern: e.target.value })}
+                  onChange={(next) => onUpdate(node.id, { resolveNamePattern: next })}
                   placeholder="e.g. qs-episode-*"
+                  rows={1}
                   style={monoInputStyle}
+                  stepIds={dagStepIds}
+                  workflowInputs={dagInputs}
+                  triggerFields={dagTriggerFields}
                 />
               </div>
               <div>
                 <label style={labelStyle}>Space</label>
-                <input
-                  type="text"
+                <ExpressionTextarea
                   value={data.resolveSpace || ''}
-                  onChange={(e) => onUpdate(node.id, { resolveSpace: e.target.value })}
-                  placeholder="e.g. Construct/WorkflowOutputs"
+                  onChange={(next) => onUpdate(node.id, { resolveSpace: next })}
+                  placeholder="e.g. Construct/${inputs.team}/WorkflowOutputs"
+                  rows={1}
                   style={monoInputStyle}
+                  stepIds={dagStepIds}
+                  workflowInputs={dagInputs}
+                  triggerFields={dagTriggerFields}
                 />
               </div>
               <div>
@@ -2955,6 +2980,18 @@ export default function StepConfigPanel({
                 >
                   <option value="latest">latest</option>
                   <option value="all">all</option>
+                </select>
+              </div>
+              <div>
+                <label style={labelStyle}>Metadata Source</label>
+                <select
+                  value={data.resolveMetadataSource || 'revision'}
+                  onChange={(e) => onUpdate(node.id, { resolveMetadataSource: e.target.value })}
+                  style={inputStyle}
+                >
+                  <option value="revision">revision</option>
+                  <option value="item">item</option>
+                  <option value="artifact">artifact</option>
                 </select>
               </div>
               <div>

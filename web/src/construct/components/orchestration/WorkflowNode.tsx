@@ -5,6 +5,7 @@ import {
   gateBranchLabel,
   gateBranchStyle,
   type ConditionalBranchDefinition,
+  type StepRunInfo,
   type TaskNodeData,
 } from '@/construct/components/workflows/yamlSync';
 import { workflowActionTone, workflowStatusTone } from '../../lib/orchestration';
@@ -29,6 +30,71 @@ function useNodeAutoSize(id: string) {
   return ref;
 }
 
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function textValue(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function compactText(value: string, max = 110): string {
+  const oneLine = value.replace(/\s+/g, ' ').trim();
+  return oneLine.length > max ? `${oneLine.slice(0, max - 1)}…` : oneLine;
+}
+
+function stepFailureReason(runInfo?: StepRunInfo): string {
+  if (!runInfo || runInfo.status !== 'failed') return '';
+  const output = asRecord(runInfo.output_data);
+  const input = asRecord(runInfo.input_data);
+  const candidates = [
+    runInfo.error,
+    output.error,
+    output.entity_error,
+    output.entity_artifact_error,
+    output.entity_tag_error,
+    output.register_output_error,
+    output.structured_output_error,
+    asRecord(output.error_message).content,
+    output.stderr,
+    output.stderr_preview,
+    input.command ? `command: ${input.command}` : '',
+  ];
+  for (const candidate of candidates) {
+    const text = compactText(textValue(candidate));
+    if (text) return text;
+  }
+  return '';
+}
+
+function conditionalRunSummary(runInfo?: StepRunInfo): string {
+  if (!runInfo || runInfo.status !== 'completed') return '';
+  const input = asRecord(runInfo.input_data);
+  const output = asRecord(runInfo.output_data);
+  const index = textValue(output.matched_branch_index ?? input.matched_branch_index);
+  const goto = textValue(output.matched_goto);
+  const condition = textValue(output.matched_condition ?? input.matched_condition);
+  const emitted = textValue(output.matched_output ?? runInfo.output_preview);
+  const parts: string[] = [];
+  const numericIndex = Number(index);
+  const branchLabel = textValue(output.matched_branch_label);
+  if (branchLabel) parts.push(branchLabel);
+  else if (Number.isFinite(numericIndex) && numericIndex >= 0) parts.push(`branch ${numericIndex + 1}`);
+  if (goto) parts.push(`to ${goto}`);
+  if (condition) parts.push(`if ${condition}`);
+  if (emitted) parts.push(`out ${emitted}`);
+  return compactText(parts.join(' · '), 120);
+}
+
 function WorkflowNode({
   id,
   data,
@@ -47,6 +113,8 @@ function WorkflowNode({
       : data.running
         ? 'var(--construct-signal-live)'
         : accent;
+  const failureReason = stepFailureReason(data.runInfo);
+  const branchSummary = data.type === 'conditional' ? conditionalRunSummary(data.runInfo) : '';
 
   return (
     <div
@@ -57,6 +125,8 @@ function WorkflowNode({
         `Type: ${data.type}`,
         data.runInfo?.status ? `Status: ${data.runInfo.status}` : null,
         data.runInfo?.agent_type ? `Agent: ${data.runInfo.agent_type}${data.runInfo.role ? ` / ${data.runInfo.role}` : ''}` : null,
+        branchSummary ? `Resolved: ${branchSummary}` : null,
+        failureReason ? `Failure: ${failureReason}` : null,
         data.blocked ? 'Blocked by upstream failure' : null,
         data.failing ? 'On failure path' : null,
         data.runInfo?.skills?.length ? `Skills: ${data.runInfo.skills.join(', ')}` : null,
@@ -153,6 +223,18 @@ function WorkflowNode({
           </span>
         ) : null}
       </div>
+
+      {branchSummary ? (
+        <div className="mt-2 rounded-md px-2 py-1 text-[10px] leading-4" style={{ background: 'color-mix(in srgb, var(--construct-status-success) 12%, transparent)', color: 'var(--construct-text-secondary)' }}>
+          {branchSummary}
+        </div>
+      ) : null}
+
+      {failureReason ? (
+        <div className="mt-2 rounded-md px-2 py-1 text-[10px] leading-4" style={{ background: 'color-mix(in srgb, var(--construct-status-danger) 12%, transparent)', color: 'var(--construct-status-danger)' }}>
+          {failureReason}
+        </div>
+      ) : null}
 
       <Handle type="source" position={Position.Bottom} style={{ background: operationalAccent, width: 9, height: 9 }} />
     </div>

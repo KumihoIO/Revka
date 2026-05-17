@@ -67,11 +67,12 @@ class _FakeKumihoSDK:
         self._available = True
         self.items_by_space: dict[str, list[dict[str, Any]]] = {}
         self.revisions_by_kref: dict[str, dict[str, Any]] = {}
+        self.artifacts_by_revision: dict[str, list[dict[str, Any]]] = {}
         self._kref_counter = 0
         # Calls captured for assertions.
         self.create_item_calls: list[str] = []
         self.list_items_calls: list[str] = []
-        self.create_artifact_calls: list[tuple[str, str, str]] = []
+        self.create_artifact_calls: list[tuple[str, str, str, dict[str, Any]]] = []
         self.tag_revision_calls: list[tuple[str, str]] = []
         self.events: list[tuple[Any, ...]] = []
 
@@ -111,10 +112,27 @@ class _FakeKumihoSDK:
     async def get_latest_revision(self, item_kref: str, tag: str = "published") -> dict[str, Any] | None:
         return self.revisions_by_kref.get(item_kref)
 
-    async def create_artifact(self, revision_kref: str, name: str, location: str) -> Any:
-        self.create_artifact_calls.append((revision_kref, name, location))
+    async def create_artifact(
+        self,
+        revision_kref: str,
+        name: str,
+        location: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> Any:
+        meta = dict(metadata or {})
+        self.create_artifact_calls.append((revision_kref, name, location, meta))
         self.events.append(("create_artifact", revision_kref, name, location))
-        return {"kref": f"{revision_kref}#artifact-{len(self.create_artifact_calls)}"}
+        artifact = {
+            "kref": f"{revision_kref}#artifact-{len(self.create_artifact_calls)}",
+            "name": name,
+            "location": location,
+            "metadata": meta,
+        }
+        self.artifacts_by_revision.setdefault(revision_kref, []).append(artifact)
+        return artifact
+
+    async def get_artifacts(self, revision_kref: str) -> list[dict[str, Any]]:
+        return list(self.artifacts_by_revision.get(revision_kref, []))
 
     async def tag_revision(self, revision_kref: str, tag: str) -> dict[str, bool]:
         self.tag_revision_calls.append((revision_kref, tag))
@@ -155,6 +173,8 @@ async def _publish_then_resolve(
     kind: str = "BlogPost",
     tag: str = "ready",
     name: str = "post-1",
+    metadata_target: str = "item",
+    metadata_source: str = "revision",
 ) -> dict[str, Any] | list[dict[str, Any]] | None:
     await publish_workflow_entity(
         entity_name=name,
@@ -162,13 +182,20 @@ async def _publish_then_resolve(
         entity_tag=tag,
         entity_space=write_space,
         entity_metadata={"k": "v"},
+        metadata_target=metadata_target,
         content="hello",
         content_format="markdown",
         workflow_name="wf",
         run_id="r1",
         step_id="s1",
     )
-    return await resolve_entity(kind=kind, tag=tag, space=read_space, mode="latest")
+    return await resolve_entity(
+        kind=kind,
+        tag=tag,
+        space=read_space,
+        mode="latest",
+        metadata_source=metadata_source,
+    )
 
 
 @pytest.mark.asyncio
@@ -205,7 +232,7 @@ class TestRoundTripNormalization:
         assert result["tag_applied"] is True
         assert result["artifact_path"].endswith("/final-output.md")
         assert fake_sdk.create_artifact_calls == [
-            (result["revision_kref"], "final-output.md", result["artifact_path"])
+            (result["revision_kref"], "final-output.md", result["artifact_path"], {})
         ]
         assert fake_sdk.tag_revision_calls == [
             (result["revision_kref"], "ready")
@@ -363,6 +390,63 @@ class TestRoundTripNormalization:
         assert result is not None
         assert fake_sdk.create_item_calls[-1] == "Construct/WorkflowOutputs/Github"
         assert fake_sdk.list_items_calls[-1] == "Construct/WorkflowOutputs/Github"
+
+    async def test_default_resolve_reads_revision_metadata_not_item_metadata(self, fake_sdk):
+        result = await _publish_then_resolve(
+            fake_sdk,
+            write_space="Construct/WorkflowOutputs/Github",
+            read_space="Construct/WorkflowOutputs/Github",
+        )
+
+        assert result is not None
+        assert isinstance(result, dict)
+        assert result["metadata_source"] == "revision"
+        assert result["item_metadata"]["k"] == "v"
+        assert "k" not in result["metadata"]
+
+    async def test_resolve_can_read_item_metadata(self, fake_sdk):
+        result = await _publish_then_resolve(
+            fake_sdk,
+            write_space="Construct/WorkflowOutputs/Github",
+            read_space="Construct/WorkflowOutputs/Github",
+            metadata_source="item",
+        )
+
+        assert result is not None
+        assert isinstance(result, dict)
+        assert result["metadata_source"] == "item"
+        assert result["metadata"]["k"] == "v"
+
+    async def test_output_can_target_revision_metadata_for_default_resolve(self, fake_sdk):
+        result = await _publish_then_resolve(
+            fake_sdk,
+            write_space="Construct/WorkflowOutputs/Github",
+            read_space="Construct/WorkflowOutputs/Github",
+            metadata_target="revision",
+        )
+
+        assert result is not None
+        assert isinstance(result, dict)
+        assert result["metadata_source"] == "revision"
+        assert result["metadata"]["k"] == "v"
+        assert "k" not in result["item_metadata"]
+
+    async def test_output_can_target_artifact_metadata(self, fake_sdk):
+        result = await _publish_then_resolve(
+            fake_sdk,
+            write_space="Construct/WorkflowOutputs/Github",
+            read_space="Construct/WorkflowOutputs/Github",
+            metadata_target="artifact",
+            metadata_source="artifact",
+        )
+
+        assert result is not None
+        assert isinstance(result, dict)
+        assert result["metadata_source"] == "artifact"
+        assert result["metadata"]["k"] == "v"
+        assert result["artifact_metadata"]["k"] == "v"
+        artifact_call = fake_sdk.create_artifact_calls[-1]
+        assert artifact_call[3] == {"k": "v"}
 
 
 # ---------------------------------------------------------------------------
