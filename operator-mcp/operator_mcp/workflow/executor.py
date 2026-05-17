@@ -960,13 +960,13 @@ Respond with ONLY a JSON object:
 # Step executors
 # ---------------------------------------------------------------------------
 
-def _agent_artifact_stem(step_id: str, state: WorkflowState) -> str:
-    """Return the on-disk artifact stem for an agent step execution.
+def _iteration_qualified_step_id(step_id: str, state: WorkflowState) -> str:
+    """Return the active iteration-qualified step id when inside for_each.
 
     for_each executes the same StepDef repeatedly and stores each result under
-    ``<step_id>__iter_<N>`` after the handler returns. The artifact is written
-    inside _exec_agent before that re-keying happens, so it must derive the same
-    iteration-qualified stem from the active loop context.
+    ``<step_id>__iter_<N>`` after the handler returns. Artifact-producing step
+    handlers write files before that re-keying happens, so they must derive the
+    same iteration-qualified id from the active loop context.
     """
     fe_ctx = state.inputs.get("__for_each__")
     if isinstance(fe_ctx, dict):
@@ -1050,7 +1050,7 @@ async def _exec_agent(step: StepDef, state: WorkflowState, cwd: str) -> StepResu
                 f"~/.construct/artifacts/{state.workflow_name}/{state.run_id}"
             )
             os.makedirs(art_dir, exist_ok=True)
-            artifact_stem = _agent_artifact_stem(step.id, state)
+            artifact_stem = _iteration_qualified_step_id(step.id, state)
             artifact_path = os.path.join(art_dir, f"{artifact_stem}.md")
             with open(artifact_path, "w", encoding="utf-8") as f:
                 f.write(effective)
@@ -2122,6 +2122,7 @@ async def _exec_output(step: StepDef, state: WorkflowState) -> StepResult:
     """Execute an output step — render template with interpolation."""
     cfg: OutputStepConfig = step.output  # type: ignore
     rendered = interpolate(cfg.template, state)
+    artifact_step_id = _iteration_qualified_step_id(step.id, state)
 
     input_data: dict[str, Any] = {
         "format": cfg.format,
@@ -2178,7 +2179,7 @@ async def _exec_output(step: StepDef, state: WorkflowState) -> StepResult:
             content_format=cfg.format,
             workflow_name=state.workflow_name,
             run_id=state.run_id,
-            step_id=step.id,
+            step_id=artifact_step_id,
         )
         if not entity_result:
             result.status = "failed"
