@@ -1,9 +1,10 @@
 import { Eye, Pause, RefreshCw, Trash2, Wrench, MessageSquareText, RotateCcw } from 'lucide-react';
+import type { ReactNode } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import type { TaskDefinition } from '@/construct/components/workflows/yamlSync';
 import { parseWorkflowYaml } from '@/construct/components/workflows/yamlSync';
-import type { KumihoArtifact, WorkflowRunDetail, WorkflowRunSummary, WorkflowDefinition } from '@/types/api';
+import type { KumihoArtifact, WorkflowRunDetail, WorkflowRunSummary, WorkflowDefinition, WorkflowStepDetail } from '@/types/api';
 import type { AgentActivity, AgentToolCall } from '@/lib/api';
 import { cancelWorkflowRun, deleteWorkflowRun, fetchAgentActivity, fetchWorkflowByRevisionKref, fetchWorkflowRun, fetchWorkflowRuns, fetchWorkflows, retryWorkflowRun } from '@/lib/api';
 import ApprovalPanel from '@/components/workflows/ApprovalPanel';
@@ -29,6 +30,93 @@ import { useT } from '@/construct/hooks/useT';
 
 function isMissingRunError(err: unknown): boolean {
   return err instanceof Error && /\bAPI 404\b/.test(err.message);
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function detailText(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function compactDetail(value: string, max = 220): string {
+  const oneLine = value.replace(/\s+/g, ' ').trim();
+  return oneLine.length > max ? `${oneLine.slice(0, max - 1)}…` : oneLine;
+}
+
+function hasStructuredData(value: unknown): boolean {
+  const record = asRecord(value);
+  return Object.keys(record).length > 0;
+}
+
+function jsonPreview(value: unknown): string {
+  try {
+    return JSON.stringify(value ?? {}, null, 2);
+  } catch {
+    return detailText(value);
+  }
+}
+
+function stepFailureReason(step?: WorkflowStepDetail | null): string {
+  if (!step || step.status !== 'failed') return '';
+  const input = asRecord(step.input_data);
+  const output = asRecord(step.output_data);
+  const candidates = [
+    step.error,
+    output.error,
+    output.entity_error,
+    output.entity_artifact_error,
+    output.entity_tag_error,
+    output.register_output_error,
+    output.structured_output_error,
+    output.stderr,
+    output.stderr_preview,
+    asRecord(output.error_message).content,
+    input.command ? `command: ${input.command}` : '',
+    input.code_preview ? `python: ${input.code_preview}` : '',
+  ];
+  for (const candidate of candidates) {
+    const text = compactDetail(detailText(candidate));
+    if (text) return text;
+  }
+  return '';
+}
+
+interface ConditionalResolutionDetail {
+  label: string;
+  goto: string;
+  condition: string;
+  valueExpr: string;
+  output: string;
+}
+
+function conditionalResolution(step?: WorkflowStepDetail | null): ConditionalResolutionDetail | null {
+  if (!step || step.status !== 'completed') return null;
+  const input = asRecord(step.input_data);
+  const output = asRecord(step.output_data);
+  const rawIndex = output.matched_branch_index ?? input.matched_branch_index;
+  const index = typeof rawIndex === 'number' ? rawIndex : Number(detailText(rawIndex));
+  const explicitLabel = detailText(output.matched_branch_label);
+  const label = explicitLabel
+    || (Number.isFinite(index) && index >= 0 ? `Branch ${index + 1}` : 'No branch matched');
+  const emitted = detailText(output.matched_output ?? step.output_preview);
+  return {
+    label,
+    goto: detailText(output.matched_goto),
+    condition: detailText(output.matched_condition ?? input.matched_condition),
+    valueExpr: detailText(output.matched_value_expr ?? input.matched_value_expr),
+    output: emitted,
+  };
 }
 
 export default function WorkflowRuns() {
@@ -269,6 +357,11 @@ export default function WorkflowRuns() {
   const selectedStep = useMemo(
     () => (selectedTask && selectedRun ? selectedRun.steps.find((step) => step.step_id === selectedTask.id) ?? null : null),
     [selectedRun, selectedTask],
+  );
+  const selectedFailureReason = useMemo(() => stepFailureReason(selectedStep), [selectedStep]);
+  const selectedConditionalResolution = useMemo(
+    () => (selectedTask?.type === 'conditional' ? conditionalResolution(selectedStep) : null),
+    [selectedStep, selectedTask?.type],
   );
 
   const pendingApprovalStep = useMemo(
@@ -770,6 +863,21 @@ export default function WorkflowRuns() {
                             {selectedStep.output_preview}
                           </div>
                         ) : null}
+                        {selectedConditionalResolution ? (
+                          <RunDetailCard title="Resolved Branch" tone="success">
+                            <div className="space-y-1">
+                              <div>{selectedConditionalResolution.label}{selectedConditionalResolution.goto ? ` -> ${selectedConditionalResolution.goto}` : ''}</div>
+                              {selectedConditionalResolution.condition ? <div>Condition: {selectedConditionalResolution.condition}</div> : null}
+                              {selectedConditionalResolution.valueExpr ? <div>Value: {selectedConditionalResolution.valueExpr}</div> : null}
+                              {selectedConditionalResolution.output ? <div>Output: {selectedConditionalResolution.output}</div> : null}
+                            </div>
+                          </RunDetailCard>
+                        ) : null}
+                        {selectedFailureReason ? (
+                          <RunDetailCard title="Failure Detail" tone="danger">
+                            {selectedFailureReason}
+                          </RunDetailCard>
+                        ) : null}
                       </>
                     ) : null}
                     {selectedTask && selectedRun ? (
@@ -793,6 +901,12 @@ export default function WorkflowRuns() {
                   <div className="text-sm" style={{ color: 'var(--construct-text-faint)' }}>{t('runs.detail.select_step')}</div>
                 ) : (
                   <div className="space-y-3">
+                    {selectedStep.input_data && hasStructuredData(selectedStep.input_data) ? (
+                      <JsonDetailCard title="Resolved Inputs" value={selectedStep.input_data} />
+                    ) : null}
+                    {selectedStep.output_data && hasStructuredData(selectedStep.output_data) ? (
+                      <JsonDetailCard title="Structured Output" value={selectedStep.output_data} />
+                    ) : null}
                     {selectedStep.output_preview ? (
                       <div className="rounded-[10px] border p-3" style={{ borderColor: 'var(--construct-border-soft)' }}>
                         <div className="mb-2 flex items-center justify-between gap-2">
@@ -831,7 +945,7 @@ export default function WorkflowRuns() {
                         <pre className="whitespace-pre-wrap text-xs leading-6" style={{ color: 'var(--construct-text-secondary)', fontFamily: 'var(--pc-font-mono)' }}>{selectedActivity.last_message}</pre>
                       </div>
                     ) : null}
-                    {!selectedStep.output_preview && !selectedActivity?.last_message ? (
+                    {!selectedStep.output_preview && !selectedActivity?.last_message && !hasStructuredData(selectedStep.input_data) && !hasStructuredData(selectedStep.output_data) ? (
                       <div className="text-sm" style={{ color: 'var(--construct-text-faint)' }}>{t('runs.detail.no_output')}</div>
                     ) : null}
                   </div>
@@ -896,7 +1010,12 @@ export default function WorkflowRuns() {
                 {tpl('runs.timeline', { count: selectedRun.steps.length })}
               </span>
               <div className="mt-2 space-y-1">
-                {selectedRun.steps.map((step) => (
+                {selectedRun.steps.map((step) => {
+                  const failureReason = stepFailureReason(step);
+                  const branch = selectedDefinitionTasks.find((task) => task.id === step.step_id)?.type === 'conditional'
+                    ? conditionalResolution(step)
+                    : null;
+                  return (
                   <button
                     key={step.step_id}
                     type="button"
@@ -908,10 +1027,20 @@ export default function WorkflowRuns() {
                         : 'transparent',
                     }}
                   >
-                    <span className="truncate text-sm" style={{ color: 'var(--construct-text-primary)' }}>{step.step_id}</span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm" style={{ color: 'var(--construct-text-primary)' }}>{step.step_id}</span>
+                      {failureReason ? (
+                        <span className="mt-0.5 block truncate text-[11px]" style={{ color: 'var(--construct-status-danger)' }}>{failureReason}</span>
+                      ) : branch ? (
+                        <span className="mt-0.5 block truncate text-[11px]" style={{ color: 'var(--construct-text-secondary)' }}>
+                          {branch.label}{branch.goto ? ` -> ${branch.goto}` : ''}{branch.output ? ` · ${compactDetail(branch.output, 90)}` : ''}
+                        </span>
+                      ) : null}
+                    </span>
                     <StatusPill status={step.status} />
                   </button>
-                ))}
+                  );
+                })}
               </div>
             </Panel>
           ) : null}
@@ -958,6 +1087,55 @@ function PathLegend() {
       <OperatorLegendChip label={t('runs.overlay.legend_blocked')} tone="var(--construct-status-warning)" />
       <OperatorLegendChip label={t('runs.overlay.legend_skipped')} tone="var(--construct-status-idle)" />
       <OperatorLegendChip label={t('runs.overlay.legend_gate')} tone="var(--construct-signal-network)" />
+    </div>
+  );
+}
+
+function RunDetailCard({
+  title,
+  tone = 'neutral',
+  children,
+}: {
+  title: string;
+  tone?: 'neutral' | 'success' | 'danger';
+  children: ReactNode;
+}) {
+  const toneColor = tone === 'danger'
+    ? 'var(--construct-status-danger)'
+    : tone === 'success'
+      ? 'var(--construct-status-success)'
+      : 'var(--construct-text-faint)';
+  const background = tone === 'neutral'
+    ? 'transparent'
+    : `color-mix(in srgb, ${toneColor} 10%, transparent)`;
+  return (
+    <div
+      className="rounded-[10px] border p-2 text-xs leading-6"
+      style={{
+        borderColor: tone === 'neutral'
+          ? 'var(--construct-border-soft)'
+          : `color-mix(in srgb, ${toneColor} 34%, transparent)`,
+        background,
+        color: tone === 'danger' ? 'var(--construct-status-danger)' : 'var(--construct-text-secondary)',
+      }}
+    >
+      <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em]" style={{ color: toneColor }}>
+        {title}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function JsonDetailCard({ title, value }: { title: string; value: unknown }) {
+  return (
+    <div className="rounded-[10px] border p-3" style={{ borderColor: 'var(--construct-border-soft)' }}>
+      <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.12em]" style={{ color: 'var(--construct-text-faint)' }}>
+        {title}
+      </div>
+      <pre className="max-h-72 overflow-auto whitespace-pre-wrap text-xs leading-6" style={{ color: 'var(--construct-text-secondary)', fontFamily: 'var(--pc-font-mono)' }}>
+        {jsonPreview(value)}
+      </pre>
     </div>
   );
 }

@@ -388,6 +388,9 @@ class OutputStepConfig(BaseModel):
     entity_space: str | None = None       # Space path (defaults to /Construct/WorkflowOutputs)
     entity_metadata: dict[str, str] = {}  # Key-value pairs stored on entity (supports ${...} interpolation)
                                           # Downstream triggers auto-map matching keys to workflow inputs
+    metadata_target: Literal["item", "revision", "artifact"] = "item"
+                                          # Where entity_metadata is written.
+                                          # item preserves legacy trigger auto-map behavior.
 
 
 class ResolveStepConfig(BaseModel):
@@ -398,6 +401,8 @@ class ResolveStepConfig(BaseModel):
     space: str = ""                                     # Optional space path filter
     mode: Literal["latest", "all"] = "latest"           # latest = single newest; all = list
     fields: list[str] = Field(default_factory=list)     # Specific metadata fields to extract (empty = all)
+    metadata_source: Literal["revision", "item", "artifact"] = "revision"
+                                                        # Which metadata level populates output_data.metadata
     fail_if_missing: bool = True                        # Fail step if no entity found
 
 

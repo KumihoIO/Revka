@@ -380,6 +380,14 @@ export interface WorkflowDefinition {
   steps: number;
   revision_number: number;
   source?: string; // "builtin" | "builtin-modified" | "custom"
+  triggers?: WorkflowTrigger[];
+}
+
+export interface WorkflowTrigger {
+  on_kind: string;
+  on_tag: string;
+  on_name_pattern?: string;
+  on_space?: string;
 }
 
 export interface WorkflowCreateRequest {

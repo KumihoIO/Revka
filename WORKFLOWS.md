@@ -64,6 +64,8 @@ The dashboard keeps workflow definitions and workflow run instances separate:
 - **Runs tab** (`/workflows`, `/runs`) selects run instances and offers run-scoped controls only: stop an active run, retry a failed run, or delete the selected run record.
 - The YAML drawer is a graph editor surface. YAML text edits must be applied to the graph before Save; Save serializes the graph back to YAML and the gateway validates it before creating a Kumiho revision.
 - The run viewer pins a run to the workflow revision it executed when that revision is available, so later definition edits do not change the displayed run graph.
+- Completed conditional nodes show the matched branch, goto target, branch value, and emitted output in the graph and step inspector.
+- Failed nodes show the best available failure detail from the executor error, structured `output_data`, stderr preview, or captured inputs.
 
 ---
 
@@ -79,6 +81,8 @@ triggers:                      # Optional — auto-launch conditions
   - cron: "0 9 * * 1"         # Time-based (cron expression)
   - on_kind: "report"         # Event-based (entity kind + tag)
     on_tag: "ready"
+    on_name_pattern: "daily-*" # Optional glob on entity name
+    on_space: "Construct/Reports" # Optional space prefix filter
     input_map:
       report_kref: "${trigger.entity_kref}"
 
@@ -187,6 +191,7 @@ The `action` field provides shorthand: `action: research` auto-sets
     name_pattern: ""           # Optional glob filter on entity name
     space: ""                  # Space path filter (default: Construct/WorkflowOutputs)
     mode: latest               # latest = single newest | all = list
+    metadata_source: revision  # revision | item | artifact
     fields: [part, episode_number, arc_name]  # Metadata fields to extract (empty = all)
     fail_if_missing: false     # false = don't fail if nothing found
 ```
@@ -199,7 +204,12 @@ The `action` field provides shorthand: `action: research` auto-sets
 | `item_kref` | Kumiho item kref |
 | `revision_kref` | Kumiho revision kref |
 | `name` | Entity name |
+| `metadata_source` | Metadata level used for extracted fields |
 | `<field>` | Each field from `fields` list, or all metadata if `fields` is empty |
+
+`metadata_source` defaults to `revision`. Use `item` to read metadata written
+for trigger auto-mapping, or `artifact` to read metadata attached to the
+published output artifact.
 
 ### `conditional` — Branch on expressions
 
@@ -219,6 +229,17 @@ The `action` field provides shorthand: `action: research` auto-sets
 
 Supported operators: `==`, `!=`, `contains`, `>`, `<`, `>=`, `<=`.
 Use `"end"` as goto target to terminate the workflow.
+
+The run viewer records the matched branch on completed conditionals:
+
+| Field | Meaning |
+|-------|---------|
+| `output_data.matched_branch_index` | Zero-based branch index |
+| `output_data.matched_branch_label` | `branch N` or `default` |
+| `output_data.matched_goto` | Target step chosen by this gate |
+| `output_data.matched_condition` | Condition string that matched |
+| `output_data.matched_value_expr` | Optional branch `value` expression |
+| `output_data.matched_output` | Value emitted as `${gate.output}` |
 
 ### `parallel` — Run steps concurrently
 
@@ -266,6 +287,7 @@ Use `"end"` as goto target to terminate the workflow.
     entity_kind: "analysis-report"
     entity_tag: "ready"
     entity_space: "Construct/WorkflowOutputs"   # Default space
+    metadata_target: item       # item | revision | artifact
     entity_metadata:
       topic: "${inputs.topic}"
       summary: "${analyze.output}"
@@ -276,6 +298,11 @@ When `entity_name` and `entity_kind` are both set, the executor:
 2. Creates a revision with the rendered template as content
 3. Tags the revision with `entity_tag`
 4. Fires a `revision.tagged` event — which can trigger downstream workflows
+
+`entity_metadata` is written to `metadata_target`. The default `item` preserves
+downstream trigger auto-mapping. Choose `revision` when resolve steps should
+read it without setting `metadata_source`, or `artifact` when metadata belongs
+to the attached output artifact.
 
 **Output data** includes `entity_kref` and `entity_revision_kref` for downstream reference.
 
@@ -327,8 +354,38 @@ Response becomes `${ask_user.output}` for downstream steps.
 
 ## Variable Interpolation
 
-All string fields in steps support `${...}` interpolation. Variables resolve
-at execution time from the current workflow state.
+Most user-authored string fields in steps support `${...}` interpolation.
+Variables resolve at execution time from the current workflow state. This
+includes prompts, shell commands, Python args, notify messages, output
+templates, entity publish fields, resolve `kind`/`tag`/`name_pattern`/`space`,
+conditions, branch values, goto guards, and email fields.
+
+There are two expression forms:
+
+| Form | Result type | Use when |
+|------|-------------|----------|
+| `${namespace.path}` | Always text | You need a direct value lookup |
+| `${{ expression }}` | Typed when it is the whole value, text inside larger strings | You need functions, arithmetic, comparisons, or fallback logic |
+
+Examples:
+
+```yaml
+agent:
+  prompt: |
+    Topic: ${inputs.topic}
+    Prior summary: ${resolve_prior.output_data.summary}
+
+resolve:
+  kind: "report"
+  tag: "${inputs.release_tag}"
+  name_pattern: "daily-${{ lower(inputs.team) }}-*"
+  space: "Construct/${{ lower(inputs.team) }}/Reports"
+
+compute:
+  outputs:
+    next_episode: "${{ int(resolve_cursor.output_data.episode_number) + 1 }}"
+    publish_ready: "${{ review.output_data.score >= 0.8 }}"
+```
 
 ### Namespaces
 
@@ -353,8 +410,45 @@ ${env.VAR}                        Environment variable
 ${run_id}                         Workflow run UUID
 ```
 
-**Unresolved variables** remain as literal `${...}` strings (empty string for
-missing output_data keys).
+`inputs` is the canonical workflow input namespace. Some older UI hints may
+show `${input.name}`; use `${inputs.name}` in workflow YAML.
+
+### Expression placeholders
+
+`${{ ... }}` uses the same safe expression evaluator used by conditional
+steps. It can read the namespaces above without wrapping each lookup in
+`${...}`:
+
+```yaml
+condition: "review.output_data.score >= 0.8"
+value: "approved:${{ format(review.output_data.score, '.2f') }}"
+space: "Construct/${{ lower(inputs.team) }}/WorkflowOutputs"
+```
+
+Supported expression features:
+
+| Feature | Examples |
+|---------|----------|
+| Comparisons | `a == b`, `a != b`, `score >= 0.8` |
+| Boolean logic | `ok and not blocked`, `status == 'done' or retry_count > 0` |
+| Membership | `'approve' in lower(review.output)`, `review.output contains 'APPROVED'` |
+| Arithmetic | `int(count) + 1`, `price * quantity` |
+| String helpers | `lower(x)`, `upper(x)`, `str(x)`, `format(score, '.2f')`, `pad(n, 3)` |
+| Type helpers | `int(x)`, `float(x)`, `bool(x)`, `len(x)` |
+| Lists/ranges | `range(1, int(inputs.count) + 1)` |
+| Equality helper | `eq(a, b)` |
+
+When a string is exactly one expression placeholder, the typed value is
+preserved where the step supports typed values. Inside longer strings, the
+expression result is converted to text.
+
+### Missing values
+
+Unresolved `${step.output_data.key}` returns `""` if the step has not run,
+the key is absent, or a resolve step returned `found: false`. Other unresolved
+`${...}` references remain literal so they are visible in run diagnostics.
+Use `fail_if_missing: false` on first-run resolve steps and write prompts to
+handle empty resolved fields.
 
 ---
 
@@ -381,14 +475,24 @@ triggers:
   - on_kind: "qs-arc-plan"      # Watch for this entity kind
     on_tag: "ready"             # When tagged with this
     on_name_pattern: "qs-*"     # Optional glob on entity name
+    on_space: "Construct/WorkflowOutputs/QuantumSoul" # Optional space prefix
     input_map:                  # Map trigger data → workflow inputs
       arc_kref: "${trigger.entity_kref}"
       arc_name: "${trigger.metadata.arc_name}"
 ```
 
-The event listener watches for `revision.tagged` events in
-`/Construct/WorkflowOutputs`. When an output step publishes an entity matching
-a trigger rule, the downstream workflow launches automatically.
+The event listener watches for `revision.tagged` events. When an output step
+publishes an entity matching a trigger rule, the downstream workflow launches
+automatically.
+
+Entity trigger filters are cumulative:
+
+| Field | Match behavior |
+|-------|----------------|
+| `on_kind` | Entity kind exact match. Required for entity triggers. |
+| `on_tag` | Revision tag exact match. Defaults to `ready` when omitted. |
+| `on_name_pattern` | Optional glob against entity name, for example `daily-*`. |
+| `on_space` | Optional space path prefix, for example `Construct/Reports`. |
 
 **Auto-mapping**: If a trigger's entity metadata keys match required input
 names on the downstream workflow, they're mapped automatically — no explicit
@@ -476,7 +580,9 @@ resolved continuity. Output publishes new entity (next iteration).
 2. Put sensible defaults in `inputs` for the very first run
 3. Structure prompts with both resolved and seed sections
 4. Store everything the next run needs in `entity_metadata`
-5. Make sure the output step's `entity_kind` + `entity_tag` match what the
+5. Align `output.metadata_target` with `resolve.metadata_source` when reading
+   entity metadata back in a later run
+6. Make sure the output step's `entity_kind` + `entity_tag` match what the
    resolve step searches for
 
 ---
@@ -608,6 +714,7 @@ Each prompt follows the dual-source pattern:
       entity_kind: "qs-arc-plan"
       entity_tag: "ready"
       entity_space: "Construct/WorkflowOutputs"
+      metadata_target: revision
       entity_metadata:
         part: "${resolve_cursor.output_data.part}"
         arc_name: "${resolve_cursor.output_data.arc_name}"
@@ -622,6 +729,7 @@ Each prompt follows the dual-source pattern:
 **Critical details:**
 - `entity_kind: "qs-arc-plan"` must match `resolve_last_arc`'s `kind` field
 - `entity_tag: "ready"` must match `resolve_last_arc`'s `tag` field
+- `metadata_target: revision` matches resolve's default `metadata_source`
 - `entity_metadata` stores everything the next run needs to pick up continuity
 - The entity_name uses `${inputs.arc_name}` (always has a value) not resolved data (may be empty)
 

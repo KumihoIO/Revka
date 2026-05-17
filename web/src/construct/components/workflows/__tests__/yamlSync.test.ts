@@ -102,6 +102,40 @@ test('workflow inputs with blank names are omitted from emitted and parsed metad
   assert.deepEqual(parseWorkflowMeta(emitted).inputs.map((input) => input.name), ['topic']);
 });
 
+test('entity trigger name and space filters round-trip through metadata YAML', () => {
+  const yaml = `
+name: triggered-workflow
+version: "1.0"
+triggers:
+  - on_kind: report
+    on_tag: ready
+    on_name_pattern: "daily-*"
+    on_space: "Construct/Reports"
+    input_map:
+      report_kref: "\${trigger.entity_kref}"
+steps:
+  - id: a
+    type: agent
+    agent:
+      prompt: "A"
+`;
+
+  const meta = parseWorkflowMeta(yaml);
+  assert.equal(meta.triggers.length, 1);
+  assert.deepEqual(meta.triggers[0], {
+    onKind: 'report',
+    onTag: 'ready',
+    onNamePattern: 'daily-*',
+    onSpace: 'Construct/Reports',
+    inputMap: { report_kref: '${trigger.entity_kref}' },
+  });
+
+  const emitted = tasksToYaml(parseWorkflowYaml(yaml), meta);
+  assert.match(emitted, /on_name_pattern: "daily-\*"/);
+  assert.match(emitted, /on_space: Construct\/Reports/);
+  assert.equal(parseWorkflowMeta(emitted).triggers[0]!.onSpace, 'Construct/Reports');
+});
+
 test('canonical conditional.branches populates flat fields + edges', () => {
   const yaml = `
 steps:
@@ -1014,4 +1048,49 @@ test('manus step register_output: enabled with empty entity_name/kind still emit
   // — both keys are present so the runtime fail-fast path sees the empty values.
   assert.ok(/entity_name:/.test(out), 'entity_name key present in block');
   assert.ok(/entity_kind:/.test(out), 'entity_kind key present in block');
+});
+
+test('output metadata target and resolve metadata source round-trip', () => {
+  const yaml = `
+steps:
+  - id: publish
+    type: output
+    output:
+      format: markdown
+      template: "body"
+      entity_name: "report"
+      entity_kind: "Report"
+      metadata_target: revision
+      entity_metadata:
+        topic: "Q1"
+  - id: resolve
+    type: resolve
+    depends_on: [publish]
+    resolve:
+      kind: "Report"
+      tag: "ready"
+      mode: "latest"
+      metadata_source: artifact
+      fields: [topic]
+`;
+
+  const tasks1 = parseWorkflowYaml(yaml);
+  assert.equal(tasks1[0]!.metadata_target, 'revision');
+  assert.equal(tasks1[1]!.resolve_metadata_source, 'artifact');
+
+  const { nodes, edges } = tasksToFlow(tasks1);
+  assert.equal(nodes[0]!.data.entityMetadataTarget, 'revision');
+  assert.equal(nodes[1]!.data.resolveMetadataSource, 'artifact');
+
+  const tasks2 = flowToTasks(nodes, edges);
+  assert.equal(tasks2[0]!.metadata_target, 'revision');
+  assert.equal(tasks2[1]!.resolve_metadata_source, 'artifact');
+
+  const yaml2 = tasksToYaml(tasks2);
+  assert.match(yaml2, /metadata_target:\s+revision/);
+  assert.match(yaml2, /metadata_source:\s+artifact/);
+
+  const tasks3 = parseWorkflowYaml(yaml2);
+  assert.equal(tasks3[0]!.metadata_target, 'revision');
+  assert.equal(tasks3[1]!.resolve_metadata_source, 'artifact');
 });

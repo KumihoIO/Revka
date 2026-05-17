@@ -120,6 +120,19 @@ interface WorkflowEditorProps {
   containerClassName?: string;
 }
 
+interface CopiedWorkflowNode {
+  id: string;
+  data: TaskNodeData;
+  nodeType: string | undefined;
+  position: WorkflowNodePosition;
+}
+
+interface CopiedWorkflowSelection {
+  nodes: CopiedWorkflowNode[];
+  edges: Edge[];
+  origin: WorkflowNodePosition;
+}
+
 export default function WorkflowEditor(props: WorkflowEditorProps) {
   return (
     <ReactFlowProvider>
@@ -461,6 +474,7 @@ function defaultNodeData(id: string, overrides?: Partial<TaskNodeData>): TaskNod
     entityTag: '',
     entitySpace: '',
     entityMetadata: {},
+    entityMetadataTarget: 'item',
     handoffFrom: '',
     handoffTo: '',
     handoffReason: '',
@@ -492,6 +506,7 @@ function defaultNodeData(id: string, overrides?: Partial<TaskNodeData>): TaskNod
     resolveSpace: '',
     resolveMode: 'latest',
     resolveFields: [],
+    resolveMetadataSource: 'revision',
     resolveFailIfMissing: true,
     mapReduceTask: '',
     mapReduceSplits: [],
@@ -1017,11 +1032,27 @@ function cloneTaskData(data: TaskNodeData): TaskNodeData {
   return JSON.parse(JSON.stringify(data)) as TaskNodeData;
 }
 
-function prepareCopiedTaskData(data: TaskNodeData, newTaskId: string): TaskNodeData {
-  const copy = cloneTaskData(data);
+function rewriteStepRefsForCopy(data: TaskNodeData, idMap: Map<string, string>): TaskNodeData {
+  let next = data;
+  for (const [oldId, newId] of idMap) {
+    if (oldId !== newId) next = rewriteStepRefsInTaskData(next, oldId, newId);
+  }
+  return next;
+}
+
+function prepareCopiedTaskData(
+  data: TaskNodeData,
+  newTaskId: string,
+  idMap: Map<string, string> = new Map(),
+): TaskNodeData {
+  const copy = rewriteStepRefsForCopy(cloneTaskData(data), idMap);
   const displayName = data.name?.trim()
     ? `${data.name.trim()} Copy`
     : newTaskId;
+  const remapInternalTarget = (target: string | undefined): string => {
+    if (!target) return '';
+    return idMap.get(target) ?? '';
+  };
   return {
     ...copy,
     taskId: newTaskId,
@@ -1030,8 +1061,13 @@ function prepareCopiedTaskData(data: TaskNodeData, newTaskId: string): TaskNodeD
     dependencyCount: 0,
     conditionalBranches: (copy.conditionalBranches || []).map((branch) => ({
       ...branch,
-      goto: '',
+      goto: remapInternalTarget(branch.goto),
     })),
+    gotoTarget: remapInternalTarget(copy.gotoTarget),
+    humanApprovalOnRejectGoto: remapInternalTarget(copy.humanApprovalOnRejectGoto),
+    forEachSteps: (copy.forEachSteps || [])
+      .map((stepId) => idMap.get(stepId))
+      .filter((stepId): stepId is string => Boolean(stepId)),
   };
 }
 
@@ -1114,11 +1150,7 @@ function WorkflowEditorInner({
   const [detailsPanelWidth, setDetailsPanelWidth] = useState(readDetailsPanelWidth);
   const [detailsPanelResizing, setDetailsPanelResizing] = useState(false);
   const detailsResizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
-  const copiedNodeRef = useRef<{
-    data: TaskNodeData;
-    nodeType: string | undefined;
-    position: { x: number; y: number };
-  } | null>(null);
+  const copiedSelectionRef = useRef<CopiedWorkflowSelection | null>(null);
   const [hasCopiedNode, setHasCopiedNode] = useState(false);
   const pasteCountRef = useRef(0);
   const [runLog, setRunLog] = useState<RunLogState | null>(null);
@@ -1202,6 +1234,11 @@ function WorkflowEditorInner({
     () => (selectedNodeId ? liveNodes.find((n) => n.id === selectedNodeId) ?? null : null),
     [selectedNodeId, liveNodes],
   );
+  const selectedNodes = useMemo(() => {
+    const selectedByFlow = liveNodes.filter((node) => node.selected);
+    if (selectedByFlow.length > 0) return selectedByFlow;
+    return selectedNode ? [selectedNode] : [];
+  }, [liveNodes, selectedNode]);
 
   // ── DAG context for ${...} expression autocomplete in textareas ─────────
   // Step IDs come from the live xyflow nodes; workflow inputs from the
@@ -1290,47 +1327,110 @@ function WorkflowEditorInner({
   }, [detailsPanelResizing]);
 
   const copySelectedNode = useCallback(() => {
-    if (!selectedNode) return;
-    copiedNodeRef.current = {
-      data: cloneTaskData(selectedNode.data as TaskNodeData),
-      nodeType: selectedNode.type,
-      position: { ...selectedNode.position },
+    if (selectedNodes.length === 0) return;
+    const selectedIds = new Set(selectedNodes.map((node) => node.id));
+    const origin = selectedNodes.reduce(
+      (acc, node) => ({
+        x: Math.min(acc.x, node.position.x),
+        y: Math.min(acc.y, node.position.y),
+      }),
+      { x: Number.POSITIVE_INFINITY, y: Number.POSITIVE_INFINITY },
+    );
+    copiedSelectionRef.current = {
+      nodes: selectedNodes.map((node) => ({
+        id: node.id,
+        data: cloneTaskData(node.data as TaskNodeData),
+        nodeType: node.type,
+        position: { ...node.position },
+      })),
+      edges: edges
+        .filter((edge) => selectedIds.has(edge.source) && selectedIds.has(edge.target))
+        .map((edge) => ({ ...edge })),
+      origin,
     };
     pasteCountRef.current = 0;
     setHasCopiedNode(true);
-  }, [selectedNode]);
+  }, [edges, selectedNodes]);
 
   const pasteCopiedNode = useCallback(
     (position?: { x: number; y: number }) => {
-      const copied = copiedNodeRef.current;
-      if (!copied) return;
+      const copied = copiedSelectionRef.current;
+      if (!copied || copied.nodes.length === 0) return;
       pasteCountRef.current += 1;
-      const existingIds = liveNodes.map((node) => (node.data as TaskNodeData).taskId);
-      const originalId = copied.data.taskId || copied.data.name || 'step';
-      const newId = uniqueCopyTaskId(originalId, existingIds);
+      const existingIds = new Set(liveNodes.map((node) => (node.data as TaskNodeData).taskId || node.id));
+      const idMap = new Map<string, string>();
+      for (const copiedNode of copied.nodes) {
+        const originalId = copiedNode.data.taskId || copiedNode.id || copiedNode.data.name || 'step';
+        const newId = uniqueCopyTaskId(originalId, existingIds);
+        existingIds.add(newId);
+        idMap.set(copiedNode.id, newId);
+        if (copiedNode.data.taskId) idMap.set(copiedNode.data.taskId, newId);
+      }
       const pointerPosition = position ? null : lastPointerFlowPositionRef.current;
       const pointerOffset = COPY_PASTE_OFFSET * Math.max(0, pasteCountRef.current - 1);
       const fallbackOffset = COPY_PASTE_OFFSET * pasteCountRef.current;
-      const pastePosition = position
+      const pasteOrigin = position
         ?? (pointerPosition
           ? { x: pointerPosition.x + pointerOffset, y: pointerPosition.y + pointerOffset }
           : {
-              x: copied.position.x + fallbackOffset,
-              y: copied.position.y + fallbackOffset,
+              x: copied.origin.x + fallbackOffset,
+              y: copied.origin.y + fallbackOffset,
             });
-      const data = prepareCopiedTaskData(copied.data, newId);
-      const nodeType = data.type === 'conditional' ? 'gateNode' : copied.nodeType || 'taskNode';
-      const nextNode: Node<TaskNodeData> = {
-        id: newId,
-        type: nodeType,
-        position: pastePosition,
-        data,
+      const delta = {
+        x: pasteOrigin.x - copied.origin.x,
+        y: pasteOrigin.y - copied.origin.y,
       };
-      setNodes((nds) => [...nds, nextNode]);
-      setSelectedNodeId(newId);
+      const nextNodes: Node<TaskNodeData>[] = copied.nodes.map((copiedNode) => {
+        const newId = idMap.get(copiedNode.id)!;
+        const data = prepareCopiedTaskData(copiedNode.data, newId, idMap);
+        const nodeType = data.type === 'conditional' ? 'gateNode' : copiedNode.nodeType || 'taskNode';
+        return {
+          id: newId,
+          type: nodeType,
+          position: {
+            x: copiedNode.position.x + delta.x,
+            y: copiedNode.position.y + delta.y,
+          },
+          data,
+          selected: true,
+        };
+      });
+      const nextEdges: Edge[] = copied.edges
+        .map((edge) => {
+          const source = idMap.get(edge.source);
+          const target = idMap.get(edge.target);
+          if (!source || !target) return null;
+          const branch = edge.sourceHandle ?? null;
+          const edgeStyle = isGateBranchHandle(branch) ? gateEdgeStyleForHandle(branch) : GATE_EDGE_STYLES.default;
+          const edgeColor = edgeStyle.stroke;
+          const branchLabel = gateHandleLabel(branch);
+          const nextEdge: Edge = {
+            ...edge,
+            id: `${source}->${branch ? branch + '->' : ''}${target}`,
+            source,
+            target,
+            type: wireStyle,
+            animated: true,
+            selectable: true,
+            interactionWidth: 20,
+            style: edgeStyle,
+            markerEnd: { type: MarkerType.ArrowClosed, color: edgeColor },
+            ...(branchLabel
+              ? { label: branchLabel, labelStyle: { fill: edgeColor, fontSize: 10, fontWeight: 600 } }
+              : { label: undefined, labelStyle: undefined }),
+          };
+          return applyWireStyle(nextEdge, wireStyle);
+        })
+        .filter((edge): edge is Edge => edge !== null);
+      setNodes((nds) => [
+        ...nds.map((node) => ({ ...node, selected: false })),
+        ...nextNodes,
+      ]);
+      if (nextEdges.length > 0) setEdges((eds) => [...eds, ...nextEdges]);
+      setSelectedNodeId(nextNodes[nextNodes.length - 1]?.id ?? null);
       setContextMenu(null);
     },
-    [liveNodes, setNodes],
+    [liveNodes, setEdges, setNodes, wireStyle],
   );
 
   // ── Persist node positions ──────────────────────────────────────────────
@@ -1549,7 +1649,7 @@ function WorkflowEditorInner({
 
       if (inField) return;
 
-      if (mod && event.key.toLowerCase() === 'c' && selectedNodeId) {
+      if (mod && event.key.toLowerCase() === 'c' && selectedNodes.length > 0) {
         event.preventDefault();
         copySelectedNode();
         return;
@@ -1573,7 +1673,7 @@ function WorkflowEditorInner({
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [isMac, selectedNodeId, copySelectedNode, hasCopiedNode, pasteCopiedNode]);
+  }, [isMac, selectedNodes.length, copySelectedNode, hasCopiedNode, pasteCopiedNode]);
 
   // ── React Flow handlers ─────────────────────────────────────────────────
   const onConnect = useCallback(
@@ -2782,17 +2882,17 @@ function WorkflowEditorInner({
               <button
                 type="button"
                 onClick={copySelectedNode}
-                disabled={!selectedNode}
+                disabled={selectedNodes.length === 0}
                 className="construct-button"
-                aria-label="Copy selected step"
-                title={`Copy selected step (${isMac ? '⌘' : 'Ctrl'}+C)`}
+                aria-label="Copy selected steps"
+                title={`Copy selected step${selectedNodes.length > 1 ? 's' : ''} (${isMac ? '⌘' : 'Ctrl'}+C)`}
                 style={{
                   width: 32,
                   height: 32,
                   padding: 0,
                   justifyContent: 'center',
-                  opacity: selectedNode ? 1 : 0.48,
-                  cursor: selectedNode ? 'pointer' : 'not-allowed',
+                  opacity: selectedNodes.length > 0 ? 1 : 0.48,
+                  cursor: selectedNodes.length > 0 ? 'pointer' : 'not-allowed',
                 }}
               >
                 <Copy size={14} />
@@ -2971,6 +3071,13 @@ function WorkflowEditorInner({
                   onConnectEnd={onConnectEnd}
                   onEdgesDelete={onEdgesDelete}
                   onNodeClick={onNodeClick}
+                  onSelectionChange={({ nodes: selected }) => {
+                    if (selected.length === 0) {
+                      setSelectedNodeId(null);
+                    } else {
+                      setSelectedNodeId(selected[selected.length - 1]?.id ?? null);
+                    }
+                  }}
                   onNodeDragStop={onNodeDragStop}
                   onPaneClick={onPaneClick}
                   nodeTypes={allNodeTypes}
@@ -3387,7 +3494,7 @@ function WorkflowSettingsPanel({
                       ...m,
                       triggers: [
                         ...m.triggers,
-                        { onKind: '', onTag: '', onNamePattern: '', inputMap: { __cron: '' } },
+                        { onKind: '', onTag: '', onNamePattern: '', onSpace: '', inputMap: { __cron: '' } },
                       ],
                     }))
                   }
@@ -3404,7 +3511,7 @@ function WorkflowSettingsPanel({
                       ...m,
                       triggers: [
                         ...m.triggers,
-                        { onKind: '', onTag: 'ready', onNamePattern: '', inputMap: {} },
+                        { onKind: '', onTag: 'ready', onNamePattern: '', onSpace: '', inputMap: {} },
                       ],
                     }))
                   }
@@ -3467,7 +3574,7 @@ function WorkflowSettingsPanel({
                     style={{ ...inputStyle, fontFamily: 'var(--pc-font-mono, ui-monospace, monospace)' }}
                   />
                 ) : (
-                  <div style={{ display: 'flex', gap: 6 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 96px', gap: 6 }}>
                     <input
                       type="text"
                       value={trigger.onKind}
@@ -3479,7 +3586,7 @@ function WorkflowSettingsPanel({
                         })
                       }
                       placeholder="Entity kind"
-                      style={{ ...inputStyle, flex: 1, fontFamily: 'var(--pc-font-mono, ui-monospace, monospace)' }}
+                      style={{ ...inputStyle, fontFamily: 'var(--pc-font-mono, ui-monospace, monospace)' }}
                     />
                     <input
                       type="text"
@@ -3492,7 +3599,33 @@ function WorkflowSettingsPanel({
                         })
                       }
                       placeholder="Tag"
-                      style={{ ...inputStyle, width: 80, fontFamily: 'var(--pc-font-mono, ui-monospace, monospace)' }}
+                      style={{ ...inputStyle, fontFamily: 'var(--pc-font-mono, ui-monospace, monospace)' }}
+                    />
+                    <input
+                      type="text"
+                      value={trigger.onNamePattern}
+                      onChange={(e) =>
+                        setMeta((m) => {
+                          const triggers = [...m.triggers];
+                          triggers[ti] = { ...triggers[ti]!, onNamePattern: e.target.value };
+                          return { ...m, triggers };
+                        })
+                      }
+                      placeholder="Name pattern"
+                      style={{ ...inputStyle, fontFamily: 'var(--pc-font-mono, ui-monospace, monospace)' }}
+                    />
+                    <input
+                      type="text"
+                      value={trigger.onSpace ?? ''}
+                      onChange={(e) =>
+                        setMeta((m) => {
+                          const triggers = [...m.triggers];
+                          triggers[ti] = { ...triggers[ti]!, onSpace: e.target.value };
+                          return { ...m, triggers };
+                        })
+                      }
+                      placeholder="Space prefix"
+                      style={{ ...inputStyle, fontFamily: 'var(--pc-font-mono, ui-monospace, monospace)' }}
                     />
                   </div>
                 )}

@@ -236,10 +236,27 @@ class KumihoSDKClient:
     # -- Artifact operations ---------------------------------------------------
 
     async def create_artifact(
-        self, revision_kref: str, name: str, location: str,
+        self,
+        revision_kref: str,
+        name: str,
+        location: str,
+        metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Attach an artifact (file reference) to a revision."""
         def _call():
+            str_meta = {str(k): str(v) for k, v in (metadata or {}).items()} if metadata else None
+            if str_meta:
+                # Older kumiho.mcp_server exposes artifact metadata on the
+                # underlying SDK but not on tool_create_artifact. Use the same
+                # configured singleton directly so workflow output metadata can
+                # target artifacts without waiting for a tool wrapper bump.
+                try:
+                    from kumiho.mcp_server import _serialize_artifact, kumiho
+                    revision = kumiho.get_revision(revision_kref)
+                    artifact = revision.create_artifact(name, location, metadata=str_meta)
+                    return _serialize_artifact(artifact)
+                except Exception as exc:
+                    raise RuntimeError(str(exc)) from exc
             r = tool_create_artifact(revision_kref, name, location)
             if "error" in r:
                 raise RuntimeError(r["error"])
@@ -468,14 +485,25 @@ class KumihoAgentPoolClient:
                 revisions[item_kref] = revision
         return revisions
 
-    async def create_artifact(self, revision_kref: str, name: str, location: str) -> dict[str, Any]:
+    async def create_artifact(
+        self,
+        revision_kref: str,
+        name: str,
+        location: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         sdk = _get_sdk()
         if sdk:
-            return await sdk.create_artifact(revision_kref, name, location)
+            return await sdk.create_artifact(revision_kref, name, location, metadata)
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.post(
                 f"{self.api_url}/api/v1/artifacts",
-                json={"revision_kref": revision_kref, "name": name, "location": location},
+                json={
+                    "revision_kref": revision_kref,
+                    "name": name,
+                    "location": location,
+                    "metadata": metadata or {},
+                },
                 headers=self._headers(),
             )
             resp.raise_for_status()

@@ -493,6 +493,7 @@ async def publish_workflow_entity(
     entity_tag: str = "ready",
     entity_space: str | None = None,
     entity_metadata: dict[str, str] | None = None,
+    metadata_target: str = "item",
     content: str,
     content_format: str = "markdown",
     workflow_name: str,
@@ -507,9 +508,10 @@ async def publish_workflow_entity(
     downstream workflows.
 
     Args:
-        entity_metadata: User-defined key-value pairs stored on the item.
-            Downstream triggers can auto-map these to workflow inputs when
-            metadata keys match input names.
+        entity_metadata: User-defined key-value pairs. Stored on the Kumiho
+            item, revision, or artifact according to metadata_target.
+        metadata_target: One of "item", "revision", or "artifact". Item is
+            the legacy default and keeps downstream trigger auto-mapping.
 
     Returns {"item_kref": ..., "revision_kref": ...} or None on failure.
     """
@@ -534,14 +536,19 @@ async def publish_workflow_entity(
         _log(f"workflow_memory: ensuring space {space_path} for entity {entity_name}")
         await _ensure_space_path(space_path)
 
-        # Merge source tracking with user-defined entity metadata
+        target = metadata_target if metadata_target in {"item", "revision", "artifact"} else "item"
+        user_meta = dict(entity_metadata or {})
+
+        # Merge source tracking with user-defined metadata only when the user
+        # targets the item. Source tracking remains on the item for operational
+        # lookup regardless of target.
         item_meta: dict[str, str] = {
             "source_workflow": workflow_name,
             "source_run_id": run_id,
             "source_step": step_id,
         }
-        if entity_metadata:
-            item_meta.update(entity_metadata)
+        if target == "item":
+            item_meta.update(user_meta)
 
         # Create the item. Retry once on NOT_FOUND to absorb the rare race
         # where the gRPC backend hasn't yet replicated the space we just
@@ -617,6 +624,8 @@ async def publish_workflow_entity(
             "content_preview": content[:2000] if content else "",
             "content_length": str(len(content)) if content else "0",
         }
+        if target == "revision":
+            metadata.update(user_meta)
         if artifact_path:
             metadata["artifact_path"] = artifact_path
         # Create the revision untagged first. Kumiho revisions can become
@@ -646,6 +655,7 @@ async def publish_workflow_entity(
                     rev_kref,
                     artifact_file_name,
                     artifact_path,
+                    user_meta if target == "artifact" else None,
                 )
                 artifact_kref = (
                     artifact.get("kref", "")
@@ -687,6 +697,7 @@ async def publish_workflow_entity(
             "artifact_error": artifact_error,
             "tag_applied": tag_applied,
             "tag_error": tag_error,
+            "metadata_target": target,
         }
 
     except Exception as e:
@@ -705,6 +716,7 @@ async def resolve_entity(
     name_pattern: str = "",
     space: str = "",
     mode: str = "latest",
+    metadata_source: str = "revision",
 ) -> dict[str, Any] | list[dict[str, Any]] | None:
     """Resolve a Kumiho entity by kind + tag. Returns revision dict(s) or None."""
     from ..operator_mcp import KUMIHO_SDK
@@ -758,6 +770,45 @@ async def resolve_entity(
         )
         return None
 
+    source = metadata_source if metadata_source in {"revision", "item", "artifact"} else "revision"
+
+    async def _decorate_revision(item: dict[str, Any], rev: dict[str, Any]) -> dict[str, Any]:
+        item_kref = item.get("kref", "")
+        item_meta = dict(item.get("metadata", {}) or {})
+        rev_meta = dict(rev.get("metadata", {}) or {})
+        artifact_meta: dict[str, Any] = {}
+        artifact_info: dict[str, Any] | None = None
+        if source == "artifact":
+            try:
+                artifacts = await KUMIHO_SDK.get_artifacts(rev.get("kref", ""))
+            except Exception as exc:
+                _log(f"resolve_entity: failed to fetch artifacts for {rev.get('kref', '')}: {exc}")
+                artifacts = []
+            if artifacts:
+                default_name = rev.get("default_artifact", "")
+                artifact_info = next(
+                    (a for a in artifacts if default_name and a.get("name") == default_name),
+                    artifacts[0],
+                )
+                artifact_meta = dict(artifact_info.get("metadata", {}) or {})
+
+        selected_meta = (
+            item_meta if source == "item"
+            else artifact_meta if source == "artifact"
+            else rev_meta
+        )
+        rev = dict(rev)
+        rev.setdefault("item_kref", item_kref)
+        rev.setdefault("name", item.get("name", ""))
+        rev["metadata"] = selected_meta
+        rev["metadata_source"] = source
+        rev["item_metadata"] = item_meta
+        rev["revision_metadata"] = rev_meta
+        if artifact_info is not None:
+            rev["artifact"] = artifact_info
+            rev["artifact_metadata"] = artifact_meta
+        return rev
+
     if mode == "latest":
         # Get the most recent item (by created_at or just take last)
         # Try to get revision with the specified tag
@@ -767,22 +818,10 @@ async def resolve_entity(
                 continue
             rev = await KUMIHO_SDK.get_latest_revision(item_kref, tag=tag)
             if rev:
-                # Merge item-level info into revision for convenience
-                rev.setdefault("item_kref", item_kref)
-                rev.setdefault("name", item.get("name", ""))
-                # Merge item metadata as fallback — workflow output steps
-                # store meaningful fields (part, episode_number, etc.) on
-                # the item, while revision metadata has system fields
-                # (artifact_path, content_preview, etc.).
-                item_meta = item.get("metadata", {})
-                rev_meta = rev.get("metadata", {})
-                for k, v in item_meta.items():
-                    if k not in rev_meta:
-                        rev_meta[k] = v
-                rev["metadata"] = rev_meta
+                rev = await _decorate_revision(item, rev)
                 _log(
                     f"resolve_entity: matched {item.get('name')} "
-                    f"kref={item_kref} (rev tag={tag!r})"
+                    f"kref={item_kref} (rev tag={tag!r}, metadata_source={source!r})"
                 )
                 return rev
             else:
@@ -803,15 +842,7 @@ async def resolve_entity(
                 continue
             rev = await KUMIHO_SDK.get_latest_revision(item_kref, tag=tag)
             if rev:
-                rev.setdefault("item_kref", item_kref)
-                rev.setdefault("name", item.get("name", ""))
-                item_meta = item.get("metadata", {})
-                rev_meta = rev.get("metadata", {})
-                for k, v in item_meta.items():
-                    if k not in rev_meta:
-                        rev_meta[k] = v
-                rev["metadata"] = rev_meta
-                results.append(rev)
+                results.append(await _decorate_revision(item, rev))
         return results if results else None
 
 

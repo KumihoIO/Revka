@@ -183,6 +183,8 @@ pub struct WorkflowTrigger {
     pub on_tag: String,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub on_name_pattern: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub on_space: String,
 }
 
 #[derive(Serialize, Clone)]
@@ -722,13 +724,15 @@ fn extract_yaml_field(content: &str, field: &str) -> Option<String> {
 /// Extract trigger definitions from a YAML workflow definition (lightweight, no full parser).
 ///
 /// Expects a `triggers:` top-level key containing a list of mappings with `on_kind`,
-/// optional `on_tag` (defaults to `"ready"`), and optional `on_name_pattern`.
+/// optional `on_tag` (defaults to `"ready"`), optional `on_name_pattern`, and
+/// optional `on_space`.
 fn extract_triggers(content: &str) -> Vec<WorkflowTrigger> {
     let mut triggers = Vec::new();
     let mut in_triggers = false;
     let mut current_kind = String::new();
     let mut current_tag = String::new();
     let mut current_pattern = String::new();
+    let mut current_space = String::new();
 
     for line in content.lines() {
         let trimmed = line.trim();
@@ -759,6 +763,7 @@ fn extract_triggers(content: &str) -> Vec<WorkflowTrigger> {
                         std::mem::take(&mut current_tag)
                     },
                     on_name_pattern: std::mem::take(&mut current_pattern),
+                    on_space: std::mem::take(&mut current_space),
                 });
             }
             // Parse inline key on the `- ` line (e.g. `- on_kind: model`)
@@ -770,6 +775,7 @@ fn extract_triggers(content: &str) -> Vec<WorkflowTrigger> {
                     "on_kind" => current_kind = v.to_string(),
                     "on_tag" => current_tag = v.to_string(),
                     "on_name_pattern" => current_pattern = v.to_string(),
+                    "on_space" => current_space = v.to_string(),
                     _ => {}
                 }
             }
@@ -783,6 +789,7 @@ fn extract_triggers(content: &str) -> Vec<WorkflowTrigger> {
                 "on_kind" => current_kind = v.to_string(),
                 "on_tag" => current_tag = v.to_string(),
                 "on_name_pattern" => current_pattern = v.to_string(),
+                "on_space" => current_space = v.to_string(),
                 _ => {}
             }
         }
@@ -797,6 +804,7 @@ fn extract_triggers(content: &str) -> Vec<WorkflowTrigger> {
                 current_tag
             },
             on_name_pattern: current_pattern,
+            on_space: current_space,
         });
     }
     triggers
