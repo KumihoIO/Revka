@@ -960,6 +960,22 @@ Respond with ONLY a JSON object:
 # Step executors
 # ---------------------------------------------------------------------------
 
+def _agent_artifact_stem(step_id: str, state: WorkflowState) -> str:
+    """Return the on-disk artifact stem for an agent step execution.
+
+    for_each executes the same StepDef repeatedly and stores each result under
+    ``<step_id>__iter_<N>`` after the handler returns. The artifact is written
+    inside _exec_agent before that re-keying happens, so it must derive the same
+    iteration-qualified stem from the active loop context.
+    """
+    fe_ctx = state.inputs.get("__for_each__")
+    if isinstance(fe_ctx, dict):
+        iteration = fe_ctx.get("iteration")
+        if iteration not in (None, ""):
+            return f"{step_id}__iter_{iteration}"
+    return step_id
+
+
 async def _exec_agent(step: StepDef, state: WorkflowState, cwd: str) -> StepResult:
     """Execute an agent step."""
     from ..patterns.refinement import _spawn_and_wait, _get_agent_output
@@ -1034,7 +1050,8 @@ async def _exec_agent(step: StepDef, state: WorkflowState, cwd: str) -> StepResu
                 f"~/.construct/artifacts/{state.workflow_name}/{state.run_id}"
             )
             os.makedirs(art_dir, exist_ok=True)
-            artifact_path = os.path.join(art_dir, f"{step.id}.md")
+            artifact_stem = _agent_artifact_stem(step.id, state)
+            artifact_path = os.path.join(art_dir, f"{artifact_stem}.md")
             with open(artifact_path, "w", encoding="utf-8") as f:
                 f.write(effective)
         except Exception as e:
@@ -2635,7 +2652,7 @@ async def _exec_for_each(
             if not deps_ok:
                 iter_key = f"{sub_id}__iter_{iter_num}"
                 state.step_results[iter_key] = StepResult(
-                    step_id=sub_id, status="skipped",
+                    step_id=iter_key, status="skipped",
                     error="Dependencies not satisfied within iteration",
                 )
                 iteration_failed = True
@@ -2649,7 +2666,9 @@ async def _exec_for_each(
 
             # Store under iteration-qualified key for history
             iter_key = f"{sub_id}__iter_{iter_num}"
-            state.step_results[iter_key] = result
+            iter_result = result.model_copy(deep=True)
+            iter_result.step_id = iter_key
+            state.step_results[iter_key] = iter_result
             # Also store under original key so intra-iteration refs work
             state.step_results[sub_id] = result
             current_results[sub_id] = result.model_dump()
