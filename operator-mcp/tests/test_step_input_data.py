@@ -40,6 +40,7 @@ from operator_mcp.workflow.memory import (
     _redact_for_persistence,
 )
 from operator_mcp.workflow.schema import (
+    AgentStepConfig,
     ConditionalBranch,
     ConditionalStepConfig,
     DeprecateStepConfig,
@@ -399,6 +400,66 @@ class TestForEach:
         assert result.input_data["items_count"] == 10
         assert len(result.input_data["items_preview"]) == 5
         assert result.input_data["items_preview"] == ["1", "2", "3", "4", "5"]
+
+    async def test_agent_artifacts_are_iteration_qualified(self, tmp_path, monkeypatch):
+        """Agent steps inside for_each must not overwrite the same markdown file."""
+        from operator_mcp.agent_state import ManagedAgent
+        from operator_mcp.patterns import refinement
+
+        monkeypatch.setenv("HOME", str(tmp_path))
+
+        calls: list[tuple[str, str]] = []
+
+        async def fake_spawn_and_wait(agent_type, title, cwd, prompt, **_kwargs):
+            iter_num = len(calls) + 1
+            calls.append((title, prompt))
+            agent = ManagedAgent(
+                id=f"agent-{iter_num}",
+                agent_type=agent_type,
+                title=title,
+                cwd=cwd,
+                status="completed",
+            )
+            return agent, f"# draft {iter_num}\n"
+
+        monkeypatch.setattr(refinement, "_spawn_and_wait", fake_spawn_and_wait)
+        monkeypatch.setattr(refinement, "_get_agent_output", lambda _agent_id: ("", []))
+
+        cfg = ForEachStepConfig(items=["a", "b"], variable="item", steps=["draft"])
+        loop = StepDef(id="loop", type=StepType.FOR_EACH, for_each=cfg)
+        draft = StepDef(
+            id="draft",
+            type=StepType.AGENT,
+            agent=AgentStepConfig(
+                agent_type="codex",
+                role="writer",
+                prompt="write ${for_each.item}",
+                max_turns=1,
+                tools="none",
+            ),
+        )
+        wf = WorkflowDef(name="t", steps=[loop, draft], checkpoint=False)
+        state = _state()
+
+        result = await _exec_for_each(loop, state, str(tmp_path), wf)
+
+        assert result.status == "completed"
+        art_dir = tmp_path / ".construct" / "artifacts" / "t" / "r"
+        iter_1 = art_dir / "draft__iter_1.md"
+        iter_2 = art_dir / "draft__iter_2.md"
+        assert iter_1.read_text(encoding="utf-8") == "# draft 1\n"
+        assert iter_2.read_text(encoding="utf-8") == "# draft 2\n"
+        assert not (art_dir / "draft.md").exists()
+        assert state.step_results["draft__iter_1"].output_data["artifact_path"] == str(iter_1)
+        assert state.step_results["draft__iter_2"].output_data["artifact_path"] == str(iter_2)
+        assert state.step_results["draft__iter_1"].step_id == "draft__iter_1"
+        assert state.step_results["draft__iter_2"].step_id == "draft__iter_2"
+        # The base alias intentionally points at the latest iteration for
+        # existing `${draft.output}` workflows, but its artifact path must be
+        # the latest isolated file rather than a shared `draft.md`.
+        assert state.step_results["draft"].step_id == "draft"
+        assert state.step_results["draft"].agent_id == "agent-2"
+        assert state.step_results["draft"].output_data["artifact_path"] == str(iter_2)
 
 
 # ── _exec_goto ─────────────────────────────────────────────────────
