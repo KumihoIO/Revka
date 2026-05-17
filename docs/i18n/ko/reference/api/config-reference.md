@@ -473,7 +473,7 @@ methods = ["list", "get", "create", "update"]
 | `workspace_only` | `true` | 명시적으로 끄지 않으면 절대 경로 입력을 거부 |
 | `allowed_commands` | _셸 실행 시 필수_ | 실행 파일 이름·명시 경로·`"*"`의 허용 목록 |
 | `forbidden_paths` | 빌트인 보호 목록 | 명시적 경로 거부 목록 (시스템 경로 + 민감한 dotdir이 기본) |
-| `allowed_roots` | `[]` | canonicalize 후 워크스페이스 외부에서 허용할 추가 루트 |
+| `allowed_roots` | `["~/.construct/workflows"]` | canonicalize 후 워크스페이스 외부에서 허용할 추가 루트 |
 | `max_actions_per_hour` | `20` | 정책당 시간당 액션 예산 |
 | `max_cost_per_day_cents` | `500` | 정책당 일일 지출 가드레일 |
 | `require_approval_for_medium_risk` | `true` | 중간 위험 명령에 대한 승인 게이트 |

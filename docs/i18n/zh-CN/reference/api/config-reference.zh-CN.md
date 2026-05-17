@@ -373,7 +373,7 @@ methods = ["list", "get", "create", "update"]
 | `workspace_only` | `true` | 除非显式禁用，否则拒绝绝对路径输入 |
 | `allowed_commands` | _shell 执行必填_ | 可执行名称、显式可执行路径或 `"*"` 的白名单 |
 | `forbidden_paths` | 内置保护列表 | 显式路径拒绝列表（默认包含系统路径 + 敏感点目录） |
-| `allowed_roots` | `[]` | 规范化后允许在工作区外的额外根路径 |
+| `allowed_roots` | `["~/.construct/workflows"]` | 规范化后允许在工作区外的额外根路径 |
 | `max_actions_per_hour` | `20` | 每个策略的操作预算 |
 | `max_cost_per_day_cents` | `500` | 每个策略的支出防护 |
 | `require_approval_for_medium_risk` | `true` | 中等风险命令的审批门控 |

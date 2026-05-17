@@ -73,7 +73,7 @@ class TestKumihoMemoryConfig:
             assert config is not None
             assert config["type"] == "stdio"
             assert "kumiho" in config["args"][0].lower() or "kumiho" in config["command"].lower() or True
-            assert "KUMIHO_AUTO_CONFIGURE" in config["env"]
+            assert "KUMIHO_AUTO_CONFIGURE" not in config["env"]
 
     def test_passes_env_vars(self):
         with patch("os.path.exists", return_value=True), \

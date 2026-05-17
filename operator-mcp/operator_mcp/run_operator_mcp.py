@@ -64,6 +64,9 @@ def main() -> "None":
     parent_dir = str(SCRIPT_DIR.parent)
     env = os.environ.copy()
     env["PYTHONPATH"] = parent_dir + (os.pathsep + env.get("PYTHONPATH", ""))
+    # Older Construct binaries may still inject KUMIHO_AUTO_CONFIGURE at
+    # sidecar launch. Keep endpoint discovery out of the pre-initialize path.
+    env.pop("KUMIHO_AUTO_CONFIGURE", None)
 
     # IMPORTANT: switch cwd to the parent before exec'ing. install-sidecars
     # flattens the package directly into OPERATOR_DIR (which contains both

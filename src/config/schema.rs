@@ -5330,8 +5330,10 @@ pub struct AutonomyConfig {
 
     /// Extra directory roots the agent may read/write outside the workspace.
     /// Supports absolute, `~/...`, and workspace-relative entries.
+    /// Defaults include Construct's workflow-definition store so Operator can
+    /// inspect saved workflow YAMLs without requiring a per-user allowlist edit.
     /// Resolved paths under any of these roots pass `is_resolved_path_allowed`.
-    #[serde(default)]
+    #[serde(default = "default_allowed_roots")]
     pub allowed_roots: Vec<String>,
 
     /// Tools to exclude from non-CLI channels (e.g. Telegram, Discord).
@@ -5364,6 +5366,10 @@ fn default_auto_approve() -> Vec<String> {
 
 fn default_always_ask() -> Vec<String> {
     vec![]
+}
+
+fn default_allowed_roots() -> Vec<String> {
+    vec!["~/.construct/workflows".into()]
 }
 
 impl AutonomyConfig {
@@ -5498,7 +5504,7 @@ impl Default for AutonomyConfig {
             shell_env_passthrough: vec![],
             auto_approve: default_auto_approve(),
             always_ask: default_always_ask(),
-            allowed_roots: Vec::new(),
+            allowed_roots: default_allowed_roots(),
             non_cli_excluded_tools: Vec::new(),
         }
     }
@@ -11302,6 +11308,10 @@ mod tests {
         assert!(a.require_approval_for_medium_risk);
         assert!(a.block_high_risk_commands);
         assert!(a.shell_env_passthrough.is_empty());
+        assert!(
+            a.allowed_roots
+                .contains(&"~/.construct/workflows".to_string())
+        );
     }
 
     #[test]
