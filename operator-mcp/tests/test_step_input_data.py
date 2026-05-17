@@ -552,6 +552,62 @@ class TestForEach:
         assert state.step_results["draft"].agent_id == "agent-2"
         assert state.step_results["draft"].output_data["artifact_path"] == str(iter_2)
 
+    async def test_output_entity_artifacts_are_iteration_qualified(self, tmp_path):
+        """Output steps inside for_each must publish distinct files per iteration."""
+        calls: list[dict[str, Any]] = []
+
+        async def fake_publish_workflow_entity(**kwargs):
+            calls.append(kwargs)
+            artifact_dir = tmp_path / ".construct" / "artifacts" / kwargs["workflow_name"] / kwargs["run_id"]
+            artifact_dir.mkdir(parents=True, exist_ok=True)
+            artifact_path = artifact_dir / f"{kwargs['step_id']}.md"
+            artifact_path.write_text(kwargs["content"], encoding="utf-8")
+            return {
+                "item_kref": f"kref://item/{kwargs['step_id']}",
+                "revision_kref": f"kref://rev/{kwargs['step_id']}",
+                "artifact_path": str(artifact_path),
+                "artifact_kref": f"kref://rev/{kwargs['step_id']}#artifact",
+                "artifact_attached": True,
+                "artifact_error": "",
+                "tag_applied": True,
+                "tag_error": "",
+                "metadata_target": "item",
+            }
+
+        cfg = ForEachStepConfig(items=["alpha", "beta"], variable="episode", steps=["emit"])
+        loop = StepDef(id="loop", type=StepType.FOR_EACH, for_each=cfg)
+        emit = StepDef(
+            id="emit",
+            type=StepType.OUTPUT,
+            output=OutputStepConfig(
+                format="markdown",
+                template="# ${for_each.episode}\n",
+                entity_name="episode-${for_each.iteration}",
+                entity_kind="episode",
+                entity_tag="ready",
+            ),
+        )
+        wf = WorkflowDef(name="t", steps=[loop, emit], checkpoint=False)
+        state = _state()
+
+        with patch(
+            "operator_mcp.workflow.memory.publish_workflow_entity",
+            fake_publish_workflow_entity,
+        ):
+            result = await _exec_for_each(loop, state, str(tmp_path), wf)
+
+        assert result.status == "completed"
+        assert [call["step_id"] for call in calls] == ["emit__iter_1", "emit__iter_2"]
+        art_dir = tmp_path / ".construct" / "artifacts" / "t" / "r"
+        iter_1 = art_dir / "emit__iter_1.md"
+        iter_2 = art_dir / "emit__iter_2.md"
+        assert iter_1.read_text(encoding="utf-8") == "# alpha\n"
+        assert iter_2.read_text(encoding="utf-8") == "# beta\n"
+        assert not (art_dir / "emit.md").exists()
+        assert state.step_results["emit__iter_1"].output_data["artifact_path"] == str(iter_1)
+        assert state.step_results["emit__iter_2"].output_data["artifact_path"] == str(iter_2)
+        assert state.step_results["emit"].output_data["artifact_path"] == str(iter_2)
+
 
 # ── _exec_goto ─────────────────────────────────────────────────────
 
@@ -765,3 +821,89 @@ class TestPersistRoundTrip:
             parsed = json.loads(s)
             for key in idata:
                 assert key in parsed["input_data"], f"step={sid} key={key} dropped"
+
+    @pytest.mark.asyncio
+    async def test_workflow_run_artifact_capture_dedupes_for_each_aliases(
+        self,
+        tmp_path,
+        monkeypatch,
+    ):
+        from operator_mcp.workflow.memory import persist_workflow_run
+
+        class FakeSDK:
+            _available = True
+
+            def __init__(self) -> None:
+                self.create_artifact_calls: list[tuple[str, str, str]] = []
+
+            async def ensure_space(self, _project: str, _space: str) -> None:
+                return None
+
+            async def list_items(self, _space_path: str) -> list[dict[str, Any]]:
+                return []
+
+            async def create_item(
+                self,
+                _space_path: str,
+                name: str,
+                kind: str,
+                metadata: dict[str, Any] | None = None,
+            ) -> dict[str, str]:
+                return {"kref": f"kref://item/{name}", "kind": kind}
+
+            async def create_revision(
+                self,
+                _item_kref: str,
+                _metadata: dict[str, Any],
+                tag: str | None = "latest",
+            ) -> dict[str, str]:
+                return {"kref": f"kref://rev/{tag or 'untagged'}"}
+
+            async def create_artifact(
+                self,
+                revision_kref: str,
+                name: str,
+                location: str,
+            ) -> dict[str, str]:
+                self.create_artifact_calls.append((revision_kref, name, location))
+                return {"kref": f"{revision_kref}#{name}"}
+
+        iter_1 = tmp_path / "emit-episode__iter_1.md"
+        iter_2 = tmp_path / "emit-episode__iter_2.md"
+        iter_1.write_text("# one\n", encoding="utf-8")
+        iter_2.write_text("# two\n", encoding="utf-8")
+
+        sdk = FakeSDK()
+        import operator_mcp.operator_mcp as op_mod
+        monkeypatch.setattr(op_mod, "KUMIHO_SDK", sdk, raising=False)
+
+        # Mirrors for_each state: iteration-qualified history entries plus
+        # a base alias that points at the latest iteration for interpolation.
+        step_results = {
+            "emit-episode__iter_1": {
+                "status": "completed",
+                "output_data": {"artifact_path": str(iter_1)},
+            },
+            "emit-episode": {
+                "status": "completed",
+                "output_data": {"artifact_path": str(iter_2)},
+            },
+            "emit-episode__iter_2": {
+                "status": "completed",
+                "output_data": {"artifact_path": str(iter_2)},
+            },
+        }
+
+        item_kref = await persist_workflow_run(
+            workflow_name="room",
+            run_id="run-1234567890",
+            status="completed",
+            inputs={},
+            step_results=step_results,
+        )
+
+        assert item_kref is not None
+        assert sdk.create_artifact_calls == [
+            ("kref://rev/latest", "emit-episode__iter_1.md", str(iter_1)),
+            ("kref://rev/latest", "emit-episode__iter_2.md", str(iter_2)),
+        ]
