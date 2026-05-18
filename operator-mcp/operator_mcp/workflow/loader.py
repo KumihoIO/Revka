@@ -445,6 +445,78 @@ def build_trigger_registry(workflows: dict[str, "WorkflowDef"] | None = None) ->
     return registry.rule_count
 
 
+def _is_workflow_definition_item(item: dict[str, Any]) -> bool:
+    """Return true for Kumiho items that represent workflow definitions."""
+    item_kref = item.get("kref", "")
+    if not isinstance(item_kref, str) or not item_kref:
+        return False
+    return item_kref.split("?", 1)[0].endswith(".workflow")
+
+
+async def load_all_workflows_with_kumiho(
+    project_dir: str | None = None,
+) -> dict[str, WorkflowDef]:
+    """Load all disk workflows, then overlay current Kumiho revisions.
+
+    Plain disk discovery intentionally skips ``*.rN.yaml`` revision artifact
+    files. That is correct for editable local workflow files, but the event
+    trigger registry must reflect the current workflow catalogue because a
+    trigger can be introduced in a saved revision while the base disk copy
+    remains stale.
+    """
+    loaded = load_all_workflows(project_dir)
+
+    try:
+        from ..operator_mcp import KUMIHO_SDK
+        if not KUMIHO_SDK._available:
+            return loaded
+
+        items = await KUMIHO_SDK.list_items(f"{harness_project()}/Workflows")
+        kumiho_loaded = 0
+        for item in items:
+            if not _is_workflow_definition_item(item):
+                continue
+            item_name = item.get("item_name", item.get("name", ""))
+            try:
+                result = await _load_workflow_item_from_kumiho(item)
+            except Exception as exc:
+                _log(f"workflow_loader: skipping Kumiho workflow '{item_name}': {exc}")
+                continue
+            if not result:
+                continue
+            wf, _item_kref, _revision_kref = result
+            loaded[wf.name] = wf
+            kumiho_loaded += 1
+
+        if kumiho_loaded:
+            _log(
+                "workflow_loader: overlaid "
+                f"{kumiho_loaded} current Kumiho workflow(s)"
+            )
+    except Exception as exc:
+        _log(f"workflow_loader: Kumiho trigger registry overlay failed: {exc}")
+
+    try:
+        registry = get_trigger_registry()
+        registry.rebuild(loaded)
+    except Exception as exc:
+        _log(f"workflow_loader: trigger registry rebuild failed: {exc}")
+
+    return loaded
+
+
+async def build_trigger_registry_async(
+    workflows: dict[str, "WorkflowDef"] | None = None,
+    project_dir: str | None = None,
+) -> int:
+    """Build/rebuild the trigger registry, including current Kumiho workflows."""
+    if workflows is None:
+        workflows = await load_all_workflows_with_kumiho(project_dir)
+    registry = get_trigger_registry()
+    registry.rebuild(workflows)
+    return registry.rule_count
+
+
 # ---------------------------------------------------------------------------
 # Public helpers
 # ---------------------------------------------------------------------------
@@ -471,10 +543,10 @@ async def resolve_workflow(
     Returns (workflow_def, item_kref, revision_kref) on success. Both kref
     strings are empty ("") for built-in disk fallbacks — the caller treats
     empty kref as "no pinned revision" and renders runs by name-matching
-    the current published workflow.
+    the current workflow.
 
     Resolution order:
-      1. Kumiho (published tag → latest tag fallback) — canonical source.
+      1. Kumiho latest revision — canonical source.
       2. Built-in disk fallback (operator/workflow/builtins/) — for testing
          ship-with-Construct workflows when Kumiho entry is absent.
 
@@ -507,10 +579,9 @@ async def resolve_workflow(
 async def _get_workflow_from_kumiho(name: str) -> tuple[WorkflowDef, str, str] | None:
     """Load a workflow from Kumiho by revision + artifact.
 
-    Picks the revision tagged 'published' (falls back to 'latest'), fetches
-    its artifacts, and loads the YAML file directly from the artifact
-    location. Hard-fails on Kumiho errors — the caller decides how to handle
-    a missing SDK vs. a Kumiho lookup failure.
+    Picks the latest revision, fetches its artifacts, and loads the YAML file
+    directly from the artifact location. Hard-fails on Kumiho errors — the
+    caller decides how to handle a missing SDK vs. a Kumiho lookup failure.
     """
     from ..operator_mcp import KUMIHO_SDK
     if not KUMIHO_SDK._available:
@@ -523,35 +594,55 @@ async def _get_workflow_from_kumiho(name: str) -> tuple[WorkflowDef, str, str] |
     items = await KUMIHO_SDK.list_items(f"{harness_project()}/Workflows")
 
     item_kref = None
+    workflow_item: dict[str, Any] | None = None
     for item in items:
         item_name = item.get("item_name", item.get("name", ""))
         if item_name == slug or item_name == name:
             item_kref = item.get("kref", "")
+            workflow_item = item
             break
 
     if not item_kref:
         _log(f"workflow_loader: '{name}' not found in Kumiho Construct/Workflows")
         return None
 
-    # Published tag wins; fall back to 'latest' if nothing is published.
-    # get_latest_revision already implements this fallback.
-    revision = await KUMIHO_SDK.get_latest_revision(item_kref, tag="published")
+    return await _load_workflow_item_from_kumiho(workflow_item, expected_name=name)
+
+
+async def _load_workflow_item_from_kumiho(
+    item: dict[str, Any],
+    expected_name: str | None = None,
+) -> tuple[WorkflowDef, str, str] | None:
+    """Load one Kumiho workflow item from its latest YAML artifact."""
+    from ..operator_mcp import KUMIHO_SDK
+
+    item_name = item.get("item_name", item.get("name", ""))
+    display_name = expected_name or item_name or "<unknown>"
+    item_kref = item.get("kref", "")
+    if not item_kref:
+        _log(f"workflow_loader: Kumiho workflow '{display_name}' has no item kref")
+        return None
+
+    # Workflow edits create a new revision artifact before any publish-style
+    # tag is applied. When a tag such as "published" is immutable or otherwise
+    # fails to move, the newest usable workflow is still the "latest" revision.
+    revision = await KUMIHO_SDK.get_latest_revision(item_kref, tag="latest")
     if not revision:
         raise RuntimeError(
-            f"workflow_loader: '{name}' has no published/latest revision in Kumiho "
+            f"workflow_loader: '{display_name}' has no latest revision in Kumiho "
             f"(item_kref={item_kref})"
         )
 
     revision_kref = revision.get("kref", "")
     if not revision_kref:
         raise RuntimeError(
-            f"workflow_loader: Kumiho revision for '{name}' has no kref: {revision!r}"
+            f"workflow_loader: Kumiho revision for '{display_name}' has no kref: {revision!r}"
         )
 
     artifacts = await KUMIHO_SDK.get_artifacts(revision_kref)
     if not artifacts:
         raise RuntimeError(
-            f"workflow_loader: revision '{revision_kref}' for '{name}' has no artifacts"
+            f"workflow_loader: revision '{revision_kref}' for '{display_name}' has no artifacts"
         )
 
     # Pick the first YAML artifact. A workflow revision should carry exactly
@@ -582,7 +673,7 @@ async def _get_workflow_from_kumiho(name: str) -> tuple[WorkflowDef, str, str] |
 
     wf = load_workflow_from_yaml(yaml_path)
     tag_info = revision.get("tags") or revision.get("tag") or "?"
-    _log(f"workflow_loader: loaded '{name}' from Kumiho rev={revision_kref} tags={tag_info} → {yaml_path}")
+    _log(f"workflow_loader: loaded '{wf.name}' from Kumiho rev={revision_kref} tags={tag_info} → {yaml_path}")
     return (wf, item_kref, revision_kref)
 
 

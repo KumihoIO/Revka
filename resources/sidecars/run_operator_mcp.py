@@ -31,6 +31,9 @@ def main() -> int:
     # Older Construct binaries may still inject KUMIHO_AUTO_CONFIGURE at
     # sidecar launch. Keep endpoint discovery out of the pre-initialize path.
     os.environ.pop("KUMIHO_AUTO_CONFIGURE", None)
+    # Keep gRPC C-core INFO fork diagnostics out of the user-facing log stream.
+    os.environ.setdefault("GRPC_VERBOSITY", "ERROR")
+    os.environ.setdefault("GLOG_minloglevel", "2")
 
     argv = [str(interp), "-m", "operator_mcp", *sys.argv[1:]]
     os.execv(str(interp), argv)
