@@ -1558,6 +1558,23 @@ impl KumihoClient {
             .map_err(|e| KumihoError::Decode(e.to_string()))
     }
 
+    /// Find artifacts by their stored location.
+    pub async fn get_artifacts_by_location(&self, location: &str) -> Result<Vec<ArtifactResponse>> {
+        let resp = self
+            .send_with_retry(|| {
+                self.client
+                    .get(self.url("/artifacts/by-location"))
+                    .header("X-Kumiho-Token", &self.service_token)
+                    .query(&[("location", location)])
+            })
+            .await?;
+
+        let resp = self.check_response(resp).await?;
+        resp.json::<Vec<ArtifactResponse>>()
+            .await
+            .map_err(|e| KumihoError::Decode(e.to_string()))
+    }
+
     /// Get a specific artifact by revision kref and name.
     pub async fn get_artifact_by_name(
         &self,
