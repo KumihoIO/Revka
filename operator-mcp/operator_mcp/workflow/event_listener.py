@@ -120,6 +120,14 @@ class TriggerRegistry:
                 self.register(wf_name, trigger)
                 self._workflow_count += 1
 
+    def iter_rules(self) -> list[tuple[str, str, TriggerRule]]:
+        """Return all registered entity trigger rules with their kind/tag key."""
+        out: list[tuple[str, str, TriggerRule]] = []
+        for (kind, tag), rules in self._rules.items():
+            for rule in rules:
+                out.append((kind, tag, rule))
+        return out
+
     # -- Query --------------------------------------------------------------
 
     def match(self, kind: str, tag: str, name: str = "", space: str = "") -> list[TriggerRule]:
@@ -187,8 +195,11 @@ class WorkflowEventListener:
         )
         self._task: asyncio.Task[None] | None = None
         self._poll_task: asyncio.Task[None] | None = None
+        self._entity_poll_task: asyncio.Task[None] | None = None
         self._running = False
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._entity_seen: set[str] = set()
+        self._entity_seen_loaded = False
 
         # Metrics
         self._last_event_at: str | None = None
@@ -207,6 +218,8 @@ class WorkflowEventListener:
     # -- Lifecycle ----------------------------------------------------------
 
     _LISTENER_LOCK_PATH = os.path.expanduser("~/.construct/event_listener.lock")
+    _ENTITY_SEEN_PATH = os.path.expanduser("~/.construct/entity_trigger_seen.json")
+    _ENTITY_POLL_INTERVAL_SECS = 30.0
 
     async def start(self) -> None:
         """Start the background listener task (idempotent).
@@ -242,6 +255,9 @@ class WorkflowEventListener:
             self._poll_run_requests(), name="workflow-run-request-poll"
         )
         self._poll_task.add_done_callback(self._poll_done_cb)
+        self._entity_poll_task = asyncio.create_task(
+            self._poll_entity_triggers(), name="workflow-entity-trigger-poll"
+        )
         _log("WorkflowEventListener started (locked)")
 
     @staticmethod
@@ -257,7 +273,11 @@ class WorkflowEventListener:
     async def stop(self) -> None:
         """Gracefully stop the background listener."""
         self._running = False
-        for t in [self._task, getattr(self, "_poll_task", None)]:
+        for t in [
+            self._task,
+            getattr(self, "_poll_task", None),
+            getattr(self, "_entity_poll_task", None),
+        ]:
             if t and not t.done():
                 t.cancel()
                 try:
@@ -375,7 +395,7 @@ class WorkflowEventListener:
         Steps:
         1. Extract the revision kref and tag from the event payload.
         2. Resolve the revision to its parent item (kind, name, space).
-        3. Filter: only react to events from ``/Construct/WorkflowOutputs``.
+        3. Handle workflow run-request items specially.
         4. Match against the trigger registry.
         5. For each match, schedule a workflow launch on the event loop.
         6. Persist cursor every 10 events.
@@ -416,19 +436,15 @@ class WorkflowEventListener:
                 _log(f"Event skipped: failed to resolve {kref_str}: {exc}")
                 return
 
-            # -- 3. Space filter --------------------------------------------
-            # React to workflow outputs (entity triggers) and run requests
-            # (cron-triggered workflow launches).
-            if not space or not any(
-                s in space for s in ["WorkflowOutputs", "WorkflowRunRequests"]
-            ):
-                return
-
-            # -- 3a. Cron-triggered run requests ----------------------------
+            # -- 3. Cron-triggered run requests -----------------------------
             # Items of kind 'workflow-run-request' tagged 'pending' represent
             # cron-scheduled workflow launches.  Handle them directly instead
             # of going through the trigger registry.
-            if kind == "workflow-run-request" and tag == "pending":
+            if (
+                kind == "workflow-run-request"
+                and tag == "pending"
+                and "WorkflowRunRequests" in space
+            ):
                 self._handle_run_request(
                     item_kref=str(item_kref),
                     item_metadata={
@@ -443,9 +459,10 @@ class WorkflowEventListener:
             _debug(f"Event received: kind={kind} tag={tag} name={name} space={space}")
 
             # -- 4. Match against registry ---------------------------------
-            # Non-matching events are the common case (every workflow run
-            # emits running/completed events that aren't entity triggers).
-            # Log at DEBUG so the daemon log isn't dominated by them.
+            # Non-matching events are the common case. Do not pre-filter by
+            # WorkflowOutputs here: workflow output steps can publish to
+            # domain-specific spaces, and trigger rules carry their own
+            # optional space filter.
             matches = self._registry.match(kind, tag, name, space)
             if not matches:
                 _debug(f"Event skipped: no trigger match for kind={kind} tag={tag}")
@@ -474,7 +491,12 @@ class WorkflowEventListener:
                 trigger_ctx[f"metadata.{mk}"] = mv
 
             now = time.monotonic()
+            self._load_entity_seen()
+            saw_new_entity_trigger = False
             for rule in matches:
+                seen_key = self._entity_seen_key(kref_str, rule.workflow_name)
+                if seen_key in self._entity_seen:
+                    continue
                 dedup_key = (name, rule.workflow_name)
                 last_triggered = self._trigger_cooldowns.get(dedup_key, 0.0)
                 if now - last_triggered < self._TRIGGER_COOLDOWN_SECS:
@@ -484,6 +506,10 @@ class WorkflowEventListener:
                     continue
                 self._trigger_cooldowns[dedup_key] = now
                 self._launch_workflow(rule, trigger_ctx)
+                self._entity_seen.add(seen_key)
+                saw_new_entity_trigger = True
+            if saw_new_entity_trigger:
+                self._save_entity_seen()
 
             # -- 7. Cursor persistence (every event) -------------------------
             event_cursor = getattr(event, "cursor", None)
@@ -557,8 +583,8 @@ class WorkflowEventListener:
                         WorkflowEventListener._claimed_runs.update(
                             str(r) for r in data[-10000:]
                         )
-        except Exception:
-            pass
+        except Exception as exc:
+            _log(f"event_listener: failed to load claimed workflow runs: {exc}")
         WorkflowEventListener._claimed_runs_loaded = True
 
     def _save_claimed_runs(self) -> None:
@@ -887,6 +913,132 @@ class WorkflowEventListener:
                 lock_fd.close()
             except Exception:
                 pass
+
+    # -- Poll-based entity trigger pickup ----------------------------------
+
+    def _load_entity_seen(self) -> None:
+        if self._entity_seen_loaded:
+            return
+        try:
+            if os.path.exists(self._ENTITY_SEEN_PATH):
+                with open(self._ENTITY_SEEN_PATH, "r") as f:
+                    data = json.load(f)
+                    if isinstance(data, list):
+                        self._entity_seen = {str(v) for v in data[-10_000:]}
+        except Exception:
+            self._entity_seen = set()
+        self._entity_seen_loaded = True
+
+    def _save_entity_seen(self) -> None:
+        try:
+            os.makedirs(os.path.dirname(self._ENTITY_SEEN_PATH), exist_ok=True)
+            data = sorted(self._entity_seen)[-10_000:]
+            with open(self._ENTITY_SEEN_PATH, "w") as f:
+                json.dump(data, f)
+        except Exception as exc:
+            _log(f"event_listener: failed to persist entity trigger seen-set: {exc}")
+
+    @staticmethod
+    def _entity_seen_key(revision_kref: str, workflow_name: str) -> str:
+        return f"{revision_kref}|{workflow_name}"
+
+    async def _poll_entity_triggers(self) -> None:
+        """Poll registered entity trigger spaces as a durable event-stream fallback."""
+        _log("event_listener: entity trigger poller started")
+        while self._running:
+            try:
+                await asyncio.sleep(self._ENTITY_POLL_INTERVAL_SECS)
+                triggered = await self._poll_entity_triggers_once()
+                if triggered:
+                    _log(f"event_listener: entity poll triggered {triggered} workflow(s)")
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                import traceback
+                _log(f"event_listener: entity poll error: {exc}\n{traceback.format_exc()}")
+                await asyncio.sleep(10)
+
+    async def _poll_entity_triggers_once(self) -> int:
+        """Scan trigger spaces for tagged entity revisions missed by the stream."""
+        from operator_mcp.operator_mcp import KUMIHO_SDK
+
+        if not KUMIHO_SDK._available:
+            return 0
+        self._load_entity_seen()
+
+        scan_specs = {
+            (rule.space_filter, kind, tag)
+            for kind, tag, rule in self._registry.iter_rules()
+            if kind and tag and rule.space_filter
+        }
+        if not scan_specs:
+            return 0
+
+        triggered = 0
+        for space_filter, kind, tag in sorted(scan_specs):
+            items = await KUMIHO_SDK.list_items(space_filter)
+            for item in items:
+                item_kind = str(item.get("kind", ""))
+                if item_kind != kind:
+                    continue
+                item_kref = str(item.get("kref", ""))
+                if not item_kref:
+                    continue
+                name = str(item.get("item_name", item.get("name", "")))
+                space = str(item.get("space", "") or space_filter)
+
+                matches = self._registry.match(kind, tag, name, space)
+                if not matches:
+                    continue
+
+                rev = await KUMIHO_SDK.get_latest_revision(item_kref, tag=tag)
+                if not rev:
+                    continue
+                rev_tags = rev.get("tags")
+                if isinstance(rev_tags, list) and tag not in {str(t) for t in rev_tags}:
+                    continue
+                rev_kref = str(rev.get("kref", ""))
+                if not rev_kref:
+                    continue
+
+                raw_meta = item.get("metadata", None)
+                item_metadata = (
+                    {str(k): str(v) for k, v in raw_meta.items()}
+                    if isinstance(raw_meta, dict)
+                    else {}
+                )
+                trigger_ctx: dict[str, str] = {
+                    "entity_kref": item_kref,
+                    "entity_name": name,
+                    "entity_kind": kind,
+                    "tag": tag,
+                    "revision_kref": rev_kref,
+                    "metadata": json.dumps(item_metadata),
+                }
+                for mk, mv in item_metadata.items():
+                    trigger_ctx[f"metadata.{mk}"] = mv
+
+                now = time.monotonic()
+                for rule in matches:
+                    seen_key = self._entity_seen_key(rev_kref, rule.workflow_name)
+                    if seen_key in self._entity_seen:
+                        continue
+                    dedup_key = (name, rule.workflow_name)
+                    last_triggered = self._trigger_cooldowns.get(dedup_key, 0.0)
+                    if now - last_triggered < self._TRIGGER_COOLDOWN_SECS:
+                        continue
+                    self._trigger_cooldowns[dedup_key] = now
+                    _log(
+                        f"Trigger poll: launching '{rule.workflow_name}' "
+                        f"for {kind}:{name} tag={tag}"
+                    )
+                    self._launch_workflow(rule, trigger_ctx)
+                    self._entity_seen.add(seen_key)
+                    triggered += 1
+
+        if triggered:
+            self._save_entity_seen()
+        return triggered
 
     # -- Entity-trigger workflow launch ------------------------------------
 

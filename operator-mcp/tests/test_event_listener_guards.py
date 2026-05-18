@@ -8,6 +8,8 @@ of permanently claiming a run_id we can't actually schedule.
 from __future__ import annotations
 
 import asyncio
+import sys
+import types
 
 import pytest
 
@@ -18,6 +20,7 @@ from operator_mcp.workflow.event_listener import (
     TriggerRule,
     WorkflowEventListener,
 )
+from operator_mcp.workflow.schema import TriggerDef
 
 
 def _make_listener() -> WorkflowEventListener:
@@ -35,6 +38,11 @@ def _isolate_claimed_runs_persistence(tmp_path, monkeypatch):
         WorkflowEventListener,
         "_CLAIMED_RUNS_PATH",
         str(tmp_path / "claimed_runs.json"),
+    )
+    monkeypatch.setattr(
+        WorkflowEventListener,
+        "_ENTITY_SEEN_PATH",
+        str(tmp_path / "entity_trigger_seen.json"),
     )
     WorkflowEventListener._claimed_runs.clear()
     WorkflowEventListener._claimed_runs_loaded = False
@@ -134,6 +142,127 @@ def test_launch_workflow_skips_when_loop_closed():
     rule = TriggerRule(workflow_name="some-wf", input_map={})
     # Should not raise — the guard takes the early-return path.
     listener._launch_workflow(rule, trigger_ctx={"entity_name": "e"})
+
+
+def test_process_event_matches_domain_specific_output_space(tmp_path, monkeypatch):
+    """Entity triggers must not be limited to Construct/WorkflowOutputs.
+
+    Workflows can publish output entities to domain spaces such as
+    CrossChronicle/ArcBlueprints, and trigger rules should match those spaces
+    directly.
+    """
+    registry = TriggerRegistry()
+    registry.register(
+        "cross-chronicle-episode-room",
+        TriggerDef(
+            on_kind="arc-blueprint",
+            on_tag="ready",
+            on_name_pattern="cc-vol-*",
+            on_space="CrossChronicle/ArcBlueprints",
+            input_map={"arc_kref": "${trigger.entity_kref}"},
+        ),
+    )
+    listener = WorkflowEventListener(
+        registry,
+        cwd="/tmp",
+        cursor_path=str(tmp_path / "event_listener_cursor.txt"),
+    )
+
+    revision = types.SimpleNamespace(
+        item_kref="kref://Construct/CrossChronicle/ArcBlueprints/cc-vol-1-arc-3.arc-blueprint",
+    )
+    item = types.SimpleNamespace(
+        kind="arc-blueprint",
+        item_name="cc-vol-1-arc-3",
+        space="CrossChronicle/ArcBlueprints",
+        metadata={"arc_number": "3"},
+    )
+    fake_kumiho = types.SimpleNamespace(
+        get_revision=lambda _kref: revision,
+        get_item=lambda _kref: item,
+    )
+    monkeypatch.setitem(sys.modules, "kumiho", fake_kumiho)
+
+    launches: list[tuple[TriggerRule, dict[str, str]]] = []
+    monkeypatch.setattr(
+        listener,
+        "_launch_workflow",
+        lambda rule, ctx: launches.append((rule, ctx)),
+    )
+
+    event = types.SimpleNamespace(
+        kref="kref://Construct/CrossChronicle/ArcBlueprints/cc-vol-1-arc-3.arc-blueprint?r=9",
+        details={"tag": "ready"},
+        cursor="cursor-1",
+    )
+    listener._process_event(event)
+
+    assert len(launches) == 1
+    rule, trigger_ctx = launches[0]
+    assert rule.workflow_name == "cross-chronicle-episode-room"
+    assert trigger_ctx["entity_kind"] == "arc-blueprint"
+    assert trigger_ctx["entity_name"] == "cc-vol-1-arc-3"
+    assert trigger_ctx["metadata.arc_number"] == "3"
+
+
+@pytest.mark.asyncio
+async def test_entity_trigger_poller_picks_up_domain_output(monkeypatch):
+    """Entity trigger polling catches tagged outputs missed by the event stream."""
+    registry = TriggerRegistry()
+    registry.register(
+        "cross-chronicle-episode-room",
+        TriggerDef(
+            on_kind="arc-blueprint",
+            on_tag="ready",
+            on_name_pattern="cc-vol-*",
+            on_space="CrossChronicle/ArcBlueprints",
+            input_map={"arc_kref": "${trigger.entity_kref}"},
+        ),
+    )
+    listener = WorkflowEventListener(registry, cwd="/tmp")
+
+    class FakeSDK:
+        _available = True
+
+        async def list_items(self, space):
+            assert space == "CrossChronicle/ArcBlueprints"
+            return [
+                {
+                    "kref": "kref://CrossChronicle/ArcBlueprints/cc-vol-1-arc-6.arc-blueprint",
+                    "kind": "arc-blueprint",
+                    "item_name": "cc-vol-1-arc-6",
+                    "space": "CrossChronicle/ArcBlueprints",
+                    "metadata": {"episode_start": "16"},
+                }
+            ]
+
+        async def get_latest_revision(self, item_kref, tag=None):
+            assert tag == "ready"
+            return {
+                "kref": f"{item_kref}?r=1",
+                "tags": ["latest", "ready"],
+            }
+
+    import operator_mcp.operator_mcp as op_mod
+    monkeypatch.setattr(op_mod, "KUMIHO_SDK", FakeSDK(), raising=False)
+
+    launches: list[tuple[TriggerRule, dict[str, str]]] = []
+    monkeypatch.setattr(
+        listener,
+        "_launch_workflow",
+        lambda rule, ctx: launches.append((rule, ctx)),
+    )
+
+    assert await listener._poll_entity_triggers_once() == 1
+    assert len(launches) == 1
+    rule, trigger_ctx = launches[0]
+    assert rule.workflow_name == "cross-chronicle-episode-room"
+    assert trigger_ctx["entity_name"] == "cc-vol-1-arc-6"
+    assert trigger_ctx["metadata.episode_start"] == "16"
+
+    # Persistent seen-set prevents duplicate launches for the same revision.
+    assert await listener._poll_entity_triggers_once() == 0
+    assert len(launches) == 1
 
 
 def test_handle_run_request_does_not_claim_on_schedule_exception(monkeypatch):

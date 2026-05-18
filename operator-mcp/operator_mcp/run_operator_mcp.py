@@ -67,6 +67,9 @@ def main() -> "None":
     # Older Construct binaries may still inject KUMIHO_AUTO_CONFIGURE at
     # sidecar launch. Keep endpoint discovery out of the pre-initialize path.
     env.pop("KUMIHO_AUTO_CONFIGURE", None)
+    # Keep gRPC C-core INFO fork diagnostics out of the user-facing log stream.
+    env.setdefault("GRPC_VERBOSITY", "ERROR")
+    env.setdefault("GLOG_minloglevel", "2")
 
     # IMPORTANT: switch cwd to the parent before exec'ing. install-sidecars
     # flattens the package directly into OPERATOR_DIR (which contains both

@@ -36,7 +36,7 @@ from .session_manager_client import SessionManagerClient
 from .event_consumer import EventConsumer
 from .workflow_context import WorkflowContext
 from .workflow.event_listener import WorkflowEventListener, get_trigger_registry, set_event_listener
-from .workflow.loader import build_trigger_registry
+from .workflow.loader import build_trigger_registry_async
 
 # -- Global singleton instances (initialised once at module load) -----------
 
@@ -3022,6 +3022,20 @@ async def _dispatch(name: str, args: dict[str, Any]) -> dict[str, Any]:
 # Entry point
 # ---------------------------------------------------------------------------
 
+async def _mark_stale_runs_on_startup() -> None:
+    """Mark interrupted workflow runs without blocking trigger startup."""
+    try:
+        from .workflow.memory import mark_stale_runs
+        marked_stale = await mark_stale_runs()
+        if marked_stale:
+            _log(
+                f"Workflow startup: marked {marked_stale} interrupted run(s) "
+                "failed; retry is user-initiated"
+            )
+    except Exception as exc:
+        _log(f"Workflow stale-run scan failed (non-fatal): {exc}")
+
+
 async def _background_init() -> None:
     """Heavy service initialization — runs as a background task so it does
     not block the MCP initialize handshake."""
@@ -3077,16 +3091,6 @@ async def _background_init() -> None:
     if recovered:
         _log(f"Reconnected {len(recovered)} agent(s) from previous session")
 
-    # Do not auto-resume interrupted workflow runs on restart. Mark stale runs
-    # failed so the user can explicitly choose Retry from the run page.
-    try:
-        from .workflow.memory import mark_stale_runs
-        marked_stale = await mark_stale_runs()
-        if marked_stale:
-            _log(f"Workflow startup: marked {marked_stale} interrupted run(s) failed; retry is user-initiated")
-    except Exception as exc:
-        _log(f"Workflow stale-run scan failed (non-fatal): {exc}")
-
     # Start journal health monitor
     from .journal_health import get_journal_health_monitor
     jhm = get_journal_health_monitor()
@@ -3095,7 +3099,8 @@ async def _background_init() -> None:
 
     # Start workflow event listener (Kumiho event stream -> trigger downstream workflows)
     try:
-        build_trigger_registry()
+        trigger_rules = await build_trigger_registry_async()
+        _log(f"Event listener: registered {trigger_rules} workflow trigger rule(s)")
         _event_listener = WorkflowEventListener(
             registry=get_trigger_registry(),
             cwd=os.path.expanduser("~"),
@@ -3105,6 +3110,15 @@ async def _background_init() -> None:
         _log("Event listener: watching for workflow triggers")
     except Exception as e:
         _log(f"Event listener failed to start (non-fatal): {e}")
+
+    # Do not auto-resume interrupted workflow runs on restart. Mark stale runs
+    # failed so the user can explicitly choose Retry from the run page. This is
+    # intentionally backgrounded because Kumiho revision reads can be slow, and
+    # trigger dispatch must not wait on cleanup.
+    asyncio.create_task(
+        _mark_stale_runs_on_startup(),
+        name="workflow-stale-run-scan",
+    )
 
 
 async def _run() -> None:
