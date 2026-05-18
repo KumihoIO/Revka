@@ -19,6 +19,7 @@ _TRAILING_AGENT_ID = re.compile(
     r"[\s_-]*(?:agent[-_\s]*)?[0-9a-f]{8,}(?:-[0-9a-f]{4,}){0,4}\s*$",
     re.IGNORECASE,
 )
+_WINDOWS_DRIVE_PATH = re.compile(r"^/?[A-Za-z]:[\\/]")
 
 
 def _slug(value: str, *, default: str = "skill") -> str:
@@ -98,7 +99,18 @@ def _revision_metadata(revision: dict[str, Any] | None) -> dict[str, Any]:
 def _artifact_path_from_location(location: str) -> Path:
     if location.startswith("file://"):
         parsed = urlparse(location)
-        return Path(unquote(parsed.path))
+        if parsed.netloc.lower() == "localhost":
+            raw_path = parsed.path
+        elif _WINDOWS_DRIVE_PATH.match(parsed.netloc):
+            raw_path = f"{parsed.netloc}{parsed.path}"
+        elif parsed.netloc and parsed.path:
+            raw_path = f"//{parsed.netloc}{parsed.path}"
+        else:
+            raw_path = parsed.path or location[len("file://"):]
+        decoded = unquote(raw_path)
+        if _WINDOWS_DRIVE_PATH.match(decoded):
+            decoded = decoded.lstrip("/")
+        return Path(decoded)
     return Path(location)
 
 
