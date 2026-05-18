@@ -306,7 +306,7 @@ pub async fn handle_clawhub_install(
         let skills_dir = std::path::PathBuf::from(home).join(".construct/workspace/skills");
         let _ = tokio::fs::create_dir_all(&skills_dir).await;
         let file_path = skills_dir.join(format!("{slug}.md"));
-        let location = format!("file://{}", file_path.display());
+        let location = super::api_skills::file_uri_for_path(&file_path);
 
         if let Err(e) = tokio::fs::write(&file_path, &skill_md).await {
             tracing::warn!("Failed to write skill file for {slug}: {e}");

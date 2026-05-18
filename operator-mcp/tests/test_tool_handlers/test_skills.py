@@ -5,7 +5,12 @@ from unittest.mock import patch
 
 import pytest
 
-from operator_mcp.tool_handlers.skills import tool_capture_skill, tool_list_skills, tool_load_skill
+from operator_mcp.tool_handlers.skills import (
+    _artifact_path_from_location,
+    tool_capture_skill,
+    tool_list_skills,
+    tool_load_skill,
+)
 
 
 class FakeSkillPool:
@@ -65,6 +70,21 @@ class FakeSkillPool:
 
     async def tag_revision(self, revision_kref, tag):
         self.tagged.append((revision_kref, tag))
+
+
+def _normalized_path(value: str) -> str:
+    return str(_artifact_path_from_location(value)).replace("\\", "/")
+
+
+def test_artifact_path_from_location_accepts_windows_file_uris():
+    assert (
+        _normalized_path("file:///C:/Users/neo/Skill%20Guide.md")
+        == "C:/Users/neo/Skill Guide.md"
+    )
+    assert (
+        _normalized_path(r"file://C:\Users\neo\Skill Guide.md")
+        == "C:/Users/neo/Skill Guide.md"
+    )
 
 
 @pytest.mark.asyncio

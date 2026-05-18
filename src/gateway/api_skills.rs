@@ -29,7 +29,9 @@ use axum::{
 };
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::OnceLock;
 use std::time::Instant;
 
@@ -265,9 +267,61 @@ async fn enrich_items(
 }
 
 /// Resolve the local skills directory.
-fn skills_dir() -> std::path::PathBuf {
+fn skills_dir() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    std::path::PathBuf::from(home).join(SKILLS_DIR)
+    PathBuf::from(home).join(SKILLS_DIR)
+}
+
+fn has_windows_drive_prefix(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && (bytes[2] == b'/' || bytes[2] == b'\\')
+}
+
+fn strip_windows_drive_uri_slash(value: &str) -> &str {
+    if let Some(rest) = value.strip_prefix('/') {
+        if has_windows_drive_prefix(rest) {
+            return rest;
+        }
+    }
+    value
+}
+
+fn decode_file_uri_path(value: &str) -> Cow<'_, str> {
+    urlencoding::decode(value).unwrap_or_else(|_| Cow::Borrowed(value))
+}
+
+fn artifact_location_to_path(location: &str) -> Option<PathBuf> {
+    let trimmed = location.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    if let Some(rest) = trimmed.strip_prefix("file://localhost/") {
+        let decoded = decode_file_uri_path(rest);
+        let path = format!("/{decoded}");
+        return Some(PathBuf::from(strip_windows_drive_uri_slash(&path)));
+    }
+
+    if let Some(rest) = trimmed.strip_prefix("file://") {
+        let decoded = decode_file_uri_path(rest);
+        return Some(PathBuf::from(strip_windows_drive_uri_slash(&decoded)));
+    }
+
+    if trimmed.starts_with('/') || trimmed.starts_with("\\\\") || has_windows_drive_prefix(trimmed)
+    {
+        return Some(PathBuf::from(trimmed));
+    }
+
+    None
+}
+
+pub(crate) fn file_uri_for_path(path: &std::path::Path) -> String {
+    reqwest::Url::from_file_path(path)
+        .map(|url| url.to_string())
+        .unwrap_or_else(|()| format!("file://{}", path.display()))
 }
 
 /// Fetch full skill content from local file (via artifact location), falling
@@ -281,15 +335,7 @@ async fn fetch_skill_content(
         for art in &artifacts {
             if art.name == SKILL_ARTIFACT_NAME {
                 // Priority 1: read from local file via artifact location
-                let location = &art.location;
-                let file_path = if let Some(path) = location.strip_prefix("file://") {
-                    Some(std::path::PathBuf::from(path))
-                } else if location.starts_with('/') {
-                    Some(std::path::PathBuf::from(location))
-                } else {
-                    None
-                };
-                if let Some(ref path) = file_path {
+                if let Some(path) = artifact_location_to_path(&art.location) {
                     if let Ok(content) = tokio::fs::read_to_string(path).await {
                         return content;
                     }
@@ -317,7 +363,7 @@ async fn store_skill_artifact(
     let dir = skills_dir();
     let _ = tokio::fs::create_dir_all(&dir).await;
     let file_path = dir.join(format!("{slug}.md"));
-    let location = format!("file://{}", file_path.display());
+    let location = file_uri_for_path(&file_path);
 
     // Write content to local file
     tokio::fs::write(&file_path, content)
@@ -676,5 +722,51 @@ pub async fn handle_delete_skill(
             StatusCode::NO_CONTENT.into_response()
         }
         Err(e) => kumiho_err(e).into_response(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn normalized(location: &str) -> String {
+        artifact_location_to_path(location)
+            .expect("location should resolve")
+            .to_string_lossy()
+            .replace('\\', "/")
+    }
+
+    #[test]
+    fn artifact_location_to_path_accepts_unix_file_uri() {
+        assert_eq!(
+            normalized("file:///Users/neo/Skill%20Guide.md"),
+            "/Users/neo/Skill Guide.md"
+        );
+    }
+
+    #[test]
+    fn artifact_location_to_path_accepts_windows_file_uri() {
+        assert_eq!(
+            normalized("file:///C:/Users/neo/Skill%20Guide.md"),
+            "C:/Users/neo/Skill Guide.md"
+        );
+    }
+
+    #[test]
+    fn artifact_location_to_path_accepts_legacy_windows_file_uri() {
+        assert_eq!(
+            normalized(r"file://C:\Users\neo\Skill Guide.md"),
+            "C:/Users/neo/Skill Guide.md"
+        );
+    }
+
+    #[test]
+    fn file_uri_for_path_encodes_spaces() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("Skill Guide.md");
+        let uri = file_uri_for_path(&path);
+
+        assert!(uri.starts_with("file://"));
+        assert!(uri.contains("Skill%20Guide.md"));
     }
 }
