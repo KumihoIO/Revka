@@ -4837,9 +4837,21 @@ pub async fn doctor_channels(config: Config) -> Result<()> {
     Ok(())
 }
 
-/// Start all configured channels and route messages to the agent
-#[allow(clippy::too_many_lines)]
+/// Start all configured channels and route messages to the agent.
 pub async fn start_channels(config: Config) -> Result<()> {
+    start_channels_with_mcp_registry(config, None).await
+}
+
+/// Start all configured channels, optionally reusing a daemon-owned MCP registry.
+///
+/// Standalone `construct channel start` owns its registry. The long-running daemon
+/// shares one registry between gateway and channels so stdio sidecars are not
+/// spawned twice.
+#[allow(clippy::too_many_lines)]
+pub async fn start_channels_with_mcp_registry(
+    config: Config,
+    shared_mcp_registry: Option<Arc<crate::tools::McpRegistry>>,
+) -> Result<()> {
     // Inject Kumiho + Operator MCP servers so channel agents have full
     // orchestration capabilities (user may issue operator orders via Discord).
     let config = crate::agent::kumiho::inject_kumiho(config, false);
@@ -4949,7 +4961,99 @@ pub async fn start_channels(config: Config) -> Result<()> {
     > = None;
     let mut ch_mcp_registry: Option<Arc<crate::tools::McpRegistry>> = None;
     let mut kumiho_advanced = false;
-    if config.mcp.enabled && !config.mcp.servers.is_empty() {
+    if let Some(registry) = shared_mcp_registry {
+        tracing::info!(
+            "Using shared MCP client — {} server(s), {} tool(s)",
+            registry.server_count(),
+            registry.tool_count()
+        );
+        ch_mcp_registry = Some(std::sync::Arc::clone(&registry));
+        kumiho_advanced =
+            crate::agent::kumiho::registry_has_advanced_kumiho_tools(&registry.tool_names());
+        crate::agent::kumiho::warn_if_kumiho_advanced_missing(&config, kumiho_advanced);
+        if config.mcp.deferred_loading {
+            let is_local_provider = resolved_default_provider(&config) == "ollama";
+            let all_names = registry.tool_names();
+            let mut eager_count = 0usize;
+
+            for name in &all_names {
+                let should_eager = if is_local_provider {
+                    crate::tools::mcp_deferred::is_local_model_eager_tool(name)
+                } else {
+                    crate::tools::mcp_deferred::is_operator_seat_eager_tool(name)
+                };
+                if should_eager {
+                    if let Some(def) = registry.get_tool_def(name).await {
+                        let wrapper: std::sync::Arc<dyn Tool> =
+                            std::sync::Arc::new(crate::tools::McpToolWrapper::new(
+                                name.clone(),
+                                def,
+                                std::sync::Arc::clone(&registry),
+                            ));
+                        if let Some(ref handle) = delegate_handle_ch {
+                            handle.write().push(std::sync::Arc::clone(&wrapper));
+                        }
+                        built_tools.push(Box::new(crate::tools::ArcToolRef(wrapper)));
+                        eager_count += 1;
+                    }
+                }
+            }
+
+            let deferred_set = crate::tools::DeferredMcpToolSet::from_registry_filtered(
+                std::sync::Arc::clone(&registry),
+                move |name: &str| {
+                    if is_local_provider {
+                        !crate::tools::mcp_deferred::is_local_model_eager_tool(name)
+                    } else {
+                        !crate::tools::mcp_deferred::is_operator_seat_eager_tool(name)
+                    }
+                },
+            )
+            .await;
+            tracing::info!(
+                "MCP hybrid: {} eager tool(s), {} deferred stub(s) from shared {} server(s) (local_provider={})",
+                eager_count,
+                deferred_set.len(),
+                registry.server_count(),
+                is_local_provider,
+            );
+            let server_instructions = registry.server_instructions().await;
+            deferred_section =
+                crate::tools::mcp_deferred::build_deferred_tools_section_with_instructions(
+                    &deferred_set,
+                    &server_instructions,
+                );
+            let activated =
+                std::sync::Arc::new(std::sync::Mutex::new(crate::tools::ActivatedToolSet::new()));
+            ch_activated_handle = Some(std::sync::Arc::clone(&activated));
+            built_tools.push(Box::new(crate::tools::ToolSearchTool::new(
+                deferred_set,
+                activated,
+            )));
+        } else {
+            let mut registered = 0usize;
+            for name in registry.tool_names() {
+                if let Some(def) = registry.get_tool_def(&name).await {
+                    let wrapper: std::sync::Arc<dyn Tool> =
+                        std::sync::Arc::new(crate::tools::McpToolWrapper::new(
+                            name,
+                            def,
+                            std::sync::Arc::clone(&registry),
+                        ));
+                    if let Some(ref handle) = delegate_handle_ch {
+                        handle.write().push(std::sync::Arc::clone(&wrapper));
+                    }
+                    built_tools.push(Box::new(crate::tools::ArcToolRef(wrapper)));
+                    registered += 1;
+                }
+            }
+            tracing::info!(
+                "MCP: {} tool(s) registered from shared {} server(s)",
+                registered,
+                registry.server_count()
+            );
+        }
+    } else if config.mcp.enabled && !config.mcp.servers.is_empty() {
         tracing::info!(
             "Initializing MCP client — {} server(s) configured",
             config.mcp.servers.len()
