@@ -19,6 +19,7 @@ import signal
 import time
 import uuid
 from datetime import datetime, timezone
+from contextlib import contextmanager
 from typing import Any
 
 from .._log import _log
@@ -4585,19 +4586,28 @@ async def _persist_preflight_failure(wf: WorkflowDef, state: WorkflowState) -> N
     """Persist a terminal preflight failure so the dashboard can show it."""
     from .recovery import _acquire_run_lock, _release_run_lock
 
-    lock_fd = _acquire_run_lock(state.run_id)
-    if lock_fd is None:
-        _log(
-            f"workflow: preflight failure for run={state.run_id[:8]} "
-            "already claimed by another process; skipping duplicate persist"
-        )
-        return
-    try:
-        from .memory import persist_workflow_run
-        step_dicts = {
-            sid: sr.model_dump() for sid, sr in state.step_results.items()
-        }
-        await persist_workflow_run(
+    @contextmanager
+    def _run_lock_context():
+        fd = _acquire_run_lock(state.run_id)
+        try:
+            yield fd
+        finally:
+            if fd is not None:
+                _release_run_lock(fd, state.run_id)
+
+    with _run_lock_context() as lock_fd:
+        if lock_fd is None:
+            _log(
+                f"workflow: preflight failure for run={state.run_id[:8]} "
+                "already claimed by another process; skipping duplicate persist"
+            )
+            return
+        try:
+            from .memory import persist_workflow_run
+            step_dicts = {
+                sid: sr.model_dump() for sid, sr in state.step_results.items()
+            }
+            await persist_workflow_run(
             workflow_name=state.workflow_name,
             run_id=state.run_id,
             status=state.status.value,
@@ -4610,14 +4620,12 @@ async def _persist_preflight_failure(wf: WorkflowDef, state: WorkflowState) -> N
             workflow_item_kref=state.workflow_item_kref,
             workflow_revision_kref=state.workflow_revision_kref,
         )
-        _log(
-            f"workflow: persisted preflight failure for "
-            f"'{state.workflow_name}' run={state.run_id[:8]}"
-        )
-    except Exception as exc:
-        _log(f"workflow: failed to persist preflight failure (non-fatal): {exc}")
-    finally:
-        _release_run_lock(lock_fd, state.run_id)
+            _log(
+                f"workflow: persisted preflight failure for "
+                f"'{state.workflow_name}' run={state.run_id[:8]}"
+            )
+        except Exception as exc:
+            _log(f"workflow: failed to persist preflight failure (non-fatal): {exc}")
 
 
 async def _return_preflight_failure(
