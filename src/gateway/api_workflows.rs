@@ -17,6 +17,7 @@
 use super::AppState;
 use super::api::require_auth;
 use super::api_agents::build_kumiho_client;
+use super::api_kumiho_proxy::invalidate_proxy_cache;
 use super::kumiho_client::{ItemResponse, KumihoClient, KumihoError, RevisionResponse, slugify};
 use axum::{
     extract::{Path, Query, State},
@@ -60,8 +61,32 @@ struct WorkflowCache {
     fetched_at: Instant,
 }
 
+#[derive(Clone)]
+struct WorkflowRunsSummaryCache {
+    recent_runs: Vec<WorkflowRunSummary>,
+    total_runs: usize,
+    fetched_at: Instant,
+}
+
+#[derive(Clone)]
+struct WorkflowRunsListCache {
+    runs: Vec<WorkflowRunSummary>,
+    fetched_at: Instant,
+}
+
 static WORKFLOW_CACHE: OnceLock<Mutex<HashMap<(bool, bool), WorkflowCache>>> = OnceLock::new();
 const CACHE_TTL_SECS: u64 = 30;
+const STALE_CACHE_TTL_SECS: u64 = 120;
+
+static WORKFLOW_DASHBOARD_DEFINITIONS_CACHE: OnceLock<Mutex<Option<WorkflowCache>>> =
+    OnceLock::new();
+static WORKFLOW_RUNS_SUMMARY_CACHE: OnceLock<Mutex<Option<WorkflowRunsSummaryCache>>> =
+    OnceLock::new();
+static WORKFLOW_RUNS_LIST_CACHE: OnceLock<
+    Mutex<HashMap<(usize, Option<String>), WorkflowRunsListCache>>,
+> = OnceLock::new();
+const RUNS_SUMMARY_CACHE_TTL_SECS: u64 = 5;
+const RUNS_SUMMARY_STALE_TTL_SECS: u64 = 120;
 
 static WORKFLOW_REVISION_CACHE: OnceLock<Mutex<HashMap<String, RevisionWorkflowCache>>> =
     OnceLock::new();
@@ -99,6 +124,98 @@ pub(super) fn invalidate_cache() {
         // Mark as expired but keep stale data for fallback on API errors
         for c in cache.values_mut() {
             c.fetched_at = Instant::now() - std::time::Duration::from_secs(CACHE_TTL_SECS + 1);
+        }
+    }
+    invalidate_dashboard_definitions_cache();
+}
+
+fn get_cached_dashboard_definitions(allow_stale: bool) -> Option<Vec<WorkflowResponse>> {
+    let lock = WORKFLOW_DASHBOARD_DEFINITIONS_CACHE.get_or_init(|| Mutex::new(None));
+    let cache = lock.lock();
+    let entry = cache.as_ref()?;
+    let age = entry.fetched_at.elapsed().as_secs();
+    if age < CACHE_TTL_SECS || (allow_stale && age < STALE_CACHE_TTL_SECS) {
+        return Some(entry.workflows.clone());
+    }
+    None
+}
+
+fn set_cached_dashboard_definitions(workflows: &[WorkflowResponse]) {
+    let lock = WORKFLOW_DASHBOARD_DEFINITIONS_CACHE.get_or_init(|| Mutex::new(None));
+    *lock.lock() = Some(WorkflowCache {
+        workflows: workflows.to_vec(),
+        fetched_at: Instant::now(),
+    });
+}
+
+fn invalidate_dashboard_definitions_cache() {
+    if let Some(lock) = WORKFLOW_DASHBOARD_DEFINITIONS_CACHE.get() {
+        if let Some(entry) = lock.lock().as_mut() {
+            entry.fetched_at = Instant::now() - Duration::from_secs(CACHE_TTL_SECS + 1);
+        }
+    }
+}
+
+fn get_cached_dashboard_runs(allow_stale: bool) -> Option<(Vec<WorkflowRunSummary>, usize)> {
+    let lock = WORKFLOW_RUNS_SUMMARY_CACHE.get_or_init(|| Mutex::new(None));
+    let cache = lock.lock();
+    let entry = cache.as_ref()?;
+    let age = entry.fetched_at.elapsed().as_secs();
+    if age < RUNS_SUMMARY_CACHE_TTL_SECS || (allow_stale && age < RUNS_SUMMARY_STALE_TTL_SECS) {
+        return Some((entry.recent_runs.clone(), entry.total_runs));
+    }
+    None
+}
+
+fn set_cached_dashboard_runs(recent_runs: &[WorkflowRunSummary], total_runs: usize) {
+    let lock = WORKFLOW_RUNS_SUMMARY_CACHE.get_or_init(|| Mutex::new(None));
+    *lock.lock() = Some(WorkflowRunsSummaryCache {
+        recent_runs: recent_runs.to_vec(),
+        total_runs,
+        fetched_at: Instant::now(),
+    });
+}
+
+fn get_cached_workflow_runs(
+    limit: usize,
+    workflow: Option<&str>,
+    allow_stale: bool,
+) -> Option<Vec<WorkflowRunSummary>> {
+    let lock = WORKFLOW_RUNS_LIST_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let cache = lock.lock();
+    let key = (limit, workflow.map(str::to_string));
+    let entry = cache.get(&key)?;
+    let age = entry.fetched_at.elapsed().as_secs();
+    if age < RUNS_SUMMARY_CACHE_TTL_SECS || (allow_stale && age < RUNS_SUMMARY_STALE_TTL_SECS) {
+        return Some(entry.runs.clone());
+    }
+    None
+}
+
+fn set_cached_workflow_runs(limit: usize, workflow: Option<&str>, runs: &[WorkflowRunSummary]) {
+    let lock = WORKFLOW_RUNS_LIST_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut cache = lock.lock();
+    cache.insert(
+        (limit, workflow.map(str::to_string)),
+        WorkflowRunsListCache {
+            runs: runs.to_vec(),
+            fetched_at: Instant::now(),
+        },
+    );
+}
+
+fn invalidate_dashboard_runs_cache() {
+    if let Some(lock) = WORKFLOW_RUNS_SUMMARY_CACHE.get() {
+        if let Some(entry) = lock.lock().as_mut() {
+            entry.fetched_at =
+                Instant::now() - Duration::from_secs(RUNS_SUMMARY_CACHE_TTL_SECS + 1);
+        }
+    }
+    if let Some(lock) = WORKFLOW_RUNS_LIST_CACHE.get() {
+        let mut cache = lock.lock();
+        for entry in cache.values_mut() {
+            entry.fetched_at =
+                Instant::now() - Duration::from_secs(RUNS_SUMMARY_CACHE_TTL_SECS + 1);
         }
     }
 }
@@ -154,6 +271,154 @@ fn set_cached_revision_workflow(revision_kref: &str, workflow: &WorkflowResponse
             fetched_at: Instant::now(),
         },
     );
+}
+
+fn to_workflow_dashboard_summary(item: &ItemResponse) -> WorkflowResponse {
+    let get = |key: &str| -> String { item.metadata.get(key).cloned().unwrap_or_default() };
+    let display_name = {
+        let n = get("display_name");
+        if n.is_empty() {
+            item.item_name.clone()
+        } else {
+            n
+        }
+    };
+    let tags_str = get("tags");
+    let tags = if tags_str.is_empty() {
+        Vec::new()
+    } else {
+        tags_str.split(',').map(|s| s.trim().to_string()).collect()
+    };
+
+    WorkflowResponse {
+        kref: item.kref.clone(),
+        name: display_name,
+        item_name: item.item_name.clone(),
+        deprecated: item.deprecated,
+        created_at: item.created_at.clone(),
+        description: get("description"),
+        definition: String::new(),
+        version: get("version"),
+        tags,
+        steps: get("steps").parse().unwrap_or(0),
+        revision_number: 0,
+        source: "custom".to_string(),
+        triggers: Vec::new(),
+    }
+}
+
+async fn fetch_workflow_definitions_for_dashboard(
+    client: &KumihoClient,
+    space_path: &str,
+    include_definition: bool,
+) -> Vec<WorkflowResponse> {
+    if let Some(cached) = get_cached(false, include_definition) {
+        return cached;
+    }
+    if !include_definition {
+        if let Some(cached) = get_cached_dashboard_definitions(false) {
+            return cached;
+        }
+    }
+
+    let started = Instant::now();
+    let definitions = match client.list_items(space_path, false).await {
+        Ok(items) => {
+            let mut workflows = if include_definition {
+                let workflows =
+                    merge_with_builtins(enrich_items(client, items, include_definition).await);
+                set_cached(&workflows, false, include_definition);
+                workflows
+            } else {
+                // Dashboard cards do not need revision metadata or YAML bodies.
+                // Avoid the expensive revision batch fanout on the cold path;
+                // item metadata plus builtin summaries are enough for counts,
+                // names, and source classification.
+                merge_with_builtins(
+                    items
+                        .iter()
+                        .filter(|i| i.kind == "workflow")
+                        .map(to_workflow_dashboard_summary)
+                        .collect(),
+                )
+            };
+            if !include_definition {
+                for workflow in &mut workflows {
+                    workflow.definition.clear();
+                    workflow.triggers.clear();
+                }
+                set_cached_dashboard_definitions(&workflows);
+            }
+            workflows
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "workflow dashboard definitions fetch failed");
+            get_cached_dashboard_definitions(true)
+                .unwrap_or_else(|| merge_with_builtins(Vec::new()))
+        }
+    };
+
+    let elapsed = started.elapsed();
+    if elapsed >= Duration::from_secs(1) {
+        tracing::warn!(
+            elapsed_ms = elapsed.as_millis() as u64,
+            definitions = definitions.len(),
+            include_definition,
+            "workflow dashboard definitions fetch was slow"
+        );
+    }
+
+    definitions
+}
+
+async fn fetch_recent_runs_for_dashboard(
+    client: &KumihoClient,
+    runs_space: &str,
+) -> (Vec<WorkflowRunSummary>, usize) {
+    if let Some(cached) = get_cached_dashboard_runs(false) {
+        return cached;
+    }
+
+    let started = Instant::now();
+    let result = match client.list_items(runs_space, false).await {
+        Ok(mut items) => {
+            items.retain(|i| i.kind == "workflow_run");
+
+            let total = items.len();
+            items.sort_by(|a, b| {
+                let a_time = a.created_at.as_deref().unwrap_or("");
+                let b_time = b.created_at.as_deref().unwrap_or("");
+                b_time.cmp(a_time)
+            });
+            items.truncate(5);
+
+            let runs: Vec<WorkflowRunSummary> = items
+                .iter()
+                .map(|item| to_run_summary(item, None))
+                .collect();
+
+            (runs, total)
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "workflow dashboard runs fetch failed");
+            get_cached_dashboard_runs(true).unwrap_or_else(|| (Vec::new(), 0))
+        }
+    };
+    if !result.0.is_empty() || result.1 > 0 {
+        set_cached_dashboard_runs(&result.0, result.1);
+    }
+
+    let elapsed = started.elapsed();
+    if elapsed >= Duration::from_secs(1) {
+        tracing::warn!(
+            elapsed_ms = elapsed.as_millis() as u64,
+            recent_runs = result.0.len(),
+            total_runs = result.1,
+            "workflow dashboard runs fetch was slow"
+        );
+    }
+
+    result
 }
 
 // ── Query / request types ───────────────────────────────────────────────
@@ -607,11 +872,19 @@ async fn enrich_items(
 }
 
 fn to_run_summary(item: &ItemResponse, rev: Option<&RevisionResponse>) -> WorkflowRunSummary {
-    let meta = rev.map(|r| &r.metadata);
-    let get = |key: &str| -> String { meta.and_then(|m| m.get(key)).cloned().unwrap_or_default() };
+    let meta = rev.map(|r| &r.metadata).unwrap_or(&item.metadata);
+    let get = |key: &str| -> String { meta.get(key).cloned().unwrap_or_default() };
 
     let run_id_meta = get("run_id");
     let status = normalize_run_status(&get("status"), &get("steps_completed"), &get("step_count"));
+    let started_at = {
+        let value = get("started_at");
+        if value.is_empty() {
+            item.created_at.clone().unwrap_or_default()
+        } else {
+            value
+        }
+    };
     WorkflowRunSummary {
         kref: item.kref.clone(),
         run_id: if run_id_meta.is_empty() {
@@ -624,7 +897,7 @@ fn to_run_summary(item: &ItemResponse, rev: Option<&RevisionResponse>) -> Workfl
             if wn.is_empty() { get("workflow") } else { wn }
         },
         status,
-        started_at: get("started_at"),
+        started_at,
         completed_at: get("completed_at"),
         steps_completed: get("steps_completed"),
         steps_total: get("steps_total"),
@@ -1406,6 +1679,7 @@ pub async fn handle_create_workflow(
     let _ = client.tag_revision(&rev.kref, "published").await;
 
     invalidate_cache();
+    invalidate_proxy_cache();
     sync_cron_for_workflow(&state, &body.name, &body.definition);
 
     broadcast_revision_published(&state, &headers, &item.kref, &rev, &body.name);
@@ -1465,6 +1739,7 @@ pub async fn handle_update_workflow(
     let workflow = to_workflow_response(&item, Some(&rev), true);
     upsert_cached_workflow(&workflow);
     set_cached_revision_workflow(&rev.kref, &workflow);
+    invalidate_proxy_cache();
     sync_cron_for_workflow(&state, &body.name, &body.definition);
 
     broadcast_revision_published(&state, &headers, &kref, &rev, &body.name);
@@ -1488,6 +1763,7 @@ pub async fn handle_deprecate_workflow(
     match client.deprecate_item(&kref, body.deprecated).await {
         Ok(item) => {
             invalidate_cache();
+            invalidate_proxy_cache();
             let rev = client.get_published_or_latest(&kref).await.ok();
 
             // Sync cron triggers: remove when deprecating, re-add when restoring.
@@ -1533,6 +1809,7 @@ pub async fn handle_delete_workflow(
     match client.delete_item(&kref).await {
         Ok(()) => {
             invalidate_cache();
+            invalidate_proxy_cache();
 
             // Remove associated cron jobs.  Extract the item_name from the kref
             // (the last path segment minus the `.workflow` kind suffix) and use
@@ -1786,6 +2063,8 @@ pub async fn handle_run_workflow(
                 );
             }
 
+            invalidate_dashboard_runs_cache();
+            invalidate_proxy_cache();
             (
                 StatusCode::OK,
                 Json(serde_json::json!({
@@ -1906,6 +2185,11 @@ pub async fn handle_list_workflow_runs(
     let client = build_kumiho_client(&state);
     let project = workflow_project(&state);
     let runs_space = workflow_runs_space_path(&state);
+    let workflow_filter = query.workflow.as_deref();
+
+    if let Some(cached) = get_cached_workflow_runs(query.limit, workflow_filter, false) {
+        return Json(serde_json::json!({ "runs": cached, "count": cached.len() })).into_response();
+    }
 
     match client.list_items(&runs_space, false).await {
         Ok(mut items) => {
@@ -1929,17 +2213,12 @@ pub async fn handle_list_workflow_runs(
             });
             items.truncate(query.limit);
 
-            let krefs: Vec<String> = items.iter().map(|i| i.kref.clone()).collect();
-            let rev_map = client
-                .batch_get_revisions(&krefs, "latest")
-                .await
-                .unwrap_or_default();
-
             let runs: Vec<WorkflowRunSummary> = items
                 .iter()
-                .map(|item| to_run_summary(item, rev_map.get(&item.kref)))
+                .map(|item| to_run_summary(item, None))
                 .collect();
 
+            set_cached_workflow_runs(query.limit, workflow_filter, &runs);
             Json(serde_json::json!({ "runs": runs, "count": runs.len() })).into_response()
         }
         Err(ref e) if matches!(e, KumihoError::Api { status: 404, .. }) => {
@@ -1950,6 +2229,10 @@ pub async fn handle_list_workflow_runs(
             Json(serde_json::json!({ "runs": [], "count": 0 })).into_response()
         }
         Err(e) => {
+            if let Some(cached) = get_cached_workflow_runs(query.limit, workflow_filter, true) {
+                return Json(serde_json::json!({ "runs": cached, "count": cached.len() }))
+                    .into_response();
+            }
             let msg = format!("Failed to fetch workflow runs: {e}");
             (
                 StatusCode::SERVICE_UNAVAILABLE,
@@ -2103,6 +2386,8 @@ pub async fn handle_delete_workflow_run(
 
     match client.delete_item(&kref).await {
         Ok(()) => {
+            invalidate_dashboard_runs_cache();
+            invalidate_proxy_cache();
             cleanup_local_run_files(&run_id).await;
             StatusCode::NO_CONTENT.into_response()
         }
@@ -2216,6 +2501,8 @@ pub async fn handle_approve_workflow_run(
 
     match mcp_result {
         Ok(_) => {
+            invalidate_dashboard_runs_cache();
+            invalidate_proxy_cache();
             // Broadcast a human_approval_resolved SSE event so connected dashboards
             // can update their UI immediately without waiting for the next REST poll.
             let _ = state.event_tx.send(serde_json::json!({
@@ -2299,6 +2586,8 @@ pub async fn handle_retry_workflow_run(
 
     match mcp_result {
         Ok(result_str) => {
+            invalidate_dashboard_runs_cache();
+            invalidate_proxy_cache();
             let _ = state.event_tx.send(serde_json::json!({
                 "type": "workflow_retry",
                 "run_id": run_id,
@@ -2375,6 +2664,8 @@ pub async fn handle_cancel_workflow_run(
 
             let status_code = cancel_status_for(&payload);
             if status_code == StatusCode::OK {
+                invalidate_dashboard_runs_cache();
+                invalidate_proxy_cache();
                 let _ = state.event_tx.send(serde_json::json!({
                     "type": "workflow_cancel",
                     "run_id": run_id,
@@ -2626,41 +2917,13 @@ pub async fn handle_workflow_dashboard(
     let space_path = workflow_space_path(&state);
     let runs_space = workflow_runs_space_path(&state);
 
-    // Fetch definitions from Kumiho + merge builtins
-    let definitions = match client.list_items(&space_path, false).await {
-        Ok(items) => {
-            merge_with_builtins(enrich_items(&client, items, query.include_definition).await)
-        }
-        Err(_) => merge_with_builtins(Vec::new()),
-    };
+    let definitions_future =
+        fetch_workflow_definitions_for_dashboard(&client, &space_path, query.include_definition);
+    let recent_runs_future = fetch_recent_runs_for_dashboard(&client, &runs_space);
+
+    let (definitions, (recent_runs, total_runs)) =
+        tokio::join!(definitions_future, recent_runs_future);
     let definitions_count = definitions.len();
-
-    // Fetch recent runs from Kumiho
-    let (recent_runs, total_runs) = match client.list_items(&runs_space, false).await {
-        Ok(mut items) => {
-            let total = items.len();
-            items.sort_by(|a, b| {
-                let a_time = a.created_at.as_deref().unwrap_or("");
-                let b_time = b.created_at.as_deref().unwrap_or("");
-                b_time.cmp(a_time)
-            });
-            items.truncate(5);
-
-            let krefs: Vec<String> = items.iter().map(|i| i.kref.clone()).collect();
-            let rev_map = client
-                .batch_get_revisions(&krefs, "latest")
-                .await
-                .unwrap_or_default();
-
-            let runs: Vec<WorkflowRunSummary> = items
-                .iter()
-                .map(|item| to_run_summary(item, rev_map.get(&item.kref)))
-                .collect();
-
-            (runs, total)
-        }
-        Err(_) => (Vec::new(), 0),
-    };
 
     let active_runs = recent_runs
         .iter()

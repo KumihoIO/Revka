@@ -15,11 +15,14 @@ use super::kumiho_client::{is_retryable_status, looks_like_html_body};
 use axum::{
     Json,
     extract::{Query, State},
-    http::{HeaderMap, HeaderValue, StatusCode, header},
+    http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
 };
-use std::collections::HashMap;
+use parking_lot::Mutex;
+use std::collections::{HashMap, hash_map::DefaultHasher};
+use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 /// Same end-to-end budget as `KumihoClient::TOTAL_BUDGET`. Duplicated here
@@ -29,6 +32,97 @@ const PROXY_TOTAL_BUDGET: Duration = Duration::from_secs(15);
 const PROXY_PER_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(5);
 const PROXY_MAX_ATTEMPTS: u32 = 3;
 const PROXY_BACKOFF_MS: [u64; 2] = [500, 1500];
+const PROXY_CACHE_TTL: Duration = Duration::from_secs(10);
+const PROXY_STALE_TTL: Duration = Duration::from_secs(120);
+
+#[derive(Clone, Hash, Eq, PartialEq)]
+struct ProxyCacheKey {
+    token_hash: u64,
+    url: String,
+}
+
+#[derive(Clone)]
+struct ProxyCacheEntry {
+    status: StatusCode,
+    body: String,
+    fetched_at: Instant,
+}
+
+static KUMIHO_PROXY_CACHE: OnceLock<Mutex<HashMap<ProxyCacheKey, ProxyCacheEntry>>> =
+    OnceLock::new();
+
+fn token_hash(token: &str) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    token.hash(&mut hasher);
+    hasher.finish()
+}
+
+fn proxy_cache_key(url: &str, service_token: &str) -> ProxyCacheKey {
+    ProxyCacheKey {
+        token_hash: token_hash(service_token),
+        url: url.to_string(),
+    }
+}
+
+fn cached_proxy_response(
+    url: &str,
+    service_token: &str,
+    allow_stale: bool,
+) -> Option<(StatusCode, String, bool)> {
+    let lock = KUMIHO_PROXY_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let cache = lock.lock();
+    let entry = cache.get(&proxy_cache_key(url, service_token))?;
+    let age = entry.fetched_at.elapsed();
+    if age <= PROXY_CACHE_TTL {
+        return Some((entry.status, entry.body.clone(), false));
+    }
+    if allow_stale && age <= PROXY_STALE_TTL {
+        return Some((entry.status, entry.body.clone(), true));
+    }
+    None
+}
+
+fn set_cached_proxy_response(url: &str, service_token: &str, status: StatusCode, body: &str) {
+    if !status.is_success() {
+        return;
+    }
+
+    let lock = KUMIHO_PROXY_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut cache = lock.lock();
+    cache.retain(|_, entry| entry.fetched_at.elapsed() <= PROXY_STALE_TTL);
+    cache.insert(
+        proxy_cache_key(url, service_token),
+        ProxyCacheEntry {
+            status,
+            body: body.to_string(),
+            fetched_at: Instant::now(),
+        },
+    );
+}
+
+pub(super) fn invalidate_proxy_cache() {
+    if let Some(lock) = KUMIHO_PROXY_CACHE.get() {
+        lock.lock().clear();
+    }
+}
+
+fn cached_json_response(status: StatusCode, body: String, state: &'static str) -> Response {
+    (
+        status,
+        [
+            (
+                header::CONTENT_TYPE,
+                HeaderValue::from_static("application/json"),
+            ),
+            (
+                HeaderName::from_static("x-construct-cache"),
+                HeaderValue::from_static(state),
+            ),
+        ],
+        body,
+    )
+        .into_response()
+}
 
 /// Build the unified 503 response the typed routes return on CDN 5xx / hung
 /// upstream. Centralised here so the proxy can't leak a different shape.
@@ -200,11 +294,17 @@ pub async fn handle_kumiho_proxy(
     // Build the upstream URL
     let mut url = format!("{}/api/v1/{}", base_url.trim_end_matches('/'), path);
     if !params.is_empty() {
+        let mut params: Vec<(&String, &String)> = params.iter().collect();
+        params.sort_by(|(a, _), (b, _)| a.cmp(b));
         let qs: Vec<String> = params
-            .iter()
+            .into_iter()
             .map(|(k, v)| format!("{}={}", urlencoding::encode(k), urlencoding::encode(v)))
             .collect();
         url = format!("{}?{}", url, qs.join("&"));
+    }
+
+    if let Some((status, body, stale)) = cached_proxy_response(&url, &service_token, false) {
+        return cached_json_response(status, body, if stale { "stale" } else { "hit" });
     }
 
     let deadline = Instant::now() + PROXY_TOTAL_BUDGET;
@@ -270,6 +370,7 @@ pub async fn handle_kumiho_proxy(
 
                 if code.is_success() {
                     let body = enrich_success_body(body);
+                    set_cached_proxy_response(&url, &service_token, code, &body);
                     return (
                         code,
                         [(axum::http::header::CONTENT_TYPE, "application/json")],
@@ -298,6 +399,11 @@ pub async fn handle_kumiho_proxy(
                             "Kumiho proxy: non-retried 5xx"
                         );
                     }
+                    if let Some((cached_status, cached_body, _)) =
+                        cached_proxy_response(&url, &service_token, true)
+                    {
+                        return cached_json_response(cached_status, cached_body, "stale");
+                    }
                     return upstream_unavailable(status);
                 }
 
@@ -325,6 +431,11 @@ pub async fn handle_kumiho_proxy(
                     let remaining = deadline.saturating_duration_since(now2);
                     if remaining <= Duration::from_millis(delay_ms) {
                         tracing::warn!(error = %e, path = %path, "Kumiho proxy: budget exhausted");
+                        if let Some((cached_status, cached_body, _)) =
+                            cached_proxy_response(&url, &service_token, true)
+                        {
+                            return cached_json_response(cached_status, cached_body, "stale");
+                        }
                         return unreachable();
                     }
                     tracing::warn!(
@@ -338,12 +449,21 @@ pub async fn handle_kumiho_proxy(
                     continue;
                 }
                 tracing::warn!(error = %e, path = %path, "Kumiho proxy: unreachable after retries");
+                if let Some((cached_status, cached_body, _)) =
+                    cached_proxy_response(&url, &service_token, true)
+                {
+                    return cached_json_response(cached_status, cached_body, "stale");
+                }
                 return unreachable();
             }
         }
     }
 
     // Budget exhausted on retryable status path.
+    if let Some((cached_status, cached_body, _)) = cached_proxy_response(&url, &service_token, true)
+    {
+        return cached_json_response(cached_status, cached_body, "stale");
+    }
     upstream_unavailable(last_retryable_status.unwrap_or(502))
 }
 
