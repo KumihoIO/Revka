@@ -149,7 +149,7 @@ export default function WorkflowRuns() {
     setLoading(true);
     return Promise.all([
       fetchWorkflowRuns(25),
-      fetchWorkflows(true),
+      fetchWorkflows(true, false),
     ])
       .then(async ([workflowRuns, workflowDefinitions]) => {
         const requestedRun = searchParams.get('run');

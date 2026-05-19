@@ -58,17 +58,19 @@ fn workflow_run_requests_space_path(state: &AppState) -> String {
 struct WorkflowCache {
     workflows: Vec<WorkflowResponse>,
     include_deprecated: bool,
+    include_definition: bool,
     fetched_at: Instant,
 }
 
 static WORKFLOW_CACHE: OnceLock<Mutex<Option<WorkflowCache>>> = OnceLock::new();
 const CACHE_TTL_SECS: u64 = 3;
 
-fn get_cached(include_deprecated: bool) -> Option<Vec<WorkflowResponse>> {
+fn get_cached(include_deprecated: bool, include_definition: bool) -> Option<Vec<WorkflowResponse>> {
     let lock = WORKFLOW_CACHE.get_or_init(|| Mutex::new(None));
     let cache = lock.lock();
     if let Some(ref c) = *cache {
         if c.include_deprecated == include_deprecated
+            && c.include_definition == include_definition
             && c.fetched_at.elapsed().as_secs() < CACHE_TTL_SECS
         {
             return Some(c.workflows.clone());
@@ -77,12 +79,13 @@ fn get_cached(include_deprecated: bool) -> Option<Vec<WorkflowResponse>> {
     None
 }
 
-fn set_cached(workflows: &[WorkflowResponse], include_deprecated: bool) {
+fn set_cached(workflows: &[WorkflowResponse], include_deprecated: bool, include_definition: bool) {
     let lock = WORKFLOW_CACHE.get_or_init(|| Mutex::new(None));
     let mut cache = lock.lock();
     *cache = Some(WorkflowCache {
         workflows: workflows.to_vec(),
         include_deprecated,
+        include_definition,
         fetched_at: Instant::now(),
     });
 }
@@ -103,7 +106,19 @@ pub(super) fn invalidate_cache() {
 pub struct WorkflowListQuery {
     #[serde(default)]
     pub include_deprecated: bool,
+    #[serde(default = "default_include_definition")]
+    pub include_definition: bool,
     pub q: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct WorkflowDashboardQuery {
+    #[serde(default = "default_include_definition")]
+    pub include_definition: bool,
+}
+
+fn default_include_definition() -> bool {
+    true
 }
 
 #[derive(Deserialize)]
@@ -325,7 +340,11 @@ fn count_yaml_steps(content: &str) -> usize {
     count
 }
 
-fn to_workflow_response(item: &ItemResponse, rev: Option<&RevisionResponse>) -> WorkflowResponse {
+fn to_workflow_response(
+    item: &ItemResponse,
+    rev: Option<&RevisionResponse>,
+    include_definition: bool,
+) -> WorkflowResponse {
     let meta = rev.map(|r| &r.metadata);
     let get = |key: &str| -> String { meta.and_then(|m| m.get(key)).cloned().unwrap_or_default() };
     let tags_str = get("tags");
@@ -345,8 +364,16 @@ fn to_workflow_response(item: &ItemResponse, rev: Option<&RevisionResponse>) -> 
         }
     };
 
-    let definition = get("definition");
-    let triggers = extract_triggers(&definition);
+    let definition = if include_definition {
+        get("definition")
+    } else {
+        String::new()
+    };
+    let triggers = if include_definition {
+        extract_triggers(&definition)
+    } else {
+        Vec::new()
+    };
 
     WorkflowResponse {
         kref: item.kref.clone(),
@@ -395,6 +422,7 @@ async fn prefer_artifact_definitions(
 async fn enrich_items(
     client: &super::kumiho_client::KumihoClient,
     items: Vec<ItemResponse>,
+    include_definition: bool,
 ) -> Vec<WorkflowResponse> {
     // Only include items with kind == "workflow" — filter out stray items
     // that agents may have created in the Workflows space.
@@ -421,13 +449,15 @@ async fn enrich_items(
             HashMap::new()
         };
 
-        // Artifact-first: the `workflow.yaml` on disk is canonical. The inline
-        // `definition` metadata drifts for operator-authored revisions and is
-        // truncated by Kumiho's batch endpoint for large YAMLs, so we always
-        // prefer the artifact when it exists — same logic the single-revision
-        // endpoint uses.
-        prefer_artifact_definitions(client, &mut rev_map).await;
-        prefer_artifact_definitions(client, &mut latest_map).await;
+        if include_definition {
+            // Artifact-first: the `workflow.yaml` on disk is canonical. The inline
+            // `definition` metadata drifts for operator-authored revisions and is
+            // truncated by Kumiho's batch endpoint for large YAMLs, so we always
+            // prefer the artifact when it exists — same logic the single-revision
+            // endpoint uses.
+            prefer_artifact_definitions(client, &mut rev_map).await;
+            prefer_artifact_definitions(client, &mut latest_map).await;
+        }
 
         return items
             .iter()
@@ -435,7 +465,7 @@ async fn enrich_items(
                 let rev = rev_map
                     .get(&item.kref)
                     .or_else(|| latest_map.get(&item.kref));
-                to_workflow_response(item, rev)
+                to_workflow_response(item, rev, include_definition)
             })
             .collect();
     }
@@ -444,7 +474,7 @@ async fn enrich_items(
     let mut workflows = Vec::with_capacity(items.len());
     for item in &items {
         let rev = client.get_published_or_latest(&item.kref).await.ok();
-        workflows.push(to_workflow_response(item, rev.as_ref()));
+        workflows.push(to_workflow_response(item, rev.as_ref(), include_definition));
     }
     workflows
 }
@@ -987,7 +1017,7 @@ pub async fn handle_list_workflows(
 
     // Return cached result if available (before making API call)
     if query.q.is_none() {
-        if let Some(cached) = get_cached(query.include_deprecated) {
+        if let Some(cached) = get_cached(query.include_deprecated, query.include_definition) {
             return Json(serde_json::json!({ "workflows": cached })).into_response();
         }
     }
@@ -1005,9 +1035,14 @@ pub async fn handle_list_workflows(
 
     match items_result {
         Ok(items) => {
-            let workflows = merge_with_builtins(enrich_items(&client, items).await);
+            let workflows =
+                merge_with_builtins(enrich_items(&client, items, query.include_definition).await);
             if query.q.is_none() {
-                set_cached(&workflows, query.include_deprecated);
+                set_cached(
+                    &workflows,
+                    query.include_deprecated,
+                    query.include_definition,
+                );
             }
             Json(serde_json::json!({ "workflows": workflows })).into_response()
         }
@@ -1023,6 +1058,11 @@ pub async fn handle_list_workflows(
                 let lock = WORKFLOW_CACHE.get_or_init(|| Mutex::new(None));
                 let cache = lock.lock();
                 if let Some(ref c) = *cache {
+                    if c.include_deprecated != query.include_deprecated
+                        || c.include_definition != query.include_definition
+                    {
+                        return kumiho_err(e).into_response();
+                    }
                     tracing::warn!("Workflows list failed, returning stale cache: {e}");
                     return Json(serde_json::json!({ "workflows": c.workflows })).into_response();
                 }
@@ -1232,7 +1272,7 @@ pub async fn handle_create_workflow(
 
     broadcast_revision_published(&state, &headers, &item.kref, &rev, &body.name);
 
-    let workflow = to_workflow_response(&item, Some(&rev));
+    let workflow = to_workflow_response(&item, Some(&rev), true);
     (
         StatusCode::CREATED,
         Json(serde_json::json!({ "workflow": workflow })),
@@ -1294,7 +1334,7 @@ pub async fn handle_update_workflow(
     let item = items.iter().find(|i| i.kref == kref);
     match item {
         Some(item) => {
-            let workflow = to_workflow_response(item, Some(&rev));
+            let workflow = to_workflow_response(item, Some(&rev), true);
             Json(serde_json::json!({ "workflow": workflow })).into_response()
         }
         None => {
@@ -1310,7 +1350,7 @@ pub async fn handle_update_workflow(
                 author_display: None,
                 metadata: HashMap::new(),
             };
-            let workflow = to_workflow_response(&fallback, Some(&rev));
+            let workflow = to_workflow_response(&fallback, Some(&rev), true);
             Json(serde_json::json!({ "workflow": workflow })).into_response()
         }
     }
@@ -1354,7 +1394,7 @@ pub async fn handle_deprecate_workflow(
                 }
             }
 
-            let workflow = to_workflow_response(&item, rev.as_ref());
+            let workflow = to_workflow_response(&item, rev.as_ref(), true);
             Json(serde_json::json!({ "workflow": workflow })).into_response()
         }
         Err(e) => kumiho_err(e).into_response(),
@@ -1726,7 +1766,7 @@ pub async fn handle_get_workflow_by_revision(
         metadata: HashMap::new(),
     };
 
-    let workflow = to_workflow_response(&item, Some(&rev));
+    let workflow = to_workflow_response(&item, Some(&rev), true);
     Json(serde_json::json!({ "workflow": workflow })).into_response()
 }
 
@@ -2455,6 +2495,7 @@ pub struct AgentActivityQuery {
 pub async fn handle_workflow_dashboard(
     State(state): State<AppState>,
     headers: HeaderMap,
+    Query(query): Query<WorkflowDashboardQuery>,
 ) -> impl IntoResponse {
     if let Err(e) = require_auth(&state, &headers) {
         return e.into_response();
@@ -2466,7 +2507,9 @@ pub async fn handle_workflow_dashboard(
 
     // Fetch definitions from Kumiho + merge builtins
     let definitions = match client.list_items(&space_path, false).await {
-        Ok(items) => merge_with_builtins(enrich_items(&client, items).await),
+        Ok(items) => {
+            merge_with_builtins(enrich_items(&client, items, query.include_definition).await)
+        }
         Err(_) => merge_with_builtins(Vec::new()),
     };
     let definitions_count = definitions.len();
