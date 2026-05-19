@@ -333,15 +333,18 @@ pub fn kumiho_mcp_server_config(kumiho_cfg: &KumihoConfig) -> McpServerConfig {
     // the discovery endpoint at control.kumiho.cloud accepts service_tokens
     // via verifyControlPlaneToken and returns the tenant gRPC routing.
     //
-    // Priority: explicit KUMIHO_AUTH_TOKEN > KUMIHO_SERVICE_TOKEN. When
-    // neither is set, leave KUMIHO_AUTH_TOKEN unset and let the Python SDK's
-    // _token_loader read ~/.kumiho/kumiho_authentication.json directly
+    // Priority: KUMIHO_SERVICE_TOKEN > KUMIHO_AUTH_TOKEN. The service token is
+    // the value written by Construct onboarding and should not be shadowed by a
+    // stale shell-level KUMIHO_AUTH_TOKEN from another account.
+    //
+    // When neither is set, leave KUMIHO_AUTH_TOKEN unset and let the Python
+    // SDK's _token_loader read ~/.kumiho/kumiho_authentication.json directly
     // (path used by `kumiho login`).
-    let auth_token = std::env::var("KUMIHO_AUTH_TOKEN")
+    let auth_token = std::env::var("KUMIHO_SERVICE_TOKEN")
         .ok()
         .filter(|t| !t.trim().is_empty())
         .or_else(|| {
-            std::env::var("KUMIHO_SERVICE_TOKEN")
+            std::env::var("KUMIHO_AUTH_TOKEN")
                 .ok()
                 .filter(|t| !t.trim().is_empty())
         });
@@ -599,6 +602,9 @@ fn expand_tilde(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
     use crate::config::KumihoConfig;
 
     #[test]
@@ -798,6 +804,35 @@ mod tests {
             !server.env.contains_key("KUMIHO_AUTO_CONFIGURE"),
             "Kumiho MCP must answer initialize before network discovery"
         );
+    }
+
+    #[test]
+    fn kumiho_mcp_server_config_prefers_service_token_over_auth_token() {
+        let _guard = ENV_LOCK.lock().expect("env lock poisoned");
+        let previous_auth = std::env::var("KUMIHO_AUTH_TOKEN").ok();
+        let previous_service = std::env::var("KUMIHO_SERVICE_TOKEN").ok();
+
+        unsafe {
+            std::env::set_var("KUMIHO_AUTH_TOKEN", "stale-auth-token");
+            std::env::set_var("KUMIHO_SERVICE_TOKEN", "onboarded-service-token");
+        }
+
+        let server = kumiho_mcp_server_config(&KumihoConfig::default());
+        assert_eq!(
+            server.env.get("KUMIHO_AUTH_TOKEN").map(String::as_str),
+            Some("onboarded-service-token")
+        );
+
+        unsafe {
+            match previous_auth {
+                Some(value) => std::env::set_var("KUMIHO_AUTH_TOKEN", value),
+                None => std::env::remove_var("KUMIHO_AUTH_TOKEN"),
+            }
+            match previous_service {
+                Some(value) => std::env::set_var("KUMIHO_SERVICE_TOKEN", value),
+                None => std::env::remove_var("KUMIHO_SERVICE_TOKEN"),
+            }
+        }
     }
 
     #[test]
