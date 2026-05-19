@@ -27,7 +27,7 @@ use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::OnceLock;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 const WORKFLOW_SPACE_NAME: &str = "Workflows";
 const WORKFLOW_RUNS_SPACE_NAME: &str = "WorkflowRuns";
@@ -57,12 +57,10 @@ fn workflow_run_requests_space_path(state: &AppState) -> String {
 
 struct WorkflowCache {
     workflows: Vec<WorkflowResponse>,
-    include_deprecated: bool,
-    include_definition: bool,
     fetched_at: Instant,
 }
 
-static WORKFLOW_CACHE: OnceLock<Mutex<Option<WorkflowCache>>> = OnceLock::new();
+static WORKFLOW_CACHE: OnceLock<Mutex<HashMap<(bool, bool), WorkflowCache>>> = OnceLock::new();
 const CACHE_TTL_SECS: u64 = 30;
 
 static WORKFLOW_REVISION_CACHE: OnceLock<Mutex<HashMap<String, RevisionWorkflowCache>>> =
@@ -75,37 +73,62 @@ struct RevisionWorkflowCache {
 }
 
 fn get_cached(include_deprecated: bool, include_definition: bool) -> Option<Vec<WorkflowResponse>> {
-    let lock = WORKFLOW_CACHE.get_or_init(|| Mutex::new(None));
+    let lock = WORKFLOW_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
     let cache = lock.lock();
-    if let Some(ref c) = *cache {
-        if c.include_deprecated == include_deprecated
-            && c.include_definition == include_definition
-            && c.fetched_at.elapsed().as_secs() < CACHE_TTL_SECS
-        {
-            return Some(c.workflows.clone());
-        }
-    }
-    None
+    cache
+        .get(&(include_deprecated, include_definition))
+        .filter(|c| c.fetched_at.elapsed().as_secs() < CACHE_TTL_SECS)
+        .map(|c| c.workflows.clone())
 }
 
 fn set_cached(workflows: &[WorkflowResponse], include_deprecated: bool, include_definition: bool) {
-    let lock = WORKFLOW_CACHE.get_or_init(|| Mutex::new(None));
+    let lock = WORKFLOW_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
     let mut cache = lock.lock();
-    *cache = Some(WorkflowCache {
-        workflows: workflows.to_vec(),
-        include_deprecated,
-        include_definition,
-        fetched_at: Instant::now(),
-    });
+    cache.insert(
+        (include_deprecated, include_definition),
+        WorkflowCache {
+            workflows: workflows.to_vec(),
+            fetched_at: Instant::now(),
+        },
+    );
 }
 
 pub(super) fn invalidate_cache() {
     if let Some(lock) = WORKFLOW_CACHE.get() {
         let mut cache = lock.lock();
         // Mark as expired but keep stale data for fallback on API errors
-        if let Some(ref mut c) = *cache {
+        for c in cache.values_mut() {
             c.fetched_at = Instant::now() - std::time::Duration::from_secs(CACHE_TTL_SECS + 1);
         }
+    }
+}
+
+fn upsert_cached_workflow(workflow: &WorkflowResponse) {
+    let Some(lock) = WORKFLOW_CACHE.get() else {
+        return;
+    };
+
+    let mut cache = lock.lock();
+    for ((include_deprecated, include_definition), c) in cache.iter_mut() {
+        let mut cached = workflow.clone();
+        if !*include_definition {
+            cached.definition.clear();
+            cached.triggers.clear();
+        }
+
+        if let Some(existing) = c.workflows.iter_mut().find(|w| w.kref == workflow.kref) {
+            if cached.created_at.is_none() {
+                cached.created_at.clone_from(&existing.created_at);
+            }
+            if existing.source != "custom" {
+                cached.source.clone_from(&existing.source);
+            }
+            *existing = cached;
+        } else if *include_deprecated || !cached.deprecated {
+            c.workflows.push(cached);
+        }
+
+        c.fetched_at = Instant::now();
     }
 }
 
@@ -425,6 +448,35 @@ fn to_workflow_response(
     }
 }
 
+fn workflow_item_name_from_kref(kref: &str, fallback: &str) -> String {
+    kref.split('/')
+        .next_back()
+        .and_then(|segment| {
+            let name = segment
+                .rsplit_once('.')
+                .map(|(name, _kind)| name)
+                .unwrap_or(segment);
+            (!name.is_empty()).then(|| name.to_string())
+        })
+        .unwrap_or_else(|| slugify(fallback))
+}
+
+fn workflow_item_from_body(kref: &str, body: &CreateWorkflowBody) -> ItemResponse {
+    let item_name = workflow_item_name_from_kref(kref, &body.name);
+    ItemResponse {
+        kref: kref.to_string(),
+        name: item_name.clone(),
+        item_name,
+        kind: "workflow".to_string(),
+        deprecated: false,
+        created_at: None,
+        author: None,
+        username: None,
+        author_display: None,
+        metadata: HashMap::new(),
+    }
+}
+
 /// Prefer the `workflow.yaml` artifact on disk as the canonical definition,
 /// falling back to inline `definition` metadata only when no artifact exists.
 ///
@@ -436,18 +488,60 @@ async fn prefer_artifact_definitions(
     client: &super::kumiho_client::KumihoClient,
     revs: &mut HashMap<String, RevisionResponse>,
 ) {
-    for rev in revs.values_mut() {
-        if let Ok(artifact) = client
-            .get_artifact_by_name(&rev.kref, "workflow.yaml")
+    const ARTIFACT_LOOKUP_TIMEOUT: Duration = Duration::from_secs(2);
+
+    let lookups = revs
+        .iter()
+        .map(|(item_kref, rev)| (item_kref.clone(), rev.kref.clone()))
+        .map(|(item_kref, rev_kref)| async move {
+            let artifact = match tokio::time::timeout(
+                ARTIFACT_LOOKUP_TIMEOUT,
+                client.get_artifact_by_name(&rev_kref, "workflow.yaml"),
+            )
             .await
-        {
+            {
+                Ok(Ok(artifact)) => artifact,
+                Ok(Err(e)) => {
+                    tracing::debug!(
+                        revision_kref = %rev_kref,
+                        "workflow artifact lookup skipped: {e}"
+                    );
+                    return None;
+                }
+                Err(_) => {
+                    tracing::debug!(
+                        revision_kref = %rev_kref,
+                        timeout_ms = ARTIFACT_LOOKUP_TIMEOUT.as_millis(),
+                        "workflow artifact lookup timed out"
+                    );
+                    return None;
+                }
+            };
+
             let path = artifact
                 .location
                 .strip_prefix("file://")
                 .unwrap_or(&artifact.location);
-            if let Ok(yaml) = tokio::fs::read_to_string(path).await {
-                rev.metadata.insert("definition".to_string(), yaml);
+            match tokio::fs::read_to_string(path).await {
+                Ok(yaml) => Some((item_kref, yaml)),
+                Err(e) => {
+                    tracing::debug!(
+                        revision_kref = %rev_kref,
+                        artifact_path = %path,
+                        "workflow artifact read skipped: {e}"
+                    );
+                    None
+                }
             }
+        });
+
+    for (item_kref, yaml) in futures_util::future::join_all(lookups)
+        .await
+        .into_iter()
+        .flatten()
+    {
+        if let Some(rev) = revs.get_mut(&item_kref) {
+            rev.metadata.insert("definition".to_string(), yaml);
         }
     }
 }
@@ -1088,16 +1182,12 @@ pub async fn handle_list_workflows(
         Err(e) => {
             // On API error, try to return stale cache rather than an error
             if query.q.is_none() {
-                let lock = WORKFLOW_CACHE.get_or_init(|| Mutex::new(None));
+                let lock = WORKFLOW_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
                 let cache = lock.lock();
-                if let Some(ref c) = *cache {
-                    if c.include_deprecated != query.include_deprecated
-                        || c.include_definition != query.include_definition
-                    {
-                        return kumiho_err(e).into_response();
-                    }
+                if let Some(c) = cache.get(&(query.include_deprecated, query.include_definition)) {
                     tracing::warn!("Workflows list failed, returning stale cache: {e}");
-                    return Json(serde_json::json!({ "workflows": c.workflows })).into_response();
+                    return Json(serde_json::json!({ "workflows": c.workflows.clone() }))
+                        .into_response();
                 }
             }
             kumiho_err(e).into_response()
@@ -1306,6 +1396,8 @@ pub async fn handle_create_workflow(
     broadcast_revision_published(&state, &headers, &item.kref, &rev, &body.name);
 
     let workflow = to_workflow_response(&item, Some(&rev), true);
+    upsert_cached_workflow(&workflow);
+    set_cached_revision_workflow(&rev.kref, &workflow);
     (
         StatusCode::CREATED,
         Json(serde_json::json!({ "workflow": workflow })),
@@ -1354,39 +1446,15 @@ pub async fn handle_update_workflow(
     persist_workflow_artifact(&client, &rev.kref, rev.number, &body.name, &body.definition).await;
     let _ = client.tag_revision(&rev.kref, "published").await;
 
-    let items = match client.list_items(&workflow_space_path(&state), true).await {
-        Ok(items) => items,
-        Err(e) => return kumiho_err(e).into_response(),
-    };
-
-    invalidate_cache();
+    let item = workflow_item_from_body(&kref, &body);
+    let workflow = to_workflow_response(&item, Some(&rev), true);
+    upsert_cached_workflow(&workflow);
+    set_cached_revision_workflow(&rev.kref, &workflow);
     sync_cron_for_workflow(&state, &body.name, &body.definition);
 
     broadcast_revision_published(&state, &headers, &kref, &rev, &body.name);
 
-    let item = items.iter().find(|i| i.kref == kref);
-    match item {
-        Some(item) => {
-            let workflow = to_workflow_response(item, Some(&rev), true);
-            Json(serde_json::json!({ "workflow": workflow })).into_response()
-        }
-        None => {
-            let fallback = ItemResponse {
-                kref: kref.clone(),
-                name: body.name.clone(),
-                item_name: body.name.clone(),
-                kind: "workflow".to_string(),
-                deprecated: false,
-                created_at: None,
-                author: None,
-                username: None,
-                author_display: None,
-                metadata: HashMap::new(),
-            };
-            let workflow = to_workflow_response(&fallback, Some(&rev), true);
-            Json(serde_json::json!({ "workflow": workflow })).into_response()
-        }
-    }
+    Json(serde_json::json!({ "workflow": workflow })).into_response()
 }
 
 /// POST /api/workflows/deprecate
@@ -2593,6 +2661,24 @@ pub async fn handle_workflow_dashboard(
     };
 
     Json(serde_json::json!({ "dashboard": dashboard })).into_response()
+}
+
+#[cfg(test)]
+mod workflow_save_tests {
+    use super::*;
+
+    #[test]
+    fn workflow_item_name_prefers_kref_slug() {
+        assert_eq!(
+            workflow_item_name_from_kref("kref://Construct/Workflows/my-flow.workflow", "My Flow"),
+            "my-flow"
+        );
+    }
+
+    #[test]
+    fn workflow_item_name_falls_back_to_slugified_body_name() {
+        assert_eq!(workflow_item_name_from_kref("", "My Flow"), "my-flow");
+    }
 }
 
 #[cfg(test)]
