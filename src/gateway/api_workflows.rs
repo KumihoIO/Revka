@@ -63,7 +63,16 @@ struct WorkflowCache {
 }
 
 static WORKFLOW_CACHE: OnceLock<Mutex<Option<WorkflowCache>>> = OnceLock::new();
-const CACHE_TTL_SECS: u64 = 3;
+const CACHE_TTL_SECS: u64 = 30;
+
+static WORKFLOW_REVISION_CACHE: OnceLock<Mutex<HashMap<String, RevisionWorkflowCache>>> =
+    OnceLock::new();
+const REVISION_CACHE_TTL_SECS: u64 = 300;
+
+struct RevisionWorkflowCache {
+    workflow: WorkflowResponse,
+    fetched_at: Instant,
+}
 
 fn get_cached(include_deprecated: bool, include_definition: bool) -> Option<Vec<WorkflowResponse>> {
     let lock = WORKFLOW_CACHE.get_or_init(|| Mutex::new(None));
@@ -98,6 +107,30 @@ pub(super) fn invalidate_cache() {
             c.fetched_at = Instant::now() - std::time::Duration::from_secs(CACHE_TTL_SECS + 1);
         }
     }
+}
+
+fn get_cached_revision_workflow(revision_kref: &str) -> Option<WorkflowResponse> {
+    let lock = WORKFLOW_REVISION_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let cache = lock.lock();
+    cache.get(revision_kref).and_then(|entry| {
+        if entry.fetched_at.elapsed().as_secs() < REVISION_CACHE_TTL_SECS {
+            Some(entry.workflow.clone())
+        } else {
+            None
+        }
+    })
+}
+
+fn set_cached_revision_workflow(revision_kref: &str, workflow: &WorkflowResponse) {
+    let lock = WORKFLOW_REVISION_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut cache = lock.lock();
+    cache.insert(
+        revision_kref.to_string(),
+        RevisionWorkflowCache {
+            workflow: workflow.clone(),
+            fetched_at: Instant::now(),
+        },
+    );
 }
 
 // ── Query / request types ───────────────────────────────────────────────
@@ -1714,6 +1747,10 @@ pub async fn handle_get_workflow_by_revision(
         format!("kref://{kref}")
     };
 
+    if let Some(workflow) = get_cached_revision_workflow(&revision_kref) {
+        return Json(serde_json::json!({ "workflow": workflow })).into_response();
+    }
+
     let client = build_kumiho_client(&state);
 
     let mut rev = match client.get_revision(&revision_kref).await {
@@ -1767,6 +1804,7 @@ pub async fn handle_get_workflow_by_revision(
     };
 
     let workflow = to_workflow_response(&item, Some(&rev), true);
+    set_cached_revision_workflow(&revision_kref, &workflow);
     Json(serde_json::json!({ "workflow": workflow })).into_response()
 }
 
