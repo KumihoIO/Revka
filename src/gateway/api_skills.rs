@@ -39,6 +39,9 @@ use std::time::Instant;
 
 struct SkillCache {
     skills: Vec<SkillResponse>,
+    total_count: u32,
+    page: u32,
+    per_page: u32,
     include_deprecated: bool,
     fetched_at: Instant,
 }
@@ -46,24 +49,39 @@ struct SkillCache {
 static SKILL_CACHE: OnceLock<Mutex<Option<SkillCache>>> = OnceLock::new();
 const CACHE_TTL_SECS: u64 = 30;
 
-fn get_cached_skills(include_deprecated: bool) -> Option<Vec<SkillResponse>> {
+fn get_cached_skills(
+    include_deprecated: bool,
+    page: u32,
+    per_page: u32,
+) -> Option<(Vec<SkillResponse>, u32)> {
     let lock = SKILL_CACHE.get_or_init(|| Mutex::new(None));
     let cache = lock.lock();
     if let Some(ref c) = *cache {
         if c.include_deprecated == include_deprecated
+            && c.page == page
+            && c.per_page == per_page
             && c.fetched_at.elapsed().as_secs() < CACHE_TTL_SECS
         {
-            return Some(c.skills.clone());
+            return Some((c.skills.clone(), c.total_count));
         }
     }
     None
 }
 
-fn set_cached_skills(skills: &[SkillResponse], include_deprecated: bool) {
+fn set_cached_skills(
+    skills: &[SkillResponse],
+    include_deprecated: bool,
+    total_count: u32,
+    page: u32,
+    per_page: u32,
+) {
     let lock = SKILL_CACHE.get_or_init(|| Mutex::new(None));
     let mut cache = lock.lock();
     *cache = Some(SkillCache {
         skills: skills.to_vec(),
+        total_count,
+        page,
+        per_page,
         include_deprecated,
         fetched_at: Instant::now(),
     });
@@ -390,18 +408,15 @@ pub async fn handle_list_skills(
         return e.into_response();
     }
 
+    let per_page = query.per_page.unwrap_or(9).min(50).max(1);
+    let page = query.page.unwrap_or(1).max(1);
+    let skip = ((page - 1) * per_page) as usize;
+
     // Check cache first for non-search list requests
     if query.q.is_none() {
-        if let Some(cached) = get_cached_skills(query.include_deprecated) {
-            let total_count = cached.len() as u32;
-            let per_page = query.per_page.unwrap_or(9).min(50).max(1);
-            let page = query.page.unwrap_or(1).max(1);
-            let skip = ((page - 1) * per_page) as usize;
-            let skills: Vec<_> = cached
-                .into_iter()
-                .skip(skip)
-                .take(per_page as usize)
-                .collect();
+        if let Some((skills, total_count)) =
+            get_cached_skills(query.include_deprecated, page, per_page)
+        {
             return Json(serde_json::json!({
                 "skills": skills,
                 "total_count": total_count,
@@ -434,16 +449,13 @@ pub async fn handle_list_skills(
 
         return match items_result {
             Ok(items) => {
-                let skills = enrich_items(&client, items).await;
-                let total_count = skills.len() as u32;
-                let per_page = query.per_page.unwrap_or(9).min(50).max(1);
-                let page = query.page.unwrap_or(1).max(1);
-                let skip = ((page - 1) * per_page) as usize;
-                let skills: Vec<_> = skills
+                let total_count = items.len() as u32;
+                let page_items: Vec<_> = items
                     .into_iter()
                     .skip(skip)
                     .take(per_page as usize)
                     .collect();
+                let skills = enrich_items(&client, page_items).await;
                 Json(serde_json::json!({
                     "skills": skills,
                     "total_count": total_count,
@@ -494,19 +506,22 @@ pub async fn handle_list_skills(
         let _ = client.ensure_space(&project_name, SKILL_SPACE_NAME).await;
     }
 
-    let skills = enrich_items(&client, items).await;
-    set_cached_skills(&skills, query.include_deprecated);
-
-    // Pagination
-    let total_count = skills.len() as u32;
-    let per_page = query.per_page.unwrap_or(9).min(50).max(1);
-    let page = query.page.unwrap_or(1).max(1);
-    let skip = ((page - 1) * per_page) as usize;
-    let skills: Vec<_> = skills
+    // Pagination before enrichment keeps list views from fetching revisions for
+    // every skill in the space when the UI only renders the current page.
+    let total_count = items.len() as u32;
+    let page_items: Vec<_> = items
         .into_iter()
         .skip(skip)
         .take(per_page as usize)
         .collect();
+    let skills = enrich_items(&client, page_items).await;
+    set_cached_skills(
+        &skills,
+        query.include_deprecated,
+        total_count,
+        page,
+        per_page,
+    );
 
     Json(serde_json::json!({
         "skills": skills,
