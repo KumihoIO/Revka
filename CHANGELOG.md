@@ -7,6 +7,44 @@ Version numbers follow CalVer (`YYYY.M.D`).
 
 - No unreleased changes yet.
 
+## [2026.5.13] - 2026-05-19
+
+### Highlights
+
+- Promoted the 2026.5.13 release with Windows/Kumiho runtime fixes for
+  fresh onboarding, asset browsing after local state resets, and skill
+  artifact path normalization.
+- Fixed Kumiho MCP token precedence so Construct-launched sidecars prefer the
+  onboarded `KUMIHO_SERVICE_TOKEN` instead of inheriting a stale shell-level
+  `KUMIHO_AUTH_TOKEN` from another account.
+- Made the Asset Browser recover text and YAML artifact bodies from Kumiho
+  revision metadata when the recorded local artifact path is missing or points
+  at another machine/OS.
+
+### Gateway And Asset Browser
+
+- Added an authenticated `/api/artifact-body` fallback path that looks up an
+  artifact by stored location, reads its revision metadata, and serves
+  reconstructable text/YAML/base64 payloads with
+  `x-construct-artifact-source: revision-metadata`.
+- Preserved correct 404 behavior for missing binary payloads such as images
+  when Kumiho stores only prompts or summaries rather than the original bytes.
+- Normalized Windows skill markdown artifact paths so browser/editor reads do
+  not fail on mixed path separator or `file://` shape differences.
+
+### Kumiho Runtime
+
+- Reordered Kumiho MCP sidecar token selection to use the Construct onboarding
+  service token first, then fall back to `KUMIHO_AUTH_TOKEN`, then the SDK's
+  local Kumiho authentication file.
+- Added regression coverage for service-token precedence and artifact body
+  metadata fallback behavior.
+
+### Packaging
+
+- Bumped the Rust package, web package, package lock, and Tauri desktop
+  metadata to `2026.5.13`.
+
 ## [2026.5.11] - 2026-05-16
 
 ### Highlights
