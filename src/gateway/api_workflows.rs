@@ -611,6 +611,7 @@ fn to_run_summary(item: &ItemResponse, rev: Option<&RevisionResponse>) -> Workfl
     let get = |key: &str| -> String { meta.and_then(|m| m.get(key)).cloned().unwrap_or_default() };
 
     let run_id_meta = get("run_id");
+    let status = normalize_run_status(&get("status"), &get("steps_completed"), &get("step_count"));
     WorkflowRunSummary {
         kref: item.kref.clone(),
         run_id: if run_id_meta.is_empty() {
@@ -622,7 +623,7 @@ fn to_run_summary(item: &ItemResponse, rev: Option<&RevisionResponse>) -> Workfl
             let wn = get("workflow_name");
             if wn.is_empty() { get("workflow") } else { wn }
         },
-        status: get("status"),
+        status,
         started_at: get("started_at"),
         completed_at: get("completed_at"),
         steps_completed: get("steps_completed"),
@@ -630,6 +631,20 @@ fn to_run_summary(item: &ItemResponse, rev: Option<&RevisionResponse>) -> Workfl
         error: get("error"),
         workflow_item_kref: get("workflow_item_kref"),
         workflow_revision_kref: get("workflow_revision_kref"),
+    }
+}
+
+fn normalize_run_status(status: &str, steps_completed: &str, step_count: &str) -> String {
+    let status = status.to_string();
+    if status != "running" {
+        return status;
+    }
+
+    let completed = steps_completed.parse::<usize>().ok();
+    let count = step_count.parse::<usize>().ok();
+    match (completed, count) {
+        (Some(completed), Some(count)) if count > 0 && completed >= count => "completed".into(),
+        _ => status,
     }
 }
 
@@ -2731,5 +2746,23 @@ mod cancel_tests {
         // bad-request fallback, never silently 200.
         let payload = json!({"error": "missing run_id", "code": "missing_run_id"});
         assert_eq!(cancel_status_for(&payload), StatusCode::BAD_REQUEST);
+    }
+}
+
+#[cfg(test)]
+mod workflow_run_status_tests {
+    use super::normalize_run_status;
+
+    #[test]
+    fn completed_steps_override_stale_running_status() {
+        assert_eq!(normalize_run_status("running", "46", "46"), "completed");
+        assert_eq!(normalize_run_status("running", "47", "46"), "completed");
+    }
+
+    #[test]
+    fn incomplete_running_status_stays_running() {
+        assert_eq!(normalize_run_status("running", "45", "46"), "running");
+        assert_eq!(normalize_run_status("running", "", "46"), "running");
+        assert_eq!(normalize_run_status("running", "46", ""), "running");
     }
 }

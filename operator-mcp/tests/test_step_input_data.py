@@ -15,6 +15,7 @@ and will be revisited in a follow-up PR.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any
 from unittest.mock import patch
@@ -907,3 +908,120 @@ class TestPersistRoundTrip:
             ("kref://rev/latest", "emit-episode__iter_1.md", str(iter_1)),
             ("kref://rev/latest", "emit-episode__iter_2.md", str(iter_2)),
         ]
+
+    @pytest.mark.asyncio
+    async def test_workflow_run_persist_times_out_hung_revision(
+        self,
+        monkeypatch,
+    ):
+        from operator_mcp.workflow.memory import persist_workflow_run
+
+        class FakeSDK:
+            _available = True
+
+            async def ensure_space(self, _project: str, _space: str) -> None:
+                return None
+
+            async def list_items(self, _space_path: str) -> list[dict[str, Any]]:
+                return []
+
+            async def create_item(
+                self,
+                _space_path: str,
+                name: str,
+                kind: str,
+                metadata: dict[str, Any] | None = None,
+            ) -> dict[str, str]:
+                return {"kref": f"kref://item/{name}", "kind": kind}
+
+            async def create_revision(
+                self,
+                _item_kref: str,
+                _metadata: dict[str, Any],
+                tag: str | None = "latest",
+            ) -> dict[str, str]:
+                await asyncio.Event().wait()
+                return {"kref": f"kref://rev/{tag or 'untagged'}"}
+
+        import operator_mcp.operator_mcp as op_mod
+        monkeypatch.setattr(op_mod, "KUMIHO_SDK", FakeSDK(), raising=False)
+        monkeypatch.setenv("CONSTRUCT_WORKFLOW_MEMORY_TIMEOUT_SECS", "0.01")
+
+        item_kref = await persist_workflow_run(
+            workflow_name="room",
+            run_id="run-1234567890",
+            status="completed",
+            inputs={},
+            step_results={"draft": {"status": "completed"}},
+        )
+
+        assert item_kref is None
+
+    @pytest.mark.asyncio
+    async def test_workflow_run_artifact_attach_only_for_terminal_runs(
+        self,
+        tmp_path,
+        monkeypatch,
+    ):
+        from operator_mcp.workflow.memory import persist_workflow_run
+
+        class FakeSDK:
+            _available = True
+
+            def __init__(self) -> None:
+                self.create_artifact_calls: list[tuple[str, str, str]] = []
+
+            async def ensure_space(self, _project: str, _space: str) -> None:
+                return None
+
+            async def list_items(self, _space_path: str) -> list[dict[str, Any]]:
+                return []
+
+            async def create_item(
+                self,
+                _space_path: str,
+                name: str,
+                kind: str,
+                metadata: dict[str, Any] | None = None,
+            ) -> dict[str, str]:
+                return {"kref": f"kref://item/{name}", "kind": kind}
+
+            async def create_revision(
+                self,
+                _item_kref: str,
+                _metadata: dict[str, Any],
+                tag: str | None = "latest",
+            ) -> dict[str, str]:
+                return {"kref": f"kref://rev/{tag or 'untagged'}"}
+
+            async def create_artifact(
+                self,
+                revision_kref: str,
+                name: str,
+                location: str,
+            ) -> dict[str, str]:
+                self.create_artifact_calls.append((revision_kref, name, location))
+                return {"kref": f"{revision_kref}#{name}"}
+
+        artifact = tmp_path / "draft.md"
+        artifact.write_text("# draft\n", encoding="utf-8")
+
+        sdk = FakeSDK()
+        import operator_mcp.operator_mcp as op_mod
+        monkeypatch.setattr(op_mod, "KUMIHO_SDK", sdk, raising=False)
+
+        item_kref = await persist_workflow_run(
+            workflow_name="room",
+            run_id="run-1234567890",
+            status="running",
+            inputs={},
+            step_results={
+                "draft": {
+                    "status": "completed",
+                    "output_data": {"artifact_path": str(artifact)},
+                },
+            },
+        )
+
+        assert item_kref is not None
+        assert sdk.create_artifact_calls == []

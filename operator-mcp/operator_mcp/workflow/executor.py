@@ -5201,7 +5201,22 @@ async def execute_workflow(
                     workflow_revision_kref=state.workflow_revision_kref,
                 )
                 if run_kref:
-                    await link_agents_to_run(run_kref, step_dicts)
+                    try:
+                        link_timeout = max(
+                            0.0,
+                            float(os.getenv("CONSTRUCT_WORKFLOW_MEMORY_LINK_TIMEOUT_SECS", "15")),
+                        )
+                    except ValueError:
+                        link_timeout = 15.0
+                    if link_timeout:
+                        await asyncio.wait_for(
+                            link_agents_to_run(run_kref, step_dicts),
+                            timeout=link_timeout,
+                        )
+                    else:
+                        await link_agents_to_run(run_kref, step_dicts)
+            except asyncio.TimeoutError:
+                _log("workflow: memory link timed out (non-fatal)")
             except Exception as mem_exc:
                 _log(f"workflow: memory persist failed (non-fatal): {mem_exc}")
 
