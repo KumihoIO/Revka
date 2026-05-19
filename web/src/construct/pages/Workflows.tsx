@@ -79,6 +79,21 @@ export default function Workflows() {
       .finally(() => setLoading(false));
   };
 
+  const applySavedWorkflow = (workflow: WorkflowDefinition) => {
+    setDefinitions((current) => {
+      const index = current.findIndex((entry) => entry.kref === workflow.kref);
+      if (index === -1) return [workflow, ...current];
+
+      const next = [...current];
+      next[index] = { ...next[index], ...workflow };
+      return next;
+    });
+  };
+
+  const refreshInBackground = () => {
+    void load();
+  };
+
   useEffect(() => {
     load();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -331,9 +346,10 @@ export default function Workflows() {
           definition: values.definition,
         };
         const updated = await updateWorkflow(request);
-        await load();
+        applySavedWorkflow(updated);
         setSelectedWorkflowKref(updated.kref);
         setNotice({ tone: 'success', message: tpl('workflows.toast.updated', { name: updated.name }) });
+        refreshInBackground();
       } else {
         const request: WorkflowCreateRequest = {
           name: values.name,
@@ -343,9 +359,10 @@ export default function Workflows() {
           definition: values.definition,
         };
         const created = await createWorkflow(request);
-        await load();
+        applySavedWorkflow(created);
         setSelectedWorkflowKref(created.kref);
         setNotice({ tone: 'success', message: tpl('workflows.toast.created', { name: created.name }) });
+        refreshInBackground();
       }
       setEditorMode(null);
     } catch (err) {
