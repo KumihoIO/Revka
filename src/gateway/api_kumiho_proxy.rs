@@ -295,7 +295,7 @@ pub async fn handle_kumiho_proxy(
     let mut url = format!("{}/api/v1/{}", base_url.trim_end_matches('/'), path);
     if !params.is_empty() {
         let mut params: Vec<(&String, &String)> = params.iter().collect();
-        params.sort_by(|(a, _), (b, _)| a.cmp(b));
+        params.sort_by_key(|(key, _)| *key);
         let qs: Vec<String> = params
             .into_iter()
             .map(|(k, v)| format!("{}={}", urlencoding::encode(k), urlencoding::encode(v)))

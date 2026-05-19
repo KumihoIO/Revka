@@ -984,6 +984,7 @@ class WorkflowState(BaseModel):
     status: WorkflowStatus = WorkflowStatus.PENDING
     inputs: dict[str, Any] = Field(default_factory=dict)
     step_results: dict[str, StepResult] = Field(default_factory=dict)
+    steps_total: int = 0
     current_step: str | None = None
     iteration_counts: dict[str, int] = Field(default_factory=dict)  # For goto loops
     started_at: str | None = None

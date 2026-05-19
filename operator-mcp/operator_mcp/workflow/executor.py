@@ -4563,12 +4563,14 @@ def _failed_preflight_state(
             state.workflow_item_kref = workflow_item_kref
         if workflow_revision_kref and not state.workflow_revision_kref:
             state.workflow_revision_kref = workflow_revision_kref
+        state.steps_total = len(wf.steps)
     else:
         state = WorkflowState(
             workflow_name=wf.name,
             run_id=run_id or str(uuid.uuid4()),
             status=WorkflowStatus.FAILED,
             inputs=_merge_input_defaults(wf, inputs),
+            steps_total=len(wf.steps),
             started_at=now,
             trigger_context=trigger_context or {},
             workflow_item_kref=workflow_item_kref,
@@ -4764,6 +4766,7 @@ async def execute_workflow(
         # resume.
         if target_step_id:
             state.target_step_id = target_step_id
+        state.steps_total = len(wf.steps)
     else:
         # Merge declared input defaults with caller-provided values.
         # Caller values win; defaults fill in anything not explicitly passed.
@@ -4773,6 +4776,7 @@ async def execute_workflow(
             run_id=run_id or str(uuid.uuid4()),
             status=WorkflowStatus.RUNNING,
             inputs=merged_inputs,
+            steps_total=len(wf.steps),
             started_at=datetime.now(timezone.utc).isoformat(),
             trigger_context=trigger_context or {},
             workflow_item_kref=workflow_item_kref,

@@ -392,10 +392,7 @@ async fn fetch_recent_runs_for_dashboard(
             });
             items.truncate(5);
 
-            let runs: Vec<WorkflowRunSummary> = items
-                .iter()
-                .map(|item| to_run_summary(item, None))
-                .collect();
+            let runs: Vec<WorkflowRunSummary> = items.iter().map(to_run_summary_fast).collect();
 
             (runs, total)
         }
@@ -905,6 +902,132 @@ fn to_run_summary(item: &ItemResponse, rev: Option<&RevisionResponse>) -> Workfl
         workflow_item_kref: get("workflow_item_kref"),
         workflow_revision_kref: get("workflow_revision_kref"),
     }
+}
+
+fn to_run_summary_fast(item: &ItemResponse) -> WorkflowRunSummary {
+    let mut summary = to_run_summary(item, None);
+    apply_local_checkpoint_progress(&mut summary);
+    summary
+}
+
+fn is_safe_checkpoint_run_id(run_id: &str) -> bool {
+    !run_id.is_empty()
+        && run_id.len() <= 128
+        && run_id
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+}
+
+fn workflow_checkpoint_path(run_id: &str) -> Option<std::path::PathBuf> {
+    if !is_safe_checkpoint_run_id(run_id) {
+        return None;
+    }
+    directories::UserDirs::new().map(|dirs| {
+        dirs.home_dir()
+            .join(".construct")
+            .join("workflow_checkpoints")
+            .join(format!("{run_id}.json"))
+    })
+}
+
+fn parse_usize_json(value: Option<&serde_json::Value>) -> Option<usize> {
+    match value? {
+        serde_json::Value::Number(n) => n.as_u64().map(|v| v as usize),
+        serde_json::Value::String(s) => s.parse::<usize>().ok(),
+        _ => None,
+    }
+}
+
+fn nonempty_json_string<'a>(value: &'a serde_json::Value, key: &str) -> Option<&'a str> {
+    value
+        .get(key)
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+}
+
+fn apply_checkpoint_value_to_summary(
+    summary: &mut WorkflowRunSummary,
+    checkpoint: &serde_json::Value,
+) {
+    if let Some(checkpoint_run_id) = nonempty_json_string(checkpoint, "run_id") {
+        if checkpoint_run_id != summary.run_id {
+            return;
+        }
+    }
+
+    if let Some(status) = nonempty_json_string(checkpoint, "status") {
+        summary.status = status.to_string();
+    }
+    if let Some(started_at) = nonempty_json_string(checkpoint, "started_at") {
+        summary.started_at = started_at.to_string();
+    }
+    if let Some(completed_at) = nonempty_json_string(checkpoint, "completed_at") {
+        summary.completed_at = completed_at.to_string();
+    }
+    if let Some(error) = nonempty_json_string(checkpoint, "error") {
+        summary.error = error.to_string();
+    }
+    if let Some(workflow_item_kref) = nonempty_json_string(checkpoint, "workflow_item_kref") {
+        summary.workflow_item_kref = workflow_item_kref.to_string();
+    }
+    if let Some(workflow_revision_kref) = nonempty_json_string(checkpoint, "workflow_revision_kref")
+    {
+        summary.workflow_revision_kref = workflow_revision_kref.to_string();
+    }
+
+    let step_results = checkpoint
+        .get("step_results")
+        .and_then(|value| value.as_object());
+    if let Some(steps) = step_results {
+        let completed = steps
+            .values()
+            .filter(|step| {
+                matches!(
+                    step.get("status")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or_default(),
+                    "completed" | "skipped"
+                )
+            })
+            .count();
+        summary.steps_completed = completed.to_string();
+    }
+
+    let explicit_total = parse_usize_json(checkpoint.get("steps_total"))
+        .or_else(|| parse_usize_json(checkpoint.get("step_count")));
+    let inferred_completed_total = step_results.and_then(|steps| {
+        if summary.status == "completed" {
+            Some(steps.len())
+        } else {
+            None
+        }
+    });
+    if let Some(total) = explicit_total {
+        summary.steps_total = total.to_string();
+    } else if summary.steps_total.is_empty() || summary.steps_total == "0" {
+        if let Some(total) = inferred_completed_total {
+            summary.steps_total = total.to_string();
+        }
+    }
+
+    summary.status = normalize_run_status(
+        &summary.status,
+        &summary.steps_completed,
+        &summary.steps_total,
+    );
+}
+
+fn apply_local_checkpoint_progress(summary: &mut WorkflowRunSummary) {
+    let Some(path) = workflow_checkpoint_path(&summary.run_id) else {
+        return;
+    };
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return;
+    };
+    let Ok(checkpoint) = serde_json::from_str::<serde_json::Value>(&content) else {
+        return;
+    };
+    apply_checkpoint_value_to_summary(summary, &checkpoint);
 }
 
 fn normalize_run_status(status: &str, steps_completed: &str, step_count: &str) -> String {
@@ -2213,10 +2336,7 @@ pub async fn handle_list_workflow_runs(
             });
             items.truncate(query.limit);
 
-            let runs: Vec<WorkflowRunSummary> = items
-                .iter()
-                .map(|item| to_run_summary(item, None))
-                .collect();
+            let runs: Vec<WorkflowRunSummary> = items.iter().map(to_run_summary_fast).collect();
 
             set_cached_workflow_runs(query.limit, workflow_filter, &runs);
             Json(serde_json::json!({ "runs": runs, "count": runs.len() })).into_response()
@@ -3014,7 +3134,24 @@ mod cancel_tests {
 
 #[cfg(test)]
 mod workflow_run_status_tests {
-    use super::normalize_run_status;
+    use super::{WorkflowRunSummary, apply_checkpoint_value_to_summary, normalize_run_status};
+    use serde_json::json;
+
+    fn summary(run_id: &str, status: &str) -> WorkflowRunSummary {
+        WorkflowRunSummary {
+            kref: "kref://Construct/WorkflowRuns/test.workflow_run".to_string(),
+            run_id: run_id.to_string(),
+            workflow_name: "test".to_string(),
+            status: status.to_string(),
+            started_at: String::new(),
+            completed_at: String::new(),
+            steps_completed: String::new(),
+            steps_total: String::new(),
+            error: String::new(),
+            workflow_item_kref: String::new(),
+            workflow_revision_kref: String::new(),
+        }
+    }
 
     #[test]
     fn completed_steps_override_stale_running_status() {
@@ -3027,5 +3164,82 @@ mod workflow_run_status_tests {
         assert_eq!(normalize_run_status("running", "45", "46"), "running");
         assert_eq!(normalize_run_status("running", "", "46"), "running");
         assert_eq!(normalize_run_status("running", "46", ""), "running");
+    }
+
+    #[test]
+    fn checkpoint_progress_fills_completed_run_total_from_observed_steps() {
+        let checkpoint = json!({
+            "run_id": "run-1",
+            "status": "completed",
+            "step_results": {
+                "one": { "status": "completed" },
+                "two": { "status": "skipped" }
+            }
+        });
+        let mut run = summary("run-1", "running");
+
+        apply_checkpoint_value_to_summary(&mut run, &checkpoint);
+
+        assert_eq!(run.status, "completed");
+        assert_eq!(run.steps_completed, "2");
+        assert_eq!(run.steps_total, "2");
+    }
+
+    #[test]
+    fn checkpoint_progress_preserves_unknown_total_for_running_run() {
+        let checkpoint = json!({
+            "run_id": "run-1",
+            "status": "running",
+            "step_results": {
+                "one": { "status": "completed" },
+                "two": { "status": "running" }
+            }
+        });
+        let mut run = summary("run-1", "running");
+
+        apply_checkpoint_value_to_summary(&mut run, &checkpoint);
+
+        assert_eq!(run.status, "running");
+        assert_eq!(run.steps_completed, "1");
+        assert_eq!(run.steps_total, "");
+    }
+
+    #[test]
+    fn checkpoint_progress_uses_explicit_total() {
+        let checkpoint = json!({
+            "run_id": "run-1",
+            "status": "running",
+            "steps_total": 5,
+            "step_results": {
+                "one": { "status": "completed" },
+                "two": { "status": "completed" }
+            }
+        });
+        let mut run = summary("run-1", "running");
+
+        apply_checkpoint_value_to_summary(&mut run, &checkpoint);
+
+        assert_eq!(run.status, "running");
+        assert_eq!(run.steps_completed, "2");
+        assert_eq!(run.steps_total, "5");
+    }
+
+    #[test]
+    fn checkpoint_progress_ignores_mismatched_run_id() {
+        let checkpoint = json!({
+            "run_id": "other-run",
+            "status": "completed",
+            "steps_total": 1,
+            "step_results": {
+                "one": { "status": "completed" }
+            }
+        });
+        let mut run = summary("run-1", "running");
+
+        apply_checkpoint_value_to_summary(&mut run, &checkpoint);
+
+        assert_eq!(run.status, "running");
+        assert_eq!(run.steps_completed, "");
+        assert_eq!(run.steps_total, "");
     }
 }

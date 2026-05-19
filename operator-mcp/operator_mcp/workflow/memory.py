@@ -245,6 +245,12 @@ async def persist_workflow_run(
         item_kref = ""
         _log(f"workflow_memory: persisting run={run_id[:8]} item_name={item_name}")
 
+        completed_count = sum(
+            1 for sr in step_results.values()
+            if sr.get("status") in ("completed", "skipped")
+        )
+        effective_steps_total = max(steps_total or 0, len(step_results))
+
         # Check if item already exists (e.g. "running" entry created at start)
         try:
             existing = await _kumiho_with_timeout(
@@ -267,8 +273,17 @@ async def persist_workflow_run(
                     kind="workflow_run",
                     metadata={
                         "workflow": workflow_name,
+                        "workflow_name": workflow_name,
                         "run_id": run_id,
                         "status": status,
+                        "started_at": started_at or "",
+                        "completed_at": completed_at or "",
+                        "error": error[:500],
+                        "step_count": str(len(step_results)),
+                        "steps_completed": str(completed_count),
+                        "steps_total": str(effective_steps_total),
+                        "workflow_item_kref": workflow_item_kref,
+                        "workflow_revision_kref": workflow_revision_kref,
                     },
                 ),
                 "create workflow run item",
@@ -367,14 +382,6 @@ async def persist_workflow_run(
                 entry["_truncated"] = True
                 entry_json = json.dumps(entry, default=str)
             step_summary[sid] = entry_json
-
-        # Count completed / failed / total for dashboard
-        completed_count = sum(
-            1 for sr in step_results.values()
-            if sr.get("status") in ("completed", "skipped")
-        )
-
-        effective_steps_total = max(steps_total or 0, len(step_results))
 
         rev_metadata: dict[str, str] = {
             "workflow": workflow_name,
