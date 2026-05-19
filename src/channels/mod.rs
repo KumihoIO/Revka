@@ -4839,7 +4839,7 @@ pub async fn doctor_channels(config: Config) -> Result<()> {
 
 /// Start all configured channels and route messages to the agent.
 pub async fn start_channels(config: Config) -> Result<()> {
-    start_channels_with_mcp_registry(config, None).await
+    Box::pin(start_channels_with_mcp_registry(config, None)).await
 }
 
 /// Start all configured channels, optionally reusing a daemon-owned MCP registry.

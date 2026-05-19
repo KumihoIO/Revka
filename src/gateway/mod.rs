@@ -483,7 +483,7 @@ impl AppState {
 
 /// Run the HTTP gateway using axum with proper HTTP/1.1 compliance.
 pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
-    run_gateway_with_mcp_registry(host, port, config, None).await
+    Box::pin(run_gateway_with_mcp_registry(host, port, config, None)).await
 }
 
 /// Run the HTTP gateway, optionally reusing a daemon-owned MCP registry.
