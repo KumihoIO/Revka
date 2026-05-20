@@ -223,9 +223,14 @@ class RunLog:
             "stderr": stderr[-2000:] if stderr else "",
         }
         self._append(entry)
-        if exit_code and exit_code != 0:
+        if exit_code is None or exit_code != 0:
+            self._status = "failed"
             self._errors.append(entry)
             self._last_failing_command = entry
+        else:
+            self._status = "completed"
+        if stdout:
+            self._last_message = stdout.strip()
 
     def record_prompt(self, prompt: str) -> None:
         """Record the initial prompt sent to the agent."""
@@ -415,9 +420,16 @@ def load_log_from_disk(agent_id: str) -> RunLog | None:
                             "total_cost_usd": log._usage.get("total_cost_usd", 0) + (usage.get("totalCostUsd") or 0),
                         }
                 elif kind == "subprocess":
-                    if entry.get("exit_code") and entry["exit_code"] != 0:
+                    exit_code = entry.get("exit_code")
+                    if exit_code is None or exit_code != 0:
+                        log._status = "failed"
                         log._errors.append(entry)
                         log._last_failing_command = entry
+                    else:
+                        log._status = "completed"
+                    stdout = entry.get("stdout", "")
+                    if stdout:
+                        log._last_message = stdout.strip()
 
     except Exception as e:
         _log(f"RunLog: failed to load {agent_id}: {e}")

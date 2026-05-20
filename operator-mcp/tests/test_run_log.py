@@ -7,7 +7,14 @@ from unittest.mock import patch
 
 import pytest
 
-from operator_mcp.run_log import RunLog, get_or_create_log, get_log, cleanup_logs, _LOGS
+from operator_mcp.run_log import (
+    RunLog,
+    get_or_create_log,
+    get_log,
+    cleanup_logs,
+    load_log_from_disk,
+    _LOGS,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -129,12 +136,53 @@ class TestRunLogRecording:
 
     def test_record_subprocess(self, log):
         log.record_subprocess("npm test", exit_code=1, stdout="FAIL", stderr="error")
-        assert log.get_summary()["error_count"] == 1
-        assert log.get_summary()["last_failing_command"]["command"] == "npm test"
+        summary = log.get_summary()
+        assert summary["status"] == "failed"
+        assert summary["error_count"] == 1
+        assert summary["last_failing_command"]["command"] == "npm test"
+        assert summary["last_message"] == "FAIL"
 
     def test_subprocess_success(self, log):
         log.record_subprocess("npm build", exit_code=0, stdout="OK")
-        assert log.get_summary()["error_count"] == 0
+        summary = log.get_summary()
+        assert summary["status"] == "completed"
+        assert summary["error_count"] == 0
+        assert summary["last_message"] == "OK"
+
+    def test_subprocess_status_replays_from_disk(self, log, tmp_path):
+        log.record_subprocess("npm build", exit_code=0, stdout="OK")
+        _LOGS.clear()
+
+        with patch("operator_mcp.run_log._RUNLOGS_DIR", str(tmp_path)):
+            loaded = load_log_from_disk("test-agent-1")
+
+        assert loaded is not None
+        summary = loaded.get_summary()
+        assert summary["status"] == "completed"
+        assert summary["last_message"] == "OK"
+
+    def test_workflow_subprocess_output_prefers_full_stdout_buffer(self, log):
+        from operator_mcp.agent_state import AGENTS, ManagedAgent
+        from operator_mcp.patterns.refinement import _get_agent_output
+
+        agent = ManagedAgent(
+            id="test-agent-1",
+            agent_type="codex",
+            title="wf-test",
+            cwd="/tmp",
+            status="idle",
+        )
+        agent.stdout_buffer = "x" * 5000
+        AGENTS[agent.id] = agent
+        log.record_subprocess("codex exec", exit_code=0, stdout="short")
+
+        try:
+            output, files = _get_agent_output(agent.id)
+        finally:
+            AGENTS.pop(agent.id, None)
+
+        assert output == agent.stdout_buffer
+        assert files == []
 
 
 class TestRunLogQueries:
