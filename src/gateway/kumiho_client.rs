@@ -9,7 +9,8 @@ use crate::config::Config;
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Json, Response};
 use rand::RngExt;
-use reqwest::Client;
+use reqwest::{Client, Method};
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -22,8 +23,9 @@ use std::time::{Duration, Instant};
 /// `AppState`.
 pub fn build_client_from_config(config: &Config) -> KumihoClient {
     let base_url = config.kumiho.api_url.clone();
-    let service_token = std::env::var("KUMIHO_SERVICE_TOKEN").unwrap_or_default();
-    KumihoClient::new(base_url, service_token)
+    let service_token = configured_service_token();
+    let auth_token = configured_auth_token(&service_token);
+    KumihoClient::new_with_auth_token(base_url, service_token, auth_token)
 }
 
 /// Convert a human-readable name to a kref-safe slug (lowercase, hyphens, no spaces).
@@ -49,12 +51,32 @@ fn item_kref_without_selectors(kref: &str) -> &str {
     kref.split_once('?').map_or(kref, |(base, _)| base)
 }
 
+pub(crate) fn configured_service_token() -> String {
+    std::env::var("KUMIHO_SERVICE_TOKEN")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .or_else(|| {
+            std::env::var("KUMIHO_AUTH_TOKEN")
+                .ok()
+                .filter(|v| !v.trim().is_empty())
+        })
+        .unwrap_or_default()
+}
+
+pub(crate) fn configured_auth_token(service_token: &str) -> String {
+    std::env::var("KUMIHO_AUTH_TOKEN")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or_else(|| service_token.to_string())
+}
+
 /// Kumiho FastAPI client.
 #[derive(Clone)]
 pub struct KumihoClient {
     client: Client,
     base_url: String,
     service_token: String,
+    auth_token: String,
 }
 
 // ── Response types (match Kumiho FastAPI JSON) ──────────────────────────
@@ -416,6 +438,15 @@ impl KumihoClient {
     ///
     /// `service_token` is sent as `X-Kumiho-Token` on every request.
     pub fn new(base_url: String, service_token: String) -> Self {
+        Self::new_with_auth_token(base_url, service_token.clone(), service_token)
+    }
+
+    /// Create a new Kumiho client with separate FastAPI and SDK auth tokens.
+    pub fn new_with_auth_token(
+        base_url: String,
+        service_token: String,
+        auth_token: String,
+    ) -> Self {
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(20))
             .connect_timeout(std::time::Duration::from_secs(5))
@@ -428,6 +459,7 @@ impl KumihoClient {
             client,
             base_url: base_url.trim_end_matches('/').to_string(),
             service_token,
+            auth_token,
         }
     }
 
@@ -440,6 +472,57 @@ impl KumihoClient {
 
     fn url(&self, path: &str) -> String {
         format!("{}/api/v1{}", self.base_url, path)
+    }
+
+    fn bridge_token(&self) -> &str {
+        if self.auth_token.trim().is_empty() {
+            &self.service_token
+        } else {
+            &self.auth_token
+        }
+    }
+
+    async fn bridge_json<T>(
+        &self,
+        method: Method,
+        path: &str,
+        query: Vec<(String, String)>,
+        body: Option<serde_json::Value>,
+    ) -> Option<Result<T>>
+    where
+        T: DeserializeOwned,
+    {
+        let response = crate::gateway::kumiho_bridge::send_raw(
+            &self.client,
+            method,
+            path,
+            query,
+            self.bridge_token(),
+            body,
+        )
+        .await?;
+        Some(response.and_then(|raw| {
+            serde_json::from_str::<T>(&raw.body).map_err(|e| KumihoError::Decode(e.to_string()))
+        }))
+    }
+
+    async fn bridge_unit(
+        &self,
+        method: Method,
+        path: &str,
+        query: Vec<(String, String)>,
+        body: Option<serde_json::Value>,
+    ) -> Option<Result<()>> {
+        let response = crate::gateway::kumiho_bridge::send_raw(
+            &self.client,
+            method,
+            path,
+            query,
+            self.bridge_token(),
+            body,
+        )
+        .await?;
+        Some(response.map(|_| ()))
     }
 
     async fn check_response(&self, resp: reqwest::Response) -> Result<reqwest::Response> {
@@ -625,6 +708,22 @@ impl KumihoClient {
             description: None,
         };
 
+        if let Some(result) = self
+            .bridge_unit(
+                Method::POST,
+                "/projects",
+                Vec::new(),
+                Some(serde_json::to_value(&body).unwrap_or_default()),
+            )
+            .await
+        {
+            match result {
+                Ok(()) => return Ok(()),
+                Err(KumihoError::Api { status: 409, .. }) => return Ok(()),
+                Err(e) => return Err(e),
+            }
+        }
+
         let resp = self
             .send_no_retry(|| {
                 self.client
@@ -652,6 +751,22 @@ impl KumihoClient {
             parent_path: format!("/{project}"),
             name: space_name.to_string(),
         };
+
+        if let Some(result) = self
+            .bridge_unit(
+                Method::POST,
+                "/spaces",
+                Vec::new(),
+                Some(serde_json::to_value(&body).unwrap_or_default()),
+            )
+            .await
+        {
+            match result {
+                Ok(()) => return Ok(()),
+                Err(KumihoError::Api { status: 409, .. }) => return Ok(()),
+                Err(e) => return Err(e),
+            }
+        }
 
         let resp = self
             .send_no_retry(|| {
@@ -684,6 +799,22 @@ impl KumihoClient {
             name: space_name.to_string(),
         };
 
+        if let Some(result) = self
+            .bridge_unit(
+                Method::POST,
+                "/spaces",
+                Vec::new(),
+                Some(serde_json::to_value(&body).unwrap_or_default()),
+            )
+            .await
+        {
+            match result {
+                Ok(()) => return Ok(()),
+                Err(KumihoError::Api { status: 409, .. }) => return Ok(()),
+                Err(e) => return Err(e),
+            }
+        }
+
         let resp = self
             .send_no_retry(|| {
                 self.client
@@ -708,6 +839,21 @@ impl KumihoClient {
         parent_path: &str,
         recursive: bool,
     ) -> Result<Vec<SpaceResponse>> {
+        if let Some(result) = self
+            .bridge_json(
+                Method::GET,
+                "/spaces",
+                vec![
+                    ("parent_path".to_string(), parent_path.to_string()),
+                    ("recursive".to_string(), recursive.to_string()),
+                ],
+                None,
+            )
+            .await
+        {
+            return result;
+        }
+
         let resp = self
             .send_with_retry(|| {
                 self.client
@@ -748,6 +894,26 @@ impl KumihoClient {
     ) -> Result<Vec<ItemResponse>> {
         let limit_s = limit.to_string();
         let offset_s = offset.to_string();
+        if let Some(result) = self
+            .bridge_json(
+                Method::GET,
+                "/items",
+                vec![
+                    ("space_path".to_string(), space_path.to_string()),
+                    (
+                        "include_deprecated".to_string(),
+                        include_deprecated.to_string(),
+                    ),
+                    ("limit".to_string(), limit_s.clone()),
+                    ("offset".to_string(), offset_s.clone()),
+                ],
+                None,
+            )
+            .await
+        {
+            return result;
+        }
+
         let resp = self
             .send_with_retry(|| {
                 self.client
@@ -781,6 +947,25 @@ impl KumihoClient {
         name_filter: &str,
         include_deprecated: bool,
     ) -> Result<Vec<ItemResponse>> {
+        if let Some(result) = self
+            .bridge_json(
+                Method::GET,
+                "/items",
+                vec![
+                    ("space_path".to_string(), space_path.to_string()),
+                    ("name_filter".to_string(), name_filter.to_string()),
+                    (
+                        "include_deprecated".to_string(),
+                        include_deprecated.to_string(),
+                    ),
+                ],
+                None,
+            )
+            .await
+        {
+            return result;
+        }
+
         let resp = self
             .send_with_retry(|| {
                 self.client
@@ -818,6 +1003,18 @@ impl KumihoClient {
             metadata,
         };
 
+        if let Some(result) = self
+            .bridge_json(
+                Method::POST,
+                "/items",
+                Vec::new(),
+                Some(serde_json::to_value(&body).unwrap_or_default()),
+            )
+            .await
+        {
+            return result;
+        }
+
         let resp = self
             .send_no_retry(|| {
                 self.client
@@ -836,6 +1033,21 @@ impl KumihoClient {
     /// Deprecate or restore an item.
     pub async fn deprecate_item(&self, kref: &str, deprecated: bool) -> Result<ItemResponse> {
         let item_kref = item_kref_without_selectors(kref);
+        if let Some(result) = self
+            .bridge_json(
+                Method::POST,
+                "/items/deprecate",
+                vec![
+                    ("kref".to_string(), item_kref.to_string()),
+                    ("deprecated".to_string(), deprecated.to_string()),
+                ],
+                None,
+            )
+            .await
+        {
+            return result;
+        }
+
         let resp = self
             .send_no_retry(|| {
                 self.client
@@ -864,6 +1076,18 @@ impl KumihoClient {
     /// Get an item by kref.
     pub async fn get_item_by_kref(&self, kref: &str) -> Result<ItemResponse> {
         let item_kref = item_kref_without_selectors(kref);
+        if let Some(result) = self
+            .bridge_json(
+                Method::GET,
+                "/items/by-kref",
+                vec![("kref".to_string(), item_kref.to_string())],
+                None,
+            )
+            .await
+        {
+            return result;
+        }
+
         let resp = self
             .send_with_retry(|| {
                 self.client
@@ -886,6 +1110,21 @@ impl KumihoClient {
 
     async fn delete_item_with_force(&self, kref: &str, force: bool) -> Result<()> {
         let item_kref = item_kref_without_selectors(kref);
+        if let Some(result) = self
+            .bridge_unit(
+                Method::DELETE,
+                "/items/by-kref",
+                vec![
+                    ("kref".to_string(), item_kref.to_string()),
+                    ("force".to_string(), force.to_string()),
+                ],
+                None,
+            )
+            .await
+        {
+            return result;
+        }
+
         let resp = self
             .send_no_retry(|| {
                 self.client
@@ -910,6 +1149,26 @@ impl KumihoClient {
         kind: &str,
         include_deprecated: bool,
     ) -> Result<Vec<SearchResult>> {
+        if let Some(result) = self
+            .bridge_json(
+                Method::GET,
+                "/items/fulltext-search",
+                vec![
+                    ("query".to_string(), query.to_string()),
+                    ("context".to_string(), context.to_string()),
+                    ("kind".to_string(), kind.to_string()),
+                    (
+                        "include_deprecated".to_string(),
+                        include_deprecated.to_string(),
+                    ),
+                ],
+                None,
+            )
+            .await
+        {
+            return result;
+        }
+
         let resp = self
             .send_with_retry(|| {
                 self.client
@@ -946,6 +1205,18 @@ impl KumihoClient {
             metadata,
         };
 
+        if let Some(result) = self
+            .bridge_json(
+                Method::POST,
+                "/revisions",
+                Vec::new(),
+                Some(serde_json::to_value(&body).unwrap_or_default()),
+            )
+            .await
+        {
+            return result;
+        }
+
         let resp = self
             .send_no_retry(|| {
                 self.client
@@ -966,6 +1237,18 @@ impl KumihoClient {
     /// Backed by `GET /api/v1/revisions?item_kref=...` on Kumiho. Used by the
     /// editor's revision-history strip (Architect feature).
     pub async fn list_item_revisions(&self, item_kref: &str) -> Result<Vec<RevisionResponse>> {
+        if let Some(result) = self
+            .bridge_json(
+                Method::GET,
+                "/revisions",
+                vec![("item_kref".to_string(), item_kref.to_string())],
+                None,
+            )
+            .await
+        {
+            return result;
+        }
+
         let resp = self
             .send_with_retry(|| {
                 self.client
@@ -984,6 +1267,18 @@ impl KumihoClient {
     /// Tag a revision (e.g. "published").
     pub async fn tag_revision(&self, revision_kref: &str, tag: &str) -> Result<()> {
         let body = serde_json::json!({ "tag": tag });
+        if let Some(result) = self
+            .bridge_unit(
+                Method::POST,
+                "/revisions/tags",
+                vec![("kref".to_string(), revision_kref.to_string())],
+                Some(body.clone()),
+            )
+            .await
+        {
+            return result;
+        }
+
         let resp = self
             .send_no_retry(|| {
                 self.client
@@ -1004,6 +1299,21 @@ impl KumihoClient {
         revision_kref: &str,
         deprecated: bool,
     ) -> Result<RevisionResponse> {
+        if let Some(result) = self
+            .bridge_json(
+                Method::POST,
+                "/revisions/deprecate",
+                vec![
+                    ("kref".to_string(), revision_kref.to_string()),
+                    ("deprecated".to_string(), deprecated.to_string()),
+                ],
+                None,
+            )
+            .await
+        {
+            return result;
+        }
+
         let resp = self
             .send_no_retry(|| {
                 self.client
@@ -1028,6 +1338,21 @@ impl KumihoClient {
         item_kref: &str,
         tag: &str,
     ) -> Result<RevisionResponse> {
+        if let Some(result) = self
+            .bridge_json(
+                Method::GET,
+                "/revisions/by-kref",
+                vec![
+                    ("kref".to_string(), item_kref.to_string()),
+                    ("t".to_string(), tag.to_string()),
+                ],
+                None,
+            )
+            .await
+        {
+            return result;
+        }
+
         let resp = self
             .send_with_retry(|| {
                 self.client
@@ -1047,6 +1372,18 @@ impl KumihoClient {
     /// The Kumiho server's `/revisions/by-kref` endpoint parses the `?r=N`
     /// suffix out of the kref and returns that exact revision's metadata.
     pub async fn get_revision(&self, revision_kref: &str) -> Result<RevisionResponse> {
+        if let Some(result) = self
+            .bridge_json(
+                Method::GET,
+                "/revisions/by-kref",
+                vec![("kref".to_string(), revision_kref.to_string())],
+                None,
+            )
+            .await
+        {
+            return result;
+        }
+
         let resp = self
             .send_with_retry(|| {
                 self.client
@@ -1064,6 +1401,18 @@ impl KumihoClient {
 
     /// Get the latest revision for an item.
     pub async fn get_latest_revision(&self, item_kref: &str) -> Result<RevisionResponse> {
+        if let Some(result) = self
+            .bridge_json(
+                Method::GET,
+                "/revisions/latest",
+                vec![("item_kref".to_string(), item_kref.to_string())],
+                None,
+            )
+            .await
+        {
+            return result;
+        }
+
         let resp = self
             .send_with_retry(|| {
                 self.client
@@ -1085,6 +1434,21 @@ impl KumihoClient {
     /// own — otherwise a degraded upstream could hold a single gateway
     /// request open for ~2× `TOTAL_BUDGET`.
     pub async fn get_published_or_latest(&self, item_kref: &str) -> Result<RevisionResponse> {
+        if let Ok(revision) = self.get_revision_by_tag(item_kref, "published").await {
+            return Ok(revision);
+        }
+        if let Some(result) = self
+            .bridge_json(
+                Method::GET,
+                "/revisions/latest",
+                vec![("item_kref".to_string(), item_kref.to_string())],
+                None,
+            )
+            .await
+        {
+            return result;
+        }
+
         let deadline = Instant::now() + TOTAL_BUDGET;
         let by_tag = self
             .send_with_retry_deadline(
@@ -1141,6 +1505,23 @@ impl KumihoClient {
             "tag": tag,
             "allow_partial": true,
         });
+
+        if let Some(result) = self
+            .bridge_json::<BatchRevisionsResponse>(
+                Method::POST,
+                "/revisions/batch",
+                Vec::new(),
+                Some(body.clone()),
+            )
+            .await
+        {
+            let batch = result?;
+            let mut map = HashMap::with_capacity(batch.revisions.len());
+            for rev in batch.revisions {
+                map.insert(rev.item_kref.clone(), rev);
+            }
+            return Ok(map);
+        }
 
         // POST used as a read (batch fetch by body). This endpoint is
         // side-effect free, so retry it like other reads; otherwise a single
@@ -1293,6 +1674,18 @@ impl KumihoClient {
             metadata,
         };
 
+        if let Some(result) = self
+            .bridge_json(
+                Method::POST,
+                "/bundles",
+                Vec::new(),
+                Some(serde_json::to_value(&body).unwrap_or_default()),
+            )
+            .await
+        {
+            return result;
+        }
+
         let resp = self
             .send_no_retry(|| {
                 self.client
@@ -1310,6 +1703,18 @@ impl KumihoClient {
 
     /// Get a bundle by kref.
     pub async fn get_bundle(&self, kref: &str) -> Result<ItemResponse> {
+        if let Some(result) = self
+            .bridge_json(
+                Method::GET,
+                "/bundles/by-kref",
+                vec![("kref".to_string(), kref.to_string())],
+                None,
+            )
+            .await
+        {
+            return result;
+        }
+
         let resp = self
             .send_with_retry(|| {
                 self.client
@@ -1327,6 +1732,21 @@ impl KumihoClient {
 
     /// Delete a bundle (force).
     pub async fn delete_bundle(&self, kref: &str) -> Result<()> {
+        if let Some(result) = self
+            .bridge_unit(
+                Method::DELETE,
+                "/bundles/by-kref",
+                vec![
+                    ("kref".to_string(), kref.to_string()),
+                    ("force".to_string(), "true".to_string()),
+                ],
+                None,
+            )
+            .await
+        {
+            return result;
+        }
+
         let resp = self
             .send_no_retry(|| {
                 self.client
@@ -1357,6 +1777,18 @@ impl KumihoClient {
             },
         };
 
+        if let Some(result) = self
+            .bridge_json(
+                Method::POST,
+                "/bundles/members/add",
+                Vec::new(),
+                Some(serde_json::to_value(&body).unwrap_or_default()),
+            )
+            .await
+        {
+            return result;
+        }
+
         let resp = self
             .send_no_retry(|| {
                 self.client
@@ -1383,6 +1815,18 @@ impl KumihoClient {
             item_kref: item_kref.to_string(),
         };
 
+        if let Some(result) = self
+            .bridge_json(
+                Method::POST,
+                "/bundles/members/remove",
+                Vec::new(),
+                Some(serde_json::to_value(&body).unwrap_or_default()),
+            )
+            .await
+        {
+            return result;
+        }
+
         let resp = self
             .send_no_retry(|| {
                 self.client
@@ -1400,6 +1844,18 @@ impl KumihoClient {
 
     /// List members of a bundle.
     pub async fn list_bundle_members(&self, bundle_kref: &str) -> Result<BundleMembersResponse> {
+        if let Some(result) = self
+            .bridge_json(
+                Method::GET,
+                "/bundles/members",
+                vec![("bundle_kref".to_string(), bundle_kref.to_string())],
+                None,
+            )
+            .await
+        {
+            return result;
+        }
+
         let resp = self
             .send_with_retry(|| {
                 self.client
@@ -1431,6 +1887,18 @@ impl KumihoClient {
             edge_type: edge_type.to_string(),
             metadata,
         };
+
+        if let Some(result) = self
+            .bridge_json(
+                Method::POST,
+                "/edges",
+                Vec::new(),
+                Some(serde_json::to_value(&body).unwrap_or_default()),
+            )
+            .await
+        {
+            return result;
+        }
 
         let resp = self
             .send_no_retry(|| {
@@ -1472,6 +1940,17 @@ impl KumihoClient {
             query_params.push(("direction", dir));
         }
 
+        let bridge_query = query_params
+            .iter()
+            .map(|(key, value)| ((*key).to_string(), (*value).to_string()))
+            .collect::<Vec<_>>();
+        if let Some(result) = self
+            .bridge_json(Method::GET, "/edges", bridge_query, None)
+            .await
+        {
+            return result;
+        }
+
         let resp = self
             .send_with_retry(|| {
                 self.client
@@ -1494,6 +1973,22 @@ impl KumihoClient {
         target_kref: &str,
         edge_type: &str,
     ) -> Result<()> {
+        if let Some(result) = self
+            .bridge_unit(
+                Method::DELETE,
+                "/edges",
+                vec![
+                    ("source_kref".to_string(), source_kref.to_string()),
+                    ("target_kref".to_string(), target_kref.to_string()),
+                    ("edge_type".to_string(), edge_type.to_string()),
+                ],
+                None,
+            )
+            .await
+        {
+            return result;
+        }
+
         let resp = self
             .send_no_retry(|| {
                 self.client
@@ -1528,6 +2023,18 @@ impl KumihoClient {
             metadata,
         };
 
+        if let Some(result) = self
+            .bridge_json(
+                Method::POST,
+                "/artifacts",
+                Vec::new(),
+                Some(serde_json::to_value(&body).unwrap_or_default()),
+            )
+            .await
+        {
+            return result;
+        }
+
         let resp = self
             .send_no_retry(|| {
                 self.client
@@ -1545,6 +2052,18 @@ impl KumihoClient {
 
     /// List artifacts for a revision.
     pub async fn get_artifacts(&self, revision_kref: &str) -> Result<Vec<ArtifactResponse>> {
+        if let Some(result) = self
+            .bridge_json(
+                Method::GET,
+                "/artifacts",
+                vec![("revision_kref".to_string(), revision_kref.to_string())],
+                None,
+            )
+            .await
+        {
+            return result;
+        }
+
         let resp = self
             .send_with_retry(|| {
                 self.client
@@ -1562,6 +2081,18 @@ impl KumihoClient {
 
     /// Find artifacts by their stored location.
     pub async fn get_artifacts_by_location(&self, location: &str) -> Result<Vec<ArtifactResponse>> {
+        if let Some(result) = self
+            .bridge_json(
+                Method::GET,
+                "/artifacts/by-location",
+                vec![("location".to_string(), location.to_string())],
+                None,
+            )
+            .await
+        {
+            return result;
+        }
+
         let resp = self
             .send_with_retry(|| {
                 self.client
@@ -1583,6 +2114,21 @@ impl KumihoClient {
         revision_kref: &str,
         name: &str,
     ) -> Result<ArtifactResponse> {
+        if let Some(result) = self
+            .bridge_json(
+                Method::GET,
+                "/artifacts/by-kref",
+                vec![
+                    ("revision_kref".to_string(), revision_kref.to_string()),
+                    ("name".to_string(), name.to_string()),
+                ],
+                None,
+            )
+            .await
+        {
+            return result;
+        }
+
         let resp = self
             .send_with_retry(|| {
                 self.client
@@ -1600,6 +2146,18 @@ impl KumihoClient {
 
     /// Get a specific artifact by artifact kref.
     pub async fn get_artifact(&self, artifact_kref: &str) -> Result<ArtifactResponse> {
+        if let Some(result) = self
+            .bridge_json(
+                Method::GET,
+                "/artifacts/by-kref",
+                vec![("kref".to_string(), artifact_kref.to_string())],
+                None,
+            )
+            .await
+        {
+            return result;
+        }
+
         let resp = self
             .send_with_retry(|| {
                 self.client
@@ -1621,6 +2179,21 @@ impl KumihoClient {
         artifact_kref: &str,
         deprecated: bool,
     ) -> Result<ArtifactResponse> {
+        if let Some(result) = self
+            .bridge_json(
+                Method::POST,
+                "/artifacts/deprecate",
+                vec![
+                    ("kref".to_string(), artifact_kref.to_string()),
+                    ("deprecated".to_string(), deprecated.to_string()),
+                ],
+                None,
+            )
+            .await
+        {
+            return result;
+        }
+
         let resp = self
             .send_no_retry(|| {
                 self.client

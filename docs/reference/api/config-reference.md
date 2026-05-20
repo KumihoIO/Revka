@@ -958,7 +958,15 @@ prompt into every non-internal agent.
 Notes:
 
 - Disable on deployments where Kumiho is not installed: `enabled = false`.
-- The `api_url` is used by the dashboard/API proxy at `GET /api/kumiho/{*path}`.
+- The `api_url` remains the fallback URL for dashboard/API Kumiho traffic.
+  When the installed Kumiho sidecar is available, Construct first tries the
+  local Kumiho SDK bridge and only falls back to `api_url` when the bridge is
+  disabled, unavailable, or does not support a route. Set
+  `CONSTRUCT_KUMIHO_SDK_BRIDGE=0` to force the hosted FastAPI transport.
+- `KUMIHO_AUTH_TOKEN` is preferred for the local SDK bridge; `KUMIHO_SERVICE_TOKEN`
+  remains the FastAPI header token and is used as a fallback when
+  `KUMIHO_AUTH_TOKEN` is not set. Response caches are keyed by the effective
+  token to avoid cross-account data bleed.
 - Namespaces used by Construct under `space_prefix` include `AgentPool`,
   `Plans`, `Sessions`, `Goals`, `AgentTrust`, `ClawHub`, `Teams`, and
   `CognitiveMemory/Skills`.

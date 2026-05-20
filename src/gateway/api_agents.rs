@@ -6,7 +6,10 @@
 
 use super::AppState;
 use super::api::require_auth;
-use super::kumiho_client::{ItemResponse, KumihoClient, KumihoError, RevisionResponse, slugify};
+use super::kumiho_client::{
+    ItemResponse, KumihoClient, KumihoError, RevisionResponse, configured_auth_token,
+    configured_service_token, slugify,
+};
 
 /// Normalize a kref from a URL path — strip existing `kref://` prefix to avoid doubling.
 fn normalize_kref(raw: &str) -> String {
@@ -150,6 +153,7 @@ pub struct AgentResponse {
 struct CachedKumihoClient {
     base_url: String,
     service_token: String,
+    auth_token: String,
     client: KumihoClient,
 }
 
@@ -157,20 +161,29 @@ static KUMIHO_CLIENT: OnceLock<Mutex<Option<CachedKumihoClient>>> = OnceLock::ne
 
 pub(super) fn build_kumiho_client(state: &AppState) -> KumihoClient {
     let base_url = state.config.lock().kumiho.api_url.clone();
-    let service_token = std::env::var("KUMIHO_SERVICE_TOKEN").unwrap_or_default();
+    let service_token = configured_service_token();
+    let auth_token = configured_auth_token(&service_token);
     let lock = KUMIHO_CLIENT.get_or_init(|| Mutex::new(None));
     let mut cached = lock.lock();
 
     if let Some(entry) = cached.as_ref() {
-        if entry.base_url == base_url && entry.service_token == service_token {
+        if entry.base_url == base_url
+            && entry.service_token == service_token
+            && entry.auth_token == auth_token
+        {
             return entry.client.clone();
         }
     }
 
-    let client = KumihoClient::new(base_url.clone(), service_token.clone());
+    let client = KumihoClient::new_with_auth_token(
+        base_url.clone(),
+        service_token.clone(),
+        auth_token.clone(),
+    );
     *cached = Some(CachedKumihoClient {
         base_url,
         service_token,
+        auth_token,
         client: client.clone(),
     });
     client

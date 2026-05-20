@@ -11,7 +11,10 @@
 use super::AppState;
 use super::api::require_auth;
 use super::api_agents::build_kumiho_client;
-use super::kumiho_client::{is_retryable_status, looks_like_html_body};
+use super::kumiho_bridge;
+use super::kumiho_client::{
+    configured_auth_token, configured_service_token, is_retryable_status, looks_like_html_body,
+};
 use axum::{
     Json,
     extract::{Query, State},
@@ -289,7 +292,13 @@ pub async fn handle_kumiho_proxy(
         let config = state.config.lock();
         config.kumiho.api_url.clone()
     };
-    let service_token = std::env::var("KUMIHO_SERVICE_TOKEN").unwrap_or_default();
+    let service_token = configured_service_token();
+    let auth_token = configured_auth_token(&service_token);
+    let cache_token = if auth_token.trim().is_empty() {
+        &service_token
+    } else {
+        &auth_token
+    };
 
     // Build the upstream URL
     let mut url = format!("{}/api/v1/{}", base_url.trim_end_matches('/'), path);
@@ -303,8 +312,55 @@ pub async fn handle_kumiho_proxy(
         url = format!("{}?{}", url, qs.join("&"));
     }
 
-    if let Some((status, body, stale)) = cached_proxy_response(&url, &service_token, false) {
+    if let Some((status, body, stale)) = cached_proxy_response(&url, cache_token, false) {
         return cached_json_response(status, body, if stale { "stale" } else { "hit" });
+    }
+
+    let bridge_query: Vec<(String, String)> = {
+        let mut entries: Vec<(String, String)> = params
+            .iter()
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect();
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
+        entries
+    };
+    if let Some(result) = kumiho_bridge::send_raw(
+        client.client(),
+        reqwest::Method::GET,
+        &format!("/{path}"),
+        bridge_query,
+        &auth_token,
+        None,
+    )
+    .await
+    {
+        match result {
+            Ok(raw) => {
+                let body = enrich_success_body(raw.body);
+                set_cached_proxy_response(&url, cache_token, raw.status, &body);
+                return (
+                    raw.status,
+                    [
+                        (axum::http::header::CONTENT_TYPE, "application/json"),
+                        (
+                            HeaderName::from_static("x-construct-kumiho-transport"),
+                            "sdk-bridge",
+                        ),
+                    ],
+                    body,
+                )
+                    .into_response();
+            }
+            Err(super::kumiho_client::KumihoError::Api { status, body }) if status >= 500 => {
+                tracing::warn!(
+                    upstream_status = status,
+                    path = %path,
+                    body = %body,
+                    "Kumiho SDK bridge returned 5xx; falling back to FastAPI"
+                );
+            }
+            Err(err) => return super::kumiho_client::kumiho_error_to_response(err),
+        }
     }
 
     let deadline = Instant::now() + PROXY_TOTAL_BUDGET;
@@ -370,7 +426,7 @@ pub async fn handle_kumiho_proxy(
 
                 if code.is_success() {
                     let body = enrich_success_body(body);
-                    set_cached_proxy_response(&url, &service_token, code, &body);
+                    set_cached_proxy_response(&url, cache_token, code, &body);
                     return (
                         code,
                         [(axum::http::header::CONTENT_TYPE, "application/json")],
@@ -400,7 +456,7 @@ pub async fn handle_kumiho_proxy(
                         );
                     }
                     if let Some((cached_status, cached_body, _)) =
-                        cached_proxy_response(&url, &service_token, true)
+                        cached_proxy_response(&url, cache_token, true)
                     {
                         return cached_json_response(cached_status, cached_body, "stale");
                     }
@@ -432,7 +488,7 @@ pub async fn handle_kumiho_proxy(
                     if remaining <= Duration::from_millis(delay_ms) {
                         tracing::warn!(error = %e, path = %path, "Kumiho proxy: budget exhausted");
                         if let Some((cached_status, cached_body, _)) =
-                            cached_proxy_response(&url, &service_token, true)
+                            cached_proxy_response(&url, cache_token, true)
                         {
                             return cached_json_response(cached_status, cached_body, "stale");
                         }
@@ -450,7 +506,7 @@ pub async fn handle_kumiho_proxy(
                 }
                 tracing::warn!(error = %e, path = %path, "Kumiho proxy: unreachable after retries");
                 if let Some((cached_status, cached_body, _)) =
-                    cached_proxy_response(&url, &service_token, true)
+                    cached_proxy_response(&url, cache_token, true)
                 {
                     return cached_json_response(cached_status, cached_body, "stale");
                 }
@@ -460,8 +516,7 @@ pub async fn handle_kumiho_proxy(
     }
 
     // Budget exhausted on retryable status path.
-    if let Some((cached_status, cached_body, _)) = cached_proxy_response(&url, &service_token, true)
-    {
+    if let Some((cached_status, cached_body, _)) = cached_proxy_response(&url, cache_token, true) {
         return cached_json_response(cached_status, cached_body, "stale");
     }
     upstream_unavailable(last_retryable_status.unwrap_or(502))
