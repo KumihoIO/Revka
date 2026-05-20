@@ -2755,7 +2755,7 @@ fn spawn_channel_progress_heartbeat_after(
     tokio::spawn(async move {
         tokio::select! {
             () = cancellation_token.cancelled() => {}
-            _ = tokio::time::sleep(delay) => {
+            () = tokio::time::sleep(delay) => {
                 if cancellation_token.is_cancelled() {
                     return;
                 }
@@ -9910,7 +9910,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 id: "msg-before-new".to_string(),
                 sender: "alice".to_string(),
                 reply_target: "chat-refresh".to_string(),
-                content: "hello".to_string(),
+                content: "please inspect this workspace before reset".to_string(),
                 channel: "telegram".to_string(),
                 timestamp: 1,
                 thread_ts: None,
