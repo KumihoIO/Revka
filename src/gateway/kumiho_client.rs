@@ -8,11 +8,15 @@
 use crate::config::Config;
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Json, Response};
+use parking_lot::Mutex;
 use rand::RngExt;
 use reqwest::{Client, Method};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, hash_map::DefaultHasher};
+use std::hash::{Hash, Hasher};
+use std::path::PathBuf;
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 /// Build a `KumihoClient` from the top-level `Config`.
@@ -22,10 +26,7 @@ use std::time::{Duration, Instant};
 /// `construct migrate openclaw`) that need a Kumiho client without an
 /// `AppState`.
 pub fn build_client_from_config(config: &Config) -> KumihoClient {
-    let base_url = config.kumiho.api_url.clone();
-    let service_token = configured_service_token();
-    let auth_token = configured_auth_token(&service_token);
-    KumihoClient::new_with_auth_token(base_url, service_token, auth_token)
+    build_cached_client(config.kumiho.api_url.clone())
 }
 
 /// Convert a human-readable name to a kref-safe slug (lowercase, hyphens, no spaces).
@@ -68,6 +69,55 @@ pub(crate) fn configured_auth_token(service_token: &str) -> String {
         .ok()
         .filter(|v| !v.trim().is_empty())
         .unwrap_or_else(|| service_token.to_string())
+}
+
+/// Build a cached gateway `KumihoClient` from the current config + env.
+///
+/// All gateway Kumiho access should come through this function so token
+/// selection, connection pooling, bridge fallback, and response caching stay
+/// centralized in [`KumihoClient`].
+pub(super) fn build_kumiho_client(state: &super::AppState) -> KumihoClient {
+    let base_url = state.config.lock().kumiho.api_url.clone();
+    build_cached_client(base_url)
+}
+
+#[derive(Clone)]
+struct CachedKumihoClient {
+    base_url: String,
+    service_token: String,
+    auth_token: String,
+    client: KumihoClient,
+}
+
+static KUMIHO_CLIENT: OnceLock<Mutex<Option<CachedKumihoClient>>> = OnceLock::new();
+
+fn build_cached_client(base_url: String) -> KumihoClient {
+    let service_token = configured_service_token();
+    let auth_token = configured_auth_token(&service_token);
+    let lock = KUMIHO_CLIENT.get_or_init(|| Mutex::new(None));
+    let mut cached = lock.lock();
+
+    if let Some(entry) = cached.as_ref() {
+        if entry.base_url == base_url
+            && entry.service_token == service_token
+            && entry.auth_token == auth_token
+        {
+            return entry.client.clone();
+        }
+    }
+
+    let client = KumihoClient::new_with_auth_token(
+        base_url.clone(),
+        service_token.clone(),
+        auth_token.clone(),
+    );
+    *cached = Some(CachedKumihoClient {
+        base_url,
+        service_token,
+        auth_token,
+        client: client.clone(),
+    });
+    client
 }
 
 /// Kumiho FastAPI client.
@@ -362,6 +412,208 @@ pub fn kumiho_error_to_response(err: KumihoError) -> Response {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct RawKumihoResponse {
+    pub status: StatusCode,
+    pub body: String,
+    pub transport: Option<&'static str>,
+    pub cache_state: Option<&'static str>,
+}
+
+#[derive(Clone, Hash, Eq, PartialEq)]
+struct RawCacheKey {
+    token_hash: u64,
+    url: String,
+}
+
+#[derive(Clone)]
+struct RawCacheEntry {
+    status: StatusCode,
+    body: String,
+    fetched_at: Instant,
+}
+
+static KUMIHO_RAW_CACHE: OnceLock<Mutex<HashMap<RawCacheKey, RawCacheEntry>>> = OnceLock::new();
+
+const RAW_CACHE_TTL: Duration = Duration::from_secs(10);
+const RAW_STALE_TTL: Duration = Duration::from_secs(120);
+
+fn token_hash(token: &str) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    token.hash(&mut hasher);
+    hasher.finish()
+}
+
+fn raw_cache_key(url: &str, token: &str) -> RawCacheKey {
+    RawCacheKey {
+        token_hash: token_hash(token),
+        url: url.to_string(),
+    }
+}
+
+fn cached_raw_response(url: &str, token: &str, allow_stale: bool) -> Option<RawKumihoResponse> {
+    let lock = KUMIHO_RAW_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let cache = lock.lock();
+    let entry = cache.get(&raw_cache_key(url, token))?;
+    let age = entry.fetched_at.elapsed();
+    if age <= RAW_CACHE_TTL {
+        return Some(RawKumihoResponse {
+            status: entry.status,
+            body: entry.body.clone(),
+            transport: None,
+            cache_state: Some("hit"),
+        });
+    }
+    if allow_stale && age <= RAW_STALE_TTL {
+        return Some(RawKumihoResponse {
+            status: entry.status,
+            body: entry.body.clone(),
+            transport: None,
+            cache_state: Some("stale"),
+        });
+    }
+    None
+}
+
+fn set_cached_raw_response(url: &str, token: &str, status: StatusCode, body: &str) {
+    if !status.is_success() {
+        return;
+    }
+
+    let lock = KUMIHO_RAW_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut cache = lock.lock();
+    cache.retain(|_, entry| entry.fetched_at.elapsed() <= RAW_STALE_TTL);
+    cache.insert(
+        raw_cache_key(url, token),
+        RawCacheEntry {
+            status,
+            body: body.to_string(),
+            fetched_at: Instant::now(),
+        },
+    );
+}
+
+pub(super) fn invalidate_proxy_cache() {
+    if let Some(lock) = KUMIHO_RAW_CACHE.get() {
+        lock.lock().clear();
+    }
+}
+
+fn raw_error_allows_stale(err: &KumihoError) -> bool {
+    match err {
+        KumihoError::Unreachable(_) | KumihoError::UpstreamUnavailable { .. } => true,
+        KumihoError::Api { status, .. } => *status >= 500,
+        KumihoError::Decode(_) => false,
+    }
+}
+
+fn is_uuid_like(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    if bytes.len() != 36 {
+        return false;
+    }
+    for (idx, byte) in bytes.iter().enumerate() {
+        if matches!(idx, 8 | 13 | 18 | 23) {
+            if *byte != b'-' {
+                return false;
+            }
+            continue;
+        }
+        if !byte.is_ascii_hexdigit() {
+            return false;
+        }
+    }
+    true
+}
+
+fn usable_identity(value: Option<&str>) -> Option<String> {
+    let value = value?.trim();
+    if value.is_empty() || is_uuid_like(value) {
+        None
+    } else {
+        Some(value.to_string())
+    }
+}
+
+fn kumiho_auth_email_path() -> Option<PathBuf> {
+    directories::UserDirs::new().map(|dirs| {
+        dirs.home_dir()
+            .join(".kumiho")
+            .join("kumiho_authentication.json")
+    })
+}
+
+fn current_kumiho_account_email() -> Option<String> {
+    let path = kumiho_auth_email_path()?;
+    let content = std::fs::read_to_string(path).ok()?;
+    let parsed = serde_json::from_str::<serde_json::Value>(&content).ok()?;
+    parsed
+        .get("email")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
+fn display_author_for_object(
+    object: &serde_json::Map<String, serde_json::Value>,
+    fallback_email: Option<&str>,
+) -> Option<String> {
+    usable_identity(object.get("username").and_then(|v| v.as_str()))
+        .or_else(|| {
+            object
+                .get("metadata")
+                .and_then(|v| v.as_object())
+                .and_then(|metadata| {
+                    usable_identity(metadata.get("username").and_then(|v| v.as_str()))
+                        .or_else(|| {
+                            usable_identity(metadata.get("updated_by").and_then(|v| v.as_str()))
+                        })
+                        .or_else(|| {
+                            usable_identity(metadata.get("created_by").and_then(|v| v.as_str()))
+                        })
+                })
+        })
+        .or_else(|| usable_identity(object.get("author").and_then(|v| v.as_str())))
+        .or_else(|| fallback_email.map(str::to_string))
+}
+
+fn enrich_author_display(value: &mut serde_json::Value, fallback_email: Option<&str>) {
+    match value {
+        serde_json::Value::Array(items) => {
+            for item in items {
+                enrich_author_display(item, fallback_email);
+            }
+        }
+        serde_json::Value::Object(object) => {
+            if (object.contains_key("author") || object.contains_key("username"))
+                && !object.contains_key("author_display")
+            {
+                if let Some(display) = display_author_for_object(object, fallback_email) {
+                    object.insert(
+                        "author_display".to_string(),
+                        serde_json::Value::String(display),
+                    );
+                }
+            }
+
+            for item in object.values_mut() {
+                enrich_author_display(item, fallback_email);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn enrich_success_body(body: String) -> String {
+    let Ok(mut value) = serde_json::from_str::<serde_json::Value>(&body) else {
+        return body;
+    };
+    let fallback_email = current_kumiho_account_email();
+    enrich_author_display(&mut value, fallback_email.as_deref());
+    serde_json::to_string(&value).unwrap_or(body)
+}
+
 // ── Request body types ──────────────────────────────────────────────────
 
 #[derive(Serialize)]
@@ -482,6 +734,36 @@ impl KumihoClient {
         }
     }
 
+    fn raw_url(&self, path: &str, query: &[(String, String)]) -> String {
+        let mut url = self.url(path);
+        if !query.is_empty() {
+            let qs: Vec<String> = query
+                .iter()
+                .map(|(k, v)| format!("{}={}", urlencoding::encode(k), urlencoding::encode(v)))
+                .collect();
+            url = format!("{}?{}", url, qs.join("&"));
+        }
+        url
+    }
+
+    async fn bridge_raw(
+        &self,
+        method: Method,
+        path: &str,
+        query: Vec<(String, String)>,
+        body: Option<serde_json::Value>,
+    ) -> Option<Result<crate::gateway::kumiho_bridge::BridgeResponse>> {
+        crate::gateway::kumiho_bridge::send_raw(
+            &self.client,
+            method,
+            path,
+            query,
+            self.bridge_token(),
+            body,
+        )
+        .await
+    }
+
     async fn bridge_json<T>(
         &self,
         method: Method,
@@ -492,15 +774,7 @@ impl KumihoClient {
     where
         T: DeserializeOwned,
     {
-        let response = crate::gateway::kumiho_bridge::send_raw(
-            &self.client,
-            method,
-            path,
-            query,
-            self.bridge_token(),
-            body,
-        )
-        .await?;
+        let response = self.bridge_raw(method, path, query, body).await?;
         Some(response.and_then(|raw| {
             serde_json::from_str::<T>(&raw.body).map_err(|e| KumihoError::Decode(e.to_string()))
         }))
@@ -513,16 +787,97 @@ impl KumihoClient {
         query: Vec<(String, String)>,
         body: Option<serde_json::Value>,
     ) -> Option<Result<()>> {
-        let response = crate::gateway::kumiho_bridge::send_raw(
-            &self.client,
-            method,
-            path,
-            query,
-            self.bridge_token(),
-            body,
-        )
-        .await?;
+        let response = self.bridge_raw(method, path, query, body).await?;
         Some(response.map(|_| ()))
+    }
+
+    fn raw_with_stale_or_error(
+        &self,
+        url: &str,
+        cache_token: &str,
+        err: KumihoError,
+    ) -> Result<RawKumihoResponse> {
+        if raw_error_allows_stale(&err) {
+            if let Some(cached) = cached_raw_response(url, cache_token, true) {
+                return Ok(cached);
+            }
+        }
+        Err(err)
+    }
+
+    /// Fetch a raw Kumiho REST JSON endpoint through the same client transport
+    /// used by typed gateway routes.
+    ///
+    /// The local SDK bridge is attempted first, then hosted FastAPI is used as
+    /// fallback. Retry, HTML trimming, account-scoped cache keys, stale cache
+    /// fallback, and author display enrichment all live here so the generic
+    /// `/api/kumiho/*` proxy does not duplicate Kumiho transport policy.
+    pub async fn get_raw(
+        &self,
+        path: &str,
+        params: &HashMap<String, String>,
+    ) -> Result<RawKumihoResponse> {
+        let path = format!("/{}", path.trim_start_matches('/'));
+        let mut query: Vec<(String, String)> = params
+            .iter()
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect();
+        query.sort_by(|a, b| a.0.cmp(&b.0));
+
+        let url = self.raw_url(&path, &query);
+        let cache_token = self.bridge_token();
+        if let Some(cached) = cached_raw_response(&url, cache_token, false) {
+            return Ok(cached);
+        }
+
+        if let Some(result) = self
+            .bridge_raw(Method::GET, &path, query.clone(), None)
+            .await
+        {
+            match result {
+                Ok(raw) => {
+                    let body = enrich_success_body(raw.body);
+                    set_cached_raw_response(&url, cache_token, raw.status, &body);
+                    return Ok(RawKumihoResponse {
+                        status: raw.status,
+                        body,
+                        transport: Some("sdk-bridge"),
+                        cache_state: None,
+                    });
+                }
+                Err(err) => return self.raw_with_stale_or_error(&url, cache_token, err),
+            }
+        }
+
+        let resp = match self
+            .send_with_retry(|| {
+                self.client
+                    .get(&url)
+                    .header("X-Kumiho-Token", &self.service_token)
+            })
+            .await
+        {
+            Ok(resp) => resp,
+            Err(err) => return self.raw_with_stale_or_error(&url, cache_token, err),
+        };
+
+        let resp = match self.check_response(resp).await {
+            Ok(resp) => resp,
+            Err(err) => return self.raw_with_stale_or_error(&url, cache_token, err),
+        };
+        let status = resp.status();
+        let body = resp
+            .text()
+            .await
+            .map_err(|e| KumihoError::Decode(e.to_string()))?;
+        let body = enrich_success_body(body);
+        set_cached_raw_response(&url, cache_token, status, &body);
+        Ok(RawKumihoResponse {
+            status,
+            body,
+            transport: Some("fastapi"),
+            cache_state: None,
+        })
     }
 
     async fn check_response(&self, resp: reqwest::Response) -> Result<reqwest::Response> {
@@ -2263,6 +2618,63 @@ mod tests {
 
     fn make_client(base_url: &str) -> KumihoClient {
         KumihoClient::new(base_url.to_string(), "test-token".to_string())
+    }
+
+    fn make_raw_client(base_url: &str) -> KumihoClient {
+        // Empty token keeps the local SDK bridge disabled for this unit test;
+        // the raw proxy path still exercises hosted FastAPI fallback logic.
+        KumihoClient::new(base_url.to_string(), String::new())
+    }
+
+    #[tokio::test]
+    async fn raw_get_502_html_returns_clean_upstream_unavailable() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/v1/projects"))
+            .respond_with(
+                ResponseTemplate::new(502)
+                    .insert_header("content-type", "text/html; charset=utf-8")
+                    .set_body_string("<!DOCTYPE html><html><body>Bad Gateway</body></html>"),
+            )
+            .mount(&server)
+            .await;
+
+        let client = make_raw_client(&server.uri());
+        let err = client
+            .get_raw("projects", &HashMap::new())
+            .await
+            .expect_err("502 should surface as clean upstream unavailable");
+
+        match err {
+            KumihoError::UpstreamUnavailable { status, attempts } => {
+                assert_eq!(status, 502);
+                assert_eq!(attempts, 3);
+            }
+            other => panic!("expected UpstreamUnavailable, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn enrich_author_display_prefers_readable_username() {
+        let mut value = serde_json::json!({
+            "author": "b10101cf-d714-4ddc-a686-8680ef7114d2",
+            "username": "neo@example.com"
+        });
+        enrich_author_display(&mut value, Some("fallback@example.com"));
+        assert_eq!(value["author_display"], "neo@example.com");
+    }
+
+    #[test]
+    fn enrich_author_display_uses_fallback_for_uuid_identity() {
+        let mut value = serde_json::json!([{
+            "author": "b10101cf-d714-4ddc-a686-8680ef7114d2",
+            "username": "b10101cf-d714-4ddc-a686-8680ef7114d2",
+            "metadata": {
+                "created_by": "b10101cf-d714-4ddc-a686-8680ef7114d2"
+            }
+        }]);
+        enrich_author_display(&mut value, Some("neo@example.com"));
+        assert_eq!(value[0]["author_display"], "neo@example.com");
     }
 
     #[tokio::test]
