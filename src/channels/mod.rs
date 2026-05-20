@@ -2706,18 +2706,14 @@ impl ChannelProgressHeartbeat {
     fn cancel(&self) {
         self.cancellation.cancel();
     }
-
-    async fn finish(mut self) {
-        self.cancel();
-        if let Some(handle) = self.handle.take() {
-            log_worker_join_result(handle.await);
-        }
-    }
 }
 
 impl Drop for ChannelProgressHeartbeat {
     fn drop(&mut self) {
         self.cancel();
+        if let Some(handle) = self.handle.take() {
+            handle.abort();
+        }
     }
 }
 
