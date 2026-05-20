@@ -13,12 +13,19 @@ import os
 import sys
 import threading
 import traceback
+from collections.abc import Iterator
+from contextlib import contextmanager
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 os.environ.pop("KUMIHO_AUTO_CONFIGURE", None)
+if (
+    not os.environ.get("KUMIHO_CONTROL_PLANE_URL")
+    and os.environ.get("KUMIHO_CONTROL_PLANE_API_URL")
+):
+    os.environ["KUMIHO_CONTROL_PLANE_URL"] = os.environ["KUMIHO_CONTROL_PLANE_API_URL"]
 
 try:
     import grpc
@@ -54,6 +61,34 @@ def _token_hash(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
+def _routing_env_key() -> str:
+    parts = []
+    for name in (
+        "KUMIHO_CONTROL_PLANE_URL",
+        "KUMIHO_DISABLE_AUTO_DISCOVERY",
+        "KUMIHO_SERVER_ENDPOINT",
+        "KUMIHO_SERVER_ADDRESS",
+        "KUMIHO_SERVER_AUTHORITY",
+        "KUMIHO_SERVER_USE_TLS",
+        "KUMIHO_SSL_TARGET_OVERRIDE",
+    ):
+        parts.append(f"{name}={os.environ.get(name, '').strip()}")
+    return "\0".join(parts)
+
+
+@contextmanager
+def _forced_discovery_refresh() -> Iterator[None]:
+    previous = os.environ.get("KUMIHO_FORCE_DISCOVERY_REFRESH")
+    os.environ["KUMIHO_FORCE_DISCOVERY_REFRESH"] = "1"
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop("KUMIHO_FORCE_DISCOVERY_REFRESH", None)
+        else:
+            os.environ["KUMIHO_FORCE_DISCOVERY_REFRESH"] = previous
+
+
 def _client_for(token: str) -> Any:
     if kumiho is None:
         raise RuntimeError(f"kumiho SDK unavailable: {IMPORT_ERROR}")
@@ -61,16 +96,17 @@ def _client_for(token: str) -> Any:
     if not token:
         raise PermissionError("missing Kumiho token")
     tenant_hint = os.environ.get("KUMIHO_TENANT_HINT", "").strip()
-    key = f"{_token_hash(token)}:{tenant_hint}"
+    key = f"{_token_hash(token)}:{tenant_hint}:{_routing_env_key()}"
     with _CLIENT_LOCK:
         client = _CLIENTS.get(key)
         if client is None:
-            client = kumiho.connect(
-                token=token,
-                enable_auto_login=False,
-                use_discovery=True,
-                tenant_hint=tenant_hint or None,
-            )
+            with _forced_discovery_refresh():
+                client = kumiho.connect(
+                    token=token,
+                    enable_auto_login=False,
+                    use_discovery=True,
+                    tenant_hint=tenant_hint or None,
+                )
             _CLIENTS[key] = client
         return client
 

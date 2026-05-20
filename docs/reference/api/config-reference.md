@@ -966,7 +966,9 @@ Notes:
 - `KUMIHO_AUTH_TOKEN` is preferred for the local SDK bridge; `KUMIHO_SERVICE_TOKEN`
   remains the FastAPI header token and is used as a fallback when
   `KUMIHO_AUTH_TOKEN` is not set. Response caches are keyed by the effective
-  token to avoid cross-account data bleed.
+  token to avoid cross-account data bleed. When the bridge creates an SDK
+  client for a new token, it also forces Kumiho discovery refresh so local
+  discovery cache entries from another account are not reused.
 - Namespaces used by Construct under `space_prefix` include `AgentPool`,
   `Plans`, `Sessions`, `Goals`, `AgentTrust`, `ClawHub`, `Teams`, and
   `CognitiveMemory/Skills`.
