@@ -65,9 +65,9 @@ impl GitOperationsTool {
         )
     }
 
-    /// Resolve a user-provided path to an absolute path within the workspace.
+    /// Resolve a user-provided path to an absolute path allowed by policy.
     /// Returns the workspace_dir if no path is provided.
-    /// Rejects paths that escape the workspace via traversal.
+    /// Rejects paths that escape the configured policy boundary.
     fn resolve_working_dir(&self, path: Option<&str>) -> anyhow::Result<std::path::PathBuf> {
         let base = match path {
             Some(p) if !p.is_empty() => {
@@ -79,12 +79,8 @@ impl GitOperationsTool {
                 let resolved = candidate
                     .canonicalize()
                     .map_err(|e| anyhow::anyhow!("Cannot resolve path '{}': {}", p, e))?;
-                let workspace_canonical = self
-                    .workspace_dir
-                    .canonicalize()
-                    .unwrap_or_else(|_| self.workspace_dir.clone());
-                if !resolved.starts_with(&workspace_canonical) {
-                    anyhow::bail!("Path '{}' resolves outside the workspace directory", p);
+                if !self.security.is_resolved_path_allowed(&resolved) {
+                    anyhow::bail!("Path '{}' is not allowed by security policy", p);
                 }
                 resolved
             }
@@ -670,6 +666,7 @@ mod tests {
     fn test_tool(dir: &std::path::Path) -> GitOperationsTool {
         let security = Arc::new(SecurityPolicy {
             autonomy: AutonomyLevel::Supervised,
+            workspace_dir: dir.to_path_buf(),
             ..SecurityPolicy::default()
         });
         GitOperationsTool::new(security, dir.to_path_buf())
@@ -950,8 +947,80 @@ mod tests {
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
         assert!(
-            err_msg.contains("resolves outside the workspace"),
+            err_msg.contains("not allowed by security policy"),
             "Expected traversal rejection, got: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn resolve_working_dir_allows_configured_allowed_root() {
+        let tmp = TempDir::new().unwrap();
+        let workspace = tmp.path().join("workspace");
+        let extra = tmp.path().join("extra-root");
+        std::fs::create_dir_all(&workspace).unwrap();
+        std::fs::create_dir_all(&extra).unwrap();
+
+        let security = Arc::new(SecurityPolicy {
+            autonomy: AutonomyLevel::Supervised,
+            workspace_dir: workspace.clone(),
+            allowed_roots: vec![extra.clone()],
+            ..SecurityPolicy::default()
+        });
+        let tool = GitOperationsTool::new(security, workspace);
+
+        let result = tool
+            .resolve_working_dir(Some(extra.to_str().unwrap()))
+            .unwrap();
+        assert_eq!(result, extra.canonicalize().unwrap());
+    }
+
+    #[test]
+    fn resolve_working_dir_honors_workspace_only_false() {
+        let tmp = TempDir::new().unwrap();
+        let workspace = tmp.path().join("workspace");
+        let outside = tmp.path().join("outside");
+        std::fs::create_dir_all(&workspace).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+
+        let security = Arc::new(SecurityPolicy {
+            autonomy: AutonomyLevel::Supervised,
+            workspace_dir: workspace.clone(),
+            workspace_only: false,
+            forbidden_paths: vec![],
+            ..SecurityPolicy::default()
+        });
+        let tool = GitOperationsTool::new(security, workspace);
+
+        let result = tool
+            .resolve_working_dir(Some(outside.to_str().unwrap()))
+            .unwrap();
+        assert_eq!(result, outside.canonicalize().unwrap());
+    }
+
+    #[test]
+    fn resolve_working_dir_blocks_forbidden_when_workspace_only_false() {
+        let tmp = TempDir::new().unwrap();
+        let workspace = tmp.path().join("workspace");
+        let outside = tmp.path().join("outside");
+        std::fs::create_dir_all(&workspace).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        let outside = outside.canonicalize().unwrap();
+
+        let security = Arc::new(SecurityPolicy {
+            autonomy: AutonomyLevel::Supervised,
+            workspace_dir: workspace.clone(),
+            workspace_only: false,
+            forbidden_paths: vec![outside.to_string_lossy().into_owned()],
+            ..SecurityPolicy::default()
+        });
+        let tool = GitOperationsTool::new(security, workspace);
+
+        let result = tool.resolve_working_dir(Some(outside.to_str().unwrap()));
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("not allowed by security policy"),
+            "Expected forbidden path rejection, got: {err_msg}"
         );
     }
 

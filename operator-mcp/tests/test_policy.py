@@ -60,6 +60,30 @@ class TestCheckCwd:
         r = p.check_cwd(str(sub))
         assert r.allowed is True
 
+    def test_workspace_dir_enforced_without_allowed_roots(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        sub = workspace / "repo"
+        sub.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+
+        p = Policy(workspace_only=True, workspace_dir=str(workspace), allowed_roots=[])
+        assert p.check_cwd(str(sub)).allowed is True
+        r = p.check_cwd(str(outside))
+        assert r.allowed is False
+        assert r.policy_rule == "allowed_roots"
+
+    def test_allowed_root_uses_component_boundary(self, tmp_path):
+        allowed = tmp_path / "allowed"
+        sibling = tmp_path / "allowed-sibling"
+        allowed.mkdir()
+        sibling.mkdir()
+
+        p = Policy(workspace_only=True, allowed_roots=[str(allowed)])
+        r = p.check_cwd(str(sibling))
+        assert r.allowed is False
+
     def test_symlink_resolved(self, tmp_path):
         """Symlink bypass: /tmp/safe -> /etc/secrets should be caught."""
         forbidden_dir = tmp_path / "forbidden"
@@ -124,6 +148,19 @@ class TestCheckCommand:
         assert p.check_command("git status").allowed is True
         assert p.check_command("npm install").allowed is True
         assert p.check_command("docker run").allowed is False
+
+    def test_git_lowercase_c_blocked_but_uppercase_c_allowed(self):
+        p = Policy(allowed_commands=["git"], block_high_risk_commands=False)
+        assert p.check_command("git -c core.editor=calc.exe commit").allowed is False
+        assert p.check_command("git -c=core.editor=calc.exe commit").allowed is False
+        assert p.check_command("git config core.editor calc.exe").allowed is False
+        assert p.check_command("git -C ./repo status").allowed is True
+
+    def test_find_exec_blocked(self):
+        p = Policy(allowed_commands=["find"], block_high_risk_commands=False)
+        r = p.check_command("find . -exec rm -rf {} +")
+        assert r.allowed is False
+        assert r.policy_rule == "command_arguments"
 
     def test_full_path_resolved(self):
         p = Policy(allowed_commands=["git"])
