@@ -3,6 +3,7 @@ use anyhow::Result;
 use chrono::Utc;
 use std::future::Future;
 use std::path::PathBuf;
+use std::sync::Arc;
 use tokio::task::JoinHandle;
 use tokio::time::Duration;
 
@@ -60,11 +61,18 @@ pub async fn run(config: Config, host: String, port: u16) -> Result<()> {
                 .await;
     }
 
+    let shared_mcp_registry = if has_supervised_channels(&config) {
+        build_shared_mcp_registry(&config).await
+    } else {
+        None
+    };
+
     let mut handles: Vec<JoinHandle<()>> = vec![spawn_state_writer(config.clone())];
 
     {
         let gateway_cfg = config.clone();
         let gateway_host = host.clone();
+        let gateway_mcp_registry = shared_mcp_registry.clone();
         handles.push(spawn_component_supervisor(
             "gateway",
             initial_backoff,
@@ -72,7 +80,13 @@ pub async fn run(config: Config, host: String, port: u16) -> Result<()> {
             move || {
                 let cfg = gateway_cfg.clone();
                 let host = gateway_host.clone();
-                async move { Box::pin(crate::gateway::run_gateway(&host, port, cfg)).await }
+                let registry = gateway_mcp_registry.clone();
+                async move {
+                    Box::pin(crate::gateway::run_gateway_with_mcp_registry(
+                        &host, port, cfg, registry,
+                    ))
+                    .await
+                }
             },
         ));
     }
@@ -80,13 +94,20 @@ pub async fn run(config: Config, host: String, port: u16) -> Result<()> {
     {
         if has_supervised_channels(&config) {
             let channels_cfg = config.clone();
+            let channels_mcp_registry = shared_mcp_registry.clone();
             handles.push(spawn_component_supervisor(
                 "channels",
                 initial_backoff,
                 max_backoff,
                 move || {
                     let cfg = channels_cfg.clone();
-                    async move { Box::pin(crate::channels::start_channels(cfg)).await }
+                    let registry = channels_mcp_registry.clone();
+                    async move {
+                        Box::pin(crate::channels::start_channels_with_mcp_registry(
+                            cfg, registry,
+                        ))
+                        .await
+                    }
                 },
             ));
         } else {
@@ -144,6 +165,36 @@ pub async fn run(config: Config, host: String, port: u16) -> Result<()> {
     }
 
     Ok(())
+}
+
+async fn build_shared_mcp_registry(config: &Config) -> Option<Arc<crate::tools::McpRegistry>> {
+    let mut injected = config.clone();
+    injected = crate::agent::kumiho::inject_kumiho(injected, false);
+    injected = crate::agent::operator::inject_operator(injected, false);
+
+    if !injected.mcp.enabled || injected.mcp.servers.is_empty() {
+        return None;
+    }
+
+    tracing::info!(
+        "Daemon: initializing shared MCP client — {} server(s) configured",
+        injected.mcp.servers.len()
+    );
+    match crate::tools::McpRegistry::connect_all(&injected.mcp.servers).await {
+        Ok(registry) => {
+            let registry = Arc::new(registry);
+            tracing::info!(
+                "Daemon: shared MCP client ready — {} server(s), {} tool(s)",
+                registry.server_count(),
+                registry.tool_count()
+            );
+            Some(registry)
+        }
+        Err(e) => {
+            tracing::error!("Daemon shared MCP registry failed to initialize: {e:#}");
+            None
+        }
+    }
 }
 
 pub fn state_file_path(config: &Config) -> PathBuf {

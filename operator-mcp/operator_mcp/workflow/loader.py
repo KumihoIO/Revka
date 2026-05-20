@@ -343,6 +343,20 @@ def load_workflow_from_yaml(path: str) -> WorkflowDef:
     return wf
 
 
+def load_workflow_from_text(text: str, source: str = "<inline>") -> WorkflowDef:
+    """Parse workflow YAML text into a WorkflowDef. Raises on parse errors."""
+    data = yaml.safe_load(text)
+
+    if not isinstance(data, dict):
+        raise ValueError(
+            f"Expected YAML dict at root in {source}, got {type(data).__name__}"
+        )
+
+    wf = WorkflowDef(**data)
+    _infer_depends_on(wf)
+    return wf
+
+
 def load_workflow_from_dict(data: dict[str, Any]) -> WorkflowDef:
     """Parse a dict (from JSON/YAML) into a WorkflowDef."""
     wf = WorkflowDef(**data)
@@ -613,7 +627,13 @@ async def _load_workflow_item_from_kumiho(
     item: dict[str, Any],
     expected_name: str | None = None,
 ) -> tuple[WorkflowDef, str, str] | None:
-    """Load one Kumiho workflow item from its latest YAML artifact."""
+    """Load one Kumiho workflow item from its latest YAML definition.
+
+    Prefer the local YAML artifact when it exists because that preserves the
+    exact authored file. If the artifact points at another machine, fall back
+    to the revision metadata definition instead of dropping the workflow from
+    runtime discovery.
+    """
     from ..operator_mcp import KUMIHO_SDK
 
     item_name = item.get("item_name", item.get("name", ""))
@@ -640,41 +660,72 @@ async def _load_workflow_item_from_kumiho(
         )
 
     artifacts = await KUMIHO_SDK.get_artifacts(revision_kref)
-    if not artifacts:
-        raise RuntimeError(
-            f"workflow_loader: revision '{revision_kref}' for '{display_name}' has no artifacts"
-        )
 
     # Pick the first YAML artifact. A workflow revision should carry exactly
-    # one YAML file — if someone attaches multiple, take the first.
+    # one YAML file. If someone attaches multiple, take the first. If the
+    # artifact path points at another host, we still keep the workflow by using
+    # the inline revision definition below.
     yaml_location = None
     for art in artifacts:
         location = art.get("location", "")
         if location.endswith((".yaml", ".yml")):
             yaml_location = location
             break
-    if not yaml_location:
+    if not yaml_location and artifacts:
         yaml_location = artifacts[0].get("location", "")
 
-    if not yaml_location:
-        raise RuntimeError(
-            f"workflow_loader: no artifact location for revision '{revision_kref}'"
-        )
-
-    # Artifact location may be a file:// URL — strip the scheme.
-    if yaml_location.startswith("file://"):
-        yaml_location = yaml_location[len("file://"):]
-    yaml_path = os.path.expanduser(yaml_location)
-    if not os.path.isfile(yaml_path):
-        raise RuntimeError(
-            f"workflow_loader: Kumiho artifact path does not exist on disk: {yaml_path} "
-            f"(revision {revision_kref})"
-        )
-
-    wf = load_workflow_from_yaml(yaml_path)
     tag_info = revision.get("tags") or revision.get("tag") or "?"
-    _log(f"workflow_loader: loaded '{wf.name}' from Kumiho rev={revision_kref} tags={tag_info} → {yaml_path}")
-    return (wf, item_kref, revision_kref)
+
+    if yaml_location:
+        # Artifact location may be a file:// URL — strip the scheme.
+        yaml_path = (
+            yaml_location[len("file://"):]
+            if yaml_location.startswith("file://")
+            else yaml_location
+        )
+        yaml_path = os.path.expanduser(yaml_path)
+        if os.path.isfile(yaml_path):
+            wf = load_workflow_from_yaml(yaml_path)
+            _log(
+                f"workflow_loader: loaded '{wf.name}' from Kumiho rev={revision_kref} "
+                f"tags={tag_info} → {yaml_path}"
+            )
+            return (wf, item_kref, revision_kref)
+
+        _log(
+            "workflow_loader: Kumiho workflow artifact is not local; "
+            f"using revision metadata for '{display_name}' "
+            f"(path={yaml_path}, revision={revision_kref})"
+        )
+    else:
+        _log(
+            f"workflow_loader: revision '{revision_kref}' for '{display_name}' "
+            "has no artifact location; using revision metadata"
+        )
+
+    metadata = revision.get("metadata", {}) or {}
+    for key in ("definition", "workflow_yaml", "content", "yaml", "body"):
+        yaml_text = metadata.get(key)
+        if isinstance(yaml_text, str) and yaml_text.strip():
+            wf = load_workflow_from_text(
+                yaml_text,
+                source=f"Kumiho revision metadata {revision_kref}.{key}",
+            )
+            _log(
+                f"workflow_loader: loaded '{wf.name}' from Kumiho rev={revision_kref} "
+                f"tags={tag_info} via metadata.{key}"
+            )
+            return (wf, item_kref, revision_kref)
+
+    detail = (
+        f"artifact path does not exist on disk: {yaml_location}"
+        if yaml_location
+        else "revision has no artifacts"
+    )
+    raise RuntimeError(
+        f"workflow_loader: cannot load Kumiho workflow '{display_name}': {detail} "
+        "and revision metadata has no workflow definition"
+    )
 
 
 async def resolve_all_workflows(project_dir: str | None = None) -> dict[str, dict[str, Any]]:

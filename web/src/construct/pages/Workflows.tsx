@@ -28,6 +28,8 @@ export default function Workflows() {
   const [runs, setRuns] = useState<WorkflowRunSummary[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [definitionLoading, setDefinitionLoading] = useState(false);
+  const [definitionError, setDefinitionError] = useState<string | null>(null);
   const [selectedWorkflowKref, setSelectedWorkflowKref] = useState<string | null>(null);
   const [workspaceTab, setWorkspaceTab] = useState<'definition' | 'runs'>('definition');
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
@@ -61,7 +63,7 @@ export default function Workflows() {
   const load = async () => {
     setLoading(true);
     return Promise.all([
-      fetchWorkflows(true),
+      fetchWorkflows(true, false),
       fetchWorkflowRuns(40),
     ])
       .then(([workflowDefinitions, workflowRuns]) => {
@@ -75,6 +77,21 @@ export default function Workflows() {
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
+  };
+
+  const applySavedWorkflow = (workflow: WorkflowDefinition) => {
+    setDefinitions((current) => {
+      const index = current.findIndex((entry) => entry.kref === workflow.kref);
+      if (index === -1) return [workflow, ...current];
+
+      const next = [...current];
+      next[index] = { ...next[index], ...workflow };
+      return next;
+    });
+  };
+
+  const refreshInBackground = () => {
+    void load();
   };
 
   useEffect(() => {
@@ -98,6 +115,40 @@ export default function Workflows() {
     [definitions, selectedWorkflowKref],
   );
 
+  useEffect(() => {
+    if (!selectedWorkflow || selectedWorkflow.definition) {
+      setDefinitionLoading(false);
+      setDefinitionError(null);
+      return;
+    }
+    if (!selectedWorkflow.kref.startsWith('kref://') || selectedWorkflow.revision_number <= 0) {
+      setDefinitionLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setDefinitionLoading(true);
+    setDefinitionError(null);
+
+    fetchWorkflowByRevisionKref(`${selectedWorkflow.kref}?r=${selectedWorkflow.revision_number}`)
+      .then((workflow) => {
+        if (cancelled) return;
+        setDefinitions((current) =>
+          current.map((entry) => entry.kref === selectedWorkflow.kref ? { ...entry, ...workflow } : entry),
+        );
+      })
+      .catch((err) => {
+        if (!cancelled) setDefinitionError(err instanceof Error ? err.message : String(err));
+      })
+      .finally(() => {
+        if (!cancelled) setDefinitionLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedWorkflow?.definition, selectedWorkflow?.kref, selectedWorkflow?.revision_number]);
+
   const selectedRuns = useMemo(() => {
     if (!selectedWorkflow) return [];
     return runs.filter((run) => run.workflow_name.toLowerCase() === selectedWorkflow.name.toLowerCase()).slice(0, 20);
@@ -106,6 +157,13 @@ export default function Workflows() {
   const displayedWorkflowDefinition = workspaceTab === 'runs' && pinnedRunDefinition
     ? pinnedRunDefinition
     : selectedWorkflow;
+
+  const activeWorkflowDefinition = displayedWorkflowDefinition?.definition ?? '';
+  const activeDefinitionLoading = definitionLoading || (
+    workspaceTab === 'runs'
+    && !!selectedRun
+    && !activeWorkflowDefinition
+  );
 
   const selectedWorkflowTasks = useMemo(() => {
     if (!displayedWorkflowDefinition) return [];
@@ -288,9 +346,10 @@ export default function Workflows() {
           definition: values.definition,
         };
         const updated = await updateWorkflow(request);
-        await load();
+        applySavedWorkflow(updated);
         setSelectedWorkflowKref(updated.kref);
         setNotice({ tone: 'success', message: tpl('workflows.toast.updated', { name: updated.name }) });
+        refreshInBackground();
       } else {
         const request: WorkflowCreateRequest = {
           name: values.name,
@@ -300,9 +359,10 @@ export default function Workflows() {
           definition: values.definition,
         };
         const created = await createWorkflow(request);
-        await load();
+        applySavedWorkflow(created);
         setSelectedWorkflowKref(created.kref);
         setNotice({ tone: 'success', message: tpl('workflows.toast.created', { name: created.name }) });
+        refreshInBackground();
       }
       setEditorMode(null);
     } catch (err) {
@@ -663,17 +723,17 @@ export default function Workflows() {
         <div className="flex min-h-0 flex-1 flex-col gap-4 lg:flex-row">
           {/* DAG canvas — fills remaining space */}
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-            {!selectedWorkflow.definition ? (
+            {!activeWorkflowDefinition ? (
               <Panel className="flex flex-1 items-center justify-center" variant="secondary">
                 <StateMessage
-                  tone="empty"
-                  title={t('workflows.definition_unavailable_title')}
-                  description={t('workflows.definition_unavailable_desc')}
+                  tone={activeDefinitionLoading ? 'loading' : 'empty'}
+                  title={activeDefinitionLoading ? t('workflows.loading') : t('workflows.definition_unavailable_title')}
+                  description={definitionError ?? t('workflows.definition_unavailable_desc')}
                 />
               </Panel>
             ) : workspaceTab === 'definition' ? (
               <WorkflowDagWorkspace
-                definition={selectedWorkflow.definition}
+                definition={activeWorkflowDefinition}
                 onSelectTask={setSelectedTask}
                 selectedTaskId={selectedTask?.id}
                 fill

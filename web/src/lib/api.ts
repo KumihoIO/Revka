@@ -761,9 +761,13 @@ export async function installClawHubSkill(slug: string): Promise<{ installed: bo
 // Workflows
 // ---------------------------------------------------------------------------
 
-export async function fetchWorkflows(includeDisabled = false): Promise<WorkflowDefinition[]> {
+export async function fetchWorkflows(
+  includeDisabled = false,
+  includeDefinition = true,
+): Promise<WorkflowDefinition[]> {
   const params = new URLSearchParams();
   if (includeDisabled) params.set('include_deprecated', 'true');
+  if (!includeDefinition) params.set('include_definition', 'false');
   return apiFetch<WorkflowDefinition[] | { workflows: WorkflowDefinition[] }>(
     `/api/workflows?${params}`
   ).then((data) => unwrapField(data, 'workflows'));
@@ -1024,9 +1028,12 @@ export async function fetchAgentActivity(
   );
 }
 
-export async function fetchWorkflowDashboard(): Promise<WorkflowDashboard> {
+export async function fetchWorkflowDashboard(includeDefinition = true): Promise<WorkflowDashboard> {
+  const params = new URLSearchParams();
+  if (!includeDefinition) params.set('include_definition', 'false');
+  const query = params.toString();
   return apiFetch<WorkflowDashboard | { dashboard: WorkflowDashboard }>(
-    '/api/workflows/dashboard'
+    `/api/workflows/dashboard${query ? `?${query}` : ''}`
   ).then((data) => unwrapField(data, 'dashboard'));
 }
 

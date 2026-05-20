@@ -32,6 +32,9 @@ from ..construct_config import harness_project
 # run. Values were picked to keep a 20-step run under ~300KB total metadata.
 _PER_STRING_CAP = 4000        # any single string field in input_data/output_data
 _PER_STEP_JSON_CAP = 16_000   # full serialized step entry, post-truncation
+_PERSIST_OP_TIMEOUT_SECS = 15.0
+_PERSIST_ARTIFACT_TIMEOUT_SECS = 5.0
+_TERMINAL_RUN_STATUSES = {"completed", "failed", "cancelled"}
 
 # Patterns we mask before persistence. Conservative — better to over-mask
 # than leak. We match `key=value` and `key: value` where key looks like a
@@ -46,6 +49,39 @@ _REDACT_KEY_RE = re.compile(
 # `Bearer <token>` — Authorization header convention. Also catches a few
 # variants that happen to use the same prefix syntax.
 _REDACT_BEARER_RE = re.compile(r"(?i)\b(bearer)\s+([A-Za-z0-9._\-+/=]+)")
+
+
+def _timeout_from_env(name: str, default: float) -> float:
+    raw = os.getenv(name, "")
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        return default
+    return max(0.0, value)
+
+
+async def _kumiho_with_timeout(
+    awaitable: Any,
+    operation: str,
+    *,
+    run_id: str = "",
+    timeout: float | None = None,
+) -> Any:
+    """Bound a Kumiho persistence call so best-effort persistence stays best-effort."""
+    timeout_s = (
+        _timeout_from_env("CONSTRUCT_WORKFLOW_MEMORY_TIMEOUT_SECS", _PERSIST_OP_TIMEOUT_SECS)
+        if timeout is None
+        else timeout
+    )
+    if timeout_s <= 0:
+        return await awaitable
+    try:
+        return await asyncio.wait_for(awaitable, timeout=timeout_s)
+    except asyncio.TimeoutError as exc:
+        prefix = f"run={run_id[:8]} " if run_id else ""
+        raise TimeoutError(f"{prefix}{operation} timed out after {timeout_s:g}s") from exc
 
 
 def _redact_for_persistence(value: Any) -> Any:
@@ -198,16 +234,30 @@ async def persist_workflow_run(
             return None
 
         # Ensure space exists
-        await KUMIHO_SDK.ensure_space(_project(), _SPACE)
+        await _kumiho_with_timeout(
+            KUMIHO_SDK.ensure_space(_project(), _SPACE),
+            "ensure workflow run space",
+            run_id=run_id,
+        )
 
         # Get-or-create item for this run
         item_name = f"{workflow_name}-{run_id[:12]}"
         item_kref = ""
         _log(f"workflow_memory: persisting run={run_id[:8]} item_name={item_name}")
 
+        completed_count = sum(
+            1 for sr in step_results.values()
+            if sr.get("status") in ("completed", "skipped")
+        )
+        effective_steps_total = max(steps_total or 0, len(step_results))
+
         # Check if item already exists (e.g. "running" entry created at start)
         try:
-            existing = await KUMIHO_SDK.list_items(_space_path())
+            existing = await _kumiho_with_timeout(
+                KUMIHO_SDK.list_items(_space_path()),
+                "list workflow run items",
+                run_id=run_id,
+            )
             for it in existing:
                 if it.get("item_name", it.get("name", "")) == item_name:
                     item_kref = it.get("kref", "")
@@ -216,15 +266,28 @@ async def persist_workflow_run(
             pass
 
         if not item_kref:
-            item = await KUMIHO_SDK.create_item(
-                _space_path(),
-                item_name,
-                kind="workflow_run",
-                metadata={
-                    "workflow": workflow_name,
-                    "run_id": run_id,
-                    "status": status,
-                },
+            item = await _kumiho_with_timeout(
+                KUMIHO_SDK.create_item(
+                    _space_path(),
+                    item_name,
+                    kind="workflow_run",
+                    metadata={
+                        "workflow": workflow_name,
+                        "workflow_name": workflow_name,
+                        "run_id": run_id,
+                        "status": status,
+                        "started_at": started_at or "",
+                        "completed_at": completed_at or "",
+                        "error": error[:500],
+                        "step_count": str(len(step_results)),
+                        "steps_completed": str(completed_count),
+                        "steps_total": str(effective_steps_total),
+                        "workflow_item_kref": workflow_item_kref,
+                        "workflow_revision_kref": workflow_revision_kref,
+                    },
+                ),
+                "create workflow run item",
+                run_id=run_id,
             )
             item_kref = item.get("kref", "")
 
@@ -320,12 +383,6 @@ async def persist_workflow_run(
                 entry_json = json.dumps(entry, default=str)
             step_summary[sid] = entry_json
 
-        # Count completed / failed / total for dashboard
-        completed_count = sum(
-            1 for sr in step_results.values()
-            if sr.get("status") in ("completed", "skipped")
-        )
-
         rev_metadata: dict[str, str] = {
             "workflow": workflow_name,
             "workflow_name": workflow_name,  # Rust gateway reads this key
@@ -337,7 +394,7 @@ async def persist_workflow_run(
             "error": error[:500],
             "step_count": str(len(step_results)),
             "steps_completed": str(completed_count),
-            "steps_total": str(steps_total) if steps_total else str(len(step_results)),
+            "steps_total": str(effective_steps_total),
             "files_touched": json.dumps(list(set(all_files))[:50]),
             "persisted_at": datetime.now(timezone.utc).isoformat(),
             # Kumiho pin for the workflow revision this run executed against —
@@ -352,12 +409,17 @@ async def persist_workflow_run(
             key = f"step_{sid}"[:50]  # Kumiho key length limit
             rev_metadata[key] = summary_json
 
-        rev = await KUMIHO_SDK.create_revision(item_kref, rev_metadata, tag="latest")
+        rev = await _kumiho_with_timeout(
+            KUMIHO_SDK.create_revision(item_kref, rev_metadata, tag="latest"),
+            "create workflow run revision",
+            run_id=run_id,
+        )
         rev_kref = rev.get("kref", "") if isinstance(rev, dict) else getattr(rev, "kref", "")
 
         # Attach disk artifacts to the Kumiho revision so they're discoverable
         # via the graph (not just via the metadata artifact_path field).
-        if rev_kref:
+        attach_artifacts = status.lower() in _TERMINAL_RUN_STATUSES
+        if rev_kref and attach_artifacts:
             attached_artifact_paths: set[str] = set()
             for sid, sr in step_results.items():
                 art = sr.get("output_data", {}).get("artifact_path", "")
@@ -368,10 +430,18 @@ async def persist_workflow_run(
                     attached_artifact_paths.add(canonical_art)
                     artifact_name = os.path.basename(art) or f"{sid}.md"
                     try:
-                        await KUMIHO_SDK.create_artifact(
-                            rev_kref,
-                            artifact_name,
-                            art,
+                        await _kumiho_with_timeout(
+                            KUMIHO_SDK.create_artifact(
+                                rev_kref,
+                                artifact_name,
+                                art,
+                            ),
+                            f"attach workflow run artifact {sid}",
+                            run_id=run_id,
+                            timeout=_timeout_from_env(
+                                "CONSTRUCT_WORKFLOW_MEMORY_ARTIFACT_TIMEOUT_SECS",
+                                _PERSIST_ARTIFACT_TIMEOUT_SECS,
+                            ),
                         )
                     except Exception as e:
                         _log(f"workflow_memory: artifact attach failed for step={sid}: {e}")
@@ -408,12 +478,18 @@ async def _ensure_space_path(space_path: str) -> None:
         # Path is just "/project" — nothing to create beyond the project.
         # ensure_space requires a space name; default to WorkflowOutputs to
         # match the legacy behaviour of this function.
-        await KUMIHO_SDK.ensure_space(project, "WorkflowOutputs")
+        await _kumiho_with_timeout(
+            KUMIHO_SDK.ensure_space(project, "WorkflowOutputs"),
+            f"ensure space {project}/WorkflowOutputs",
+        )
         return
 
     # First segment under the project: ensure_space already creates
     # both the project and the root-level space idempotently.
-    await KUMIHO_SDK.ensure_space(project, parts[1])
+    await _kumiho_with_timeout(
+        KUMIHO_SDK.ensure_space(project, parts[1]),
+        f"ensure space {project}/{parts[1]}",
+    )
 
     if len(parts) == 2:
         return
@@ -438,7 +514,13 @@ async def _ensure_space_path(space_path: str) -> None:
             if "error" in r and "already exists" not in r["error"].lower():
                 _log(f"workflow_memory: create_space({pp}/{s}) warning: {r['error']}")
 
-        await asyncio.to_thread(_create)
+        await asyncio.wait_for(
+            asyncio.to_thread(_create),
+            timeout=_timeout_from_env(
+                "CONSTRUCT_WORKFLOW_MEMORY_TIMEOUT_SECS",
+                _PERSIST_OP_TIMEOUT_SECS,
+            ),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -562,11 +644,15 @@ async def publish_workflow_entity(
         # where the gRPC backend hasn't yet replicated the space we just
         # ensured above.
         async def _do_create() -> dict[str, Any]:
-            return await KUMIHO_SDK.create_item(
-                space_path,
-                entity_name,
-                kind=entity_kind,
-                metadata=item_meta,
+            return await _kumiho_with_timeout(
+                KUMIHO_SDK.create_item(
+                    space_path,
+                    entity_name,
+                    kind=entity_kind,
+                    metadata=item_meta,
+                ),
+                "create workflow entity item",
+                run_id=run_id,
             )
 
         try:
@@ -639,7 +725,11 @@ async def publish_workflow_entity(
         # Create the revision untagged first. Kumiho revisions can become
         # immutable once tagged/published, so artifacts must be attached before
         # applying the workflow-visible entity tag.
-        rev = await KUMIHO_SDK.create_revision(item_kref, metadata, tag=None)
+        rev = await _kumiho_with_timeout(
+            KUMIHO_SDK.create_revision(item_kref, metadata, tag=None),
+            "create workflow entity revision",
+            run_id=run_id,
+        )
         rev_kref = rev.get("kref", "") if isinstance(rev, dict) else getattr(rev, "kref", "")
         if not rev_kref:
             _log(f"workflow_memory: revision creation returned no kref for entity {entity_name}")
@@ -659,11 +749,19 @@ async def publish_workflow_entity(
                     if artifact_path_override
                     else f"{step_id}{ext}"
                 )
-                artifact = await KUMIHO_SDK.create_artifact(
-                    rev_kref,
-                    artifact_file_name,
-                    artifact_path,
-                    user_meta if target == "artifact" else None,
+                artifact = await _kumiho_with_timeout(
+                    KUMIHO_SDK.create_artifact(
+                        rev_kref,
+                        artifact_file_name,
+                        artifact_path,
+                        user_meta if target == "artifact" else None,
+                    ),
+                    "attach workflow entity artifact",
+                    run_id=run_id,
+                    timeout=_timeout_from_env(
+                        "CONSTRUCT_WORKFLOW_MEMORY_ARTIFACT_TIMEOUT_SECS",
+                        _PERSIST_ARTIFACT_TIMEOUT_SECS,
+                    ),
                 )
                 artifact_kref = (
                     artifact.get("kref", "")
@@ -687,7 +785,11 @@ async def publish_workflow_entity(
             _log(f"workflow_memory: {tag_error}")
         elif entity_tag:
             try:
-                tag_result = await KUMIHO_SDK.tag_revision(rev_kref, entity_tag)
+                tag_result = await _kumiho_with_timeout(
+                    KUMIHO_SDK.tag_revision(rev_kref, entity_tag),
+                    "tag workflow entity revision",
+                    run_id=run_id,
+                )
                 if isinstance(tag_result, dict) and tag_result.get("error"):
                     raise RuntimeError(str(tag_result["error"]))
                 tag_applied = True
