@@ -77,7 +77,7 @@ function GraphCanvasInner<TNode extends Node = Node>({
   return (
     <div
       className="construct-graph overflow-hidden rounded-[16px] border"
-      style={{ ...sizeStyle, borderColor: 'var(--construct-border-soft)', background: 'var(--construct-bg-surface)' }}
+      style={{ ...sizeStyle, borderColor: 'var(--construct-border-soft)', backgroundColor: 'var(--construct-bg-surface)' }}
     >
       {overlay ? (
         <div className="construct-graph-overlay">
@@ -99,7 +99,7 @@ function GraphCanvasInner<TNode extends Node = Node>({
         minZoom={0.35}
         maxZoom={2}
         proOptions={{ hideAttribution: true }}
-        style={{ background: 'var(--construct-bg-surface)' }}
+        style={{ background: 'transparent' }}
       >
         <Background gap={24} size={1} color="var(--construct-grid-line)" />
         <Controls

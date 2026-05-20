@@ -33,12 +33,33 @@ export interface ToolSpec {
 }
 
 export type SkinModeName = 'light' | 'dark';
-export type SkinAssetSlot =
-  | 'brandLogo'
-  | 'operatorAvatar'
-  | 'dashboardHero'
-  | 'shellTexture'
-  | 'panelDecoration';
+export const SKIN_ASSET_SLOTS = [
+  'brandLogo',
+  'operatorAvatar',
+  'dashboardHero',
+  'shellTexture',
+  'panelDecoration',
+  'pageBackdrop',
+  'sidebarBackdrop',
+  'headerBackdrop',
+  'dashboardShowcase',
+  'dashboardAccent',
+  'graphBackdrop',
+  'metricDecoration',
+  'runCardDecoration',
+  'stepCardDecoration',
+  'timelineDecoration',
+  'riskRailDecoration',
+  'agentRailDecoration',
+  'commandBandDecoration',
+  'recentRunsDecoration',
+  'statusRunningBadge',
+  'statusSuccessBadge',
+  'statusFailedBadge',
+  'statusPendingBadge',
+  'statusSkippedBadge',
+] as const;
+export type SkinAssetSlot = typeof SKIN_ASSET_SLOTS[number];
 
 export interface SkinModeDefinition {
   tokens?: Record<string, string>;
@@ -240,7 +261,12 @@ export interface AgentDefinition {
   agent_type: string;      // "claude" | "codex"
   model: string;           // e.g. "claude-opus-4-6", "claude-sonnet-4-6", "gpt-5.4"
   system_hint: string;     // Extra prompt context
-  revision_number: number; // Latest revision number
+  revision?: number | null;
+  revision_number?: number | null; // Latest revision number
+  avatar_url?: string | null;
+  avatar_artifact_name?: string | null;
+  avatar_filename?: string | null;
+  avatar_mime?: string | null;
 }
 
 export interface AgentCreateRequest {
@@ -336,6 +362,7 @@ export interface TeamMember {
   model?: string;
   identity: string;
   expertise: string[];
+  avatar_url?: string | null;
 }
 
 export interface TeamDefinition {
@@ -350,6 +377,10 @@ export interface TeamDefinition {
   member_count?: number;
   member_names?: string[];
   edge_count?: number;
+  avatar_url?: string | null;
+  avatar_artifact_name?: string | null;
+  avatar_filename?: string | null;
+  avatar_mime?: string | null;
 }
 
 export interface TeamCreateRequest {

@@ -1,7 +1,8 @@
 import { useMemo } from 'react';
-import { Users, Eye, Power, Pencil, Trash2 } from 'lucide-react';
+import { Eye, Power, Pencil, Trash2 } from 'lucide-react';
 import type { TeamDefinition } from '@/types/api';
 import { EDGE_TYPES, getEdgeLabel, getEdgeBadgeColors, getRoleColor } from './graphHelpers';
+import AgentAvatar from '@/construct/components/ui/AgentAvatar';
 
 export default function TeamCard({
   team,
@@ -40,7 +41,7 @@ export default function TeamCard({
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <Users className="h-4 w-4 flex-shrink-0" style={{ color: isActive ? 'var(--pc-accent)' : 'var(--pc-text-faint)' }} />
+            <AgentAvatar src={team.avatar_url} alt={team.name} size={34} radius={9} kind="team" />
             <h3 className="text-base font-bold truncate" style={{ color: 'var(--pc-text-primary)' }}>
               {team.name}
             </h3>

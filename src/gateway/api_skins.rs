@@ -34,6 +34,25 @@ const ASSET_SLOTS: &[&str] = &[
     "dashboardHero",
     "shellTexture",
     "panelDecoration",
+    "pageBackdrop",
+    "sidebarBackdrop",
+    "headerBackdrop",
+    "dashboardShowcase",
+    "dashboardAccent",
+    "graphBackdrop",
+    "metricDecoration",
+    "runCardDecoration",
+    "stepCardDecoration",
+    "timelineDecoration",
+    "riskRailDecoration",
+    "agentRailDecoration",
+    "commandBandDecoration",
+    "recentRunsDecoration",
+    "statusRunningBadge",
+    "statusSuccessBadge",
+    "statusFailedBadge",
+    "statusPendingBadge",
+    "statusSkippedBadge",
 ];
 
 const PACKAGE_EXTENSIONS: &[&str] = &["json", "png", "jpg", "jpeg", "webp"];
@@ -761,7 +780,9 @@ mod tests {
                         "--construct-radius-md": "14px"
                     },
                     "assets": {
-                        "brandLogo": "assets/logo.webp"
+                        "brandLogo": "assets/logo.webp",
+                        "dashboardShowcase": "assets/showcase.webp",
+                        "statusSuccessBadge": "assets/success.webp"
                     },
                     "preview": "assets/preview.png"
                 }

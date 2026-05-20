@@ -6,6 +6,7 @@ import type { TeamDefinition, TeamMember, WorkflowDefinition, WorkflowRunDetail,
 import { parseWorkflowMeta } from '@/construct/components/workflows/yamlSync';
 import Panel from '../ui/Panel';
 import StatusPill from '../ui/StatusPill';
+import AgentAvatar from '../ui/AgentAvatar';
 import { formatLocalDateTime } from '../../lib/datetime';
 
 interface WorkflowMetadataCardProps {
@@ -44,7 +45,7 @@ interface SelectedTaskCardProps {
 
 export function SelectedTaskCard({ task, step, title = 'Selected Node', emptyText, footer, onViewArtifact }: SelectedTaskCardProps) {
   return (
-    <Panel className="p-4" variant="secondary">
+    <Panel className="p-4" variant="secondary" skinSlot="stepCard">
       <div className="construct-kicker">{title}</div>
       {task ? (
         <div className="mt-3 space-y-2">
@@ -121,7 +122,7 @@ interface RunSummaryCardProps {
 
 export function RunSummaryCard({ run, workflowHref }: RunSummaryCardProps) {
   return (
-    <Panel className="p-4" variant="utility">
+    <Panel className="p-4" variant="utility" skinSlot="runCard">
       <div className="construct-kicker">Run Summary</div>
       {run ? (
         <div className="mt-3 space-y-2 text-sm">
@@ -201,6 +202,12 @@ export function TeamSummaryCard({ team }: TeamSummaryCardProps) {
       <div className="construct-kicker">Team Summary</div>
       {team ? (
         <div className="mt-3 space-y-2 text-sm">
+          <div className="flex items-center gap-3">
+            <AgentAvatar src={team.avatar_url} alt={team.name} size={44} radius={12} kind="team" />
+            <div className="min-w-0 text-sm font-semibold" style={{ color: 'var(--construct-text-primary)' }}>
+              {team.name}
+            </div>
+          </div>
           <div><span style={{ color: 'var(--construct-text-faint)' }}>Members</span>: <span style={{ color: 'var(--construct-text-primary)' }}>{team.members.length || team.member_count || 0}</span></div>
           <div><span style={{ color: 'var(--construct-text-faint)' }}>Edges</span>: <span style={{ color: 'var(--construct-text-primary)' }}>{team.edges.length || team.edge_count || 0}</span></div>
           <p style={{ color: 'var(--construct-text-secondary)' }}>{team.description || 'No description.'}</p>
@@ -223,7 +230,10 @@ export function SelectedMemberCard({ member, footer }: SelectedMemberCardProps) 
       <div className="construct-kicker">Selected Member</div>
       {member ? (
         <div className="mt-3 space-y-2">
-          <div className="text-sm font-semibold" style={{ color: 'var(--construct-text-primary)' }}>{member.name}</div>
+          <div className="flex items-center gap-3">
+            <AgentAvatar src={member.avatar_url} alt={member.name} size={40} radius={10} />
+            <div className="min-w-0 text-sm font-semibold" style={{ color: 'var(--construct-text-primary)' }}>{member.name}</div>
+          </div>
           <div className="text-xs uppercase tracking-[0.12em]" style={{ color: 'var(--construct-text-faint)' }}>
             {member.role} / {member.agent_type}
           </div>

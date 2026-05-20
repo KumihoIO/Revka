@@ -570,6 +570,16 @@ export async function updateAgent(agent: AgentUpdateRequest): Promise<AgentDefin
   }).then((data) => unwrapField(data, 'agent'));
 }
 
+export async function uploadAgentAvatar(kref: string, file: File): Promise<AgentDefinition> {
+  const form = new FormData();
+  form.append('kref', kref);
+  form.append('file', file, file.name);
+  return apiFetch<AgentDefinition | { agent: AgentDefinition }>('/api/agents/avatar', {
+    method: 'POST',
+    body: form,
+  }).then((data) => unwrapField(data, 'agent'));
+}
+
 export async function toggleAgentDeprecation(kref: string, deprecated: boolean): Promise<AgentDefinition> {
   return apiFetch<AgentDefinition | { agent: AgentDefinition }>('/api/agents/deprecate', {
     method: 'POST',
@@ -1079,6 +1089,16 @@ export async function updateTeam(team: TeamUpdateRequest): Promise<TeamDefinitio
   return apiFetch<TeamDefinition | { team: TeamDefinition }>(`/api/teams/${path}`, {
     method: 'PUT',
     body: JSON.stringify(team),
+  }).then((data) => unwrapField(data, 'team'));
+}
+
+export async function uploadTeamAvatar(kref: string, file: File): Promise<TeamDefinition> {
+  const form = new FormData();
+  form.append('kref', kref);
+  form.append('file', file, file.name);
+  return apiFetch<TeamDefinition | { team: TeamDefinition }>('/api/teams/avatar', {
+    method: 'POST',
+    body: form,
   }).then((data) => unwrapField(data, 'team'));
 }
 

@@ -1,4 +1,6 @@
 import type { ReactNode } from 'react';
+import { useTheme } from '@/construct/hooks/useTheme';
+import type { SkinAssetSlot } from '@/types/api';
 
 export function OperatorSection({
   title,
@@ -73,12 +75,17 @@ export function OperatorCountChip({
   value,
   tone,
   compact = false,
+  assetSlot,
 }: {
   label: string;
   value: number;
   tone: string;
   compact?: boolean;
+  assetSlot?: SkinAssetSlot;
 }) {
+  const { getSkinAsset } = useTheme();
+  const asset = assetSlot ? getSkinAsset(assetSlot) : null;
+
   return (
     <div
       className={compact ? 'rounded-[12px] border px-3 py-2' : 'construct-signal-chip'}
@@ -88,8 +95,11 @@ export function OperatorCountChip({
         backdropFilter: compact ? undefined : 'blur(10px)',
       }}
     >
-      <div className="text-[10px] font-semibold uppercase tracking-[0.12em]" style={{ color: 'var(--construct-text-faint)' }}>
-        {label}
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-[10px] font-semibold uppercase tracking-[0.12em]" style={{ color: 'var(--construct-text-faint)' }}>
+          {label}
+        </div>
+        {asset ? <img src={asset} alt="" className="construct-status-asset" draggable={false} /> : null}
       </div>
       <div className={compact ? 'mt-1 text-lg font-semibold' : 'mt-1 text-base font-semibold'} style={{ color: tone }}>
         {value}

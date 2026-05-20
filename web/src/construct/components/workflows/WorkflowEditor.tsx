@@ -82,6 +82,7 @@ import StepTypePalette from './StepTypePalette';
 import AgentPicker from './AgentPicker';
 import ArchitectPanel from './ArchitectPanel';
 import RevisionHistoryStrip from './RevisionHistoryStrip';
+import { withAgentVisuals } from './agentVisuals';
 import { useAgentRoster } from './useAgentRoster';
 import {
   ADD_STEP_EVENT,
@@ -1217,8 +1218,8 @@ function WorkflowEditorInner({
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
   const liveNodes = useMemo(
-    () => withLiveDependencyCounts(nodes as Node<TaskNodeData>[], edges),
-    [nodes, edges],
+    () => withAgentVisuals(withLiveDependencyCounts(nodes as Node<TaskNodeData>[], edges), poolAgents),
+    [nodes, edges, poolAgents],
   );
 
   useEffect(() => {

@@ -14,6 +14,8 @@ import GraphCanvas from '../orchestration/GraphCanvas';
 import { workflowEdgeTypesV2 } from '../orchestration/WorkflowEdge';
 import { workflowNodeTypesV2 } from '../orchestration/WorkflowNode';
 import { buildWorkflowEdgeStyle, resolveCssVar, workflowActionTone } from '../../lib/orchestration';
+import { withAgentVisuals } from './agentVisuals';
+import { useAgentRoster } from './useAgentRoster';
 
 export default function WorkflowDagWorkspace({
   definition,
@@ -40,6 +42,8 @@ export default function WorkflowDagWorkspace({
   failingTaskIds?: string[];
   runningTaskIds?: string[];
 }) {
+  const { agents } = useAgentRoster();
+
   const { nodes, edges, tasks } = useMemo(() => {
     const parsed = parseWorkflowYaml(definition);
     const flow = tasksToFlow(parsed);
@@ -63,10 +67,11 @@ export default function WorkflowDagWorkspace({
     const positionedNodes = hasPersistedTaskPositions(parsed)
       ? flow.nodes
       : layoutNodes(flow.nodes, flow.edges);
+    const typedPositionedNodes = positionedNodes as Node<TaskNodeData>[];
 
     return {
       tasks: parsed,
-      nodes: positionedNodes.map((node) => ({
+      nodes: withAgentVisuals(typedPositionedNodes, agents).map((node) => ({
         ...node,
         selected: node.id === selectedTaskId,
         hidden: hidden.has(node.id),
@@ -77,7 +82,7 @@ export default function WorkflowDagWorkspace({
         hidden: hidden.has(edge.source) || hidden.has(edge.target),
       })) as Edge[],
     };
-  }, [blockedTaskIds, definition, failingTaskIds, hiddenTaskIds, runningTaskIds, selectedTaskId, stepResults]);
+  }, [agents, blockedTaskIds, definition, failingTaskIds, hiddenTaskIds, runningTaskIds, selectedTaskId, stepResults]);
 
   const handleNodeClick: NodeMouseHandler<Node<TaskNodeData>> = (_, node) => {
     const taskId = node.data.taskId;
