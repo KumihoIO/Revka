@@ -129,7 +129,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio_util::sync::CancellationToken;
 
 /// Observer wrapper that forwards tool-call events to a channel sender
@@ -210,6 +210,8 @@ const CHANNEL_MESSAGE_TIMEOUT_SCALE_CAP: u64 = 4;
 const CHANNEL_PARALLELISM_PER_CHANNEL: usize = 4;
 const CHANNEL_MIN_IN_FLIGHT_MESSAGES: usize = 8;
 const CHANNEL_MAX_IN_FLIGHT_MESSAGES: usize = 64;
+const CHANNEL_PROGRESS_HEARTBEAT_DELAY_SECS: u64 = 5;
+const CHANNEL_PROGRESS_HEARTBEAT_TEXT: &str = "Working on it...";
 const CHANNEL_TYPING_REFRESH_INTERVAL_SECS: u64 = 4;
 const CHANNEL_HEALTH_HEARTBEAT_SECS: u64 = 30;
 const MODEL_CACHE_FILE: &str = "models_cache.json";
@@ -479,6 +481,151 @@ fn is_stop_command(content: &str) -> bool {
     let cmd = trimmed.split_whitespace().next().unwrap_or("");
     let base = cmd.split('@').next().unwrap_or(cmd);
     base.eq_ignore_ascii_case("/stop")
+}
+
+fn base_channel_name(channel: &str) -> &str {
+    channel.split_once(':').map_or(channel, |(base, _)| base)
+}
+
+fn is_low_latency_chat_channel(channel: &str) -> bool {
+    matches!(base_channel_name(channel), "telegram" | "discord")
+}
+
+fn normalized_short_chat(content: &str) -> Option<String> {
+    let trimmed = content.trim();
+    if trimmed.is_empty()
+        || trimmed.chars().count() > 48
+        || trimmed.contains('\n')
+        || trimmed.starts_with('/')
+        || trimmed.contains('?')
+        || trimmed.contains('？')
+    {
+        return None;
+    }
+
+    let lowered = trimmed.to_lowercase();
+    if lowered.contains("http://")
+        || lowered.contains("https://")
+        || lowered.contains("www.")
+        || lowered.contains("```")
+        || lowered.contains('@')
+    {
+        return None;
+    }
+
+    let normalized = lowered
+        .trim_matches(|c: char| {
+            c.is_whitespace() || matches!(c, '.' | ',' | '!' | '~' | '…' | '。' | '！' | ':' | ';')
+        })
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    if normalized.is_empty() || normalized.split_whitespace().count() > 5 {
+        return None;
+    }
+
+    Some(normalized)
+}
+
+fn casual_fast_path_reply(
+    channel: &str,
+    content: &str,
+    has_attachments: bool,
+    has_prior_history: bool,
+) -> Option<&'static str> {
+    if has_attachments || !is_low_latency_chat_channel(channel) {
+        return None;
+    }
+
+    let normalized = normalized_short_chat(content)?;
+    let english_greeting = matches!(
+        normalized.as_str(),
+        "hi" | "hello" | "hey" | "hey there" | "good morning" | "good afternoon" | "good evening"
+    );
+    let korean_greeting = matches!(
+        normalized.as_str(),
+        "안녕" | "안녕하세요" | "안녕하세여" | "하이" | "ㅎㅇ"
+    );
+    if english_greeting {
+        return Some("Hi.");
+    }
+    if korean_greeting {
+        return Some("안녕하세요.");
+    }
+
+    let english_ack = matches!(
+        normalized.as_str(),
+        "ok" | "okay"
+            | "k"
+            | "yes"
+            | "yep"
+            | "yeah"
+            | "yup"
+            | "got it"
+            | "understood"
+            | "sounds good"
+            | "thanks"
+            | "thank you"
+            | "thx"
+            | "cool"
+            | "nice"
+            | "great"
+    );
+    if english_ack {
+        if has_prior_history
+            && matches!(
+                normalized.as_str(),
+                "ok" | "okay" | "k" | "yes" | "yep" | "yeah" | "yup" | "got it" | "understood"
+            )
+        {
+            return None;
+        }
+        return Some("Got it.");
+    }
+
+    let korean_ack = matches!(
+        normalized.as_str(),
+        "네" | "넵"
+            | "예"
+            | "응"
+            | "ㅇㅇ"
+            | "ㅇㅋ"
+            | "오케이"
+            | "확인"
+            | "확인했습니다"
+            | "알겠습니다"
+            | "좋아"
+            | "좋습니다"
+            | "고마워"
+            | "고마워요"
+            | "감사"
+            | "감사합니다"
+            | "ㄱㅅ"
+    );
+    if korean_ack {
+        if has_prior_history
+            && matches!(
+                normalized.as_str(),
+                "네" | "넵"
+                    | "예"
+                    | "응"
+                    | "ㅇㅇ"
+                    | "ㅇㅋ"
+                    | "오케이"
+                    | "확인"
+                    | "확인했습니다"
+                    | "알겠습니다"
+                    | "좋아"
+                    | "좋습니다"
+            )
+        {
+            return None;
+        }
+        return Some("확인했습니다.");
+    }
+
+    None
 }
 
 /// Strip tool-call XML tags from outgoing messages.
@@ -2496,14 +2643,171 @@ fn spawn_scoped_typing_task(
     })
 }
 
+fn log_channel_latency_stage(
+    channel: &str,
+    sender: &str,
+    message_id: &str,
+    stage: &str,
+    stage_elapsed: Duration,
+    total_elapsed: Duration,
+) {
+    #[allow(clippy::cast_possible_truncation)]
+    let stage_ms = stage_elapsed.as_millis() as u64;
+    #[allow(clippy::cast_possible_truncation)]
+    let total_ms = total_elapsed.as_millis() as u64;
+    let unix_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or_default();
+    tracing::info!(
+        channel = %channel,
+        sender = %sender,
+        message_id = %message_id,
+        stage = %stage,
+        unix_ms,
+        stage_ms,
+        total_ms,
+        "channel latency stage"
+    );
+}
+
+struct ChannelProgressHeartbeat {
+    cancellation: CancellationToken,
+    handle: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl ChannelProgressHeartbeat {
+    fn spawn(
+        started_at: Instant,
+        channel: Arc<dyn Channel>,
+        channel_name: String,
+        sender: String,
+        message_id: String,
+        recipient: String,
+        thread_ts: Option<String>,
+    ) -> Self {
+        let cancellation = CancellationToken::new();
+        let handle = spawn_channel_progress_heartbeat(
+            started_at,
+            channel,
+            channel_name,
+            sender,
+            message_id,
+            recipient,
+            thread_ts,
+            cancellation.clone(),
+        );
+        Self {
+            cancellation,
+            handle: Some(handle),
+        }
+    }
+
+    fn cancel(&self) {
+        self.cancellation.cancel();
+    }
+
+    async fn finish(mut self) {
+        self.cancel();
+        if let Some(handle) = self.handle.take() {
+            log_worker_join_result(handle.await);
+        }
+    }
+}
+
+impl Drop for ChannelProgressHeartbeat {
+    fn drop(&mut self) {
+        self.cancel();
+    }
+}
+
+fn spawn_channel_progress_heartbeat(
+    started_at: Instant,
+    channel: Arc<dyn Channel>,
+    channel_name: String,
+    sender: String,
+    message_id: String,
+    recipient: String,
+    thread_ts: Option<String>,
+    cancellation_token: CancellationToken,
+) -> tokio::task::JoinHandle<()> {
+    spawn_channel_progress_heartbeat_after(
+        started_at,
+        channel,
+        channel_name,
+        sender,
+        message_id,
+        recipient,
+        thread_ts,
+        cancellation_token,
+        Duration::from_secs(CHANNEL_PROGRESS_HEARTBEAT_DELAY_SECS),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn spawn_channel_progress_heartbeat_after(
+    started_at: Instant,
+    channel: Arc<dyn Channel>,
+    channel_name: String,
+    sender: String,
+    message_id: String,
+    recipient: String,
+    thread_ts: Option<String>,
+    cancellation_token: CancellationToken,
+    delay: Duration,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        tokio::select! {
+            () = cancellation_token.cancelled() => {}
+            _ = tokio::time::sleep(delay) => {
+                if cancellation_token.is_cancelled() {
+                    return;
+                }
+                let send_start = Instant::now();
+                match channel
+                    .send(
+                        &SendMessage::new(CHANNEL_PROGRESS_HEARTBEAT_TEXT, &recipient)
+                            .in_thread(thread_ts),
+                    )
+                    .await
+                {
+                    Ok(()) => log_channel_latency_stage(
+                        &channel_name,
+                        &sender,
+                        &message_id,
+                        "progress_heartbeat_send",
+                        send_start.elapsed(),
+                        started_at.elapsed(),
+                    ),
+                    Err(e) => tracing::debug!(
+                        channel = %channel_name,
+                        sender = %sender,
+                        message_id = %message_id,
+                        "Failed to send channel progress heartbeat: {e}"
+                    ),
+                }
+            }
+        }
+    })
+}
+
 async fn process_channel_message(
     ctx: Arc<ChannelRuntimeContext>,
     msg: traits::ChannelMessage,
     cancellation_token: CancellationToken,
 ) {
+    let started_at = Instant::now();
     if cancellation_token.is_cancelled() {
         return;
     }
+    log_channel_latency_stage(
+        &msg.channel,
+        &msg.sender,
+        &msg.id,
+        "channel_receive",
+        Duration::ZERO,
+        Duration::ZERO,
+    );
 
     println!(
         "  💬 [{}] from {}: {}",
@@ -2540,6 +2844,73 @@ async fn process_channel_message(
         msg
     };
 
+    let target_channel = ctx
+        .channels_by_name
+        .get(&msg.channel)
+        .or_else(|| {
+            // Multi-room channels use "name:qualifier" format (e.g. "matrix:!roomId");
+            // fall back to base channel name for routing.
+            msg.channel
+                .split_once(':')
+                .and_then(|(base, _)| ctx.channels_by_name.get(base))
+        })
+        .cloned();
+    let history_key = conversation_history_key(&msg);
+    let has_prior_history = ctx
+        .conversation_histories
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(&history_key)
+        .is_some_and(|turns| !turns.is_empty());
+
+    if let (Some(reply), Some(channel)) = (
+        casual_fast_path_reply(
+            &msg.channel,
+            &msg.content,
+            !msg.attachments.is_empty(),
+            has_prior_history,
+        ),
+        target_channel.as_ref(),
+    ) {
+        let send_start = Instant::now();
+        if let Err(e) = channel
+            .send(&SendMessage::new(reply, &msg.reply_target).in_thread(msg.thread_ts.clone()))
+            .await
+        {
+            tracing::debug!(
+                channel = %msg.channel,
+                sender = %msg.sender,
+                message_id = %msg.id,
+                "Failed to send casual fast-path reply: {e}"
+            );
+        } else {
+            log_channel_latency_stage(
+                &msg.channel,
+                &msg.sender,
+                &msg.id,
+                "fast_path_send",
+                send_start.elapsed(),
+                started_at.elapsed(),
+            );
+            runtime_trace::record_event(
+                "channel_message_fast_path",
+                Some(msg.channel.as_str()),
+                None,
+                None,
+                None,
+                Some(true),
+                None,
+                serde_json::json!({
+                    "sender": msg.sender,
+                    "message_id": msg.id,
+                    "reply_target": msg.reply_target,
+                    "elapsed_ms": started_at.elapsed().as_millis(),
+                }),
+            );
+            return;
+        }
+    }
+
     // ── Media pipeline: enrich inbound message with media annotations ──
     if ctx.media_pipeline.enabled && !msg.attachments.is_empty() {
         let vision = ctx.provider.supports_vision();
@@ -2570,25 +2941,50 @@ async fn process_channel_message(
         }
     }
 
-    let target_channel = ctx
-        .channels_by_name
-        .get(&msg.channel)
-        .or_else(|| {
-            // Multi-room channels use "name:qualifier" format (e.g. "matrix:!roomId");
-            // fall back to base channel name for routing.
-            msg.channel
-                .split_once(':')
-                .and_then(|(base, _)| ctx.channels_by_name.get(base))
-        })
-        .cloned();
+    let preprocess_done_at = Instant::now();
+
+    log_channel_latency_stage(
+        &msg.channel,
+        &msg.sender,
+        &msg.id,
+        "preprocess",
+        preprocess_done_at.duration_since(started_at),
+        started_at.elapsed(),
+    );
+
+    let runtime_update_start = Instant::now();
     if let Err(err) = maybe_apply_runtime_config_update(ctx.as_ref()).await {
         tracing::warn!("Failed to apply runtime config update: {err}");
     }
+    log_channel_latency_stage(
+        &msg.channel,
+        &msg.sender,
+        &msg.id,
+        "runtime_config_update",
+        runtime_update_start.elapsed(),
+        started_at.elapsed(),
+    );
+
     if handle_runtime_command_if_needed(ctx.as_ref(), &msg, target_channel.as_ref()).await {
         return;
     }
 
-    let history_key = conversation_history_key(&msg);
+    let progress_heartbeat = if is_low_latency_chat_channel(&msg.channel) {
+        target_channel.as_ref().map(|channel| {
+            ChannelProgressHeartbeat::spawn(
+                started_at,
+                Arc::clone(channel),
+                msg.channel.clone(),
+                msg.sender.clone(),
+                msg.id.clone(),
+                msg.reply_target.clone(),
+                msg.thread_ts.clone(),
+            )
+        })
+    } else {
+        None
+    };
+
     let mut route = get_route_selection(ctx.as_ref(), &history_key);
 
     // ── Query classification: override route when a rule matches ──
@@ -2658,7 +3054,15 @@ async fn process_channel_message(
     }
 
     println!("  ⏳ Processing message...");
-    let started_at = Instant::now();
+    let agent_started_at = Instant::now();
+    log_channel_latency_stage(
+        &msg.channel,
+        &msg.sender,
+        &msg.id,
+        "agent_start",
+        agent_started_at.duration_since(started_at),
+        started_at.elapsed(),
+    );
 
     let force_fresh_session = take_pending_new_session(ctx.as_ref(), &history_key);
     if force_fresh_session {
@@ -2799,6 +3203,14 @@ async fn process_channel_message(
         context_len = memory_context.len(),
         "⏱ Memory recall completed"
     );
+    log_channel_latency_stage(
+        &msg.channel,
+        &msg.sender,
+        &msg.id,
+        "memory_recall",
+        mem_recall_start.elapsed(),
+        started_at.elapsed(),
+    );
 
     // Use refreshed system prompt for new sessions (master's /new support),
     // and inject memory into system prompt (not user message) so it
@@ -2820,6 +3232,7 @@ async fn process_channel_message(
     // Use the existing ContextCompressor to summarize older history
     // before the LLM call, preventing context-window-exceeded errors
     // and preserving key decisions through LLM-driven summarization.
+    let context_compression_start = Instant::now();
     {
         let cc_config = ctx.prompt_config.agent.context_compression.clone();
         let compressor = crate::agent::context_compressor::ContextCompressor::new(
@@ -2847,6 +3260,14 @@ async fn process_channel_message(
             _ => {}
         }
     }
+    log_channel_latency_stage(
+        &msg.channel,
+        &msg.sender,
+        &msg.id,
+        "context_compression",
+        context_compression_start.elapsed(),
+        started_at.elapsed(),
+    );
 
     let use_draft_streaming = target_channel
         .as_ref()
@@ -2888,6 +3309,11 @@ async fn process_channel_message(
     } else {
         None
     };
+    if draft_message_id.is_some() {
+        if let Some(heartbeat) = progress_heartbeat.as_ref() {
+            heartbeat.cancel();
+        }
+    }
 
     // Spawn the appropriate handler for the delta channel.
     let draft_updater = if use_draft_streaming {
@@ -2900,9 +3326,17 @@ async fn process_channel_message(
             let channel = Arc::clone(channel_ref);
             let reply_target = msg.reply_target.clone();
             let draft_id = draft_id_ref.to_string();
+            let latency_channel = msg.channel.clone();
+            let latency_sender = msg.sender.clone();
+            let latency_message_id = msg.id.clone();
+            let latency_started_at = started_at;
+            let progress_cancellation = progress_heartbeat
+                .as_ref()
+                .map(|heartbeat| heartbeat.cancellation.clone());
             Some(tokio::spawn(async move {
                 use crate::agent::loop_::DraftEvent;
                 let mut accumulated = String::new();
+                let mut saw_first_content = false;
                 while let Some(event) = rx.recv().await {
                     match event {
                         DraftEvent::Clear => {
@@ -2917,6 +3351,20 @@ async fn process_channel_message(
                             }
                         }
                         DraftEvent::Content(text) => {
+                            if !saw_first_content {
+                                saw_first_content = true;
+                                if let Some(token) = progress_cancellation.as_ref() {
+                                    token.cancel();
+                                }
+                                log_channel_latency_stage(
+                                    &latency_channel,
+                                    &latency_sender,
+                                    &latency_message_id,
+                                    "model_first_token",
+                                    latency_started_at.elapsed(),
+                                    latency_started_at.elapsed(),
+                                );
+                            }
                             accumulated.push_str(&text);
                             if let Err(e) = channel
                                 .update_draft(&reply_target, &draft_id, &accumulated)
@@ -3019,6 +3467,14 @@ async fn process_channel_message(
     #[allow(clippy::cast_possible_truncation)]
     let elapsed_before_llm_ms = started_at.elapsed().as_millis() as u64;
     tracing::info!(elapsed_before_llm_ms, "⏱ Starting LLM call");
+    log_channel_latency_stage(
+        &msg.channel,
+        &msg.sender,
+        &msg.id,
+        "model_start",
+        llm_call_start.duration_since(started_at),
+        started_at.elapsed(),
+    );
     let (llm_result, fallback_info) = scope_provider_fallback(async {
         let llm_result = loop {
             let loop_result = tokio::select! {
@@ -3136,6 +3592,14 @@ async fn process_channel_message(
     #[allow(clippy::cast_possible_truncation)]
     let total_ms = started_at.elapsed().as_millis() as u64;
     tracing::info!(llm_call_ms, total_ms, "⏱ LLM call completed");
+    log_channel_latency_stage(
+        &msg.channel,
+        &msg.sender,
+        &msg.id,
+        "model_response_ready",
+        llm_call_start.elapsed(),
+        started_at.elapsed(),
+    );
 
     if let Some(token) = typing_cancellation.as_ref() {
         token.cancel();
@@ -3320,18 +3784,22 @@ async fn process_channel_message(
                 truncate_with_ellipsis(&delivered_response, 80)
             );
             if let Some(channel) = target_channel.as_ref() {
+                let final_send_start = Instant::now();
                 if let Some(ref draft_id) = draft_message_id {
                     if let Err(e) = channel
                         .finalize_draft(&msg.reply_target, draft_id, &delivered_response)
                         .await
                     {
                         tracing::warn!("Failed to finalize draft: {e}; sending as new message");
-                        let _ = channel
+                        if let Err(send_err) = channel
                             .send(
                                 &SendMessage::new(&delivered_response, &msg.reply_target)
                                     .in_thread(msg.thread_ts.clone()),
                             )
-                            .await;
+                            .await
+                        {
+                            tracing::warn!("Failed to send fallback channel reply: {send_err}");
+                        }
                     }
                 } else if let Err(e) = channel
                     .send(
@@ -3343,6 +3811,17 @@ async fn process_channel_message(
                 {
                     eprintln!("  ❌ Failed to reply on {}: {e}", channel.name());
                 }
+                if let Some(heartbeat) = progress_heartbeat.as_ref() {
+                    heartbeat.cancel();
+                }
+                log_channel_latency_stage(
+                    &msg.channel,
+                    &msg.sender,
+                    &msg.id,
+                    "final_send",
+                    final_send_start.elapsed(),
+                    started_at.elapsed(),
+                );
             }
         }
         LlmExecutionResult::Completed(Ok(Err(e))) => {
@@ -5713,6 +6192,48 @@ mod tests {
                 CHANNEL_MESSAGE_TIMEOUT_SCALE_CAP
             ),
             300 * CHANNEL_MESSAGE_TIMEOUT_SCALE_CAP
+        );
+    }
+
+    #[test]
+    fn casual_fast_path_only_targets_low_latency_channels() {
+        assert_eq!(
+            casual_fast_path_reply("telegram", "안녕하세요", false, false),
+            Some("안녕하세요.")
+        );
+        assert_eq!(
+            casual_fast_path_reply("discord:guild-1", "hello!", false, false),
+            Some("Hi.")
+        );
+        assert_eq!(casual_fast_path_reply("slack", "hello", false, false), None);
+    }
+
+    #[test]
+    fn casual_fast_path_skips_work_intent_and_attachments() {
+        assert_eq!(
+            casual_fast_path_reply("telegram", "확인?", false, false),
+            None
+        );
+        assert_eq!(
+            casual_fast_path_reply("telegram", "안녕하세요", true, false),
+            None
+        );
+        assert_eq!(
+            casual_fast_path_reply("discord", "/models", false, false),
+            None
+        );
+    }
+
+    #[test]
+    fn casual_fast_path_preserves_contextual_ack_turns() {
+        assert_eq!(
+            casual_fast_path_reply("telegram", "응", false, false),
+            Some("확인했습니다.")
+        );
+        assert_eq!(casual_fast_path_reply("telegram", "응", false, true), None);
+        assert_eq!(
+            casual_fast_path_reply("discord", "thanks", false, true),
+            Some("Got it.")
         );
     }
 
