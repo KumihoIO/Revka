@@ -234,7 +234,11 @@ pub async fn send_raw(
     }
 
     let base_url = ensure_bridge(client).await?;
-    let url = format!("{}/api/v1{}", base_url.trim_end_matches('/'), path);
+    let url = if path == "/health" {
+        format!("{}/health", base_url.trim_end_matches('/'))
+    } else {
+        format!("{}/api/v1{}", base_url.trim_end_matches('/'), path)
+    };
     let mut req = client
         .request(method, &url)
         .header("X-Kumiho-Token", token)

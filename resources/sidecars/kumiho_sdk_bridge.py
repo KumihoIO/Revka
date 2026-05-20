@@ -311,7 +311,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _handle(self, method: str) -> None:
         parsed = urlparse(self.path)
-        if parsed.path == "/health":
+        if parsed.path in {"/health", "/api/v1/health"}:
             if IMPORT_ERROR is None:
                 self._send(HTTPStatus.OK, {"ok": True})
             else:

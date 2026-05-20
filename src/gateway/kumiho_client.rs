@@ -735,7 +735,11 @@ impl KumihoClient {
     }
 
     fn raw_url(&self, path: &str, query: &[(String, String)]) -> String {
-        let mut url = self.url(path);
+        let mut url = if path == "/health" {
+            format!("{}/healthz", self.base_url)
+        } else {
+            self.url(path)
+        };
         if !query.is_empty() {
             let qs: Vec<String> = query
                 .iter()
