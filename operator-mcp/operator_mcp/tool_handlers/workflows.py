@@ -731,7 +731,7 @@ async def tool_retry_workflow(args: dict[str, Any]) -> dict[str, Any]:
         run_id: The failed workflow run ID (required).
         cwd: Working directory for the retry (optional, falls back to /tmp).
     """
-    from ..workflow.executor import ACTIVE_WORKFLOWS, execute_workflow, load_checkpoint
+    from ..workflow.executor import ACTIVE_WORKFLOWS, execute_workflow, load_checkpoint, _save_checkpoint
     from ..workflow.loader import resolve_workflow
     from ..workflow.schema import WorkflowStatus
 
@@ -785,6 +785,35 @@ async def tool_retry_workflow(args: dict[str, Any]) -> dict[str, Any]:
 
     state.status = WorkflowStatus.RUNNING
     state.error = ""
+    state.completed_at = None
+    state.current_step = execution_order[first_failed_idx] if first_failed_idx is not None else None
+    state.cancel_requested = False
+    state.running_processes.clear()
+    state.steps_total = len(wf.steps)
+    ACTIVE_WORKFLOWS[run_id] = state
+
+    if wf.checkpoint:
+        try:
+            _save_checkpoint(state)
+        except Exception as exc:  # noqa: BLE001
+            _log(f"tool_retry_workflow: checkpoint update failed for run={run_id[:8]}: {exc}")
+
+    try:
+        from ..workflow.memory import persist_workflow_run
+        step_dicts = {sid: sr.model_dump() for sid, sr in state.step_results.items()}
+        await persist_workflow_run(
+            workflow_name=state.workflow_name,
+            run_id=state.run_id,
+            status=state.status.value,
+            inputs=state.inputs,
+            step_results=step_dicts,
+            started_at=state.started_at,
+            steps_total=len(wf.steps),
+            workflow_item_kref=state.workflow_item_kref,
+            workflow_revision_kref=state.workflow_revision_kref,
+        )
+    except Exception as exc:  # noqa: BLE001
+        _log(f"tool_retry_workflow: running-state persist failed for run={run_id[:8]}: {exc}")
 
     effective_cwd = cwd or "/tmp"
     _log(f"tool_retry_workflow: retrying run={run_id[:8]} (background)")
