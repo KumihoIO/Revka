@@ -17,6 +17,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from socketserver import TCPServer
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
@@ -42,6 +43,17 @@ else:
 
 _CLIENTS: dict[str, Any] = {}
 _CLIENT_LOCK = threading.RLock()
+
+
+class LoopbackThreadingHTTPServer(ThreadingHTTPServer):
+    def server_bind(self) -> None:
+        # HTTPServer.server_bind() calls socket.getfqdn(host), which can block on
+        # reverse DNS for loopback addresses on some hosts. The bridge is
+        # loopback-only and does not need that canonical name.
+        TCPServer.server_bind(self)
+        host, port = self.server_address[:2]
+        self.server_name = str(host)
+        self.server_port = int(port)
 
 
 def _truthy(value: str | None, default: bool = False) -> bool:
@@ -556,7 +568,7 @@ class Handler(BaseHTTPRequestHandler):
 def main() -> int:
     host = os.environ.get("KUMIHO_SDK_BRIDGE_HOST", "127.0.0.1")
     port = int(os.environ.get("KUMIHO_SDK_BRIDGE_PORT", "0") or "0")
-    server = ThreadingHTTPServer((host, port), Handler)
+    server = LoopbackThreadingHTTPServer((host, port), Handler)
     sys.stderr.write(
         f"construct kumiho sdk bridge listening on http://{host}:{server.server_port}\n"
     )
