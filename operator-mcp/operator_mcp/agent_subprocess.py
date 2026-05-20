@@ -18,7 +18,7 @@ from ._log import _log
 from .agent_state import ManagedAgent
 from .clean_env import build_agent_env, clean_build_caches
 from .journal import SessionJournal
-from .run_log import get_log
+from .run_log import get_log, get_or_create_log
 
 # Temp dir for agent prompt files — survives individual agent lifecycle
 _PROMPT_DIR = os.path.expanduser("~/.construct/tmp/agent_prompts")
@@ -280,6 +280,19 @@ async def spawn_agent(
 
     # Write prompt to temp file for stdin pipe
     prompt_path = _write_prompt_file(agent.id, prompt)
+
+    # Workflow/pattern agents can enter the subprocess backend without going
+    # through tool_create_agent, so seed their RunLog here. Top-level agents
+    # already have a log and prompt entry; avoid duplicating that prompt.
+    run_log = get_log(agent.id)
+    if run_log is None:
+        run_log = get_or_create_log(
+            agent.id,
+            title=agent.title,
+            agent_type=agent.agent_type,
+            cwd=cwd,
+        )
+        run_log.record_prompt(prompt)
 
     _log(f"Spawning agent {agent.id}: {cmd[:3]}... ({len(prompt)} chars) in {cwd} [prompt={prompt_path}]")
     prompt_fh = None
