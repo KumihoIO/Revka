@@ -415,6 +415,14 @@ pub(crate) use super::tool_execution::{
     should_execute_tools_in_parallel,
 };
 
+fn approval_denial_message(non_interactive: bool) -> &'static str {
+    if non_interactive {
+        "Denied by non-interactive channel approval policy."
+    } else {
+        "Denied by user."
+    }
+}
+
 fn parse_arguments_value(raw: Option<&serde_json::Value>) -> serde_json::Value {
     match raw {
         Some(serde_json::Value::String(s)) => serde_json::from_str::<serde_json::Value>(s)
@@ -3064,8 +3072,11 @@ pub(crate) async fn run_tool_call_loop(
 
                     // Interactive CLI: prompt the operator.
                     // Non-interactive (channels): auto-deny since no operator
-                    // is present to approve.
-                    let decision = if mgr.is_non_interactive() {
+                    // is present to approve. Keep that diagnostic distinct from
+                    // a human/user denial so channel latency/error analysis does
+                    // not misclassify policy blocks as model or bridge slowness.
+                    let non_interactive_denial = mgr.is_non_interactive();
+                    let decision = if non_interactive_denial {
                         ApprovalResponse::No
                     } else {
                         mgr.prompt_cli(&request)
@@ -3074,7 +3085,7 @@ pub(crate) async fn run_tool_call_loop(
                     mgr.record_decision(&tool_name, &tool_args, decision, channel_name);
 
                     if decision == ApprovalResponse::No {
-                        let denied = "Denied by user.".to_string();
+                        let denied = approval_denial_message(non_interactive_denial).to_string();
                         runtime_trace::record_event(
                             "tool_call_result",
                             Some(channel_name),
@@ -3087,6 +3098,8 @@ pub(crate) async fn run_tool_call_loop(
                                 "iteration": iteration + 1,
                                 "tool": tool_name.clone(),
                                 "arguments": scrub_credentials(&tool_args.to_string()),
+                                "policy_blocked": non_interactive_denial,
+                                "approval_mode": if non_interactive_denial { "non_interactive" } else { "interactive" },
                             }),
                         );
                         if let Some(ref tx) = on_delta {
@@ -5167,6 +5180,15 @@ mod tests {
     use tempfile::tempdir;
 
     // ── truncate_tool_result tests ────────────────────────────────
+
+    #[test]
+    fn approval_denial_message_distinguishes_channel_policy_blocks() {
+        assert_eq!(
+            super::approval_denial_message(true),
+            "Denied by non-interactive channel approval policy."
+        );
+        assert_eq!(super::approval_denial_message(false), "Denied by user.");
+    }
 
     #[test]
     fn truncate_tool_result_short_passthrough() {
