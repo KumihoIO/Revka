@@ -419,7 +419,9 @@ impl KumihoClient {
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(20))
             .connect_timeout(std::time::Duration::from_secs(5))
+            .pool_idle_timeout(Some(std::time::Duration::from_secs(90)))
             .pool_max_idle_per_host(32)
+            .tcp_keepalive(Some(std::time::Duration::from_secs(60)))
             .build()
             .unwrap_or_else(|_| Client::new());
         Self {
@@ -1140,12 +1142,12 @@ impl KumihoClient {
             "allow_partial": true,
         });
 
-        // POST used as a read (batch fetch by body) — but per the unsafe-write
-        // policy we still skip retry. A duplicate fetch is harmless, but the
-        // policy is enforced uniformly to avoid drift if the endpoint ever
-        // grows side-effects on Kumiho's side.
+        // POST used as a read (batch fetch by body). This endpoint is
+        // side-effect free, so retry it like other reads; otherwise a single
+        // transient CDN/reset event can make workflow and asset pages look
+        // disconnected even though the follow-up attempt would succeed.
         let resp = self
-            .send_no_retry(|| {
+            .send_with_retry(|| {
                 self.client
                     .post(self.url("/revisions/batch"))
                     .header("X-Kumiho-Token", &self.service_token)

@@ -32,7 +32,7 @@ from datetime import datetime
 from typing import Any
 
 from operator_mcp.construct_config import harness_project
-from operator_mcp.workflow.schema import TriggerDef, WorkflowDef
+from operator_mcp.workflow.schema import TriggerDef, WorkflowDef, WorkflowStatus
 
 try:
     from kumiho.mcp_server import tool_tag_revision  # noqa: F401
@@ -763,7 +763,24 @@ class WorkflowEventListener:
                 f"event_listener: cron-triggered '{workflow_name}' "
                 f"completed with status={state.status}"
             )
-            await self._tag_run_request(item_kref, "completed")
+            if state.status == WorkflowStatus.COMPLETED:
+                await self._tag_run_request(item_kref, "completed")
+            elif (
+                state.status == WorkflowStatus.CANCELLED
+                and "Duplicate execution prevented by run lock" in (state.error or "")
+            ):
+                _log(
+                    f"event_listener: run_id={run_id[:8]} is already owned by "
+                    "another executor; leaving request status unchanged"
+                )
+            else:
+                self._errors += 1
+                detail = state.error or f"workflow_status:{state.status.value}"
+                await self._tag_run_request(
+                    item_kref,
+                    "failed",
+                    status_detail=detail[:500],
+                )
         except Exception as exc:
             self._errors += 1
             import traceback

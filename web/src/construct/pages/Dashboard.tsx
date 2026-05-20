@@ -15,6 +15,7 @@ import type {
   WorkflowRunDetail,
 } from '@/types/api';
 import {
+  fetchWorkflowByRevisionKref,
   fetchWorkflowDashboard,
   fetchWorkflowRun,
   getChannels,
@@ -55,6 +56,7 @@ export default function Dashboard() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [channels, setChannels] = useState<ChannelDetail[]>([]);
   const [selectedRun, setSelectedRun] = useState<WorkflowRunDetail | null>(null);
+  const [pinnedDefinition, setPinnedDefinition] = useState<WorkflowDefinition | null>(null);
   const [selectedTask, setSelectedTask] = useState<TaskDefinition | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [shouldScrollToWorkspace, setShouldScrollToWorkspace] = useState(false);
@@ -64,7 +66,7 @@ export default function Dashboard() {
   const loadDashboard = () => {
     setRefreshing(true);
     return Promise.all([
-      fetchWorkflowDashboard(),
+      fetchWorkflowDashboard(false),
       getStatus(),
       getCost(),
       verifyAuditChain(),
@@ -130,11 +132,33 @@ export default function Dashboard() {
     setShouldScrollToWorkspace(false);
   }, [selectedRun, shouldScrollToWorkspace]);
 
+  useEffect(() => {
+    if (!selectedRun?.workflow_revision_kref) {
+      setPinnedDefinition(null);
+      return;
+    }
+
+    let cancelled = false;
+    setPinnedDefinition(null);
+    fetchWorkflowByRevisionKref(selectedRun.workflow_revision_kref)
+      .then((definition) => {
+        if (!cancelled) setPinnedDefinition(definition);
+      })
+      .catch(() => {
+        if (!cancelled) setPinnedDefinition(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedRun?.workflow_revision_kref]);
+
   const selectedDefinition = useMemo(() => {
     if (!data || !selectedRun) return null;
+    if (pinnedDefinition) return pinnedDefinition;
     const workflowName = selectedRun.workflow_name.toLowerCase();
     return data.definitions.find((definition: WorkflowDefinition) => definition.name.toLowerCase() === workflowName) ?? null;
-  }, [data, selectedRun]);
+  }, [data, pinnedDefinition, selectedRun]);
 
   const selectedDefinitionTasks = useMemo(
     () => (selectedDefinition ? parseWorkflowYaml(selectedDefinition.definition) : []),

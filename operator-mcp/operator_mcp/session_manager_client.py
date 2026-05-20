@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import sys
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -41,6 +42,7 @@ class SessionManagerClient:
         self._process: asyncio.subprocess.Process | None = None
         self._available = False
         self._persistent: httpx.AsyncClient | None = None
+        self._unsupported_logged = False
         self.breaker = CircuitBreaker("sidecar", failure_threshold=3, recovery_timeout=10.0)
 
     @property
@@ -69,6 +71,21 @@ class SessionManagerClient:
                 pass
         self._persistent = None
 
+    def _transport_unsupported(self) -> bool:
+        reason: str | None = None
+        if not _HAS_HTTPX:
+            reason = "httpx is not installed"
+        elif sys.platform == "win32":
+            reason = "Unix-domain socket transport is not available on Windows"
+
+        if reason:
+            if not self._unsupported_logged:
+                _log(f"Session manager sidecar disabled: {reason}")
+                self._unsupported_logged = True
+            self._available = False
+            return True
+        return False
+
     # -- Lifecycle ------------------------------------------------------------
 
     async def start(self) -> bool:
@@ -77,6 +94,9 @@ class SessionManagerClient:
         Uses a file lock to prevent multiple operator processes from
         spawning duplicate session managers simultaneously.
         """
+        if self._transport_unsupported():
+            return False
+
         if self.is_running:
             return True
 
@@ -206,6 +226,9 @@ class SessionManagerClient:
         already running — which would delete the socket and orphan agents
         tracked by the old instance.
         """
+        if self._transport_unsupported():
+            return False
+
         if self._available or os.path.exists(self.socket_path):
             health = await self.health()
             if health:

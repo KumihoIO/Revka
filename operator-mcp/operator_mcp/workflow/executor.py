@@ -19,6 +19,7 @@ import signal
 import time
 import uuid
 from datetime import datetime, timezone
+from contextlib import contextmanager
 from typing import Any
 
 from .._log import _log
@@ -4524,6 +4525,138 @@ def _is_step_gated_by_conditional(
 # Main executor
 # ---------------------------------------------------------------------------
 
+def _merge_input_defaults(
+    wf: WorkflowDef,
+    inputs: dict[str, Any] | None,
+) -> dict[str, Any]:
+    merged: dict[str, Any] = {
+        d.name: d.default for d in wf.inputs if d.default is not None
+    }
+    merged.update(inputs or {})
+    return merged
+
+
+def _failed_preflight_state(
+    wf: WorkflowDef,
+    inputs: dict[str, Any],
+    *,
+    run_id: str | None,
+    error: str,
+    resume_state: WorkflowState | None,
+    trigger_context: dict[str, str] | None,
+    workflow_item_kref: str,
+    workflow_revision_kref: str,
+    target_step_id: str | None,
+) -> WorkflowState:
+    now = datetime.now(timezone.utc).isoformat()
+    if resume_state:
+        state = resume_state
+        if not state.started_at:
+            state.started_at = now
+        if not state.inputs:
+            state.inputs = _merge_input_defaults(wf, inputs)
+        if trigger_context:
+            state.trigger_context = {**(state.trigger_context or {}), **trigger_context}
+        if target_step_id:
+            state.target_step_id = target_step_id
+        if workflow_item_kref and not state.workflow_item_kref:
+            state.workflow_item_kref = workflow_item_kref
+        if workflow_revision_kref and not state.workflow_revision_kref:
+            state.workflow_revision_kref = workflow_revision_kref
+        state.steps_total = len(wf.steps)
+    else:
+        state = WorkflowState(
+            workflow_name=wf.name,
+            run_id=run_id or str(uuid.uuid4()),
+            status=WorkflowStatus.FAILED,
+            inputs=_merge_input_defaults(wf, inputs),
+            steps_total=len(wf.steps),
+            started_at=now,
+            trigger_context=trigger_context or {},
+            workflow_item_kref=workflow_item_kref,
+            workflow_revision_kref=workflow_revision_kref,
+            target_step_id=target_step_id or None,
+        )
+    state.status = WorkflowStatus.FAILED
+    state.error = error
+    state.completed_at = now
+    state.current_step = None
+    return state
+
+
+async def _persist_preflight_failure(wf: WorkflowDef, state: WorkflowState) -> None:
+    """Persist a terminal preflight failure so the dashboard can show it."""
+    from .recovery import _acquire_run_lock, _release_run_lock
+
+    @contextmanager
+    def _run_lock_context():
+        fd = _acquire_run_lock(state.run_id)
+        try:
+            yield fd
+        finally:
+            if fd is not None:
+                _release_run_lock(fd, state.run_id)
+
+    with _run_lock_context() as lock_fd:
+        if lock_fd is None:
+            _log(
+                f"workflow: preflight failure for run={state.run_id[:8]} "
+                "already claimed by another process; skipping duplicate persist"
+            )
+            return
+        try:
+            from .memory import persist_workflow_run
+            step_dicts = {
+                sid: sr.model_dump() for sid, sr in state.step_results.items()
+            }
+            await persist_workflow_run(
+            workflow_name=state.workflow_name,
+            run_id=state.run_id,
+            status=state.status.value,
+            inputs=state.inputs,
+            step_results=step_dicts,
+            started_at=state.started_at,
+            completed_at=state.completed_at,
+            error=state.error,
+            steps_total=len(wf.steps),
+            workflow_item_kref=state.workflow_item_kref,
+            workflow_revision_kref=state.workflow_revision_kref,
+        )
+            _log(
+                f"workflow: persisted preflight failure for "
+                f"'{state.workflow_name}' run={state.run_id[:8]}"
+            )
+        except Exception as exc:
+            _log(f"workflow: failed to persist preflight failure (non-fatal): {exc}")
+
+
+async def _return_preflight_failure(
+    wf: WorkflowDef,
+    inputs: dict[str, Any],
+    *,
+    run_id: str | None,
+    error: str,
+    resume_state: WorkflowState | None = None,
+    trigger_context: dict[str, str] | None = None,
+    workflow_item_kref: str = "",
+    workflow_revision_kref: str = "",
+    target_step_id: str | None = None,
+) -> WorkflowState:
+    state = _failed_preflight_state(
+        wf,
+        inputs,
+        run_id=run_id,
+        error=error,
+        resume_state=resume_state,
+        trigger_context=trigger_context,
+        workflow_item_kref=workflow_item_kref,
+        workflow_revision_kref=workflow_revision_kref,
+        target_step_id=target_step_id,
+    )
+    await _persist_preflight_failure(wf, state)
+    return state
+
+
 async def execute_workflow(
     wf: WorkflowDef,
     inputs: dict[str, Any],
@@ -4558,15 +4691,17 @@ async def execute_workflow(
     # Validate first
     vr = validate_workflow(wf)
     if not vr.valid:
-        state = WorkflowState(
-            workflow_name=wf.name,
+        return await _return_preflight_failure(
+            wf,
+            inputs,
             run_id=run_id or str(uuid.uuid4()),
-            status=WorkflowStatus.FAILED,
             error=f"Validation failed: {vr.errors[0].message}",
+            resume_state=resume_state,
+            trigger_context=trigger_context,
             workflow_item_kref=workflow_item_kref,
             workflow_revision_kref=workflow_revision_kref,
+            target_step_id=target_step_id,
         )
-        return state
 
     # Run-to-step: hard-fail unknown target ids here so the executor never
     # silently runs the entire workflow when the gateway/poller passes a
@@ -4576,13 +4711,16 @@ async def execute_workflow(
         target_step_id if target_step_id else (resume_state.target_step_id if resume_state else None)
     )
     if effective_target_step_id and not wf.step_by_id(effective_target_step_id):
-        return WorkflowState(
-            workflow_name=wf.name,
+        return await _return_preflight_failure(
+            wf,
+            inputs,
             run_id=run_id or str(uuid.uuid4()),
-            status=WorkflowStatus.FAILED,
             error=f"unknown_target_step: '{effective_target_step_id}'",
+            resume_state=resume_state,
+            trigger_context=trigger_context,
             workflow_item_kref=workflow_item_kref,
             workflow_revision_kref=workflow_revision_kref,
+            target_step_id=effective_target_step_id,
         )
 
     # Propagate the workflow-level default_timeout to any step config that
@@ -4599,13 +4737,16 @@ async def execute_workflow(
     # Pre-flight cost check
     cost_err = await _check_cost_guard(max_cost_usd)
     if cost_err:
-        return WorkflowState(
-            workflow_name=wf.name,
+        return await _return_preflight_failure(
+            wf,
+            inputs,
             run_id=run_id or str(uuid.uuid4()),
-            status=WorkflowStatus.FAILED,
             error=f"Cost guard: {cost_err}",
+            resume_state=resume_state,
+            trigger_context=trigger_context,
             workflow_item_kref=workflow_item_kref,
             workflow_revision_kref=workflow_revision_kref,
+            target_step_id=target_step_id,
         )
 
     # Initialize or resume state
@@ -4625,18 +4766,17 @@ async def execute_workflow(
         # resume.
         if target_step_id:
             state.target_step_id = target_step_id
+        state.steps_total = len(wf.steps)
     else:
         # Merge declared input defaults with caller-provided values.
         # Caller values win; defaults fill in anything not explicitly passed.
-        merged_inputs: dict[str, Any] = {
-            d.name: d.default for d in wf.inputs if d.default is not None
-        }
-        merged_inputs.update(inputs or {})
+        merged_inputs = _merge_input_defaults(wf, inputs)
         state = WorkflowState(
             workflow_name=wf.name,
             run_id=run_id or str(uuid.uuid4()),
             status=WorkflowStatus.RUNNING,
             inputs=merged_inputs,
+            steps_total=len(wf.steps),
             started_at=datetime.now(timezone.utc).isoformat(),
             trigger_context=trigger_context or {},
             workflow_item_kref=workflow_item_kref,
@@ -5065,7 +5205,22 @@ async def execute_workflow(
                     workflow_revision_kref=state.workflow_revision_kref,
                 )
                 if run_kref:
-                    await link_agents_to_run(run_kref, step_dicts)
+                    try:
+                        link_timeout = max(
+                            0.0,
+                            float(os.getenv("CONSTRUCT_WORKFLOW_MEMORY_LINK_TIMEOUT_SECS", "15")),
+                        )
+                    except ValueError:
+                        link_timeout = 15.0
+                    if link_timeout:
+                        await asyncio.wait_for(
+                            link_agents_to_run(run_kref, step_dicts),
+                            timeout=link_timeout,
+                        )
+                    else:
+                        await link_agents_to_run(run_kref, step_dicts)
+            except asyncio.TimeoutError:
+                _log("workflow: memory link timed out (non-fatal)")
             except Exception as mem_exc:
                 _log(f"workflow: memory persist failed (non-fatal): {mem_exc}")
 

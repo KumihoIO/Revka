@@ -17,6 +17,7 @@
 use super::AppState;
 use super::api::require_auth;
 use super::api_agents::build_kumiho_client;
+use super::api_kumiho_proxy::invalidate_proxy_cache;
 use super::kumiho_client::{ItemResponse, KumihoClient, KumihoError, RevisionResponse, slugify};
 use axum::{
     extract::{Path, Query, State},
@@ -27,7 +28,7 @@ use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::OnceLock;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 const WORKFLOW_SPACE_NAME: &str = "Workflows";
 const WORKFLOW_RUNS_SPACE_NAME: &str = "WorkflowRuns";
@@ -57,44 +58,364 @@ fn workflow_run_requests_space_path(state: &AppState) -> String {
 
 struct WorkflowCache {
     workflows: Vec<WorkflowResponse>,
-    include_deprecated: bool,
     fetched_at: Instant,
 }
 
-static WORKFLOW_CACHE: OnceLock<Mutex<Option<WorkflowCache>>> = OnceLock::new();
-const CACHE_TTL_SECS: u64 = 3;
-
-fn get_cached(include_deprecated: bool) -> Option<Vec<WorkflowResponse>> {
-    let lock = WORKFLOW_CACHE.get_or_init(|| Mutex::new(None));
-    let cache = lock.lock();
-    if let Some(ref c) = *cache {
-        if c.include_deprecated == include_deprecated
-            && c.fetched_at.elapsed().as_secs() < CACHE_TTL_SECS
-        {
-            return Some(c.workflows.clone());
-        }
-    }
-    None
+#[derive(Clone)]
+struct WorkflowRunsSummaryCache {
+    recent_runs: Vec<WorkflowRunSummary>,
+    total_runs: usize,
+    fetched_at: Instant,
 }
 
-fn set_cached(workflows: &[WorkflowResponse], include_deprecated: bool) {
-    let lock = WORKFLOW_CACHE.get_or_init(|| Mutex::new(None));
+#[derive(Clone)]
+struct WorkflowRunsListCache {
+    runs: Vec<WorkflowRunSummary>,
+    fetched_at: Instant,
+}
+
+static WORKFLOW_CACHE: OnceLock<Mutex<HashMap<(bool, bool), WorkflowCache>>> = OnceLock::new();
+const CACHE_TTL_SECS: u64 = 30;
+const STALE_CACHE_TTL_SECS: u64 = 120;
+
+static WORKFLOW_DASHBOARD_DEFINITIONS_CACHE: OnceLock<Mutex<Option<WorkflowCache>>> =
+    OnceLock::new();
+static WORKFLOW_RUNS_SUMMARY_CACHE: OnceLock<Mutex<Option<WorkflowRunsSummaryCache>>> =
+    OnceLock::new();
+static WORKFLOW_RUNS_LIST_CACHE: OnceLock<
+    Mutex<HashMap<(usize, Option<String>), WorkflowRunsListCache>>,
+> = OnceLock::new();
+const RUNS_SUMMARY_CACHE_TTL_SECS: u64 = 5;
+const RUNS_SUMMARY_STALE_TTL_SECS: u64 = 120;
+
+static WORKFLOW_REVISION_CACHE: OnceLock<Mutex<HashMap<String, RevisionWorkflowCache>>> =
+    OnceLock::new();
+const REVISION_CACHE_TTL_SECS: u64 = 300;
+
+struct RevisionWorkflowCache {
+    workflow: WorkflowResponse,
+    fetched_at: Instant,
+}
+
+fn get_cached(include_deprecated: bool, include_definition: bool) -> Option<Vec<WorkflowResponse>> {
+    let lock = WORKFLOW_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let cache = lock.lock();
+    cache
+        .get(&(include_deprecated, include_definition))
+        .filter(|c| c.fetched_at.elapsed().as_secs() < CACHE_TTL_SECS)
+        .map(|c| c.workflows.clone())
+}
+
+fn set_cached(workflows: &[WorkflowResponse], include_deprecated: bool, include_definition: bool) {
+    let lock = WORKFLOW_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
     let mut cache = lock.lock();
-    *cache = Some(WorkflowCache {
-        workflows: workflows.to_vec(),
-        include_deprecated,
-        fetched_at: Instant::now(),
-    });
+    cache.insert(
+        (include_deprecated, include_definition),
+        WorkflowCache {
+            workflows: workflows.to_vec(),
+            fetched_at: Instant::now(),
+        },
+    );
 }
 
 pub(super) fn invalidate_cache() {
     if let Some(lock) = WORKFLOW_CACHE.get() {
         let mut cache = lock.lock();
         // Mark as expired but keep stale data for fallback on API errors
-        if let Some(ref mut c) = *cache {
+        for c in cache.values_mut() {
             c.fetched_at = Instant::now() - std::time::Duration::from_secs(CACHE_TTL_SECS + 1);
         }
     }
+    invalidate_dashboard_definitions_cache();
+}
+
+fn get_cached_dashboard_definitions(allow_stale: bool) -> Option<Vec<WorkflowResponse>> {
+    let lock = WORKFLOW_DASHBOARD_DEFINITIONS_CACHE.get_or_init(|| Mutex::new(None));
+    let cache = lock.lock();
+    let entry = cache.as_ref()?;
+    let age = entry.fetched_at.elapsed().as_secs();
+    if age < CACHE_TTL_SECS || (allow_stale && age < STALE_CACHE_TTL_SECS) {
+        return Some(entry.workflows.clone());
+    }
+    None
+}
+
+fn set_cached_dashboard_definitions(workflows: &[WorkflowResponse]) {
+    let lock = WORKFLOW_DASHBOARD_DEFINITIONS_CACHE.get_or_init(|| Mutex::new(None));
+    *lock.lock() = Some(WorkflowCache {
+        workflows: workflows.to_vec(),
+        fetched_at: Instant::now(),
+    });
+}
+
+fn invalidate_dashboard_definitions_cache() {
+    if let Some(lock) = WORKFLOW_DASHBOARD_DEFINITIONS_CACHE.get() {
+        if let Some(entry) = lock.lock().as_mut() {
+            entry.fetched_at = Instant::now() - Duration::from_secs(CACHE_TTL_SECS + 1);
+        }
+    }
+}
+
+fn get_cached_dashboard_runs(allow_stale: bool) -> Option<(Vec<WorkflowRunSummary>, usize)> {
+    let lock = WORKFLOW_RUNS_SUMMARY_CACHE.get_or_init(|| Mutex::new(None));
+    let cache = lock.lock();
+    let entry = cache.as_ref()?;
+    let age = entry.fetched_at.elapsed().as_secs();
+    if age < RUNS_SUMMARY_CACHE_TTL_SECS || (allow_stale && age < RUNS_SUMMARY_STALE_TTL_SECS) {
+        return Some((entry.recent_runs.clone(), entry.total_runs));
+    }
+    None
+}
+
+fn set_cached_dashboard_runs(recent_runs: &[WorkflowRunSummary], total_runs: usize) {
+    let lock = WORKFLOW_RUNS_SUMMARY_CACHE.get_or_init(|| Mutex::new(None));
+    *lock.lock() = Some(WorkflowRunsSummaryCache {
+        recent_runs: recent_runs.to_vec(),
+        total_runs,
+        fetched_at: Instant::now(),
+    });
+}
+
+fn get_cached_workflow_runs(
+    limit: usize,
+    workflow: Option<&str>,
+    allow_stale: bool,
+) -> Option<Vec<WorkflowRunSummary>> {
+    let lock = WORKFLOW_RUNS_LIST_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let cache = lock.lock();
+    let key = (limit, workflow.map(str::to_string));
+    let entry = cache.get(&key)?;
+    let age = entry.fetched_at.elapsed().as_secs();
+    if age < RUNS_SUMMARY_CACHE_TTL_SECS || (allow_stale && age < RUNS_SUMMARY_STALE_TTL_SECS) {
+        return Some(entry.runs.clone());
+    }
+    None
+}
+
+fn set_cached_workflow_runs(limit: usize, workflow: Option<&str>, runs: &[WorkflowRunSummary]) {
+    let lock = WORKFLOW_RUNS_LIST_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut cache = lock.lock();
+    cache.insert(
+        (limit, workflow.map(str::to_string)),
+        WorkflowRunsListCache {
+            runs: runs.to_vec(),
+            fetched_at: Instant::now(),
+        },
+    );
+}
+
+fn invalidate_dashboard_runs_cache() {
+    if let Some(lock) = WORKFLOW_RUNS_SUMMARY_CACHE.get() {
+        if let Some(entry) = lock.lock().as_mut() {
+            entry.fetched_at =
+                Instant::now() - Duration::from_secs(RUNS_SUMMARY_CACHE_TTL_SECS + 1);
+        }
+    }
+    if let Some(lock) = WORKFLOW_RUNS_LIST_CACHE.get() {
+        let mut cache = lock.lock();
+        for entry in cache.values_mut() {
+            entry.fetched_at =
+                Instant::now() - Duration::from_secs(RUNS_SUMMARY_CACHE_TTL_SECS + 1);
+        }
+    }
+}
+
+fn upsert_cached_workflow(workflow: &WorkflowResponse) {
+    let Some(lock) = WORKFLOW_CACHE.get() else {
+        return;
+    };
+
+    let mut cache = lock.lock();
+    for ((include_deprecated, include_definition), c) in cache.iter_mut() {
+        let mut cached = workflow.clone();
+        if !*include_definition {
+            cached.definition.clear();
+            cached.triggers.clear();
+        }
+
+        if let Some(existing) = c.workflows.iter_mut().find(|w| w.kref == workflow.kref) {
+            if cached.created_at.is_none() {
+                cached.created_at.clone_from(&existing.created_at);
+            }
+            if existing.source != "custom" {
+                cached.source.clone_from(&existing.source);
+            }
+            *existing = cached;
+        } else if *include_deprecated || !cached.deprecated {
+            c.workflows.push(cached);
+        }
+
+        c.fetched_at = Instant::now();
+    }
+}
+
+fn get_cached_revision_workflow(revision_kref: &str) -> Option<WorkflowResponse> {
+    let lock = WORKFLOW_REVISION_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let cache = lock.lock();
+    cache.get(revision_kref).and_then(|entry| {
+        if entry.fetched_at.elapsed().as_secs() < REVISION_CACHE_TTL_SECS {
+            Some(entry.workflow.clone())
+        } else {
+            None
+        }
+    })
+}
+
+fn set_cached_revision_workflow(revision_kref: &str, workflow: &WorkflowResponse) {
+    let lock = WORKFLOW_REVISION_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut cache = lock.lock();
+    cache.insert(
+        revision_kref.to_string(),
+        RevisionWorkflowCache {
+            workflow: workflow.clone(),
+            fetched_at: Instant::now(),
+        },
+    );
+}
+
+fn to_workflow_dashboard_summary(item: &ItemResponse) -> WorkflowResponse {
+    let get = |key: &str| -> String { item.metadata.get(key).cloned().unwrap_or_default() };
+    let display_name = {
+        let n = get("display_name");
+        if n.is_empty() {
+            item.item_name.clone()
+        } else {
+            n
+        }
+    };
+    let tags_str = get("tags");
+    let tags = if tags_str.is_empty() {
+        Vec::new()
+    } else {
+        tags_str.split(',').map(|s| s.trim().to_string()).collect()
+    };
+
+    WorkflowResponse {
+        kref: item.kref.clone(),
+        name: display_name,
+        item_name: item.item_name.clone(),
+        deprecated: item.deprecated,
+        created_at: item.created_at.clone(),
+        description: get("description"),
+        definition: String::new(),
+        version: get("version"),
+        tags,
+        steps: get("steps").parse().unwrap_or(0),
+        revision_number: 0,
+        source: "custom".to_string(),
+        triggers: Vec::new(),
+    }
+}
+
+async fn fetch_workflow_definitions_for_dashboard(
+    client: &KumihoClient,
+    space_path: &str,
+    include_definition: bool,
+) -> Vec<WorkflowResponse> {
+    if let Some(cached) = get_cached(false, include_definition) {
+        return cached;
+    }
+    if !include_definition {
+        if let Some(cached) = get_cached_dashboard_definitions(false) {
+            return cached;
+        }
+    }
+
+    let started = Instant::now();
+    let definitions = match client.list_items(space_path, false).await {
+        Ok(items) => {
+            let mut workflows = if include_definition {
+                let workflows =
+                    merge_with_builtins(enrich_items(client, items, include_definition).await);
+                set_cached(&workflows, false, include_definition);
+                workflows
+            } else {
+                // Dashboard cards do not need revision metadata or YAML bodies.
+                // Avoid the expensive revision batch fanout on the cold path;
+                // item metadata plus builtin summaries are enough for counts,
+                // names, and source classification.
+                merge_with_builtins(
+                    items
+                        .iter()
+                        .filter(|i| i.kind == "workflow")
+                        .map(to_workflow_dashboard_summary)
+                        .collect(),
+                )
+            };
+            if !include_definition {
+                for workflow in &mut workflows {
+                    workflow.definition.clear();
+                    workflow.triggers.clear();
+                }
+                set_cached_dashboard_definitions(&workflows);
+            }
+            workflows
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "workflow dashboard definitions fetch failed");
+            get_cached_dashboard_definitions(true)
+                .unwrap_or_else(|| merge_with_builtins(Vec::new()))
+        }
+    };
+
+    let elapsed = started.elapsed();
+    if elapsed >= Duration::from_secs(1) {
+        tracing::warn!(
+            elapsed_ms = elapsed.as_millis() as u64,
+            definitions = definitions.len(),
+            include_definition,
+            "workflow dashboard definitions fetch was slow"
+        );
+    }
+
+    definitions
+}
+
+async fn fetch_recent_runs_for_dashboard(
+    client: &KumihoClient,
+    runs_space: &str,
+) -> (Vec<WorkflowRunSummary>, usize) {
+    if let Some(cached) = get_cached_dashboard_runs(false) {
+        return cached;
+    }
+
+    let started = Instant::now();
+    let result = match client.list_items(runs_space, false).await {
+        Ok(mut items) => {
+            items.retain(|i| i.kind == "workflow_run");
+
+            let total = items.len();
+            items.sort_by(|a, b| {
+                let a_time = a.created_at.as_deref().unwrap_or("");
+                let b_time = b.created_at.as_deref().unwrap_or("");
+                b_time.cmp(a_time)
+            });
+            items.truncate(5);
+
+            let runs: Vec<WorkflowRunSummary> = items.iter().map(to_run_summary_fast).collect();
+
+            (runs, total)
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "workflow dashboard runs fetch failed");
+            get_cached_dashboard_runs(true).unwrap_or_else(|| (Vec::new(), 0))
+        }
+    };
+    if !result.0.is_empty() || result.1 > 0 {
+        set_cached_dashboard_runs(&result.0, result.1);
+    }
+
+    let elapsed = started.elapsed();
+    if elapsed >= Duration::from_secs(1) {
+        tracing::warn!(
+            elapsed_ms = elapsed.as_millis() as u64,
+            recent_runs = result.0.len(),
+            total_runs = result.1,
+            "workflow dashboard runs fetch was slow"
+        );
+    }
+
+    result
 }
 
 // ── Query / request types ───────────────────────────────────────────────
@@ -103,7 +424,19 @@ pub(super) fn invalidate_cache() {
 pub struct WorkflowListQuery {
     #[serde(default)]
     pub include_deprecated: bool,
+    #[serde(default = "default_include_definition")]
+    pub include_definition: bool,
     pub q: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct WorkflowDashboardQuery {
+    #[serde(default = "default_include_definition")]
+    pub include_definition: bool,
+}
+
+fn default_include_definition() -> bool {
+    true
 }
 
 #[derive(Deserialize)]
@@ -325,7 +658,11 @@ fn count_yaml_steps(content: &str) -> usize {
     count
 }
 
-fn to_workflow_response(item: &ItemResponse, rev: Option<&RevisionResponse>) -> WorkflowResponse {
+fn to_workflow_response(
+    item: &ItemResponse,
+    rev: Option<&RevisionResponse>,
+    include_definition: bool,
+) -> WorkflowResponse {
     let meta = rev.map(|r| &r.metadata);
     let get = |key: &str| -> String { meta.and_then(|m| m.get(key)).cloned().unwrap_or_default() };
     let tags_str = get("tags");
@@ -345,8 +682,16 @@ fn to_workflow_response(item: &ItemResponse, rev: Option<&RevisionResponse>) -> 
         }
     };
 
-    let definition = get("definition");
-    let triggers = extract_triggers(&definition);
+    let definition = if include_definition {
+        get("definition")
+    } else {
+        String::new()
+    };
+    let triggers = if include_definition {
+        extract_triggers(&definition)
+    } else {
+        Vec::new()
+    };
 
     WorkflowResponse {
         kref: item.kref.clone(),
@@ -365,6 +710,35 @@ fn to_workflow_response(item: &ItemResponse, rev: Option<&RevisionResponse>) -> 
     }
 }
 
+fn workflow_item_name_from_kref(kref: &str, fallback: &str) -> String {
+    kref.split('/')
+        .next_back()
+        .and_then(|segment| {
+            let name = segment
+                .rsplit_once('.')
+                .map(|(name, _kind)| name)
+                .unwrap_or(segment);
+            (!name.is_empty()).then(|| name.to_string())
+        })
+        .unwrap_or_else(|| slugify(fallback))
+}
+
+fn workflow_item_from_body(kref: &str, body: &CreateWorkflowBody) -> ItemResponse {
+    let item_name = workflow_item_name_from_kref(kref, &body.name);
+    ItemResponse {
+        kref: kref.to_string(),
+        name: item_name.clone(),
+        item_name,
+        kind: "workflow".to_string(),
+        deprecated: false,
+        created_at: None,
+        author: None,
+        username: None,
+        author_display: None,
+        metadata: HashMap::new(),
+    }
+}
+
 /// Prefer the `workflow.yaml` artifact on disk as the canonical definition,
 /// falling back to inline `definition` metadata only when no artifact exists.
 ///
@@ -376,18 +750,60 @@ async fn prefer_artifact_definitions(
     client: &super::kumiho_client::KumihoClient,
     revs: &mut HashMap<String, RevisionResponse>,
 ) {
-    for rev in revs.values_mut() {
-        if let Ok(artifact) = client
-            .get_artifact_by_name(&rev.kref, "workflow.yaml")
+    const ARTIFACT_LOOKUP_TIMEOUT: Duration = Duration::from_secs(2);
+
+    let lookups = revs
+        .iter()
+        .map(|(item_kref, rev)| (item_kref.clone(), rev.kref.clone()))
+        .map(|(item_kref, rev_kref)| async move {
+            let artifact = match tokio::time::timeout(
+                ARTIFACT_LOOKUP_TIMEOUT,
+                client.get_artifact_by_name(&rev_kref, "workflow.yaml"),
+            )
             .await
-        {
+            {
+                Ok(Ok(artifact)) => artifact,
+                Ok(Err(e)) => {
+                    tracing::debug!(
+                        revision_kref = %rev_kref,
+                        "workflow artifact lookup skipped: {e}"
+                    );
+                    return None;
+                }
+                Err(_) => {
+                    tracing::debug!(
+                        revision_kref = %rev_kref,
+                        timeout_ms = ARTIFACT_LOOKUP_TIMEOUT.as_millis(),
+                        "workflow artifact lookup timed out"
+                    );
+                    return None;
+                }
+            };
+
             let path = artifact
                 .location
                 .strip_prefix("file://")
                 .unwrap_or(&artifact.location);
-            if let Ok(yaml) = tokio::fs::read_to_string(path).await {
-                rev.metadata.insert("definition".to_string(), yaml);
+            match tokio::fs::read_to_string(path).await {
+                Ok(yaml) => Some((item_kref, yaml)),
+                Err(e) => {
+                    tracing::debug!(
+                        revision_kref = %rev_kref,
+                        artifact_path = %path,
+                        "workflow artifact read skipped: {e}"
+                    );
+                    None
+                }
             }
+        });
+
+    for (item_kref, yaml) in futures_util::future::join_all(lookups)
+        .await
+        .into_iter()
+        .flatten()
+    {
+        if let Some(rev) = revs.get_mut(&item_kref) {
+            rev.metadata.insert("definition".to_string(), yaml);
         }
     }
 }
@@ -395,6 +811,7 @@ async fn prefer_artifact_definitions(
 async fn enrich_items(
     client: &super::kumiho_client::KumihoClient,
     items: Vec<ItemResponse>,
+    include_definition: bool,
 ) -> Vec<WorkflowResponse> {
     // Only include items with kind == "workflow" — filter out stray items
     // that agents may have created in the Workflows space.
@@ -421,13 +838,15 @@ async fn enrich_items(
             HashMap::new()
         };
 
-        // Artifact-first: the `workflow.yaml` on disk is canonical. The inline
-        // `definition` metadata drifts for operator-authored revisions and is
-        // truncated by Kumiho's batch endpoint for large YAMLs, so we always
-        // prefer the artifact when it exists — same logic the single-revision
-        // endpoint uses.
-        prefer_artifact_definitions(client, &mut rev_map).await;
-        prefer_artifact_definitions(client, &mut latest_map).await;
+        if include_definition {
+            // Artifact-first: the `workflow.yaml` on disk is canonical. The inline
+            // `definition` metadata drifts for operator-authored revisions and is
+            // truncated by Kumiho's batch endpoint for large YAMLs, so we always
+            // prefer the artifact when it exists — same logic the single-revision
+            // endpoint uses.
+            prefer_artifact_definitions(client, &mut rev_map).await;
+            prefer_artifact_definitions(client, &mut latest_map).await;
+        }
 
         return items
             .iter()
@@ -435,7 +854,7 @@ async fn enrich_items(
                 let rev = rev_map
                     .get(&item.kref)
                     .or_else(|| latest_map.get(&item.kref));
-                to_workflow_response(item, rev)
+                to_workflow_response(item, rev, include_definition)
             })
             .collect();
     }
@@ -444,16 +863,31 @@ async fn enrich_items(
     let mut workflows = Vec::with_capacity(items.len());
     for item in &items {
         let rev = client.get_published_or_latest(&item.kref).await.ok();
-        workflows.push(to_workflow_response(item, rev.as_ref()));
+        workflows.push(to_workflow_response(item, rev.as_ref(), include_definition));
     }
     workflows
 }
 
 fn to_run_summary(item: &ItemResponse, rev: Option<&RevisionResponse>) -> WorkflowRunSummary {
-    let meta = rev.map(|r| &r.metadata);
-    let get = |key: &str| -> String { meta.and_then(|m| m.get(key)).cloned().unwrap_or_default() };
+    let meta = rev.map(|r| &r.metadata).unwrap_or(&item.metadata);
+    let get = |key: &str| -> String { meta.get(key).cloned().unwrap_or_default() };
 
     let run_id_meta = get("run_id");
+    let completed_at = get("completed_at");
+    let status = normalize_run_status(
+        &get("status"),
+        &get("steps_completed"),
+        &get("steps_total"),
+        &completed_at,
+    );
+    let started_at = {
+        let value = get("started_at");
+        if value.is_empty() {
+            item.created_at.clone().unwrap_or_default()
+        } else {
+            value
+        }
+    };
     WorkflowRunSummary {
         kref: item.kref.clone(),
         run_id: if run_id_meta.is_empty() {
@@ -465,14 +899,162 @@ fn to_run_summary(item: &ItemResponse, rev: Option<&RevisionResponse>) -> Workfl
             let wn = get("workflow_name");
             if wn.is_empty() { get("workflow") } else { wn }
         },
-        status: get("status"),
-        started_at: get("started_at"),
-        completed_at: get("completed_at"),
+        status,
+        started_at,
+        completed_at,
         steps_completed: get("steps_completed"),
         steps_total: get("steps_total"),
         error: get("error"),
         workflow_item_kref: get("workflow_item_kref"),
         workflow_revision_kref: get("workflow_revision_kref"),
+    }
+}
+
+fn to_run_summary_fast(item: &ItemResponse) -> WorkflowRunSummary {
+    let mut summary = to_run_summary(item, None);
+    apply_local_checkpoint_progress(&mut summary);
+    summary
+}
+
+fn is_safe_checkpoint_run_id(run_id: &str) -> bool {
+    !run_id.is_empty()
+        && run_id.len() <= 128
+        && run_id
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+}
+
+fn workflow_checkpoint_path(run_id: &str) -> Option<std::path::PathBuf> {
+    if !is_safe_checkpoint_run_id(run_id) {
+        return None;
+    }
+    directories::UserDirs::new().map(|dirs| {
+        dirs.home_dir()
+            .join(".construct")
+            .join("workflow_checkpoints")
+            .join(format!("{run_id}.json"))
+    })
+}
+
+fn parse_usize_json(value: Option<&serde_json::Value>) -> Option<usize> {
+    match value? {
+        serde_json::Value::Number(n) => n.as_u64().map(|v| v as usize),
+        serde_json::Value::String(s) => s.parse::<usize>().ok(),
+        _ => None,
+    }
+}
+
+fn nonempty_json_string<'a>(value: &'a serde_json::Value, key: &str) -> Option<&'a str> {
+    value
+        .get(key)
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+}
+
+fn apply_checkpoint_value_to_summary(
+    summary: &mut WorkflowRunSummary,
+    checkpoint: &serde_json::Value,
+) {
+    if let Some(checkpoint_run_id) = nonempty_json_string(checkpoint, "run_id") {
+        if checkpoint_run_id != summary.run_id {
+            return;
+        }
+    }
+
+    if let Some(status) = nonempty_json_string(checkpoint, "status") {
+        summary.status = status.to_string();
+    }
+    if let Some(started_at) = nonempty_json_string(checkpoint, "started_at") {
+        summary.started_at = started_at.to_string();
+    }
+    if let Some(completed_at) = nonempty_json_string(checkpoint, "completed_at") {
+        summary.completed_at = completed_at.to_string();
+    }
+    if let Some(error) = nonempty_json_string(checkpoint, "error") {
+        summary.error = error.to_string();
+    }
+    if let Some(workflow_item_kref) = nonempty_json_string(checkpoint, "workflow_item_kref") {
+        summary.workflow_item_kref = workflow_item_kref.to_string();
+    }
+    if let Some(workflow_revision_kref) = nonempty_json_string(checkpoint, "workflow_revision_kref")
+    {
+        summary.workflow_revision_kref = workflow_revision_kref.to_string();
+    }
+
+    let step_results = checkpoint
+        .get("step_results")
+        .and_then(|value| value.as_object());
+    if let Some(steps) = step_results {
+        let completed = steps
+            .values()
+            .filter(|step| {
+                matches!(
+                    step.get("status")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or_default(),
+                    "completed" | "skipped"
+                )
+            })
+            .count();
+        summary.steps_completed = completed.to_string();
+    }
+
+    let explicit_total = parse_usize_json(checkpoint.get("steps_total"));
+    let inferred_completed_total = step_results.and_then(|steps| {
+        if summary.status == "completed" {
+            Some(steps.len())
+        } else {
+            None
+        }
+    });
+    if let Some(total) = explicit_total {
+        summary.steps_total = total.to_string();
+    } else if summary.steps_total.is_empty() || summary.steps_total == "0" {
+        if let Some(total) = inferred_completed_total {
+            summary.steps_total = total.to_string();
+        }
+    }
+
+    summary.status = normalize_run_status(
+        &summary.status,
+        &summary.steps_completed,
+        &summary.steps_total,
+        &summary.completed_at,
+    );
+}
+
+fn apply_local_checkpoint_progress(summary: &mut WorkflowRunSummary) {
+    let Some(path) = workflow_checkpoint_path(&summary.run_id) else {
+        return;
+    };
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return;
+    };
+    let Ok(checkpoint) = serde_json::from_str::<serde_json::Value>(&content) else {
+        return;
+    };
+    apply_checkpoint_value_to_summary(summary, &checkpoint);
+}
+
+fn normalize_run_status(
+    status: &str,
+    steps_completed: &str,
+    steps_total: &str,
+    completed_at: &str,
+) -> String {
+    let status = status.to_string();
+    if status != "running" {
+        return status;
+    }
+    if completed_at.is_empty() {
+        return status;
+    }
+
+    let completed = steps_completed.parse::<usize>().ok();
+    let count = steps_total.parse::<usize>().ok();
+    match (completed, count) {
+        (Some(completed), Some(count)) if count > 0 && completed >= count => "completed".into(),
+        _ => status,
     }
 }
 
@@ -620,7 +1202,8 @@ fn extract_steps_from_metadata(meta: &HashMap<String, String>) -> Vec<WorkflowSt
 }
 
 fn to_run_detail(item: &ItemResponse, rev: Option<&RevisionResponse>) -> WorkflowRunDetail {
-    let summary = to_run_summary(item, rev);
+    let mut summary = to_run_summary(item, rev);
+    apply_local_checkpoint_progress(&mut summary);
     let steps = rev
         .map(|r| extract_steps_from_metadata(&r.metadata))
         .unwrap_or_default();
@@ -987,7 +1570,7 @@ pub async fn handle_list_workflows(
 
     // Return cached result if available (before making API call)
     if query.q.is_none() {
-        if let Some(cached) = get_cached(query.include_deprecated) {
+        if let Some(cached) = get_cached(query.include_deprecated, query.include_definition) {
             return Json(serde_json::json!({ "workflows": cached })).into_response();
         }
     }
@@ -1005,9 +1588,14 @@ pub async fn handle_list_workflows(
 
     match items_result {
         Ok(items) => {
-            let workflows = merge_with_builtins(enrich_items(&client, items).await);
+            let workflows =
+                merge_with_builtins(enrich_items(&client, items, query.include_definition).await);
             if query.q.is_none() {
-                set_cached(&workflows, query.include_deprecated);
+                set_cached(
+                    &workflows,
+                    query.include_deprecated,
+                    query.include_definition,
+                );
             }
             Json(serde_json::json!({ "workflows": workflows })).into_response()
         }
@@ -1020,11 +1608,12 @@ pub async fn handle_list_workflows(
         Err(e) => {
             // On API error, try to return stale cache rather than an error
             if query.q.is_none() {
-                let lock = WORKFLOW_CACHE.get_or_init(|| Mutex::new(None));
+                let lock = WORKFLOW_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
                 let cache = lock.lock();
-                if let Some(ref c) = *cache {
+                if let Some(c) = cache.get(&(query.include_deprecated, query.include_definition)) {
                     tracing::warn!("Workflows list failed, returning stale cache: {e}");
-                    return Json(serde_json::json!({ "workflows": c.workflows })).into_response();
+                    return Json(serde_json::json!({ "workflows": c.workflows.clone() }))
+                        .into_response();
                 }
             }
             kumiho_err(e).into_response()
@@ -1228,11 +1817,14 @@ pub async fn handle_create_workflow(
     let _ = client.tag_revision(&rev.kref, "published").await;
 
     invalidate_cache();
+    invalidate_proxy_cache();
     sync_cron_for_workflow(&state, &body.name, &body.definition);
 
     broadcast_revision_published(&state, &headers, &item.kref, &rev, &body.name);
 
-    let workflow = to_workflow_response(&item, Some(&rev));
+    let workflow = to_workflow_response(&item, Some(&rev), true);
+    upsert_cached_workflow(&workflow);
+    set_cached_revision_workflow(&rev.kref, &workflow);
     (
         StatusCode::CREATED,
         Json(serde_json::json!({ "workflow": workflow })),
@@ -1281,39 +1873,16 @@ pub async fn handle_update_workflow(
     persist_workflow_artifact(&client, &rev.kref, rev.number, &body.name, &body.definition).await;
     let _ = client.tag_revision(&rev.kref, "published").await;
 
-    let items = match client.list_items(&workflow_space_path(&state), true).await {
-        Ok(items) => items,
-        Err(e) => return kumiho_err(e).into_response(),
-    };
-
-    invalidate_cache();
+    let item = workflow_item_from_body(&kref, &body);
+    let workflow = to_workflow_response(&item, Some(&rev), true);
+    upsert_cached_workflow(&workflow);
+    set_cached_revision_workflow(&rev.kref, &workflow);
+    invalidate_proxy_cache();
     sync_cron_for_workflow(&state, &body.name, &body.definition);
 
     broadcast_revision_published(&state, &headers, &kref, &rev, &body.name);
 
-    let item = items.iter().find(|i| i.kref == kref);
-    match item {
-        Some(item) => {
-            let workflow = to_workflow_response(item, Some(&rev));
-            Json(serde_json::json!({ "workflow": workflow })).into_response()
-        }
-        None => {
-            let fallback = ItemResponse {
-                kref: kref.clone(),
-                name: body.name.clone(),
-                item_name: body.name.clone(),
-                kind: "workflow".to_string(),
-                deprecated: false,
-                created_at: None,
-                author: None,
-                username: None,
-                author_display: None,
-                metadata: HashMap::new(),
-            };
-            let workflow = to_workflow_response(&fallback, Some(&rev));
-            Json(serde_json::json!({ "workflow": workflow })).into_response()
-        }
-    }
+    Json(serde_json::json!({ "workflow": workflow })).into_response()
 }
 
 /// POST /api/workflows/deprecate
@@ -1332,6 +1901,7 @@ pub async fn handle_deprecate_workflow(
     match client.deprecate_item(&kref, body.deprecated).await {
         Ok(item) => {
             invalidate_cache();
+            invalidate_proxy_cache();
             let rev = client.get_published_or_latest(&kref).await.ok();
 
             // Sync cron triggers: remove when deprecating, re-add when restoring.
@@ -1354,7 +1924,7 @@ pub async fn handle_deprecate_workflow(
                 }
             }
 
-            let workflow = to_workflow_response(&item, rev.as_ref());
+            let workflow = to_workflow_response(&item, rev.as_ref(), true);
             Json(serde_json::json!({ "workflow": workflow })).into_response()
         }
         Err(e) => kumiho_err(e).into_response(),
@@ -1377,6 +1947,7 @@ pub async fn handle_delete_workflow(
     match client.delete_item(&kref).await {
         Ok(()) => {
             invalidate_cache();
+            invalidate_proxy_cache();
 
             // Remove associated cron jobs.  Extract the item_name from the kref
             // (the last path segment minus the `.workflow` kind suffix) and use
@@ -1630,6 +2201,8 @@ pub async fn handle_run_workflow(
                 );
             }
 
+            invalidate_dashboard_runs_cache();
+            invalidate_proxy_cache();
             (
                 StatusCode::OK,
                 Json(serde_json::json!({
@@ -1673,6 +2246,10 @@ pub async fn handle_get_workflow_by_revision(
     } else {
         format!("kref://{kref}")
     };
+
+    if let Some(workflow) = get_cached_revision_workflow(&revision_kref) {
+        return Json(serde_json::json!({ "workflow": workflow })).into_response();
+    }
 
     let client = build_kumiho_client(&state);
 
@@ -1726,7 +2303,8 @@ pub async fn handle_get_workflow_by_revision(
         metadata: HashMap::new(),
     };
 
-    let workflow = to_workflow_response(&item, Some(&rev));
+    let workflow = to_workflow_response(&item, Some(&rev), true);
+    set_cached_revision_workflow(&revision_kref, &workflow);
     Json(serde_json::json!({ "workflow": workflow })).into_response()
 }
 
@@ -1745,6 +2323,11 @@ pub async fn handle_list_workflow_runs(
     let client = build_kumiho_client(&state);
     let project = workflow_project(&state);
     let runs_space = workflow_runs_space_path(&state);
+    let workflow_filter = query.workflow.as_deref();
+
+    if let Some(cached) = get_cached_workflow_runs(query.limit, workflow_filter, false) {
+        return Json(serde_json::json!({ "runs": cached, "count": cached.len() })).into_response();
+    }
 
     match client.list_items(&runs_space, false).await {
         Ok(mut items) => {
@@ -1768,17 +2351,9 @@ pub async fn handle_list_workflow_runs(
             });
             items.truncate(query.limit);
 
-            let krefs: Vec<String> = items.iter().map(|i| i.kref.clone()).collect();
-            let rev_map = client
-                .batch_get_revisions(&krefs, "latest")
-                .await
-                .unwrap_or_default();
+            let runs: Vec<WorkflowRunSummary> = items.iter().map(to_run_summary_fast).collect();
 
-            let runs: Vec<WorkflowRunSummary> = items
-                .iter()
-                .map(|item| to_run_summary(item, rev_map.get(&item.kref)))
-                .collect();
-
+            set_cached_workflow_runs(query.limit, workflow_filter, &runs);
             Json(serde_json::json!({ "runs": runs, "count": runs.len() })).into_response()
         }
         Err(ref e) if matches!(e, KumihoError::Api { status: 404, .. }) => {
@@ -1789,6 +2364,10 @@ pub async fn handle_list_workflow_runs(
             Json(serde_json::json!({ "runs": [], "count": 0 })).into_response()
         }
         Err(e) => {
+            if let Some(cached) = get_cached_workflow_runs(query.limit, workflow_filter, true) {
+                return Json(serde_json::json!({ "runs": cached, "count": cached.len() }))
+                    .into_response();
+            }
             let msg = format!("Failed to fetch workflow runs: {e}");
             (
                 StatusCode::SERVICE_UNAVAILABLE,
@@ -1942,6 +2521,8 @@ pub async fn handle_delete_workflow_run(
 
     match client.delete_item(&kref).await {
         Ok(()) => {
+            invalidate_dashboard_runs_cache();
+            invalidate_proxy_cache();
             cleanup_local_run_files(&run_id).await;
             StatusCode::NO_CONTENT.into_response()
         }
@@ -2055,6 +2636,8 @@ pub async fn handle_approve_workflow_run(
 
     match mcp_result {
         Ok(_) => {
+            invalidate_dashboard_runs_cache();
+            invalidate_proxy_cache();
             // Broadcast a human_approval_resolved SSE event so connected dashboards
             // can update their UI immediately without waiting for the next REST poll.
             let _ = state.event_tx.send(serde_json::json!({
@@ -2138,6 +2721,8 @@ pub async fn handle_retry_workflow_run(
 
     match mcp_result {
         Ok(result_str) => {
+            invalidate_dashboard_runs_cache();
+            invalidate_proxy_cache();
             let _ = state.event_tx.send(serde_json::json!({
                 "type": "workflow_retry",
                 "run_id": run_id,
@@ -2214,6 +2799,8 @@ pub async fn handle_cancel_workflow_run(
 
             let status_code = cancel_status_for(&payload);
             if status_code == StatusCode::OK {
+                invalidate_dashboard_runs_cache();
+                invalidate_proxy_cache();
                 let _ = state.event_tx.send(serde_json::json!({
                     "type": "workflow_cancel",
                     "run_id": run_id,
@@ -2455,6 +3042,7 @@ pub struct AgentActivityQuery {
 pub async fn handle_workflow_dashboard(
     State(state): State<AppState>,
     headers: HeaderMap,
+    Query(query): Query<WorkflowDashboardQuery>,
 ) -> impl IntoResponse {
     if let Err(e) = require_auth(&state, &headers) {
         return e.into_response();
@@ -2464,39 +3052,13 @@ pub async fn handle_workflow_dashboard(
     let space_path = workflow_space_path(&state);
     let runs_space = workflow_runs_space_path(&state);
 
-    // Fetch definitions from Kumiho + merge builtins
-    let definitions = match client.list_items(&space_path, false).await {
-        Ok(items) => merge_with_builtins(enrich_items(&client, items).await),
-        Err(_) => merge_with_builtins(Vec::new()),
-    };
+    let definitions_future =
+        fetch_workflow_definitions_for_dashboard(&client, &space_path, query.include_definition);
+    let recent_runs_future = fetch_recent_runs_for_dashboard(&client, &runs_space);
+
+    let (definitions, (recent_runs, total_runs)) =
+        tokio::join!(definitions_future, recent_runs_future);
     let definitions_count = definitions.len();
-
-    // Fetch recent runs from Kumiho
-    let (recent_runs, total_runs) = match client.list_items(&runs_space, false).await {
-        Ok(mut items) => {
-            let total = items.len();
-            items.sort_by(|a, b| {
-                let a_time = a.created_at.as_deref().unwrap_or("");
-                let b_time = b.created_at.as_deref().unwrap_or("");
-                b_time.cmp(a_time)
-            });
-            items.truncate(5);
-
-            let krefs: Vec<String> = items.iter().map(|i| i.kref.clone()).collect();
-            let rev_map = client
-                .batch_get_revisions(&krefs, "latest")
-                .await
-                .unwrap_or_default();
-
-            let runs: Vec<WorkflowRunSummary> = items
-                .iter()
-                .map(|item| to_run_summary(item, rev_map.get(&item.kref)))
-                .collect();
-
-            (runs, total)
-        }
-        Err(_) => (Vec::new(), 0),
-    };
 
     let active_runs = recent_runs
         .iter()
@@ -2512,6 +3074,24 @@ pub async fn handle_workflow_dashboard(
     };
 
     Json(serde_json::json!({ "dashboard": dashboard })).into_response()
+}
+
+#[cfg(test)]
+mod workflow_save_tests {
+    use super::*;
+
+    #[test]
+    fn workflow_item_name_prefers_kref_slug() {
+        assert_eq!(
+            workflow_item_name_from_kref("kref://Construct/Workflows/my-flow.workflow", "My Flow"),
+            "my-flow"
+        );
+    }
+
+    #[test]
+    fn workflow_item_name_falls_back_to_slugified_body_name() {
+        assert_eq!(workflow_item_name_from_kref("", "My Flow"), "my-flow");
+    }
 }
 
 #[cfg(test)]
@@ -2564,5 +3144,205 @@ mod cancel_tests {
         // bad-request fallback, never silently 200.
         let payload = json!({"error": "missing run_id", "code": "missing_run_id"});
         assert_eq!(cancel_status_for(&payload), StatusCode::BAD_REQUEST);
+    }
+}
+
+#[cfg(test)]
+mod workflow_run_status_tests {
+    use super::{
+        ItemResponse, RevisionResponse, WorkflowRunSummary, apply_checkpoint_value_to_summary,
+        normalize_run_status, to_run_summary,
+    };
+    use serde_json::json;
+    use std::collections::HashMap;
+
+    fn summary(run_id: &str, status: &str) -> WorkflowRunSummary {
+        WorkflowRunSummary {
+            kref: "kref://Construct/WorkflowRuns/test.workflow_run".to_string(),
+            run_id: run_id.to_string(),
+            workflow_name: "test".to_string(),
+            status: status.to_string(),
+            started_at: String::new(),
+            completed_at: String::new(),
+            steps_completed: String::new(),
+            steps_total: String::new(),
+            error: String::new(),
+            workflow_item_kref: String::new(),
+            workflow_revision_kref: String::new(),
+        }
+    }
+
+    #[test]
+    fn completed_steps_with_completion_time_override_stale_running_status() {
+        assert_eq!(
+            normalize_run_status("running", "46", "46", "2026-05-20T00:00:00Z"),
+            "completed"
+        );
+        assert_eq!(
+            normalize_run_status("running", "47", "46", "2026-05-20T00:00:00Z"),
+            "completed"
+        );
+    }
+
+    #[test]
+    fn incomplete_running_status_stays_running() {
+        assert_eq!(
+            normalize_run_status("running", "45", "46", "2026-05-20T00:00:00Z"),
+            "running"
+        );
+        assert_eq!(
+            normalize_run_status("running", "", "46", "2026-05-20T00:00:00Z"),
+            "running"
+        );
+        assert_eq!(
+            normalize_run_status("running", "46", "", "2026-05-20T00:00:00Z"),
+            "running"
+        );
+    }
+
+    #[test]
+    fn completed_steps_without_completion_time_stay_running() {
+        assert_eq!(normalize_run_status("running", "46", "46", ""), "running");
+        assert_eq!(normalize_run_status("running", "47", "46", ""), "running");
+    }
+
+    #[test]
+    fn run_summary_uses_total_steps_not_observed_step_count() {
+        let item = ItemResponse {
+            kref: "kref://Construct/WorkflowRuns/test.workflow_run".to_string(),
+            name: "test".to_string(),
+            item_name: "test".to_string(),
+            kind: "workflow_run".to_string(),
+            deprecated: false,
+            created_at: None,
+            author: None,
+            username: None,
+            author_display: None,
+            metadata: HashMap::new(),
+        };
+        let rev = RevisionResponse {
+            kref: "kref://Construct/WorkflowRuns/test.workflow_run?rev=1".to_string(),
+            item_kref: item.kref.clone(),
+            number: 1,
+            latest: true,
+            tags: Vec::new(),
+            metadata: HashMap::from([
+                ("run_id".to_string(), "run-1".to_string()),
+                ("workflow_name".to_string(), "test".to_string()),
+                ("status".to_string(), "running".to_string()),
+                ("step_count".to_string(), "3".to_string()),
+                ("steps_completed".to_string(), "3".to_string()),
+                ("steps_total".to_string(), "11".to_string()),
+            ]),
+            deprecated: false,
+            created_at: None,
+            author: None,
+            username: None,
+            author_display: None,
+        };
+
+        let run = to_run_summary(&item, Some(&rev));
+
+        assert_eq!(run.status, "running");
+        assert_eq!(run.steps_completed, "3");
+        assert_eq!(run.steps_total, "11");
+    }
+
+    #[test]
+    fn checkpoint_progress_fills_completed_run_total_from_observed_steps() {
+        let checkpoint = json!({
+            "run_id": "run-1",
+            "status": "completed",
+            "step_results": {
+                "one": { "status": "completed" },
+                "two": { "status": "skipped" }
+            }
+        });
+        let mut run = summary("run-1", "running");
+
+        apply_checkpoint_value_to_summary(&mut run, &checkpoint);
+
+        assert_eq!(run.status, "completed");
+        assert_eq!(run.steps_completed, "2");
+        assert_eq!(run.steps_total, "2");
+    }
+
+    #[test]
+    fn checkpoint_progress_preserves_unknown_total_for_running_run() {
+        let checkpoint = json!({
+            "run_id": "run-1",
+            "status": "running",
+            "step_results": {
+                "one": { "status": "completed" },
+                "two": { "status": "running" }
+            }
+        });
+        let mut run = summary("run-1", "running");
+
+        apply_checkpoint_value_to_summary(&mut run, &checkpoint);
+
+        assert_eq!(run.status, "running");
+        assert_eq!(run.steps_completed, "1");
+        assert_eq!(run.steps_total, "");
+    }
+
+    #[test]
+    fn checkpoint_progress_uses_explicit_total() {
+        let checkpoint = json!({
+            "run_id": "run-1",
+            "status": "running",
+            "steps_total": 5,
+            "step_results": {
+                "one": { "status": "completed" },
+                "two": { "status": "completed" }
+            }
+        });
+        let mut run = summary("run-1", "running");
+
+        apply_checkpoint_value_to_summary(&mut run, &checkpoint);
+
+        assert_eq!(run.status, "running");
+        assert_eq!(run.steps_completed, "2");
+        assert_eq!(run.steps_total, "5");
+    }
+
+    #[test]
+    fn checkpoint_progress_keeps_workflow_total_when_for_each_expands_results() {
+        let checkpoint = json!({
+            "run_id": "run-1",
+            "status": "running",
+            "steps_total": 2,
+            "step_results": {
+                "for_each": { "status": "completed" },
+                "child-1": { "status": "completed" },
+                "child-2": { "status": "completed" }
+            }
+        });
+        let mut run = summary("run-1", "running");
+
+        apply_checkpoint_value_to_summary(&mut run, &checkpoint);
+
+        assert_eq!(run.status, "running");
+        assert_eq!(run.steps_completed, "3");
+        assert_eq!(run.steps_total, "2");
+    }
+
+    #[test]
+    fn checkpoint_progress_ignores_mismatched_run_id() {
+        let checkpoint = json!({
+            "run_id": "other-run",
+            "status": "completed",
+            "steps_total": 1,
+            "step_results": {
+                "one": { "status": "completed" }
+            }
+        });
+        let mut run = summary("run-1", "running");
+
+        apply_checkpoint_value_to_summary(&mut run, &checkpoint);
+
+        assert_eq!(run.status, "running");
+        assert_eq!(run.steps_completed, "");
+        assert_eq!(run.steps_total, "");
     }
 }

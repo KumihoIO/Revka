@@ -482,8 +482,18 @@ impl AppState {
 }
 
 /// Run the HTTP gateway using axum with proper HTTP/1.1 compliance.
-#[allow(clippy::too_many_lines)]
 pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
+    Box::pin(run_gateway_with_mcp_registry(host, port, config, None)).await
+}
+
+/// Run the HTTP gateway, optionally reusing a daemon-owned MCP registry.
+#[allow(clippy::too_many_lines)]
+pub async fn run_gateway_with_mcp_registry(
+    host: &str,
+    port: u16,
+    config: Config,
+    shared_mcp_registry: Option<Arc<tools::McpRegistry>>,
+) -> Result<()> {
     // ── Security: warn on public bind without tunnel or explicit opt-in ──
     if is_public_bind(host) && config.tunnel.provider == "none" && !config.gateway.allow_public_bind
     {
@@ -590,8 +600,15 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
         c = crate::agent::operator::inject_operator(c, false);
         c.mcp
     };
-    let mut mcp_registry_shared: Option<Arc<tools::McpRegistry>> = None;
-    if gateway_mcp_config.enabled && !gateway_mcp_config.servers.is_empty() {
+    let mut mcp_registry_shared: Option<Arc<tools::McpRegistry>> = shared_mcp_registry;
+    let registry_for_wiring = if let Some(registry) = mcp_registry_shared.as_ref() {
+        tracing::info!(
+            "Gateway: using shared MCP client — {} server(s), {} tool(s)",
+            registry.server_count(),
+            registry.tool_count()
+        );
+        Some(std::sync::Arc::clone(registry))
+    } else if gateway_mcp_config.enabled && !gateway_mcp_config.servers.is_empty() {
         tracing::info!(
             "Gateway: initializing MCP client — {} server(s) configured",
             gateway_mcp_config.servers.len()
@@ -600,87 +617,86 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
             Ok(registry) => {
                 let registry = std::sync::Arc::new(registry);
                 mcp_registry_shared = Some(std::sync::Arc::clone(&registry));
-                // Registry-based probe + loud-failure warning for the
-                // high-level Kumiho memory reflexes (coherence audit row 1+13).
-                // Gateway agents built via Agent::from_config run their own
-                // probe; this fires the warning once at gateway startup so
-                // operators see it even before the first agent run.
-                let kumiho_advanced = crate::agent::kumiho::registry_has_advanced_kumiho_tools(
-                    &registry.tool_names(),
-                );
-                crate::agent::kumiho::warn_if_kumiho_advanced_missing(&config, kumiho_advanced);
-                if gateway_mcp_config.deferred_loading {
-                    let operator_prefix =
-                        format!("{}__", crate::agent::operator::OPERATOR_SERVER_NAME);
-                    let kumiho_prefix = format!("{}__", crate::agent::kumiho::KUMIHO_SERVER_NAME);
-                    let all_names = registry.tool_names();
-                    let mut eager_count = 0usize;
-
-                    for name in &all_names {
-                        if name.starts_with(&operator_prefix) || name.starts_with(&kumiho_prefix) {
-                            if let Some(def) = registry.get_tool_def(name).await {
-                                let wrapper: std::sync::Arc<dyn tools::Tool> =
-                                    std::sync::Arc::new(tools::McpToolWrapper::new(
-                                        name.clone(),
-                                        def,
-                                        std::sync::Arc::clone(&registry),
-                                    ));
-                                if let Some(ref handle) = delegate_handle_gw {
-                                    handle.write().push(std::sync::Arc::clone(&wrapper));
-                                }
-                                tools_registry_raw.push(Box::new(tools::ArcToolRef(wrapper)));
-                                eager_count += 1;
-                            }
-                        }
-                    }
-
-                    let deferred_set = tools::DeferredMcpToolSet::from_registry_filtered(
-                        std::sync::Arc::clone(&registry),
-                        |name| {
-                            !name.starts_with(&operator_prefix) && !name.starts_with(&kumiho_prefix)
-                        },
-                    )
-                    .await;
-                    tracing::info!(
-                        "Gateway MCP hybrid: {} eager operator+kumiho tool(s), {} deferred stub(s) from {} server(s)",
-                        eager_count,
-                        deferred_set.len(),
-                        registry.server_count()
-                    );
-                    let activated =
-                        std::sync::Arc::new(std::sync::Mutex::new(tools::ActivatedToolSet::new()));
-                    tools_registry_raw.push(Box::new(tools::ToolSearchTool::new(
-                        deferred_set,
-                        activated,
-                    )));
-                } else {
-                    let names = registry.tool_names();
-                    let mut registered = 0usize;
-                    for name in names {
-                        if let Some(def) = registry.get_tool_def(&name).await {
-                            let wrapper: std::sync::Arc<dyn tools::Tool> =
-                                std::sync::Arc::new(tools::McpToolWrapper::new(
-                                    name,
-                                    def,
-                                    std::sync::Arc::clone(&registry),
-                                ));
-                            if let Some(ref handle) = delegate_handle_gw {
-                                handle.write().push(std::sync::Arc::clone(&wrapper));
-                            }
-                            tools_registry_raw.push(Box::new(tools::ArcToolRef(wrapper)));
-                            registered += 1;
-                        }
-                    }
-                    tracing::info!(
-                        "Gateway MCP: {} tool(s) registered from {} server(s)",
-                        registered,
-                        registry.server_count()
-                    );
-                }
+                Some(registry)
             }
             Err(e) => {
                 tracing::error!("Gateway MCP registry failed to initialize: {e:#}");
+                None
             }
+        }
+    } else {
+        None
+    };
+
+    if let Some(registry) = registry_for_wiring {
+        // Registry-based probe + loud-failure warning for the high-level Kumiho
+        // memory reflexes (coherence audit row 1+13). Gateway agents built via
+        // Agent::from_config run their own probe; this fires the warning once at
+        // gateway startup so operators see it even before the first agent run.
+        let kumiho_advanced =
+            crate::agent::kumiho::registry_has_advanced_kumiho_tools(&registry.tool_names());
+        crate::agent::kumiho::warn_if_kumiho_advanced_missing(&config, kumiho_advanced);
+        if gateway_mcp_config.deferred_loading {
+            let operator_prefix = format!("{}__", crate::agent::operator::OPERATOR_SERVER_NAME);
+            let kumiho_prefix = format!("{}__", crate::agent::kumiho::KUMIHO_SERVER_NAME);
+            let all_names = registry.tool_names();
+            let mut eager_count = 0usize;
+
+            for name in &all_names {
+                if name.starts_with(&operator_prefix) || name.starts_with(&kumiho_prefix) {
+                    if let Some(def) = registry.get_tool_def(name).await {
+                        let wrapper: std::sync::Arc<dyn tools::Tool> =
+                            std::sync::Arc::new(tools::McpToolWrapper::new(
+                                name.clone(),
+                                def,
+                                std::sync::Arc::clone(&registry),
+                            ));
+                        if let Some(ref handle) = delegate_handle_gw {
+                            handle.write().push(std::sync::Arc::clone(&wrapper));
+                        }
+                        tools_registry_raw.push(Box::new(tools::ArcToolRef(wrapper)));
+                        eager_count += 1;
+                    }
+                }
+            }
+
+            let deferred_set = tools::DeferredMcpToolSet::from_registry_filtered(
+                std::sync::Arc::clone(&registry),
+                |name| !name.starts_with(&operator_prefix) && !name.starts_with(&kumiho_prefix),
+            )
+            .await;
+            tracing::info!(
+                "Gateway MCP hybrid: {} eager operator+kumiho tool(s), {} deferred stub(s) from {} server(s)",
+                eager_count,
+                deferred_set.len(),
+                registry.server_count()
+            );
+            let activated =
+                std::sync::Arc::new(std::sync::Mutex::new(tools::ActivatedToolSet::new()));
+            tools_registry_raw.push(Box::new(tools::ToolSearchTool::new(
+                deferred_set,
+                activated,
+            )));
+        } else {
+            let names = registry.tool_names();
+            let mut registered = 0usize;
+            for name in names {
+                if let Some(def) = registry.get_tool_def(&name).await {
+                    let wrapper: std::sync::Arc<dyn tools::Tool> = std::sync::Arc::new(
+                        tools::McpToolWrapper::new(name, def, std::sync::Arc::clone(&registry)),
+                    );
+                    if let Some(ref handle) = delegate_handle_gw {
+                        handle.write().push(std::sync::Arc::clone(&wrapper));
+                    }
+                    tools_registry_raw.push(Box::new(tools::ArcToolRef(wrapper)));
+                    registered += 1;
+                }
+            }
+            tracing::info!(
+                "Gateway MCP: {} tool(s) registered from {} server(s)",
+                registered,
+                registry.server_count()
+            );
         }
     }
 

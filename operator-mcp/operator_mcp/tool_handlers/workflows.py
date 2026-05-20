@@ -128,13 +128,23 @@ async def tool_run_workflow(args: dict[str, Any]) -> dict[str, Any]:
 
     async def _run_in_background() -> None:
         try:
-            await execute_workflow(
+            state = await execute_workflow(
                 wf, inputs, cwd, run_id=run_id, max_cost_usd=max_cost_usd,
                 workflow_item_kref=workflow_item_kref,
                 workflow_revision_kref=workflow_revision_kref,
                 target_step_id=target_step_id,
             )
-            _log(f"tool_run_workflow: background run={run_id[:8]} finished")
+            status = getattr(state.status, "value", str(state.status))
+            if status == "failed":
+                _log(
+                    f"tool_run_workflow: background run={run_id[:8]} "
+                    f"finished status=failed error={(state.error or '')[:500]}"
+                )
+            else:
+                _log(
+                    f"tool_run_workflow: background run={run_id[:8]} "
+                    f"finished status={status}"
+                )
         except Exception as exc:
             _log(f"tool_run_workflow: background run={run_id[:8]} FAILED: {exc}")
         finally:

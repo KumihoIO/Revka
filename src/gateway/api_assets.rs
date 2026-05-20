@@ -7,6 +7,7 @@
 use super::AppState;
 use super::api::require_auth;
 use super::api_agents::build_kumiho_client;
+use super::api_kumiho_proxy::invalidate_proxy_cache;
 use super::kumiho_client::{
     ArtifactResponse, KumihoError, RevisionResponse, kumiho_error_to_response,
 };
@@ -170,7 +171,10 @@ pub async fn handle_deprecate_item(
         .deprecate_item(&body.kref, body.deprecated)
         .await
     {
-        Ok(item) => Json(serde_json::json!({ "item": item })).into_response(),
+        Ok(item) => {
+            invalidate_proxy_cache();
+            Json(serde_json::json!({ "item": item })).into_response()
+        }
         Err(e) => kumiho_err(e),
     }
 }
@@ -188,7 +192,10 @@ pub async fn handle_deprecate_revision(
         .deprecate_revision(&body.kref, body.deprecated)
         .await
     {
-        Ok(revision) => Json(serde_json::json!({ "revision": revision })).into_response(),
+        Ok(revision) => {
+            invalidate_proxy_cache();
+            Json(serde_json::json!({ "revision": revision })).into_response()
+        }
         Err(e) => kumiho_err(e),
     }
 }
@@ -206,7 +213,10 @@ pub async fn handle_deprecate_artifact(
         .deprecate_artifact(&body.kref, body.deprecated)
         .await
     {
-        Ok(artifact) => Json(serde_json::json!({ "artifact": artifact })).into_response(),
+        Ok(artifact) => {
+            invalidate_proxy_cache();
+            Json(serde_json::json!({ "artifact": artifact })).into_response()
+        }
         Err(e) => kumiho_err(e),
     }
 }
@@ -226,7 +236,10 @@ pub async fn handle_publish_revision(
     }
 
     match client.get_revision(&body.kref).await {
-        Ok(revision) => Json(serde_json::json!({ "revision": revision })).into_response(),
+        Ok(revision) => {
+            invalidate_proxy_cache();
+            Json(serde_json::json!({ "revision": revision })).into_response()
+        }
         Err(e) => kumiho_err(e),
     }
 }
@@ -277,6 +290,7 @@ pub async fn handle_update_artifact_content(
                 format!("failed to write artifact content: {e}"),
             );
         }
+        invalidate_proxy_cache();
         return Json(UpdateArtifactContentResponse {
             revision: source_revision,
             artifact: source_artifact,
@@ -376,6 +390,7 @@ pub async fn handle_update_artifact_content(
         }
     };
 
+    invalidate_proxy_cache();
     Json(UpdateArtifactContentResponse {
         revision: new_revision,
         artifact,

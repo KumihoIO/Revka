@@ -20,7 +20,7 @@ from operator_mcp.workflow.event_listener import (
     TriggerRule,
     WorkflowEventListener,
 )
-from operator_mcp.workflow.schema import TriggerDef
+from operator_mcp.workflow.schema import TriggerDef, WorkflowState, WorkflowStatus
 
 
 def _make_listener() -> WorkflowEventListener:
@@ -435,3 +435,56 @@ async def test_async_run_request_proceeds_when_latest_status_is_pending(
     assert resolve_called["hit"], (
         "pending request should have proceeded past the status guard"
     )
+
+
+@pytest.mark.asyncio
+async def test_async_run_request_tags_failed_when_executor_returns_failed(
+    tmp_path, monkeypatch
+):
+    listener = _make_listener()
+
+    class FakeSDK:
+        _available = True
+
+        async def get_latest_revision(self, kref, tag=None):
+            return {"metadata": {"status": "pending"}}
+
+    import operator_mcp.operator_mcp as op_mod
+    monkeypatch.setattr(op_mod, "KUMIHO_SDK", FakeSDK(), raising=False)
+
+    async def _resolve_workflow(_name, *_args, **_kwargs):
+        return object(), "kref://workflow-item", "kref://workflow-item?r=3"
+
+    async def _execute_workflow(*_args, **_kwargs):
+        return WorkflowState(
+            workflow_name="budgeted-workflow",
+            run_id="failed-run-1",
+            status=WorkflowStatus.FAILED,
+            error="Cost guard: Budget exceeded",
+        )
+
+    from operator_mcp.workflow import loader, executor
+
+    monkeypatch.setattr(loader, "resolve_workflow", _resolve_workflow)
+    monkeypatch.setattr(executor, "execute_workflow", _execute_workflow)
+
+    tags: list[tuple[str, str]] = []
+
+    async def _capture_tag(_item_kref, tag, status_detail=""):
+        tags.append((tag, status_detail))
+
+    monkeypatch.setattr(listener, "_tag_run_request", _capture_tag)
+
+    await listener._async_run_request(
+        item_kref="kref://Construct/WorkflowRunRequests/run-failed",
+        metadata={
+            "workflow_name": "budgeted-workflow",
+            "run_id": "failed-run-1",
+            "inputs": "{}",
+        },
+    )
+
+    assert tags == [
+        ("running", ""),
+        ("failed", "Cost guard: Budget exceeded"),
+    ]
