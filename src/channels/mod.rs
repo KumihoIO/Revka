@@ -10211,7 +10211,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 id: "tg-msg-1".to_string(),
                 sender: "alice".to_string(),
                 reply_target: "chat-telegram".to_string(),
-                content: "hello".to_string(),
+                content: "explain the earlier context".to_string(),
                 channel: "telegram".to_string(),
                 timestamp: 1,
                 thread_ts: None,
