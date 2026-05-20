@@ -3203,7 +3203,7 @@ async fn process_channel_message(
         &msg.channel,
         &msg.sender,
         &msg.id,
-        "memory_recall",
+        "context_retrieval",
         mem_recall_start.elapsed(),
         started_at.elapsed(),
     );
