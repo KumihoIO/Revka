@@ -31,6 +31,7 @@ pub mod approval_registry;
 pub mod auth_rate_limit;
 pub mod canvas;
 pub mod click_tracking;
+pub mod kumiho_bridge;
 pub mod kumiho_client;
 pub mod mcp_discovery;
 pub mod nodes;

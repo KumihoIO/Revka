@@ -6,8 +6,8 @@
 
 use super::AppState;
 use super::api::require_auth;
-use super::api_agents::build_kumiho_client;
-use super::api_kumiho_proxy::invalidate_proxy_cache;
+use super::kumiho_client::build_kumiho_client;
+use super::kumiho_client::invalidate_proxy_cache;
 use super::kumiho_client::{
     ArtifactResponse, KumihoError, RevisionResponse, kumiho_error_to_response,
 };

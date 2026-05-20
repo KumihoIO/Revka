@@ -789,7 +789,17 @@ Kumiho는 Construct의 정식 영속 그래프 메모리 백엔드입니다. 런
 메모:
 
 - Kumiho를 설치하지 않은 배포에서는 `enabled = false`로 끄세요.
-- `api_url`은 대시보드/API 프록시 `GET /api/kumiho/{*path}`에서 사용됩니다.
+- `api_url`은 대시보드/API Kumiho 트래픽의 fallback URL입니다. 설치된 Kumiho
+  sidecar를 사용할 수 있으면 Construct는 먼저 로컬 Kumiho SDK bridge를 시도하고,
+  bridge가 꺼져 있거나 사용할 수 없거나 해당 route를 지원하지 않을 때만
+  `api_url`로 fallback합니다. hosted FastAPI transport만 강제로 쓰려면
+  `CONSTRUCT_KUMIHO_SDK_BRIDGE=0`을 설정하세요.
+- 로컬 SDK bridge는 `KUMIHO_AUTH_TOKEN`을 우선 사용합니다.
+  `KUMIHO_SERVICE_TOKEN`은 FastAPI header token으로 유지되며,
+  `KUMIHO_AUTH_TOKEN`이 없을 때 fallback으로 사용됩니다. 응답 cache는 계정
+  데이터가 섞이지 않도록 effective token 기준으로 분리됩니다. bridge가 새
+  token용 SDK client를 만들 때 Kumiho discovery도 강제로 refresh해서 다른
+  계정의 로컬 discovery cache 항목을 재사용하지 않습니다.
 - `space_prefix` 아래 Construct가 사용하는 네임스페이스: `AgentPool`, `Plans`, `Sessions`, `Goals`, `AgentTrust`, `ClawHub`, `Teams`, `CognitiveMemory/Skills`.
 
 ## `[operator]`

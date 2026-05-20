@@ -7,7 +7,7 @@
 
 use super::AppState;
 use super::api::require_auth;
-use super::api_agents::build_kumiho_client;
+use super::kumiho_client::build_kumiho_client;
 use super::kumiho_client::{KumihoClient, KumihoError};
 
 /// Normalize a kref from a URL path — strip existing `kref://` prefix to avoid doubling.

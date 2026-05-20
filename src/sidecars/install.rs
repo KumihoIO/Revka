@@ -18,6 +18,7 @@ use super::python::{detect_npm, detect_python};
 use super::{construct_root, kumiho_launcher_path, operator_launcher_path};
 
 const KUMIHO_LAUNCHER_SRC: &str = include_str!("../../resources/sidecars/run_kumiho_mcp.py");
+const KUMIHO_SDK_BRIDGE_SRC: &str = include_str!("../../resources/sidecars/kumiho_sdk_bridge.py");
 const OPERATOR_LAUNCHER_SRC: &str = include_str!("../../resources/sidecars/run_operator_mcp.py");
 
 static OPERATOR_MCP_SRC: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/operator-mcp");
@@ -116,12 +117,14 @@ fn install_kumiho(python: &Path, dry_run: bool) -> Result<()> {
     let dir = construct_root()?.join("kumiho");
     let venv = dir.join("venv");
     let launcher = dir.join("run_kumiho_mcp.py");
+    let bridge = dir.join("kumiho_sdk_bridge.py");
 
     eprintln!("==> Installing Kumiho MCP → {}", dir.display());
     if dry_run {
         eprintln!("    + create {}", venv.display());
         eprintln!("    + pip install {KUMIHO_PIN}");
         eprintln!("    + write {}", launcher.display());
+        eprintln!("    + write {}", bridge.display());
         return Ok(());
     }
 
@@ -138,6 +141,8 @@ fn install_kumiho(python: &Path, dry_run: bool) -> Result<()> {
 
     write_launcher(&launcher, KUMIHO_LAUNCHER_SRC)?;
     eprintln!("    [ok] launcher: {}", launcher.display());
+    write_launcher(&bridge, KUMIHO_SDK_BRIDGE_SRC)?;
+    eprintln!("    [ok] sdk bridge: {}", bridge.display());
     Ok(())
 }
 
