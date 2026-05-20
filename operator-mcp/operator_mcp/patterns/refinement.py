@@ -272,6 +272,9 @@ async def _wait_for_agent(agent: ManagedAgent, *, timeout: float = 300.0) -> str
             await _cancel_timed_out_agent(agent)
             return f"[TIMEOUT after {timeout}s]"
 
+    if not sidecar_id and agent.stdout_buffer:
+        return agent.stdout_buffer
+
     run_log = get_log(agent.id)
     if run_log is None and sidecar_id:
         run_log = get_log(sidecar_id)
@@ -367,6 +370,8 @@ def _get_agent_output(agent_id: str) -> tuple[str, list[str]]:
         return "", []
     run_log = get_log(agent_id)
     sidecar_id = getattr(agent, "_sidecar_id", None)
+    if not sidecar_id and agent.stdout_buffer:
+        return agent.stdout_buffer, []
     if run_log is None and sidecar_id:
         run_log = get_log(sidecar_id)
     if run_log:
