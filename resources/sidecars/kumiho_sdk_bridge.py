@@ -276,7 +276,8 @@ def _error_payload(exc: BaseException) -> dict[str, Any]:
         try:
             message = exc.details() or message
         except Exception:
-            pass
+            # Ignore details() extraction errors and keep the fallback str(exc) message.
+            message = message
     return {
         "error": message,
         "error_code": "kumiho_sdk_bridge_error",
