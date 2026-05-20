@@ -999,8 +999,10 @@ impl SecurityPolicy {
                 return false;
             }
 
-            // Validate arguments for the command
-            let args: Vec<String> = words.map(|w| w.to_ascii_lowercase()).collect();
+            // Validate arguments for the command. Preserve argument case so
+            // git's directory flag `-C` is not confused with config injection
+            // flag `-c`.
+            let args: Vec<String> = words.map(|w| w.to_string()).collect();
             if !self.is_args_safe(base_cmd, &args) {
                 return false;
             }
@@ -1019,17 +1021,22 @@ impl SecurityPolicy {
         match base.as_str() {
             "find" => {
                 // find -exec and find -ok allow arbitrary command execution
-                !args.iter().any(|arg| arg == "-exec" || arg == "-ok")
+                !args.iter().any(|arg| {
+                    let arg = arg.to_ascii_lowercase();
+                    arg == "-exec" || arg == "-ok"
+                })
             }
             "git" => {
                 // git config, alias, and -c can be used to set dangerous options
                 // (e.g. git config core.editor "rm -rf /")
                 !args.iter().any(|arg| {
-                    arg == "config"
-                        || arg.starts_with("config.")
-                        || arg == "alias"
-                        || arg.starts_with("alias.")
+                    let lower = arg.to_ascii_lowercase();
+                    lower == "config"
+                        || lower.starts_with("config.")
+                        || lower == "alias"
+                        || lower.starts_with("alias.")
                         || arg == "-c"
+                        || arg.starts_with("-c=")
                 })
             }
             _ => true,
@@ -2229,10 +2236,14 @@ mod tests {
         assert!(!p.is_command_allowed("git config core.editor \"rm -rf /\""));
         assert!(!p.is_command_allowed("git alias.st status"));
         assert!(!p.is_command_allowed("git -c core.editor=calc.exe commit"));
+        assert!(!p.is_command_allowed("git -c=core.editor=calc.exe commit"));
+        assert!(!p.is_command_allowed("git Config core.editor \"rm -rf /\""));
         // Legitimate commands should still work
         assert!(p.is_command_allowed("find . -name '*.txt'"));
         assert!(p.is_command_allowed("git status"));
         assert!(p.is_command_allowed("git add ."));
+        assert!(p.is_command_allowed("git -C ./repo status"));
+        assert!(p.is_command_allowed("git -C=./repo status"));
     }
 
     #[test]

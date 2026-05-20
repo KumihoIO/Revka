@@ -15,6 +15,7 @@ Usage:
 from __future__ import annotations
 
 import os
+import shlex
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -27,11 +28,27 @@ except ImportError:
         tomllib = None  # type: ignore[assignment]
 
 from ._log import _log
+from .construct_config import workspace_dir as configured_workspace_dir
 
 
 # ---------------------------------------------------------------------------
 # Policy data
 # ---------------------------------------------------------------------------
+
+def _expand_path(path: str) -> str:
+    """Resolve a policy path the same way for roots, forbidden paths, and cwd."""
+    return os.path.realpath(os.path.expandvars(os.path.expanduser(path)))
+
+
+def _path_is_under(path: str, root: str) -> bool:
+    """Component-aware containment check for real paths."""
+    if not root:
+        return False
+    try:
+        return os.path.commonpath([path, root]) == root
+    except ValueError:
+        return False
+
 
 @dataclass
 class PolicyCheckResult:
@@ -55,6 +72,7 @@ class PolicyCheckResult:
 class Policy:
     """Loaded autonomy policy from config.toml."""
     level: str = "supervised"  # supervised, autonomous, locked
+    workspace_dir: str = "~/.construct/workspace"
     workspace_only: bool = True
     allowed_commands: list[str] = field(default_factory=list)
     forbidden_paths: list[str] = field(default_factory=list)
@@ -67,15 +85,17 @@ class Policy:
     max_cost_per_day_cents: int = 500
 
     # Expanded paths (resolved ~ and env vars)
+    _workspace_expanded: str = field(default="", repr=False)
     _forbidden_expanded: list[str] = field(default_factory=list, repr=False)
     _roots_expanded: list[str] = field(default_factory=list, repr=False)
 
     def __post_init__(self) -> None:
+        self._workspace_expanded = _expand_path(self.workspace_dir) if self.workspace_dir else ""
         self._forbidden_expanded = [
-            os.path.realpath(os.path.expanduser(p)) for p in self.forbidden_paths if p
+            _expand_path(p) for p in self.forbidden_paths if p
         ]
         self._roots_expanded = [
-            os.path.realpath(os.path.expanduser(p)) for p in self.allowed_roots if p
+            _expand_path(p) for p in self.allowed_roots if p
         ]
 
     def check_cwd(self, cwd: str) -> PolicyCheckResult:
@@ -85,11 +105,15 @@ class Policy:
                                      policy_rule="workspace_only")
 
         # Resolve symlinks to prevent bypass via symlinked paths
-        expanded = os.path.realpath(os.path.expanduser(cwd))
+        expanded = _expand_path(cwd)
+
+        roots = [r for r in [self._workspace_expanded, *self._roots_expanded] if r]
+        if any(_path_is_under(expanded, root) for root in roots):
+            return PolicyCheckResult(allowed=True)
 
         # Check forbidden paths
         for forbidden in self._forbidden_expanded:
-            if expanded.startswith(forbidden):
+            if _path_is_under(expanded, forbidden):
                 return PolicyCheckResult(
                     allowed=False,
                     reason=f"Path {cwd} is under forbidden path {forbidden}",
@@ -98,14 +122,14 @@ class Policy:
                 )
 
         # Check allowed roots (if workspace_only)
-        if self.workspace_only and self._roots_expanded:
-            if not any(expanded.startswith(root) for root in self._roots_expanded):
-                return PolicyCheckResult(
-                    allowed=False,
-                    reason=f"Path {cwd} is not under any allowed root",
-                    policy_rule="allowed_roots",
-                    suggestion=f"Allowed roots: {', '.join(self.allowed_roots)}",
-                )
+        if self.workspace_only:
+            display_roots = [self.workspace_dir, *self.allowed_roots]
+            return PolicyCheckResult(
+                allowed=False,
+                reason=f"Path {cwd} is not under any allowed root",
+                policy_rule="allowed_roots",
+                suggestion=f"Allowed roots: {', '.join(r for r in display_roots if r)}",
+            )
 
         return PolicyCheckResult(allowed=True)
 
@@ -115,8 +139,13 @@ class Policy:
             return PolicyCheckResult(allowed=True)
 
         # Extract base command (first word)
-        base = command.strip().split()[0] if command.strip() else ""
+        try:
+            tokens = shlex.split(command)
+        except ValueError:
+            tokens = command.strip().split()
+        base = tokens[0] if tokens else ""
         base = os.path.basename(base)  # handle /usr/bin/git -> git
+        args = tokens[1:]
 
         # High-risk command patterns — always checked regardless of allowlist
         if self.block_high_risk_commands:
@@ -132,6 +161,9 @@ class Policy:
                     )
 
         if not self.allowed_commands:
+            arg_check = self._check_dangerous_args(base, args)
+            if arg_check is not None:
+                return arg_check
             return PolicyCheckResult(allowed=True)  # No allowlist = allow all
 
         if base not in self.allowed_commands:
@@ -142,7 +174,43 @@ class Policy:
                 suggestion=f"Allowed commands: {', '.join(c for c in self.allowed_commands if c)}",
             )
 
+        arg_check = self._check_dangerous_args(base, args)
+        if arg_check is not None:
+            return arg_check
+
         return PolicyCheckResult(allowed=True)
+
+    def _check_dangerous_args(self, base: str, args: list[str]) -> PolicyCheckResult | None:
+        """Mirror Rust's command argument safety checks for pre-flight."""
+        base = base.lower()
+        if base == "find":
+            for arg in args:
+                lower = arg.lower()
+                if lower in {"-exec", "-ok"}:
+                    return PolicyCheckResult(
+                        allowed=False,
+                        reason=f"Command argument '{arg}' can execute subcommands",
+                        policy_rule="command_arguments",
+                        suggestion="Avoid find arguments that execute commands",
+                    )
+        if base == "git":
+            for arg in args:
+                lower = arg.lower()
+                if (
+                    lower == "config"
+                    or lower.startswith("config.")
+                    or lower == "alias"
+                    or lower.startswith("alias.")
+                    or arg == "-c"
+                    or arg.startswith("-c=")
+                ):
+                    return PolicyCheckResult(
+                        allowed=False,
+                        reason=f"Git argument '{arg}' is not allowed by policy",
+                        policy_rule="command_arguments",
+                        suggestion="Avoid git config, alias, or -c injection arguments",
+                    )
+        return None
 
     def check_tool(self, tool_name: str) -> PolicyCheckResult:
         """Check tool permission level."""
@@ -219,6 +287,8 @@ def load_policy(*, force_reload: bool = False) -> Policy:
     autonomy = config.get("autonomy", {})
     _cached_policy = Policy(
         level=autonomy.get("level", "supervised"),
+        workspace_dir=config.get("workspace_dir")
+        or configured_workspace_dir(force_reload=force_reload),
         workspace_only=autonomy.get("workspace_only", True),
         allowed_commands=autonomy.get("allowed_commands", []),
         forbidden_paths=autonomy.get("forbidden_paths", []),
