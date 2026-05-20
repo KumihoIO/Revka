@@ -161,6 +161,29 @@ class TestRunLogRecording:
         assert summary["status"] == "completed"
         assert summary["last_message"] == "OK"
 
+    def test_workflow_subprocess_output_prefers_full_stdout_buffer(self, log):
+        from operator_mcp.agent_state import AGENTS, ManagedAgent
+        from operator_mcp.patterns.refinement import _get_agent_output
+
+        agent = ManagedAgent(
+            id="test-agent-1",
+            agent_type="codex",
+            title="wf-test",
+            cwd="/tmp",
+            status="idle",
+        )
+        agent.stdout_buffer = "x" * 5000
+        AGENTS[agent.id] = agent
+        log.record_subprocess("codex exec", exit_code=0, stdout="short")
+
+        try:
+            output, files = _get_agent_output(agent.id)
+        finally:
+            AGENTS.pop(agent.id, None)
+
+        assert output == agent.stdout_buffer
+        assert files == []
+
 
 class TestRunLogQueries:
     def test_get_tool_calls(self, log):
