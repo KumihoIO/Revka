@@ -873,7 +873,13 @@ fn to_run_summary(item: &ItemResponse, rev: Option<&RevisionResponse>) -> Workfl
     let get = |key: &str| -> String { meta.get(key).cloned().unwrap_or_default() };
 
     let run_id_meta = get("run_id");
-    let status = normalize_run_status(&get("status"), &get("steps_completed"), &get("step_count"));
+    let completed_at = get("completed_at");
+    let status = normalize_run_status(
+        &get("status"),
+        &get("steps_completed"),
+        &get("steps_total"),
+        &completed_at,
+    );
     let started_at = {
         let value = get("started_at");
         if value.is_empty() {
@@ -895,7 +901,7 @@ fn to_run_summary(item: &ItemResponse, rev: Option<&RevisionResponse>) -> Workfl
         },
         status,
         started_at,
-        completed_at: get("completed_at"),
+        completed_at,
         steps_completed: get("steps_completed"),
         steps_total: get("steps_total"),
         error: get("error"),
@@ -993,8 +999,7 @@ fn apply_checkpoint_value_to_summary(
         summary.steps_completed = completed.to_string();
     }
 
-    let explicit_total = parse_usize_json(checkpoint.get("steps_total"))
-        .or_else(|| parse_usize_json(checkpoint.get("step_count")));
+    let explicit_total = parse_usize_json(checkpoint.get("steps_total"));
     let inferred_completed_total = step_results.and_then(|steps| {
         if summary.status == "completed" {
             Some(steps.len())
@@ -1014,6 +1019,7 @@ fn apply_checkpoint_value_to_summary(
         &summary.status,
         &summary.steps_completed,
         &summary.steps_total,
+        &summary.completed_at,
     );
 }
 
@@ -1030,14 +1036,22 @@ fn apply_local_checkpoint_progress(summary: &mut WorkflowRunSummary) {
     apply_checkpoint_value_to_summary(summary, &checkpoint);
 }
 
-fn normalize_run_status(status: &str, steps_completed: &str, step_count: &str) -> String {
+fn normalize_run_status(
+    status: &str,
+    steps_completed: &str,
+    steps_total: &str,
+    completed_at: &str,
+) -> String {
     let status = status.to_string();
     if status != "running" {
         return status;
     }
+    if completed_at.is_empty() {
+        return status;
+    }
 
     let completed = steps_completed.parse::<usize>().ok();
-    let count = step_count.parse::<usize>().ok();
+    let count = steps_total.parse::<usize>().ok();
     match (completed, count) {
         (Some(completed), Some(count)) if count > 0 && completed >= count => "completed".into(),
         _ => status,
@@ -1188,7 +1202,8 @@ fn extract_steps_from_metadata(meta: &HashMap<String, String>) -> Vec<WorkflowSt
 }
 
 fn to_run_detail(item: &ItemResponse, rev: Option<&RevisionResponse>) -> WorkflowRunDetail {
-    let summary = to_run_summary(item, rev);
+    let mut summary = to_run_summary(item, rev);
+    apply_local_checkpoint_progress(&mut summary);
     let steps = rev
         .map(|r| extract_steps_from_metadata(&r.metadata))
         .unwrap_or_default();
@@ -3134,8 +3149,12 @@ mod cancel_tests {
 
 #[cfg(test)]
 mod workflow_run_status_tests {
-    use super::{WorkflowRunSummary, apply_checkpoint_value_to_summary, normalize_run_status};
+    use super::{
+        ItemResponse, RevisionResponse, WorkflowRunSummary, apply_checkpoint_value_to_summary,
+        normalize_run_status, to_run_summary,
+    };
     use serde_json::json;
+    use std::collections::HashMap;
 
     fn summary(run_id: &str, status: &str) -> WorkflowRunSummary {
         WorkflowRunSummary {
@@ -3154,16 +3173,79 @@ mod workflow_run_status_tests {
     }
 
     #[test]
-    fn completed_steps_override_stale_running_status() {
-        assert_eq!(normalize_run_status("running", "46", "46"), "completed");
-        assert_eq!(normalize_run_status("running", "47", "46"), "completed");
+    fn completed_steps_with_completion_time_override_stale_running_status() {
+        assert_eq!(
+            normalize_run_status("running", "46", "46", "2026-05-20T00:00:00Z"),
+            "completed"
+        );
+        assert_eq!(
+            normalize_run_status("running", "47", "46", "2026-05-20T00:00:00Z"),
+            "completed"
+        );
     }
 
     #[test]
     fn incomplete_running_status_stays_running() {
-        assert_eq!(normalize_run_status("running", "45", "46"), "running");
-        assert_eq!(normalize_run_status("running", "", "46"), "running");
-        assert_eq!(normalize_run_status("running", "46", ""), "running");
+        assert_eq!(
+            normalize_run_status("running", "45", "46", "2026-05-20T00:00:00Z"),
+            "running"
+        );
+        assert_eq!(
+            normalize_run_status("running", "", "46", "2026-05-20T00:00:00Z"),
+            "running"
+        );
+        assert_eq!(
+            normalize_run_status("running", "46", "", "2026-05-20T00:00:00Z"),
+            "running"
+        );
+    }
+
+    #[test]
+    fn completed_steps_without_completion_time_stay_running() {
+        assert_eq!(normalize_run_status("running", "46", "46", ""), "running");
+        assert_eq!(normalize_run_status("running", "47", "46", ""), "running");
+    }
+
+    #[test]
+    fn run_summary_uses_total_steps_not_observed_step_count() {
+        let item = ItemResponse {
+            kref: "kref://Construct/WorkflowRuns/test.workflow_run".to_string(),
+            name: "test".to_string(),
+            item_name: "test".to_string(),
+            kind: "workflow_run".to_string(),
+            deprecated: false,
+            created_at: None,
+            author: None,
+            username: None,
+            author_display: None,
+            metadata: HashMap::new(),
+        };
+        let rev = RevisionResponse {
+            kref: "kref://Construct/WorkflowRuns/test.workflow_run?rev=1".to_string(),
+            item_kref: item.kref.clone(),
+            number: 1,
+            latest: true,
+            tags: Vec::new(),
+            metadata: HashMap::from([
+                ("run_id".to_string(), "run-1".to_string()),
+                ("workflow_name".to_string(), "test".to_string()),
+                ("status".to_string(), "running".to_string()),
+                ("step_count".to_string(), "3".to_string()),
+                ("steps_completed".to_string(), "3".to_string()),
+                ("steps_total".to_string(), "11".to_string()),
+            ]),
+            deprecated: false,
+            created_at: None,
+            author: None,
+            username: None,
+            author_display: None,
+        };
+
+        let run = to_run_summary(&item, Some(&rev));
+
+        assert_eq!(run.status, "running");
+        assert_eq!(run.steps_completed, "3");
+        assert_eq!(run.steps_total, "11");
     }
 
     #[test]
@@ -3222,6 +3304,27 @@ mod workflow_run_status_tests {
         assert_eq!(run.status, "running");
         assert_eq!(run.steps_completed, "2");
         assert_eq!(run.steps_total, "5");
+    }
+
+    #[test]
+    fn checkpoint_progress_keeps_workflow_total_when_for_each_expands_results() {
+        let checkpoint = json!({
+            "run_id": "run-1",
+            "status": "running",
+            "steps_total": 2,
+            "step_results": {
+                "for_each": { "status": "completed" },
+                "child-1": { "status": "completed" },
+                "child-2": { "status": "completed" }
+            }
+        });
+        let mut run = summary("run-1", "running");
+
+        apply_checkpoint_value_to_summary(&mut run, &checkpoint);
+
+        assert_eq!(run.status, "running");
+        assert_eq!(run.steps_completed, "3");
+        assert_eq!(run.steps_total, "2");
     }
 
     #[test]
