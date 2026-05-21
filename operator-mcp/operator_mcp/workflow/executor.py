@@ -3911,11 +3911,173 @@ async def _exec_manus(step: StepDef, state: WorkflowState) -> StepResult:
 # Orchestration pattern step executors
 # ---------------------------------------------------------------------------
 
+def _preview_text(value: Any, limit: int = 6000) -> str:
+    text = str(value or "").strip()
+    return text[:limit]
+
+
+def _json_preview(value: Any, limit: int = 4000) -> str:
+    try:
+        return json.dumps(value, default=str)[:limit]
+    except (TypeError, ValueError):
+        return str(value)[:limit]
+
+
+def _map_reduce_output(result: dict[str, Any]) -> str:
+    reducer = result.get("reducer", {})
+    if isinstance(reducer, dict):
+        reducer_output = _preview_text(reducer.get("output"))
+        if reducer_output:
+            return reducer_output
+        reducer_status = _preview_text(reducer.get("status"), 80)
+    else:
+        reducer_status = ""
+
+    status = _preview_text(result.get("status"), 200) or "unknown"
+    total = result.get("total_splits", "?")
+    successful = result.get("successful_mappers", 0)
+    failed = result.get("failed_mappers", 0)
+    skipped = result.get("skipped_mappers", 0)
+    lines = [
+        f"Map-reduce {status}: {successful}/{total} mapper(s) succeeded"
+        f" ({failed} failed, {skipped} skipped)."
+    ]
+    if reducer_status and reducer_status not in ("completed", "idle"):
+        lines.append(f"Reducer ended with status {reducer_status}.")
+    mapper_results = result.get("mapper_results")
+    if isinstance(mapper_results, list):
+        for mapper in mapper_results[:5]:
+            if not isinstance(mapper, dict):
+                continue
+            mapper_output = _preview_text(mapper.get("output"), 500)
+            mapper_status = _preview_text(mapper.get("status"), 80) or "unknown"
+            segment = _preview_text(mapper.get("segment"), 120)
+            if mapper_output:
+                lines.append(
+                    f"Mapper {mapper.get('index', '?')} ({mapper_status})"
+                    f"{f' - {segment}' if segment else ''}: {mapper_output}"
+                )
+            else:
+                lines.append(
+                    f"Mapper {mapper.get('index', '?')} ({mapper_status})"
+                    f"{f' - {segment}' if segment else ''}"
+                )
+    return _preview_text("\n".join(lines)) or _json_preview(result)
+
+
+def _supervisor_output(result: dict[str, Any]) -> str:
+    summary = _preview_text(result.get("final_summary"))
+    if summary:
+        return summary
+
+    status = _preview_text(result.get("status"), 200) or "unknown"
+    total = result.get("total_iterations", 0)
+    lines = [f"Supervisor {status} after {total} iteration(s)."]
+
+    work_history = result.get("work_history")
+    if isinstance(work_history, list) and work_history:
+        lines.append("Recent work:")
+        lines.extend(f"- {_preview_text(item, 900)}" for item in work_history[-5:])
+    else:
+        iterations = result.get("iterations")
+        if isinstance(iterations, list) and iterations:
+            lines.append("Iterations:")
+            for iteration in iterations[-5:]:
+                if not isinstance(iteration, dict):
+                    continue
+                action = _preview_text(iteration.get("action"), 80) or "unknown"
+                subtask = _preview_text(
+                    iteration.get("subtask")
+                    or iteration.get("summary")
+                    or iteration.get("question"),
+                    900,
+                )
+                suffix = f" - {subtask}" if subtask else ""
+                lines.append(f"- {iteration.get('iteration', '?')}: {action}{suffix}")
+
+    return _preview_text("\n".join(lines)) or _json_preview(result)
+
+
+def _group_chat_output(result: dict[str, Any]) -> str:
+    summary = _preview_text(result.get("summary"), 3000)
+    conclusion = _preview_text(result.get("conclusion"), 3000)
+    parts = []
+    if summary:
+        parts.append(f"Summary: {summary}")
+    if conclusion:
+        parts.append(f"Conclusion: {conclusion}")
+    if parts:
+        return _preview_text("\n".join(parts))
+
+    transcript = result.get("transcript")
+    if isinstance(transcript, list) and transcript:
+        last = transcript[-1]
+        if isinstance(last, dict):
+            speaker = _preview_text(last.get("speaker"), 120) or "Participant"
+            content = _preview_text(last.get("content"), 3000)
+            if content:
+                return _preview_text(f"{speaker}: {content}")
+
+    return _json_preview(result)
+
+
+def _handoff_output(result: dict[str, Any]) -> str:
+    output = _preview_text(result.get("to_agent_output"))
+    if output:
+        return output
+
+    status = _preview_text(result.get("to_agent_status"), 120) or "unknown"
+    title = (
+        _preview_text(result.get("to_agent_title") or result.get("to_agent_id"), 200)
+        or "receiver"
+    )
+    reason = _preview_text(result.get("reason"), 1000)
+    lines = [f"Handoff to {title} ended with status {status}."]
+    if reason:
+        lines.append(f"Reason: {reason}")
+    return _preview_text("\n".join(lines)) or _json_preview(result)
+
+
+async def _persist_running_step_progress(
+    state: WorkflowState,
+    wf: WorkflowDef | None,
+) -> None:
+    if wf and wf.checkpoint:
+        _save_checkpoint(state)
+    try:
+        from .memory import persist_workflow_run
+        step_dicts = {
+            sid: sr.model_dump() for sid, sr in state.step_results.items()
+        }
+        await persist_workflow_run(
+            workflow_name=state.workflow_name,
+            run_id=state.run_id,
+            status="running",
+            inputs=state.inputs,
+            step_results=step_dicts,
+            started_at=state.started_at,
+            steps_total=state.steps_total,
+            workflow_item_kref=state.workflow_item_kref,
+            workflow_revision_kref=state.workflow_revision_kref,
+        )
+    except Exception as exc:
+        _log(f"workflow: live step persist failed for run={state.run_id[:8]}: {exc}")
+
+
 async def _exec_map_reduce(step: StepDef, state: WorkflowState, cwd: str) -> StepResult:
     """Execute a map_reduce pattern step."""
     cfg: MapReduceStepConfig = step.map_reduce  # type: ignore
     task = interpolate(cfg.task, state)
     splits = [interpolate(s, state) for s in cfg.splits]
+    input_data: dict[str, Any] = {
+        "task": task,
+        "splits": splits,
+        "mapper": cfg.mapper,
+        "reducer": cfg.reducer,
+        "concurrency": cfg.concurrency,
+        "timeout_secs": cfg.timeout,
+        "cwd": cwd,
+    }
 
     try:
         from ..patterns.map_reduce import tool_map_reduce
@@ -3930,22 +4092,45 @@ async def _exec_map_reduce(step: StepDef, state: WorkflowState, cwd: str) -> Ste
         })
         status = result.get("status", "")
         reducer = result.get("reducer", {})
-        output = reducer.get("output", "") if isinstance(reducer, dict) else ""
+        reducer_status = (
+            _preview_text(reducer.get("status"), 80)
+            if isinstance(reducer, dict)
+            else ""
+        )
+        reducer_ok = not reducer_status or reducer_status in ("completed", "idle")
+        completed = status == "completed" and reducer_ok
+        error = _preview_text(result.get("error"), 2000)
+        if not error and status == "completed" and not reducer_ok:
+            error = f"Reducer failed with status {reducer_status}"
         return StepResult(
             step_id=step.id,
-            status="completed" if status == "completed" else "failed",
-            output=output[:6000] or json.dumps(result, default=str)[:4000],
+            status="completed" if completed else "failed",
+            output=_map_reduce_output(result),
+            input_data=input_data,
             output_data=result,
-            error=result.get("error", "") if status != "completed" else "",
+            error="" if completed else error,
         )
     except Exception as exc:
-        return StepResult(step_id=step.id, status="failed", error=str(exc)[:2000])
+        return StepResult(
+            step_id=step.id,
+            status="failed",
+            input_data=input_data,
+            error=str(exc)[:2000],
+        )
 
 
 async def _exec_supervisor(step: StepDef, state: WorkflowState, cwd: str) -> StepResult:
     """Execute a supervisor delegation pattern step."""
     cfg: SupervisorStepConfig = step.supervisor  # type: ignore
     task = interpolate(cfg.task, state)
+    input_data: dict[str, Any] = {
+        "task": task,
+        "max_iterations": cfg.max_iterations,
+        "supervisor_type": cfg.supervisor_type,
+        "templates": cfg.templates,
+        "timeout_secs": cfg.timeout,
+        "cwd": cwd,
+    }
 
     try:
         from ..patterns.supervisor import tool_supervisor_run
@@ -3958,30 +4143,60 @@ async def _exec_supervisor(step: StepDef, state: WorkflowState, cwd: str) -> Ste
             "timeout": cfg.timeout,
         })
         status = result.get("status", "")
-        summary = result.get("final_summary", "")
         return StepResult(
             step_id=step.id,
             status="completed" if status == "completed" else "failed",
-            output=summary[:6000] or json.dumps(result, default=str)[:4000],
+            output=_supervisor_output(result),
+            input_data=input_data,
             output_data=result,
+            error=_preview_text(result.get("error"), 2000) if status != "completed" else "",
         )
     except Exception as exc:
-        return StepResult(step_id=step.id, status="failed", error=str(exc)[:2000])
+        return StepResult(
+            step_id=step.id,
+            status="failed",
+            input_data=input_data,
+            error=str(exc)[:2000],
+        )
 
 
-async def _exec_group_chat(step: StepDef, state: WorkflowState, cwd: str) -> StepResult:
+async def _exec_group_chat(
+    step: StepDef,
+    state: WorkflowState,
+    cwd: str,
+    wf: WorkflowDef | None = None,
+) -> StepResult:
     """Execute a group chat discussion step."""
     cfg: GroupChatStepConfig = step.group_chat  # type: ignore
     topic = interpolate(cfg.topic, state)
+    input_data: dict[str, Any] = {
+        "topic": topic,
+        "participants": cfg.participants,
+        "moderator": cfg.moderator,
+        "strategy": cfg.strategy,
+        "max_rounds": cfg.max_rounds,
+        "timeout_secs": cfg.timeout,
+        "cwd": cwd,
+    }
 
     # Callback to stream intermediate transcript into workflow state
-    def _on_turn(transcript: list[dict[str, str]]) -> None:
+    async def _on_turn(transcript: list[dict[str, Any]]) -> None:
+        transcript_snapshot = [dict(turn) for turn in transcript]
         state.step_results[step.id] = StepResult(
             step_id=step.id,
             status="running",
-            output=f"Discussion in progress... ({len(transcript)} messages)",
-            output_data={"transcript": transcript, "topic": topic},
+            output=f"Discussion in progress... ({len(transcript_snapshot)} message(s))",
+            input_data=input_data,
+            output_data={
+                "transcript": transcript_snapshot,
+                "chat_events": transcript_snapshot,
+                "topic": topic,
+                "participants": cfg.participants,
+                "moderator": cfg.moderator,
+                "strategy": cfg.strategy,
+            },
         )
+        await _persist_running_step_progress(state, wf)
 
     try:
         from ..patterns.group_chat import tool_group_chat
@@ -3994,17 +4209,25 @@ async def _exec_group_chat(step: StepDef, state: WorkflowState, cwd: str) -> Ste
             "cwd": cwd,
             "timeout": cfg.timeout,
         }, on_turn=_on_turn)
-        summary = result.get("summary", "")
-        conclusion = result.get("conclusion", "")
-        output = f"Summary: {summary}\nConclusion: {conclusion}"
+        transcript = result.get("transcript")
+        if isinstance(transcript, list):
+            result["chat_events"] = transcript
+        status = "failed" if result.get("error") else "completed"
         return StepResult(
             step_id=step.id,
-            status="completed",
-            output=output[:6000],
+            status=status,
+            output=_group_chat_output(result),
+            input_data=input_data,
             output_data=result,
+            error=_preview_text(result.get("error"), 2000) if status == "failed" else "",
         )
     except Exception as exc:
-        return StepResult(step_id=step.id, status="failed", error=str(exc)[:2000])
+        return StepResult(
+            step_id=step.id,
+            status="failed",
+            input_data=input_data,
+            error=str(exc)[:2000],
+        )
 
 
 async def _exec_handoff(step: StepDef, state: WorkflowState, cwd: str) -> StepResult:
@@ -4012,12 +4235,21 @@ async def _exec_handoff(step: StepDef, state: WorkflowState, cwd: str) -> StepRe
     cfg: HandoffStepConfig = step.handoff  # type: ignore
     reason = interpolate(cfg.reason, state)
     task = interpolate(cfg.task, state) if cfg.task else ""
+    input_data: dict[str, Any] = {
+        "from_step": cfg.from_step,
+        "to_agent_type": cfg.to_agent_type,
+        "reason": reason,
+        "task": task,
+        "timeout_secs": cfg.timeout,
+        "cwd": cwd,
+    }
 
     # Resolve the source agent ID from the referenced step
     from_step_result = state.step_results.get(cfg.from_step)
     if not from_step_result or not from_step_result.agent_id:
         return StepResult(
             step_id=step.id, status="failed",
+            input_data=input_data,
             error=f"Handoff source step '{cfg.from_step}' has no agent_id",
         )
 
@@ -4033,17 +4265,23 @@ async def _exec_handoff(step: StepDef, state: WorkflowState, cwd: str) -> StepRe
         })
 
         to_status = result.get("to_agent_status", "error")
-        output = result.get("to_agent_output", "")
         return StepResult(
             step_id=step.id,
             status="completed" if to_status in ("completed", "idle") else "failed",
-            output=output[:6000],
+            output=_handoff_output(result),
+            input_data=input_data,
             output_data=result,
             agent_id=result.get("to_agent_id"),
             files_touched=result.get("to_agent_files", []),
+            error=_preview_text(result.get("error"), 2000) if to_status not in ("completed", "idle") else "",
         )
     except Exception as exc:
-        return StepResult(step_id=step.id, status="failed", error=str(exc)[:2000])
+        return StepResult(
+            step_id=step.id,
+            status="failed",
+            input_data=input_data,
+            error=str(exc)[:2000],
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -5330,7 +5568,7 @@ async def _dispatch_step(
         elif step.type == StepType.SUPERVISOR:
             return await _exec_supervisor(step, state, cwd)
         elif step.type == StepType.GROUP_CHAT:
-            return await _exec_group_chat(step, state, cwd)
+            return await _exec_group_chat(step, state, cwd, wf)
         elif step.type == StepType.HANDOFF:
             return await _exec_handoff(step, state, cwd)
         elif step.type == StepType.RESOLVE:

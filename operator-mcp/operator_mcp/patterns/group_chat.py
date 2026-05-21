@@ -11,6 +11,7 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import inspect
 import uuid
 from typing import Any, Callable
 
@@ -144,7 +145,7 @@ Produce a final synthesis:
 
 async def tool_group_chat(
     args: dict[str, Any],
-    on_turn: Callable[[list[dict[str, str]]], None] | None = None,
+    on_turn: Callable[[list[dict[str, Any]]], Any] | None = None,
 ) -> dict[str, Any]:
     """Run a moderated multi-agent group chat discussion.
 
@@ -250,8 +251,7 @@ async def tool_group_chat(
                 model=model, timeout=timeout,
             )
             transcript.append({"speaker": "Moderator", "content": mod_output[:3000], "round": round_num})
-            if on_turn:
-                on_turn(transcript)
+            await _emit_turn(on_turn, transcript)
 
             # Check if moderator is synthesizing (SUMMARY: present)
             if "SUMMARY:" in mod_output:
@@ -292,8 +292,7 @@ async def tool_group_chat(
             model=model, timeout=timeout,
         )
         transcript.append({"speaker": name, "content": p_output[:3000], "round": round_num})
-        if on_turn:
-            on_turn(transcript)
+        await _emit_turn(on_turn, transcript)
 
         _log(f"group_chat: round {round_num} — {name} spoke ({len(p_output)} chars)")
 
@@ -322,8 +321,7 @@ async def tool_group_chat(
             "content": synth_output[:3000],
             "round": rounds_completed + 1,
         })
-        if on_turn:
-            on_turn(transcript)
+        await _emit_turn(on_turn, transcript)
 
     result: dict[str, Any] = {
         "topic": topic,
@@ -345,7 +343,25 @@ async def tool_group_chat(
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _format_transcript(transcript: list[dict[str, str]]) -> str:
+async def _emit_turn(
+    on_turn: Callable[[list[dict[str, Any]]], Any] | None,
+    transcript: list[dict[str, Any]],
+) -> None:
+    """Notify callers after each chat turn.
+
+    The workflow executor uses an async callback so it can persist incremental
+    transcript state for live dashboard polling. Existing sync callbacks remain
+    supported for direct tool callers and tests.
+    """
+    if not on_turn:
+        return
+    snapshot = [dict(turn) for turn in transcript]
+    result = on_turn(snapshot)
+    if inspect.isawaitable(result):
+        _ = await result
+
+
+def _format_transcript(transcript: list[dict[str, Any]]) -> str:
     """Format transcript for injection into prompts."""
     lines = []
     for entry in transcript:
