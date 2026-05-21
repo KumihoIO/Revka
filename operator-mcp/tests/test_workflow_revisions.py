@@ -16,6 +16,7 @@ from operator_mcp.tool_handlers.workflow_revisions import (
     SkippedReason,
     _apply_rename_step,
     _exact_id_pattern,
+    _load_current_yaml,
     _scan_broken_refs,
     tool_revise_workflow,
 )
@@ -175,6 +176,126 @@ async def test_revise_skip_path_continues_after_failure(fake_gateway, monkeypatc
     parsed = yaml.safe_load(kwargs["definition_yaml"])
     first = next(s for s in parsed["steps"] if s["id"] == "first")
     assert first["agent"]["prompt"] == "Updated prompt"
+
+
+@pytest.mark.asyncio
+async def test_revise_reorder_accepts_before_position_keyword(fake_gateway, monkeypatch):
+    from operator_mcp import operator_mcp as op_mod
+
+    class _StubSDK:
+        _available = True
+        async def get_latest_revision(self, item_kref: str, tag: str = "published"):
+            return {"kref": "kref://Construct/Workflows/revise-test.r2"}
+
+    monkeypatch.setattr(op_mod, "KUMIHO_SDK", _StubSDK())
+
+    result = await tool_revise_workflow(
+        {
+            "workflow_kref": "kref://Construct/Workflows/revise-test.workflow",
+            "workflow_yaml": _BASE_YAML,
+            "operations": [
+                {
+                    "op": "reorder",
+                    "step_id": "second",
+                    "position": "before",
+                    "target_step_id": "first",
+                },
+            ],
+        },
+        _gw=fake_gateway,
+    )
+
+    assert result["success"] is True, result
+    assert result["applied_count"] == 1
+    assert result["skipped_items"] == []
+    kwargs = fake_gateway.register_workflow.await_args.kwargs
+    parsed = yaml.safe_load(kwargs["definition_yaml"])
+    assert [s["id"] for s in parsed["steps"]] == ["second", "first"]
+
+
+@pytest.mark.asyncio
+async def test_revise_add_step_accepts_before_position_keyword(fake_gateway, monkeypatch):
+    from operator_mcp import operator_mcp as op_mod
+
+    class _StubSDK:
+        _available = True
+        async def get_latest_revision(self, item_kref: str, tag: str = "published"):
+            return {"kref": "kref://Construct/Workflows/revise-test.r2"}
+
+    monkeypatch.setattr(op_mod, "KUMIHO_SDK", _StubSDK())
+
+    result = await tool_revise_workflow(
+        {
+            "workflow_kref": "kref://Construct/Workflows/revise-test.workflow",
+            "workflow_yaml": _BASE_YAML,
+            "operations": [
+                {
+                    "op": "add_step",
+                    "position": "before",
+                    "target_step_id": "second",
+                    "step_def": {
+                        "id": "middle",
+                        "type": "agent",
+                        "agent": {
+                            "agent_type": "claude",
+                            "role": "reviewer",
+                            "prompt": "Review the first step",
+                        },
+                    },
+                },
+            ],
+        },
+        _gw=fake_gateway,
+    )
+
+    assert result["success"] is True, result
+    assert result["applied_count"] == 1
+    assert result["skipped_items"] == []
+    kwargs = fake_gateway.register_workflow.await_args.kwargs
+    parsed = yaml.safe_load(kwargs["definition_yaml"])
+    assert [s["id"] for s in parsed["steps"]] == ["first", "middle", "second"]
+
+
+@pytest.mark.asyncio
+async def test_load_current_yaml_pins_utf8_for_korean_artifacts(tmp_path, monkeypatch):
+    workflow_path = tmp_path / "workflow.yaml"
+    workflow_path.write_text(
+        'name: korean-test\nversion: "1.0"\ndescription: "한글 워크플로우"\nsteps: []\n',
+        encoding="utf-8",
+    )
+
+    from operator_mcp import operator_mcp as op_mod
+
+    class _StubSDK:
+        _available = True
+
+        async def get_latest_revision(self, item_kref: str, tag: str = "published"):
+            return {"kref": "kref://Construct/Workflows/korean-test.r1"}
+
+        async def get_artifacts(self, revision_kref: str):
+            return [{"location": str(workflow_path)}]
+
+    real_open = open
+
+    def cp949_default_open(path, mode="r", *args, **kwargs):
+        if (
+            str(path) == str(workflow_path)
+            and "r" in mode
+            and "b" not in mode
+            and kwargs.get("encoding") is None
+        ):
+            raise UnicodeDecodeError("cp949", b"\xec", 0, 1, "illegal multibyte sequence")
+        return real_open(path, mode, *args, **kwargs)
+
+    monkeypatch.setattr(op_mod, "KUMIHO_SDK", _StubSDK())
+    monkeypatch.setattr("builtins.open", cp949_default_open)
+
+    yaml_text, revision_kref = await _load_current_yaml(
+        "kref://Construct/Workflows/korean-test.workflow"
+    )
+
+    assert revision_kref == "kref://Construct/Workflows/korean-test.r1"
+    assert "한글 워크플로우" in yaml_text
 
 
 # ---------------------------------------------------------------------------
