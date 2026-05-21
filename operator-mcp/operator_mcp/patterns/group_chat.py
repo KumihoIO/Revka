@@ -358,7 +358,7 @@ async def _emit_turn(
     snapshot = [dict(turn) for turn in transcript]
     result = on_turn(snapshot)
     if inspect.isawaitable(result):
-        await result
+        _ = await result
 
 
 def _format_transcript(transcript: list[dict[str, Any]]) -> str:
