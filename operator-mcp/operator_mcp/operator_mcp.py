@@ -322,6 +322,35 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
+            name="prune_completed_agents",
+            description="Remove inactive completed/cancelled/failed/idle agent runtime records while preserving runlogs and workflow history.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "older_than_seconds": {
+                        "type": "number",
+                        "description": "Only prune inactive records older than this age. Default: 60.",
+                    },
+                    "include_idle": {
+                        "type": "boolean",
+                        "description": "Include idle records. Default: true.",
+                    },
+                    "include_cancelled": {
+                        "type": "boolean",
+                        "description": "Include cancelled records. Default: true.",
+                    },
+                    "include_failed": {
+                        "type": "boolean",
+                        "description": "Include failed/error records. Default: true.",
+                    },
+                    "dry_run": {
+                        "type": "boolean",
+                        "description": "Preview records that would be pruned without deleting them.",
+                    },
+                },
+            },
+        ),
+        Tool(
             name="search_agent_pool",
             description="Search the agent template pool by keywords (name, role, capabilities, description).",
             inputSchema={
@@ -2573,6 +2602,7 @@ async def list_tools() -> list[Tool]:
 _EXPECTED_KEYS: dict[str, frozenset[str]] = {
     "create_agent": frozenset({"agent_id", "type", "status", "cwd", "title"}),
     "list_agents": frozenset({"agents"}),
+    "prune_completed_agents": frozenset({"pruned", "would_prune"}),
     "search_agent_pool": frozenset({"matches", "count"}),
     "get_team": frozenset({"team", "kref"}),
     "get_agent_activity": frozenset({"agent_id"}),
@@ -2693,6 +2723,8 @@ async def _dispatch(name: str, args: dict[str, Any]) -> dict[str, Any]:
         return await agents.tool_cancel_agent(args)
     if name == "cancel_all_agents":
         return await agents.tool_cancel_all_agents(args)
+    if name == "prune_completed_agents":
+        return await agents.tool_prune_completed_agents(args)
 
     # -- Agent pool --
     if name == "search_agent_pool":

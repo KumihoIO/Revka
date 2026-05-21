@@ -174,6 +174,11 @@ async def _wait_for_agent(agent: ManagedAgent, *, timeout: float = 300.0) -> str
     _ZOMBIE_MIN = 180.0               # floor: 3 minutes
     _ZOMBIE_RATIO = 0.4               # 40% of step timeout
     _LIVENESS_CHECK_INTERVAL = 30.0   # how often to fetch event counts
+    try:
+        _INITIALIZING_TIMEOUT = float(os.getenv("CONSTRUCT_AGENT_INITIALIZING_TIMEOUT_SECS", "180"))
+    except (TypeError, ValueError):
+        _INITIALIZING_TIMEOUT = 180.0
+    _INITIALIZING_TIMEOUT = min(timeout, max(0.1, _INITIALIZING_TIMEOUT))
     _RUNLOG_DIR = os.path.expanduser("~/.construct/operator_mcp/runlogs")
 
     zombie_window = max(_ZOMBIE_MIN, timeout * _ZOMBIE_RATIO)
@@ -185,6 +190,7 @@ async def _wait_for_agent(agent: ManagedAgent, *, timeout: float = 300.0) -> str
         if _sidecar_client:
             loop_time = asyncio.get_event_loop().time
             deadline = loop_time() + timeout
+            poll_start = loop_time()
             poll_interval = 1.0
 
             # Zombie-detection state
@@ -205,12 +211,20 @@ async def _wait_for_agent(agent: ManagedAgent, *, timeout: float = 300.0) -> str
                         return "[AGENT VANISHED]"
 
                     status = info.get("status", "")
+                    now = loop_time()
                     if status in ("idle", "error", "closed"):
                         agent.status = "completed" if status == "idle" else status
                         break
+                    if status == "initializing" and now - poll_start >= _INITIALIZING_TIMEOUT:
+                        _log(
+                            f"refinement: agent {agent.id[:8]} stayed initializing for "
+                            f"{now - poll_start:.0f}s; marking failed"
+                        )
+                        await _cancel_timed_out_agent(agent)
+                        agent.status = "error"
+                        return f"[INITIALIZATION TIMEOUT after {_INITIALIZING_TIMEOUT:.0f}s]"
 
                     # Periodic liveness probe for running agents
-                    now = loop_time()
                     if now >= next_liveness_check:
                         next_liveness_check = now + _LIVENESS_CHECK_INTERVAL
                         try:
@@ -229,8 +243,8 @@ async def _wait_for_agent(agent: ManagedAgent, *, timeout: float = 300.0) -> str
                                     else:
                                         _log(f"refinement: agent {agent.id[:8]} never produced "
                                              f"events after {consecutive_empty} checks — zombie")
-                                        agent.status = "error"
                                         await _cancel_timed_out_agent(agent)
+                                        agent.status = "error"
                                         return "[ZOMBIE — never produced events]"
                             elif last_event_count < 0 or event_count > last_event_count:
                                 last_event_count = event_count
@@ -247,8 +261,8 @@ async def _wait_for_agent(agent: ManagedAgent, *, timeout: float = 300.0) -> str
                                     _log(f"refinement: agent {agent.id[:8]} no progress for "
                                          f"{stale:.0f}s (events frozen at {event_count}, "
                                          f"runlog static) — zombie confirmed")
-                                    agent.status = "error"
                                     await _cancel_timed_out_agent(agent)
+                                    agent.status = "error"
                                     return f"[ZOMBIE — no progress for {stale:.0f}s]"
 
                             # Track runlog size for next comparison
@@ -258,7 +272,11 @@ async def _wait_for_agent(agent: ManagedAgent, *, timeout: float = 300.0) -> str
                 except Exception:
                     pass
                 remaining = deadline - loop_time()
-                await asyncio.sleep(min(poll_interval, max(0.1, remaining)))
+                sleep_for = min(poll_interval, max(0.1, remaining))
+                if _INITIALIZING_TIMEOUT < timeout:
+                    init_remaining = (poll_start + _INITIALIZING_TIMEOUT) - loop_time()
+                    sleep_for = min(sleep_for, max(0.1, init_remaining))
+                await asyncio.sleep(sleep_for)
                 poll_interval = min(poll_interval * 1.2, 5.0)
             else:
                 _log(f"refinement: agent {agent.id[:8]} timed out ({timeout}s), cancelling")

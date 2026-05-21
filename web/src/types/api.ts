@@ -442,6 +442,11 @@ export interface WorkflowRunSummary {
   completed_at: string;
   steps_completed: string;
   steps_total: string;
+  expanded_steps_completed?: string;
+  current_loop?: string;
+  current_iteration?: string;
+  current_loop_total?: string;
+  current_step_instance?: string;
   error: string;
   workflow_item_kref?: string;
   workflow_revision_kref?: string;

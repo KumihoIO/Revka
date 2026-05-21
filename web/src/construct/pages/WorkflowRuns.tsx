@@ -26,6 +26,7 @@ import WorkflowDagWorkspace from '../components/workflows/WorkflowDagWorkspace';
 import ArtifactViewerModal from '../components/ui/ArtifactViewerModal';
 import { deriveBlockedTaskIds, deriveDependencyChainIds, toStepRunInfo } from '../lib/orchestration';
 import { formatLocalDateTime } from '../lib/datetime';
+import { expandedStepCount, loopProgressLabel } from '../lib/workflowProgress';
 import { useT } from '@/construct/hooks/useT';
 
 function isMissingRunError(err: unknown): boolean {
@@ -90,6 +91,20 @@ function stepFailureReason(step?: WorkflowStepDetail | null): string {
     if (text) return text;
   }
   return '';
+}
+
+function RunProgressMeta({ run, className = '' }: { run: WorkflowRunSummary; className?: string }) {
+  const { tpl } = useT();
+  const expanded = expandedStepCount(run);
+  const loopLabel = loopProgressLabel(run, tpl);
+
+  return (
+    <div className={className} style={{ color: 'var(--construct-text-faint)' }}>
+      <span>{tpl('runs.stats.steps_fraction', { completed: run.steps_completed || '0', total: run.steps_total || '?' })}</span>
+      {expanded !== null ? <span>{tpl('runs.stats.expanded_steps', { count: expanded })}</span> : null}
+      {loopLabel ? <span className="font-mono">{loopLabel}</span> : null}
+    </div>
+  );
 }
 
 interface ConditionalResolutionDetail {
@@ -630,9 +645,9 @@ export default function WorkflowRuns() {
                     </span>
                     <StatusPill status={run.status} />
                   </div>
+                  <RunProgressMeta className="mt-1 flex flex-wrap items-center gap-3 text-xs" run={run} />
                   <div className="mt-1 flex items-center gap-3 text-xs" style={{ color: 'var(--construct-text-faint)' }}>
                     <span className="font-mono">{run.run_id.slice(0, 8)}</span>
-                    <span>{tpl('runs.stats.steps_fraction', { completed: run.steps_completed || '0', total: run.steps_total || '?' })}</span>
                   </div>
                 </button>
               );
@@ -777,9 +792,7 @@ export default function WorkflowRuns() {
             <Panel className="mb-3 p-3" variant="utility">
               <div className="flex items-center justify-between gap-2 text-xs">
                 <StatusPill status={selectedRun.status} />
-                <span style={{ color: 'var(--construct-text-faint)' }}>
-                  {tpl('runs.stats.steps_fraction', { completed: selectedRun.steps_completed || '0', total: selectedRun.steps_total || '?' })}
-                </span>
+                <RunProgressMeta className="flex flex-wrap items-center justify-end gap-2" run={selectedRun} />
               </div>
               {selectedRun.started_at ? (
                 <div className="mt-2 text-xs" style={{ color: 'var(--construct-text-faint)' }}>

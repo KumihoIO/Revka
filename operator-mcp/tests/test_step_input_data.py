@@ -282,6 +282,49 @@ class TestResolve:
         assert result.input_data["space"] == "Construct/ops/Inbox"
         assert calls["space"] == "Construct/ops/Inbox"
 
+    async def test_interpolated_query_values_are_visible_in_output_preview(self):
+        calls: dict[str, Any] = {}
+
+        async def fake_resolve(**kwargs):
+            calls.update(kwargs)
+            return {
+                "kref": "kref:rev:abc",
+                "item_kref": "kref:item:def",
+                "name": "Episode 7",
+                "metadata": {"foo": "bar"},
+            }
+
+        cfg = ResolveStepConfig(
+            kind="${inputs.kind}",
+            tag="${inputs.tag}",
+            name_pattern="${inputs.series}-ep-${inputs.episode}",
+            fail_if_missing=True,
+        )
+        step = StepDef(id="r", type=StepType.RESOLVE, resolve=cfg)
+        state = _state(inputs={
+            "kind": "episode",
+            "tag": "published",
+            "series": "manghan",
+            "episode": 7,
+        })
+        with patch("operator_mcp.workflow.memory.resolve_entity", fake_resolve):
+            result = await _exec_resolve(step, state)
+
+        assert result.status == "completed"
+        assert calls["kind"] == "episode"
+        assert calls["tag"] == "published"
+        assert calls["name_pattern"] == "manghan-ep-7"
+        assert result.input_data["kind"] == "episode"
+        assert result.input_data["tag"] == "published"
+        assert result.input_data["name_pattern"] == "manghan-ep-7"
+        assert result.input_data["kind_expression"] == "${inputs.kind}"
+        assert result.input_data["tag_expression"] == "${inputs.tag}"
+        assert result.input_data["name_pattern_expression"] == "${inputs.series}-ep-${inputs.episode}"
+        assert "kind='episode'" in result.output
+        assert "tag='published'" in result.output
+        assert "name_pattern='manghan-ep-7'" in result.output
+        assert "${inputs.kind}" not in result.output
+
 
 # ── _exec_output ───────────────────────────────────────────────────
 

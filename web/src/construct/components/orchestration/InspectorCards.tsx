@@ -5,6 +5,7 @@ import type { TaskDefinition } from '@/construct/components/workflows/yamlSync';
 import type { TeamDefinition, TeamMember, TranscriptEntry, WorkflowDefinition, WorkflowRunDetail, WorkflowRunSummary, WorkflowStepDetail } from '@/types/api';
 import { useT } from '@/construct/hooks/useT';
 import { parseWorkflowMeta } from '@/construct/components/workflows/yamlSync';
+import { expandedStepCount, loopProgressLabel } from '@/construct/lib/workflowProgress';
 import Panel from '../ui/Panel';
 import StatusPill from '../ui/StatusPill';
 import AgentAvatar from '../ui/AgentAvatar';
@@ -174,6 +175,10 @@ interface RunSummaryCardProps {
 }
 
 export function RunSummaryCard({ run, workflowHref }: RunSummaryCardProps) {
+  const { tpl } = useT();
+  const expanded = run ? expandedStepCount(run) : null;
+  const loopLabel = run ? loopProgressLabel(run, tpl) : null;
+
   return (
     <Panel className="p-4" variant="utility" skinSlot="runCard">
       <div className="construct-kicker">Run Summary</div>
@@ -186,6 +191,12 @@ export function RunSummaryCard({ run, workflowHref }: RunSummaryCardProps) {
           <div><span style={{ color: 'var(--construct-text-faint)' }}>Started</span>: <span style={{ color: 'var(--construct-text-primary)' }}>{formatLocalDateTime(run.started_at) || '-'}</span></div>
           <div><span style={{ color: 'var(--construct-text-faint)' }}>Completed</span>: <span style={{ color: 'var(--construct-text-primary)' }}>{formatLocalDateTime(run.completed_at) || '-'}</span></div>
           <div><span style={{ color: 'var(--construct-text-faint)' }}>Steps</span>: <span style={{ color: 'var(--construct-text-primary)' }}>{run.steps_completed || '0'} / {run.steps_total || '?'}</span></div>
+          {expanded !== null ? (
+            <div><span style={{ color: 'var(--construct-text-faint)' }}>Expanded</span>: <span style={{ color: 'var(--construct-text-primary)' }}>{expanded}</span></div>
+          ) : null}
+          {loopLabel ? (
+            <div><span style={{ color: 'var(--construct-text-faint)' }}>Loop</span>: <span className="font-mono" style={{ color: 'var(--construct-text-primary)' }}>{loopLabel}</span></div>
+          ) : null}
           {run.error ? (
             <div className="rounded-[12px] border p-3 text-xs" style={{ borderColor: 'color-mix(in srgb, var(--construct-status-danger) 28%, transparent)', color: 'var(--construct-status-danger)' }}>
               {run.error}
@@ -215,6 +226,8 @@ interface RecentRunsCardProps {
 }
 
 export function RecentRunsCard({ runs, workflowKref, emptyText }: RecentRunsCardProps) {
+  const { tpl } = useT();
+
   return (
     <Panel className="p-4" variant="utility">
       <div className="construct-kicker">Recent Runs</div>
@@ -232,8 +245,11 @@ export function RecentRunsCard({ runs, workflowKref, emptyText }: RecentRunsCard
               </div>
               <StatusPill status={run.status} />
             </div>
-            <div className="mt-2 text-xs" style={{ color: 'var(--construct-text-secondary)' }}>
-              {run.steps_completed || '0'} / {run.steps_total || '?'} steps
+            <div className="mt-2 flex flex-wrap gap-2 text-xs" style={{ color: 'var(--construct-text-secondary)' }}>
+              <span>{run.steps_completed || '0'} / {run.steps_total || '?'} steps</span>
+              {expandedStepCount(run) !== null ? (
+                <span>{tpl('runs.stats.expanded_steps', { count: expandedStepCount(run) ?? 0 })}</span>
+              ) : null}
             </div>
           </Link>
         ))}

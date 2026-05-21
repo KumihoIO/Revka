@@ -395,10 +395,10 @@ class OutputStepConfig(BaseModel):
 
 class ResolveStepConfig(BaseModel):
     """Config for 'resolve' step type — deterministic Kumiho entity lookup."""
-    kind: str                                           # Entity kind to search for
-    tag: str = "published"                              # Tag to match
-    name_pattern: str = ""                              # Optional name filter (glob/regex)
-    space: str = ""                                     # Optional space path filter
+    kind: str                                           # Entity kind to search for (supports ${...} interpolation)
+    tag: str = "published"                              # Tag to match (supports ${...} interpolation)
+    name_pattern: str = ""                              # Optional name filter (glob/regex; supports ${...} interpolation)
+    space: str = ""                                     # Optional space path filter (supports ${...} interpolation)
     mode: Literal["latest", "all"] = "latest"           # latest = single newest; all = list
     fields: list[str] = Field(default_factory=list)     # Specific metadata fields to extract (empty = all)
     metadata_source: Literal["revision", "item", "artifact"] = "revision"
