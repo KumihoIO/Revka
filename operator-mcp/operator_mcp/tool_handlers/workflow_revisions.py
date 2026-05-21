@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field, ValidationError as PydanticValidationErro
 
 from .._log import _log
 from ..gateway_client import ConstructGatewayClient
-from ..workflow.loader import load_workflow_from_dict
+from ..workflow.loader import _read_workflow_text, load_workflow_from_dict
 from ..workflow.schema import StepType, WorkflowDef
 from ..workflow.validator import validate_workflow
 
@@ -51,8 +51,9 @@ class RevisionOp(BaseModel):
     step_def: dict[str, Any] | None = None     # add_step, edit_step
     target_step_id: str | None = None          # wire, unwire
     parallel_id: str | None = None             # insert_into_parallel, extract_from_parallel
-    position: int | None = None                # reorder
+    position: int | str | None = None          # reorder index or relative keyword
     position_after: str | None = None          # add_step
+    position_before: str | None = None         # add_step/reorder relative anchor
 
 
 class SkippedReason(str, Enum):
@@ -279,16 +280,11 @@ def _apply_add_step(state: dict[str, Any], op: RevisionOp) -> None:
                        f"step id '{new_id}' already exists",
                        target_step_id=new_id)
     steps = state.setdefault("steps", [])
-    if op.position_after:
-        idx = _find_step_index(state, op.position_after)
-        if idx < 0:
-            # position_after not found — append rather than fail (instructions
-            # say "if known, insert after; otherwise append")
-            steps.append(new_step)
-        else:
-            steps.insert(idx + 1, new_step)
-    else:
+    insert_at = _resolve_add_insert_index(state, op, len(steps))
+    if insert_at is None:
         steps.append(new_step)
+    else:
+        steps.insert(insert_at, new_step)
 
 
 def _apply_edit_step(state: dict[str, Any], op: RevisionOp) -> None:
@@ -354,7 +350,7 @@ def _apply_reorder(state: dict[str, Any], op: RevisionOp) -> None:
     if not op.step_id:
         raise _OpError(SkippedReason.MISSING_REQUIRED_FIELD,
                        "reorder requires step_id")
-    if op.position is None:
+    if op.position is None and not op.position_before and not op.position_after:
         raise _OpError(SkippedReason.MISSING_REQUIRED_FIELD,
                        "reorder requires position")
     steps = state.get("steps", [])
@@ -363,13 +359,130 @@ def _apply_reorder(state: dict[str, Any], op: RevisionOp) -> None:
         raise _OpError(SkippedReason.STEP_NOT_FOUND,
                        f"step '{op.step_id}' not found",
                        target_step_id=op.step_id)
-    pos = op.position
+    pos = _resolve_reorder_insert_index(state, op, idx)
     if pos < 0 or pos >= len(steps):
         raise _OpError(SkippedReason.INVALID_POSITION,
                        f"position {pos} out of range [0, {len(steps) - 1}]",
                        target_step_id=op.step_id)
     s = steps.pop(idx)
     steps.insert(pos, s)
+
+
+def _parse_position_index(value: int | str | None) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        stripped = value.strip()
+        if re.fullmatch(r"-?\d+", stripped):
+            return int(stripped)
+    return None
+
+
+def _position_keyword(value: int | str | None) -> str | None:
+    if not isinstance(value, str):
+        return None
+    keyword = value.strip().lower()
+    return keyword or None
+
+
+def _resolve_relative_anchor(state: dict[str, Any], op: RevisionOp, keyword: str) -> tuple[int, str]:
+    anchor_id = op.target_step_id
+    if keyword == "before":
+        anchor_id = op.position_before or anchor_id
+    elif keyword == "after":
+        anchor_id = op.position_after or anchor_id
+    if not anchor_id:
+        raise _OpError(
+            SkippedReason.INVALID_POSITION,
+            f"position '{keyword}' requires target_step_id"
+            + (f" or position_{keyword}" if keyword in {"before", "after"} else ""),
+            target_step_id=op.step_id,
+        )
+    anchor_idx = _find_step_index(state, anchor_id)
+    if anchor_idx < 0:
+        raise _OpError(
+            SkippedReason.STEP_NOT_FOUND,
+            f"position anchor step '{anchor_id}' not found",
+            target_step_id=anchor_id,
+        )
+    return anchor_idx, anchor_id
+
+
+def _resolve_add_insert_index(state: dict[str, Any], op: RevisionOp, step_count: int) -> int | None:
+    if op.position_before:
+        idx = _find_step_index(state, op.position_before)
+        if idx >= 0:
+            return idx
+    if op.position_after:
+        idx = _find_step_index(state, op.position_after)
+        if idx >= 0:
+            return idx + 1
+
+    pos_index = _parse_position_index(op.position)
+    if pos_index is not None:
+        if pos_index < 0:
+            return 0
+        if pos_index > step_count:
+            return step_count
+        return pos_index
+
+    keyword = _position_keyword(op.position)
+    if keyword in {"start", "beginning", "first"}:
+        return 0
+    if keyword in {"end", "last", "append"}:
+        return None
+    if keyword in {"before", "after"}:
+        try:
+            anchor_idx, _anchor_id = _resolve_relative_anchor(state, op, keyword)
+        except _OpError:
+            return None
+        return anchor_idx if keyword == "before" else anchor_idx + 1
+    return None
+
+
+def _resolve_reorder_insert_index(state: dict[str, Any], op: RevisionOp, current_idx: int) -> int:
+    if op.position_before:
+        anchor_idx, anchor_id = _resolve_relative_anchor(state, op, "before")
+        if anchor_id == op.step_id:
+            return current_idx
+        insert_at = anchor_idx
+        if current_idx < insert_at:
+            insert_at -= 1
+        return insert_at
+    if op.position_after:
+        anchor_idx, anchor_id = _resolve_relative_anchor(state, op, "after")
+        if anchor_id == op.step_id:
+            return current_idx
+        insert_at = anchor_idx + 1
+        if current_idx < insert_at:
+            insert_at -= 1
+        return insert_at
+
+    pos_index = _parse_position_index(op.position)
+    if pos_index is not None:
+        return pos_index
+
+    keyword = _position_keyword(op.position)
+    steps = state.get("steps", [])
+    if keyword in {"start", "beginning", "first"}:
+        return 0
+    if keyword in {"end", "last", "append"}:
+        return len(steps) - 1
+    if keyword in {"before", "after"}:
+        anchor_idx, anchor_id = _resolve_relative_anchor(state, op, keyword)
+        if anchor_id == op.step_id:
+            return current_idx
+        insert_at = anchor_idx if keyword == "before" else anchor_idx + 1
+        if current_idx < insert_at:
+            insert_at -= 1
+        return insert_at
+    raise _OpError(
+        SkippedReason.INVALID_POSITION,
+        f"unsupported position {op.position!r}; use an integer index or before/after/start/end",
+        target_step_id=op.step_id,
+    )
 
 
 def _apply_wire(state: dict[str, Any], op: RevisionOp) -> None:
@@ -635,8 +748,7 @@ async def _load_current_yaml(workflow_kref: str) -> tuple[str, str]:
     yaml_path = os.path.expanduser(yaml_loc)
     if not os.path.isfile(yaml_path):
         raise RuntimeError(f"artifact path missing on disk: {yaml_path}")
-    with open(yaml_path, "r") as f:
-        return f.read(), revision_kref
+    return _read_workflow_text(yaml_path), revision_kref
 
 
 # ---------------------------------------------------------------------------

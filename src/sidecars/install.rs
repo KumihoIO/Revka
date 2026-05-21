@@ -6,7 +6,8 @@
 //!
 //! At install time we detect Python, create per-sidecar venvs, pip-install
 //! `kumiho[mcp]` into the Kumiho venv, extract the embedded operator-mcp
-//! source into a temp dir and pip-install it into the Operator venv, and
+//! source into a temp dir, pip-install it into the Operator venv, sync the
+//! flat Operator package tree used by dashboard/scheduler readers, and
 //! materialize the launchers. No shell scripts involved.
 
 use anyhow::{Context, Result, anyhow};
@@ -162,6 +163,7 @@ fn install_operator(python: &Path, dry_run: bool, from_source: Option<&Path>) ->
         }
         eprintln!("    + create {}", venv.display());
         eprintln!("    + pip install operator-mcp");
+        eprintln!("    + sync flat operator package into {}", dir.display());
         eprintln!("    + write {}", launcher.display());
         return Ok(());
     }
@@ -227,6 +229,9 @@ fn install_operator(python: &Path, dry_run: bool, from_source: Option<&Path>) ->
         )?;
     }
     eprintln!("    [ok] operator-mcp installed");
+
+    sync_operator_flat_package(&install_src.join("operator_mcp"), &dir)?;
+    eprintln!("    [ok] flat operator package synced: {}", dir.display());
 
     write_launcher(&launcher, OPERATOR_LAUNCHER_SRC)?;
     eprintln!("    [ok] launcher: {}", launcher.display());
@@ -388,6 +393,111 @@ fn is_relevant(rel: &Path) -> bool {
     true
 }
 
+fn sync_operator_flat_package(package_src: &Path, install_dir: &Path) -> Result<()> {
+    if !package_src.join("__init__.py").is_file() {
+        return Err(anyhow!(
+            "operator_mcp package source missing __init__.py: {}",
+            package_src.display()
+        ));
+    }
+    std::fs::create_dir_all(install_dir)
+        .with_context(|| format!("creating {}", install_dir.display()))?;
+    sync_operator_flat_dir(package_src, install_dir)
+}
+
+fn sync_operator_flat_dir(src: &Path, dest: &Path) -> Result<()> {
+    let mut source_names = std::collections::HashSet::new();
+    for entry in std::fs::read_dir(src).with_context(|| format!("reading {}", src.display()))? {
+        let entry = entry.with_context(|| format!("reading entry under {}", src.display()))?;
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        let src_path = entry.path();
+        if should_skip_operator_flat_source_entry(&src_path, &name_str) {
+            continue;
+        }
+        source_names.insert(name);
+        let dest_path = dest.join(entry.file_name());
+        let file_type = entry
+            .file_type()
+            .with_context(|| format!("reading file type for {}", src_path.display()))?;
+        if file_type.is_dir() {
+            std::fs::create_dir_all(&dest_path)
+                .with_context(|| format!("creating {}", dest_path.display()))?;
+            sync_operator_flat_dir(&src_path, &dest_path)?;
+        } else if file_type.is_file() {
+            if let Some(parent) = dest_path.parent() {
+                std::fs::create_dir_all(parent)
+                    .with_context(|| format!("creating {}", parent.display()))?;
+            }
+            std::fs::copy(&src_path, &dest_path).with_context(|| {
+                format!("copying {} to {}", src_path.display(), dest_path.display())
+            })?;
+        }
+    }
+
+    if !dest.exists() {
+        return Ok(());
+    }
+    for entry in std::fs::read_dir(dest).with_context(|| format!("reading {}", dest.display()))? {
+        let entry = entry.with_context(|| format!("reading entry under {}", dest.display()))?;
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        let dest_path = entry.path();
+        if should_preserve_operator_flat_dest_entry(&name_str) {
+            continue;
+        }
+        if should_skip_operator_flat_source_entry(&dest_path, &name_str)
+            || !source_names.contains(&name)
+        {
+            remove_operator_flat_path(&dest_path)?;
+        }
+    }
+    Ok(())
+}
+
+fn should_skip_operator_flat_source_entry(path: &Path, name: &str) -> bool {
+    if matches!(
+        name,
+        "__pycache__" | ".pytest_cache" | ".mypy_cache" | ".ruff_cache" | ".venv" | "venv"
+    ) {
+        return true;
+    }
+    matches!(
+        path.extension().and_then(|ext| ext.to_str()),
+        Some("pyc" | "pyo")
+    )
+}
+
+fn should_preserve_operator_flat_dest_entry(name: &str) -> bool {
+    matches!(
+        name,
+        "venv"
+            | "session-manager"
+            | "session-manager.sock"
+            | "agents"
+            | "runlogs"
+            | "diffs"
+            | "checkpoints"
+    ) || name.ends_with(".json")
+        || name.ends_with(".jsonl")
+        || name.ends_with(".db")
+        || name.ends_with(".sqlite")
+        || name.ends_with(".sqlite3")
+        || name.ends_with(".sock")
+        || name.ends_with(".lock")
+}
+
+fn remove_operator_flat_path(path: &Path) -> Result<()> {
+    let metadata = std::fs::symlink_metadata(path)
+        .with_context(|| format!("reading metadata for {}", path.display()))?;
+    if metadata.is_dir() {
+        std::fs::remove_dir_all(path).with_context(|| format!("removing {}", path.display()))?;
+    } else {
+        std::fs::remove_file(path).with_context(|| format!("removing {}", path.display()))?;
+    }
+    Ok(())
+}
+
 fn ensure_venv(python: &Path, venv: &Path) -> Result<()> {
     if venv_python(venv).is_ok() {
         eprintln!("    [skip] venv already exists: {}", venv.display());
@@ -431,6 +541,69 @@ fn write_launcher(path: &Path, contents: &str) -> Result<()> {
             .with_context(|| format!("chmod +x {}", path.display()))?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sync_operator_flat_package_updates_code_and_preserves_runtime_state() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let src = tmp.path().join("src").join("operator_mcp");
+        let dest = tmp.path().join("install");
+
+        std::fs::create_dir_all(src.join("workflow").join("__pycache__"))?;
+        std::fs::write(src.join("__init__.py"), "")?;
+        std::fs::write(src.join("workflow").join("executor.py"), "new executor\n")?;
+        std::fs::write(src.join("workflow").join("generated.pyc"), "bytecode")?;
+        std::fs::write(
+            src.join("workflow")
+                .join("__pycache__")
+                .join("executor.pyc"),
+            "cache",
+        )?;
+
+        std::fs::create_dir_all(dest.join("workflow").join("__pycache__"))?;
+        std::fs::write(dest.join("__init__.py"), "old init\n")?;
+        std::fs::write(dest.join("workflow").join("executor.py"), "old executor\n")?;
+        std::fs::write(dest.join("workflow").join("stale_module.py"), "stale\n")?;
+        std::fs::write(
+            dest.join("workflow")
+                .join("__pycache__")
+                .join("executor.pyc"),
+            "stale cache",
+        )?;
+
+        std::fs::create_dir_all(dest.join("venv"))?;
+        std::fs::write(dest.join("venv").join("keep.txt"), "venv")?;
+        std::fs::create_dir_all(dest.join("session-manager"))?;
+        std::fs::write(dest.join("session-manager").join("package.json"), "{}")?;
+        std::fs::create_dir_all(dest.join("runlogs"))?;
+        std::fs::write(dest.join("runlogs").join("agent.jsonl"), "{}\n")?;
+        std::fs::write(dest.join("workflow_presets.json"), "{}")?;
+
+        sync_operator_flat_package(&src, &dest)?;
+
+        assert_eq!(
+            std::fs::read_to_string(dest.join("workflow").join("executor.py"))?,
+            "new executor\n"
+        );
+        assert!(!dest.join("workflow").join("stale_module.py").exists());
+        assert!(!dest.join("workflow").join("generated.pyc").exists());
+        assert!(
+            !dest
+                .join("workflow")
+                .join("__pycache__")
+                .join("executor.pyc")
+                .exists()
+        );
+        assert!(dest.join("venv").join("keep.txt").exists());
+        assert!(dest.join("session-manager").join("package.json").exists());
+        assert!(dest.join("runlogs").join("agent.jsonl").exists());
+        assert!(dest.join("workflow_presets.json").exists());
+        Ok(())
+    }
 }
 
 fn run(program: &Path, args: &[&str]) -> Result<()> {
