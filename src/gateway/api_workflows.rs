@@ -530,6 +530,16 @@ pub struct WorkflowRunSummary {
     pub completed_at: String,
     pub steps_completed: String,
     pub steps_total: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub expanded_steps_completed: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub current_loop: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub current_iteration: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub current_loop_total: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub current_step_instance: String,
     pub error: String,
     /// Kumiho item kref of the workflow definition this run used.
     /// Empty for built-in / disk-fallback workflows.
@@ -904,6 +914,11 @@ fn to_run_summary(item: &ItemResponse, rev: Option<&RevisionResponse>) -> Workfl
         completed_at,
         steps_completed: get("steps_completed"),
         steps_total: get("steps_total"),
+        expanded_steps_completed: get("expanded_steps_completed"),
+        current_loop: get("current_loop"),
+        current_iteration: get("current_iteration"),
+        current_loop_total: get("current_loop_total"),
+        current_step_instance: get("current_step_instance"),
         error: get("error"),
         workflow_item_kref: get("workflow_item_kref"),
         workflow_revision_kref: get("workflow_revision_kref"),
@@ -941,6 +956,15 @@ fn parse_usize_json(value: Option<&serde_json::Value>) -> Option<usize> {
         serde_json::Value::Number(n) => n.as_u64().map(|v| v as usize),
         serde_json::Value::String(s) => s.parse::<usize>().ok(),
         _ => None,
+    }
+}
+
+fn json_value_to_summary_string(value: Option<&serde_json::Value>) -> String {
+    match value {
+        Some(serde_json::Value::String(s)) => s.clone(),
+        Some(serde_json::Value::Number(n)) => n.to_string(),
+        Some(serde_json::Value::Bool(v)) => v.to_string(),
+        _ => String::new(),
     }
 }
 
@@ -985,24 +1009,69 @@ fn apply_checkpoint_value_to_summary(
         .get("step_results")
         .and_then(|value| value.as_object());
     if let Some(steps) = step_results {
+        let is_progress_terminal = |step: &serde_json::Value| -> bool {
+            matches!(
+                step.get("status")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or_default(),
+                "completed" | "skipped"
+            )
+        };
         let completed = steps
-            .values()
-            .filter(|step| {
-                matches!(
-                    step.get("status")
-                        .and_then(|value| value.as_str())
-                        .unwrap_or_default(),
-                    "completed" | "skipped"
-                )
-            })
+            .iter()
+            .filter(|(step_id, step)| !step_id.contains("__iter_") && is_progress_terminal(step))
             .count();
-        summary.steps_completed = completed.to_string();
+        let expanded_completed = steps
+            .values()
+            .filter(|step| is_progress_terminal(step))
+            .count();
+        let explicit_total = parse_usize_json(checkpoint.get("steps_total"));
+        let capped_completed = explicit_total
+            .map(|total| completed.min(total))
+            .unwrap_or(completed);
+        summary.steps_completed = capped_completed.to_string();
+        summary.expanded_steps_completed = expanded_completed.to_string();
+    }
+
+    let for_each_ctx = checkpoint
+        .get("inputs")
+        .and_then(|inputs| inputs.get("__for_each__"));
+    if let Some(ctx) = for_each_ctx {
+        let current_loop = json_value_to_summary_string(
+            ctx.get("loop_id")
+                .or_else(|| ctx.get("loop"))
+                .or_else(|| ctx.get("step_id")),
+        );
+        if !current_loop.is_empty() {
+            summary.current_loop = current_loop;
+        }
+        summary.current_iteration = json_value_to_summary_string(ctx.get("iteration"));
+        summary.current_loop_total = json_value_to_summary_string(ctx.get("total"));
+        if !summary.current_iteration.is_empty() {
+            if let Some(current_step) = nonempty_json_string(checkpoint, "current_step") {
+                summary.current_step_instance =
+                    format!("{current_step}__iter_{}", summary.current_iteration);
+            }
+        }
     }
 
     let explicit_total = parse_usize_json(checkpoint.get("steps_total"));
     let inferred_completed_total = step_results.and_then(|steps| {
         if summary.status == "completed" {
-            Some(steps.len())
+            Some(
+                steps
+                    .iter()
+                    .filter(|(step_id, step)| {
+                        !step_id.contains("__iter_")
+                            && matches!(
+                                step.get("status")
+                                    .and_then(|value| value.as_str())
+                                    .unwrap_or_default(),
+                                "completed" | "skipped"
+                            )
+                    })
+                    .count(),
+            )
         } else {
             None
         }
@@ -3166,6 +3235,11 @@ mod workflow_run_status_tests {
             completed_at: String::new(),
             steps_completed: String::new(),
             steps_total: String::new(),
+            expanded_steps_completed: String::new(),
+            current_loop: String::new(),
+            current_iteration: String::new(),
+            current_loop_total: String::new(),
+            current_step_instance: String::new(),
             error: String::new(),
             workflow_item_kref: String::new(),
             workflow_revision_kref: String::new(),
@@ -3312,10 +3386,19 @@ mod workflow_run_status_tests {
             "run_id": "run-1",
             "status": "running",
             "steps_total": 2,
+            "current_step": "child",
+            "inputs": {
+                "__for_each__": {
+                    "loop_id": "for_each",
+                    "iteration": 2,
+                    "total": 3
+                }
+            },
             "step_results": {
                 "for_each": { "status": "completed" },
-                "child-1": { "status": "completed" },
-                "child-2": { "status": "completed" }
+                "child": { "status": "completed" },
+                "child__iter_1": { "status": "completed" },
+                "child__iter_2": { "status": "completed" }
             }
         });
         let mut run = summary("run-1", "running");
@@ -3323,8 +3406,13 @@ mod workflow_run_status_tests {
         apply_checkpoint_value_to_summary(&mut run, &checkpoint);
 
         assert_eq!(run.status, "running");
-        assert_eq!(run.steps_completed, "3");
+        assert_eq!(run.steps_completed, "2");
         assert_eq!(run.steps_total, "2");
+        assert_eq!(run.expanded_steps_completed, "4");
+        assert_eq!(run.current_loop, "for_each");
+        assert_eq!(run.current_iteration, "2");
+        assert_eq!(run.current_loop_total, "3");
+        assert_eq!(run.current_step_instance, "child__iter_2");
     }
 
     #[test]

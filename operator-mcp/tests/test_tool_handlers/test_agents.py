@@ -1,18 +1,22 @@
 """Tests for operator.tool_handlers.agents — agent lifecycle handlers."""
 from __future__ import annotations
 
-import os
-from unittest.mock import AsyncMock, MagicMock, patch
+from datetime import datetime, timedelta, timezone
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from operator_mcp.agent_state import AGENTS, AgentPool, AgentTemplate, ManagedAgent
 from operator_mcp.journal import SessionJournal
 from operator_mcp.tool_handlers.agents import (
+    agent_is_active,
     set_sidecar,
+    tool_cancel_agent,
+    tool_cancel_all_agents,
     tool_create_agent,
     tool_get_agent_activity,
     tool_list_agents,
+    tool_prune_completed_agents,
     tool_send_agent_prompt,
     tool_wait_for_agent,
 )
@@ -269,3 +273,118 @@ class TestToolListAgents:
         entry = result["agents"][0]
         assert entry["backend"] == "sidecar"
         assert entry["sidecar_id"] == "sc-456"
+
+
+# ---------------------------------------------------------------------------
+# cancellation / cleanup
+# ---------------------------------------------------------------------------
+
+class UnsupportedSignalProcess:
+    """Async subprocess stand-in that mimics Windows rejecting SIGINT."""
+
+    def __init__(self):
+        self.returncode = None
+        self.killed = False
+
+    def send_signal(self, _signal):
+        raise ValueError("Unsupported signal: 2")
+
+    def kill(self):
+        self.killed = True
+        self.returncode = -9
+
+    def terminate(self):
+        self.returncode = -15
+
+    async def wait(self):
+        return self.returncode
+
+
+@pytest.mark.asyncio
+class TestAgentCancellation:
+    async def test_cancel_agent_falls_back_when_sigint_unsupported(self, tmp_path):
+        proc = UnsupportedSignalProcess()
+        agent = ManagedAgent(
+            id="a-win",
+            agent_type="codex",
+            title="Windows Agent",
+            cwd=str(tmp_path),
+            status="cancelling",
+            process=proc,
+        )
+        AGENTS[agent.id] = agent
+
+        result = await tool_cancel_agent({"agent_id": agent.id})
+
+        assert result["status"] == "cancelled"
+        assert result["method"] == "kill_unsupported_signal"
+        assert proc.killed is True
+        assert agent.status == "cancelled"
+
+    async def test_cancel_all_agents_terminalizes_cancelling_dead_agents(self, tmp_path):
+        live = UnsupportedSignalProcess()
+        dead = UnsupportedSignalProcess()
+        dead.returncode = 0
+        AGENTS["live"] = ManagedAgent(
+            id="live",
+            agent_type="codex",
+            title="Live",
+            cwd=str(tmp_path),
+            status="running",
+            process=live,
+        )
+        AGENTS["dead"] = ManagedAgent(
+            id="dead",
+            agent_type="codex",
+            title="Dead",
+            cwd=str(tmp_path),
+            status="cancelling",
+            process=dead,
+        )
+
+        result = await tool_cancel_all_agents({})
+
+        assert result["cancelled"] == 2
+        by_id = {entry["agent_id"]: entry for entry in result["results"]}
+        assert by_id["dead"]["method"] == "already_stopped"
+        assert AGENTS["dead"].status == "cancelled"
+        assert AGENTS["live"].status == "cancelled"
+
+    async def test_prune_completed_agents_removes_only_inactive_records(self, tmp_path):
+        old = datetime.now(timezone.utc) - timedelta(seconds=120)
+        active_proc = UnsupportedSignalProcess()
+        AGENTS["active"] = ManagedAgent(
+            id="active",
+            agent_type="codex",
+            title="Active",
+            cwd=str(tmp_path),
+            status="running",
+            process=active_proc,
+            created_at=old,
+        )
+        AGENTS["idle"] = ManagedAgent(
+            id="idle",
+            agent_type="codex",
+            title="Idle",
+            cwd=str(tmp_path),
+            status="idle",
+            created_at=old,
+        )
+        AGENTS["cancelled"] = ManagedAgent(
+            id="cancelled",
+            agent_type="codex",
+            title="Cancelled",
+            cwd=str(tmp_path),
+            status="cancelled",
+            created_at=old,
+        )
+
+        dry_run = await tool_prune_completed_agents({"older_than_seconds": 60, "dry_run": True})
+        assert dry_run["would_prune"] == 2
+        assert set(AGENTS) == {"active", "idle", "cancelled"}
+
+        pruned = await tool_prune_completed_agents({"older_than_seconds": 60})
+        assert pruned["pruned"] == 2
+        assert set(AGENTS) == {"active"}
+        assert agent_is_active(AGENTS["active"]) is True
+        assert pruned["remaining_managed"] == 1

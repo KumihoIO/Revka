@@ -2246,17 +2246,28 @@ async def _exec_resolve(step: StepDef, state: WorkflowState) -> StepResult:
         "metadata_source": cfg.metadata_source,
         "fail_if_missing": cfg.fail_if_missing,
     }
+    for key, raw, resolved in (
+        ("kind", cfg.kind, resolved_kind),
+        ("tag", cfg.tag, resolved_tag),
+        ("name_pattern", cfg.name_pattern, resolved_name_pattern),
+        ("space", cfg.space, resolved_space),
+    ):
+        if raw and raw != resolved:
+            input_data[f"{key}_expression"] = raw
     if not resolved_kind.strip():
+        summary = f"Resolved kind={resolved_kind!r} tag={resolved_tag!r} → not found"
         if cfg.fail_if_missing:
             return StepResult(
                 step_id=step.id,
                 status="failed",
                 error="resolve step requires 'kind'",
+                output=summary,
                 input_data=input_data,
             )
         return StepResult(
             step_id=step.id,
             status="completed",
+            output=summary,
             output_data={"found": False},
             input_data=input_data,
         )
@@ -2283,7 +2294,7 @@ async def _exec_resolve(step: StepDef, state: WorkflowState) -> StepResult:
     if entity is None and cfg.fail_if_missing:
         return StepResult(
             step_id=step.id, status="failed",
-            error=f"No entity found for kind={cfg.kind!r} tag={cfg.tag!r}",
+            error=f"No entity found for kind={resolved_kind!r} tag={resolved_tag!r}",
             input_data=input_data,
         )
 
@@ -2365,7 +2376,12 @@ async def _exec_resolve(step: StepDef, state: WorkflowState) -> StepResult:
             ent.get("item_kref", ent.get("kref", "")) for ent in entities
         )
 
-    summary = f"Resolved {cfg.kind}:{cfg.tag}"
+    summary_parts = [f"kind={resolved_kind!r}", f"tag={resolved_tag!r}"]
+    if resolved_name_pattern:
+        summary_parts.append(f"name_pattern={resolved_name_pattern!r}")
+    if resolved_space:
+        summary_parts.append(f"space={resolved_space!r}")
+    summary = f"Resolved {' '.join(summary_parts)}"
     if output_data.get("found"):
         summary += f" → {output_data.get('name', output_data.get('item_kref', ''))}"
     else:
@@ -2636,6 +2652,7 @@ async def _exec_for_each(
 
         # Inject for_each context
         state.inputs["__for_each__"] = {
+            "loop_id": step.id,
             cfg.variable: value,
             "index": idx,
             "iteration": iter_num,
@@ -4289,6 +4306,62 @@ async def _exec_handoff(step: StepDef, state: WorkflowState, cwd: str) -> StepRe
 # ---------------------------------------------------------------------------
 
 ACTIVE_WORKFLOWS: dict[str, WorkflowState] = {}
+
+
+def _completed_for_progress(result: StepResult) -> bool:
+    return result.status in ("completed", "skipped")
+
+
+def _is_iteration_result_key(step_id: str) -> bool:
+    return "__iter_" in step_id
+
+
+def workflow_progress_snapshot(state: WorkflowState) -> dict[str, Any]:
+    """Return separate static-step and loop-expanded progress counters."""
+    top_level_completed = sum(
+        1
+        for sid, result in state.step_results.items()
+        if not _is_iteration_result_key(sid) and _completed_for_progress(result)
+    )
+    expanded_completed = sum(
+        1 for result in state.step_results.values() if _completed_for_progress(result)
+    )
+    total = max(0, int(state.steps_total or 0))
+    if total:
+        top_level_completed = min(top_level_completed, total)
+
+    snapshot: dict[str, Any] = {
+        "top_level_steps_completed": top_level_completed,
+        "top_level_steps_total": total,
+        "expanded_steps_completed": expanded_completed,
+    }
+
+    fe_ctx = state.inputs.get("__for_each__")
+    if isinstance(fe_ctx, dict):
+        current_loop = (
+            fe_ctx.get("loop_id")
+            or fe_ctx.get("loop")
+            or fe_ctx.get("step_id")
+            or ""
+        )
+        iteration = fe_ctx.get("iteration")
+        loop_total = fe_ctx.get("total")
+        if current_loop:
+            snapshot["current_loop"] = str(current_loop)
+        if iteration not in (None, ""):
+            try:
+                snapshot["current_iteration"] = int(iteration)
+            except (TypeError, ValueError):
+                snapshot["current_iteration"] = str(iteration)
+        if loop_total not in (None, ""):
+            try:
+                snapshot["current_loop_total"] = int(loop_total)
+            except (TypeError, ValueError):
+                snapshot["current_loop_total"] = str(loop_total)
+        if state.current_step and iteration not in (None, ""):
+            snapshot["current_step_instance"] = f"{state.current_step}__iter_{iteration}"
+
+    return snapshot
 
 
 # ---------------------------------------------------------------------------

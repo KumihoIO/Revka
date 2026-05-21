@@ -1,5 +1,7 @@
 import { Activity, ArrowDownRight } from 'lucide-react';
 import type { WorkflowRunDetail } from '@/types/api';
+import { useT } from '@/construct/hooks/useT';
+import { expandedStepCount, loopProgressLabel } from '@/construct/lib/workflowProgress';
 import StatusPill from '../ui/StatusPill';
 import { formatLocalDateTime } from '../../lib/datetime';
 
@@ -12,7 +14,10 @@ export default function RunFocusBanner({
   active?: boolean;
   label?: string;
 }) {
+  const { tpl } = useT();
   if (!run) return null;
+  const expanded = expandedStepCount(run);
+  const loopLabel = loopProgressLabel(run, tpl);
 
   return (
     <div
@@ -33,6 +38,18 @@ export default function RunFocusBanner({
           </div>
           <div className="mt-2 flex flex-wrap items-center gap-2 text-xs" style={{ color: 'var(--construct-text-secondary)' }}>
             <span>{run.steps_completed || '0'} / {run.steps_total || '?'} steps</span>
+            {expanded !== null ? (
+              <>
+                <span aria-hidden="true">•</span>
+                <span>{tpl('runs.stats.expanded_steps', { count: expanded })}</span>
+              </>
+            ) : null}
+            {loopLabel ? (
+              <>
+                <span aria-hidden="true">•</span>
+                <span className="font-mono">{loopLabel}</span>
+              </>
+            ) : null}
             <span aria-hidden="true">•</span>
             <span>{formatLocalDateTime(run.started_at) || 'start time unavailable'}</span>
             {active ? (

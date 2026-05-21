@@ -245,11 +245,17 @@ async def persist_workflow_run(
         item_kref = ""
         _log(f"workflow_memory: persisting run={run_id[:8]} item_name={item_name}")
 
-        completed_count = sum(
+        expanded_completed_count = sum(
             1 for sr in step_results.values()
             if sr.get("status") in ("completed", "skipped")
         )
-        effective_steps_total = max(steps_total or 0, len(step_results))
+        completed_count = sum(
+            1 for sid, sr in step_results.items()
+            if "__iter_" not in sid and sr.get("status") in ("completed", "skipped")
+        )
+        effective_steps_total = steps_total or completed_count
+        if effective_steps_total:
+            completed_count = min(completed_count, effective_steps_total)
 
         # Check if item already exists (e.g. "running" entry created at start)
         try:
@@ -282,6 +288,7 @@ async def persist_workflow_run(
                         "step_count": str(len(step_results)),
                         "steps_completed": str(completed_count),
                         "steps_total": str(effective_steps_total),
+                        "expanded_steps_completed": str(expanded_completed_count),
                         "workflow_item_kref": workflow_item_kref,
                         "workflow_revision_kref": workflow_revision_kref,
                     },
@@ -395,6 +402,7 @@ async def persist_workflow_run(
             "step_count": str(len(step_results)),
             "steps_completed": str(completed_count),
             "steps_total": str(effective_steps_total),
+            "expanded_steps_completed": str(expanded_completed_count),
             "files_touched": json.dumps(list(set(all_files))[:50]),
             "persisted_at": datetime.now(timezone.utc).isoformat(),
             # Kumiho pin for the workflow revision this run executed against —

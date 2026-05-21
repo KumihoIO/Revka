@@ -32,6 +32,7 @@ from operator_mcp.workflow.executor import (
     ACTIVE_WORKFLOWS,
     _exec_shell,
     execute_workflow,
+    workflow_progress_snapshot,
 )
 from operator_mcp.workflow.schema import (
     ForEachStepConfig,
@@ -422,3 +423,86 @@ def test_mark_stale_checkpoint_preserves_retry_state(tmp_path, monkeypatch) -> N
     assert loaded.status == WorkflowStatus.FAILED
     assert loaded.error == "interrupted"
     assert loaded.step_results["done"].status == "completed"
+
+
+def test_workflow_progress_snapshot_splits_loop_instances() -> None:
+    state = _state_for("loop-progress")
+    state.steps_total = 2
+    state.current_step = "child"
+    state.inputs["__for_each__"] = {
+        "loop_id": "episode-loop",
+        "iteration": 3,
+        "total": 5,
+    }
+    state.step_results["episode-loop"] = StepResult(
+        step_id="episode-loop",
+        status="completed",
+        output="loop wrapper",
+    )
+    state.step_results["child"] = StepResult(
+        step_id="child",
+        status="completed",
+        output="top-level child",
+    )
+    state.step_results["child__iter_1"] = StepResult(
+        step_id="child__iter_1",
+        status="completed",
+        output="one",
+    )
+    state.step_results["child__iter_2"] = StepResult(
+        step_id="child__iter_2",
+        status="completed",
+        output="two",
+    )
+
+    progress = workflow_progress_snapshot(state)
+
+    assert progress["top_level_steps_completed"] == 2
+    assert progress["top_level_steps_total"] == 2
+    assert progress["expanded_steps_completed"] == 4
+    assert progress["current_loop"] == "episode-loop"
+    assert progress["current_iteration"] == 3
+    assert progress["current_loop_total"] == 5
+    assert progress["current_step_instance"] == "child__iter_3"
+
+
+@pytest.mark.asyncio
+async def test_wait_for_agent_initializing_timeout_is_bounded(tmp_path, monkeypatch) -> None:
+    import operator_mcp.patterns.refinement as refinement
+    import operator_mcp.tool_handlers.agents as agents
+    from operator_mcp.agent_state import AGENTS, ManagedAgent
+
+    class StuckInitializingSidecar:
+        async def get_agent(self, _agent_id):
+            return {"status": "initializing"}
+
+        async def get_events(self, _agent_id, since=0):
+            return [{"type": "status_changed", "status": "initializing"}]
+
+        async def interrupt_agent(self, _agent_id):
+            return {"ok": True}
+
+        async def close_agent(self, _agent_id):
+            return {"closed": True}
+
+    monkeypatch.setenv("CONSTRUCT_AGENT_INITIALIZING_TIMEOUT_SECS", "0.1")
+    monkeypatch.setattr(agents, "_sidecar_client", StuckInitializingSidecar())
+    monkeypatch.setattr(agents, "_event_consumer", None)
+
+    agent = ManagedAgent(
+        id="initializing-agent",
+        agent_type="codex",
+        title="Stuck",
+        cwd=str(tmp_path),
+        status="running",
+    )
+    agent._sidecar_id = "sidecar-initializing-agent"
+    AGENTS[agent.id] = agent
+
+    try:
+        output = await refinement._wait_for_agent(agent, timeout=0.3)
+    finally:
+        AGENTS.pop(agent.id, None)
+
+    assert "INITIALIZATION TIMEOUT" in output
+    assert agent.status == "error"
