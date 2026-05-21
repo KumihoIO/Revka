@@ -29,10 +29,17 @@ async def tool_system_dashboard(args: dict[str, Any]) -> dict[str, Any]:
     # -- Active agents --
     if include_agents:
         from ..agent_state import AGENTS, POOL
+        from .agents import agent_is_active
         active = [
-            {"id": a.id, "title": a.title, "type": a.agent_type, "status": a.status}
+            {
+                "id": a.id,
+                "title": a.title,
+                "type": a.agent_type,
+                "status": a.status,
+                "alive": True,
+            }
             for a in AGENTS.values()
-            if a.status in ("running", "idle")
+            if agent_is_active(a)
         ]
         pool_templates = [
             {"name": t.name, "type": t.agent_type, "role": t.role}
@@ -59,7 +66,7 @@ async def tool_system_dashboard(args: dict[str, Any]) -> dict[str, Any]:
 
     # -- Active and recent workflows --
     if include_workflows:
-        from ..workflow.executor import ACTIVE_WORKFLOWS
+        from ..workflow.executor import ACTIVE_WORKFLOWS, workflow_progress_snapshot
         from ..workflow.schema import WorkflowStatus
 
         active_wfs = []
@@ -73,16 +80,22 @@ async def tool_system_dashboard(args: dict[str, Any]) -> dict[str, Any]:
                 WorkflowStatus.CANCELLED,
             ):
                 continue
+            progress = workflow_progress_snapshot(state)
             active_wfs.append({
                 "run_id": rid,
                 "workflow": state.workflow_name,
                 "status": state.status.value,
                 "current_step": state.current_step,
-                "steps_completed": sum(
-                    1 for r in state.step_results.values() if r.status == "completed"
-                ),
+                "steps_completed": progress["top_level_steps_completed"],
+                "steps_total": progress["top_level_steps_total"],
+                "top_level_steps_completed": progress["top_level_steps_completed"],
+                "top_level_steps_total": progress["top_level_steps_total"],
+                "expanded_steps_completed": progress["expanded_steps_completed"],
                 "started_at": state.started_at,
             })
+            for key in ("current_loop", "current_iteration", "current_loop_total", "current_step_instance"):
+                if key in progress:
+                    active_wfs[-1][key] = progress[key]
 
         # Recent runs from Kumiho (best-effort)
         recent_runs: list[dict[str, Any]] = []

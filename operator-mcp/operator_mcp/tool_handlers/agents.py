@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sys
 import uuid
+from datetime import datetime, timezone
 from typing import Any
 
 from .._log import _log
@@ -32,6 +34,39 @@ from ..token_compression import compress_agent_result
 _sidecar_client = None  # SessionManagerClient | None
 _event_consumer = None  # EventConsumer | None
 _workflow_ctx: WorkflowContext | None = None  # Set by operator_mcp at startup
+
+_ACTIVE_AGENT_STATUSES = frozenset({"initializing", "running", "cancelling"})
+
+
+def agent_runtime_alive(agent: ManagedAgent) -> bool:
+    """Return whether an agent still has a live runtime handle."""
+    try:
+        from ..heartbeat import get_heartbeat_monitor
+        health = get_heartbeat_monitor().get_health(agent.id)
+        if health and health.get("alive") is False:
+            return False
+    except Exception as exc:
+        # Heartbeat is best-effort; if unavailable, fall back to process/sidecar checks.
+        _log.debug("heartbeat health lookup failed for agent %s: %s", agent.id, exc)
+
+    proc = agent.process
+    if proc is not None:
+        return proc.returncode is None
+    return bool(getattr(agent, "_sidecar_id", None) and agent.status in _ACTIVE_AGENT_STATUSES)
+
+
+def agent_is_active(agent: ManagedAgent) -> bool:
+    """Dashboard-facing active predicate: only live runtime work counts."""
+    return agent.status in _ACTIVE_AGENT_STATUSES and agent_runtime_alive(agent)
+
+
+def _agent_age_seconds(agent: ManagedAgent) -> float:
+    created_at = agent.created_at
+    if not isinstance(created_at, datetime):
+        return 0.0
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+    return max(0.0, (datetime.now(timezone.utc) - created_at).total_seconds())
 
 
 def set_sidecar(sidecar: Any, consumer: Any) -> None:
@@ -403,11 +438,14 @@ async def tool_create_agent(args: dict[str, Any], journal: SessionJournal, pool_
 def _agent_base(agent_id: str, agent: ManagedAgent) -> dict[str, Any]:
     """Common identity/metadata fields — included in EVERY agent response."""
     sidecar_id = getattr(agent, "_sidecar_id", None)
+    alive = agent_runtime_alive(agent)
     return {
         "agent_id": agent_id,
         "sidecar_id": sidecar_id or None,
         "title": agent.title,
         "status": agent.status,
+        "alive": alive,
+        "active": agent.status in _ACTIVE_AGENT_STATUSES and alive,
         "backend": "sidecar" if sidecar_id else "subprocess",
         "agent_type": agent.agent_type,
         "cwd": agent.cwd,
@@ -895,6 +933,14 @@ async def _cancel_one(agent: ManagedAgent) -> dict[str, Any]:
     agent_id = agent.id
     sidecar_id = getattr(agent, "_sidecar_id", None)
 
+    if agent.status in ("cancelled",):
+        return {"agent_id": agent_id, "status": "cancelled", "method": "already_cancelled"}
+    if agent.status in ("completed", "closed", "error", "failed"):
+        return {"agent_id": agent_id, "status": agent.status, "method": "already_stopped"}
+    if agent.status == "idle" and not agent_runtime_alive(agent):
+        agent.status = "cancelled"
+        return {"agent_id": agent_id, "status": "cancelled", "method": "already_stopped"}
+
     # Sidecar path: interrupt then close
     if sidecar_id and _sidecar_client:
         try:
@@ -908,7 +954,7 @@ async def _cancel_one(agent: ManagedAgent) -> dict[str, Any]:
             await _event_consumer.unsubscribe(sidecar_id)
         return {"agent_id": agent_id, "status": "cancelled", "method": "sidecar"}
 
-    # Subprocess path: signal escalation SIGINT → SIGTERM → SIGKILL
+    # Subprocess path: POSIX signal escalation, Windows-safe termination.
     proc = agent.process
     if proc is None or proc.returncode is not None:
         agent.status = "cancelled"
@@ -916,12 +962,48 @@ async def _cancel_one(agent: ManagedAgent) -> dict[str, Any]:
 
     agent.status = "cancelling"
 
+    if sys.platform == "win32":
+        try:
+            proc.kill()
+            await asyncio.wait_for(proc.wait(), timeout=5.0)
+        except (ProcessLookupError, OSError):
+            agent.status = "cancelled"
+            return {"agent_id": agent_id, "status": "cancelled", "method": "already_exited"}
+        except Exception as exc:
+            _log(f"cancel_agent: windows kill failed for {agent_id[:8]}: {exc}")
+        agent.status = "cancelled"
+        return {
+            "agent_id": agent_id,
+            "status": "cancelled",
+            "method": "kill",
+            "exit_code": proc.returncode,
+        }
+
     # 1. SIGINT (graceful)
     try:
         proc.send_signal(_signal.SIGINT)
     except (ProcessLookupError, OSError):
         agent.status = "cancelled"
         return {"agent_id": agent_id, "status": "cancelled", "method": "already_exited"}
+    except ValueError as exc:
+        # Windows asyncio subprocesses reject POSIX signal numbers with
+        # "Unsupported signal: 2".  Treat this as a portability fallback, not
+        # a lifecycle failure, so cancelling+cold/dead agents never wedge.
+        _log(f"cancel_agent: SIGINT unsupported for {agent_id[:8]} ({exc}); falling back to kill")
+        try:
+            proc.kill()
+            await asyncio.wait_for(proc.wait(), timeout=5.0)
+        except (ProcessLookupError, OSError):
+            pass
+        except Exception as kill_exc:
+            _log(f"cancel_agent: fallback kill failed for {agent_id[:8]}: {kill_exc}")
+        agent.status = "cancelled"
+        return {
+            "agent_id": agent_id,
+            "status": "cancelled",
+            "method": "kill_unsupported_signal",
+            "exit_code": proc.returncode,
+        }
 
     # Wait up to 5s for graceful exit
     try:
@@ -964,9 +1046,6 @@ async def tool_cancel_agent(args: dict[str, Any]) -> dict[str, Any]:
     if agent is None:
         return agent_not_found(agent_id)
 
-    if agent.status in ("cancelled", "completed", "closed"):
-        return {"agent_id": agent_id, "status": agent.status, "already_stopped": True}
-
     result = await _cancel_one(agent)
     _log(f"cancel_agent: {agent_id[:8]} → {result.get('method')}")
     return result
@@ -975,7 +1054,7 @@ async def tool_cancel_agent(args: dict[str, Any]) -> dict[str, Any]:
 async def tool_cancel_all_agents(args: dict[str, Any]) -> dict[str, Any]:
     """Cancel all running agents."""
     results = []
-    running = [a for a in AGENTS.values() if a.status in ("running", "cancelling")]
+    running = [a for a in AGENTS.values() if a.status in _ACTIVE_AGENT_STATUSES]
     if not running:
         return {"cancelled": 0, "results": [], "message": "No running agents to cancel."}
 
@@ -985,3 +1064,70 @@ async def tool_cancel_all_agents(args: dict[str, Any]) -> dict[str, Any]:
         _log(f"cancel_all: {agent.id[:8]} → {result.get('method')}")
 
     return {"cancelled": len(results), "results": results}
+
+
+async def tool_prune_completed_agents(args: dict[str, Any]) -> dict[str, Any]:
+    """Remove inactive runtime records while preserving runlogs/history."""
+    try:
+        older_than = max(0.0, float(args.get("older_than_seconds", 60)))
+    except (TypeError, ValueError):
+        older_than = 60.0
+    include_idle = bool(args.get("include_idle", True))
+    include_cancelled = bool(args.get("include_cancelled", True))
+    include_failed = bool(args.get("include_failed", True))
+    dry_run = bool(args.get("dry_run", False))
+
+    statuses = {"completed", "closed"}
+    if include_idle:
+        statuses.add("idle")
+    if include_cancelled:
+        statuses.add("cancelled")
+    if include_failed:
+        statuses.update({"error", "failed"})
+
+    candidates: list[ManagedAgent] = []
+    for agent in list(AGENTS.values()):
+        if agent_is_active(agent):
+            continue
+        if agent.status not in statuses:
+            continue
+        if _agent_age_seconds(agent) < older_than:
+            continue
+        candidates.append(agent)
+
+    pruned: list[dict[str, Any]] = []
+    if dry_run:
+        for agent in candidates:
+            pruned.append({
+                "agent_id": agent.id,
+                "status": agent.status,
+                "age_seconds": round(_agent_age_seconds(agent), 1),
+            })
+        return {"dry_run": True, "would_prune": len(pruned), "agents": pruned}
+
+    for agent in candidates:
+        sidecar_id = getattr(agent, "_sidecar_id", None)
+        if sidecar_id and _sidecar_client:
+            try:
+                await _sidecar_client.close_agent(sidecar_id)
+            except Exception as exc:
+                _log(f"prune_completed_agents: sidecar close failed for {agent.id[:8]}: {exc}")
+            if _event_consumer:
+                try:
+                    await _event_consumer.unsubscribe(sidecar_id)
+                except Exception as exc:
+                    _log(f"prune_completed_agents: unsubscribe failed for {agent.id[:8]} ({sidecar_id}): {exc}")
+        AGENTS.pop(agent.id, None)
+        _terminal_result_cache.pop(agent.id, None)
+        pruned.append({
+            "agent_id": agent.id,
+            "status": agent.status,
+            "age_seconds": round(_agent_age_seconds(agent), 1),
+        })
+
+    return {
+        "dry_run": False,
+        "pruned": len(pruned),
+        "agents": pruned,
+        "remaining_managed": len(AGENTS),
+    }

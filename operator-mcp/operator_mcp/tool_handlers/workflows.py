@@ -173,7 +173,7 @@ async def tool_get_workflow_status(args: dict[str, Any]) -> dict[str, Any]:
         run_id: The workflow run ID (required).
         include_outputs: Whether to include step outputs (default False).
     """
-    from ..workflow.executor import ACTIVE_WORKFLOWS, load_checkpoint
+    from ..workflow.executor import ACTIVE_WORKFLOWS, load_checkpoint, workflow_progress_snapshot
 
     run_id = args.get("run_id", "")
     include_outputs = args.get("include_outputs", False)
@@ -193,6 +193,7 @@ async def tool_get_workflow_status(args: dict[str, Any]) -> dict[str, Any]:
             code="not_found", category=VALIDATION_ERROR,
         )
 
+    progress = workflow_progress_snapshot(state)
     result: dict[str, Any] = {
         "run_id": state.run_id,
         "workflow": state.workflow_name,
@@ -201,8 +202,16 @@ async def tool_get_workflow_status(args: dict[str, Any]) -> dict[str, Any]:
         "started_at": state.started_at,
         "completed_at": state.completed_at,
         "error": state.error or None,
+        "steps_completed": progress["top_level_steps_completed"],
+        "steps_total": progress["top_level_steps_total"],
+        "top_level_steps_completed": progress["top_level_steps_completed"],
+        "top_level_steps_total": progress["top_level_steps_total"],
+        "expanded_steps_completed": progress["expanded_steps_completed"],
         "steps": {},
     }
+    for key in ("current_loop", "current_iteration", "current_loop_total", "current_step_instance"):
+        if key in progress:
+            result[key] = progress[key]
 
     for sid, sr in state.step_results.items():
         entry: dict[str, Any] = {
@@ -314,7 +323,7 @@ async def tool_cancel_workflow(args: dict[str, Any]) -> dict[str, Any]:
     Args:
         run_id: The workflow run ID (required).
     """
-    from ..workflow.executor import ACTIVE_WORKFLOWS
+    from ..workflow.executor import ACTIVE_WORKFLOWS, workflow_progress_snapshot
     from ..workflow.schema import WorkflowStatus
 
     run_id = args.get("run_id", "")
@@ -349,11 +358,13 @@ async def tool_cancel_workflow(args: dict[str, Any]) -> dict[str, Any]:
     state.cancel_requested = True
     _log(f"tool_cancel_workflow: cancel_requested set for run={run_id[:8]} (status={state.status.value})")
 
+    progress = workflow_progress_snapshot(state)
     return {
         "cancelled": True,
         "run_id": run_id,
         "status": state.status.value,
-        "steps_completed": sum(1 for r in state.step_results.values() if r.status == "completed"),
+        "steps_completed": progress["top_level_steps_completed"],
+        "expanded_steps_completed": progress["expanded_steps_completed"],
     }
 
 
