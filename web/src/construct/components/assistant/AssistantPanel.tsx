@@ -514,8 +514,15 @@ function ChatPane({
   }, []);
 
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
-  }, [activities, messages, streamingContent, typing]);
+    if (!visible) return;
+    const frame = requestAnimationFrame(() => {
+      scrollRef.current?.scrollTo({
+        top: scrollRef.current.scrollHeight,
+        behavior: open ? 'smooth' : 'auto',
+      });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [activities, messages, open, streamingContent, streamingThinking, typing, visible]);
 
   // Focus the message input each time the panel opens *and* this pane
   // is the visible one. The 320ms delay matches the panel's 300ms
@@ -1082,6 +1089,7 @@ export default function AssistantPanel() {
   const [showNewTabMenu, setShowNewTabMenu] = useState(false);
   const newTabBtnRef = useRef<HTMLButtonElement>(null);
   const [showConfig, setShowConfig] = useState(false);
+  const [hasOpened, setHasOpened] = useState(open);
   // Split-pane state — when splitTabId is non-null and BOTH the active
   // tab and the split tab are chats, the panel renders them side-by-side
   // (vertical) or stacked (horizontal). Code/terminal tabs ignore the
@@ -1162,6 +1170,10 @@ export default function AssistantPanel() {
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   }, [open, closeAssistant]);
+
+  useEffect(() => {
+    if (open) setHasOpened(true);
+  }, [open]);
 
   const addTab = useCallback((type: TabType) => {
     const id = generateUUID();
@@ -1526,7 +1538,7 @@ export default function AssistantPanel() {
         {showConfig && <ConfigPanel config={config} updateConfig={updateConfig} />}
 
         {/* pane content */}
-        {open && (
+        {hasOpened && (
           <div className="relative z-10 flex min-h-0 flex-1 flex-col">
             {/* Terminal tabs — all rendered, visibility toggled */}
             {tabs.filter((t) => t.type === 'terminal').map((tab) => (

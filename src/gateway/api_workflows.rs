@@ -55,6 +55,30 @@ fn workflow_run_requests_space_path(state: &AppState) -> String {
     )
 }
 
+fn audit_workflow_change(state: &AppState, detail: impl AsRef<str>) {
+    if let Some(ref logger) = state.audit_logger {
+        if let Err(err) = logger.log_config_change("dashboard", detail.as_ref()) {
+            tracing::debug!("workflow audit change log skipped: {err}");
+        }
+    }
+}
+
+fn audit_workflow_command(state: &AppState, detail: impl AsRef<str>, success: bool) {
+    if let Some(ref logger) = state.audit_logger {
+        if let Err(err) = logger.log_command(
+            "dashboard",
+            detail.as_ref(),
+            "medium",
+            true,
+            true,
+            success,
+            0,
+        ) {
+            tracing::debug!("workflow audit command log skipped: {err}");
+        }
+    }
+}
+
 // ── Response cache ──────────────────────────────────────────────────────
 
 struct WorkflowCache {
@@ -1796,6 +1820,13 @@ pub async fn handle_create_workflow(
     let workflow = to_workflow_response(&item, Some(&response_rev), true);
     upsert_cached_workflow(&workflow);
     set_cached_revision_workflow(&response_rev.kref, &workflow);
+    audit_workflow_change(
+        &state,
+        format!(
+            "Workflow created: {} ({}) revision {}",
+            body.name, item.kref, rev.number
+        ),
+    );
     (
         StatusCode::CREATED,
         Json(serde_json::json!({ "workflow": workflow })),
@@ -1857,6 +1888,13 @@ pub async fn handle_update_workflow(
     sync_cron_for_workflow(&state, &body.name, &body.definition);
 
     broadcast_revision_published(&state, &headers, &kref, &rev, &body.name);
+    audit_workflow_change(
+        &state,
+        format!(
+            "Workflow updated: {} ({}) revision {}",
+            body.name, kref, rev.number
+        ),
+    );
 
     Json(serde_json::json!({ "workflow": workflow })).into_response()
 }
@@ -1901,6 +1939,18 @@ pub async fn handle_deprecate_workflow(
             }
 
             let workflow = to_workflow_response(&item, rev.as_ref(), true);
+            audit_workflow_change(
+                &state,
+                format!(
+                    "Workflow {}: {}",
+                    if body.deprecated {
+                        "deprecated"
+                    } else {
+                        "restored"
+                    },
+                    kref
+                ),
+            );
             Json(serde_json::json!({ "workflow": workflow })).into_response()
         }
         Err(e) => kumiho_err(e).into_response(),
@@ -1924,6 +1974,7 @@ pub async fn handle_delete_workflow(
         Ok(()) => {
             invalidate_cache();
             invalidate_proxy_cache();
+            audit_workflow_change(&state, format!("Workflow deleted: {kref}"));
 
             // Remove associated cron jobs.  Extract the item_name from the kref
             // (the last path segment minus the `.workflow` kind suffix) and use
@@ -2061,6 +2112,11 @@ pub async fn handle_run_workflow(
             if let Ok(rev) = client.create_revision(&item.kref, metadata).await {
                 let _ = client.tag_revision(&rev.kref, "pending").await;
             }
+            audit_workflow_command(
+                &state,
+                format!("Workflow run requested: {name} ({run_id})"),
+                true,
+            );
 
             // Direct invocation: kick the operator's run_workflow tool now so
             // the workflow starts within seconds instead of waiting up to 30s
@@ -2191,6 +2247,11 @@ pub async fn handle_run_workflow(
         }
         Err(e) => {
             tracing::warn!("Failed to create workflow run request: {e}");
+            audit_workflow_command(
+                &state,
+                format!("Workflow run request failed: {name} ({run_id}) - {e}"),
+                false,
+            );
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({
@@ -2494,11 +2555,21 @@ pub async fn handle_delete_workflow_run(
             invalidate_dashboard_runs_cache();
             invalidate_proxy_cache();
             cleanup_local_run_files(&run_id).await;
+            audit_workflow_command(
+                &state,
+                format!("Workflow run deleted: {run_id} ({kref})"),
+                true,
+            );
             StatusCode::NO_CONTENT.into_response()
         }
         Err(e) => {
             let msg = format!("Failed to delete run '{run_id}': {e}");
             tracing::warn!("{msg}");
+            audit_workflow_command(
+                &state,
+                format!("Workflow run delete failed: {run_id} - {e}"),
+                false,
+            );
             kumiho_err(e).into_response()
         }
     }
@@ -2608,6 +2679,14 @@ pub async fn handle_approve_workflow_run(
         Ok(_) => {
             invalidate_dashboard_runs_cache();
             invalidate_proxy_cache();
+            audit_workflow_command(
+                &state,
+                format!(
+                    "Workflow run {}: {run_id}",
+                    if approved { "approved" } else { "rejected" }
+                ),
+                true,
+            );
             // Broadcast a human_approval_resolved SSE event so connected dashboards
             // can update their UI immediately without waiting for the next REST poll.
             let _ = state.event_tx.send(serde_json::json!({
@@ -2630,6 +2709,11 @@ pub async fn handle_approve_workflow_run(
         }
         Err(e) => {
             tracing::warn!("approve_workflow_run: failed for run_id={run_id}: {e}");
+            audit_workflow_command(
+                &state,
+                format!("Workflow run approval failed: {run_id} - {e}"),
+                false,
+            );
             (
                 StatusCode::BAD_GATEWAY,
                 Json(serde_json::json!({
@@ -2693,6 +2777,11 @@ pub async fn handle_retry_workflow_run(
         Ok(result_str) => {
             invalidate_dashboard_runs_cache();
             invalidate_proxy_cache();
+            audit_workflow_command(
+                &state,
+                format!("Workflow run retry requested: {run_id}"),
+                true,
+            );
             let _ = state.event_tx.send(serde_json::json!({
                 "type": "workflow_retry",
                 "run_id": run_id,
@@ -2704,6 +2793,11 @@ pub async fn handle_retry_workflow_run(
         }
         Err(e) => {
             tracing::warn!("retry_workflow_run: failed for run_id={run_id}: {e}");
+            audit_workflow_command(
+                &state,
+                format!("Workflow run retry failed: {run_id} - {e}"),
+                false,
+            );
             (
                 StatusCode::BAD_GATEWAY,
                 Json(serde_json::json!({ "error": format!("Failed to retry workflow: {e}") })),
@@ -2771,16 +2865,33 @@ pub async fn handle_cancel_workflow_run(
             if status_code == StatusCode::OK {
                 invalidate_dashboard_runs_cache();
                 invalidate_proxy_cache();
+                audit_workflow_command(
+                    &state,
+                    format!("Workflow run cancellation requested: {run_id}"),
+                    true,
+                );
                 let _ = state.event_tx.send(serde_json::json!({
                     "type": "workflow_cancel",
                     "run_id": run_id,
                     "timestamp": chrono::Utc::now().to_rfc3339(),
                 }));
             }
+            if status_code != StatusCode::OK {
+                audit_workflow_command(
+                    &state,
+                    format!("Workflow run cancellation rejected: {run_id} ({status_code})"),
+                    false,
+                );
+            }
             (status_code, Json(payload)).into_response()
         }
         Err(e) => {
             tracing::warn!("cancel_workflow_run: failed for run_id={run_id}: {e}");
+            audit_workflow_command(
+                &state,
+                format!("Workflow run cancellation failed: {run_id} - {e}"),
+                false,
+            );
             (
                 StatusCode::BAD_GATEWAY,
                 Json(serde_json::json!({ "error": format!("Failed to cancel workflow: {e}") })),
