@@ -214,10 +214,26 @@ function skinAssetVars(
 
 function deriveSkinTokenVars(tokens: Record<string, string>): Record<string, string> {
   const derived: Record<string, string> = {};
+  const base = tokens['--construct-bg-base'];
+  const surface = tokens['--construct-bg-surface'];
+  const panel = tokens['--construct-bg-panel'];
+  const panelStrong = tokens['--construct-bg-panel-strong'];
+  const borderSoft = tokens['--construct-border-soft'];
   const live = tokens['--construct-signal-live'];
   const network = tokens['--construct-signal-network'];
   const selected = tokens['--construct-signal-selected'] ?? live;
+  const inputSurface = panelStrong ?? surface ?? panel;
+  const success = tokens['--construct-status-success'] ?? selected ?? live;
 
+  if (inputSurface && !tokens['--construct-bg-input']) {
+    derived['--construct-bg-input'] = `color-mix(in srgb, ${inputSurface} 88%, ${base ?? 'black'})`;
+  }
+  if ((borderSoft || selected) && !tokens['--construct-border-neutral']) {
+    const neutral = selected
+      ? `color-mix(in srgb, ${selected} 18%, ${borderSoft ?? 'transparent'})`
+      : borderSoft;
+    if (neutral) derived['--construct-border-neutral'] = neutral;
+  }
   if (live && !tokens['--construct-signal-live-soft']) {
     derived['--construct-signal-live-soft'] = `color-mix(in srgb, ${live} 16%, transparent)`;
   }
@@ -229,6 +245,15 @@ function deriveSkinTokenVars(tokens: Record<string, string>): Record<string, str
   }
   if (selected && !tokens['--construct-hover-surface']) {
     derived['--construct-hover-surface'] = `color-mix(in srgb, ${selected} 10%, var(--construct-bg-surface))`;
+  }
+  if (success && !tokens['--construct-status-success']) {
+    derived['--construct-status-success'] = success;
+  }
+  if (success && !tokens['--construct-status-ok']) {
+    derived['--construct-status-ok'] = success;
+  }
+  if (tokens['--construct-status-danger'] && !tokens['--construct-status-error']) {
+    derived['--construct-status-error'] = tokens['--construct-status-danger'];
   }
 
   return derived;

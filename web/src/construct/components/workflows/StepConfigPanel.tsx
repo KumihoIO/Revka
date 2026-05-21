@@ -677,7 +677,7 @@ export default function StepConfigPanel({
                   background: 'transparent',
                   color: runToHereDisabled
                     ? 'var(--pc-text-faint)'
-                    : 'var(--construct-status-success)',
+                    : 'var(--construct-signal-selected)',
                   fontSize: 11,
                   cursor: runToHereDisabled ? 'not-allowed' : 'pointer',
                   opacity: runToHereDisabled ? 0.6 : 1,
@@ -751,7 +751,7 @@ export default function StepConfigPanel({
                       style={{
                         color:
                           sid === data.taskId
-                            ? 'var(--construct-status-success)'
+                            ? 'var(--construct-signal-selected)'
                             : 'var(--pc-text-faint)',
                         fontWeight: sid === data.taskId ? 600 : 400,
                       }}
@@ -784,8 +784,8 @@ export default function StepConfigPanel({
                   style={{
                     padding: '4px 10px',
                     borderRadius: 6,
-                    border: '1px solid var(--construct-status-success)',
-                    background: 'var(--construct-status-success)',
+                    border: '1px solid var(--construct-signal-selected)',
+                    background: 'var(--construct-signal-selected)',
                     color: 'var(--pc-bg-base)',
                     fontSize: 11,
                     fontWeight: 600,
@@ -1357,7 +1357,7 @@ export default function StepConfigPanel({
           {/* ── ForEach ── */}
           {stepType === 'for_each' && (
             <div style={sectionShellStyle}>
-              <div style={{ ...sectionTitleStyle, color: 'var(--construct-status-success)' }}>ForEach Config</div>
+              <div style={{ ...sectionTitleStyle, color: 'var(--construct-signal-selected)' }}>ForEach Config</div>
               <div>
                 <label style={labelStyle}>Range</label>
                 <input

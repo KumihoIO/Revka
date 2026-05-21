@@ -1,8 +1,9 @@
 //! REST API handlers for workflow management (`/api/workflows`).
 //!
 //! Each workflow definition is a Kumiho item of kind `"workflow"` in the
-//! `Construct/Workflows` space.  The YAML definition and metadata (description,
-//! version, tags, steps count) are stored as revision metadata.
+//! `Construct/Workflows` space.  The YAML definition is stored as a
+//! `workflow.yaml` revision artifact; descriptive fields and indexes live in
+//! revision metadata.
 //!
 //! Provides:
 //!   - `GET    /api/workflows`              — list workflow definitions
@@ -52,6 +53,30 @@ fn workflow_run_requests_space_path(state: &AppState) -> String {
         workflow_project(state),
         WORKFLOW_RUN_REQUESTS_SPACE_NAME
     )
+}
+
+fn audit_workflow_change(state: &AppState, detail: impl AsRef<str>) {
+    if let Some(ref logger) = state.audit_logger {
+        if let Err(err) = logger.log_config_change("dashboard", detail.as_ref()) {
+            tracing::debug!("workflow audit change log skipped: {err}");
+        }
+    }
+}
+
+fn audit_workflow_command(state: &AppState, detail: impl AsRef<str>, success: bool) {
+    if let Some(ref logger) = state.audit_logger {
+        if let Err(err) = logger.log_command(
+            "dashboard",
+            detail.as_ref(),
+            "medium",
+            true,
+            true,
+            success,
+            0,
+        ) {
+            tracing::debug!("workflow audit command log skipped: {err}");
+        }
+    }
 }
 
 // ── Response cache ──────────────────────────────────────────────────────
@@ -273,40 +298,6 @@ fn set_cached_revision_workflow(revision_kref: &str, workflow: &WorkflowResponse
     );
 }
 
-fn to_workflow_dashboard_summary(item: &ItemResponse) -> WorkflowResponse {
-    let get = |key: &str| -> String { item.metadata.get(key).cloned().unwrap_or_default() };
-    let display_name = {
-        let n = get("display_name");
-        if n.is_empty() {
-            item.item_name.clone()
-        } else {
-            n
-        }
-    };
-    let tags_str = get("tags");
-    let tags = if tags_str.is_empty() {
-        Vec::new()
-    } else {
-        tags_str.split(',').map(|s| s.trim().to_string()).collect()
-    };
-
-    WorkflowResponse {
-        kref: item.kref.clone(),
-        name: display_name,
-        item_name: item.item_name.clone(),
-        deprecated: item.deprecated,
-        created_at: item.created_at.clone(),
-        description: get("description"),
-        definition: String::new(),
-        version: get("version"),
-        tags,
-        steps: get("steps").parse().unwrap_or(0),
-        revision_number: 0,
-        source: "custom".to_string(),
-        triggers: Vec::new(),
-    }
-}
-
 async fn fetch_workflow_definitions_for_dashboard(
     client: &KumihoClient,
     space_path: &str,
@@ -324,24 +315,11 @@ async fn fetch_workflow_definitions_for_dashboard(
     let started = Instant::now();
     let definitions = match client.list_items(space_path, false).await {
         Ok(items) => {
-            let mut workflows = if include_definition {
-                let workflows =
-                    merge_with_builtins(enrich_items(client, items, include_definition).await);
+            let mut workflows =
+                merge_with_builtins(enrich_items(client, items, include_definition).await);
+            if include_definition {
                 set_cached(&workflows, false, include_definition);
-                workflows
-            } else {
-                // Dashboard cards do not need revision metadata or YAML bodies.
-                // Avoid the expensive revision batch fanout on the cold path;
-                // item metadata plus builtin summaries are enough for counts,
-                // names, and source classification.
-                merge_with_builtins(
-                    items
-                        .iter()
-                        .filter(|i| i.kind == "workflow")
-                        .map(to_workflow_dashboard_summary)
-                        .collect(),
-                )
-            };
+            }
             if !include_definition {
                 for workflow in &mut workflows {
                     workflow.definition.clear();
@@ -624,7 +602,6 @@ fn workflow_metadata(body: &CreateWorkflowBody) -> HashMap<String, String> {
     let mut meta = HashMap::new();
     meta.insert("display_name".to_string(), body.name.clone());
     meta.insert("description".to_string(), body.description.clone());
-    meta.insert("definition".to_string(), body.definition.clone());
     meta.insert("created_by".to_string(), "construct-dashboard".to_string());
     // Count steps in the YAML
     let steps = count_yaml_steps(&body.definition);
@@ -749,71 +726,84 @@ fn workflow_item_from_body(kref: &str, body: &CreateWorkflowBody) -> ItemRespons
     }
 }
 
-/// Prefer the `workflow.yaml` artifact on disk as the canonical definition,
-/// falling back to inline `definition` metadata only when no artifact exists.
-///
-/// The inline `definition` metadata is a legacy gateway-authored field that
-/// drifts from the artifact for operator-authored revisions and can also be
-/// truncated by Kumiho's batch endpoint for large YAMLs. The artifact file is
-/// the source of truth, so we always overwrite metadata with it when present.
-async fn prefer_artifact_definitions(
+async fn read_workflow_yaml_artifact(
     client: &super::kumiho_client::KumihoClient,
-    revs: &mut HashMap<String, RevisionResponse>,
-) {
+    rev_kref: &str,
+) -> Option<String> {
     const ARTIFACT_LOOKUP_TIMEOUT: Duration = Duration::from_secs(2);
 
+    let artifact = match tokio::time::timeout(
+        ARTIFACT_LOOKUP_TIMEOUT,
+        client.get_artifact_by_name(rev_kref, "workflow.yaml"),
+    )
+    .await
+    {
+        Ok(Ok(artifact)) => artifact,
+        Ok(Err(e)) => {
+            tracing::warn!(
+                revision_kref = %rev_kref,
+                "skipping invalid workflow revision: workflow.yaml artifact lookup failed: {e}"
+            );
+            return None;
+        }
+        Err(_) => {
+            tracing::warn!(
+                revision_kref = %rev_kref,
+                timeout_ms = ARTIFACT_LOOKUP_TIMEOUT.as_millis(),
+                "skipping invalid workflow revision: workflow.yaml artifact lookup timed out"
+            );
+            return None;
+        }
+    };
+
+    let path = artifact
+        .location
+        .strip_prefix("file://")
+        .unwrap_or(&artifact.location);
+    match tokio::fs::read_to_string(path).await {
+        Ok(yaml) => Some(yaml),
+        Err(e) => {
+            tracing::warn!(
+                revision_kref = %rev_kref,
+                artifact_path = %path,
+                "skipping invalid workflow revision: workflow.yaml artifact read failed: {e}"
+            );
+            None
+        }
+    }
+}
+
+/// Keep only revisions whose canonical `workflow.yaml` artifact can be read.
+///
+/// Inline `definition` metadata is intentionally ignored. Large workflows can
+/// exceed metadata limits, and stale inline YAML can drift from the artifact.
+async fn retain_artifact_backed_revisions(
+    client: &super::kumiho_client::KumihoClient,
+    revs: &mut HashMap<String, RevisionResponse>,
+    include_definition: bool,
+) {
     let lookups = revs
         .iter()
         .map(|(item_kref, rev)| (item_kref.clone(), rev.kref.clone()))
         .map(|(item_kref, rev_kref)| async move {
-            let artifact = match tokio::time::timeout(
-                ARTIFACT_LOOKUP_TIMEOUT,
-                client.get_artifact_by_name(&rev_kref, "workflow.yaml"),
-            )
-            .await
-            {
-                Ok(Ok(artifact)) => artifact,
-                Ok(Err(e)) => {
-                    tracing::debug!(
-                        revision_kref = %rev_kref,
-                        "workflow artifact lookup skipped: {e}"
-                    );
-                    return None;
-                }
-                Err(_) => {
-                    tracing::debug!(
-                        revision_kref = %rev_kref,
-                        timeout_ms = ARTIFACT_LOOKUP_TIMEOUT.as_millis(),
-                        "workflow artifact lookup timed out"
-                    );
-                    return None;
-                }
-            };
-
-            let path = artifact
-                .location
-                .strip_prefix("file://")
-                .unwrap_or(&artifact.location);
-            match tokio::fs::read_to_string(path).await {
-                Ok(yaml) => Some((item_kref, yaml)),
-                Err(e) => {
-                    tracing::debug!(
-                        revision_kref = %rev_kref,
-                        artifact_path = %path,
-                        "workflow artifact read skipped: {e}"
-                    );
-                    None
-                }
-            }
+            read_workflow_yaml_artifact(client, &rev_kref)
+                .await
+                .map(|yaml| (item_kref, yaml))
         });
 
-    for (item_kref, yaml) in futures_util::future::join_all(lookups)
+    let loaded: HashMap<String, String> = futures_util::future::join_all(lookups)
         .await
         .into_iter()
         .flatten()
-    {
-        if let Some(rev) = revs.get_mut(&item_kref) {
-            rev.metadata.insert("definition".to_string(), yaml);
+        .collect();
+
+    revs.retain(|item_kref, _| loaded.contains_key(item_kref));
+
+    if include_definition {
+        for (item_kref, yaml) in loaded {
+            if let Some(rev) = revs.get_mut(&item_kref) {
+                rev.metadata.insert("definition".to_string(), yaml);
+            }
         }
     }
 }
@@ -848,23 +838,16 @@ async fn enrich_items(
             HashMap::new()
         };
 
-        if include_definition {
-            // Artifact-first: the `workflow.yaml` on disk is canonical. The inline
-            // `definition` metadata drifts for operator-authored revisions and is
-            // truncated by Kumiho's batch endpoint for large YAMLs, so we always
-            // prefer the artifact when it exists — same logic the single-revision
-            // endpoint uses.
-            prefer_artifact_definitions(client, &mut rev_map).await;
-            prefer_artifact_definitions(client, &mut latest_map).await;
-        }
+        retain_artifact_backed_revisions(client, &mut rev_map, include_definition).await;
+        retain_artifact_backed_revisions(client, &mut latest_map, include_definition).await;
 
         return items
             .iter()
-            .map(|item| {
+            .filter_map(|item| {
                 let rev = rev_map
                     .get(&item.kref)
                     .or_else(|| latest_map.get(&item.kref));
-                to_workflow_response(item, rev, include_definition)
+                rev.map(|rev| to_workflow_response(item, Some(rev), include_definition))
             })
             .collect();
     }
@@ -872,8 +855,16 @@ async fn enrich_items(
     // Fallback: sequential
     let mut workflows = Vec::with_capacity(items.len());
     for item in &items {
-        let rev = client.get_published_or_latest(&item.kref).await.ok();
-        workflows.push(to_workflow_response(item, rev.as_ref(), include_definition));
+        let Some(mut rev) = client.get_published_or_latest(&item.kref).await.ok() else {
+            continue;
+        };
+        let Some(yaml) = read_workflow_yaml_artifact(client, &rev.kref).await else {
+            continue;
+        };
+        if include_definition {
+            rev.metadata.insert("definition".to_string(), yaml);
+        }
+        workflows.push(to_workflow_response(item, Some(&rev), include_definition));
     }
     workflows
 }
@@ -1891,9 +1882,20 @@ pub async fn handle_create_workflow(
 
     broadcast_revision_published(&state, &headers, &item.kref, &rev, &body.name);
 
-    let workflow = to_workflow_response(&item, Some(&rev), true);
+    let mut response_rev = rev.clone();
+    response_rev
+        .metadata
+        .insert("definition".to_string(), body.definition.clone());
+    let workflow = to_workflow_response(&item, Some(&response_rev), true);
     upsert_cached_workflow(&workflow);
-    set_cached_revision_workflow(&rev.kref, &workflow);
+    set_cached_revision_workflow(&response_rev.kref, &workflow);
+    audit_workflow_change(
+        &state,
+        format!(
+            "Workflow created: {} ({}) revision {}",
+            body.name, item.kref, rev.number
+        ),
+    );
     (
         StatusCode::CREATED,
         Json(serde_json::json!({ "workflow": workflow })),
@@ -1943,13 +1945,25 @@ pub async fn handle_update_workflow(
     let _ = client.tag_revision(&rev.kref, "published").await;
 
     let item = workflow_item_from_body(&kref, &body);
-    let workflow = to_workflow_response(&item, Some(&rev), true);
+    let mut response_rev = rev.clone();
+    response_rev
+        .metadata
+        .insert("definition".to_string(), body.definition.clone());
+    let workflow = to_workflow_response(&item, Some(&response_rev), true);
+    invalidate_cache();
     upsert_cached_workflow(&workflow);
-    set_cached_revision_workflow(&rev.kref, &workflow);
+    set_cached_revision_workflow(&response_rev.kref, &workflow);
     invalidate_proxy_cache();
     sync_cron_for_workflow(&state, &body.name, &body.definition);
 
     broadcast_revision_published(&state, &headers, &kref, &rev, &body.name);
+    audit_workflow_change(
+        &state,
+        format!(
+            "Workflow updated: {} ({}) revision {}",
+            body.name, kref, rev.number
+        ),
+    );
 
     Json(serde_json::json!({ "workflow": workflow })).into_response()
 }
@@ -1994,6 +2008,18 @@ pub async fn handle_deprecate_workflow(
             }
 
             let workflow = to_workflow_response(&item, rev.as_ref(), true);
+            audit_workflow_change(
+                &state,
+                format!(
+                    "Workflow {}: {}",
+                    if body.deprecated {
+                        "deprecated"
+                    } else {
+                        "restored"
+                    },
+                    kref
+                ),
+            );
             Json(serde_json::json!({ "workflow": workflow })).into_response()
         }
         Err(e) => kumiho_err(e).into_response(),
@@ -2017,6 +2043,7 @@ pub async fn handle_delete_workflow(
         Ok(()) => {
             invalidate_cache();
             invalidate_proxy_cache();
+            audit_workflow_change(&state, format!("Workflow deleted: {kref}"));
 
             // Remove associated cron jobs.  Extract the item_name from the kref
             // (the last path segment minus the `.workflow` kind suffix) and use
@@ -2154,6 +2181,11 @@ pub async fn handle_run_workflow(
             if let Ok(rev) = client.create_revision(&item.kref, metadata).await {
                 let _ = client.tag_revision(&rev.kref, "pending").await;
             }
+            audit_workflow_command(
+                &state,
+                format!("Workflow run requested: {name} ({run_id})"),
+                true,
+            );
 
             // Direct invocation: kick the operator's run_workflow tool now so
             // the workflow starts within seconds instead of waiting up to 30s
@@ -2284,6 +2316,11 @@ pub async fn handle_run_workflow(
         }
         Err(e) => {
             tracing::warn!("Failed to create workflow run request: {e}");
+            audit_workflow_command(
+                &state,
+                format!("Workflow run request failed: {name} ({run_id}) - {e}"),
+                false,
+            );
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({
@@ -2327,23 +2364,17 @@ pub async fn handle_get_workflow_by_revision(
         Err(e) => return kumiho_err(e).into_response(),
     };
 
-    // Canonical source for a pinned revision's YAML is the `workflow.yaml`
-    // artifact on disk. The inline `definition` metadata key is a legacy
-    // gateway-authored field and drifts from the artifact for operator-
-    // authored revisions, so we always prefer the artifact and only fall
-    // back to metadata when no artifact exists.
-    if let Ok(artifact) = client
-        .get_artifact_by_name(&rev.kref, "workflow.yaml")
-        .await
-    {
-        let path = artifact
-            .location
-            .strip_prefix("file://")
-            .unwrap_or(&artifact.location);
-        if let Ok(yaml) = tokio::fs::read_to_string(path).await {
-            rev.metadata.insert("definition".to_string(), yaml);
-        }
-    }
+    let Some(yaml) = read_workflow_yaml_artifact(&client, &rev.kref).await else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "error": "workflow revision is invalid: workflow.yaml artifact is missing or unreadable",
+                "revision_kref": revision_kref,
+            })),
+        )
+            .into_response();
+    };
+    rev.metadata.insert("definition".to_string(), yaml);
 
     // Derive a minimal item from the revision's item_kref. The DAG viewer only
     // consumes `definition` (YAML) and `revision_number` from the response.
@@ -2593,11 +2624,21 @@ pub async fn handle_delete_workflow_run(
             invalidate_dashboard_runs_cache();
             invalidate_proxy_cache();
             cleanup_local_run_files(&run_id).await;
+            audit_workflow_command(
+                &state,
+                format!("Workflow run deleted: {run_id} ({kref})"),
+                true,
+            );
             StatusCode::NO_CONTENT.into_response()
         }
         Err(e) => {
             let msg = format!("Failed to delete run '{run_id}': {e}");
             tracing::warn!("{msg}");
+            audit_workflow_command(
+                &state,
+                format!("Workflow run delete failed: {run_id} - {e}"),
+                false,
+            );
             kumiho_err(e).into_response()
         }
     }
@@ -2707,6 +2748,14 @@ pub async fn handle_approve_workflow_run(
         Ok(_) => {
             invalidate_dashboard_runs_cache();
             invalidate_proxy_cache();
+            audit_workflow_command(
+                &state,
+                format!(
+                    "Workflow run {}: {run_id}",
+                    if approved { "approved" } else { "rejected" }
+                ),
+                true,
+            );
             // Broadcast a human_approval_resolved SSE event so connected dashboards
             // can update their UI immediately without waiting for the next REST poll.
             let _ = state.event_tx.send(serde_json::json!({
@@ -2729,6 +2778,11 @@ pub async fn handle_approve_workflow_run(
         }
         Err(e) => {
             tracing::warn!("approve_workflow_run: failed for run_id={run_id}: {e}");
+            audit_workflow_command(
+                &state,
+                format!("Workflow run approval failed: {run_id} - {e}"),
+                false,
+            );
             (
                 StatusCode::BAD_GATEWAY,
                 Json(serde_json::json!({
@@ -2792,6 +2846,11 @@ pub async fn handle_retry_workflow_run(
         Ok(result_str) => {
             invalidate_dashboard_runs_cache();
             invalidate_proxy_cache();
+            audit_workflow_command(
+                &state,
+                format!("Workflow run retry requested: {run_id}"),
+                true,
+            );
             let _ = state.event_tx.send(serde_json::json!({
                 "type": "workflow_retry",
                 "run_id": run_id,
@@ -2803,6 +2862,11 @@ pub async fn handle_retry_workflow_run(
         }
         Err(e) => {
             tracing::warn!("retry_workflow_run: failed for run_id={run_id}: {e}");
+            audit_workflow_command(
+                &state,
+                format!("Workflow run retry failed: {run_id} - {e}"),
+                false,
+            );
             (
                 StatusCode::BAD_GATEWAY,
                 Json(serde_json::json!({ "error": format!("Failed to retry workflow: {e}") })),
@@ -2870,16 +2934,33 @@ pub async fn handle_cancel_workflow_run(
             if status_code == StatusCode::OK {
                 invalidate_dashboard_runs_cache();
                 invalidate_proxy_cache();
+                audit_workflow_command(
+                    &state,
+                    format!("Workflow run cancellation requested: {run_id}"),
+                    true,
+                );
                 let _ = state.event_tx.send(serde_json::json!({
                     "type": "workflow_cancel",
                     "run_id": run_id,
                     "timestamp": chrono::Utc::now().to_rfc3339(),
                 }));
             }
+            if status_code != StatusCode::OK {
+                audit_workflow_command(
+                    &state,
+                    format!("Workflow run cancellation rejected: {run_id} ({status_code})"),
+                    false,
+                );
+            }
             (status_code, Json(payload)).into_response()
         }
         Err(e) => {
             tracing::warn!("cancel_workflow_run: failed for run_id={run_id}: {e}");
+            audit_workflow_command(
+                &state,
+                format!("Workflow run cancellation failed: {run_id} - {e}"),
+                false,
+            );
             (
                 StatusCode::BAD_GATEWAY,
                 Json(serde_json::json!({ "error": format!("Failed to cancel workflow: {e}") })),
@@ -3160,6 +3241,30 @@ mod workflow_save_tests {
     #[test]
     fn workflow_item_name_falls_back_to_slugified_body_name() {
         assert_eq!(workflow_item_name_from_kref("", "My Flow"), "my-flow");
+    }
+
+    #[test]
+    fn workflow_metadata_keeps_large_yaml_out_of_revision_metadata() {
+        let mut steps = String::new();
+        for idx in 0..512 {
+            steps.push_str("  - id: step-");
+            steps.push_str(&idx.to_string());
+            steps.push_str("\n    type: agent\n");
+        }
+        let body = CreateWorkflowBody {
+            name: "Big Flow".to_string(),
+            description: "Large workflow".to_string(),
+            definition: format!("name: Big Flow\nsteps:\n{steps}"),
+            version: None,
+            tags: Some(vec!["large".to_string()]),
+        };
+
+        let metadata = workflow_metadata(&body);
+
+        assert!(!metadata.contains_key("definition"));
+        assert_eq!(metadata.get("display_name"), Some(&"Big Flow".to_string()));
+        assert_eq!(metadata.get("steps"), Some(&"512".to_string()));
+        assert_eq!(metadata.get("tags"), Some(&"large".to_string()));
     }
 }
 

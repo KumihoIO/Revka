@@ -4297,7 +4297,7 @@ dependencies = [
 
 [[package]]
 name = "kumiho-construct"
-version = "2026.5.13"
+version = "2026.5.14"
 dependencies = [
  "aardvark-sys",
  "anyhow",

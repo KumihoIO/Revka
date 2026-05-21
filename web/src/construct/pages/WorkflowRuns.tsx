@@ -754,7 +754,7 @@ export default function WorkflowRuns() {
                       <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
                         <OperatorCountChip label={t('runs.overlay.running')} value={runStepCounts.running} tone="var(--construct-signal-live)" />
                         <OperatorCountChip label={t('runs.overlay.failed')} value={runStepCounts.failed} tone="var(--construct-status-danger)" />
-                        <OperatorCountChip label={t('runs.overlay.done')} value={runStepCounts.completed} tone="var(--construct-status-success)" />
+                        <OperatorCountChip label={t('runs.overlay.done')} value={runStepCounts.completed} tone="var(--construct-signal-selected)" />
                         <OperatorCountChip label={t('runs.overlay.pending')} value={runStepCounts.pending} tone="var(--construct-text-faint)" />
                         <OperatorCountChip label={t('runs.overlay.skipped')} value={runStepCounts.skipped} tone="var(--construct-status-idle)" />
                       </div>
@@ -1116,7 +1116,7 @@ function RunDetailCard({
   const toneColor = tone === 'danger'
     ? 'var(--construct-status-danger)'
     : tone === 'success'
-      ? 'var(--construct-status-success)'
+      ? 'var(--construct-signal-selected)'
       : 'var(--construct-text-faint)';
   const background = tone === 'neutral'
     ? 'transparent'
@@ -1171,7 +1171,7 @@ function ToolCallCard({ tool }: { tool: AgentToolCall }) {
   const statusColor = tool.status === 'failed'
     ? 'var(--construct-status-danger)'
     : tool.status === 'completed'
-      ? 'var(--construct-status-success)'
+      ? 'var(--construct-signal-selected)'
       : 'var(--construct-status-warning)';
 
   return (

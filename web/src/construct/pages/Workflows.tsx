@@ -567,8 +567,8 @@ export default function Workflows() {
                           style={{
                             background: workflow.deprecated
                               ? 'color-mix(in srgb, var(--construct-status-danger) 12%, transparent)'
-                              : 'color-mix(in srgb, var(--construct-status-success) 12%, transparent)',
-                            color: workflow.deprecated ? 'var(--construct-status-danger)' : 'var(--construct-status-success)',
+                              : 'var(--construct-signal-selected-soft, color-mix(in srgb, var(--construct-signal-selected) 14%, transparent))',
+                            color: workflow.deprecated ? 'var(--construct-status-danger)' : 'var(--construct-signal-selected)',
                           }}
                         >
                           {workflow.deprecated ? t('workflows.status.off') : t('workflows.status.ready')}

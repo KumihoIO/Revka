@@ -7,6 +7,26 @@ Version numbers follow CalVer (`YYYY.M.D`).
 
 - No unreleased changes yet.
 
+## [2026.5.14] - 2026-05-21
+
+### Highlights
+
+- Promoted the UI Skin Phase 2 release with expanded asset slots, sample
+  skin packaging, workflow/team/agent imagery, and polished dark-mode skin
+  coverage across Construct pages.
+- Fixed large workflow editor saves by lifting the gateway body limit for
+  workflow APIs while keeping artifact-backed YAML as the authoritative
+  workflow definition source.
+- Added workflow audit entries for workflow saves and run dispatch so active
+  operational changes appear in the Audit trail.
+- Preserved in-flight Operator chat state when the assistant panel is hidden
+  and restored.
+
+### Packaging
+
+- Bumped the Rust package, web package, package lock, and Tauri desktop
+  metadata to `2026.5.14`.
+
 ## [2026.5.13] - 2026-05-19
 
 ### Highlights

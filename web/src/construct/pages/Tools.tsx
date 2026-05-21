@@ -170,7 +170,7 @@ export default function Tools() {
               onClick={() => setCliSectionOpen((v) => !v)}
               aria-expanded={cliSectionOpen}
             >
-              <Terminal className="h-4 w-4" style={{ color: 'var(--construct-status-success)' }} />
+              <Terminal className="h-4 w-4" style={{ color: 'var(--construct-signal-selected)' }} />
               <span className="construct-kicker flex-1">{tpl('tools.cli_tools_count', { count: filteredCli.length })}</span>
               <ChevronDown
                 className="h-4 w-4"
@@ -217,7 +217,7 @@ export default function Tools() {
                               style={{
                                 borderColor: 'var(--construct-border-soft)',
                                 color: 'var(--construct-text-secondary)',
-                                background: 'color-mix(in srgb, var(--construct-signal-network-soft) 40%, transparent)',
+                                background: 'color-mix(in srgb, var(--construct-signal-selected) 8%, transparent)',
                               }}
                             >
                               {tool.category}

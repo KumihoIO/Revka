@@ -58,10 +58,10 @@ export default function Cost() {
                 {[
                   { icon: DollarSign, tone: 'var(--construct-signal-live)', label: t('cost.session_cost'), value: formatUSD(cost.session_cost_usd) },
                   { icon: TrendingUp, tone: 'var(--construct-status-success)', label: t('cost.daily_cost'), value: formatUSD(cost.daily_cost_usd) },
-                  { icon: Layers, tone: '#a78bfa', label: t('cost.monthly_cost'), value: formatUSD(cost.monthly_cost_usd) },
+                  { icon: Layers, tone: 'var(--construct-signal-selected)', label: t('cost.monthly_cost'), value: formatUSD(cost.monthly_cost_usd) },
                   { icon: Hash, tone: 'var(--construct-status-warning)', label: t('cost.requests'), value: cost.request_count.toLocaleString() },
                 ].map(({ icon: Icon, tone, label, value }) => (
-                  <div key={label} className="rounded-[14px] border p-3" style={{ borderColor: 'var(--construct-border-soft)', background: 'var(--construct-bg-surface)' }}>
+                  <div key={label} className="rounded-[14px] border p-3" style={{ borderColor: 'var(--construct-border-soft)', background: 'color-mix(in srgb, var(--construct-bg-panel-strong) 88%, transparent)' }}>
                     <div className="flex items-center gap-3">
                       <div className="rounded-[12px] p-2" style={{ background: `color-mix(in srgb, ${tone} 12%, transparent)`, color: tone }}>
                         <Icon className="h-4 w-4" />
@@ -113,8 +113,8 @@ export default function Cost() {
                         <div>{tpl('cost.requests_label', { count: model.request_count.toLocaleString() })}</div>
                         <div>{tpl('cost.share_label', { share: share.toFixed(1) })}</div>
                       </div>
-                      <div className="mt-3 h-2 overflow-hidden rounded-full" style={{ background: 'var(--construct-bg-surface)' }}>
-                        <div style={{ width: `${Math.max(share, 2)}%`, background: 'var(--construct-signal-live)', height: '100%' }} />
+                      <div className="mt-3 h-2 overflow-hidden rounded-full" style={{ background: 'color-mix(in srgb, var(--construct-bg-panel-strong) 86%, transparent)' }}>
+                        <div style={{ width: `${Math.max(share, 2)}%`, background: 'var(--construct-signal-selected)', height: '100%' }} />
                       </div>
                     </button>
                   );

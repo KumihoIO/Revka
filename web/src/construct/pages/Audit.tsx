@@ -121,7 +121,7 @@ export default function Audit() {
               <option value="security_event">{t('audit.event.security_event')}</option>
             </select>
             {chainStatus ? (
-              <div className="rounded-[12px] border p-3 text-sm" style={{ borderColor: chainStatus.verified ? 'rgba(125,255,155,0.24)' : 'rgba(255,107,122,0.24)' }}>
+              <div className="rounded-[12px] border p-3 text-sm" style={{ borderColor: chainStatus.verified ? 'color-mix(in srgb, var(--construct-status-success) 24%, transparent)' : 'color-mix(in srgb, var(--construct-status-danger) 24%, transparent)' }}>
                 <div className="flex items-start gap-2">
                   {chainStatus.verified ? (
                     <CheckCircle className="mt-0.5 h-4 w-4" style={{ color: 'var(--construct-status-success)' }} />
@@ -187,7 +187,7 @@ export default function Audit() {
                     </div>
                   </div>
                   {event.security.policy_violation ? (
-                    <div className="mt-3 inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em]" style={{ color: 'var(--construct-status-danger)', background: 'rgba(255,107,122,0.1)' }}>
+                    <div className="mt-3 inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em]" style={{ color: 'var(--construct-status-danger)', background: 'color-mix(in srgb, var(--construct-status-danger) 10%, transparent)' }}>
                       <ShieldAlert className="h-3 w-3" />
                       {t('audit.policy_violation_badge')}
                     </div>

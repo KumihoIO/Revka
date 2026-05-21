@@ -306,7 +306,7 @@ export default function Cron() {
               disabled={togglingCatchUp}
               className="relative inline-flex h-6 w-11 items-center rounded-full transition-colors"
               style={{
-                background: settings.catch_up_on_startup ? 'var(--construct-status-success)' : 'var(--construct-border-strong)',
+                background: settings.catch_up_on_startup ? 'var(--construct-signal-selected)' : 'var(--construct-border-strong)',
                 opacity: togglingCatchUp ? 0.6 : 1,
               }}
               aria-pressed={settings.catch_up_on_startup}
@@ -390,7 +390,7 @@ export default function Cron() {
                       <span
                         className="inline-flex items-center rounded-full border px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider"
                         style={job.enabled
-                          ? { color: 'var(--construct-status-success)', borderColor: 'color-mix(in srgb, var(--construct-status-success) 28%, transparent)', background: 'color-mix(in srgb, var(--construct-status-success) 10%, transparent)' }
+                          ? { color: 'var(--construct-signal-selected)', borderColor: 'color-mix(in srgb, var(--construct-signal-selected) 28%, transparent)', background: 'color-mix(in srgb, var(--construct-signal-selected) 10%, transparent)' }
                           : { color: 'var(--construct-text-faint)', borderColor: 'var(--construct-border-soft)', background: 'transparent' }}
                       >
                         {job.enabled ? t('cron.enabled_badge') : t('cron.disabled_badge')}

@@ -109,7 +109,7 @@ export default function Doctor() {
                         </div>
                         <div className="mt-4 space-y-2">
                           {items.map((result, index) => (
-                            <div key={`${category}-${index}`} className="rounded-[12px] border p-3" style={{ borderColor: result.severity === 'ok' ? 'rgba(125,255,155,0.24)' : result.severity === 'warn' ? 'rgba(255,204,102,0.24)' : 'rgba(255,107,122,0.24)' }}>
+                            <div key={`${category}-${index}`} className="rounded-[12px] border p-3" style={{ borderColor: result.severity === 'ok' ? 'color-mix(in srgb, var(--construct-status-success) 24%, transparent)' : result.severity === 'warn' ? 'color-mix(in srgb, var(--construct-status-warning) 24%, transparent)' : 'color-mix(in srgb, var(--construct-status-danger) 24%, transparent)' }}>
                               <div className="flex items-start gap-3">
                                 {severityIcon(result.severity)}
                                 <div className="min-w-0">
@@ -149,7 +149,7 @@ function HealthMetric({
   icon: ReactNode;
 }) {
   return (
-    <div className="rounded-[14px] border p-3" style={{ borderColor: 'var(--construct-border-soft)', background: 'var(--construct-bg-surface)' }}>
+    <div className="rounded-[14px] border p-3" style={{ borderColor: 'var(--construct-border-soft)', background: 'color-mix(in srgb, var(--construct-bg-panel-strong) 88%, transparent)' }}>
       <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.14em]" style={{ color: 'var(--construct-text-faint)' }}>
         {icon}
         {label}

@@ -559,9 +559,9 @@ export default function RevisionHistoryStrip({
                         width: 6,
                         height: 6,
                         borderRadius: 999,
-                        background: 'var(--construct-status-success)',
+                        background: 'var(--construct-signal-selected)',
                         boxShadow:
-                          '0 0 6px color-mix(in srgb, var(--construct-status-success) 60%, transparent)',
+                          '0 0 6px color-mix(in srgb, var(--construct-signal-selected) 60%, transparent)',
                       }}
                     />
                   ) : null}
