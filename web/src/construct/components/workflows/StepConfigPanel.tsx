@@ -34,6 +34,38 @@ function parseListInput(value: string): string[] {
     .filter(Boolean);
 }
 
+function useCommaListDraft(value: string[], resetKey: string) {
+  const valueText = value.join(', ');
+  const [draft, setDraft] = useState(valueText);
+  const [editing, setEditing] = useState(false);
+
+  useEffect(() => {
+    if (!editing) {
+      setDraft(valueText);
+    }
+  }, [editing, valueText]);
+
+  useEffect(() => {
+    setEditing(false);
+    setDraft(valueText);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resetKey]);
+
+  const commit = useCallback(() => {
+    const parsed = parseListInput(draft);
+    setDraft(parsed.join(', '));
+    setEditing(false);
+    return parsed;
+  }, [draft]);
+
+  return {
+    draft,
+    setDraft,
+    startEditing: () => setEditing(true),
+    commit,
+  };
+}
+
 function defaultConditionalBranches(data: TaskNodeData): ConditionalBranchDefinition[] {
   if (data.conditionalBranches?.length > 0) {
     return data.conditionalBranches.map((branch) => ({ ...branch }));
@@ -236,17 +268,40 @@ export default function StepConfigPanel({
     () => existingTaskIds.filter((id) => id !== data.taskId),
     [existingTaskIds, data.taskId],
   );
+  const agentOutputFieldsDraftState = useCommaListDraft(data.agentOutputFields || [], node.id);
+  const agentQualityCriteriaDraftState = useCommaListDraft(data.agentQualityCriteria || [], node.id);
+  const approvalApproveKeywordsDraftState = useCommaListDraft(data.humanApprovalApproveKeywords || [], node.id);
+  const approvalRejectKeywordsDraftState = useCommaListDraft(data.humanApprovalRejectKeywords || [], node.id);
+  const mapReduceSplitsDraftState = useCommaListDraft(data.mapReduceSplits || [], node.id);
 
   const handleNameChange = useCallback(
     (nextName: string) => {
       onUpdate(node.id, { name: nextName, label: nextName });
+    },
+    [node.id, onUpdate],
+  );
+
+  const commitNameLinkedId = useCallback(
+    (nextName: string) => {
       if (idLinkedToName) {
         const nextId = uniqueTaskId(slugify(nextName), otherTaskIds);
         if (nextId !== data.taskId) onRenameStep(data.taskId, nextId);
       }
     },
-    [idLinkedToName, node.id, data.taskId, otherTaskIds, onUpdate, onRenameStep],
+    [idLinkedToName, data.taskId, otherTaskIds, onRenameStep],
   );
+
+  const handleAgentOutputFieldsChange = useCallback(
+    (nextDraft: string) => {
+      agentOutputFieldsDraftState.setDraft(nextDraft);
+      onUpdate(node.id, { agentOutputFields: parseListInput(nextDraft) });
+    },
+    [agentOutputFieldsDraftState, node.id, onUpdate],
+  );
+
+  const commitAgentOutputFieldsDraft = useCallback(() => {
+    onUpdate(node.id, { agentOutputFields: agentOutputFieldsDraftState.commit() });
+  }, [agentOutputFieldsDraftState, node.id, onUpdate]);
 
   // Local draft so typing intermediate states (uppercase, spaces) doesn't
   // aggressively reformat under the cursor. Commits to the canvas on blur.
@@ -745,7 +800,7 @@ export default function StepConfigPanel({
         </div>
 
         <div style={{ overflowY: 'auto', padding: 16, display: 'flex', flexDirection: 'column', gap: 14 }}>
-          {/* Step ID — editable; auto-slugifies from Name while linked */}
+          {/* Step ID — editable; syncs from Name after edits while linked */}
           <div>
             <div
               style={{
@@ -843,6 +898,13 @@ export default function StepConfigPanel({
               type="text"
               value={data.name}
               onChange={(e) => handleNameChange(e.target.value)}
+              onBlur={(e) => commitNameLinkedId(e.currentTarget.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  (e.currentTarget as HTMLInputElement).blur();
+                }
+              }}
               style={inputStyle}
             />
           </div>
@@ -1171,8 +1233,16 @@ export default function StepConfigPanel({
                 <label style={labelStyle}>Output Fields</label>
                 <input
                   type="text"
-                  value={(data.agentOutputFields || []).join(', ')}
-                  onChange={(e) => onUpdate(node.id, { agentOutputFields: parseListInput(e.target.value) })}
+                  value={agentOutputFieldsDraftState.draft}
+                  onFocus={agentOutputFieldsDraftState.startEditing}
+                  onChange={(e) => handleAgentOutputFieldsChange(e.target.value)}
+                  onBlur={commitAgentOutputFieldsDraft}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      (e.currentTarget as HTMLInputElement).blur();
+                    }
+                  }}
                   placeholder="summary, decision, files_touched"
                   style={monoInputStyle}
                 />
@@ -1214,8 +1284,19 @@ export default function StepConfigPanel({
                       <label style={labelStyle}>Criteria</label>
                       <input
                         type="text"
-                        value={(data.agentQualityCriteria || []).join(', ')}
-                        onChange={(e) => onUpdate(node.id, { agentQualityCriteria: parseListInput(e.target.value) })}
+                        value={agentQualityCriteriaDraftState.draft}
+                        onFocus={agentQualityCriteriaDraftState.startEditing}
+                        onChange={(e) => {
+                          agentQualityCriteriaDraftState.setDraft(e.target.value);
+                          onUpdate(node.id, { agentQualityCriteria: parseListInput(e.target.value) });
+                        }}
+                        onBlur={() => onUpdate(node.id, { agentQualityCriteria: agentQualityCriteriaDraftState.commit() })}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            (e.currentTarget as HTMLInputElement).blur();
+                          }
+                        }}
                         placeholder="on_mandate, depth, language_ko"
                         style={monoInputStyle}
                       />
@@ -2540,8 +2621,21 @@ export default function StepConfigPanel({
                 <label style={labelStyle}>Approve Keywords</label>
                 <input
                   type="text"
-                  value={(data.humanApprovalApproveKeywords || []).join(', ')}
-                  onChange={(e) => onUpdate(node.id, { humanApprovalApproveKeywords: parseListInput(e.target.value) })}
+                  value={approvalApproveKeywordsDraftState.draft}
+                  onFocus={approvalApproveKeywordsDraftState.startEditing}
+                  onChange={(e) => {
+                    approvalApproveKeywordsDraftState.setDraft(e.target.value);
+                    onUpdate(node.id, { humanApprovalApproveKeywords: parseListInput(e.target.value) });
+                  }}
+                  onBlur={() =>
+                    onUpdate(node.id, { humanApprovalApproveKeywords: approvalApproveKeywordsDraftState.commit() })
+                  }
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      (e.currentTarget as HTMLInputElement).blur();
+                    }
+                  }}
                   placeholder="approve, approved, yes, lgtm"
                   style={monoInputStyle}
                 />
@@ -2550,8 +2644,21 @@ export default function StepConfigPanel({
                 <label style={labelStyle}>Reject Keywords</label>
                 <input
                   type="text"
-                  value={(data.humanApprovalRejectKeywords || []).join(', ')}
-                  onChange={(e) => onUpdate(node.id, { humanApprovalRejectKeywords: parseListInput(e.target.value) })}
+                  value={approvalRejectKeywordsDraftState.draft}
+                  onFocus={approvalRejectKeywordsDraftState.startEditing}
+                  onChange={(e) => {
+                    approvalRejectKeywordsDraftState.setDraft(e.target.value);
+                    onUpdate(node.id, { humanApprovalRejectKeywords: parseListInput(e.target.value) });
+                  }}
+                  onBlur={() =>
+                    onUpdate(node.id, { humanApprovalRejectKeywords: approvalRejectKeywordsDraftState.commit() })
+                  }
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      (e.currentTarget as HTMLInputElement).blur();
+                    }
+                  }}
                   placeholder="reject, rejected, no"
                   style={monoInputStyle}
                 />
@@ -3035,12 +3142,19 @@ export default function StepConfigPanel({
                 <label style={labelStyle}>Splits (comma-separated)</label>
                 <input
                   type="text"
-                  value={data.mapReduceSplits.join(', ')}
-                  onChange={(e) =>
-                    onUpdate(node.id, {
-                      mapReduceSplits: e.target.value.split(',').map((s) => s.trim()).filter(Boolean),
-                    })
-                  }
+                  value={mapReduceSplitsDraftState.draft}
+                  onFocus={mapReduceSplitsDraftState.startEditing}
+                  onChange={(e) => {
+                    mapReduceSplitsDraftState.setDraft(e.target.value);
+                    onUpdate(node.id, { mapReduceSplits: parseListInput(e.target.value) });
+                  }}
+                  onBlur={() => onUpdate(node.id, { mapReduceSplits: mapReduceSplitsDraftState.commit() })}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      (e.currentTarget as HTMLInputElement).blur();
+                    }
+                  }}
                   placeholder="segment1, segment2, segment3"
                   style={inputStyle}
                 />
