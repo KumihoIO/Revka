@@ -1115,8 +1115,8 @@ async def tool_prune_completed_agents(args: dict[str, Any]) -> dict[str, Any]:
             if _event_consumer:
                 try:
                     await _event_consumer.unsubscribe(sidecar_id)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    _log(f"prune_completed_agents: unsubscribe failed for {agent.id[:8]} ({sidecar_id}): {exc}")
         AGENTS.pop(agent.id, None)
         _terminal_result_cache.pop(agent.id, None)
         pruned.append({
