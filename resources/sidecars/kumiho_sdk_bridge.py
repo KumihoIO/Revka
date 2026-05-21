@@ -13,8 +13,6 @@ import os
 import sys
 import threading
 import traceback
-from collections.abc import Iterator
-from contextlib import contextmanager
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from socketserver import TCPServer
@@ -88,17 +86,21 @@ def _routing_env_key() -> str:
     return "\0".join(parts)
 
 
-@contextmanager
-def _forced_discovery_refresh() -> Iterator[None]:
-    previous = os.environ.get("KUMIHO_FORCE_DISCOVERY_REFRESH")
-    os.environ["KUMIHO_FORCE_DISCOVERY_REFRESH"] = "1"
+def _cached_discovery_route(tenant_hint: str) -> tuple[str, str] | None:
     try:
-        yield
-    finally:
-        if previous is None:
-            os.environ.pop("KUMIHO_FORCE_DISCOVERY_REFRESH", None)
-        else:
-            os.environ["KUMIHO_FORCE_DISCOVERY_REFRESH"] = previous
+        from kumiho.discovery import DiscoveryCache
+
+        cache_key = tenant_hint or "__default__"
+        record = DiscoveryCache().load(cache_key)
+        if record is None:
+            return None
+        target = record.region.grpc_authority or record.region.server_url
+        tenant_id = getattr(record, "tenant_id", "")
+        if not target or not tenant_id:
+            return None
+        return target, tenant_id
+    except Exception:
+        return None
 
 
 def _client_for(token: str) -> Any:
@@ -112,7 +114,17 @@ def _client_for(token: str) -> Any:
     with _CLIENT_LOCK:
         client = _CLIENTS.get(key)
         if client is None:
-            with _forced_discovery_refresh():
+            cached_route = _cached_discovery_route(tenant_hint)
+            if cached_route:
+                target, tenant_id = cached_route
+                client = kumiho.connect(
+                    endpoint=target,
+                    token=token,
+                    enable_auto_login=False,
+                    use_discovery=False,
+                    default_metadata=[("x-tenant-id", tenant_id)],
+                )
+            else:
                 client = kumiho.connect(
                     token=token,
                     enable_auto_login=False,

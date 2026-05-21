@@ -1115,27 +1115,78 @@ pub async fn run_gateway_with_mcp_registry(
         // distinct from the gateway's — the channel supervisor's populate
         // path still routes through the gateway's tool instances; the MCP
         // versions advertise and execute independently).
-        let (mcp_tools_boxed, _d_h, _r_h, _c_h, _a_h, _e_h) = tools::all_tools_with_runtime(
-            Arc::new(config.clone()),
-            &security,
-            Arc::new(crate::runtime::NativeRuntime::new()),
-            Arc::clone(&mem),
-            composio_key,
-            composio_entity_id,
-            &config.browser,
-            &config.http_request,
-            &config.web_fetch,
-            &config.workspace_dir,
-            &config.agents,
-            config.api_key.as_deref(),
-            &config,
-            Some(canvas_store.clone()),
-        );
+        let (mcp_tools_boxed, mcp_delegate_handle, _r_h, _c_h, _a_h, _e_h) =
+            tools::all_tools_with_runtime(
+                Arc::new(config.clone()),
+                &security,
+                Arc::new(crate::runtime::NativeRuntime::new()),
+                Arc::clone(&mem),
+                composio_key,
+                composio_entity_id,
+                &config.browser,
+                &config.http_request,
+                &config.web_fetch,
+                &config.workspace_dir,
+                &config.agents,
+                config.api_key.as_deref(),
+                &config,
+                Some(canvas_store.clone()),
+            );
         // Convert Box<dyn Tool> to Arc<dyn Tool>.
-        let mcp_tool_arcs: Vec<Arc<dyn tools::Tool>> = mcp_tools_boxed
+        let mut mcp_tool_arcs: Vec<Arc<dyn tools::Tool>> = mcp_tools_boxed
             .into_iter()
             .map(|b| Arc::<dyn tools::Tool>::from(b))
             .collect();
+
+        // Mirror the gateway MCP wrapper wiring into the external MCP server.
+        // `all_tools_with_runtime()` does not know about the shared MCP registry;
+        // without this, `/api/tools` exposes operator/kumiho while `~/.construct/mcp.json`
+        // clients only see the baseline local tools.
+        if let Some(registry) = mcp_registry_shared.as_ref() {
+            if gateway_mcp_config.deferred_loading {
+                let operator_prefix = format!("{}__", crate::agent::operator::OPERATOR_SERVER_NAME);
+                let kumiho_prefix = format!("{}__", crate::agent::kumiho::KUMIHO_SERVER_NAME);
+                let all_names = registry.tool_names();
+
+                for name in &all_names {
+                    if (name.starts_with(&operator_prefix) || name.starts_with(&kumiho_prefix))
+                        && let Some(def) = registry.get_tool_def(name).await
+                    {
+                        let wrapper: Arc<dyn tools::Tool> = Arc::new(tools::McpToolWrapper::new(
+                            name.clone(),
+                            def,
+                            Arc::clone(registry),
+                        ));
+                        if let Some(ref handle) = mcp_delegate_handle {
+                            handle.write().push(Arc::clone(&wrapper));
+                        }
+                        mcp_tool_arcs.push(wrapper);
+                    }
+                }
+
+                let deferred_set = tools::DeferredMcpToolSet::from_registry_filtered(
+                    Arc::clone(registry),
+                    |name| !name.starts_with(&operator_prefix) && !name.starts_with(&kumiho_prefix),
+                )
+                .await;
+                let activated = Arc::new(std::sync::Mutex::new(tools::ActivatedToolSet::new()));
+                mcp_tool_arcs.push(Arc::new(tools::ToolSearchTool::new(
+                    deferred_set,
+                    activated,
+                )));
+            } else {
+                for name in registry.tool_names() {
+                    if let Some(def) = registry.get_tool_def(&name).await {
+                        let wrapper: Arc<dyn tools::Tool> =
+                            Arc::new(tools::McpToolWrapper::new(name, def, Arc::clone(registry)));
+                        if let Some(ref handle) = mcp_delegate_handle {
+                            handle.write().push(Arc::clone(&wrapper));
+                        }
+                        mcp_tool_arcs.push(wrapper);
+                    }
+                }
+            }
+        }
         rh.pre_built_tools = Some(mcp_tool_arcs);
 
         rh
