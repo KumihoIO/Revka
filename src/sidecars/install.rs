@@ -543,6 +543,23 @@ fn write_launcher(path: &Path, contents: &str) -> Result<()> {
     Ok(())
 }
 
+fn run(program: &Path, args: &[&str]) -> Result<()> {
+    let status = Command::new(program)
+        .args(args)
+        .stdin(Stdio::null())
+        .status()
+        .with_context(|| format!("invoking {} {}", program.display(), args.join(" ")))?;
+    if !status.success() {
+        return Err(anyhow!(
+            "`{} {}` exited with status {}",
+            program.display(),
+            args.join(" "),
+            status.code().unwrap_or(-1)
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -604,21 +621,4 @@ mod tests {
         assert!(dest.join("workflow_presets.json").exists());
         Ok(())
     }
-}
-
-fn run(program: &Path, args: &[&str]) -> Result<()> {
-    let status = Command::new(program)
-        .args(args)
-        .stdin(Stdio::null())
-        .status()
-        .with_context(|| format!("invoking {} {}", program.display(), args.join(" ")))?;
-    if !status.success() {
-        return Err(anyhow!(
-            "`{} {}` exited with status {}",
-            program.display(),
-            args.join(" "),
-            status.code().unwrap_or(-1)
-        ));
-    }
-    Ok(())
 }
