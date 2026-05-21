@@ -1614,6 +1614,34 @@ pub async fn run_gateway_with_mcp_registry(
             Duration::from_secs(120),
         ));
 
+    let agent_avatar_router = Router::new()
+        .route(
+            "/api/agents/avatar",
+            post(api_agents::handle_upload_agent_avatar),
+        )
+        .with_state(state.clone())
+        .layer(DefaultBodyLimit::disable())
+        .layer(RequestBodyLimitLayer::new(
+            api_agents::AGENT_AVATAR_MAX_BODY,
+        ))
+        .layer(TimeoutLayer::with_status_code(
+            StatusCode::REQUEST_TIMEOUT,
+            Duration::from_secs(60),
+        ));
+
+    let team_avatar_router = Router::new()
+        .route(
+            "/api/teams/avatar",
+            post(api_teams::handle_upload_team_avatar),
+        )
+        .with_state(state.clone())
+        .layer(DefaultBodyLimit::disable())
+        .layer(RequestBodyLimitLayer::new(api_teams::TEAM_AVATAR_MAX_BODY))
+        .layer(TimeoutLayer::with_status_code(
+            StatusCode::REQUEST_TIMEOUT,
+            Duration::from_secs(60),
+        ));
+
     // Asset Browser artifact-content edits are JSON payloads and can be larger
     // than the default 64 KiB API cap. Keep the write surface typed and bounded
     // without loosening limits for the rest of the gateway.
@@ -1902,6 +1930,12 @@ pub async fn run_gateway_with_mcp_registry(
     // Merge attachments router (has its own 25 MiB body limit + 120s timeout,
     // outside the global 64 KiB / 30s caps).
     let inner = inner.merge(attachments_router);
+
+    // Merge agent-avatar upload route (multipart body limit, outside the
+    // global small JSON cap).
+    let inner = inner.merge(agent_avatar_router);
+
+    let inner = inner.merge(team_avatar_router);
 
     // Merge Asset Browser write router (has its own bounded JSON body limit,
     // outside the global 64 KiB cap).

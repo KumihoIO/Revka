@@ -14,7 +14,13 @@ function ModePreview({ skin, mode }: { skin: SkinSummary; mode: SkinModeName }) 
   const modeDef = skin.manifest.modes[mode];
   const tokens = modeDef?.tokens ?? {};
   const assets = modeDef?.assets ?? {};
-  const preview = modeDef?.preview ? skinAssetPath(skin.id, modeDef.preview) : assets.dashboardHero ? skinAssetPath(skin.id, assets.dashboardHero) : null;
+  const preview = modeDef?.preview
+    ? skinAssetPath(skin.id, modeDef.preview)
+    : assets.dashboardShowcase
+      ? skinAssetPath(skin.id, assets.dashboardShowcase)
+      : assets.dashboardHero
+        ? skinAssetPath(skin.id, assets.dashboardHero)
+        : null;
   const bg = tokens['--construct-bg-base'] ?? (mode === 'light' ? '#f4f8f5' : '#05080a');
   const surface = tokens['--construct-bg-surface'] ?? (mode === 'light' ? '#ffffff' : '#0c1413');
   const text = tokens['--construct-text-primary'] ?? (mode === 'light' ? '#13201b' : '#e7f1eb');

@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Bot, Brain, Filter, Pencil, Plus, Power, RefreshCw, Search, Trash2 } from 'lucide-react';
+import { Brain, Filter, ImagePlus, Pencil, Plus, Power, RefreshCw, Search, Trash2 } from 'lucide-react';
 import type { AgentCreateRequest, AgentDefinition, AgentUpdateRequest } from '@/types/api';
-import { createAgent, deleteAgent, fetchAgents, toggleAgentDeprecation, updateAgent } from '@/lib/api';
+import { createAgent, deleteAgent, fetchAgents, toggleAgentDeprecation, updateAgent, uploadAgentAvatar } from '@/lib/api';
 import Panel from '../components/ui/Panel';
 import PageHeader from '../components/ui/PageHeader';
 import Modal from '../components/ui/Modal';
 import Notice from '../components/ui/Notice';
 import StateMessage from '../components/ui/StateMessage';
+import AgentAvatar from '../components/ui/AgentAvatar';
 import { formatLocalDateTime } from '../lib/datetime';
 import { useT } from '@/construct/hooks/useT';
 
@@ -20,6 +21,7 @@ interface AgentFormValues {
   agent_type: string;
   model: string;
   system_hint: string;
+  avatarFile?: File | null;
 }
 
 const EMPTY_FORM: AgentFormValues = {
@@ -107,24 +109,31 @@ export default function Agents() {
   const handleSave = async (values: AgentFormValues) => {
     setSaving(true);
     try {
+      const { avatarFile, ...agentValues } = values;
       if (editorMode === 'edit' && selectedAgent) {
         const request: AgentUpdateRequest = {
-          ...values,
+          ...agentValues,
           kref: selectedAgent.kref,
           model: values.model || undefined,
           system_hint: values.system_hint || undefined,
         };
-        const updated = await updateAgent(request);
+        let updated = await updateAgent(request);
+        if (avatarFile) {
+          updated = await uploadAgentAvatar(updated.kref, avatarFile);
+        }
         setAgents((current) => current.map((agent) => (agent.kref === updated.kref ? updated : agent)));
         setSelectedAgentKref(updated.kref);
         setNotice({ tone: 'success', message: tpl('agents.toast.updated', { name: updated.name }) });
       } else {
         const request: AgentCreateRequest = {
-          ...values,
+          ...agentValues,
           model: values.model || undefined,
           system_hint: values.system_hint || undefined,
         };
-        const created = await createAgent(request);
+        let created = await createAgent(request);
+        if (avatarFile) {
+          created = await uploadAgentAvatar(created.kref, avatarFile);
+        }
         setAgents((current) => [created, ...current]);
         setSelectedAgentKref(created.kref);
         setNotice({ tone: 'success', message: tpl('agents.toast.created', { name: created.name }) });
@@ -247,7 +256,13 @@ export default function Agents() {
                   onClick={() => setSelectedAgentKref(agent.kref)}
                 >
                   <div className="flex items-center gap-2">
-                    <Bot className="h-4 w-4 shrink-0" style={{ color: agent.deprecated ? 'var(--construct-text-faint)' : 'var(--construct-signal-network)' }} />
+                    <AgentAvatar
+                      src={agent.avatar_url}
+                      alt={agent.name}
+                      size={28}
+                      radius={8}
+                      style={{ opacity: agent.deprecated ? 0.72 : 1 }}
+                    />
                     <div className="min-w-0 flex-1">
                       <div className="text-sm font-semibold">{agent.name}</div>
                       <div className="mt-0.5 flex items-center gap-1.5 text-[11px]" style={{ color: 'var(--construct-text-secondary)' }}>
@@ -296,13 +311,16 @@ export default function Agents() {
           ) : (
             <>
               <div className="flex items-start justify-between gap-3">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <Brain className="h-4 w-4" style={{ color: 'var(--construct-signal-network)' }} />
-                    <div className="text-sm font-semibold" style={{ color: 'var(--construct-text-primary)' }}>{selectedAgent.name}</div>
-                  </div>
-                  <div className="mt-1 text-xs" style={{ color: 'var(--construct-text-secondary)' }}>
-                    {selectedAgent.role} / {selectedAgent.agent_type}{selectedAgent.model ? ` / ${selectedAgent.model}` : ''}
+                <div className="flex min-w-0 items-start gap-3">
+                  <AgentAvatar src={selectedAgent.avatar_url} alt={selectedAgent.name} size={44} radius={12} />
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <Brain className="h-4 w-4" style={{ color: 'var(--construct-signal-network)' }} />
+                      <div className="truncate text-sm font-semibold" style={{ color: 'var(--construct-text-primary)' }}>{selectedAgent.name}</div>
+                    </div>
+                    <div className="mt-1 text-xs" style={{ color: 'var(--construct-text-secondary)' }}>
+                      {selectedAgent.role} / {selectedAgent.agent_type}{selectedAgent.model ? ` / ${selectedAgent.model}` : ''}
+                    </div>
                   </div>
                 </div>
                 <span className="rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em]" style={{
@@ -368,7 +386,7 @@ export default function Agents() {
                   <div className="mt-4 grid gap-3 text-sm">
                     <div>
                       <div style={{ color: 'var(--construct-text-faint)' }}>{t('agents.section.revision')}</div>
-                      <div className="mt-1 font-semibold" style={{ color: 'var(--construct-text-primary)' }}>{selectedAgent.revision_number}</div>
+                      <div className="mt-1 font-semibold" style={{ color: 'var(--construct-text-primary)' }}>{selectedAgent.revision_number ?? selectedAgent.revision ?? '--'}</div>
                     </div>
                     <div>
                       <div style={{ color: 'var(--construct-text-faint)' }}>{t('agents.section.created')}</div>
@@ -426,7 +444,7 @@ export default function Agents() {
                     [t('agents.summary.type'), selectedAgent.agent_type],
                     [t('agents.summary.model'), selectedAgent.model || t('agents.summary.model_default')],
                     [t('agents.summary.tone'), selectedAgent.tone || '--'],
-                    [t('agents.summary.revision'), String(selectedAgent.revision_number)],
+                    [t('agents.summary.revision'), String(selectedAgent.revision_number ?? selectedAgent.revision ?? '--')],
                     [t('agents.summary.created'), formatLocalDateTime(selectedAgent.created_at) || '--'],
                   ].map(([label, value]) => (
                     <div key={label} className="rounded-[12px] border p-3" style={{ borderColor: 'var(--construct-border-soft)' }}>
@@ -494,6 +512,7 @@ function AgentEditorModal({
   const [model, setModel] = useState(agent?.model ?? '');
   const [systemHint, setSystemHint] = useState(agent?.system_hint ?? '');
   const [expertiseInput, setExpertiseInput] = useState(agent?.expertise.join(', ') ?? '');
+  const [avatarFile, setAvatarFile] = useState<File | null>(null);
 
   useEffect(() => {
     setName(agent?.name ?? EMPTY_FORM.name);
@@ -505,7 +524,20 @@ function AgentEditorModal({
     setModel(agent?.model ?? EMPTY_FORM.model);
     setSystemHint(agent?.system_hint ?? EMPTY_FORM.system_hint);
     setExpertiseInput(agent?.expertise.join(', ') ?? '');
+    setAvatarFile(null);
   }, [agent]);
+
+  const [avatarPreviewUrl, setAvatarPreviewUrl] = useState<string | null>(agent?.avatar_url ?? null);
+
+  useEffect(() => {
+    if (!avatarFile) {
+      setAvatarPreviewUrl(agent?.avatar_url ?? null);
+      return undefined;
+    }
+    const url = URL.createObjectURL(avatarFile);
+    setAvatarPreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [agent?.avatar_url, avatarFile]);
 
   const canSave = name.trim() && identity.trim() && soul.trim();
 
@@ -523,6 +555,29 @@ function AgentEditorModal({
         <label className="grid gap-2 text-sm">
           <span style={{ color: 'var(--construct-text-secondary)' }}>{t('agents.form.tone')}</span>
           <input className="construct-input" value={tone} onChange={(event) => setTone(event.target.value)} placeholder={t('agents.form.tone_placeholder')} />
+        </label>
+      </div>
+
+      <div className="mt-4 flex items-center gap-3 rounded-[12px] border p-3" style={{ borderColor: 'var(--construct-border-soft)' }}>
+        <AgentAvatar src={avatarPreviewUrl} alt={name || agent?.name || 'Agent'} size={54} radius={14} />
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-semibold" style={{ color: 'var(--construct-text-primary)' }}>
+            Profile image
+          </div>
+          <div className="mt-1 text-xs" style={{ color: 'var(--construct-text-faint)' }}>
+            PNG, JPEG, or WebP.
+          </div>
+        </div>
+        <label className="construct-button cursor-pointer">
+          <ImagePlus className="h-4 w-4" />
+          Upload
+          <input
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            className="sr-only"
+            disabled={saving}
+            onChange={(event) => setAvatarFile(event.target.files?.[0] ?? null)}
+          />
         </label>
       </div>
 
@@ -586,6 +641,7 @@ function AgentEditorModal({
             agent_type: agentType,
             model: model.trim(),
             system_hint: systemHint,
+            avatarFile,
           })}
         >
           {saving ? t('agents.form.saving') : mode === 'create' ? t('agents.form.save_create') : t('agents.form.save_edit')}

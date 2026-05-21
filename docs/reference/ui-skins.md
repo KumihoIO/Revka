@@ -55,8 +55,11 @@ Assets must live under `assets/`. The gateway stores imported skins under:
         "brandLogo": "assets/logo.png",
         "operatorAvatar": "assets/avatar.webp",
         "dashboardHero": "assets/hero.jpg",
+        "dashboardShowcase": "assets/showcase.webp",
         "shellTexture": "assets/shell-texture.png",
-        "panelDecoration": "assets/panel-decoration.webp"
+        "panelDecoration": "assets/panel-decoration.webp",
+        "riskRailDecoration": "assets/risk-rail.webp",
+        "statusSuccessBadge": "assets/success-badge.webp"
       },
       "preview": "assets/hero.jpg"
     },
@@ -137,13 +140,76 @@ Common useful tokens:
 |---|---|
 | `brandLogo` | sidebar/header brand image |
 | `operatorAvatar` | operator/agent avatar surfaces |
-| `dashboardHero` | dashboard visual hero |
+| `dashboardHero` | dashboard banner image |
 | `shellTexture` | subtle shell background texture |
 | `panelDecoration` | subtle panel corner decoration |
+| `pageBackdrop` | full application backdrop behind the shell |
+| `sidebarBackdrop` | sidebar-specific background art or texture |
+| `headerBackdrop` | top header command-band background art or texture |
+| `dashboardShowcase` | large dashboard visual panel for character, room, product, or scene art |
+| `dashboardAccent` | small dashboard showcase accent prop or emblem |
+| `graphBackdrop` | workflow/team graph canvas background |
+| `metricDecoration` | overview metric and mini-metric card decoration |
+| `runCardDecoration` | selected-run and run-summary decoration |
+| `stepCardDecoration` | selected-step/selected-node decoration |
+| `timelineDecoration` | priority timeline decoration |
+| `riskRailDecoration` | risk rail card decoration |
+| `agentRailDecoration` | agent rail card decoration |
+| `commandBandDecoration` | command band card decoration |
+| `recentRunsDecoration` | recent runs rail decoration |
+| `statusRunningBadge` | running status badge art |
+| `statusSuccessBadge` | completed/success status badge art |
+| `statusFailedBadge` | failed status badge art |
+| `statusPendingBadge` | pending/blocked status badge art |
+| `statusSkippedBadge` | skipped status badge art |
 
 Asset values must be relative paths under `assets/`, for example
 `assets/logo.webp`. Remote URLs, absolute paths, path traversal, and SVG are
 rejected.
+
+## Profile Images
+
+Agent and team profile images are intentionally not UI skin asset slots. Skin
+assets are theme-scoped visuals that ship in a ZIP package and apply globally.
+Per-agent and per-team profile images are identity assets, so they are uploaded
+from the Agent Pool and Agent Teams screens and stored as Kumiho file artifacts.
+
+Supported profile image uploads:
+
+| Target | Upload route | Artifact name | Storage shape |
+|---|---|---|---|
+| Agent | `POST /api/agents/avatar` | `profile-avatar` | `{workspace_dir}/artifacts/{project}/AgentPool/{agent}/avatars/{uuid}.{ext}` |
+| Team | `POST /api/teams/avatar` | `profile-avatar` | `{workspace_dir}/artifacts/{project}/Teams/{team}/avatars/{uuid}.{ext}` |
+
+Profile uploads accept PNG, JPEG, and WebP images up to 5 MiB. SVG and other
+file types are rejected, even when the file extension is allowed. Uploads are
+multipart requests with `kref` and `file` fields.
+
+Uploading a profile image creates a new published revision for the agent or
+team and stores the artifact metadata on the revision:
+
+```json
+{
+  "avatar_artifact_name": "profile-avatar",
+  "avatar_filename": "reviewer.png",
+  "avatar_mime": "image/png",
+  "avatar_location": "{workspace_dir}/artifacts/{project}/AgentPool/reviewer/avatars/{uuid}.png"
+}
+```
+
+The gateway returns a signed local workspace URL as `avatar_url`. Editing an
+agent or team without uploading a new image preserves the existing avatar
+metadata. Uploading a replacement image writes a new artifact file and updates
+the revision metadata.
+
+Workflow and topology surfaces render these identity assets separately from the
+skin:
+
+| Surface | Profile image behavior |
+|---|---|
+| Workflow task nodes | Assigned agent avatars are shown as a large node background layer and as a compact identity chip. Resolution prefers `runInfo.template_name`, then `assign`, then `template`. |
+| Run DAG nodes | Runtime step nodes use the same assigned-agent avatar treatment when the agent can be resolved. |
+| Agent Teams | Team cards and headers show the team avatar. Team topology member nodes show the member agent avatar as a large background layer and compact identity chip. |
 
 ## Gateway API
 

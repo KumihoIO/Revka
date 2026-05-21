@@ -55,7 +55,7 @@ export default function Sidebar({ mobileOpen = false, onCloseMobile }: SidebarPr
         className={`construct-sidebar fixed inset-y-0 left-0 z-50 flex flex-col overflow-hidden border-r transition-transform duration-200 lg:static lg:z-auto lg:flex lg:h-screen lg:flex-shrink-0 lg:translate-x-0 ${mobileOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}
         style={{
           borderColor: 'var(--construct-border-soft)',
-          background: 'var(--construct-bg-shell)',
+          backgroundColor: 'var(--construct-bg-shell)',
           width: sidebarWidth,
           padding: collapsed ? '1rem 0.5rem' : '1rem 0.75rem',
           transition: 'width 0.18s ease, padding 0.18s ease, transform 0.2s ease',

@@ -13,23 +13,42 @@
   min-height: 100vh;
   color: var(--construct-text-primary);
   background:
+    var(--construct-skin-pageBackdrop, none),
     var(--construct-skin-shellTexture, none),
     radial-gradient(circle at top left, var(--construct-grid-line), transparent 28%),
     radial-gradient(circle at top right, color-mix(in srgb, var(--construct-signal-network) 18%, transparent), transparent 22%),
     linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 18%),
     var(--construct-bg-base);
   background-size:
+    cover,
     min(720px, 100vw) auto,
     auto,
     auto,
     auto,
     auto;
   background-repeat:
+    no-repeat,
     repeat,
     no-repeat,
     no-repeat,
     no-repeat,
     no-repeat;
+  background-position:
+    center top,
+    top left,
+    top left,
+    top right,
+    top,
+    center;
+}
+
+.construct-sidebar {
+  background-image:
+    var(--construct-skin-sidebarBackdrop, none),
+    linear-gradient(180deg, color-mix(in srgb, var(--construct-signal-live) 5%, transparent), transparent 28%);
+  background-size: cover, auto;
+  background-repeat: no-repeat, no-repeat;
+  background-position: center top, top;
 }
 
 .construct-shell::before {
@@ -89,13 +108,45 @@
   width: 4.5rem;
   height: 4.5rem;
   background:
-    var(--construct-skin-panelDecoration, none),
+    var(--construct-panel-decoration, var(--construct-skin-panelDecoration, none)),
     radial-gradient(circle, color-mix(in srgb, var(--construct-signal-network) 12%, transparent), transparent 72%);
-  background-size: contain, auto;
-  background-repeat: no-repeat;
-  background-position: center;
+  background-size: contain, contain, auto;
+  background-repeat: no-repeat, no-repeat, no-repeat;
+  background-position: center, center, center;
   pointer-events: none;
   opacity: 0.7;
+}
+
+.construct-panel[data-skin-slot='riskRail'] {
+  --construct-panel-decoration: var(--construct-skin-riskRailDecoration, none), var(--construct-skin-panelDecoration, none);
+}
+
+.construct-panel[data-skin-slot='agentRail'] {
+  --construct-panel-decoration: var(--construct-skin-agentRailDecoration, none), var(--construct-skin-panelDecoration, none);
+}
+
+.construct-panel[data-skin-slot='commandBand'] {
+  --construct-panel-decoration: var(--construct-skin-commandBandDecoration, none), var(--construct-skin-panelDecoration, none);
+}
+
+.construct-panel[data-skin-slot='recentRuns'] {
+  --construct-panel-decoration: var(--construct-skin-recentRunsDecoration, none), var(--construct-skin-panelDecoration, none);
+}
+
+.construct-panel[data-skin-slot='runCard'] {
+  --construct-panel-decoration: var(--construct-skin-runCardDecoration, none), var(--construct-skin-panelDecoration, none);
+}
+
+.construct-panel[data-skin-slot='stepCard'] {
+  --construct-panel-decoration: var(--construct-skin-stepCardDecoration, none), var(--construct-skin-panelDecoration, none);
+}
+
+.construct-panel[data-skin-slot='timeline'] {
+  --construct-panel-decoration: var(--construct-skin-timelineDecoration, none), var(--construct-skin-panelDecoration, none);
+}
+
+.construct-panel[data-skin-slot='metric'] {
+  --construct-panel-decoration: var(--construct-skin-metricDecoration, none), var(--construct-skin-panelDecoration, none);
 }
 
 .construct-panel[data-variant='secondary'] {
@@ -105,6 +156,17 @@
 .construct-panel[data-variant='utility'] {
   background: color-mix(in srgb, var(--construct-bg-surface) 88%, transparent);
   box-shadow: none;
+}
+
+.construct-panel.construct-header-panel {
+  background:
+    var(--construct-skin-headerBackdrop, none),
+    linear-gradient(135deg, color-mix(in srgb, var(--construct-signal-live) 8%, transparent), transparent 36%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 28%),
+    var(--construct-bg-panel);
+  background-size: cover, auto, auto, auto;
+  background-repeat: no-repeat, no-repeat, no-repeat, no-repeat;
+  background-position: center, center, center, center;
 }
 
 .construct-title {
@@ -127,6 +189,31 @@
   font-size: 1.6rem;
   font-weight: 600;
   letter-spacing: -0.03em;
+}
+
+.construct-dashboard-stat {
+  position: relative;
+  overflow: hidden;
+  min-height: 5.25rem;
+  border: 1px solid var(--construct-border-soft);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--construct-bg-panel-strong) 74%, transparent);
+  padding: 0.85rem;
+}
+
+.construct-dashboard-stat::after {
+  content: '';
+  position: absolute;
+  right: 0.6rem;
+  bottom: 0.45rem;
+  width: 3.75rem;
+  height: 3.75rem;
+  background: var(--construct-skin-metricDecoration, none);
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center;
+  opacity: 0.42;
+  pointer-events: none;
 }
 
 .construct-status-pill {
@@ -460,6 +547,12 @@
 
 .construct-graph {
   position: relative;
+  background-image:
+    linear-gradient(180deg, color-mix(in srgb, var(--construct-bg-surface) 72%, transparent), color-mix(in srgb, var(--construct-bg-surface) 92%, transparent)),
+    var(--construct-skin-graphBackdrop, none);
+  background-size: auto, cover;
+  background-repeat: no-repeat, no-repeat;
+  background-position: center, center;
 }
 
 .construct-graph-overlay {
@@ -493,6 +586,45 @@
   font-size: 0.75rem;
 }
 
+.construct-mini-metric-card {
+  position: relative;
+  overflow: hidden;
+}
+
+.construct-mini-metric-card::after {
+  content: '';
+  position: absolute;
+  right: 0.65rem;
+  bottom: 0.55rem;
+  width: 3.5rem;
+  height: 3.5rem;
+  background: var(--construct-skin-metricDecoration, none);
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center;
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.construct-status-asset {
+  width: 0.95rem;
+  height: 0.95rem;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+
+.construct-dashboard-showcase {
+  min-height: clamp(18rem, 30vw, 32rem);
+  background:
+    linear-gradient(180deg, transparent 58%, color-mix(in srgb, var(--construct-bg-base) 78%, transparent)),
+    var(--construct-skin-dashboardAccent, none),
+    var(--construct-skin-dashboardShowcase, none),
+    var(--construct-bg-panel);
+  background-size: auto, min(12rem, 44%) auto, cover, auto;
+  background-repeat: no-repeat, no-repeat, no-repeat, no-repeat;
+  background-position: center, right 1rem bottom 1rem, center, center;
+}
+
 .construct-kbd {
   border: 1px solid var(--construct-border-neutral);
   border-radius: 8px;
@@ -512,8 +644,12 @@
   border: 1px solid color-mix(in srgb, var(--construct-signal-network) 16%, var(--construct-border-soft));
   border-radius: 16px;
   background:
+    var(--construct-skin-runCardDecoration, none),
     linear-gradient(135deg, color-mix(in srgb, var(--construct-signal-live) 10%, transparent), transparent 42%),
     color-mix(in srgb, var(--construct-bg-panel-strong) 94%, transparent);
+  background-size: min(9rem, 32%) auto, auto, auto;
+  background-repeat: no-repeat, no-repeat, no-repeat;
+  background-position: right 1rem center, center, center;
   padding: 0.9rem 1rem;
   box-shadow: 0 12px 28px rgba(0, 0, 0, 0.14);
 }

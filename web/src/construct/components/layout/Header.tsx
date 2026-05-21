@@ -48,7 +48,7 @@ export default function Header({ onOpenMobileNav }: HeaderProps) {
 
   return (
     <header className="px-4 py-3 lg:px-6 lg:py-4">
-      <div className="construct-panel p-3 lg:p-4">
+      <div className="construct-panel construct-header-panel p-3 lg:p-4">
         {/* Mobile: compact single-row header with title + right-aligned hamburger + operator.
             Desktop (lg+): full layout with pills and theme toggles. */}
         <div className="flex items-center gap-2 lg:hidden">

@@ -32,6 +32,7 @@ export function skinAssetPath(skinId: string, assetPath: string): string {
   const normalizedSkinId = encodeURIComponent(skinId);
   const normalizedAsset = assetPath
     .replace(/^\/+/, '')
+    .replace(/^assets\//, '')
     .split('/')
     .map((part) => encodeURIComponent(part))
     .join('/');

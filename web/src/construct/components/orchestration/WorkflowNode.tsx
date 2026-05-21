@@ -8,7 +8,12 @@ import {
   type StepRunInfo,
   type TaskNodeData,
 } from '@/construct/components/workflows/yamlSync';
+import AgentAvatar from '@/construct/components/ui/AgentAvatar';
 import { workflowActionTone, workflowStatusTone } from '../../lib/orchestration';
+
+function cssUrl(value: string): string {
+  return `url("${value.replace(/"/g, '%22')}")`;
+}
 
 // Tells React Flow to re-measure this node and re-anchor handles + MiniMap
 // rectangles whenever the rendered card resizes. Cards grow past their
@@ -115,6 +120,18 @@ function WorkflowNode({
         : accent;
   const failureReason = stepFailureReason(data.runInfo);
   const branchSummary = data.type === 'conditional' ? conditionalRunSummary(data.runInfo) : '';
+  const poolAgentLabel = data.runInfo?.template_name || data.assign || data.template;
+  const accentLayer = selected
+    ? `linear-gradient(135deg, color-mix(in srgb, ${operationalAccent} var(--construct-node-accent-selected), transparent), transparent 78%)`
+    : `linear-gradient(180deg, color-mix(in srgb, ${operationalAccent} var(--construct-node-accent-idle), transparent), transparent 42%)`;
+  const hasAvatarBackground = Boolean(data.agentAvatarUrl);
+  const nodeBackgroundImage = hasAvatarBackground
+    ? [
+        'linear-gradient(90deg, var(--construct-bg-panel-strong) 0%, color-mix(in srgb, var(--construct-bg-panel-strong) 88%, transparent) 50%, color-mix(in srgb, var(--construct-bg-panel-strong) 32%, transparent) 100%)',
+        accentLayer,
+        cssUrl(data.agentAvatarUrl!),
+      ].join(', ')
+    : accentLayer;
 
   return (
     <div
@@ -142,9 +159,11 @@ function WorkflowNode({
         minWidth: 220,
         maxWidth: 280,
         borderColor: selected ? operationalAccent : 'color-mix(in srgb, var(--construct-border-soft) 75%, transparent)',
-        background: selected
-          ? `linear-gradient(135deg, color-mix(in srgb, ${operationalAccent} var(--construct-node-accent-selected), transparent), transparent 78%), var(--construct-bg-panel-strong)`
-          : `linear-gradient(180deg, color-mix(in srgb, ${operationalAccent} var(--construct-node-accent-idle), transparent), transparent 42%), var(--construct-bg-panel-strong)`,
+        backgroundColor: 'var(--construct-bg-panel-strong)',
+        backgroundImage: nodeBackgroundImage,
+        backgroundRepeat: 'no-repeat',
+        backgroundPosition: hasAvatarBackground ? '0 0, 0 0, right -22px center' : undefined,
+        backgroundSize: hasAvatarBackground ? '100% 100%, 100% 100%, 56% auto' : undefined,
         boxShadow: selected
           ? `0 0 0 1px ${operationalAccent}, 0 0 28px color-mix(in srgb, ${operationalAccent} 26%, transparent)`
           : data.failing
@@ -188,7 +207,22 @@ function WorkflowNode({
             ) : null}
           </div>
         </div>
-        {data.runInfo?.agent_type ? (
+        {poolAgentLabel ? (
+          <span
+            className="inline-flex max-w-[116px] items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium"
+            style={{ background: 'var(--construct-signal-network-soft)', color: 'var(--construct-signal-network)' }}
+            title={data.agentDisplayName || poolAgentLabel}
+          >
+            <AgentAvatar
+              src={data.agentAvatarUrl}
+              alt={data.agentDisplayName || poolAgentLabel}
+              size={16}
+              radius={4}
+              iconSize={10}
+            />
+            <span className="truncate">{poolAgentLabel}</span>
+          </span>
+        ) : data.runInfo?.agent_type ? (
           <span className="rounded-md px-1.5 py-0.5 text-[10px] font-medium" style={{ background: 'var(--construct-signal-network-soft)', color: 'var(--construct-signal-network)' }}>
             {data.runInfo.agent_type}
           </span>

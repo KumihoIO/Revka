@@ -12,10 +12,11 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Bot, Loader2, X } from 'lucide-react';
-import { createAgent } from '@/lib/api';
+import { Bot, ImagePlus, Loader2, X } from 'lucide-react';
+import { createAgent, uploadAgentAvatar } from '@/lib/api';
 import { ApiError } from '@/lib/api';
 import type { AgentDefinition, AgentCreateRequest } from '@/types/api';
+import AgentAvatar from '@/construct/components/ui/AgentAvatar';
 import { slugify } from './slugify';
 
 interface Props {
@@ -72,8 +73,10 @@ export default function NewPoolAgentModal({ open, onClose, onCreated }: Props) {
   const [model, setModel] = useState('');
   const [identity, setIdentity] = useState('');
   const [systemHint, setSystemHint] = useState('');
+  const [avatarFile, setAvatarFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [avatarPreviewUrl, setAvatarPreviewUrl] = useState<string | null>(null);
 
   // Reset state on open.
   useEffect(() => {
@@ -86,10 +89,22 @@ export default function NewPoolAgentModal({ open, onClose, onCreated }: Props) {
     setModel('');
     setIdentity('');
     setSystemHint('');
+    setAvatarFile(null);
+    setAvatarPreviewUrl(null);
     setSubmitting(false);
     setError(null);
     requestAnimationFrame(() => nameRef.current?.focus());
   }, [open]);
+
+  useEffect(() => {
+    if (!avatarFile) {
+      setAvatarPreviewUrl(null);
+      return undefined;
+    }
+    const url = URL.createObjectURL(avatarFile);
+    setAvatarPreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [avatarFile]);
 
   // Auto-slugify name → slug until the user types into slug.
   useEffect(() => {
@@ -144,7 +159,10 @@ export default function NewPoolAgentModal({ open, onClose, onCreated }: Props) {
         model: model.trim() || undefined,
         system_hint: systemHint.trim() || undefined,
       };
-      const created = await createAgent(body);
+      let created = await createAgent(body);
+      if (avatarFile) {
+        created = await uploadAgentAvatar(created.kref, avatarFile);
+      }
       await onCreated(created);
     } catch (err) {
       let message = 'Failed to create agent';
@@ -289,6 +307,42 @@ export default function NewPoolAgentModal({ open, onClose, onCreated }: Props) {
               style={monoInputStyle}
               disabled={submitting}
             />
+          </div>
+
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+              padding: 10,
+              borderRadius: 10,
+              border: '1px solid var(--construct-border-soft)',
+              background: 'color-mix(in srgb, var(--construct-bg-panel-strong) 78%, transparent)',
+            }}
+          >
+            <AgentAvatar src={avatarPreviewUrl} alt={name || slug || 'Agent'} size={42} radius={10} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 11.5, fontWeight: 700, color: 'var(--construct-text-primary)' }}>
+                Profile image
+              </div>
+              <div style={{ marginTop: 2, fontSize: 10.5, color: 'var(--construct-text-faint)' }}>
+                PNG, JPEG, or WebP
+              </div>
+            </div>
+            <label
+              className="construct-button"
+              style={{ cursor: submitting ? 'not-allowed' : 'pointer' }}
+            >
+              <ImagePlus size={13} />
+              Upload
+              <input
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                disabled={submitting}
+                className="sr-only"
+                onChange={(event) => setAvatarFile(event.target.files?.[0] ?? null)}
+              />
+            </label>
           </div>
 
           {/* Agent type — segmented control */}

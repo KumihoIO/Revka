@@ -368,6 +368,9 @@ export interface TaskNodeData {
    *  discovery or by a hand-edited YAML. Distinct from `assign`, which is
    *  only written by the AgentPicker side-panel UI. */
   template: string;
+  /** UI-only: resolved from the pool-agent roster, never serialized to YAML. */
+  agentAvatarUrl?: string;
+  agentDisplayName?: string;
   paramCount: number;
   dependencyCount: number;
   /** Gate-only: condition expression */

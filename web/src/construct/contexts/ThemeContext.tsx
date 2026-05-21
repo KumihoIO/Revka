@@ -5,7 +5,7 @@ import type { ThemeMode, AccentColor, UiFont, MonoFont } from './ThemeContextDef
 import { uiFontStacks, monoFontStacks } from './ThemeContextDef';
 import { loadUiFont, loadMonoFont } from './fontLoader';
 import { colorThemeMap, DEFAULT_DARK_THEME, DEFAULT_LIGHT_THEME, type ColorThemeId } from './colorThemes';
-import type { SkinAssetSlot, SkinModeDefinition, SkinSummary } from '@/types/api';
+import { SKIN_ASSET_SLOTS, type SkinAssetSlot, type SkinModeDefinition, type SkinSummary } from '@/types/api';
 import {
   deleteSkin as apiDeleteSkin,
   getSkins as apiGetSkins,
@@ -200,6 +200,18 @@ function cssUrl(url: string): string {
   return `url("${url.replace(/"/g, '%22')}")`;
 }
 
+function skinAssetVars(
+  skin: SkinSummary | null,
+  assets: Partial<Record<SkinAssetSlot, string>>,
+): Record<string, string> {
+  const vars: Record<string, string> = {};
+  for (const slot of SKIN_ASSET_SLOTS) {
+    const asset = assets[slot];
+    vars[`--construct-skin-${slot}`] = asset && skin ? cssUrl(skinAssetPath(skin.id, asset)) : 'none';
+  }
+  return vars;
+}
+
 function deriveSkinTokenVars(tokens: Record<string, string>): Record<string, string> {
   const derived: Record<string, string> = {};
   const live = tokens['--construct-signal-live'];
@@ -236,8 +248,7 @@ function skinVars(
   const vars: Record<string, string> = {
     ...tokens,
     ...bridgePcVars(tokens),
-    '--construct-skin-shellTexture': assets.shellTexture && skin ? cssUrl(skinAssetPath(skin.id, assets.shellTexture)) : 'none',
-    '--construct-skin-panelDecoration': assets.panelDecoration && skin ? cssUrl(skinAssetPath(skin.id, assets.panelDecoration)) : 'none',
+    ...skinAssetVars(skin, assets),
   };
   return vars;
 }

@@ -1,8 +1,8 @@
-import { Pencil, Plus, Power, RefreshCw, Trash2, Users } from 'lucide-react';
+import { ImagePlus, Pencil, Plus, Power, RefreshCw, Trash2 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import type { AgentDefinition, TeamCreateRequest, TeamDefinition, TeamEdge, TeamUpdateRequest } from '@/types/api';
-import { createTeam, deleteTeam, fetchAgents, fetchTeam, fetchTeams, toggleTeamDeprecation, updateTeam } from '@/lib/api';
+import { createTeam, deleteTeam, fetchAgents, fetchTeam, fetchTeams, toggleTeamDeprecation, updateTeam, uploadTeamAvatar } from '@/lib/api';
 import { useT } from '@/construct/hooks/useT';
 import {
   SelectedMemberCard,
@@ -14,6 +14,7 @@ import PageHeader from '../components/ui/PageHeader';
 import Modal from '../components/ui/Modal';
 import StateMessage from '../components/ui/StateMessage';
 import TeamTopologyPanel from '../components/teams/TeamTopologyPanel';
+import AgentAvatar from '../components/ui/AgentAvatar';
 
 export default function Teams() {
   const { t, tpl } = useT();
@@ -91,6 +92,7 @@ export default function Teams() {
     setSaving(true);
     setError(null);
     try {
+      const avatarFile = values.avatarFile ?? null;
       if (selectedTeam) {
         const request: TeamUpdateRequest = {
           kref: selectedTeam.kref,
@@ -99,7 +101,10 @@ export default function Teams() {
           members: values.memberKrefs,
           edges: values.edges,
         };
-        const updated = await updateTeam(request);
+        let updated = await updateTeam(request);
+        if (avatarFile) {
+          updated = await uploadTeamAvatar(updated.kref, avatarFile);
+        }
         setSelectedTeam(updated);
         setNotice({ tone: 'success', message: tpl('teams.toast.updated', { name: updated.name }) });
       } else {
@@ -109,7 +114,10 @@ export default function Teams() {
           members: values.memberKrefs,
           edges: values.edges,
         };
-        const created = await createTeam(request);
+        let created = await createTeam(request);
+        if (avatarFile) {
+          created = await uploadTeamAvatar(created.kref, avatarFile);
+        }
         setSelectedTeam(created);
         setNotice({ tone: 'success', message: tpl('teams.toast.created', { name: created.name }) });
       }
@@ -213,7 +221,13 @@ export default function Teams() {
                   }}
                 >
                   <div className="flex items-center gap-2">
-                    <Users className="h-4 w-4 shrink-0" style={{ color: 'var(--construct-signal-network)' }} />
+                    <AgentAvatar
+                      src={team.avatar_url}
+                      alt={team.name}
+                      size={30}
+                      radius={8}
+                      kind="team"
+                    />
                     <div className="min-w-0 flex-1">
                       <div className="text-sm font-semibold">{team.name}</div>
                       <div className="mt-0.5 text-[11px]" style={{ color: 'var(--construct-text-secondary)' }}>
@@ -247,14 +261,19 @@ export default function Teams() {
           ) : (
             <>
               <div className="flex items-center justify-between gap-3">
-                <div className="flex items-center gap-2">
-                  <div className="text-sm font-semibold" style={{ color: 'var(--construct-text-primary)' }}>{selectedTeam.name}</div>
-                  <span className="rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em]" style={{
-                    background: selectedTeam.deprecated ? 'color-mix(in srgb, var(--construct-status-danger) 12%, transparent)' : 'color-mix(in srgb, var(--construct-status-success) 12%, transparent)',
-                    color: selectedTeam.deprecated ? 'var(--construct-status-danger)' : 'var(--construct-status-success)',
-                  }}>
-                    {selectedTeam.deprecated ? t('teams.status.deprecated') : t('teams.status.active')}
-                  </span>
+                <div className="flex min-w-0 items-center gap-3">
+                  <AgentAvatar src={selectedTeam.avatar_url} alt={selectedTeam.name} size={48} radius={12} kind="team" />
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-semibold" style={{ color: 'var(--construct-text-primary)' }}>{selectedTeam.name}</div>
+                    <div className="mt-1">
+                      <span className="rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em]" style={{
+                        background: selectedTeam.deprecated ? 'color-mix(in srgb, var(--construct-status-danger) 12%, transparent)' : 'color-mix(in srgb, var(--construct-status-success) 12%, transparent)',
+                        color: selectedTeam.deprecated ? 'var(--construct-status-danger)' : 'var(--construct-status-success)',
+                      }}>
+                        {selectedTeam.deprecated ? t('teams.status.deprecated') : t('teams.status.active')}
+                      </span>
+                    </div>
+                  </div>
                 </div>
                 <div className="flex items-center gap-1">
                   <button className="construct-button" onClick={() => setEditorOpen(true)} title={t('teams.action.edit')}>
@@ -354,6 +373,7 @@ interface TeamFormValues {
   description: string;
   memberKrefs: string[];
   edges: TeamEdge[];
+  avatarFile?: File | null;
 }
 
 function TeamEditorModal({
@@ -377,13 +397,26 @@ function TeamEditorModal({
   const [fromKref, setFromKref] = useState('');
   const [toKref, setToKref] = useState('');
   const [edgeType, setEdgeType] = useState<TeamEdge['edge_type']>('REPORTS_TO');
+  const [avatarFile, setAvatarFile] = useState<File | null>(null);
+  const [avatarPreviewUrl, setAvatarPreviewUrl] = useState<string | null>(team?.avatar_url ?? null);
 
   useEffect(() => {
     setName(team?.name ?? '');
     setDescription(team?.description ?? '');
     setMemberKrefs(team?.members.map((member) => member.kref) ?? []);
     setEdges(team?.edges ?? []);
+    setAvatarFile(null);
   }, [team]);
+
+  useEffect(() => {
+    if (!avatarFile) {
+      setAvatarPreviewUrl(team?.avatar_url ?? null);
+      return undefined;
+    }
+    const url = URL.createObjectURL(avatarFile);
+    setAvatarPreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [avatarFile, team?.avatar_url]);
 
   useEffect(() => {
     setEdges((current) =>
@@ -412,6 +445,7 @@ function TeamEditorModal({
       model: agent.model,
       identity: agent.identity,
       expertise: agent.expertise,
+      avatar_url: agent.avatar_url,
     })),
     edges,
     member_count: selectedAgents.length,
@@ -443,6 +477,28 @@ function TeamEditorModal({
           <input className="construct-input" value={description} onChange={(event) => setDescription(event.target.value)} />
         </label>
       </div>
+      <div className="mt-4 flex items-center gap-3 rounded-[12px] border p-3" style={{ borderColor: 'var(--construct-border-soft)' }}>
+        <AgentAvatar src={avatarPreviewUrl} alt={name || team?.name || 'Team'} size={58} radius={14} kind="team" />
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-semibold" style={{ color: 'var(--construct-text-primary)' }}>
+            Team profile image
+          </div>
+          <div className="mt-1 text-xs" style={{ color: 'var(--construct-text-faint)' }}>
+            PNG, JPEG, or WebP
+          </div>
+        </div>
+        <label className="construct-button cursor-pointer">
+          <ImagePlus className="h-4 w-4" />
+          Upload
+          <input
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            className="sr-only"
+            disabled={saving}
+            onChange={(event) => setAvatarFile(event.target.files?.[0] ?? null)}
+          />
+        </label>
+      </div>
       <div className="mt-4">
         <div className="construct-kicker">{t('teams.form.members')}</div>
         <div className="mt-3 grid max-h-[22rem] gap-2 overflow-auto md:grid-cols-2">
@@ -457,6 +513,7 @@ function TeamEditorModal({
                     setMemberKrefs((current) => event.target.checked ? [...current, agent.kref] : current.filter((value) => value !== agent.kref));
                   }}
                 />
+                <AgentAvatar src={agent.avatar_url} alt={agent.name} size={34} radius={9} />
                 <div className="min-w-0">
                   <div className="text-sm font-medium" style={{ color: 'var(--construct-text-primary)' }}>{agent.name}</div>
                   <div className="text-xs" style={{ color: 'var(--construct-text-secondary)' }}>{agent.role} / {agent.agent_type}</div>
@@ -539,7 +596,7 @@ function TeamEditorModal({
           className="construct-button"
           data-variant="primary"
           disabled={saving || !name.trim() || memberKrefs.length === 0}
-          onClick={() => onSave({ name: name.trim(), description: description.trim(), memberKrefs, edges })}
+          onClick={() => onSave({ name: name.trim(), description: description.trim(), memberKrefs, edges, avatarFile })}
         >
           {saving ? t('teams.form.saving') : team ? t('teams.form.save') : t('teams.modal.create_title')}
         </button>

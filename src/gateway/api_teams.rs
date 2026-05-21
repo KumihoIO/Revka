@@ -7,8 +7,12 @@
 
 use super::AppState;
 use super::api::require_auth;
-use super::kumiho_client::build_kumiho_client;
-use super::kumiho_client::{KumihoClient, KumihoError};
+use super::api_agents::{
+    AVATAR_ARTIFACT_NAME_KEY, AVATAR_FILENAME_KEY, AVATAR_LOCATION_KEY, AVATAR_MIME_KEY,
+    PROFILE_AVATAR_ARTIFACT_NAME, ascii_storage_segment, avatar_url_from_metadata,
+    detect_avatar_image, preserve_avatar_metadata, sanitize_upload_filename,
+};
+use super::kumiho_client::{KumihoClient, KumihoError, build_kumiho_client};
 
 /// Normalize a kref from a URL path — strip existing `kref://` prefix to avoid doubling.
 fn normalize_kref(raw: &str) -> String {
@@ -16,15 +20,17 @@ fn normalize_kref(raw: &str) -> String {
     format!("kref://{stripped}")
 }
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Multipart, Path, Query, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Json},
 };
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::path::PathBuf;
 use std::sync::OnceLock;
 use std::time::Instant;
+use tracing::{error, warn};
 
 // ── Response cache (avoids N+1 Kumiho calls on rapid dashboard polls) ───
 
@@ -36,6 +42,7 @@ struct TeamCache {
 
 static TEAM_CACHE: OnceLock<Mutex<Option<TeamCache>>> = OnceLock::new();
 const CACHE_TTL_SECS: u64 = 30;
+pub const TEAM_AVATAR_MAX_BODY: usize = 5 * 1024 * 1024;
 
 fn get_cached_teams(include_deprecated: bool) -> Option<Vec<TeamResponse>> {
     let lock = TEAM_CACHE.get_or_init(|| Mutex::new(None));
@@ -134,6 +141,10 @@ pub struct TeamResponse {
     pub member_names: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub edge_count: Option<u32>,
+    pub avatar_url: Option<String>,
+    pub avatar_artifact_name: Option<String>,
+    pub avatar_filename: Option<String>,
+    pub avatar_mime: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -144,6 +155,7 @@ pub struct TeamMemberResponse {
     pub agent_type: String,
     pub identity: String,
     pub expertise: Vec<String>,
+    pub avatar_url: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -164,6 +176,7 @@ fn kumiho_err(e: KumihoError) -> axum::response::Response {
 /// Build a full `TeamResponse` for a bundle kref by fetching members, enriching
 /// each with agent metadata, and collecting edges between members.
 async fn build_team_response(
+    state: &AppState,
     client: &KumihoClient,
     bundle_kref: &str,
     name: &str,
@@ -171,6 +184,21 @@ async fn build_team_response(
     deprecated: bool,
     created_at: Option<String>,
 ) -> Result<TeamResponse, KumihoError> {
+    let team_rev = client.get_published_or_latest(bundle_kref).await.ok();
+    let team_meta = team_rev.as_ref().map(|rev| &rev.metadata);
+    let response_description = if description.is_empty() {
+        team_meta
+            .and_then(|meta| meta.get("description"))
+            .cloned()
+            .unwrap_or_default()
+    } else {
+        description.to_string()
+    };
+    let avatar_url = avatar_url_from_metadata(state, team_meta);
+    let avatar_artifact_name = team_meta.and_then(|m| m.get(AVATAR_ARTIFACT_NAME_KEY).cloned());
+    let avatar_filename = team_meta.and_then(|m| m.get(AVATAR_FILENAME_KEY).cloned());
+    let avatar_mime = team_meta.and_then(|m| m.get(AVATAR_MIME_KEY).cloned());
+
     // 1. Fetch bundle members (gracefully handle errors — Kumiho may return 500)
     let members_resp = match client.list_bundle_members(bundle_kref).await {
         Ok(resp) => resp,
@@ -179,7 +207,7 @@ async fn build_team_response(
             return Ok(TeamResponse {
                 kref: bundle_kref.to_string(),
                 name: name.to_string(),
-                description: description.to_string(),
+                description: response_description,
                 deprecated,
                 created_at,
                 members: Vec::new(),
@@ -187,6 +215,10 @@ async fn build_team_response(
                 member_count: None,
                 member_names: None,
                 edge_count: None,
+                avatar_url,
+                avatar_artifact_name,
+                avatar_filename,
+                avatar_mime,
             });
         }
     };
@@ -257,6 +289,7 @@ async fn build_team_response(
             agent_type: get("agent_type"),
             identity: get("identity"),
             expertise,
+            avatar_url: avatar_url_from_metadata(state, meta),
         });
     }
 
@@ -323,12 +356,16 @@ async fn build_team_response(
     Ok(TeamResponse {
         kref: bundle_kref.to_string(),
         name: name.to_string(),
-        description: description.to_string(),
+        description: response_description,
         deprecated,
         created_at,
         member_count: None,
         member_names: None,
         edge_count: None,
+        avatar_url,
+        avatar_artifact_name,
+        avatar_filename,
+        avatar_mime,
         members: member_responses,
         edges: edge_responses,
     })
@@ -513,35 +550,49 @@ pub async fn handle_list_teams(
     let page = query.page.unwrap_or(1).max(1);
     let skip = ((page - 1) * per_page) as usize;
 
-    // Build summary responses from bundle metadata only — no enrichment calls.
-    let teams: Vec<TeamResponse> = items
+    let page_items: Vec<_> = items.iter().skip(skip).take(per_page as usize).collect();
+    let page_krefs: Vec<String> = page_items.iter().map(|item| item.kref.clone()).collect();
+    let rev_map = client
+        .batch_get_revisions(&page_krefs, "published")
+        .await
+        .unwrap_or_default();
+    let missing: Vec<String> = page_krefs
         .iter()
-        .skip(skip)
-        .take(per_page as usize)
+        .filter(|kref| !rev_map.contains_key(*kref))
+        .cloned()
+        .collect();
+    let latest_map = if missing.is_empty() {
+        HashMap::new()
+    } else {
+        client
+            .batch_get_revisions(&missing, "latest")
+            .await
+            .unwrap_or_default()
+    };
+
+    let teams: Vec<TeamResponse> = page_items
+        .iter()
         .map(|item| {
-            let member_count = item
-                .metadata
-                .get("member_count")
-                .and_then(|v| v.parse::<u32>().ok());
-            let member_names = item.metadata.get("member_names").map(|v| {
+            let rev = rev_map
+                .get(&item.kref)
+                .or_else(|| latest_map.get(&item.kref));
+            let meta = rev.map(|rev| &rev.metadata).unwrap_or(&item.metadata);
+            let member_count = meta.get("member_count").and_then(|v| v.parse::<u32>().ok());
+            let member_names = meta.get("member_names").map(|v| {
                 v.split(',')
                     .map(|s| s.trim().to_string())
                     .filter(|s| !s.is_empty())
                     .collect::<Vec<_>>()
             });
-            let edge_count = item
-                .metadata
-                .get("edge_count")
-                .and_then(|v| v.parse::<u32>().ok());
+            let edge_count = meta.get("edge_count").and_then(|v| v.parse::<u32>().ok());
 
             TeamResponse {
                 kref: item.kref.clone(),
-                name: item.item_name.clone(),
-                description: item
-                    .metadata
-                    .get("description")
+                name: meta
+                    .get("name")
                     .cloned()
-                    .unwrap_or_default(),
+                    .unwrap_or_else(|| item.item_name.clone()),
+                description: meta.get("description").cloned().unwrap_or_default(),
                 deprecated: item.deprecated,
                 created_at: item.created_at.clone(),
                 members: Vec::new(),
@@ -549,6 +600,10 @@ pub async fn handle_list_teams(
                 member_count,
                 member_names,
                 edge_count,
+                avatar_url: avatar_url_from_metadata(&state, Some(meta)),
+                avatar_artifact_name: meta.get(AVATAR_ARTIFACT_NAME_KEY).cloned(),
+                avatar_filename: meta.get(AVATAR_FILENAME_KEY).cloned(),
+                avatar_mime: meta.get(AVATAR_MIME_KEY).cloned(),
             }
         })
         .collect();
@@ -730,6 +785,7 @@ pub async fn handle_create_team(
     // 7. Build and return the full team response
     let description = body.description.as_deref().unwrap_or("");
     match build_team_response(
+        &state,
         &client,
         &bundle.kref,
         &bundle.item_name,
@@ -775,6 +831,7 @@ pub async fn handle_get_team(
         .cloned()
         .unwrap_or_default();
     match build_team_response(
+        &state,
         &client,
         &bundle.kref,
         &bundle.item_name,
@@ -808,6 +865,7 @@ pub async fn handle_update_team(
         Ok(b) => b,
         Err(e) => return kumiho_err(e).into_response(),
     };
+    let current_rev = client.get_published_or_latest(&kref).await.ok();
 
     // 2. Validate team graph before updating (always — even with empty edges)
     let validation_errors = validate_team_edges(&body.members, &body.edges);
@@ -842,6 +900,7 @@ pub async fn handle_update_team(
     metadata.insert("member_count".to_string(), body.members.len().to_string());
     metadata.insert("member_names".to_string(), member_names.join(","));
     metadata.insert("edge_count".to_string(), body.edges.len().to_string());
+    preserve_avatar_metadata(&mut metadata, current_rev.as_ref());
     if let Ok(rev) = client.create_revision(&kref, metadata).await {
         let _ = client.tag_revision(&rev.kref, "published").await;
     }
@@ -999,6 +1058,7 @@ pub async fn handle_update_team(
     // 5. Build and return the full team response
     let description = body.description.as_deref().unwrap_or("");
     match build_team_response(
+        &state,
         &client,
         &kref,
         &body.name,
@@ -1012,6 +1072,220 @@ pub async fn handle_update_team(
             invalidate_team_cache();
             Json(serde_json::json!({ "team": team })).into_response()
         }
+        Err(e) => kumiho_err(e).into_response(),
+    }
+}
+
+struct TeamAvatarUpload {
+    filename: String,
+    mime: String,
+    bytes: Vec<u8>,
+}
+
+/// POST /api/teams/avatar
+///
+/// Multipart fields:
+/// - `kref`: team bundle kref
+/// - `file`: png/jpeg/webp image bytes
+pub async fn handle_upload_team_avatar(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    mut multipart: Multipart,
+) -> impl IntoResponse {
+    if let Err(e) = require_auth(&state, &headers) {
+        return e.into_response();
+    }
+
+    let mut kref: Option<String> = None;
+    let mut upload: Option<TeamAvatarUpload> = None;
+    while let Ok(Some(field)) = multipart.next_field().await {
+        let name = field.name().map(str::to_string);
+        match name.as_deref() {
+            Some("kref") => match field.text().await {
+                Ok(value) => kref = Some(normalize_kref(value.trim())),
+                Err(err) => {
+                    warn!(err = %err, "failed to read team avatar kref field");
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(serde_json::json!({ "error": "failed to read kref field" })),
+                    )
+                        .into_response();
+                }
+            },
+            Some("file") => {
+                let filename = field
+                    .file_name()
+                    .map(sanitize_upload_filename)
+                    .unwrap_or_else(|| "avatar".to_string());
+                let mime = field
+                    .content_type()
+                    .map(str::to_string)
+                    .filter(|value| !value.trim().is_empty())
+                    .unwrap_or_else(|| "application/octet-stream".to_string());
+                let bytes = match field.bytes().await {
+                    Ok(bytes) => bytes,
+                    Err(err) => {
+                        warn!(err = %err, "failed to read team avatar upload bytes");
+                        return (
+                            StatusCode::BAD_REQUEST,
+                            Json(serde_json::json!({ "error": "failed to read upload body" })),
+                        )
+                            .into_response();
+                    }
+                };
+                if bytes.is_empty() {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(serde_json::json!({ "error": "empty avatar file" })),
+                    )
+                        .into_response();
+                }
+                if bytes.len() > TEAM_AVATAR_MAX_BODY {
+                    return (
+                        StatusCode::PAYLOAD_TOO_LARGE,
+                        Json(serde_json::json!({
+                            "error": format!(
+                                "team avatar exceeds {} byte limit (received {} bytes)",
+                                TEAM_AVATAR_MAX_BODY,
+                                bytes.len(),
+                            ),
+                        })),
+                    )
+                        .into_response();
+                }
+                upload = Some(TeamAvatarUpload {
+                    filename,
+                    mime,
+                    bytes: bytes.to_vec(),
+                });
+            }
+            _ => {}
+        }
+    }
+
+    let Some(kref) = kref else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "missing team kref" })),
+        )
+            .into_response();
+    };
+    let Some(upload) = upload else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "missing avatar file" })),
+        )
+            .into_response();
+    };
+
+    let kind = match detect_avatar_image(&upload.bytes, &upload.mime) {
+        Ok(kind) => kind,
+        Err(message) => {
+            return (
+                StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                Json(serde_json::json!({ "error": message })),
+            )
+                .into_response();
+        }
+    };
+
+    let client = build_kumiho_client(&state);
+    let bundle = match client.get_bundle(&kref).await {
+        Ok(bundle) => bundle,
+        Err(e) => return kumiho_err(e).into_response(),
+    };
+    let current_rev = match client.get_published_or_latest(&kref).await {
+        Ok(rev) => rev,
+        Err(e) => return kumiho_err(e).into_response(),
+    };
+
+    let project_segment = ascii_storage_segment(&team_project(&state), "construct");
+    let team_segment = ascii_storage_segment(&bundle.item_name, "team");
+    let filename = format!("{}.{}", uuid::Uuid::new_v4(), kind.ext);
+    let rel_path = PathBuf::from("artifacts")
+        .join(project_segment)
+        .join(TEAM_SPACE_NAME)
+        .join(team_segment)
+        .join("avatars")
+        .join(filename);
+    let workspace_dir = state.config.lock().workspace_dir.clone();
+    let absolute_path = workspace_dir.join(&rel_path);
+    if let Some(parent) = absolute_path.parent() {
+        if let Err(err) = tokio::fs::create_dir_all(parent).await {
+            error!(err = %err, dir = %parent.display(), "failed to create team avatar directory");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": "failed to create team avatar storage" })),
+            )
+                .into_response();
+        }
+    }
+    if let Err(err) = tokio::fs::write(&absolute_path, &upload.bytes).await {
+        error!(err = %err, path = %absolute_path.display(), "failed to persist team avatar");
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": "failed to persist team avatar" })),
+        )
+            .into_response();
+    }
+
+    let location = absolute_path.to_string_lossy().to_string();
+    let mut metadata = current_rev.metadata.clone();
+    metadata.insert(AVATAR_LOCATION_KEY.to_string(), location.clone());
+    metadata.insert(AVATAR_FILENAME_KEY.to_string(), upload.filename.clone());
+    metadata.insert(AVATAR_MIME_KEY.to_string(), kind.mime.to_string());
+    metadata.insert(
+        AVATAR_ARTIFACT_NAME_KEY.to_string(),
+        PROFILE_AVATAR_ARTIFACT_NAME.to_string(),
+    );
+
+    let rev = match client.create_revision(&kref, metadata).await {
+        Ok(rev) => rev,
+        Err(e) => {
+            let _ = tokio::fs::remove_file(&absolute_path).await;
+            return kumiho_err(e).into_response();
+        }
+    };
+
+    let mut artifact_metadata = HashMap::new();
+    artifact_metadata.insert("kind".to_string(), "team_avatar".to_string());
+    artifact_metadata.insert("mime".to_string(), kind.mime.to_string());
+    artifact_metadata.insert("filename".to_string(), upload.filename);
+    artifact_metadata.insert("team_bundle_kref".to_string(), kref.clone());
+
+    if let Err(e) = client
+        .create_artifact(
+            &rev.kref,
+            PROFILE_AVATAR_ARTIFACT_NAME,
+            &location,
+            artifact_metadata,
+        )
+        .await
+    {
+        let _ = tokio::fs::remove_file(&absolute_path).await;
+        return kumiho_err(e).into_response();
+    }
+    let _ = client.tag_revision(&rev.kref, "published").await;
+
+    invalidate_team_cache();
+    let description = rev
+        .metadata
+        .get("description")
+        .cloned()
+        .or_else(|| bundle.metadata.get("description").cloned())
+        .unwrap_or_default();
+    match build_team_response(
+        &state,
+        &client,
+        &bundle.kref,
+        &bundle.item_name,
+        &description,
+        bundle.deprecated,
+        bundle.created_at.clone(),
+    )
+    .await
+    {
+        Ok(team) => Json(serde_json::json!({ "team": team })).into_response(),
         Err(e) => kumiho_err(e).into_response(),
     }
 }

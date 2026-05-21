@@ -31,6 +31,7 @@ export default function TeamTopologyPanel({
         agentType: member.agent_type,
         identity: member.identity,
         kref: member.kref,
+        avatarUrl: member.avatar_url,
       },
     }));
 

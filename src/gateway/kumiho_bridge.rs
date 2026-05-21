@@ -145,7 +145,7 @@ async fn start_bridge(client: &Client) -> Result<BridgeState> {
 
     #[cfg(windows)]
     {
-        cmd.creation_flags(0x08000000);
+        cmd.creation_flags(0x0800_0000);
     }
 
     let mut child = cmd.spawn().context("spawning Kumiho SDK bridge")?;

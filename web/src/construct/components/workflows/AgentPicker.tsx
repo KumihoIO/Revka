@@ -20,10 +20,11 @@
  * open never re-hits the API.
  */
 
-import { Bot, Search } from 'lucide-react';
+import { Search } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { AgentDefinition } from '@/types/api';
+import AgentAvatar from '@/construct/components/ui/AgentAvatar';
 import { useAgentRoster } from './useAgentRoster';
 import NewPoolAgentModal from './NewPoolAgentModal';
 
@@ -293,14 +294,13 @@ export default function AgentPicker({
                         font: 'inherit',
                       }}
                     >
-                      <span
+                      <AgentAvatar
+                        src={agent.avatar_url}
+                        alt={agent.name || agent.item_name}
+                        size={24}
+                        radius={6}
+                        iconSize={13}
                         style={{
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          width: 24,
-                          height: 24,
-                          borderRadius: 6,
                           background: isSelected
                             ? 'var(--construct-signal-network-soft)'
                             : 'color-mix(in srgb, var(--pc-accent-glow) 60%, transparent)',
@@ -309,9 +309,7 @@ export default function AgentPicker({
                             : 'var(--pc-accent)',
                           flexShrink: 0,
                         }}
-                      >
-                        <Bot size={13} />
-                      </span>
+                      />
                       <span
                         style={{
                           display: 'flex',

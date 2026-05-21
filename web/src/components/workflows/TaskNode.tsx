@@ -2,6 +2,7 @@ import { Handle, Position, type NodeTypes } from '@xyflow/react';
 import { Bot, Lock } from 'lucide-react';
 import type { TaskNodeData } from '@/construct/components/workflows/yamlSync';
 import { emitOpenAgentPicker } from '@/construct/components/workflows/stepEvents';
+import AgentAvatar from '@/construct/components/ui/AgentAvatar';
 
 // Action → token mapping. Maps semantic intent to Construct CSS vars.
 // Categories:
@@ -97,11 +98,26 @@ const AGENT_TYPE_TONES: Record<string, ActionTone> = {
   codex: 'warning',
 };
 
+function cssUrl(value: string): string {
+  return `url("${value.replace(/"/g, '%22')}")`;
+}
+
 function TaskNode({ id, data, selected }: { id: string; data: TaskNodeData; selected?: boolean }) {
   const tone = getActionTone(data.type);
   const color = toneColorVar(tone);
   const soft = toneSoftVar(tone);
   const isAgentStep = (data.type || 'agent') === 'agent';
+  const baseLayer = selected
+    ? `linear-gradient(135deg, ${soft} 0%, ${soft} 40%, transparent 100%)`
+    : `linear-gradient(135deg, ${soft} 0%, color-mix(in srgb, var(--construct-bg-elevated) 72%, transparent) 50%, transparent 100%)`;
+  const hasAvatarBackground = Boolean(data.agentAvatarUrl);
+  const nodeBackgroundImage = hasAvatarBackground
+    ? [
+        'linear-gradient(90deg, var(--construct-bg-panel-strong) 0%, color-mix(in srgb, var(--construct-bg-panel-strong) 86%, transparent) 54%, color-mix(in srgb, var(--construct-bg-panel-strong) 32%, transparent) 100%)',
+        baseLayer,
+        cssUrl(data.agentAvatarUrl!),
+      ].join(', ')
+    : baseLayer;
 
   const openAgentPicker = (event: React.MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
@@ -114,12 +130,15 @@ function TaskNode({ id, data, selected }: { id: string; data: TaskNodeData; sele
       className={`px-4 py-3 rounded-xl shadow-lg transition-all${data.justUpdated ? ' step-updated-pulse' : ''}`}
       style={{
         position: 'relative',
-        background: selected
-          ? `linear-gradient(135deg, ${soft} 0%, ${soft} 40%, var(--construct-bg-panel-strong) 100%)`
-          : `linear-gradient(135deg, ${soft} 0%, var(--construct-bg-elevated) 50%, var(--construct-bg-surface) 100%)`,
+        backgroundColor: selected ? 'var(--construct-bg-panel-strong)' : 'var(--construct-bg-surface)',
+        backgroundImage: nodeBackgroundImage,
+        backgroundRepeat: 'no-repeat',
+        backgroundPosition: hasAvatarBackground ? '0 0, 0 0, right -18px center' : undefined,
+        backgroundSize: hasAvatarBackground ? '100% 100%, 100% 100%, 56% auto' : undefined,
         border: `2px solid ${selected ? color : 'var(--construct-border-strong)'}`,
         minWidth: 220,
         maxWidth: 280,
+        minHeight: 142,
         boxShadow: selected
           ? `0 0 20px ${soft}, inset 0 1px 0 ${soft}`
           : `0 4px 12px rgba(0, 0, 0, 0.3), inset 0 1px 0 var(--construct-border-soft)`,
@@ -180,7 +199,13 @@ function TaskNode({ id, data, selected }: { id: string; data: TaskNodeData; sele
           }}
           title={`Assigned: ${data.assign}${isAgentStep ? ' — click to change' : ''}`}
         >
-          <span style={{ fontSize: '8px' }}>●</span>
+          <AgentAvatar
+            src={data.agentAvatarUrl}
+            alt={data.agentDisplayName || data.assign}
+            size={14}
+            radius={4}
+            iconSize={9}
+          />
           {data.assign}
         </button>
       )}
@@ -204,7 +229,13 @@ function TaskNode({ id, data, selected }: { id: string; data: TaskNodeData; sele
           }}
           title={`Pool persona "${data.template}" — click to change`}
         >
-          <Bot size={10} />
+          <AgentAvatar
+            src={data.agentAvatarUrl}
+            alt={data.agentDisplayName || data.template}
+            size={14}
+            radius={4}
+            iconSize={9}
+          />
           Persona · {data.template}
         </button>
       )}
@@ -372,7 +403,13 @@ function TaskNode({ id, data, selected }: { id: string; data: TaskNodeData; sele
               }}
               title={`Pool Agent: ${data.runInfo.template_name}`}
             >
-              <span style={{ fontSize: '8px' }}>●</span>
+              <AgentAvatar
+                src={data.agentAvatarUrl}
+                alt={data.agentDisplayName || data.runInfo.template_name}
+                size={14}
+                radius={4}
+                iconSize={9}
+              />
               {data.runInfo.template_name}
             </div>
           )}

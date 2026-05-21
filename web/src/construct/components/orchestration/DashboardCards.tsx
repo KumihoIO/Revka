@@ -36,7 +36,7 @@ export function DashboardMetricStrip({
 
 function DashboardStat({ label, value }: { label: string; value: ReactNode }) {
   return (
-    <div>
+    <div className="construct-dashboard-stat">
       <div className="construct-kicker">{label}</div>
       <div className="construct-metric-value mt-2">{value}</div>
     </div>
@@ -57,7 +57,7 @@ export function CommandBandCard({
   model,
 }: CommandBandCardProps) {
   return (
-    <Panel className="p-4">
+    <Panel className="p-4" skinSlot="commandBand">
       <div className="construct-kicker">Command Band</div>
       <div className="mt-3 grid gap-2 text-sm">
         <StatusPill status={selectedRunStatus ?? 'running'} />
@@ -93,7 +93,7 @@ export function AgentRailCard({
   activeChannelCount,
 }: AgentRailCardProps) {
   return (
-    <Panel className="p-4" variant="secondary">
+    <Panel className="p-4" variant="secondary" skinSlot="agentRail">
       <div className="construct-kicker">Agent Rail</div>
       <div className="mt-3 space-y-3">
         <MiniMetricCard
@@ -139,7 +139,7 @@ export function RiskRailCard({
   degradedComponentCount,
 }: RiskRailCardProps) {
   return (
-    <Panel className="p-4" variant="secondary">
+    <Panel className="p-4" variant="secondary" skinSlot="riskRail">
       <div className="construct-kicker">Risk Rail</div>
       <div className="mt-3 space-y-3">
         <MiniMetricCard
@@ -172,7 +172,7 @@ interface RecentRunsRailCardProps {
 
 export function RecentRunsRailCard({ runs, onSelectRun, selectedRunId, footer }: RecentRunsRailCardProps) {
   return (
-    <Panel className="p-4" variant="utility">
+    <Panel className="p-4" variant="utility" skinSlot="recentRuns">
       <div className="flex items-center gap-2">
         <Activity className="h-4 w-4" style={{ color: 'var(--construct-signal-network)' }} />
         <span className="text-sm font-medium">Recent runs</span>
@@ -223,7 +223,7 @@ interface MiniMetricCardProps {
 
 function MiniMetricCard({ icon, label, value, detail }: MiniMetricCardProps) {
   return (
-    <div className="rounded-[12px] border p-3" style={{ borderColor: 'var(--construct-border-soft)' }}>
+    <div className="construct-mini-metric-card rounded-[12px] border p-3" style={{ borderColor: 'var(--construct-border-soft)' }}>
       <div className="flex items-center gap-2">
         {icon}
         <span className="text-sm font-medium" style={{ color: 'var(--construct-text-primary)' }}>{label}</span>

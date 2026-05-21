@@ -9,6 +9,7 @@ use super::api::require_auth;
 use super::kumiho_client::{
     ItemResponse, KumihoClient, KumihoError, RevisionResponse, build_kumiho_client, slugify,
 };
+use super::workspace_assets;
 
 /// Normalize a kref from a URL path — strip existing `kref://` prefix to avoid doubling.
 fn normalize_kref(raw: &str) -> String {
@@ -16,15 +17,17 @@ fn normalize_kref(raw: &str) -> String {
     format!("kref://{stripped}")
 }
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Multipart, Path, Query, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Json},
 };
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::path::{Component, Path as FsPath, PathBuf};
 use std::sync::OnceLock;
 use std::time::Instant;
+use tracing::{error, warn};
 
 // ── Response cache (avoids N+1 Kumiho calls on rapid dashboard polls) ───
 
@@ -36,6 +39,19 @@ struct AgentCache {
 
 static AGENT_CACHE: OnceLock<Mutex<Option<AgentCache>>> = OnceLock::new();
 const CACHE_TTL_SECS: u64 = 3;
+pub const AGENT_AVATAR_MAX_BODY: usize = 5 * 1024 * 1024;
+const AGENT_AVATAR_TTL_SECS: u64 = 24 * 60 * 60;
+pub(super) const PROFILE_AVATAR_ARTIFACT_NAME: &str = "profile-avatar";
+pub(super) const AVATAR_LOCATION_KEY: &str = "avatar_location";
+pub(super) const AVATAR_FILENAME_KEY: &str = "avatar_filename";
+pub(super) const AVATAR_MIME_KEY: &str = "avatar_mime";
+pub(super) const AVATAR_ARTIFACT_NAME_KEY: &str = "avatar_artifact_name";
+pub(super) const AVATAR_METADATA_KEYS: &[&str] = &[
+    AVATAR_LOCATION_KEY,
+    AVATAR_FILENAME_KEY,
+    AVATAR_MIME_KEY,
+    AVATAR_ARTIFACT_NAME_KEY,
+];
 
 fn get_cached_agents(include_deprecated: bool) -> Option<Vec<AgentResponse>> {
     let lock = AGENT_CACHE.get_or_init(|| Mutex::new(None));
@@ -143,6 +159,11 @@ pub struct AgentResponse {
     pub model: String,
     pub system_hint: String,
     pub revision: Option<i32>,
+    pub revision_number: Option<i32>,
+    pub avatar_url: Option<String>,
+    pub avatar_artifact_name: Option<String>,
+    pub avatar_filename: Option<String>,
+    pub avatar_mime: Option<String>,
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────
@@ -183,8 +204,178 @@ fn agent_metadata(body: &CreateAgentBody) -> HashMap<String, String> {
     meta
 }
 
+pub(super) fn preserve_avatar_metadata(
+    metadata: &mut HashMap<String, String>,
+    rev: Option<&RevisionResponse>,
+) {
+    let Some(rev) = rev else {
+        return;
+    };
+    for key in AVATAR_METADATA_KEYS {
+        if let Some(value) = rev.metadata.get(*key) {
+            metadata.insert((*key).to_string(), value.clone());
+        }
+    }
+}
+
+pub(super) fn sanitize_upload_filename(name: &str) -> String {
+    let cleaned = name
+        .chars()
+        .map(|c| match c {
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+            c if c.is_control() => '_',
+            c => c,
+        })
+        .collect::<String>()
+        .trim()
+        .trim_matches('.')
+        .to_string();
+    if cleaned.is_empty() {
+        "avatar".to_string()
+    } else {
+        cleaned
+    }
+}
+
+pub(super) fn ascii_storage_segment(value: &str, fallback: &str) -> String {
+    let mut out = String::new();
+    let mut prev_dash = false;
+    for c in value.trim().to_lowercase().chars() {
+        let next = if c.is_ascii_alphanumeric() {
+            Some(c)
+        } else if c == '-' || c == '_' {
+            Some('-')
+        } else {
+            None
+        };
+        match next {
+            Some('-') => {
+                if !prev_dash && !out.is_empty() {
+                    out.push('-');
+                    prev_dash = true;
+                }
+            }
+            Some(c) => {
+                out.push(c);
+                prev_dash = false;
+            }
+            None => {
+                if !prev_dash && !out.is_empty() {
+                    out.push('-');
+                    prev_dash = true;
+                }
+            }
+        }
+    }
+    let trimmed = out.trim_matches('-');
+    if trimmed.is_empty() {
+        fallback.to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct AvatarImageKind {
+    pub(super) ext: &'static str,
+    pub(super) mime: &'static str,
+}
+
+struct AvatarUpload {
+    filename: String,
+    mime: String,
+    bytes: Vec<u8>,
+}
+
+pub(super) fn detect_avatar_image(
+    bytes: &[u8],
+    declared_mime: &str,
+) -> Result<AvatarImageKind, &'static str> {
+    let mime = declared_mime
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    if mime == "image/svg+xml" {
+        return Err("svg avatars are not supported");
+    }
+
+    let kind = if bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]) {
+        AvatarImageKind {
+            ext: "png",
+            mime: "image/png",
+        }
+    } else if bytes.starts_with(&[0xff, 0xd8, 0xff]) {
+        AvatarImageKind {
+            ext: "jpg",
+            mime: "image/jpeg",
+        }
+    } else if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        AvatarImageKind {
+            ext: "webp",
+            mime: "image/webp",
+        }
+    } else {
+        return Err("avatar must be a png, jpeg, or webp image");
+    };
+
+    if !mime.is_empty() && mime != "application/octet-stream" && !mime.starts_with("image/") {
+        return Err("avatar upload content type must be an image");
+    }
+    Ok(kind)
+}
+
+fn path_to_workspace_rel(workspace_dir: &FsPath, location: &str) -> Option<String> {
+    let path = PathBuf::from(location);
+    let rel = if path.is_absolute() {
+        match path.strip_prefix(workspace_dir) {
+            Ok(stripped) => stripped.to_path_buf(),
+            Err(_) => {
+                let root = workspace_dir.canonicalize().ok()?;
+                let canonical = path.canonicalize().ok()?;
+                canonical.strip_prefix(root).ok()?.to_path_buf()
+            }
+        }
+    } else {
+        path
+    };
+
+    let mut parts = Vec::new();
+    for component in rel.components() {
+        match component {
+            Component::Normal(part) => parts.push(part.to_string_lossy().to_string()),
+            Component::CurDir => {}
+            _ => return None,
+        }
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("/"))
+    }
+}
+
+pub(super) fn avatar_url_from_metadata(
+    state: &AppState,
+    meta: Option<&HashMap<String, String>>,
+) -> Option<String> {
+    let location = meta?.get(AVATAR_LOCATION_KEY)?;
+    let workspace_dir = state.config.lock().workspace_dir.clone();
+    let rel_path = path_to_workspace_rel(&workspace_dir, location)?;
+    Some(workspace_assets::sign_url(
+        &rel_path,
+        AGENT_AVATAR_TTL_SECS,
+        state.service_token.as_bytes(),
+    ))
+}
+
 /// Build an `AgentResponse` from an item + its latest revision metadata.
-fn to_agent_response(item: &ItemResponse, rev: Option<&RevisionResponse>) -> AgentResponse {
+fn to_agent_response(
+    state: &AppState,
+    item: &ItemResponse,
+    rev: Option<&RevisionResponse>,
+) -> AgentResponse {
     let meta = rev.map(|r| &r.metadata);
     let get = |key: &str| -> String { meta.and_then(|m| m.get(key)).cloned().unwrap_or_default() };
     let expertise_str = get("expertise");
@@ -222,6 +413,11 @@ fn to_agent_response(item: &ItemResponse, rev: Option<&RevisionResponse>) -> Age
         model: get("model"),
         system_hint: get("system_hint"),
         revision: rev.map(|r| r.number),
+        revision_number: rev.map(|r| r.number),
+        avatar_url: avatar_url_from_metadata(state, meta),
+        avatar_artifact_name: meta.and_then(|m| m.get(AVATAR_ARTIFACT_NAME_KEY).cloned()),
+        avatar_filename: meta.and_then(|m| m.get(AVATAR_FILENAME_KEY).cloned()),
+        avatar_mime: meta.and_then(|m| m.get(AVATAR_MIME_KEY).cloned()),
     }
 }
 
@@ -229,7 +425,11 @@ fn to_agent_response(item: &ItemResponse, rev: Option<&RevisionResponse>) -> Age
 ///
 /// Uses batch API for a single HTTP call instead of N parallel requests.
 /// Falls back to parallel individual calls if the batch endpoint is unavailable.
-async fn enrich_items(client: &KumihoClient, items: Vec<ItemResponse>) -> Vec<AgentResponse> {
+async fn enrich_items(
+    state: &AppState,
+    client: &KumihoClient,
+    items: Vec<ItemResponse>,
+) -> Vec<AgentResponse> {
     if items.is_empty() {
         return Vec::new();
     }
@@ -259,7 +459,7 @@ async fn enrich_items(client: &KumihoClient, items: Vec<ItemResponse>) -> Vec<Ag
                 let rev = rev_map
                     .get(&item.kref)
                     .or_else(|| latest_map.get(&item.kref));
-                to_agent_response(item, rev)
+                to_agent_response(state, item, rev)
             })
             .collect();
     }
@@ -276,7 +476,7 @@ async fn enrich_items(client: &KumihoClient, items: Vec<ItemResponse>) -> Vec<Ag
     let mut agents = Vec::with_capacity(items.len());
     for (item, handle) in items.iter().zip(handles) {
         let rev = handle.await.ok().flatten();
-        agents.push(to_agent_response(item, rev.as_ref()));
+        agents.push(to_agent_response(state, item, rev.as_ref()));
     }
     agents
 }
@@ -336,7 +536,7 @@ pub async fn handle_list_agents(
 
     match items_result {
         Ok(items) => {
-            let agents = enrich_items(&client, items).await;
+            let agents = enrich_items(&state, &client, items).await;
             // Cache non-search results
             if query.q.is_none() {
                 set_cached_agents(&agents, query.include_deprecated);
@@ -415,7 +615,7 @@ pub async fn handle_create_agent(
     let _ = client.tag_revision(&rev.kref, "published").await;
 
     invalidate_agent_cache();
-    let agent = to_agent_response(&item, Some(&rev));
+    let agent = to_agent_response(&state, &item, Some(&rev));
     (
         StatusCode::CREATED,
         Json(serde_json::json!({ "agent": agent })),
@@ -439,9 +639,11 @@ pub async fn handle_update_agent(
     let kref = normalize_kref(&kref);
     let client = build_kumiho_client(&state);
     let space_path = agent_space_path(&state);
+    let current_rev = client.get_published_or_latest(&kref).await.ok();
 
     // Create new revision on existing item with updated metadata
-    let metadata = agent_metadata(&body);
+    let mut metadata = agent_metadata(&body);
+    preserve_avatar_metadata(&mut metadata, current_rev.as_ref());
     let rev = match client.create_revision(&kref, metadata).await {
         Ok(rev) => rev,
         Err(e) => return kumiho_err(e).into_response(),
@@ -460,7 +662,7 @@ pub async fn handle_update_agent(
     let item = items.iter().find(|i| i.kref == kref);
     match item {
         Some(item) => {
-            let agent = to_agent_response(item, Some(&rev));
+            let agent = to_agent_response(&state, item, Some(&rev));
             Json(serde_json::json!({ "agent": agent })).into_response()
         }
         None => {
@@ -480,10 +682,213 @@ pub async fn handle_update_agent(
                 author_display: None,
                 metadata: HashMap::new(),
             };
-            let agent = to_agent_response(&fallback, Some(&rev));
+            let agent = to_agent_response(&state, &fallback, Some(&rev));
             Json(serde_json::json!({ "agent": agent })).into_response()
         }
     }
+}
+
+/// POST /api/agents/avatar
+///
+/// Multipart fields:
+/// - `kref`: agent item kref
+/// - `file`: png/jpeg/webp image bytes
+pub async fn handle_upload_agent_avatar(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    mut multipart: Multipart,
+) -> impl IntoResponse {
+    if let Err(e) = require_auth(&state, &headers) {
+        return e.into_response();
+    }
+
+    let mut kref: Option<String> = None;
+    let mut upload: Option<AvatarUpload> = None;
+
+    while let Ok(Some(field)) = multipart.next_field().await {
+        let name = field.name().map(str::to_string);
+        match name.as_deref() {
+            Some("kref") => match field.text().await {
+                Ok(value) => kref = Some(normalize_kref(value.trim())),
+                Err(err) => {
+                    warn!(err = %err, "failed to read agent avatar kref field");
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(serde_json::json!({ "error": "failed to read kref field" })),
+                    )
+                        .into_response();
+                }
+            },
+            Some("file") => {
+                let filename = field
+                    .file_name()
+                    .map(sanitize_upload_filename)
+                    .unwrap_or_else(|| "avatar".to_string());
+                let mime = field
+                    .content_type()
+                    .map(str::to_string)
+                    .filter(|value| !value.trim().is_empty())
+                    .unwrap_or_else(|| "application/octet-stream".to_string());
+                let bytes = match field.bytes().await {
+                    Ok(bytes) => bytes,
+                    Err(err) => {
+                        warn!(err = %err, "failed to read agent avatar upload bytes");
+                        return (
+                            StatusCode::BAD_REQUEST,
+                            Json(serde_json::json!({ "error": "failed to read upload body" })),
+                        )
+                            .into_response();
+                    }
+                };
+                if bytes.is_empty() {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(serde_json::json!({ "error": "empty avatar file" })),
+                    )
+                        .into_response();
+                }
+                if bytes.len() > AGENT_AVATAR_MAX_BODY {
+                    return (
+                        StatusCode::PAYLOAD_TOO_LARGE,
+                        Json(serde_json::json!({
+                            "error": format!(
+                                "avatar exceeds {} byte limit (received {} bytes)",
+                                AGENT_AVATAR_MAX_BODY,
+                                bytes.len(),
+                            ),
+                        })),
+                    )
+                        .into_response();
+                }
+                upload = Some(AvatarUpload {
+                    filename,
+                    mime,
+                    bytes: bytes.to_vec(),
+                });
+            }
+            _ => {}
+        }
+    }
+
+    let Some(kref) = kref else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "missing agent kref" })),
+        )
+            .into_response();
+    };
+    let Some(upload) = upload else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "missing avatar file" })),
+        )
+            .into_response();
+    };
+
+    let kind = match detect_avatar_image(&upload.bytes, &upload.mime) {
+        Ok(kind) => kind,
+        Err(message) => {
+            return (
+                StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                Json(serde_json::json!({ "error": message })),
+            )
+                .into_response();
+        }
+    };
+
+    let client = build_kumiho_client(&state);
+    let space_path = agent_space_path(&state);
+    let item = match client.list_items(&space_path, true).await {
+        Ok(items) => match items.into_iter().find(|item| item.kref == kref) {
+            Some(item) => item,
+            None => {
+                return (
+                    StatusCode::NOT_FOUND,
+                    Json(serde_json::json!({ "error": "agent not found" })),
+                )
+                    .into_response();
+            }
+        },
+        Err(e) => return kumiho_err(e).into_response(),
+    };
+
+    let current_rev = match client.get_published_or_latest(&kref).await {
+        Ok(rev) => rev,
+        Err(e) => return kumiho_err(e).into_response(),
+    };
+
+    let project_segment = ascii_storage_segment(&agent_project(&state), "construct");
+    let item_segment = ascii_storage_segment(&item.item_name, "agent");
+    let filename = format!("{}.{}", uuid::Uuid::new_v4(), kind.ext);
+    let rel_path = PathBuf::from("artifacts")
+        .join(project_segment)
+        .join(AGENT_SPACE_NAME)
+        .join(item_segment)
+        .join("avatars")
+        .join(filename);
+    let workspace_dir = state.config.lock().workspace_dir.clone();
+    let absolute_path = workspace_dir.join(&rel_path);
+    if let Some(parent) = absolute_path.parent() {
+        if let Err(err) = tokio::fs::create_dir_all(parent).await {
+            error!(err = %err, dir = %parent.display(), "failed to create agent avatar directory");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": "failed to create avatar storage" })),
+            )
+                .into_response();
+        }
+    }
+    if let Err(err) = tokio::fs::write(&absolute_path, &upload.bytes).await {
+        error!(err = %err, path = %absolute_path.display(), "failed to persist agent avatar");
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": "failed to persist avatar" })),
+        )
+            .into_response();
+    }
+
+    let location = absolute_path.to_string_lossy().to_string();
+    let mut metadata = current_rev.metadata.clone();
+    metadata.insert(AVATAR_LOCATION_KEY.to_string(), location.clone());
+    metadata.insert(AVATAR_FILENAME_KEY.to_string(), upload.filename.clone());
+    metadata.insert(AVATAR_MIME_KEY.to_string(), kind.mime.to_string());
+    metadata.insert(
+        AVATAR_ARTIFACT_NAME_KEY.to_string(),
+        PROFILE_AVATAR_ARTIFACT_NAME.to_string(),
+    );
+
+    let rev = match client.create_revision(&kref, metadata).await {
+        Ok(rev) => rev,
+        Err(e) => {
+            let _ = tokio::fs::remove_file(&absolute_path).await;
+            return kumiho_err(e).into_response();
+        }
+    };
+
+    let mut artifact_metadata = HashMap::new();
+    artifact_metadata.insert("kind".to_string(), "agent_avatar".to_string());
+    artifact_metadata.insert("mime".to_string(), kind.mime.to_string());
+    artifact_metadata.insert("filename".to_string(), upload.filename);
+    artifact_metadata.insert("agent_item_kref".to_string(), kref.clone());
+
+    if let Err(e) = client
+        .create_artifact(
+            &rev.kref,
+            PROFILE_AVATAR_ARTIFACT_NAME,
+            &location,
+            artifact_metadata,
+        )
+        .await
+    {
+        let _ = tokio::fs::remove_file(&absolute_path).await;
+        return kumiho_err(e).into_response();
+    }
+
+    let _ = client.tag_revision(&rev.kref, "published").await;
+
+    invalidate_agent_cache();
+    let agent = to_agent_response(&state, &item, Some(&rev));
+    Json(serde_json::json!({ "agent": agent })).into_response()
 }
 
 /// POST /api/agents/deprecate
@@ -503,7 +908,7 @@ pub async fn handle_deprecate_agent(
         Ok(item) => {
             invalidate_agent_cache();
             let rev = client.get_published_or_latest(&kref).await.ok();
-            let agent = to_agent_response(&item, rev.as_ref());
+            let agent = to_agent_response(&state, &item, rev.as_ref());
             Json(serde_json::json!({ "agent": agent })).into_response()
         }
         Err(e) => kumiho_err(e).into_response(),

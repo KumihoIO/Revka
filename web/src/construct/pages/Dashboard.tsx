@@ -48,6 +48,7 @@ export default function Dashboard() {
   const { t, tpl } = useT();
   const { getSkinAsset } = useTheme();
   const dashboardHero = getSkinAsset('dashboardHero');
+  const dashboardShowcase = getSkinAsset('dashboardShowcase');
   const [searchParams, setSearchParams] = useSearchParams();
   const [data, setData] = useState<WorkflowDashboard | null>(null);
   const [status, setStatus] = useState<StatusResponse | null>(null);
@@ -331,7 +332,11 @@ export default function Dashboard() {
         )}
       />
 
-      {dashboardHero ? (
+      {dashboardShowcase ? (
+        <Panel className="construct-dashboard-showcase overflow-hidden p-0" variant="utility">
+          <div className="sr-only">{t('nav.dashboard')}</div>
+        </Panel>
+      ) : dashboardHero ? (
         <Panel className="min-h-[8rem] overflow-hidden p-0" variant="utility">
           <div
             className="h-32 w-full bg-cover bg-center"
@@ -397,11 +402,11 @@ export default function Dashboard() {
                 <div className="space-y-2">
                   <OperatorSection title={t('dashboard.run_posture')}>
                     <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
-                      <OperatorCountChip label={t('dashboard.count.running')} value={runStepCounts.running} tone="var(--construct-signal-live)" compact />
-                      <OperatorCountChip label={t('dashboard.count.failed')} value={runStepCounts.failed} tone="var(--construct-status-danger)" compact />
-                      <OperatorCountChip label={t('dashboard.count.completed')} value={runStepCounts.completed} tone="var(--construct-status-success)" compact />
-                      <OperatorCountChip label={t('dashboard.count.pending')} value={runStepCounts.pending} tone="var(--construct-text-faint)" compact />
-                      <OperatorCountChip label={t('dashboard.count.skipped')} value={runStepCounts.skipped} tone="var(--construct-status-idle)" compact />
+                      <OperatorCountChip label={t('dashboard.count.running')} value={runStepCounts.running} tone="var(--construct-signal-live)" compact assetSlot="statusRunningBadge" />
+                      <OperatorCountChip label={t('dashboard.count.failed')} value={runStepCounts.failed} tone="var(--construct-status-danger)" compact assetSlot="statusFailedBadge" />
+                      <OperatorCountChip label={t('dashboard.count.completed')} value={runStepCounts.completed} tone="var(--construct-status-success)" compact assetSlot="statusSuccessBadge" />
+                      <OperatorCountChip label={t('dashboard.count.pending')} value={runStepCounts.pending} tone="var(--construct-text-faint)" compact assetSlot="statusPendingBadge" />
+                      <OperatorCountChip label={t('dashboard.count.skipped')} value={runStepCounts.skipped} tone="var(--construct-status-idle)" compact assetSlot="statusSkippedBadge" />
                     </div>
                   </OperatorSection>
                   {signalTasks.length > 0 ? (
@@ -493,7 +498,7 @@ export default function Dashboard() {
                 emptyText={t('dashboard.select_dag_node')}
               />
 
-              <Panel className="p-4" variant="utility">
+              <Panel className="p-4" variant="utility" skinSlot="timeline">
                 <div className="construct-kicker">{t('dashboard.priority_timeline')}</div>
                 <div className="mt-3 space-y-2">
                   {selectedRun?.steps.map((step) => (
