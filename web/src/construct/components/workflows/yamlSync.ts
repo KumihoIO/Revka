@@ -1325,7 +1325,7 @@ function dedupChannels(values: string[]): string[] {
 export const GATE_EDGE_STYLES = {
   true: { stroke: 'var(--construct-status-success)', strokeWidth: 2 },
   false: { stroke: 'var(--construct-status-danger)', strokeWidth: 2 },
-  default: { stroke: 'var(--construct-status-warning)', strokeWidth: 2 },
+  default: { stroke: 'var(--construct-signal-selected)', strokeWidth: 2 },
 } as const;
 
 export function gateBranchHandle(index: number): string {

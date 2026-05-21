@@ -161,8 +161,8 @@ export default function Pairing() {
                   <div
                     className="rounded-[12px] border px-4 py-3 text-center font-mono text-3xl font-bold tracking-[0.4em]"
                     style={{
-                      borderColor: 'color-mix(in srgb, var(--construct-signal-live) 35%, transparent)',
-                      background: 'color-mix(in srgb, var(--construct-signal-live-soft) 40%, transparent)',
+                      borderColor: 'color-mix(in srgb, var(--construct-signal-selected) 35%, transparent)',
+                      background: 'color-mix(in srgb, var(--construct-signal-selected) 12%, transparent)',
                       color: 'var(--construct-text-primary)',
                     }}
                   >

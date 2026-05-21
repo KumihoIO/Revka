@@ -18,7 +18,7 @@ export default function Integrations() {
   const statusBadge = (status: Integration['status']) => {
     switch (status) {
       case 'Active':
-        return { icon: Check, label: t('integrations.badge.active'), color: 'var(--construct-status-success)', border: 'color-mix(in srgb, var(--construct-status-success) 24%, transparent)', bg: 'color-mix(in srgb, var(--construct-status-success) 10%, transparent)' };
+        return { icon: Check, label: t('integrations.badge.active'), color: 'var(--construct-signal-selected)', border: 'color-mix(in srgb, var(--construct-signal-selected) 24%, transparent)', bg: 'color-mix(in srgb, var(--construct-signal-selected) 10%, transparent)' };
       case 'Available':
         return { icon: Zap, label: t('integrations.badge.available'), color: 'var(--construct-signal-network)', border: 'color-mix(in srgb, var(--construct-signal-network) 24%, transparent)', bg: 'color-mix(in srgb, var(--construct-signal-network) 10%, transparent)' };
       case 'ComingSoon':
@@ -67,7 +67,7 @@ export default function Integrations() {
             <Panel className="p-4" variant="secondary">
               <div className="construct-kicker">{t('integrations.coverage')}</div>
               <div className="mt-4 grid gap-3 sm:grid-cols-3 xl:grid-cols-1">
-                <MetricPill label={t('integrations.metric.active')} value={summary.active} tone="var(--construct-status-success)" />
+                <MetricPill label={t('integrations.metric.active')} value={summary.active} tone="var(--construct-signal-selected)" />
                 <MetricPill label={t('integrations.metric.available')} value={summary.available} tone="var(--construct-signal-network)" />
                 <MetricPill label={t('integrations.metric.coming_soon')} value={summary.comingSoon} tone="var(--construct-text-faint)" />
               </div>
@@ -206,7 +206,7 @@ function MetricPill({
   tone: string;
 }) {
   return (
-    <div className="rounded-[14px] border p-3" style={{ borderColor: 'var(--construct-border-soft)', background: 'var(--construct-bg-surface)' }}>
+    <div className="rounded-[14px] border p-3" style={{ borderColor: 'var(--construct-border-soft)', background: 'color-mix(in srgb, var(--construct-bg-panel-strong) 88%, transparent)' }}>
       <div className="text-[10px] font-semibold uppercase tracking-[0.14em]" style={{ color: 'var(--construct-text-faint)' }}>{label}</div>
       <div className="mt-2 text-xl font-semibold" style={{ color: tone }}>{value}</div>
     </div>

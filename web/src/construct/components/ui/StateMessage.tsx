@@ -36,9 +36,9 @@ export default function StateMessage({
         return {
           icon: Inbox,
           iconClassName: '',
-          color: 'var(--construct-text-secondary)',
-          borderColor: 'var(--construct-border-soft)',
-          background: 'color-mix(in srgb, var(--construct-bg-panel-strong) 92%, transparent)',
+          color: 'var(--construct-signal-selected)',
+          borderColor: 'color-mix(in srgb, var(--construct-signal-selected) 22%, var(--construct-border-soft))',
+          background: 'linear-gradient(135deg, color-mix(in srgb, var(--construct-signal-selected) 5%, transparent), transparent 58%), color-mix(in srgb, var(--construct-bg-panel-strong) 92%, transparent)',
         };
     }
   })();

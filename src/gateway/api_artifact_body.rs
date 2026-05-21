@@ -203,6 +203,10 @@ fn body_from_revision_metadata(
     artifact: &ArtifactResponse,
     revision: &RevisionResponse,
 ) -> Option<ArtifactBodyBytes> {
+    if is_workflow_artifact(artifact, revision) {
+        return None;
+    }
+
     let filename = artifact_filename(artifact);
     let mime = mime_guess::from_path(&filename)
         .first_or_octet_stream()
@@ -230,13 +234,6 @@ fn text_payload_from_metadata(
     artifact: &ArtifactResponse,
     revision: &RevisionResponse,
 ) -> Option<String> {
-    if is_workflow_artifact(artifact, revision) {
-        return metadata_value(
-            &revision.metadata,
-            &["definition", "workflow_yaml", "content"],
-        );
-    }
-
     if !is_text_like_artifact(artifact) {
         return None;
     }
@@ -421,7 +418,7 @@ mod tests {
     }
 
     #[test]
-    fn metadata_fallback_serves_workflow_definition() {
+    fn metadata_fallback_does_not_serve_workflow_definition() {
         let artifact = artifact(
             "workflow.yaml",
             "file:///Users/neo/.construct/workflows/demo.r2.yaml",
@@ -433,11 +430,7 @@ mod tests {
         );
         let revision = revision("kref://Construct/Workflows/demo.workflow", metadata);
 
-        let body = body_from_revision_metadata(&artifact, &revision).unwrap();
-
-        assert_eq!(body.filename, "workflow.yaml");
-        assert!(body.mime.contains("yaml"));
-        assert_eq!(body.bytes, b"name: demo\nsteps: []\n");
+        assert!(body_from_revision_metadata(&artifact, &revision).is_none());
     }
 
     #[test]

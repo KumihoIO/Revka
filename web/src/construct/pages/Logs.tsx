@@ -16,26 +16,26 @@ function formatTimestamp(ts?: string): string {
 function eventTypeStyle(type: string): { color: string; bg: string; border: string } {
   switch (type.toLowerCase()) {
     case 'error':
-      return { color: 'var(--construct-status-danger)', bg: 'rgba(255,107,122,0.08)', border: 'rgba(255,107,122,0.18)' };
+      return { color: 'var(--construct-status-danger)', bg: 'color-mix(in srgb, var(--construct-status-danger) 8%, transparent)', border: 'color-mix(in srgb, var(--construct-status-danger) 18%, transparent)' };
     case 'warn':
     case 'warning':
-      return { color: 'var(--construct-status-warning)', bg: 'rgba(255,204,102,0.08)', border: 'rgba(255,204,102,0.18)' };
+      return { color: 'var(--construct-status-warning)', bg: 'color-mix(in srgb, var(--construct-status-warning) 8%, transparent)', border: 'color-mix(in srgb, var(--construct-status-warning) 18%, transparent)' };
     case 'tool_call':
     case 'tool_result':
     case 'tool_call_start':
-      return { color: '#a78bfa', bg: 'rgba(167,139,250,0.08)', border: 'rgba(167,139,250,0.18)' };
+      return { color: 'var(--construct-signal-selected)', bg: 'color-mix(in srgb, var(--construct-signal-selected) 8%, transparent)', border: 'color-mix(in srgb, var(--construct-signal-selected) 18%, transparent)' };
     case 'llm_request':
-      return { color: '#38bdf8', bg: 'rgba(56,189,248,0.08)', border: 'rgba(56,189,248,0.18)' };
+      return { color: 'var(--construct-signal-network)', bg: 'color-mix(in srgb, var(--construct-signal-network) 8%, transparent)', border: 'color-mix(in srgb, var(--construct-signal-network) 18%, transparent)' };
     case 'agent_start':
     case 'agent_end':
-      return { color: 'var(--construct-status-success)', bg: 'rgba(125,255,155,0.08)', border: 'rgba(125,255,155,0.18)' };
+      return { color: 'var(--construct-signal-selected)', bg: 'color-mix(in srgb, var(--construct-signal-selected) 8%, transparent)', border: 'color-mix(in srgb, var(--construct-signal-selected) 18%, transparent)' };
     case 'message':
     case 'chat':
-      return { color: 'var(--construct-signal-live)', bg: 'var(--construct-signal-live-soft)', border: 'color-mix(in srgb, var(--construct-signal-live) 28%, transparent)' };
+      return { color: 'var(--construct-signal-selected)', bg: 'var(--construct-signal-selected-soft, color-mix(in srgb, var(--construct-signal-selected) 18%, transparent))', border: 'color-mix(in srgb, var(--construct-signal-selected) 28%, transparent)' };
     case 'log':
       return { color: 'var(--construct-text-secondary)', bg: 'color-mix(in srgb, var(--construct-bg-panel-strong) 94%, transparent)', border: 'var(--construct-border-soft)' };
     case 'log_unavailable':
-      return { color: 'var(--construct-status-danger)', bg: 'rgba(255,107,122,0.08)', border: 'rgba(255,107,122,0.18)' };
+      return { color: 'var(--construct-status-danger)', bg: 'color-mix(in srgb, var(--construct-status-danger) 8%, transparent)', border: 'color-mix(in srgb, var(--construct-status-danger) 18%, transparent)' };
     default:
       return { color: 'var(--construct-text-secondary)', bg: 'color-mix(in srgb, var(--construct-bg-panel-strong) 94%, transparent)', border: 'var(--construct-border-soft)' };
   }
@@ -122,8 +122,8 @@ export default function Logs() {
         <div className="space-y-4">
           <Panel className="p-4">
             <div className="construct-kicker">{t('logs.stream_status')}</div>
-            <div className="mt-3 inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-semibold" style={{ color: connected ? 'var(--construct-status-success)' : 'var(--construct-status-danger)', background: connected ? 'rgba(125,255,155,0.08)' : 'rgba(255,107,122,0.08)' }}>
-              <span className="construct-dot" style={{ background: connected ? 'var(--construct-status-success)' : 'var(--construct-status-danger)' }} />
+            <div className="mt-3 inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-semibold" style={{ color: connected ? 'var(--construct-signal-selected)' : 'var(--construct-status-danger)', background: connected ? 'color-mix(in srgb, var(--construct-signal-selected) 8%, transparent)' : 'color-mix(in srgb, var(--construct-status-danger) 8%, transparent)' }}>
+              <span className="construct-dot" style={{ background: connected ? 'var(--construct-signal-selected)' : 'var(--construct-status-danger)' }} />
               {connected ? t('logs.connected') : t('logs.disconnected')}
             </div>
             <div className="mt-3 text-sm" style={{ color: 'var(--construct-text-secondary)' }}>

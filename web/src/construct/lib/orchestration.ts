@@ -127,7 +127,7 @@ export function workflowStatusTone(status?: string): string {
     case 'running':
       return 'var(--construct-signal-live)';
     case 'completed':
-      return 'var(--construct-status-success)';
+      return 'var(--construct-signal-selected)';
     case 'failed':
       return 'var(--construct-status-danger)';
     case 'skipped':

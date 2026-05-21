@@ -191,10 +191,10 @@ function parseTOML(toml: string): ParsedConfig {
 
 function colorScalar(v: string): string {
   const trimmed = v.trim();
-  if (trimmed === 'true' || trimmed === 'false') return `<span style="color:#7dfb9b">${v}</span>`;
-  if (/^-?\d[\d_]*(\.[\d_]*)?([eE][+-]?\d+)?$/.test(trimmed)) return `<span style="color:#ffd166">${v}</span>`;
-  if (trimmed.startsWith('"') || trimmed.startsWith("'")) return `<span style="color:#9be7a7">${v}</span>`;
-  if (trimmed.startsWith('[') || trimmed.startsWith('{')) return `<span style="color:#d7e4dc">${v}</span>`;
+  if (trimmed === 'true' || trimmed === 'false') return `<span style="color:var(--construct-signal-selected)">${v}</span>`;
+  if (/^-?\d[\d_]*(\.[\d_]*)?([eE][+-]?\d+)?$/.test(trimmed)) return `<span style="color:var(--construct-status-warning)">${v}</span>`;
+  if (trimmed.startsWith('"') || trimmed.startsWith("'")) return `<span style="color:var(--construct-status-success)">${v}</span>`;
+  if (trimmed.startsWith('[') || trimmed.startsWith('{')) return `<span style="color:var(--construct-text-primary)">${v}</span>`;
   return v;
 }
 
@@ -215,7 +215,7 @@ function highlightToml(raw: string): string {
   for (const line of raw.split('\n')) {
     const escaped = line.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     if (/^\s*\[/.test(escaped)) {
-      result.push(`<span style="color:#72d8ff;font-weight:600">${escaped}</span>`);
+      result.push(`<span style="color:var(--construct-signal-network);font-weight:600">${escaped}</span>`);
       continue;
     }
     if (/^\s*#/.test(escaped)) {
@@ -225,7 +225,7 @@ function highlightToml(raw: string): string {
     const kvMatch = escaped.match(/^(\s*)([A-Za-z0-9_\-.]+)(\s*=\s*)(.*)$/);
     if (kvMatch) {
       const [, indent, key, eq, rawValue] = kvMatch;
-      result.push(`${indent}<span style="color:#a78bfa">${key}</span><span style="color:#71717a">${eq}</span>${colorValue(rawValue ?? '')}`);
+      result.push(`${indent}<span style="color:var(--construct-signal-selected)">${key}</span><span style="color:var(--construct-text-faint)">${eq}</span>${colorValue(rawValue ?? '')}`);
       continue;
     }
     result.push(escaped);
@@ -649,7 +649,7 @@ export default function Config() {
                 />
 
                 {showPreview ? (
-                  <div className="min-h-0 overflow-auto rounded-[16px] border p-4" style={{ borderColor: 'var(--construct-border-soft)', background: '#09110d' }}>
+                  <div className="min-h-0 overflow-auto rounded-[16px] border p-4" style={{ borderColor: 'var(--construct-border-soft)', background: 'color-mix(in srgb, var(--construct-bg-base) 82%, var(--construct-bg-panel-strong))' }}>
                     <pre
                       className="whitespace-pre-wrap break-words text-xs leading-7"
                       style={{ color: 'var(--construct-text-secondary)', fontFamily: 'var(--pc-font-mono)' }}
@@ -928,15 +928,15 @@ function EditableToggle({
     <button
       type="button"
       className="flex items-center justify-between rounded-[12px] border px-3 py-3 text-left"
-      style={{ borderColor: 'var(--construct-border-soft)', background: 'var(--construct-bg-surface)' }}
+      style={{ borderColor: 'var(--construct-border-soft)', background: 'color-mix(in srgb, var(--construct-bg-panel-strong) 88%, transparent)' }}
       onClick={() => onChange(!checked)}
     >
       <span className="text-sm" style={{ color: 'var(--construct-text-primary)' }}>{label}</span>
       <span
         className="rounded-full px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.12em]"
         style={{
-          background: checked ? 'var(--construct-signal-live-soft)' : 'rgba(100,116,139,0.14)',
-          color: checked ? 'var(--construct-status-success)' : 'var(--construct-text-faint)',
+          background: checked ? 'var(--construct-signal-selected-soft, color-mix(in srgb, var(--construct-signal-selected) 18%, transparent))' : 'color-mix(in srgb, var(--construct-text-faint) 14%, transparent)',
+          color: checked ? 'var(--construct-signal-selected)' : 'var(--construct-text-faint)',
         }}
       >
         {checked ? t('config.toggle.enabled') : t('config.toggle.disabled')}
@@ -1141,8 +1141,8 @@ function McpServerCard({
     <div
       className="rounded-[14px] border"
       style={{
-        borderColor: hasError ? 'var(--construct-status-error, #f87171)' : 'var(--construct-border-soft)',
-        background: 'var(--construct-bg-surface)',
+        borderColor: hasError ? 'var(--construct-status-error, var(--construct-status-danger))' : 'var(--construct-border-soft)',
+        background: 'color-mix(in srgb, var(--construct-bg-panel-strong) 88%, transparent)',
       }}
     >
       <div className="flex items-center justify-between px-4 py-3">
@@ -1301,8 +1301,8 @@ function TestResultBadge({ state, t, tpl }: { state: TestState; t: TFn; tpl: Tpl
       <span
         className="inline-flex items-center gap-1 rounded border px-2 py-0.5 text-xs"
         style={{
-          borderColor: 'var(--construct-status-ok, #22c55e)',
-          color: 'var(--construct-status-ok, #22c55e)',
+          borderColor: 'var(--construct-status-ok, var(--construct-status-success))',
+          color: 'var(--construct-status-ok, var(--construct-status-success))',
         }}
         title={
           (result.tools && result.tools.length > 0)
@@ -1319,8 +1319,8 @@ function TestResultBadge({ state, t, tpl }: { state: TestState; t: TFn; tpl: Tpl
     <span
       className="inline-flex max-w-xs items-center gap-1 truncate rounded border px-2 py-0.5 text-xs"
       style={{
-        borderColor: 'var(--construct-status-error, #f87171)',
-        color: 'var(--construct-status-error, #f87171)',
+        borderColor: 'var(--construct-status-error, var(--construct-status-danger))',
+        color: 'var(--construct-status-error, var(--construct-status-danger))',
       }}
       title={result.error ?? t('config.mcp.handshake_failed')}
     >

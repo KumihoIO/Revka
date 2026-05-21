@@ -56,41 +56,48 @@ type NodeDetail = {
 };
 
 const KIND_COLORS: Record<string, string> = {
-  conversation: '#3b82f6',
-  decision: '#f59e0b',
-  fact: '#22c55e',
-  preference: '#a855f7',
-  correction: '#ef4444',
-  skill: '#06b6d4',
-  summary: '#6366f1',
-  bundle: '#14b8a6',
-  reflection: '#f472b6',
-  action: '#fbbf24',
-  error: '#f87171',
-  instruction: '#fb923c',
-  plan: '#8b5cf6',
-  implementation: '#10b981',
-  architecture: '#0ea5e9',
-  synthesis: '#e879f9',
-  space: '#64748b',
-  document: '#38bdf8',
-  skilldef: '#c084fc',
+  conversation: 'var(--construct-signal-network)',
+  decision: 'var(--construct-status-warning)',
+  fact: 'var(--construct-signal-selected)',
+  preference: 'var(--construct-signal-selected)',
+  correction: 'var(--construct-status-danger)',
+  skill: 'var(--construct-signal-network)',
+  summary: 'var(--construct-signal-selected)',
+  bundle: 'var(--construct-signal-live)',
+  reflection: 'var(--construct-signal-selected)',
+  action: 'var(--construct-status-warning)',
+  error: 'var(--construct-status-danger)',
+  instruction: 'var(--construct-status-warning)',
+  plan: 'var(--construct-signal-selected)',
+  implementation: 'var(--construct-signal-live)',
+  architecture: 'var(--construct-signal-network)',
+  synthesis: 'var(--construct-signal-selected)',
+  space: 'var(--construct-status-idle)',
+  document: 'var(--construct-signal-network)',
+  skilldef: 'var(--construct-signal-selected)',
 };
 
 const EDGE_COLORS: Record<string, string> = {
-  DEPENDS_ON: '#f97316',
-  DERIVED_FROM: '#a855f7',
-  REFERENCED: '#3b82f6',
-  CONTAINS: '#14b8a6',
-  CREATED_FROM: '#22c55e',
-  BELONGS_TO: '#6366f1',
-  SUPERSEDES: '#ef4444',
-  MEMBER: '#f59e0b',
-  USED_TEMPLATE: '#fb923c',
+  DEPENDS_ON: 'var(--construct-status-warning)',
+  DERIVED_FROM: 'var(--construct-signal-selected)',
+  REFERENCED: 'var(--construct-signal-network)',
+  CONTAINS: 'var(--construct-signal-live)',
+  CREATED_FROM: 'var(--construct-signal-selected)',
+  BELONGS_TO: 'var(--construct-signal-network)',
+  SUPERSEDES: 'var(--construct-status-danger)',
+  MEMBER: 'var(--construct-status-warning)',
+  USED_TEMPLATE: 'var(--construct-status-warning)',
 };
 
-const DEFAULT_NODE_COLOR = '#6b7280';
-const DEFAULT_EDGE_COLOR = '#475569';
+const DEFAULT_NODE_COLOR = 'var(--construct-text-muted)';
+const DEFAULT_EDGE_COLOR = 'var(--construct-text-faint)';
+
+function resolveCssColor(color: string): string {
+  if (typeof window === 'undefined') return color;
+  const match = color.match(/^var\((--[^,)]+)/);
+  if (!match) return color;
+  return getComputedStyle(document.documentElement).getPropertyValue(match[1]!).trim() || color;
+}
 
 function ensureKrefScheme(id: string): string {
   return id.startsWith('kref://') ? id : `kref://${id}`;
@@ -458,7 +465,7 @@ export default function Memory() {
   const paintNode = useCallback((node: ForceNode, ctx: CanvasRenderingContext2D, globalScale: number) => {
     const x = node.x ?? 0;
     const y = node.y ?? 0;
-    const color = KIND_COLORS[node.kind] || DEFAULT_NODE_COLOR;
+    const color = resolveCssColor(KIND_COLORS[node.kind] || DEFAULT_NODE_COLOR);
     const isSelected = node.id === selectedNodeId;
     const isHighlighted = !!node.__highlight;
     const isSpace = node.kind === 'space';
@@ -520,7 +527,7 @@ export default function Memory() {
     const target = link.target as ForceNode;
     if (typeof source !== 'object' || typeof target !== 'object') return;
     if (source.x == null || source.y == null || target.x == null || target.y == null) return;
-    const color = EDGE_COLORS[link.edgeType] || DEFAULT_EDGE_COLOR;
+    const color = resolveCssColor(EDGE_COLORS[link.edgeType] || DEFAULT_EDGE_COLOR);
     const searchActive = searchHighlight.size > 0;
     const sourceHighlighted = searchHighlight.has(source.id) || source.id === selectedNodeId;
     const targetHighlighted = searchHighlight.has(target.id) || target.id === selectedNodeId;
@@ -590,7 +597,7 @@ export default function Memory() {
                   step={25}
                   value={nodeLimit}
                   onChange={(event) => setNodeLimit(Number(event.target.value))}
-                  className="w-full accent-[var(--construct-signal-live)]"
+                  className="w-full accent-[var(--construct-signal-selected)]"
                 />
                 <div className="mt-2 text-xs font-mono" style={{ color: 'var(--construct-text-faint)' }}>{nodeLimit}</div>
               </div>

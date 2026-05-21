@@ -87,6 +87,7 @@ import ArchitectPanel from './ArchitectPanel';
 import RevisionHistoryStrip from './RevisionHistoryStrip';
 import { withAgentVisuals } from './agentVisuals';
 import { useAgentRoster } from './useAgentRoster';
+import { resolveCssVar } from '@/construct/lib/orchestration';
 import {
   ADD_STEP_EVENT,
   OPEN_AGENT_PICKER_EVENT,
@@ -1217,7 +1218,7 @@ function isTerminalRunStatus(status: string | undefined): boolean {
 
 function runStatusColor(status: string | undefined): string {
   const normalized = (status || '').toLowerCase();
-  if (['completed', 'success'].includes(normalized)) return 'var(--construct-status-success)';
+  if (['completed', 'success'].includes(normalized)) return 'var(--construct-signal-selected)';
   if (['failed', 'error', 'cancelled', 'canceled'].includes(normalized)) return 'var(--construct-status-danger)';
   if (['running', 'starting', 'queued', 'pending'].includes(normalized)) return 'var(--construct-signal-live)';
   return 'var(--construct-text-faint)';
@@ -3316,7 +3317,8 @@ function WorkflowEditorInner({
 
               <div
                 ref={canvasRef}
-                style={{ flex: 1, position: 'relative', background: 'var(--construct-bg-surface)' }}
+                className="construct-graph"
+                style={{ flex: 1, position: 'relative' }}
                 onMouseMove={(e) => {
                   rememberPointerFlowPosition(e.clientX, e.clientY);
                 }}
@@ -3388,7 +3390,7 @@ function WorkflowEditorInner({
                         height: 140,
                       }}
                       maskColor="rgba(0,0,0,0.32)"
-                      nodeColor={() => 'var(--pc-accent)'}
+                      nodeColor={() => resolveCssVar('var(--construct-signal-selected)')}
                     />
                   )}
                 </ReactFlow>

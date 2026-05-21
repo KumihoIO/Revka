@@ -1694,6 +1694,28 @@ pub async fn run_gateway_with_mcp_registry(
             Duration::from_secs(120),
         ));
 
+    // Workflow editor saves carry the full YAML definition in JSON. Real
+    // workflows can exceed the gateway's default 64 KiB small-API cap, but
+    // this route is still bounded so accidental multi-megabyte editor state
+    // does not loosen limits for the rest of the gateway.
+    const WORKFLOW_SAVE_MAX_BODY: usize = 16 * 1024 * 1024;
+    let workflow_save_router = Router::new()
+        .route(
+            "/api/workflows",
+            post(api_workflows::handle_create_workflow),
+        )
+        .route(
+            "/api/workflows/{*kref}",
+            put(api_workflows::handle_update_workflow),
+        )
+        .with_state(state.clone())
+        .layer(DefaultBodyLimit::disable())
+        .layer(RequestBodyLimitLayer::new(WORKFLOW_SAVE_MAX_BODY))
+        .layer(TimeoutLayer::with_status_code(
+            StatusCode::REQUEST_TIMEOUT,
+            Duration::from_secs(120),
+        ));
+
     // Build router with middleware
     let inner = Router::new()
         // ── Admin routes (for CLI management) ──
@@ -1805,11 +1827,11 @@ pub async fn run_gateway_with_mcp_registry(
         .route("/api/architect/revisions", get(api_architect::handle_list_workflow_revisions))
         .route("/api/architect/republish", post(api_architect::handle_republish_revision))
         // ── Workflow management API (proxied to Kumiho FastAPI) ──
-        .route("/api/workflows", get(api_workflows::handle_list_workflows).post(api_workflows::handle_create_workflow))
+        .route("/api/workflows", get(api_workflows::handle_list_workflows))
         .route("/api/workflows/deprecate", post(api_workflows::handle_deprecate_workflow))
         .route("/api/workflows/run/{name}", post(api_workflows::handle_run_workflow))
         .route("/api/workflows/revisions/{*kref}", get(api_workflows::handle_get_workflow_by_revision))
-        .route("/api/workflows/{*kref}", put(api_workflows::handle_update_workflow).delete(api_workflows::handle_delete_workflow))
+        .route("/api/workflows/{*kref}", delete(api_workflows::handle_delete_workflow))
         .route("/api/workflows/runs", get(api_workflows::handle_list_workflow_runs))
         .route("/api/workflows/runs/{run_id}", get(api_workflows::handle_get_workflow_run).delete(api_workflows::handle_delete_workflow_run))
         .route("/api/workflows/runs/{run_id}/approve", post(api_workflows::handle_approve_workflow_run))
@@ -1944,6 +1966,9 @@ pub async fn run_gateway_with_mcp_registry(
     // Merge UI skin routes (ZIP import has its own 25 MiB body limit + 120s
     // timeout; skin asset reads share the same storage-safe resolver).
     let inner = inner.merge(skins_router);
+
+    // Merge workflow editor save routes outside the global 64 KiB JSON cap.
+    let inner = inner.merge(workflow_save_router);
 
     // Nest under path prefix when configured (axum strips prefix before routing).
     // nest() at "/prefix" handles both "/prefix" and "/prefix/*" but not "/prefix/"

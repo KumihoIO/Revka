@@ -286,7 +286,7 @@ export default function Skills() {
                       <div className="min-w-0 flex-1">
                         <div className="flex items-start justify-between gap-2">
                           <div className="text-sm font-semibold leading-5" style={{ color: 'var(--construct-text-primary)' }}>{skill.name}</div>
-                          <span className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em]" style={{ background: skill.deprecated ? 'color-mix(in srgb, var(--construct-status-warning) 12%, transparent)' : 'color-mix(in srgb, var(--construct-status-success) 12%, transparent)', color: skill.deprecated ? 'var(--construct-status-warning)' : 'var(--construct-status-success)' }}>
+                          <span className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em]" style={{ background: skill.deprecated ? 'color-mix(in srgb, var(--construct-status-warning) 12%, transparent)' : 'color-mix(in srgb, var(--construct-signal-selected) 12%, transparent)', color: skill.deprecated ? 'var(--construct-status-warning)' : 'var(--construct-signal-selected)' }}>
                             {skill.deprecated ? t('skills.status.deprecated') : t('skills.status.active')}
                           </span>
                         </div>
@@ -317,8 +317,8 @@ export default function Skills() {
                   </div>
                 </div>
                 <span className="rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em]" style={{
-                  background: selectedSkill.deprecated ? 'color-mix(in srgb, var(--construct-status-warning) 12%, transparent)' : 'color-mix(in srgb, var(--construct-status-success) 12%, transparent)',
-                  color: selectedSkill.deprecated ? 'var(--construct-status-warning)' : 'var(--construct-status-success)',
+                  background: selectedSkill.deprecated ? 'color-mix(in srgb, var(--construct-status-warning) 12%, transparent)' : 'color-mix(in srgb, var(--construct-signal-selected) 12%, transparent)',
+                  color: selectedSkill.deprecated ? 'var(--construct-status-warning)' : 'var(--construct-signal-selected)',
                 }}>
                   {selectedSkill.deprecated ? t('skills.status.deprecated') : t('skills.status.active')}
                 </span>
@@ -488,7 +488,7 @@ function SummaryMetric({
   value: number;
 }) {
   return (
-    <div className="rounded-[14px] border p-3" style={{ borderColor: 'var(--construct-border-soft)', background: 'var(--construct-bg-surface)' }}>
+    <div className="rounded-[14px] border p-3" style={{ borderColor: 'var(--construct-border-soft)', background: 'color-mix(in srgb, var(--construct-bg-panel-strong) 88%, transparent)' }}>
       <div className="text-[10px] font-semibold uppercase tracking-[0.14em]" style={{ color: 'var(--construct-text-faint)' }}>{label}</div>
       <div className="mt-2 text-xl font-semibold" style={{ color: 'var(--construct-text-primary)' }}>{value}</div>
     </div>

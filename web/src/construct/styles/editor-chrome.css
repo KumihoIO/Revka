@@ -1,55 +1,31 @@
-/* Zion — engineering-deck palette for the workflow editor view.
-   Layers on top of the user's global theme, scoped to .editor-chrome.
-   Overrides both --pc-* tokens and the decorative --construct-* tokens
-   (bg, border, text, grid, soft signal chips, selection halo) that
-   drive the editor's top bar, panels, grid, and node chrome.
-   Status tokens (--construct-status-*, --construct-signal-live) are
-   intentionally NOT overridden — failures, runs, and approvals must
-   read at a glance. */
+/* Workflow editor token bridge.
+   Keep the older --pc-* editor surfaces in sync with the active Construct
+   skin. Do not pin a separate editor palette here; skins own the chrome. */
 
 .editor-chrome {
-  --pc-bg-base: #0e0d0c;
-  --pc-bg-surface: #181715;
-  --pc-bg-elevated: #22201d;
-  --pc-bg-input: #100f0d;
-  --pc-bg-code: #100f0d;
-  --pc-bg-sidebar: #0e0d0cf2;
+  --pc-bg-base: var(--construct-bg-base, #0e0d0c);
+  --pc-bg-surface: var(--construct-bg-surface, #181715);
+  --pc-bg-elevated: var(--construct-bg-elevated, #22201d);
+  --pc-bg-input: var(--construct-bg-input, color-mix(in srgb, var(--construct-bg-panel-strong, #22201d) 86%, var(--construct-bg-base, #0e0d0c)));
+  --pc-bg-code: var(--construct-bg-input, var(--construct-bg-elevated, #22201d));
+  --pc-bg-sidebar: var(--construct-bg-shell, var(--construct-bg-base, #0e0d0c));
 
-  --pc-text-primary: #d6d3cc;
-  --pc-text-secondary: #a8a39a;
-  --pc-text-muted: #75716a;
-  --pc-text-faint: #4d4945;
+  --pc-text-primary: var(--construct-text-primary, #d6d3cc);
+  --pc-text-secondary: var(--construct-text-secondary, #a8a39a);
+  --pc-text-muted: var(--construct-text-muted, #75716a);
+  --pc-text-faint: var(--construct-text-faint, #4d4945);
 
-  --pc-border: rgba(220, 200, 170, 0.06);
-  --pc-border-strong: rgba(220, 200, 170, 0.10);
-  --pc-hover: rgba(220, 200, 170, 0.04);
-  --pc-hover-strong: rgba(220, 200, 170, 0.07);
-  --pc-separator: rgba(220, 200, 170, 0.05);
+  --pc-border: var(--construct-border-soft, rgba(220, 200, 170, 0.06));
+  --pc-border-strong: var(--construct-border-strong, rgba(220, 200, 170, 0.10));
+  --pc-hover: var(--construct-hover-surface, color-mix(in srgb, var(--construct-signal-selected, #c87a3c) 10%, transparent));
+  --pc-hover-strong: color-mix(in srgb, var(--construct-signal-selected, #c87a3c) 16%, transparent);
+  --pc-separator: var(--construct-border-neutral, var(--construct-border-soft, rgba(220, 200, 170, 0.06)));
 
-  --pc-accent: #c87a3c;
-  --pc-accent-light: #e09454;
-  --pc-accent-dim: rgba(200, 122, 60, 0.25);
-  --pc-accent-glow: rgba(200, 122, 60, 0.10);
-  --pc-accent-rgb: 200, 122, 60;
-
-  --construct-signal-network: #c87a3c;
-
-  /* Decorative --construct-* chrome tokens that drive the editor's
-     actual visual identity (top bar, panels, grid, soft chips, selection halo).
-     Status tokens (--construct-status-*, --construct-signal-live) are
-     intentionally still NOT overridden. */
-  --construct-bg-base: #0e0d0c;
-  --construct-bg-surface: #181715;
-  --construct-bg-elevated: #22201d;
-  --construct-bg-panel-strong: #22201d;
-  --construct-border-soft: rgba(220,200,170,0.06);
-  --construct-border-strong: rgba(220,200,170,0.10);
-  --construct-text-primary: #d6d3cc;
-  --construct-text-secondary: #a8a39a;
-  --construct-text-faint: #4d4945;
-  --construct-grid-line: rgba(220,200,170,0.04);
-  --construct-signal-network-soft: rgba(200,122,60,0.12);
-  --construct-signal-selected: rgba(200,122,60,0.15);
+  --pc-accent: var(--construct-signal-selected, var(--construct-signal-live, #c87a3c));
+  --pc-accent-light: var(--construct-signal-selected, var(--construct-signal-live, #e09454));
+  --pc-accent-dim: color-mix(in srgb, var(--construct-signal-selected, #c87a3c) 30%, transparent);
+  --pc-accent-glow: var(--construct-signal-selected-soft, color-mix(in srgb, var(--construct-signal-selected, #c87a3c) 14%, transparent));
+  --pc-accent-glow-strong: color-mix(in srgb, var(--construct-signal-selected, #c87a3c) 24%, transparent);
 
   color-scheme: dark;
 }
@@ -68,7 +44,7 @@
 
 .editor-chrome .react-flow,
 .editor-chrome .react-flow__pane {
-  background: var(--construct-bg-surface);
+  background: transparent;
 }
 
 .editor-chrome .react-flow__renderer,

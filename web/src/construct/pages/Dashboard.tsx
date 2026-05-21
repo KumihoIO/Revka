@@ -1,5 +1,5 @@
 import { RefreshCw, Workflow } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useT } from '@/construct/hooks/useT';
 import { useTheme } from '@/construct/hooks/useTheme';
@@ -31,6 +31,7 @@ import {
   RecentRunsRailCard,
   RiskRailCard,
 } from '../components/orchestration/DashboardCards';
+import DashboardOperatorBrief from '../components/orchestration/DashboardOperatorBrief';
 import {
   OperatorCountChip,
   OperatorQuickFocusButton,
@@ -49,6 +50,8 @@ export default function Dashboard() {
   const { getSkinAsset } = useTheme();
   const dashboardHero = getSkinAsset('dashboardHero');
   const dashboardShowcase = getSkinAsset('dashboardShowcase');
+  const operatorAvatar = getSkinAsset('operatorAvatar');
+  const dashboardScene = dashboardShowcase ?? dashboardHero;
   const [searchParams, setSearchParams] = useSearchParams();
   const [data, setData] = useState<WorkflowDashboard | null>(null);
   const [status, setStatus] = useState<StatusResponse | null>(null);
@@ -264,6 +267,54 @@ export default function Dashboard() {
     [status?.health.components],
   );
 
+  const dashboardSceneStyle = useMemo(
+    () => dashboardScene
+      ? ({ '--construct-dashboard-scene-image': `url("${dashboardScene.replace(/"/g, '%22')}")` } as CSSProperties)
+      : undefined,
+    [dashboardScene],
+  );
+
+  const operatorTone = useMemo(() => {
+    if (error) return 'danger';
+    if (selectedRun?.status?.toLowerCase() === 'failed') return 'danger';
+    if (degradedComponentCount > 0) return 'warn';
+    if (selectedRun?.status?.toLowerCase() === 'running') return 'live';
+    return 'steady';
+  }, [degradedComponentCount, error, selectedRun?.status]);
+
+  const operatorBrief = useMemo(() => {
+    if (error) return t('dashboard.scene.error');
+    if (selectedRun) {
+      const total = selectedRun.steps_total || selectedRun.steps.length || '?';
+      const completed = selectedRun.steps_completed || 0;
+      const failed = selectedRun.steps.filter((step) => toStepRunInfo(step).status === 'failed').length;
+      if (failed > 0) {
+        return tpl('dashboard.scene.run_failed', {
+          workflow: selectedRun.workflow_name,
+          failed,
+          completed,
+          total,
+        });
+      }
+      return tpl('dashboard.scene.selected_run', {
+        workflow: selectedRun.workflow_name,
+        status: selectedRun.status,
+        completed,
+        total,
+      });
+    }
+    if ((data?.active_runs ?? 0) > 0) {
+      return tpl('dashboard.scene.active_overview', {
+        active: data?.active_runs ?? 0,
+        definitions: data?.definitions_count ?? 0,
+      });
+    }
+    return tpl('dashboard.scene.idle_overview', {
+      definitions: data?.definitions_count ?? 0,
+      total: data?.total_runs ?? 0,
+    });
+  }, [data?.active_runs, data?.definitions_count, data?.total_runs, error, selectedRun, t, tpl]);
+
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.metaKey || event.ctrlKey || event.altKey) return;
@@ -332,17 +383,16 @@ export default function Dashboard() {
         )}
       />
 
-      {dashboardShowcase ? (
+      {dashboardScene ? (
         <Panel className="construct-dashboard-showcase overflow-hidden p-0" variant="utility">
-          <div className="sr-only">{t('nav.dashboard')}</div>
-        </Panel>
-      ) : dashboardHero ? (
-        <Panel className="min-h-[8rem] overflow-hidden p-0" variant="utility">
-          <div
-            className="h-32 w-full bg-cover bg-center"
-            style={{ backgroundImage: `linear-gradient(90deg, var(--construct-bg-panel-strong), transparent 70%), url("${dashboardHero.replace(/"/g, '%22')}")` }}
-            aria-hidden="true"
-          />
+          <div className="construct-dashboard-scene" style={dashboardSceneStyle}>
+            <DashboardOperatorBrief
+              avatarUrl={operatorAvatar}
+              message={operatorBrief}
+              speaker={t('dashboard.scene.operator')}
+              tone={operatorTone}
+            />
+          </div>
         </Panel>
       ) : null}
 

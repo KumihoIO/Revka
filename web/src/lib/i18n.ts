@@ -471,6 +471,12 @@ const translations: Record<Locale, Record<string, string>> = {
     'dashboard.open_full_run_workspace': '打开完整运行工作区',
     'dashboard.open_all_runs': '打开所有工作流运行',
     'dashboard.status.blocked': '受阻',
+    'dashboard.scene.operator': '操作员简报',
+    'dashboard.scene.error': '仪表盘遥测出现异常。请先查看运行轨和日志，再继续下一步。',
+    'dashboard.scene.selected_run': '{workflow} 当前为 {status}。已完成 {completed}/{total} 个步骤。',
+    'dashboard.scene.run_failed': '{workflow} 需要关注：{failed} 个步骤失败，已完成 {completed}/{total} 个步骤。',
+    'dashboard.scene.active_overview': '当前有 {active} 个运行中流程，已加载 {definitions} 个定义。',
+    'dashboard.scene.idle_overview': '当前没有选中的运行。已准备好 {definitions} 个定义，历史运行总数为 {total}。',
 
     // Workflows (page)
     'workflows.kicker': '编排中心',
@@ -1921,6 +1927,12 @@ const translations: Record<Locale, Record<string, string>> = {
     'dashboard.open_full_run_workspace': 'Open full run workspace',
     'dashboard.open_all_runs': 'Open all workflow runs',
     'dashboard.status.blocked': 'blocked',
+    'dashboard.scene.operator': 'Operator Brief',
+    'dashboard.scene.error': 'Dashboard telemetry is degraded. Check the run rail and logs before committing to the next action.',
+    'dashboard.scene.selected_run': '{workflow} is {status}. {completed}/{total} steps are complete.',
+    'dashboard.scene.run_failed': '{workflow} needs attention: {failed} steps failed, with {completed}/{total} steps complete.',
+    'dashboard.scene.active_overview': '{active} runs are active across {definitions} workflow definitions.',
+    'dashboard.scene.idle_overview': 'No run is selected. {definitions} definitions are ready, with {total} total runs recorded.',
 
     // Workflows (page)
     'workflows.kicker': 'Orchestration Center',
@@ -3371,6 +3383,12 @@ const translations: Record<Locale, Record<string, string>> = {
     'dashboard.open_full_run_workspace': 'Tam çalıştırma çalışma alanını aç',
     'dashboard.open_all_runs': 'Tüm iş akışı çalıştırmalarını aç',
     'dashboard.status.blocked': 'engellendi',
+    'dashboard.scene.operator': 'Operatör Özeti',
+    'dashboard.scene.error': 'Pano telemetrisi bozuldu. Sonraki adımdan önce çalıştırma rayını ve günlükleri kontrol edin.',
+    'dashboard.scene.selected_run': '{workflow} şu anda {status}. {completed}/{total} adım tamamlandı.',
+    'dashboard.scene.run_failed': '{workflow} dikkat istiyor: {failed} adım başarısız, {completed}/{total} adım tamamlandı.',
+    'dashboard.scene.active_overview': '{definitions} iş akışı tanımı genelinde {active} aktif çalıştırma var.',
+    'dashboard.scene.idle_overview': 'Seçili çalıştırma yok. {definitions} tanım hazır, toplam {total} çalıştırma kaydedildi.',
 
     // Workflows (page)
     'workflows.kicker': 'Orkestrasyon Merkezi',
@@ -4820,6 +4838,12 @@ const translations: Record<Locale, Record<string, string>> = {
     'dashboard.open_full_run_workspace': '전체 실행 작업 공간 열기',
     'dashboard.open_all_runs': '모든 워크플로 실행 열기',
     'dashboard.status.blocked': '차단됨',
+    'dashboard.scene.operator': '오퍼레이터 브리프',
+    'dashboard.scene.error': '대시보드 텔레메트리가 불안정합니다. 다음 액션 전에 실행 레일과 로그를 확인하세요.',
+    'dashboard.scene.selected_run': '{workflow}는 현재 {status} 상태입니다. {completed}/{total} 단계가 완료됐습니다.',
+    'dashboard.scene.run_failed': '{workflow}에 확인이 필요합니다. {failed}개 단계가 실패했고 {completed}/{total} 단계가 완료됐습니다.',
+    'dashboard.scene.active_overview': '{definitions}개 워크플로 정의에서 {active}개 실행이 진행 중입니다.',
+    'dashboard.scene.idle_overview': '선택된 실행이 없습니다. {definitions}개 정의가 준비됐고 총 {total}회 실행이 기록됐습니다.',
 
     // Workflows (page)
     'workflows.kicker': '오케스트레이션 센터',

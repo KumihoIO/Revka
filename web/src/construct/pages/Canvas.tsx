@@ -108,10 +108,24 @@ export default function Canvas() {
     return () => clearInterval(interval);
   }, []);
 
+  const iframePalette = useMemo(() => {
+    if (typeof window === 'undefined') {
+      return {
+        bg: resolvedTheme === 'light' ? '#f9f2f4' : '#070607',
+        text: resolvedTheme === 'light' ? '#261019' : '#fff3f5',
+      };
+    }
+    const styles = getComputedStyle(document.documentElement);
+    return {
+      bg: styles.getPropertyValue('--construct-bg-base').trim() || (resolvedTheme === 'light' ? '#f9f2f4' : '#070607'),
+      text: styles.getPropertyValue('--construct-text-primary').trim() || (resolvedTheme === 'light' ? '#261019' : '#fff3f5'),
+    };
+  }, [resolvedTheme]);
+
   const iframeSrcDoc = useMemo(() => {
     if (!currentFrame || currentFrame.content_type === 'eval') return undefined;
-    const viewportBg = resolvedTheme === 'light' ? '#f6fbf7' : '#08110d';
-    const viewportText = resolvedTheme === 'light' ? '#173127' : '#dbece1';
+    const viewportBg = iframePalette.bg;
+    const viewportText = iframePalette.text;
 
     if (currentFrame.content_type === 'svg') {
       return `<!DOCTYPE html><html><head><style>body{margin:0;display:flex;align-items:center;justify-content:center;min-height:100vh;background:${viewportBg};color:${viewportText};}</style></head><body>${currentFrame.content}</body></html>`;
@@ -134,7 +148,7 @@ export default function Canvas() {
     }
 
     return currentFrame.content;
-  }, [currentFrame, resolvedTheme]);
+  }, [currentFrame, iframePalette]);
 
   const handleSwitchCanvas = () => {
     const nextCanvasId = canvasIdInput.trim();
@@ -183,12 +197,12 @@ export default function Canvas() {
               <span
                 className="construct-status-pill"
                 style={{
-                  color: connected ? 'var(--construct-status-success)' : 'var(--construct-status-danger)',
-                  background: connected ? 'color-mix(in srgb, var(--construct-status-success) 12%, transparent)' : 'color-mix(in srgb, var(--construct-status-danger) 12%, transparent)',
+                  color: connected ? 'var(--construct-signal-selected)' : 'var(--construct-status-danger)',
+                  background: connected ? 'color-mix(in srgb, var(--construct-signal-selected) 12%, transparent)' : 'color-mix(in srgb, var(--construct-status-danger) 12%, transparent)',
                   borderColor: 'transparent',
                 }}
               >
-                <span className="construct-dot" style={{ background: connected ? 'var(--construct-status-success)' : 'var(--construct-status-danger)' }} />
+                <span className="construct-dot" style={{ background: connected ? 'var(--construct-signal-selected)' : 'var(--construct-status-danger)' }} />
                 {connected ? t('canvas.connected') : t('canvas.disconnected')}
               </span>
               <span className="construct-status-pill" style={{ color: 'var(--construct-text-secondary)' }}>
@@ -277,7 +291,7 @@ export default function Canvas() {
             </Panel>
             <Panel className="p-3" variant="utility">
               <div className="construct-kicker">{t('canvas.connection')}</div>
-              <div className="mt-2 text-sm font-semibold" style={{ color: connected ? 'var(--construct-status-success)' : 'var(--construct-status-danger)' }}>
+              <div className="mt-2 text-sm font-semibold" style={{ color: connected ? 'var(--construct-signal-selected)' : 'var(--construct-status-danger)' }}>
                 {connected ? t('canvas.live') : t('canvas.offline')}
               </div>
             </Panel>

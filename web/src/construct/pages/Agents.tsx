@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { Brain, Filter, ImagePlus, Pencil, Plus, Power, RefreshCw, Search, Trash2 } from 'lucide-react';
 import type { AgentCreateRequest, AgentDefinition, AgentUpdateRequest } from '@/types/api';
 import { createAgent, deleteAgent, fetchAgents, toggleAgentDeprecation, updateAgent, uploadAgentAvatar } from '@/lib/api';
@@ -35,6 +35,12 @@ const EMPTY_FORM: AgentFormValues = {
   model: '',
   system_hint: '',
 };
+
+type ConstructStyle = CSSProperties & Record<string, string | number | undefined>;
+
+function cssImageUrl(url?: string | null): string {
+  return url ? `url("${url.replace(/"/g, '%22')}")` : 'none';
+}
 
 export default function Agents() {
   const { t, tpl } = useT();
@@ -194,17 +200,17 @@ export default function Agents() {
         )}
       />
 
-      <div className="flex items-center gap-3">
-        <div className="relative flex-1">
+      <div className="construct-agent-toolbar">
+        <div className="construct-agent-search relative">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2" style={{ color: 'var(--construct-text-faint)' }} />
           <input
             value={search}
             onChange={(event) => setSearch(event.target.value)}
-            className="construct-input pl-10"
+            className="construct-input construct-agent-search-input pl-10"
             placeholder={t('agents.search_placeholder')}
           />
         </div>
-        <select className="construct-input w-auto" value={roleFilter} onChange={(event) => setRoleFilter(event.target.value as typeof roleFilter)}>
+        <select className="construct-input construct-agent-filter-select w-auto" value={roleFilter} onChange={(event) => setRoleFilter(event.target.value as typeof roleFilter)}>
           <option value="all">{t('agents.filter.all_roles')}</option>
           <option value="coder">{t('agents.filter.coder')}</option>
           <option value="reviewer">{t('agents.filter.reviewer')}</option>
@@ -212,7 +218,7 @@ export default function Agents() {
         </select>
         <button
           type="button"
-          className="construct-button"
+          className="construct-button construct-agent-filter-button"
           onClick={() => setShowDisabled((current) => !current)}
         >
           <Filter className="h-4 w-4" />
@@ -245,24 +251,19 @@ export default function Agents() {
                 <button
                   key={agent.kref}
                   type="button"
-                  className="mb-1 w-full rounded-[12px] border px-3 py-3 text-left transition"
+                  className="construct-agent-list-card mb-1"
+                  data-active={String(agent.kref === selectedAgent?.kref)}
+                  data-has-avatar={String(Boolean(agent.avatar_url))}
                   style={{
                     opacity: agent.deprecated ? 0.68 : 1,
-                    borderColor: agent.kref === selectedAgent?.kref ? 'var(--construct-border-strong)' : 'var(--construct-border-soft)',
-                    background: agent.kref === selectedAgent?.kref
-                      ? 'color-mix(in srgb, var(--construct-signal-selected) 14%, var(--construct-bg-panel-strong))'
-                      : 'transparent',
-                  }}
+                    '--construct-agent-card-avatar': cssImageUrl(agent.avatar_url),
+                  } as ConstructStyle}
                   onClick={() => setSelectedAgentKref(agent.kref)}
                 >
                   <div className="flex items-center gap-2">
-                    <AgentAvatar
-                      src={agent.avatar_url}
-                      alt={agent.name}
-                      size={28}
-                      radius={8}
-                      style={{ opacity: agent.deprecated ? 0.72 : 1 }}
-                    />
+                    <span className="construct-agent-list-icon" aria-hidden="true">
+                      <Brain className="h-4 w-4" />
+                    </span>
                     <div className="min-w-0 flex-1">
                       <div className="text-sm font-semibold">{agent.name}</div>
                       <div className="mt-0.5 flex items-center gap-1.5 text-[11px]" style={{ color: 'var(--construct-text-secondary)' }}>
@@ -310,23 +311,32 @@ export default function Agents() {
             </div>
           ) : (
             <>
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex min-w-0 items-start gap-3">
-                  <AgentAvatar src={selectedAgent.avatar_url} alt={selectedAgent.name} size={44} radius={12} />
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <Brain className="h-4 w-4" style={{ color: 'var(--construct-signal-network)' }} />
-                      <div className="truncate text-sm font-semibold" style={{ color: 'var(--construct-text-primary)' }}>{selectedAgent.name}</div>
-                    </div>
-                    <div className="mt-1 text-xs" style={{ color: 'var(--construct-text-secondary)' }}>
-                      {selectedAgent.role} / {selectedAgent.agent_type}{selectedAgent.model ? ` / ${selectedAgent.model}` : ''}
-                    </div>
+              <div
+                className="construct-agent-profile-hero"
+                data-has-avatar={String(Boolean(selectedAgent.avatar_url))}
+                style={{
+                  '--construct-agent-profile-image': cssImageUrl(selectedAgent.avatar_url),
+                } as ConstructStyle}
+              >
+                <div className="construct-agent-profile-image" aria-hidden="true">
+                  {selectedAgent.avatar_url ? (
+                    <img src={selectedAgent.avatar_url} alt="" />
+                  ) : (
+                    <Brain className="h-10 w-10" />
+                  )}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="construct-agent-profile-icon" aria-hidden="true">
+                      <Brain className="h-4 w-4" />
+                    </span>
+                    <div className="truncate text-sm font-semibold" style={{ color: 'var(--construct-text-primary)' }}>{selectedAgent.name}</div>
+                  </div>
+                  <div className="mt-1 text-xs" style={{ color: 'var(--construct-text-secondary)' }}>
+                    {selectedAgent.role} / {selectedAgent.agent_type}{selectedAgent.model ? ` / ${selectedAgent.model}` : ''}
                   </div>
                 </div>
-                <span className="rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em]" style={{
-                  background: selectedAgent.deprecated ? 'color-mix(in srgb, var(--construct-status-danger) 12%, transparent)' : 'color-mix(in srgb, var(--construct-status-success) 12%, transparent)',
-                  color: selectedAgent.deprecated ? 'var(--construct-status-danger)' : 'var(--construct-status-success)',
-                }}>
+                <span className="construct-agent-status-pill" data-status={selectedAgent.deprecated ? 'disabled' : 'active'}>
                   {selectedAgent.deprecated ? t('agents.status.disabled') : t('agents.status.active')}
                 </span>
               </div>

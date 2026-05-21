@@ -85,8 +85,8 @@ const HINT_TONES: Record<string, ActionTone> = {
 
 // Run status → tone
 const STATUS_TONES: Record<string, ActionTone> = {
-  completed: 'live',
-  running: 'warning',
+  completed: 'accent',
+  running: 'live',
   failed: 'danger',
   pending: 'muted',
   skipped: 'muted',
@@ -434,12 +434,12 @@ function TaskNode({ id, data, selected }: { id: string; data: TaskNodeData; sele
                     background: data.runInfo!.status === 'running'
                       ? 'var(--construct-signal-network-soft)'
                       : data.runInfo!.status === 'completed'
-                        ? 'var(--construct-signal-live-soft)'
+                        ? 'var(--construct-signal-selected-soft)'
                         : 'var(--pc-accent-glow)',
                     color: data.runInfo!.status === 'running'
                       ? 'var(--construct-signal-network)'
                       : data.runInfo!.status === 'completed'
-                        ? 'var(--construct-signal-live)'
+                        ? 'var(--construct-signal-selected)'
                         : 'var(--pc-accent-light)',
                   }}
                 >

@@ -104,6 +104,7 @@ export function useAgentChatSession({
   onToolResultRef.current = onToolResult;
   const draftKeyRef = useRef(draftKey);
   draftKeyRef.current = draftKey;
+  const canPersistEmptyHistoryRef = useRef(false);
 
   useEffect(() => {
     typingRef.current = typing;
@@ -156,20 +157,27 @@ export function useAgentChatSession({
     setTyping(false);
     setError(null);
     setHistoryReady(false);
+    canPersistEmptyHistoryRef.current = false;
 
     (async () => {
       try {
         const res = await getSessionMessages(sessionId);
         if (cancelled) return;
-        if (res.session_persistence && res.messages.length > 0) {
-          setMessages(persistedToUiMessages(mapServerMessagesToPersisted(res.messages)));
-        } else if (!res.session_persistence) {
-          const ls = loadChatHistory(sessionId);
-          setMessages(ls.length ? persistedToUiMessages(ls) : []);
+        const localMessages = loadChatHistory(sessionId);
+        const serverMessages = res.session_persistence
+          ? mapServerMessagesToPersisted(res.messages)
+          : [];
+        const restoredMessages = serverMessages.length > 0 ? serverMessages : localMessages;
+        if (restoredMessages.length > 0) {
+          canPersistEmptyHistoryRef.current = true;
         }
+        setMessages(restoredMessages.length ? persistedToUiMessages(restoredMessages) : []);
       } catch {
         if (!cancelled) {
           const ls = loadChatHistory(sessionId);
+          if (ls.length > 0) {
+            canPersistEmptyHistoryRef.current = true;
+          }
           setMessages(ls.length ? persistedToUiMessages(ls) : []);
         }
       } finally {
@@ -184,9 +192,15 @@ export function useAgentChatSession({
 
   useEffect(() => {
     if (!historyReady) return;
-    saveChatHistory(sessionId, uiMessagesToPersisted(
+    const persistedMessages = uiMessagesToPersisted(
       messages.filter((m): m is ChatMessage & { role: 'user' | 'agent' } => m.role !== 'operator'),
-    ));
+    );
+    if (persistedMessages.length > 0) {
+      canPersistEmptyHistoryRef.current = true;
+    } else if (!canPersistEmptyHistoryRef.current && loadChatHistory(sessionId).length > 0) {
+      return;
+    }
+    saveChatHistory(sessionId, persistedMessages);
   }, [historyReady, messages, sessionId]);
 
   useEffect(() => {
@@ -739,6 +753,7 @@ export function useAgentChatSession({
    *  is still alive and can receive further turns; this only clears what
    *  the user sees. */
   const clearMessages = useCallback(() => {
+    canPersistEmptyHistoryRef.current = true;
     setMessages([]);
     setActivities([]);
     activitiesRef.current = [];
