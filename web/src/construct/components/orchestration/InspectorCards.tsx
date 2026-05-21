@@ -1,8 +1,9 @@
 import type { ReactNode } from 'react';
-import { Eye } from 'lucide-react';
+import { Eye, MessageSquareText } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import type { TaskDefinition } from '@/construct/components/workflows/yamlSync';
-import type { TeamDefinition, TeamMember, WorkflowDefinition, WorkflowRunDetail, WorkflowRunSummary, WorkflowStepDetail } from '@/types/api';
+import type { TeamDefinition, TeamMember, TranscriptEntry, WorkflowDefinition, WorkflowRunDetail, WorkflowRunSummary, WorkflowStepDetail } from '@/types/api';
+import { useT } from '@/construct/hooks/useT';
 import { parseWorkflowMeta } from '@/construct/components/workflows/yamlSync';
 import Panel from '../ui/Panel';
 import StatusPill from '../ui/StatusPill';
@@ -43,7 +44,36 @@ interface SelectedTaskCardProps {
   onViewArtifact?: (step: WorkflowStepDetail) => void;
 }
 
+function isTranscriptEntry(value: unknown): value is TranscriptEntry {
+  if (!value || typeof value !== 'object') return false;
+  const entry = value as Record<string, unknown>;
+  return typeof entry.speaker === 'string'
+    && typeof entry.content === 'string'
+    && (typeof entry.round === 'number' || typeof entry.round === 'string');
+}
+
+function normalizeTranscript(value: unknown): TranscriptEntry[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter(isTranscriptEntry)
+    .map((entry) => ({
+      speaker: entry.speaker,
+      content: entry.content,
+      round: Number(entry.round) || 0,
+    }));
+}
+
+function stepTranscript(step?: WorkflowStepDetail | null): TranscriptEntry[] {
+  if (!step) return [];
+  if (step.transcript?.length) return step.transcript;
+  const outputData = step.output_data as Record<string, unknown> | undefined;
+  return normalizeTranscript(outputData?.transcript ?? outputData?.chat_events);
+}
+
 export function SelectedTaskCard({ task, step, title = 'Selected Node', emptyText, footer, onViewArtifact }: SelectedTaskCardProps) {
+  const { t } = useT();
+  const transcript = stepTranscript(step);
+
   return (
     <Panel className="p-4" variant="secondary" skinSlot="stepCard">
       <div className="construct-kicker">{title}</div>
@@ -89,6 +119,29 @@ export function SelectedTaskCard({ task, step, title = 'Selected Node', emptyTex
                 ) : null}
               </div>
               <pre className="whitespace-pre-wrap" style={{ fontFamily: 'var(--pc-font-mono)' }}>{step.output_preview}</pre>
+            </div>
+          ) : null}
+          {transcript.length ? (
+            <div className="rounded-[12px] border p-3" style={{ borderColor: 'var(--construct-border-soft)' }}>
+              <div className="mb-2 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.12em]" style={{ color: 'var(--construct-text-faint)' }}>
+                <MessageSquareText className="h-3 w-3" />
+                {t('runs.tab.transcript')}
+              </div>
+              <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
+                {transcript.map((entry, index) => (
+                  <div
+                    key={`${entry.round}-${entry.speaker}-${index}`}
+                    className="rounded-[8px] border p-2"
+                    style={{ borderColor: 'var(--construct-border-soft)' }}
+                  >
+                    <div className="flex items-center justify-between gap-2 text-[10px] font-semibold uppercase tracking-[0.12em]" style={{ color: 'var(--construct-text-faint)' }}>
+                      <span className="truncate">{entry.speaker}</span>
+                      <span>R{entry.round}</span>
+                    </div>
+                    <pre className="mt-1 whitespace-pre-wrap text-xs leading-6" style={{ color: 'var(--construct-text-secondary)', fontFamily: 'var(--pc-font-mono)' }}>{entry.content}</pre>
+                  </div>
+                ))}
+              </div>
             </div>
           ) : null}
           {step ? (
