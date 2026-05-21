@@ -3245,9 +3245,12 @@ mod workflow_save_tests {
 
     #[test]
     fn workflow_metadata_keeps_large_yaml_out_of_revision_metadata() {
-        let steps = (0..512)
-            .map(|idx| format!("  - id: step-{idx}\n    type: agent\n"))
-            .collect::<String>();
+        let mut steps = String::new();
+        for idx in 0..512 {
+            steps.push_str("  - id: step-");
+            steps.push_str(&idx.to_string());
+            steps.push_str("\n    type: agent\n");
+        }
         let body = CreateWorkflowBody {
             name: "Big Flow".to_string(),
             description: "Large workflow".to_string(),
