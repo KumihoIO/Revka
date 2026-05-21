@@ -16,6 +16,9 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import CodeMirror from '@uiw/react-codemirror';
+import { yaml } from '@codemirror/lang-yaml';
+import { lintGutter, linter, type Diagnostic } from '@codemirror/lint';
 import {
   AlertTriangle,
   ArrowLeft,
@@ -882,11 +885,35 @@ interface RunLogState {
   error?: string;
 }
 
+interface YamlValidationState {
+  status: 'valid' | 'invalid' | 'empty';
+  message: string;
+  detail?: string;
+  line?: number;
+  column?: number;
+  taskCount?: number;
+}
+
+interface YamlParserErrorMark {
+  line?: number;
+  column?: number;
+}
+
+interface YamlParserErrorLike {
+  message?: string;
+  reason?: string;
+  mark?: YamlParserErrorMark;
+}
+
 type AgentPickerTarget = NonNullable<OpenAgentPickerDetail['target']>;
 type WorkflowWireStyle = 'default' | 'straight' | 'step';
 
 const WIRE_STYLE_STORAGE_KEY = 'construct.workflowEditor.wireStyle';
+const YAML_PANEL_WIDTH_STORAGE_KEY = 'construct.workflowEditor.yamlPanelWidth';
 const DETAILS_PANEL_WIDTH_STORAGE_KEY = 'construct.workflowEditor.detailsPanelWidth';
+const YAML_PANEL_MIN_WIDTH = 320;
+const YAML_PANEL_MAX_WIDTH = 760;
+const YAML_PANEL_DEFAULT_WIDTH = 440;
 const DETAILS_PANEL_MIN_WIDTH = 300;
 const DETAILS_PANEL_MAX_WIDTH = 620;
 const DETAILS_PANEL_DEFAULT_WIDTH = 352;
@@ -998,6 +1025,22 @@ function clampDetailsPanelWidth(width: number): number {
   return Math.max(DETAILS_PANEL_MIN_WIDTH, Math.min(DETAILS_PANEL_MAX_WIDTH, Math.round(width)));
 }
 
+function clampYamlPanelWidth(width: number): number {
+  return Math.max(YAML_PANEL_MIN_WIDTH, Math.min(YAML_PANEL_MAX_WIDTH, Math.round(width)));
+}
+
+function readYamlPanelWidth(): number {
+  if (typeof localStorage === 'undefined') return YAML_PANEL_DEFAULT_WIDTH;
+  try {
+    const saved = Number(localStorage.getItem(YAML_PANEL_WIDTH_STORAGE_KEY));
+    return Number.isFinite(saved)
+      ? clampYamlPanelWidth(saved)
+      : YAML_PANEL_DEFAULT_WIDTH;
+  } catch {
+    return YAML_PANEL_DEFAULT_WIDTH;
+  }
+}
+
 function readDetailsPanelWidth(): number {
   if (typeof localStorage === 'undefined') return DETAILS_PANEL_DEFAULT_WIDTH;
   try {
@@ -1009,6 +1052,80 @@ function readDetailsPanelWidth(): number {
     return DETAILS_PANEL_DEFAULT_WIDTH;
   }
 }
+
+function yamlParserErrorLike(error: unknown): YamlParserErrorLike {
+  return error && typeof error === 'object' ? error as YamlParserErrorLike : {};
+}
+
+function formatYamlParserError(error: unknown): YamlValidationState {
+  const parsed = yamlParserErrorLike(error);
+  const line = typeof parsed.mark?.line === 'number' ? parsed.mark.line + 1 : undefined;
+  const column = typeof parsed.mark?.column === 'number' ? parsed.mark.column + 1 : undefined;
+  const detail = parsed.reason || parsed.message || (error instanceof Error ? error.message : String(error));
+  return {
+    status: 'invalid',
+    message: line
+      ? `YAML syntax error at ${line}:${column ?? 1}`
+      : 'YAML syntax error',
+    detail,
+    line,
+    column,
+  };
+}
+
+function validateWorkflowYamlForEditor(yamlText: string): YamlValidationState {
+  if (!yamlText.trim()) {
+    return {
+      status: 'empty',
+      message: 'No YAML',
+      detail: 'The editor is empty.',
+    };
+  }
+
+  try {
+    const tasks = parseWorkflowYaml(yamlText);
+    if (tasks.length === 0) {
+      return {
+        status: 'invalid',
+        message: 'Valid YAML, but no workflow steps were found',
+        detail: 'Add a top-level steps list before applying this YAML to the graph.',
+      };
+    }
+
+    return {
+      status: 'valid',
+      message: `Valid YAML · ${tasks.length} ${tasks.length === 1 ? 'step' : 'steps'}`,
+      taskCount: tasks.length,
+    };
+  } catch (error) {
+    return formatYamlParserError(error);
+  }
+}
+
+const workflowYamlLinter = linter((view): Diagnostic[] => {
+  const validation = validateWorkflowYamlForEditor(view.state.doc.toString());
+  if (validation.status === 'valid' || validation.status === 'empty') return [];
+
+  const lineNumber = Math.min(
+    Math.max(validation.line ?? 1, 1),
+    view.state.doc.lines,
+  );
+  const line = view.state.doc.line(lineNumber);
+  const columnOffset = Math.max((validation.column ?? 1) - 1, 0);
+  const from = Math.min(line.to, line.from + columnOffset);
+  const to = Math.max(from, Math.min(line.to, from + 1));
+
+  return [{
+    from,
+    to,
+    severity: 'error',
+    message: validation.detail
+      ? `${validation.message}: ${validation.detail}`
+      : validation.message,
+  }];
+});
+
+const YAML_EDITOR_EXTENSIONS = [yaml(), lintGutter(), workflowYamlLinter];
 
 function taskIdSlug(input: string): string {
   const slug = input
@@ -1146,14 +1263,18 @@ function WorkflowEditorInner({
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [yamlText, setYamlText] = useState(workflow?.definition ?? '');
   const [yamlDirty, setYamlDirty] = useState(false);
+  const [yamlPanelWidth, setYamlPanelWidth] = useState(readYamlPanelWidth);
+  const [yamlPanelResizing, setYamlPanelResizing] = useState(false);
   const [wireStyle, setWireStyle] = useState<WorkflowWireStyle>(readWireStylePreference);
   const [detailsPanelWidth, setDetailsPanelWidth] = useState(readDetailsPanelWidth);
   const [detailsPanelResizing, setDetailsPanelResizing] = useState(false);
+  const yamlResizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
   const detailsResizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
   const copiedSelectionRef = useRef<CopiedWorkflowSelection | null>(null);
   const [hasCopiedNode, setHasCopiedNode] = useState(false);
   const pasteCountRef = useRef(0);
   const [runLog, setRunLog] = useState<RunLogState | null>(null);
+  const yamlValidation = useMemo(() => validateWorkflowYamlForEditor(yamlText), [yamlText]);
 
   const [workflowMeta, setWorkflowMeta] = useState<WorkflowMeta>({
     name: '',
@@ -1281,11 +1402,31 @@ function WorkflowEditorInner({
 
   useEffect(() => {
     try {
+      localStorage.setItem(YAML_PANEL_WIDTH_STORAGE_KEY, String(yamlPanelWidth));
+    } catch {
+      /* ignore */
+    }
+  }, [yamlPanelWidth]);
+
+  useEffect(() => {
+    try {
       localStorage.setItem(DETAILS_PANEL_WIDTH_STORAGE_KEY, String(detailsPanelWidth));
     } catch {
       /* ignore */
     }
   }, [detailsPanelWidth]);
+
+  const beginYamlPanelResize = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      yamlResizeRef.current = {
+        startX: event.clientX,
+        startWidth: yamlPanelWidth,
+      };
+      setYamlPanelResizing(true);
+    },
+    [yamlPanelWidth],
+  );
 
   const beginDetailsPanelResize = useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {
@@ -1298,6 +1439,33 @@ function WorkflowEditorInner({
     },
     [detailsPanelWidth],
   );
+
+  useEffect(() => {
+    if (!yamlPanelResizing) return undefined;
+
+    const onMove = (event: MouseEvent) => {
+      const start = yamlResizeRef.current;
+      if (!start) return;
+      const delta = event.clientX - start.startX;
+      setYamlPanelWidth(clampYamlPanelWidth(start.startWidth + delta));
+    };
+
+    const onUp = () => {
+      yamlResizeRef.current = null;
+      setYamlPanelResizing(false);
+    };
+
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+  }, [yamlPanelResizing]);
 
   useEffect(() => {
     if (!detailsPanelResizing) return undefined;
@@ -2157,6 +2325,13 @@ function WorkflowEditorInner({
   }, [fitView]);
 
   const handleYamlImport = useCallback(() => {
+    if (yamlValidation.status !== 'valid') {
+      setError(yamlValidation.detail
+        ? `${yamlValidation.message}: ${yamlValidation.detail}`
+        : yamlValidation.message);
+      return;
+    }
+
     try {
       const tasks = parseWorkflowYaml(yamlText);
       if (tasks.length === 0) {
@@ -2186,10 +2361,12 @@ function WorkflowEditorInner({
     } catch (err) {
       // js-yaml throws on malformed YAML — surface the parser's message so
       // users can fix indentation / quoting issues without opening devtools.
-      const msg = err instanceof Error ? err.message : String(err);
-      setError(`Invalid YAML: ${msg}`);
+      const validation = formatYamlParserError(err);
+      setError(validation.detail
+        ? `${validation.message}: ${validation.detail}`
+        : validation.message);
     }
-  }, [yamlText, name, description, setNodes, setEdges, wireStyle]);
+  }, [yamlText, yamlValidation, name, description, setNodes, setEdges, wireStyle]);
 
   // Open YAML drawer (used by EditorCommandList row + ⌘I shortcut).
   const openYamlPanel = useCallback(() => {
@@ -2522,6 +2699,12 @@ function WorkflowEditorInner({
   const runToHereActive = Boolean(
     runLog?.open && !isTerminalRunStatus(runLog.status),
   );
+  const yamlApplyDisabled = yamlValidation.status !== 'valid';
+  const yamlValidationColor = yamlValidation.status === 'valid'
+    ? 'var(--construct-status-success)'
+    : yamlValidation.status === 'empty'
+      ? 'var(--construct-status-warning)'
+      : 'var(--construct-status-danger)';
 
   return (
     <div
@@ -2980,69 +3163,154 @@ function WorkflowEditorInner({
             {/* Canvas + side YAML */}
             <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
               {showAdvanced && (
-                <div
-                  style={{
-                    width: 320,
-                    flexShrink: 0,
-                    borderRight: '1px solid var(--construct-border-soft)',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    background: 'var(--construct-bg-surface)',
-                  }}
-                >
+                <>
                   <div
                     style={{
+                      width: yamlPanelWidth,
+                      flexShrink: 0,
+                      borderRight: '1px solid var(--construct-border-soft)',
                       display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      padding: '8px 12px',
-                      borderBottom: '1px solid var(--construct-border-soft)',
+                      flexDirection: 'column',
+                      minHeight: 0,
+                      background: 'var(--construct-bg-surface)',
                     }}
                   >
-                    <span className="construct-kicker">YAML</span>
-                    <button
-                      type="button"
-                      onClick={handleYamlImport}
-                      className="construct-button"
-                      data-variant="primary"
-                      style={{ padding: '4px 10px', fontSize: 11 }}
-                    >
-                      <Zap size={12} />
-                      Apply to graph
-                    </button>
-                  </div>
-                  {yamlDirty ? (
                     <div
-                      className="border-b px-3 py-2 text-xs"
                       style={{
-                        borderColor: 'var(--construct-border-soft)',
-                        color: 'var(--construct-status-warning)',
-                        background: 'color-mix(in srgb, var(--construct-status-warning) 8%, transparent)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: 12,
+                        padding: '8px 12px',
+                        borderBottom: '1px solid var(--construct-border-soft)',
                       }}
                     >
-                      YAML edits are not saved until applied to the graph.
+                      <span className="construct-kicker">YAML</span>
+                      <button
+                        type="button"
+                        onClick={handleYamlImport}
+                        className="construct-button"
+                        data-variant="primary"
+                        disabled={yamlApplyDisabled}
+                        title={yamlApplyDisabled ? yamlValidation.message : 'Apply YAML to graph'}
+                        style={{
+                          padding: '4px 10px',
+                          fontSize: 11,
+                          opacity: yamlApplyDisabled ? 0.55 : 1,
+                          cursor: yamlApplyDisabled ? 'not-allowed' : 'pointer',
+                        }}
+                      >
+                        <Zap size={12} />
+                        Apply to graph
+                      </button>
                     </div>
-                  ) : null}
-                  <textarea
-                    value={yamlText}
-                    onChange={(e) => {
-                      setYamlText(e.target.value);
-                      setYamlDirty(true);
-                    }}
-                    spellCheck={false}
+                    {yamlDirty ? (
+                      <div
+                        className="border-b px-3 py-2 text-xs"
+                        style={{
+                          borderColor: 'var(--construct-border-soft)',
+                          color: 'var(--construct-status-warning)',
+                          background: 'color-mix(in srgb, var(--construct-status-warning) 8%, transparent)',
+                        }}
+                      >
+                        YAML edits are not saved until applied to the graph.
+                      </div>
+                    ) : null}
+                    <div
+                      style={{
+                        borderBottom: '1px solid var(--construct-border-soft)',
+                        padding: '8px 12px',
+                        background: 'color-mix(in srgb, var(--construct-bg-elevated) 70%, transparent)',
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 8,
+                          color: yamlValidationColor,
+                          fontSize: 11,
+                          fontWeight: 600,
+                        }}
+                      >
+                        <span
+                          aria-hidden="true"
+                          style={{
+                            width: 7,
+                            height: 7,
+                            borderRadius: 999,
+                            background: yamlValidationColor,
+                            boxShadow: `0 0 8px ${yamlValidationColor}`,
+                            flexShrink: 0,
+                          }}
+                        />
+                        <span>{yamlValidation.message}</span>
+                      </div>
+                      {yamlValidation.detail && yamlValidation.status !== 'valid' ? (
+                        <div
+                          style={{
+                            marginTop: 6,
+                            color: 'var(--construct-text-secondary)',
+                            fontFamily: 'var(--pc-font-mono, ui-monospace, monospace)',
+                            fontSize: 10.5,
+                            lineHeight: 1.45,
+                            overflowWrap: 'anywhere',
+                          }}
+                        >
+                          {yamlValidation.detail}
+                        </div>
+                      ) : null}
+                    </div>
+                    <div style={{ flex: 1, minHeight: 0 }}>
+                      <CodeMirror
+                        value={yamlText}
+                        height="100%"
+                        extensions={YAML_EDITOR_EXTENSIONS}
+                        basicSetup={{
+                          lineNumbers: true,
+                          foldGutter: true,
+                          highlightActiveLine: true,
+                          highlightSelectionMatches: true,
+                          closeBrackets: true,
+                          autocompletion: true,
+                        }}
+                        theme="dark"
+                        className="workflow-yaml-editor"
+                        onChange={(value) => {
+                          setYamlText(value);
+                          setYamlDirty(true);
+                        }}
+                      />
+                    </div>
+                  </div>
+                  <div
+                    role="separator"
+                    aria-orientation="vertical"
+                    aria-label="Resize YAML panel"
+                    title="Resize YAML panel"
+                    onMouseDown={beginYamlPanelResize}
                     style={{
-                      flex: 1,
-                      padding: 10,
-                      background: 'transparent',
-                      color: 'var(--pc-text-primary)',
-                      border: 0,
-                      outline: 'none',
-                      resize: 'none',
-                      fontFamily: 'var(--pc-font-mono, ui-monospace, monospace)',
-                      fontSize: 11.5,
+                      cursor: 'col-resize',
+                      display: 'flex',
+                      alignItems: 'stretch',
+                      justifyContent: 'center',
+                      padding: '0 5px',
+                      flexShrink: 0,
+                      borderRight: '1px solid var(--construct-border-soft)',
+                      background: 'var(--construct-bg-surface)',
                     }}
-                  />
-                </div>
+                  >
+                    <div
+                      style={{
+                        width: 2,
+                        borderRadius: 999,
+                        background: yamlPanelResizing
+                          ? 'var(--pc-accent)'
+                          : 'var(--construct-border-soft)',
+                      }}
+                    />
+                  </div>
+                </>
               )}
 
               <div
