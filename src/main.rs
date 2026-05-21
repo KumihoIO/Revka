@@ -2181,13 +2181,15 @@ fn set_owner_only_permissions(_path: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
+const KUMIHO_AUTH_FILE_TOKEN_GRACE_SECONDS: i64 = 300;
+
 /// Populate `KUMIHO_SERVICE_TOKEN` from the Kumiho CLI's auth file when it is
 /// not already set in the environment.
 ///
 /// `kumiho login` writes `~/.kumiho/kumiho_authentication.json` with a
-/// `control_plane_token` field. Without this fallback, fresh installs that
-/// have logged in via the Kumiho CLI but never exported the token would see
-/// gateway/operator code paths silently send empty `X-Kumiho-Token` headers.
+/// `control_plane_token` and `id_token` fields. This is only a fallback for
+/// CLI-login users; normal onboarding writes `KUMIHO_SERVICE_TOKEN` to the
+/// workspace `.env` and takes precedence.
 fn inject_kumiho_service_token_from_auth_file() {
     if std::env::var("KUMIHO_SERVICE_TOKEN")
         .map(|v| !v.trim().is_empty())
@@ -2208,16 +2210,35 @@ fn inject_kumiho_service_token_from_auth_file() {
     let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&content) else {
         return;
     };
-    let Some(token) = parsed
-        .get("control_plane_token")
-        .and_then(|v| v.as_str())
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-    else {
+    let Some(token) = select_kumiho_auth_file_token(&parsed, chrono::Utc::now().timestamp()) else {
         return;
     };
     // SAFETY: called once early in main before worker threads are spawned.
     unsafe { std::env::set_var("KUMIHO_SERVICE_TOKEN", token) };
+}
+
+fn select_kumiho_auth_file_token(parsed: &serde_json::Value, now_secs: i64) -> Option<String> {
+    kumiho_auth_file_token_field(parsed, "control_plane_token", "cp_expires_at", now_secs)
+        .or_else(|| kumiho_auth_file_token_field(parsed, "id_token", "expires_at", now_secs))
+}
+
+fn kumiho_auth_file_token_field(
+    parsed: &serde_json::Value,
+    token_field: &str,
+    expiry_field: &str,
+    now_secs: i64,
+) -> Option<String> {
+    let token = parsed
+        .get(token_field)
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())?;
+
+    let Some(expires_at) = parsed.get(expiry_field).and_then(|v| v.as_i64()) else {
+        return Some(token);
+    };
+
+    (expires_at > now_secs + KUMIHO_AUTH_FILE_TOKEN_GRACE_SECONDS).then_some(token)
 }
 
 fn save_pending_oauth_login(config: &Config, pending: &PendingOAuthLogin) -> Result<()> {
@@ -2875,6 +2896,36 @@ mod tests {
     #[test]
     fn cli_definition_has_no_flag_conflicts() {
         Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn kumiho_auth_file_token_prefers_valid_control_plane_token() {
+        let parsed = serde_json::json!({
+            "control_plane_token": "cp-token",
+            "cp_expires_at": 10_000,
+            "id_token": "id-token",
+            "expires_at": 10_000
+        });
+
+        assert_eq!(
+            select_kumiho_auth_file_token(&parsed, 1_000).as_deref(),
+            Some("cp-token")
+        );
+    }
+
+    #[test]
+    fn kumiho_auth_file_token_falls_back_when_control_plane_token_expired() {
+        let parsed = serde_json::json!({
+            "control_plane_token": "expired-cp-token",
+            "cp_expires_at": 1_100,
+            "id_token": "fresh-id-token",
+            "expires_at": 10_000
+        });
+
+        assert_eq!(
+            select_kumiho_auth_file_token(&parsed, 1_000).as_deref(),
+            Some("fresh-id-token")
+        );
     }
 
     #[test]
