@@ -45,8 +45,9 @@ def agent_runtime_alive(agent: ManagedAgent) -> bool:
         health = get_heartbeat_monitor().get_health(agent.id)
         if health and health.get("alive") is False:
             return False
-    except Exception:
-        pass
+    except Exception as exc:
+        # Heartbeat is best-effort; if unavailable, fall back to process/sidecar checks.
+        _log.debug("heartbeat health lookup failed for agent %s: %s", agent.id, exc)
 
     proc = agent.process
     if proc is not None:
