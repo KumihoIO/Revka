@@ -6,7 +6,6 @@ from typing import Any
 
 import pytest
 
-import operator_mcp.workflow.executor as executor
 from operator_mcp.workflow.executor import (
     _exec_group_chat,
     _exec_handoff,
@@ -68,7 +67,7 @@ async def test_group_chat_turns_are_persisted_for_live_run_detail(monkeypatch, t
         }
 
     monkeypatch.setattr("operator_mcp.workflow.memory.persist_workflow_run", fake_persist_workflow_run)
-    monkeypatch.setattr(executor, "_save_checkpoint", fake_save_checkpoint)
+    monkeypatch.setattr("operator_mcp.workflow.executor._save_checkpoint", fake_save_checkpoint)
     monkeypatch.setattr("operator_mcp.patterns.group_chat.tool_group_chat", fake_tool_group_chat)
 
     step = StepDef(
