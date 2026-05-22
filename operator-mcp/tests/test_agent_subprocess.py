@@ -50,8 +50,14 @@ class TestBuildCommand:
     def test_codex_command(self):
         cmd = _build_command("codex")
         assert cmd[0] == "codex"
-        assert cmd[1] == "exec"
-        assert "--full-auto" in cmd
+        assert "--full-auto" not in cmd
+        assert cmd[1:6] == [
+            "--ask-for-approval",
+            "never",
+            "--sandbox",
+            "danger-full-access",
+            "exec",
+        ]
         assert "--skip-git-repo-check" in cmd
 
     def test_claude_command(self):

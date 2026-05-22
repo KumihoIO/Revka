@@ -163,7 +163,16 @@ export function createCodexSession(config, onEvent) {
             provider: "codex",
         };
         handle.jsonBuffer = "";
-        const args = ["exec", "--json", "--full-auto", "--skip-git-repo-check"];
+        // Approval flags are top-level Codex options, so they must precede `exec`.
+        const args = [
+            "--ask-for-approval",
+            "never",
+            "--sandbox",
+            "danger-full-access",
+            "exec",
+            "--json",
+            "--skip-git-repo-check",
+        ];
         const effectivePrompt = config.systemPrompt
             ? `${config.systemPrompt}\n\n${prompt}`
             : prompt;
@@ -174,7 +183,7 @@ export function createCodexSession(config, onEvent) {
             args.push(...codexMcpOverrides(config.mcpServers));
         }
         args.push(effectivePrompt);
-        log(`Spawning codex: ${args.slice(0, 4).join(" ")}... (${effectivePrompt.length} chars)`);
+        log(`Spawning codex: ${args.slice(0, 7).join(" ")}... (${effectivePrompt.length} chars)`);
         const proc = spawn("codex", args, {
             cwd: config.cwd,
             stdio: ["ignore", "pipe", "pipe"],
