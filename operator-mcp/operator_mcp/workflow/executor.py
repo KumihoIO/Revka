@@ -16,6 +16,7 @@ import json
 import os
 import re
 import signal
+import subprocess
 import time
 import uuid
 from datetime import datetime, timezone
@@ -1344,8 +1345,9 @@ def _kill_proc(proc: Any) -> None:
     spawned by patterns like ``bash -c "long & other"`` that ``proc.kill()``
     would otherwise leak.
 
-    On Windows, process groups don't translate cleanly; fall back to
-    ``proc.kill()`` (the existing single-child kill).
+    On Windows, ``asyncio.create_subprocess_shell`` commonly spawns a shell
+    parent and a real child process. Use ``taskkill /T`` before falling back
+    to ``proc.kill()`` so cancellation and timeout do not leave descendants.
     """
     if proc is None:
         return
@@ -1374,6 +1376,26 @@ def _kill_proc(proc: Any) -> None:
             except (ProcessLookupError, OSError):
                 pass
             return
+
+    if os.name == "nt":
+        try:
+            result = subprocess.run(
+                ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=5.0,
+            )
+            if result.returncode == 0:
+                return
+            _log(
+                f"workflow: taskkill tree failed for pid={proc.pid} "
+                f"rc={result.returncode}: {(result.stderr or '').strip()[-300:]}"
+            )
+        except FileNotFoundError:
+            _log(f"workflow: taskkill not found for pid={proc.pid}; falling back to proc.kill")
+        except Exception as exc:
+            _log(f"workflow: taskkill tree failed for pid={proc.pid}: {exc}")
 
     # Windows fallback (or POSIX path where pgid lookup failed).
     try:

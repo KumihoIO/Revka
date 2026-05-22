@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sys
 import time
 
 import pytest
@@ -57,6 +58,10 @@ def _pid_alive(pid: int) -> bool:
         return True
     except (ProcessLookupError, OSError):
         return False
+
+
+def _sleep_command(seconds: float) -> str:
+    return f'"{sys.executable}" -c "import time; time.sleep({seconds})"'
 
 
 @pytest.fixture(autouse=True)
@@ -135,13 +140,13 @@ class TestExecutorCooperativeCancel:
                 StepDef(
                     id="s1",
                     type=StepType.SHELL,
-                    shell=ShellStepConfig(command="sleep 0.05", timeout=5),
+                    shell=ShellStepConfig(command=_sleep_command(0.05), timeout=5),
                 ),
                 StepDef(
                     id="s2",
                     type=StepType.SHELL,
                     depends_on=["s1"],
-                    shell=ShellStepConfig(command="sleep 5", timeout=10),
+                    shell=ShellStepConfig(command=_sleep_command(5), timeout=10),
                 ),
             ],
             checkpoint=False,
@@ -204,7 +209,7 @@ class TestShellSubprocessKill:
         step = StepDef(
             id="long",
             type=StepType.SHELL,
-            shell=ShellStepConfig(command="sleep 5", timeout=10),
+            shell=ShellStepConfig(command=_sleep_command(5), timeout=10),
         )
 
         async def trip_cancel() -> None:
@@ -234,7 +239,7 @@ class TestShellSubprocessKill:
         step = StepDef(
             id="t",
             type=StepType.SHELL,
-            shell=ShellStepConfig(command="sleep 5", timeout=0.5),
+            shell=ShellStepConfig(command=_sleep_command(5), timeout=0.5),
         )
 
         captured_pid: dict[str, int] = {}
@@ -342,7 +347,7 @@ class TestForEachCancelBetweenIterations:
         sub = StepDef(
             id="tick",
             type=StepType.SHELL,
-            shell=ShellStepConfig(command="sleep 0.5", timeout=5),
+            shell=ShellStepConfig(command=_sleep_command(0.5), timeout=5),
         )
         loop = StepDef(
             id="loop",
@@ -406,6 +411,7 @@ def test_mark_stale_checkpoint_preserves_retry_state(tmp_path, monkeypatch) -> N
     checkpoint_dir = home / ".construct" / "workflow_checkpoints"
     checkpoint_dir.mkdir(parents=True)
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
     monkeypatch.setattr(executor, "_CHECKPOINT_DIR", str(checkpoint_dir))
 
     state = _state_for("retry-after-stale", status=WorkflowStatus.RUNNING)
@@ -506,3 +512,90 @@ async def test_wait_for_agent_initializing_timeout_is_bounded(tmp_path, monkeypa
 
     assert "INITIALIZATION TIMEOUT" in output
     assert agent.status == "error"
+
+
+@pytest.mark.asyncio
+async def test_wait_for_subprocess_agent_prompt_only_timeout_is_bounded(tmp_path, monkeypatch) -> None:
+    import operator_mcp.patterns.refinement as refinement
+    from operator_mcp.agent_state import AGENTS, ManagedAgent
+
+    monkeypatch.setenv("CONSTRUCT_AGENT_INITIALIZING_TIMEOUT_SECS", "0.1")
+
+    cancelled: dict[str, bool] = {}
+
+    async def fake_cancel(agent):
+        cancelled["called"] = True
+        if agent._reader_task:
+            agent._reader_task.cancel()
+
+    monkeypatch.setattr(refinement, "_cancel_timed_out_agent", fake_cancel)
+
+    agent = ManagedAgent(
+        id="prompt-only-subprocess-agent",
+        agent_type="codex",
+        title="Stuck subprocess",
+        cwd=str(tmp_path),
+        status="running",
+    )
+    agent._reader_task = asyncio.create_task(asyncio.sleep(10))
+    AGENTS[agent.id] = agent
+
+    try:
+        output = await refinement._wait_for_agent(agent, timeout=0.3)
+    finally:
+        if agent._reader_task and not agent._reader_task.done():
+            agent._reader_task.cancel()
+        AGENTS.pop(agent.id, None)
+
+    assert "INITIALIZATION TIMEOUT" in output
+    assert cancelled["called"] is True
+    assert agent.status == "error"
+
+
+@pytest.mark.asyncio
+async def test_refinement_subprocess_fallback_injects_workflow_memory_alias(tmp_path, monkeypatch) -> None:
+    import operator_mcp.patterns.refinement as refinement
+    import operator_mcp.tool_handlers.agents as agents
+    from operator_mcp.agent_state import AGENTS
+
+    captured: dict[str, object] = {}
+
+    async def fake_try_sidecar_create(*args, **kwargs):
+        return None
+
+    async def fake_spawn(agent, prompt, journal, **kwargs):
+        captured["prompt"] = prompt
+        captured["mcp_servers"] = kwargs.get("mcp_servers")
+        agent.status = "running"
+        agent.stdout_buffer = "ok"
+        done = asyncio.get_running_loop().create_future()
+        done.set_result(None)
+        agent._reader_task = done
+
+    async def fake_wait(agent, *, timeout):
+        return "ok"
+
+    monkeypatch.setattr(agents, "_try_sidecar_create", fake_try_sidecar_create)
+    monkeypatch.setattr(refinement, "spawn_agent", fake_spawn)
+    monkeypatch.setattr(refinement, "_wait_for_agent", fake_wait)
+    monkeypatch.setattr("operator_mcp.skill_loader.load_skills_for_pattern", lambda _pattern: "")
+
+    agent, output = await refinement._spawn_and_wait(
+        "codex",
+        "workflow-step",
+        str(tmp_path),
+        "capture the result",
+        timeout=0.1,
+        include_memory=True,
+        include_operator=False,
+    )
+
+    try:
+        assert output == "ok"
+        servers = captured["mcp_servers"]
+        assert isinstance(servers, dict)
+        assert "workflow-memory" in servers
+        assert "capture_skill" in str(captured["prompt"])
+        assert "tag_revision" in str(captured["prompt"])
+    finally:
+        AGENTS.pop(agent.id, None)

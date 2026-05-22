@@ -40,18 +40,19 @@ _ACTIVE_AGENT_STATUSES = frozenset({"initializing", "running", "cancelling"})
 
 def agent_runtime_alive(agent: ManagedAgent) -> bool:
     """Return whether an agent still has a live runtime handle."""
+    proc = agent.process
+    proc_alive = proc is not None and proc.returncode is None
     try:
         from ..heartbeat import get_heartbeat_monitor
         health = get_heartbeat_monitor().get_health(agent.id)
-        if health and health.get("alive") is False:
+        if health and health.get("alive") is False and not proc_alive:
             return False
     except Exception as exc:
         # Heartbeat is best-effort; if unavailable, fall back to process/sidecar checks.
-        _log.debug("heartbeat health lookup failed for agent %s: %s", agent.id, exc)
+        _log(f"heartbeat health lookup failed for agent {agent.id}: {exc}")
 
-    proc = agent.process
     if proc is not None:
-        return proc.returncode is None
+        return proc_alive
     return bool(getattr(agent, "_sidecar_id", None) and agent.status in _ACTIVE_AGENT_STATUSES)
 
 
@@ -926,6 +927,7 @@ async def tool_list_agents() -> dict[str, Any]:
 # -- Cancellation --------------------------------------------------------------
 
 import signal as _signal
+import subprocess as _subprocess
 
 
 async def _cancel_one(agent: ManagedAgent) -> dict[str, Any]:
@@ -963,8 +965,30 @@ async def _cancel_one(agent: ManagedAgent) -> dict[str, Any]:
     agent.status = "cancelling"
 
     if sys.platform == "win32":
+        taskkill_rc: int | None = None
         try:
-            proc.kill()
+            killer = await asyncio.create_subprocess_exec(
+                "taskkill",
+                "/PID",
+                str(proc.pid),
+                "/T",
+                "/F",
+                stdout=_subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            _, stderr = await asyncio.wait_for(killer.communicate(), timeout=8.0)
+            taskkill_rc = killer.returncode
+            if taskkill_rc not in (0, None):
+                msg = (stderr or b"").decode("utf-8", errors="replace").strip()
+                _log(f"cancel_agent: taskkill tree failed for {agent_id[:8]} rc={taskkill_rc}: {msg[-300:]}")
+        except FileNotFoundError:
+            _log(f"cancel_agent: taskkill not found for {agent_id[:8]}; falling back to proc.kill")
+        except Exception as exc:
+            _log(f"cancel_agent: taskkill tree failed for {agent_id[:8]}: {exc}")
+
+        try:
+            if proc.returncode is None:
+                proc.kill()
             await asyncio.wait_for(proc.wait(), timeout=5.0)
         except (ProcessLookupError, OSError):
             agent.status = "cancelled"
@@ -975,7 +999,7 @@ async def _cancel_one(agent: ManagedAgent) -> dict[str, Any]:
         return {
             "agent_id": agent_id,
             "status": "cancelled",
-            "method": "kill",
+            "method": "taskkill_tree" if taskkill_rc == 0 else "kill",
             "exit_code": proc.returncode,
         }
 
