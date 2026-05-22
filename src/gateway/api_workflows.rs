@@ -1270,6 +1270,139 @@ fn to_run_detail(item: &ItemResponse, rev: Option<&RevisionResponse>) -> Workflo
     WorkflowRunDetail { summary, steps }
 }
 
+fn parse_mcp_tool_payload(result_str: &str) -> serde_json::Value {
+    let outer = serde_json::from_str::<serde_json::Value>(result_str)
+        .unwrap_or_else(|_| serde_json::json!({ "raw": result_str }));
+    outer
+        .get("content")
+        .and_then(|content| content.get(0))
+        .and_then(|entry| entry.get("text"))
+        .and_then(serde_json::Value::as_str)
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok())
+        .unwrap_or(outer)
+}
+
+async fn fetch_live_workflow_status(
+    state: &AppState,
+    run_id: &str,
+    include_outputs: bool,
+) -> Option<serde_json::Value> {
+    let registry = state.mcp_registry()?;
+    let tool_name = format!(
+        "{}__get_workflow_status",
+        crate::agent::operator::OPERATOR_SERVER_NAME
+    );
+    let args = serde_json::json!({
+        "run_id": run_id,
+        "include_outputs": include_outputs,
+    });
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        registry.call_tool(&tool_name, args),
+    )
+    .await
+    .ok()?
+    .ok()?;
+    let payload = parse_mcp_tool_payload(&result);
+    let status = payload
+        .get("status")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    if matches!(status, "pending" | "running" | "paused") {
+        Some(payload)
+    } else {
+        None
+    }
+}
+
+fn live_status_to_step_detail(step_id: &str, value: &serde_json::Value) -> WorkflowStepDetail {
+    let status = json_value_to_summary_string(value.get("status"));
+    let input_data = value.get("input_data").cloned();
+    let output_data = value.get("output_data").cloned();
+    let artifact_path = json_value_to_summary_string(value.get("artifact_path").or_else(|| {
+        output_data
+            .as_ref()
+            .and_then(|data| data.get("artifact_path"))
+    }));
+    WorkflowStepDetail {
+        step_id: step_id.to_string(),
+        status: if status.is_empty() {
+            "unknown".to_string()
+        } else {
+            status
+        },
+        agent_id: json_value_to_summary_string(value.get("agent_id")),
+        agent_type: json_value_to_summary_string(value.get("agent_type")),
+        role: json_value_to_summary_string(value.get("role")),
+        template_name: json_value_to_summary_string(value.get("template_name")),
+        output_preview: json_value_to_summary_string(value.get("output")),
+        error: json_value_to_summary_string(value.get("error")),
+        artifact_path,
+        skills: Vec::new(),
+        transcript: Vec::new(),
+        input_data,
+        output_data,
+    }
+}
+
+fn live_status_to_run_detail(live: &serde_json::Value, fallback_run_id: &str) -> WorkflowRunDetail {
+    let run_id = json_value_to_summary_string(live.get("run_id"));
+    let status = json_value_to_summary_string(live.get("status"));
+    let workflow = json_value_to_summary_string(live.get("workflow"));
+    let steps_completed = json_value_to_summary_string(
+        live.get("top_level_steps_completed")
+            .or_else(|| live.get("steps_completed")),
+    );
+    let steps_total = json_value_to_summary_string(
+        live.get("top_level_steps_total")
+            .or_else(|| live.get("steps_total")),
+    );
+    let steps = live
+        .get("steps")
+        .and_then(serde_json::Value::as_object)
+        .map(|entries| {
+            entries
+                .iter()
+                .map(|(step_id, value)| live_status_to_step_detail(step_id, value))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    WorkflowRunDetail {
+        summary: WorkflowRunSummary {
+            kref: json_value_to_summary_string(live.get("kref")),
+            run_id: if run_id.is_empty() {
+                fallback_run_id.to_string()
+            } else {
+                run_id
+            },
+            workflow_name: workflow,
+            status: if status.is_empty() {
+                "running".to_string()
+            } else {
+                status
+            },
+            started_at: json_value_to_summary_string(live.get("started_at")),
+            completed_at: json_value_to_summary_string(live.get("completed_at")),
+            steps_completed,
+            steps_total,
+            expanded_steps_completed: json_value_to_summary_string(
+                live.get("expanded_steps_completed"),
+            ),
+            current_loop: json_value_to_summary_string(live.get("current_loop")),
+            current_iteration: json_value_to_summary_string(live.get("current_iteration")),
+            current_loop_total: json_value_to_summary_string(live.get("current_loop_total")),
+            current_step_instance: json_value_to_summary_string(live.get("current_step_instance")),
+            error: json_value_to_summary_string(live.get("error")),
+            workflow_item_kref: json_value_to_summary_string(live.get("workflow_item_kref")),
+            workflow_revision_kref: json_value_to_summary_string(
+                live.get("workflow_revision_kref"),
+            ),
+        },
+        steps,
+    }
+}
+
 // ── Builtin workflow discovery ──────────────────────────────────────────
 
 /// Default directory containing builtin workflow YAML files.
@@ -2488,6 +2621,11 @@ pub async fn handle_get_workflow_run(
         return e.into_response();
     }
 
+    if let Some(live_status) = fetch_live_workflow_status(&state, &run_id, true).await {
+        let detail = live_status_to_run_detail(&live_status, &run_id);
+        return Json(serde_json::json!({ "run": detail })).into_response();
+    }
+
     let client = build_kumiho_client(&state);
     let project = workflow_project(&state);
     let runs_space = workflow_runs_space_path(&state);
@@ -2856,8 +2994,7 @@ pub async fn handle_retry_workflow_run(
                 "run_id": run_id,
                 "timestamp": chrono::Utc::now().to_rfc3339(),
             }));
-            let payload = serde_json::from_str::<serde_json::Value>(&result_str)
-                .unwrap_or_else(|_| serde_json::json!({"raw": result_str}));
+            let payload = parse_mcp_tool_payload(&result_str);
             (StatusCode::OK, Json(payload)).into_response()
         }
         Err(e) => {
@@ -2927,8 +3064,7 @@ pub async fn handle_cancel_workflow_run(
 
     match mcp_result {
         Ok(result_str) => {
-            let payload = serde_json::from_str::<serde_json::Value>(&result_str)
-                .unwrap_or_else(|_| serde_json::json!({"raw": result_str}));
+            let payload = parse_mcp_tool_payload(&result_str);
 
             let status_code = cancel_status_for(&payload);
             if status_code == StatusCode::OK {
@@ -3276,7 +3412,7 @@ mod cancel_tests {
     //! function `cancel_status_for`, which is what determines the 200/404/409
     //! semantics. The MCP tool's behavior is tested in the operator-mcp
     //! Python suite (`tests/test_workflow_cancel.py`).
-    use super::cancel_status_for;
+    use super::{cancel_status_for, parse_mcp_tool_payload};
     use axum::http::StatusCode;
     use serde_json::json;
 
@@ -3318,6 +3454,38 @@ mod cancel_tests {
         // bad-request fallback, never silently 200.
         let payload = json!({"error": "missing run_id", "code": "missing_run_id"});
         assert_eq!(cancel_status_for(&payload), StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn mcp_wrapped_cancel_payload_maps_to_inner_status() {
+        let wrapped = json!({
+            "content": [{
+                "type": "text",
+                "text": "{\"cancelled\":true,\"run_id\":\"abc123\",\"status\":\"running\"}"
+            }]
+        })
+        .to_string();
+
+        let payload = parse_mcp_tool_payload(&wrapped);
+
+        assert_eq!(payload["cancelled"], true);
+        assert_eq!(cancel_status_for(&payload), StatusCode::OK);
+    }
+
+    #[test]
+    fn live_status_step_detail_preserves_artifact_and_output_data() {
+        let value = json!({
+            "status": "completed",
+            "output": "preview",
+            "input_data": {"prompt": "write"},
+            "output_data": {"artifact_path": "C:/tmp/out.md", "summary": "done"}
+        });
+
+        let detail = super::live_status_to_step_detail("draft", &value);
+
+        assert_eq!(detail.artifact_path, "C:/tmp/out.md");
+        assert_eq!(detail.input_data.unwrap()["prompt"], "write");
+        assert_eq!(detail.output_data.unwrap()["summary"], "done");
     }
 }
 

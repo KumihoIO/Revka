@@ -27,6 +27,7 @@ _CONFIG_PATH = os.path.expanduser("~/.construct/config.toml")
 _DEFAULT_HARNESS = "Construct"
 _DEFAULT_MEMORY = "CognitiveMemory"
 _DEFAULT_WORKSPACE_DIR = "~/.construct/workspace"
+_DEFAULT_KUMIHO_API_URL = "https://api.kumiho.cloud"
 _DEFAULT_MEMORY_RETRIEVAL_LIMIT = 3
 _DEFAULT_MEMORY_MIN_RELEVANCE_SCORE = 0.4
 
@@ -118,6 +119,59 @@ def _read_kumiho_section() -> dict:
         _log(f"construct_config: error reading config: {exc}")
         return {}
     return config.get("kumiho", {}) or {}
+
+
+def _nonempty_str(value: object) -> str:
+    return value.strip() if isinstance(value, str) and value.strip() else ""
+
+
+def _read_workspace_env() -> dict[str, str]:
+    """Read simple KEY=VALUE entries from the workspace .env file."""
+    path = os.path.join(workspace_dir(), ".env")
+    values: dict[str, str] = {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for raw_line in f:
+                line = raw_line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                key = key.strip()
+                value = value.strip().strip("\"'")
+                if key and value:
+                    values[key] = value
+    except FileNotFoundError:
+        return {}
+    except Exception as exc:
+        _log(f"construct_config: error reading workspace .env: {exc}")
+    return values
+
+
+def kumiho_connection_config() -> dict[str, str]:
+    """Return Kumiho connection values from Construct config.
+
+    Onboarding stores the user-entered Kumiho token in
+    the workspace ``.env`` as ``KUMIHO_SERVICE_TOKEN``. Some deployments use
+    ``KUMIHO_AUTH_TOKEN`` or a config value instead. Workflow child agents run
+    through the Python SDK/MCP bridge, so they should not depend on a separate
+    ``kumiho_authentication.json`` having been created.
+    """
+    kumiho = _read_kumiho_section()
+    workspace_env = _read_workspace_env()
+    service_token = _nonempty_str(workspace_env.get("KUMIHO_SERVICE_TOKEN"))
+    auth_token = (
+        _nonempty_str(kumiho.get("auth_token"))
+        or _nonempty_str(workspace_env.get("KUMIHO_AUTH_TOKEN"))
+        or service_token
+    )
+    return {
+        "api_url": _nonempty_str(kumiho.get("api_url")) or _DEFAULT_KUMIHO_API_URL,
+        "auth_token": auth_token,
+        "service_token": service_token or auth_token,
+        "space_prefix": _nonempty_str(kumiho.get("space_prefix")),
+        "memory_project": _nonempty_str(kumiho.get("memory_project")) or _DEFAULT_MEMORY,
+        "harness_project": _nonempty_str(kumiho.get("harness_project")) or _DEFAULT_HARNESS,
+    }
 
 
 def harness_project(*, force_reload: bool = False) -> str:

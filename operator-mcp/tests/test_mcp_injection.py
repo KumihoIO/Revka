@@ -7,10 +7,12 @@ import pytest
 
 from operator_mcp.mcp_injection import (
     _venv_python,
+    _kumiho_forward_env,
     build_mcp_servers,
     build_system_prompt,
     operator_tools_config,
     kumiho_memory_config,
+    workflow_memory_alias_config,
 )
 
 
@@ -81,13 +83,61 @@ class TestKumihoMemoryConfig:
             config = kumiho_memory_config()
             assert config["env"]["KUMIHO_AUTH_TOKEN"] == "test-token"
 
+    def test_reads_construct_config_when_env_missing(self, tmp_path):
+        cfg = tmp_path / "config.toml"
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        cfg.write_text(
+            "\n".join([
+                "[kumiho]",
+                'api_url = "https://kumiho.example.test"',
+                'auth_token = "config-token"',
+                'space_prefix = "TeamSpace"',
+                'memory_project = "MemoryGraph"',
+                'harness_project = "HarnessGraph"',
+            ]),
+            encoding="utf-8",
+        )
+        with patch("operator_mcp.construct_config._CONFIG_PATH", str(cfg)), \
+             patch("operator_mcp.construct_config._cached_workspace_dir", None), \
+             patch.dict("os.environ", {"CONSTRUCT_WORKSPACE": str(workspace)}, clear=True):
+            env = _kumiho_forward_env()
+            assert env["KUMIHO_AUTH_TOKEN"] == "config-token"
+            assert env["KUMIHO_API_URL"] == "https://kumiho.example.test"
+            assert env["KUMIHO_SPACE_PREFIX"] == "TeamSpace"
+            assert env["KUMIHO_MEMORY_PROJECT"] == "MemoryGraph"
+            assert env["KUMIHO_HARNESS_PROJECT"] == "HarnessGraph"
+
+    def test_reads_workspace_env_service_token_as_auth_token(self, tmp_path):
+        cfg = tmp_path / "config.toml"
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        (workspace / ".env").write_text(
+            "KUMIHO_SERVICE_TOKEN=workspace-token\n",
+            encoding="utf-8",
+        )
+        cfg.write_text(
+            "\n".join([
+                "[kumiho]",
+                'api_url = "https://kumiho.example.test"',
+            ]),
+            encoding="utf-8",
+        )
+        with patch("operator_mcp.construct_config._CONFIG_PATH", str(cfg)), \
+             patch("operator_mcp.construct_config._cached_workspace_dir", None), \
+             patch.dict("os.environ", {"CONSTRUCT_WORKSPACE": str(workspace)}, clear=True):
+            env = _kumiho_forward_env()
+            assert env["KUMIHO_AUTH_TOKEN"] == "workspace-token"
+            assert env["KUMIHO_SERVICE_TOKEN"] == "workspace-token"
+            assert env["KUMIHO_API_URL"] == "https://kumiho.example.test"
+
 
 class TestOperatorToolsConfig:
     def test_basic_config(self):
-        with patch("os.path.exists", return_value=False):  # venv python missing, falls back to python3
+        with patch("os.path.exists", return_value=False):
             config = operator_tools_config()
             assert config["type"] == "stdio"
-            assert config["command"] == "python3"
+            assert config["command"] in {"python", "python3"}
             assert "subagent_mcp" in config["args"][0]
 
     def test_with_socket_path(self):
@@ -101,17 +151,34 @@ class TestOperatorToolsConfig:
             assert config["env"] == {}
 
 
+class TestWorkflowMemoryAliasConfig:
+    def test_basic_config(self):
+        with patch("os.path.exists", return_value=False):
+            config = workflow_memory_alias_config()
+            assert config["type"] == "stdio"
+            assert config["command"] in {"python", "python3"}
+            assert "workflow_memory_alias_mcp" in config["args"][0]
+
+    def test_passes_kumiho_token(self):
+        with patch("os.path.exists", return_value=False), \
+             patch.dict("os.environ", {"KUMIHO_AUTH_TOKEN": "test-token"}):
+            config = workflow_memory_alias_config()
+            assert config["env"]["KUMIHO_AUTH_TOKEN"] == "test-token"
+
+
 class TestBuildMcpServers:
     def test_both_servers(self):
         with patch("os.path.exists", return_value=True):
             servers = build_mcp_servers(include_memory=True, include_operator=True)
             assert "kumiho-memory" in servers
+            assert "workflow-memory" in servers
             assert "operator-tools" in servers
 
     def test_memory_only(self):
         with patch("os.path.exists", return_value=True):
             servers = build_mcp_servers(include_memory=True, include_operator=False)
             assert "kumiho-memory" in servers
+            assert "workflow-memory" in servers
             assert "operator-tools" not in servers
 
     def test_operator_only(self):
@@ -119,6 +186,7 @@ class TestBuildMcpServers:
             servers = build_mcp_servers(include_memory=True, include_operator=True)
             # kumiho script doesn't exist, so memory config returns None
             assert "kumiho-memory" not in servers
+            assert "workflow-memory" in servers
             assert "operator-tools" in servers
 
     def test_neither(self):

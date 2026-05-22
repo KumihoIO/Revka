@@ -1,11 +1,12 @@
 import { ChevronDown, Pause, Pencil, Play, Plus, Power, RefreshCw, RotateCcw, Trash2, Workflow } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useT } from '@/construct/hooks/useT';
 import { parseWorkflowYaml, type TaskDefinition } from '@/construct/components/workflows/yamlSync';
 import WorkflowEditor from '@/construct/components/workflows/WorkflowEditor';
 import type { WorkflowCreateRequest, WorkflowDefinition, WorkflowRunDetail, WorkflowRunSummary, WorkflowUpdateRequest } from '@/types/api';
 import { ApiError, cancelWorkflowRun, createWorkflow, deleteWorkflow, deleteWorkflowRun, fetchWorkflowByRevisionKref, fetchWorkflowRun, fetchWorkflowRuns, fetchWorkflows, retryWorkflowRun, runWorkflow, toggleWorkflowDeprecation, updateWorkflow } from '@/lib/api';
+import { SSEClient } from '@/lib/sse';
 import {
   RunSummaryCard,
   SelectedTaskCard,
@@ -19,7 +20,7 @@ import StateMessage from '../components/ui/StateMessage';
 import StatusPill from '../components/ui/StatusPill';
 import WorkflowDagWorkspace from '../components/workflows/WorkflowDagWorkspace';
 import { deriveBlockedTaskIds, toStepRunInfo } from '../lib/orchestration';
-import type { KumihoArtifact, WorkflowStepDetail } from '@/types/api';
+import type { KumihoArtifact, SSEEvent, WorkflowStepDetail } from '@/types/api';
 
 export default function Workflows() {
   const { t, tpl } = useT();
@@ -47,6 +48,34 @@ export default function Workflows() {
   const [workflowDropdownOpen, setWorkflowDropdownOpen] = useState(false);
   const [viewerArtifact, setViewerArtifact] = useState<KumihoArtifact | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  const upsertRunSummary = useCallback((run: WorkflowRunDetail | WorkflowRunSummary) => {
+    const summary: WorkflowRunSummary = {
+      kref: run.kref,
+      run_id: run.run_id,
+      workflow_name: run.workflow_name,
+      status: run.status,
+      started_at: run.started_at,
+      completed_at: run.completed_at,
+      steps_completed: run.steps_completed,
+      steps_total: run.steps_total,
+      expanded_steps_completed: run.expanded_steps_completed,
+      current_loop: run.current_loop,
+      current_iteration: run.current_iteration,
+      current_loop_total: run.current_loop_total,
+      current_step_instance: run.current_step_instance,
+      error: run.error,
+      workflow_item_kref: run.workflow_item_kref,
+      workflow_revision_kref: run.workflow_revision_kref,
+    };
+    setRuns((current) => {
+      const index = current.findIndex((entry) => entry.run_id === summary.run_id);
+      if (index === -1) return [summary, ...current].slice(0, 40);
+      const next = [...current];
+      next[index] = { ...next[index], ...summary };
+      return next;
+    });
+  }, []);
 
   const openStepArtifact = (step: WorkflowStepDetail) => {
     if (!step.artifact_path) return;
@@ -199,7 +228,7 @@ export default function Workflows() {
     const nextRun = requestedRun
       ? matchingRuns.find((run) => run.run_id === requestedRun)
       : null;
-    setSelectedRunId(nextRun?.run_id ?? matchingRuns[0]?.run_id ?? null);
+    setSelectedRunId(requestedRun ? (nextRun?.run_id ?? requestedRun) : (matchingRuns[0]?.run_id ?? null));
   }, [runs, searchParams, selectedWorkflow]);
 
   useEffect(() => {
@@ -214,7 +243,8 @@ export default function Workflows() {
     let timer: ReturnType<typeof setTimeout> | null = null;
     let lastPinnedKref: string | null = null;
     const TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled']);
-    const POLL_INTERVAL_MS = 4000;
+    const ACTIVE_STATUSES = new Set(['pending', 'running', 'paused']);
+    const POLL_INTERVAL_MS = 1000;
     const scheduleNext = (delay: number) => {
       timer = setTimeout(poll, delay);
     };
@@ -223,6 +253,7 @@ export default function Workflows() {
         .then((run) => {
           if (cancelled) return;
           setSelectedRun(run);
+          upsertRunSummary(run);
           if (run.workflow_revision_kref && run.workflow_revision_kref !== lastPinnedKref) {
             lastPinnedKref = run.workflow_revision_kref;
             fetchWorkflowByRevisionKref(run.workflow_revision_kref)
@@ -235,7 +266,7 @@ export default function Workflows() {
           }
           // Keep polling while the run is still in flight. Treat any
           // unrecognized status as terminal so we don't loop forever.
-          if (run.status === 'running' || run.status === 'pending') {
+          if (ACTIVE_STATUSES.has(run.status)) {
             scheduleNext(POLL_INTERVAL_MS);
           } else if (!TERMINAL_STATUSES.has(run.status)) {
             // Unknown status — stop polling defensively.
@@ -258,7 +289,48 @@ export default function Workflows() {
       cancelled = true;
       if (timer) clearTimeout(timer);
     };
-  }, [selectedRunId, workspaceTab]);
+  }, [selectedRunId, upsertRunSummary, workspaceTab]);
+
+  useEffect(() => {
+    if (!selectedRunId || workspaceTab !== 'runs') return undefined;
+    let cancelled = false;
+    const refreshRun = () => {
+      fetchWorkflowRun(selectedRunId)
+        .then((run) => {
+          if (cancelled) return;
+          setSelectedRun(run);
+          upsertRunSummary(run);
+        })
+        .catch(() => undefined);
+    };
+    const eventRunId = (event: SSEEvent): string | null => {
+      const direct = typeof event.run_id === 'string' ? event.run_id : null;
+      if (direct) return direct;
+      const payload = event.payload as { run_id?: unknown } | undefined;
+      return typeof payload?.run_id === 'string' ? payload.run_id : null;
+    };
+    const client = new SSEClient();
+    client.onEvent = (event) => {
+      const type = event.type;
+      if (
+        type === 'workflow_cancel' ||
+        type === 'workflow_retry' ||
+        type === 'human_approval_request' ||
+        type === 'human_approval_resolved' ||
+        type === 'channel_event'
+      ) {
+        if (eventRunId(event) === selectedRunId) {
+          refreshRun();
+          void load();
+        }
+      }
+    };
+    client.connect();
+    return () => {
+      cancelled = true;
+      client.disconnect();
+    };
+  }, [selectedRunId, upsertRunSummary, workspaceTab]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!selectedWorkflow?.kref) return;
@@ -408,6 +480,18 @@ export default function Workflows() {
       });
       setWorkspaceTab('runs');
       setSelectedRunId(response.run_id);
+      upsertRunSummary({
+        kref: '',
+        run_id: response.run_id,
+        workflow_name: selectedWorkflow.name,
+        status: 'pending',
+        started_at: new Date().toISOString(),
+        completed_at: '',
+        steps_completed: '0',
+        steps_total: String(selectedWorkflow.steps ?? ''),
+        error: '',
+        workflow_item_kref: selectedWorkflow.kref,
+      });
       await load();
     } catch (err) {
       const message = formatWorkflowError(err, t('workflows.run_failure'));

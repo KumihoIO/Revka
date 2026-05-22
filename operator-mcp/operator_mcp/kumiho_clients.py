@@ -15,7 +15,7 @@ import os
 from typing import Any
 
 from ._log import _log
-from .construct_config import harness_project
+from .construct_config import harness_project, kumiho_connection_config
 
 _KUMIHO_IMPORT_ERROR: BaseException | None = None
 
@@ -418,8 +418,9 @@ class KumihoAgentPoolClient:
         return f"/{harness_project()}/AgentPool"
 
     def __init__(self) -> None:
-        self.api_url = os.environ.get("KUMIHO_API_URL", "").rstrip("/")
-        self.auth_token = os.environ.get("KUMIHO_AUTH_TOKEN", "")
+        config = kumiho_connection_config()
+        self.api_url = (os.environ.get("KUMIHO_API_URL") or config.get("api_url", "")).rstrip("/")
+        self.auth_token = os.environ.get("KUMIHO_AUTH_TOKEN") or config.get("auth_token", "")
         self._http_available = bool(self.api_url and self.auth_token and _HAS_HTTPX)
         self._available: bool | None = None  # deferred until first use
 
@@ -786,8 +787,9 @@ class KumihoTeamClient:
         return f"/{harness_project()}/Teams"
 
     def __init__(self) -> None:
-        self.api_url = os.environ.get("KUMIHO_API_URL", "").rstrip("/")
-        self.auth_token = os.environ.get("KUMIHO_AUTH_TOKEN", "")
+        config = kumiho_connection_config()
+        self.api_url = (os.environ.get("KUMIHO_API_URL") or config.get("api_url", "")).rstrip("/")
+        self.auth_token = os.environ.get("KUMIHO_AUTH_TOKEN") or config.get("auth_token", "")
         self._http_available = bool(self.api_url and self.auth_token and _HAS_HTTPX)
         self._available: bool | None = None  # deferred until first use
 

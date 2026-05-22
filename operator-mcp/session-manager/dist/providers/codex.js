@@ -114,6 +114,30 @@ function extractTimelineText(event) {
 function hasUsage(usage) {
     return usage.inputTokens !== undefined || usage.outputTokens !== undefined || usage.totalCostUsd !== undefined;
 }
+function codexMcpOverrides(servers) {
+    const flags = [];
+    for (const [name, config] of Object.entries(servers)) {
+        const prefix = `mcp_servers.${name}`;
+        if (config.type === "stdio") {
+            if (config.command) {
+                flags.push("-c", `${prefix}.command=${JSON.stringify(config.command)}`);
+            }
+            if (config.args && config.args.length > 0) {
+                flags.push("-c", `${prefix}.args=${JSON.stringify(config.args)}`);
+            }
+            for (const [envKey, envVal] of Object.entries(config.env ?? {})) {
+                flags.push("-c", `${prefix}.env.${envKey}=${JSON.stringify(envVal)}`);
+            }
+        }
+        else if (config.type === "http") {
+            flags.push("-c", `${prefix}.url=${JSON.stringify(config.url)}`);
+            for (const [headerKey, headerVal] of Object.entries(config.headers ?? {})) {
+                flags.push("-c", `${prefix}.headers.${headerKey}=${JSON.stringify(headerVal)}`);
+            }
+        }
+    }
+    return flags;
+}
 /**
  * Create a Codex agent session via subprocess.
  */
@@ -140,11 +164,17 @@ export function createCodexSession(config, onEvent) {
         };
         handle.jsonBuffer = "";
         const args = ["exec", "--json", "--full-auto", "--skip-git-repo-check"];
+        const effectivePrompt = config.systemPrompt
+            ? `${config.systemPrompt}\n\n${prompt}`
+            : prompt;
         if (config.model) {
             args.push("--model", config.model);
         }
-        args.push(prompt);
-        log(`Spawning codex: ${args.slice(0, 4).join(" ")}... (${prompt.length} chars)`);
+        if (config.mcpServers) {
+            args.push(...codexMcpOverrides(config.mcpServers));
+        }
+        args.push(effectivePrompt);
+        log(`Spawning codex: ${args.slice(0, 4).join(" ")}... (${effectivePrompt.length} chars)`);
         const proc = spawn("codex", args, {
             cwd: config.cwd,
             stdio: ["ignore", "pipe", "pipe"],
