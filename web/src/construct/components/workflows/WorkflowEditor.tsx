@@ -458,6 +458,7 @@ function defaultNodeData(id: string, overrides?: Partial<TaskNodeData>): TaskNod
     timeout: 300,
     agentMaxTurns: 3,
     agentTools: 'none',
+    agentRequiredTools: [],
     agentOutputFields: [],
     agentQualityEnabled: false,
     agentQualityThreshold: 0.7,

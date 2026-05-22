@@ -16,6 +16,7 @@ import json
 import os
 import re
 import signal
+import subprocess
 import time
 import uuid
 from datetime import datetime, timezone
@@ -24,6 +25,7 @@ from typing import Any
 
 from .._log import _log
 from ..agent_subprocess import compose_agent_prompt
+from ..construct_config import workspace_dir
 from ..failure_classification import classified_error, VALIDATION_ERROR
 from .auth_resolver import AuthResolveError, resolve_auth_profile
 from .schema import (
@@ -64,6 +66,28 @@ from .validator import validate_workflow
 _VAR_RE = re.compile(r"\$\{(?!\{)([^}]+)\}")
 _EXPR_TEMPLATE_RE = re.compile(r"\$\{\{\s*(.*?)\s*\}\}", re.DOTALL)
 _COMPUTE_OUTPUT_KEY_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
+
+_WORKFLOW_MEMORY_ALIAS_TOOLS = {
+    "capture_skill",
+    "kumiho_capture_skill",
+    "tag_revision",
+    "kumiho_tag_revision",
+}
+_CAPTURE_TOOL_NAMES = {"capture_skill", "kumiho_capture_skill"}
+_OPERATOR_SUBAGENT_TOOLS = {
+    "create_agent",
+    "wait_for_agent",
+    "send_agent_prompt",
+    "get_agent_activity",
+    "list_agents",
+    "chat_post",
+    "chat_read",
+    "chat_list",
+    "run_workflow",
+    "get_workflow_status",
+    "list_workflows",
+    "get_auth_token",
+}
 
 
 def interpolate(template: str, state: WorkflowState) -> str:
@@ -977,12 +1001,115 @@ def _iteration_qualified_step_id(step_id: str, state: WorkflowState) -> str:
     return step_id
 
 
+def _safe_path_part(value: str, fallback: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "-", value.strip()).strip(".-")
+    return (cleaned or fallback)[:80]
+
+
+def _workflow_agent_sandbox_cwd(state: WorkflowState, step: StepDef) -> str:
+    """Return the per-run workspace sandbox used as workflow agent cwd."""
+    root = workspace_dir()
+    workflow = _safe_path_part(state.workflow_name, "workflow")
+    run = _safe_path_part(state.run_id, "run")
+    step_id = _safe_path_part(_iteration_qualified_step_id(step.id, state), "step")
+    path = os.path.join(root, "runs", workflow, run, step_id)
+    os.makedirs(path, exist_ok=True)
+    return os.path.realpath(path)
+
+
+def _tool_base_name(name: str) -> str:
+    raw = str(name or "").strip()
+    if "__" in raw:
+        raw = raw.split("__")[-1]
+    if ":" in raw:
+        raw = raw.split(":")[-1]
+    return raw.strip()
+
+
+def _agent_required_tools(step: StepDef, cfg: AgentStepConfig) -> list[str]:
+    """Declared plus inferred tool names the agent must be able to see."""
+    required: list[str] = []
+    seen: set[str] = set()
+
+    def add(tool: str) -> None:
+        base = _tool_base_name(tool)
+        if base and base not in seen:
+            required.append(base)
+            seen.add(base)
+
+    for tool in cfg.required_tools:
+        add(tool)
+
+    prompt_text = cfg.prompt or ""
+    for tool in _CAPTURE_TOOL_NAMES:
+        if re.search(rf"\b{re.escape(tool)}\b", prompt_text):
+            add(tool)
+    for tool in ("tag_revision", "kumiho_tag_revision"):
+        if re.search(rf"\b{re.escape(tool)}\b", prompt_text):
+            add(tool)
+
+    return required
+
+
+def _agent_required_tool_visible(
+    tool: str,
+    *,
+    cfg: AgentStepConfig,
+    mcp_servers: dict[str, Any],
+) -> bool:
+    base = _tool_base_name(tool)
+    if not base:
+        return True
+    if cfg.tools == "none":
+        return False
+    if base in _WORKFLOW_MEMORY_ALIAS_TOOLS:
+        return "workflow-memory" in mcp_servers
+    if base in _OPERATOR_SUBAGENT_TOOLS:
+        return "operator-tools" in mcp_servers
+    if base.startswith("kumiho_") or base.startswith("kumiho_memory_"):
+        return "kumiho-memory" in mcp_servers or "workflow-memory" in mcp_servers
+    # Unknown required names are only provably visible in the broad operator
+    # mode, where the child gets the operator-tools MCP surface.
+    return cfg.tools == "all" and "operator-tools" in mcp_servers
+
+
+def _preflight_required_tool_visibility(wf: WorkflowDef) -> str | None:
+    from ..mcp_injection import build_mcp_servers
+
+    for step in wf.steps:
+        if step.type != StepType.AGENT:
+            continue
+        cfg = step.resolve_agent_config()
+        required = _agent_required_tools(step, cfg)
+        if not required:
+            continue
+
+        include_memory = cfg.tools in ("all", "memory")
+        include_operator = cfg.tools == "all"
+        mcp_servers = build_mcp_servers(
+            include_memory=include_memory,
+            include_operator=include_operator,
+        )
+        missing = [
+            tool for tool in required
+            if not _agent_required_tool_visible(tool, cfg=cfg, mcp_servers=mcp_servers)
+        ]
+        if missing:
+            return (
+                f"Required tool visibility failed for step '{step.id}': "
+                f"missing {', '.join(missing)} (agent.tools={cfg.tools})"
+            )
+    return None
+
+
 async def _exec_agent(step: StepDef, state: WorkflowState, cwd: str) -> StepResult:
     """Execute an agent step."""
     from ..patterns.refinement import _spawn_and_wait, _get_agent_output
 
     cfg = step.resolve_agent_config()
     prompt = interpolate(cfg.prompt, state)
+    required_tools = _agent_required_tools(step, cfg)
+    agent_cwd = _workflow_agent_sandbox_cwd(state, step)
 
     # Pre-resolve skill krefs into inline content so agents don't waste turns
     # trying to fetch them via MCP tools.
@@ -992,6 +1119,12 @@ async def _exec_agent(step: StepDef, state: WorkflowState, cwd: str) -> StepResu
 
     full_prompt = compose_agent_prompt(
         step.id, cfg.role, skill_context, [], prompt,
+    )
+    full_prompt += (
+        "\n\n## Workflow Runtime\n"
+        f"- Run sandbox cwd: {agent_cwd}\n"
+        f"- Source cwd: {os.path.realpath(os.path.expanduser(cwd))}\n"
+        "- Write generated files under the run sandbox unless the task explicitly requires otherwise."
     )
 
     # Determine MCP injection level from step config
@@ -1018,7 +1151,7 @@ async def _exec_agent(step: StepDef, state: WorkflowState, cwd: str) -> StepResu
 
     agent, output = await _spawn_and_wait(
         cfg.agent_type, f"wf-{state.run_id[:8]}-{step.id}",
-        cwd, full_prompt,
+        agent_cwd, full_prompt,
         model=cfg.model, timeout=cfg.timeout,
         max_turns=cfg.max_turns,
         include_memory=include_memory,
@@ -1068,6 +1201,13 @@ async def _exec_agent(step: StepDef, state: WorkflowState, cwd: str) -> StepResu
         role=cfg.role,
         action=step.action,
         files_touched=files,
+        input_data={
+            "cwd": agent_cwd,
+            "source_cwd": os.path.realpath(os.path.expanduser(cwd)),
+            "tools": cfg.tools,
+            "required_tools": required_tools,
+            "prompt_preview": prompt[:1000],
+        },
         error=(effective[:2000] if agent.status == "error"
                else "Agent returned empty output" if not agent_succeeded and not effective.strip()
                else ""),
@@ -1115,6 +1255,15 @@ async def _exec_agent(step: StepDef, state: WorkflowState, cwd: str) -> StepResu
             if k not in result.output_data:  # Don't clobber executor fields
                 result.output_data[k] = v
         _log(f"agent step '{step.id}': extracted {len(parsed_json)} structured fields into output_data")
+
+    if (
+        result.status == "completed"
+        and any(_tool_base_name(tool) in _CAPTURE_TOOL_NAMES for tool in required_tools)
+        and not str(result.output_data.get("revision_kref") or "").strip()
+    ):
+        result.status = "failed"
+        result.error = "capture_required: revision_kref missing"
+        result.output_data["capture_required"] = True
 
     # Quality check: if configured, run a lightweight validator on the output.
     # A score below threshold marks the step as failed, triggering retry.
@@ -1196,8 +1345,9 @@ def _kill_proc(proc: Any) -> None:
     spawned by patterns like ``bash -c "long & other"`` that ``proc.kill()``
     would otherwise leak.
 
-    On Windows, process groups don't translate cleanly; fall back to
-    ``proc.kill()`` (the existing single-child kill).
+    On Windows, ``asyncio.create_subprocess_shell`` commonly spawns a shell
+    parent and a real child process. Use ``taskkill /T`` before falling back
+    to ``proc.kill()`` so cancellation and timeout do not leave descendants.
     """
     if proc is None:
         return
@@ -1226,6 +1376,26 @@ def _kill_proc(proc: Any) -> None:
             except (ProcessLookupError, OSError):
                 pass
             return
+
+    if os.name == "nt":
+        try:
+            result = subprocess.run(
+                ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=5.0,
+            )
+            if result.returncode == 0:
+                return
+            _log(
+                f"workflow: taskkill tree failed for pid={proc.pid} "
+                f"rc={result.returncode}: {(result.stderr or '').strip()[-300:]}"
+            )
+        except FileNotFoundError:
+            _log(f"workflow: taskkill not found for pid={proc.pid}; falling back to proc.kill")
+        except Exception as exc:
+            _log(f"workflow: taskkill tree failed for pid={proc.pid}: {exc}")
 
     # Windows fallback (or POSIX path where pgid lookup failed).
     try:
@@ -4081,6 +4251,19 @@ async def _persist_running_step_progress(
         _log(f"workflow: live step persist failed for run={state.run_id[:8]}: {exc}")
 
 
+def _mark_step_running(state: WorkflowState, step: StepDef) -> None:
+    existing = state.step_results.get(step.id)
+    if existing and existing.status in ("completed", "skipped"):
+        return
+    state.step_results[step.id] = StepResult(
+        step_id=step.id,
+        status="running",
+        agent_type=step.agent.agent_type if step.agent else "",
+        role=step.agent.role if step.agent else "",
+        action=step.type.value,
+    )
+
+
 async def _exec_map_reduce(step: StepDef, state: WorkflowState, cwd: str) -> StepResult:
     """Execute a map_reduce pattern step."""
     cfg: MapReduceStepConfig = step.map_reduce  # type: ignore
@@ -5045,6 +5228,20 @@ async def execute_workflow(
         if "timeout" in type(cfg).model_fields and "timeout" not in cfg.model_fields_set:
             cfg.timeout = wf.default_timeout
 
+    tool_visibility_err = _preflight_required_tool_visibility(wf)
+    if tool_visibility_err:
+        return await _return_preflight_failure(
+            wf,
+            inputs,
+            run_id=run_id or str(uuid.uuid4()),
+            error=tool_visibility_err,
+            resume_state=resume_state,
+            trigger_context=trigger_context,
+            workflow_item_kref=workflow_item_kref,
+            workflow_revision_kref=workflow_revision_kref,
+            target_step_id=target_step_id,
+        )
+
     # Pre-flight cost check
     cost_err = await _check_cost_guard(max_cost_usd)
     if cost_err:
@@ -5284,6 +5481,7 @@ async def execute_workflow(
                 step = wf.step_by_id(control_step)
                 assert step is not None
                 state.current_step = control_step
+                _mark_step_running(state, step)
                 _log(f"workflow: executing step '{control_step}' ({step.type.value})")
 
                 result = await _execute_step_with_retry(step, state, effective_cwd, wf)
@@ -5387,6 +5585,11 @@ async def execute_workflow(
             else:
                 # Run all ready non-control-flow steps in parallel
                 batch_ids = parallel_batch
+                for sid in batch_ids:
+                    step = wf.step_by_id(sid)
+                    if step is not None:
+                        _mark_step_running(state, step)
+                state.current_step = batch_ids[0] if batch_ids else None
                 _log(f"workflow: executing {len(batch_ids)} step(s) in parallel: {batch_ids}")
 
                 async def _run_one(sid: str) -> tuple[str, StepResult]:

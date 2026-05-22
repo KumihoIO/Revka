@@ -150,6 +150,13 @@ def _runlog_is_growing(sidecar_id: str, last_size: int, runlog_dir: str) -> bool
     return current > last_size
 
 
+def _subprocess_progress_marker(agent: ManagedAgent, runlog_dir: str) -> int:
+    """Return a coarse monotonic marker for subprocess fallback progress."""
+    runlog_id = getattr(agent, "_sidecar_id", None) or agent.id
+    runlog_size = max(_get_runlog_size(runlog_id, runlog_dir), 0)
+    return runlog_size + len(agent.stdout_buffer or "") + len(agent.stderr_buffer or "")
+
+
 async def _cancel_timed_out_agent(agent: ManagedAgent) -> None:
     """Cancel a timed-out agent to stop it from burning tokens."""
     try:
@@ -283,9 +290,39 @@ async def _wait_for_agent(agent: ManagedAgent, *, timeout: float = 300.0) -> str
                 await _cancel_timed_out_agent(agent)
                 return f"[TIMEOUT after {timeout}s]"
     elif agent._reader_task:
-        try:
-            await asyncio.wait_for(agent._reader_task, timeout=timeout)
-        except asyncio.TimeoutError:
+        loop_time = asyncio.get_event_loop().time
+        deadline = loop_time() + timeout
+        last_progress_time = loop_time()
+        last_marker = _subprocess_progress_marker(agent, _RUNLOG_DIR)
+
+        while loop_time() < deadline:
+            if agent._reader_task.done():
+                break
+
+            now = loop_time()
+            marker = _subprocess_progress_marker(agent, _RUNLOG_DIR)
+            if marker > last_marker:
+                last_marker = marker
+                last_progress_time = now
+
+            has_output = bool((agent.stdout_buffer or "").strip() or (agent.stderr_buffer or "").strip())
+            idle_for = now - last_progress_time
+            if not has_output and idle_for >= _INITIALIZING_TIMEOUT:
+                _log(
+                    f"refinement: subprocess agent {agent.id[:8]} produced no output for "
+                    f"{idle_for:.0f}s; marking failed"
+                )
+                await _cancel_timed_out_agent(agent)
+                agent.status = "error"
+                return f"[INITIALIZATION TIMEOUT after {_INITIALIZING_TIMEOUT:.0f}s]"
+
+            remaining = deadline - now
+            sleep_for = min(1.0, max(0.1, remaining))
+            if _INITIALIZING_TIMEOUT < timeout:
+                init_remaining = (last_progress_time + _INITIALIZING_TIMEOUT) - now
+                sleep_for = min(sleep_for, max(0.1, init_remaining))
+            await asyncio.sleep(sleep_for)
+        else:
             _log(f"refinement: agent {agent.id[:8]} timed out ({timeout}s), cancelling")
             await _cancel_timed_out_agent(agent)
             return f"[TIMEOUT after {timeout}s]"
@@ -323,7 +360,8 @@ async def _spawn_and_wait(
     injecting it into the system prompt.
     """
     from ..budget_authority import BudgetGateError, require_agent_budget
-    from ..tool_handlers.agents import _try_sidecar_create, _event_consumer
+    from ..mcp_injection import build_mcp_servers, build_system_prompt
+    from ..tool_handlers import agents as agent_tools
 
     agent_id = str(uuid.uuid4())
     agent = ManagedAgent(
@@ -339,6 +377,23 @@ async def _spawn_and_wait(
     # The sidecar's Agent SDK has separate rate limits from the CLI —
     # using `claude --print --bare` shares the user's CLI quota instead.
     use_cli = not include_memory and not include_operator
+    subprocess_mcp_servers: dict[str, Any] | None = None
+    subprocess_prompt = prompt
+
+    if not use_cli:
+        socket_path = getattr(agent_tools._sidecar_client, "socket_path", None)
+        subprocess_mcp_servers = build_mcp_servers(
+            include_memory=include_memory,
+            include_operator=include_operator,
+            socket_path=socket_path,
+        )
+        system_prompt = build_system_prompt(
+            is_top_level=False,
+            include_memory=include_memory,
+            include_operator=include_operator,
+        )
+        if system_prompt:
+            subprocess_prompt = f"{system_prompt}\n\n{prompt}"
 
     if use_cli:
         try:
@@ -351,7 +406,7 @@ async def _spawn_and_wait(
     sidecar_info = None
     if not use_cli:
         try:
-            sidecar_info = await _try_sidecar_create(
+            sidecar_info = await agent_tools._try_sidecar_create(
                 agent_id, agent_type, title, cwd, prompt, model=model,
                 max_turns=max_turns,
                 include_memory=include_memory,
@@ -364,15 +419,24 @@ async def _spawn_and_wait(
     if sidecar_info:
         agent.status = "running"
         agent._sidecar_id = sidecar_info.get("id", "")
-        if _event_consumer and agent._sidecar_id:
-            _event_consumer._agent_titles[agent._sidecar_id] = title
+        if agent_tools._event_consumer and agent._sidecar_id:
+            agent_tools._event_consumer._agent_titles[agent._sidecar_id] = title
             if model:
-                _event_consumer.set_agent_model(agent._sidecar_id, model)
-            await _event_consumer.subscribe(agent._sidecar_id, title, model=model or "")
+                agent_tools._event_consumer.set_agent_model(agent._sidecar_id, model)
+            await agent_tools._event_consumer.subscribe(agent._sidecar_id, title, model=model or "")
     else:
         from ..operator_mcp import JOURNAL
         try:
-            await spawn_agent(agent, prompt, JOURNAL, model=model, env_extra=env_extra)
+            agent._subprocess_mcp_servers = subprocess_mcp_servers
+            agent._original_prompt = subprocess_prompt
+            await spawn_agent(
+                agent,
+                subprocess_prompt,
+                JOURNAL,
+                model=model,
+                env_extra=env_extra,
+                mcp_servers=subprocess_mcp_servers,
+            )
         except Exception:
             agent.status = "error"
             return agent, agent.stderr_buffer[-2000:] if agent.stderr_buffer else "spawn failed"

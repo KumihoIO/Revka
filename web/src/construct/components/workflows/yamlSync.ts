@@ -91,6 +91,8 @@ export interface TaskDefinition {
   agent_max_turns?: number;
   /** Agent step: MCP tool injection level */
   agent_tools?: 'all' | 'memory' | 'none';
+  /** Agent step: required MCP tools that must be visible before launch */
+  agent_required_tools?: string[];
   /** Agent step: expected JSON output fields */
   agent_output_fields?: string[];
   /** Agent step: quality-check block */
@@ -394,6 +396,7 @@ export interface TaskNodeData {
   timeout: number;
   agentMaxTurns: number;
   agentTools: 'all' | 'memory' | 'none';
+  agentRequiredTools: string[];
   agentOutputFields: string[];
   agentQualityEnabled: boolean;
   agentQualityThreshold: number;
@@ -806,6 +809,7 @@ function parseStep(s: YAMLObj): TaskDefinition | null {
     t.agent_max_turns = asNum(agent.max_turns);
     const tools = asStr(agent.tools);
     if (tools === 'all' || tools === 'memory' || tools === 'none') t.agent_tools = tools;
+    t.agent_required_tools = asStrArr(agent.required_tools);
     t.agent_output_fields = asStrArr(agent.output_fields);
     const quality = isObj(agent.quality_check) ? agent.quality_check : undefined;
     if (quality) {
@@ -1446,6 +1450,7 @@ export function tasksToFlow(tasks: TaskDefinition[]): { nodes: Node<TaskNodeData
       timeout: task.timeout || 300,
       agentMaxTurns: task.agent_max_turns ?? 3,
       agentTools: task.agent_tools ?? 'none',
+      agentRequiredTools: task.agent_required_tools || [],
       agentOutputFields: task.agent_output_fields || [],
       agentQualityEnabled: task.agent_quality_enabled ?? false,
       agentQualityThreshold: task.agent_quality_threshold ?? 0.7,
@@ -2234,6 +2239,7 @@ export function flowToTasks(nodes: Node<TaskNodeData>[], edges: Edge[]): TaskDef
       if (d.model) base.model = d.model;
       if (d.agentMaxTurns && d.agentMaxTurns !== 3) base.agent_max_turns = d.agentMaxTurns;
       if (d.agentTools && d.agentTools !== 'none') base.agent_tools = d.agentTools;
+      if (d.agentRequiredTools?.length) base.agent_required_tools = d.agentRequiredTools;
       if (d.agentOutputFields?.length) base.agent_output_fields = d.agentOutputFields;
       if (d.agentQualityEnabled) {
         base.agent_quality_enabled = true;
@@ -2568,7 +2574,17 @@ export function tasksToYaml(tasks: TaskDefinition[], meta?: Partial<WorkflowMeta
       if (task.notify_channel_id) lines.push(`      channel_id: ${yamlEscape(task.notify_channel_id)}`);
     }
     // Executor-specific nested blocks
-    if (stepType === 'agent' && (task.agent_type || task.role || task.prompt || task.template || task.auth)) {
+    if (
+      stepType === 'agent'
+      && (
+        task.agent_type
+        || task.role
+        || task.prompt
+        || task.template
+        || task.auth
+        || task.agent_required_tools?.length
+      )
+    ) {
       lines.push(`    agent:`);
       if (task.agent_type) lines.push(`      agent_type: ${task.agent_type}`);
       if (task.role) lines.push(`      role: ${task.role}`);
@@ -2591,6 +2607,9 @@ export function tasksToYaml(tasks: TaskDefinition[], meta?: Partial<WorkflowMeta
       if (task.model) lines.push(`      model: ${task.model}`);
       if (task.agent_max_turns && task.agent_max_turns !== 3) lines.push(`      max_turns: ${task.agent_max_turns}`);
       if (task.agent_tools && task.agent_tools !== 'none') lines.push(`      tools: ${task.agent_tools}`);
+      if (task.agent_required_tools?.length) {
+        lines.push(`      required_tools: [${task.agent_required_tools.map(yamlEscape).join(', ')}]`);
+      }
       if (task.agent_output_fields?.length) {
         lines.push(`      output_fields: [${task.agent_output_fields.map(yamlEscape).join(', ')}]`);
       }

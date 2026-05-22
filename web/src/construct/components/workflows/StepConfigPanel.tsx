@@ -268,6 +268,7 @@ export default function StepConfigPanel({
     () => existingTaskIds.filter((id) => id !== data.taskId),
     [existingTaskIds, data.taskId],
   );
+  const agentRequiredToolsDraftState = useCommaListDraft(data.agentRequiredTools || [], node.id);
   const agentOutputFieldsDraftState = useCommaListDraft(data.agentOutputFields || [], node.id);
   const agentQualityCriteriaDraftState = useCommaListDraft(data.agentQualityCriteria || [], node.id);
   const approvalApproveKeywordsDraftState = useCommaListDraft(data.humanApprovalApproveKeywords || [], node.id);
@@ -302,6 +303,18 @@ export default function StepConfigPanel({
   const commitAgentOutputFieldsDraft = useCallback(() => {
     onUpdate(node.id, { agentOutputFields: agentOutputFieldsDraftState.commit() });
   }, [agentOutputFieldsDraftState, node.id, onUpdate]);
+
+  const handleAgentRequiredToolsChange = useCallback(
+    (nextDraft: string) => {
+      agentRequiredToolsDraftState.setDraft(nextDraft);
+      onUpdate(node.id, { agentRequiredTools: parseListInput(nextDraft) });
+    },
+    [agentRequiredToolsDraftState, node.id, onUpdate],
+  );
+
+  const commitAgentRequiredToolsDraft = useCallback(() => {
+    onUpdate(node.id, { agentRequiredTools: agentRequiredToolsDraftState.commit() });
+  }, [agentRequiredToolsDraftState, node.id, onUpdate]);
 
   // Local draft so typing intermediate states (uppercase, spaces) doesn't
   // aggressively reformat under the cursor. Commits to the canvas on blur.
@@ -1227,6 +1240,25 @@ export default function StepConfigPanel({
                     <option value="all">all</option>
                   </select>
                 </div>
+              </div>
+
+              <div>
+                <label style={labelStyle}>Required Tools</label>
+                <input
+                  type="text"
+                  value={agentRequiredToolsDraftState.draft}
+                  onFocus={agentRequiredToolsDraftState.startEditing}
+                  onChange={(e) => handleAgentRequiredToolsChange(e.target.value)}
+                  onBlur={commitAgentRequiredToolsDraft}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      (e.currentTarget as HTMLInputElement).blur();
+                    }
+                  }}
+                  placeholder="capture_skill, tag_revision"
+                  style={monoInputStyle}
+                />
               </div>
 
               <div>

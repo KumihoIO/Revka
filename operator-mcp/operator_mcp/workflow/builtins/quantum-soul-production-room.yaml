@@ -429,6 +429,8 @@ steps:
     agent:
       agent_type: claude
       role: researcher
+      tools: memory
+      required_tools: [tag_revision]
       prompt: |
         The episode has been approved for publication.
 

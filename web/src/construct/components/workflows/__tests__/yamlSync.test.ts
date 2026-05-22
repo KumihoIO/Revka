@@ -677,6 +677,7 @@ steps:
       prompt: "Produce JSON"
       max_turns: 6
       tools: memory
+      required_tools: [capture_skill, tag_revision]
       output_fields: [summary, score]
       quality_check:
         enabled: true
@@ -744,6 +745,7 @@ steps:
   const agent = tasks2.find((t) => t.id === 'agent-full')!;
   assert.equal(agent.agent_max_turns, 6);
   assert.equal(agent.agent_tools, 'memory');
+  assert.deepEqual(agent.agent_required_tools, ['capture_skill', 'tag_revision']);
   assert.deepEqual(agent.agent_output_fields, ['summary', 'score']);
   assert.equal(agent.agent_quality_enabled, true);
   assert.equal(agent.agent_quality_threshold, 0.85);

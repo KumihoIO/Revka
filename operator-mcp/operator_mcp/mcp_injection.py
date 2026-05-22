@@ -13,6 +13,8 @@ from __future__ import annotations
 import os
 from typing import Any
 
+from .construct_config import kumiho_connection_config
+
 from ._log import _log
 
 # -- Paths -------------------------------------------------------------------
@@ -31,6 +33,7 @@ _KUMIHO_SIDECAR_ROOT = os.path.join(_HOME, ".construct/kumiho")
 _KUMIHO_MCP_SCRIPT = os.path.join(_KUMIHO_SIDECAR_ROOT, "run_kumiho_mcp.py")
 _OPERATOR_DIR = os.path.dirname(os.path.abspath(__file__))
 _OPERATOR_SUBAGENT_MCP = os.path.join(_OPERATOR_DIR, "subagent_mcp.py")
+_WORKFLOW_MEMORY_ALIAS_MCP = os.path.join(_OPERATOR_DIR, "workflow_memory_alias_mcp.py")
 
 
 def _venv_python(venv_root: str) -> str:
@@ -59,6 +62,45 @@ def _venv_python(venv_root: str) -> str:
 
 # -- MCP server configs ------------------------------------------------------
 
+def _kumiho_forward_env() -> dict[str, str]:
+    """Environment shared by Kumiho-backed MCP servers."""
+    env: dict[str, str] = {}
+    for key in (
+        "KUMIHO_AUTH_TOKEN",
+        "KUMIHO_SERVICE_TOKEN",
+        "KUMIHO_API_URL",
+        "KUMIHO_CONTROL_PLANE_URL",
+        "KUMIHO_SPACE_PREFIX",
+        "KUMIHO_MEMORY_PROJECT",
+        "KUMIHO_HARNESS_PROJECT",
+        "KUMIHO_MCP_LOG_LEVEL",
+        "KUMIHO_AUTO_ASSESS",
+        "KUMIHO_LLM_API_KEY",
+        "KUMIHO_LLM_PROVIDER",
+        "KUMIHO_LLM_MODEL",
+        "KUMIHO_LLM_LIGHT_MODEL",
+        "KUMIHO_LLM_BASE_URL",
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+    ):
+        val = os.environ.get(key)
+        if val:
+            env[key] = val
+    config = kumiho_connection_config()
+    fallback_map = {
+        "KUMIHO_AUTH_TOKEN": "auth_token",
+        "KUMIHO_SERVICE_TOKEN": "service_token",
+        "KUMIHO_API_URL": "api_url",
+        "KUMIHO_SPACE_PREFIX": "space_prefix",
+        "KUMIHO_MEMORY_PROJECT": "memory_project",
+        "KUMIHO_HARNESS_PROJECT": "harness_project",
+    }
+    for env_key, config_key in fallback_map.items():
+        if env_key not in env and config.get(config_key):
+            env[env_key] = config[config_key]
+    return env
+
+
 def kumiho_memory_config() -> dict[str, Any] | None:
     """Build kumiho-memory MCP stdio config for agent injection.
 
@@ -81,33 +123,30 @@ def kumiho_memory_config() -> dict[str, Any] | None:
     # see src/agent/kumiho.rs::kumiho_mcp_server_config for the canonical set.
     # Auto-configure is intentionally not enabled by default: it can perform
     # network credential refresh before the MCP initialize handshake.
-    env: dict[str, str] = {}
-    for key in (
-        "KUMIHO_AUTH_TOKEN",
-        "KUMIHO_SERVICE_TOKEN",
-        "KUMIHO_CONTROL_PLANE_URL",
-        "KUMIHO_SPACE_PREFIX",
-        "KUMIHO_MEMORY_PROJECT",
-        "KUMIHO_HARNESS_PROJECT",
-        "KUMIHO_MCP_LOG_LEVEL",
-        "KUMIHO_AUTO_ASSESS",
-        "KUMIHO_LLM_API_KEY",
-        "KUMIHO_LLM_PROVIDER",
-        "KUMIHO_LLM_MODEL",
-        "KUMIHO_LLM_LIGHT_MODEL",
-        "KUMIHO_LLM_BASE_URL",
-        "OPENAI_API_KEY",
-        "ANTHROPIC_API_KEY",
-    ):
-        val = os.environ.get(key)
-        if val:
-            env[key] = val
+    env = _kumiho_forward_env()
 
     return {
         "type": "stdio",
         "command": python,
         "args": [_KUMIHO_MCP_SCRIPT],
         "env": env,
+    }
+
+
+def workflow_memory_alias_config() -> dict[str, Any]:
+    """Build the workflow-memory MCP for generic Kumiho aliases.
+
+    The full kumiho-memory server exposes the upstream Kumiho MCP surface,
+    whose tool names are package-version dependent. Workflow child agents need
+    a stable tiny surface for capture/publish handoffs regardless of those
+    upstream names.
+    """
+    python = _venv_python(os.path.join(_HOME, ".construct", "operator_mcp", "venv"))
+    return {
+        "type": "stdio",
+        "command": python,
+        "args": [_WORKFLOW_MEMORY_ALIAS_MCP],
+        "env": _kumiho_forward_env(),
     }
 
 
@@ -143,6 +182,7 @@ def build_mcp_servers(
         mem = kumiho_memory_config()
         if mem:
             servers["kumiho-memory"] = mem
+        servers["workflow-memory"] = workflow_memory_alias_config()
 
     if include_operator:
         servers["operator-tools"] = operator_tools_config(socket_path)
@@ -170,7 +210,9 @@ _MEMORY_BOOTSTRAP = """\
 You have access to kumiho-memory MCP for persistent memory. Use \
 kumiho_memory_engage before responding to topics that might have history. \
 Use kumiho_memory_reflect after substantive responses to capture decisions, \
-preferences, and facts."""
+preferences, and facts. Workflow agents also have stable workflow-memory \
+aliases: capture_skill stores reusable procedures and returns revision_kref; \
+tag_revision applies a tag to a Kumiho revision or item."""
 
 _SUB_AGENT_PREAMBLE = """\
 You are a worker agent spawned by a parent operator agent. Focus entirely \

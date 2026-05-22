@@ -1,8 +1,11 @@
 use crate::config::Config;
 use anyhow::{Context, Result, bail};
-use std::fs;
+use chrono::{DateTime, Utc};
+use std::fs::{self, OpenOptions};
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::str::FromStr;
 
 const SERVICE_LABEL: &str = "com.construct.daemon";
@@ -19,6 +22,7 @@ pub const DAEMON_NOFILE_SOFT: u64 = 4096;
 pub const DAEMON_NOFILE_HARD: u64 = 8192;
 const DAEMON_LOG_ROTATE_BYTES: u64 = 20 * 1024 * 1024;
 const DAEMON_LOG_RETAINED_FILES: usize = 5;
+const DAEMON_STATE_FRESH_SECONDS: i64 = 45;
 
 /// Supported init systems for service management
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -101,6 +105,48 @@ fn windows_task_name() -> &'static str {
     WINDOWS_TASK_NAME
 }
 
+#[derive(Debug, Clone, Copy)]
+struct DaemonStateSnapshot {
+    pid: Option<u64>,
+    age_seconds: i64,
+}
+
+fn fresh_daemon_state(config: &Config) -> Option<DaemonStateSnapshot> {
+    let raw = fs::read_to_string(crate::daemon::state_file_path(config)).ok()?;
+    let snapshot = serde_json::from_str::<serde_json::Value>(&raw).ok()?;
+    let updated_at = snapshot
+        .get("updated_at")
+        .or_else(|| snapshot.get("written_at"))
+        .and_then(serde_json::Value::as_str)?;
+    let ts = DateTime::parse_from_rfc3339(updated_at)
+        .ok()?
+        .with_timezone(&Utc);
+    let age_seconds = Utc::now().signed_duration_since(ts).num_seconds();
+    if !(0..=DAEMON_STATE_FRESH_SECONDS).contains(&age_seconds) {
+        return None;
+    }
+    let pid = snapshot.get("pid").and_then(serde_json::Value::as_u64);
+    if let Some(pid) = pid
+        && !daemon_state_pid_alive(pid)
+    {
+        return None;
+    }
+    Some(DaemonStateSnapshot { pid, age_seconds })
+}
+
+#[cfg(target_os = "windows")]
+fn daemon_state_pid_alive(pid: u64) -> bool {
+    let filter = format!("PID eq {pid}");
+    run_capture_checked(Command::new("tasklist").args(["/FI", &filter, "/FO", "CSV", "/NH"]))
+        .map(|out| out.contains(&format!("\",{pid},\"")) || out.contains(&pid.to_string()))
+        .unwrap_or(false)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn daemon_state_pid_alive(_pid: u64) -> bool {
+    true
+}
+
 /// Returns whether the Construct daemon service is currently running.
 pub fn is_running() -> bool {
     if cfg!(target_os = "macos") {
@@ -110,15 +156,8 @@ pub fn is_running() -> bool {
     } else if cfg!(target_os = "linux") {
         is_running_linux()
     } else if cfg!(target_os = "windows") {
-        run_capture(Command::new("schtasks").args([
-            "/Query",
-            "/TN",
-            WINDOWS_TASK_NAME,
-            "/FO",
-            "LIST",
-        ]))
-        .map(|out| out.contains("Running"))
-        .unwrap_or(false)
+        windows_task_is_running().unwrap_or(false)
+            || fresh_daemon_state(&Config::default()).is_some()
     } else {
         false
     }
@@ -189,9 +228,7 @@ fn start(config: &Config, init_system: InitSystem) -> Result<()> {
         start_linux(resolved)
     } else if cfg!(target_os = "windows") {
         rotate_daemon_logs(config)?;
-        run_checked(Command::new("schtasks").args(["/Run", "/TN", windows_task_name()]))?;
-        println!("✅ Service started");
-        Ok(())
+        start_windows(config)
     } else {
         let _ = config;
         anyhow::bail!("Service management is supported on macOS and Linux only")
@@ -267,6 +304,127 @@ fn rotated_log_path(path: &Path, index: usize) -> PathBuf {
     PathBuf::from(format!("{}.{}", path.display(), index))
 }
 
+fn run_capture_checked(command: &mut Command) -> Result<String> {
+    let output = command.output().context("Failed to spawn command")?;
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let text = if stdout.trim().is_empty() {
+        stderr
+    } else {
+        stdout
+    };
+    if !output.status.success() {
+        let detail = text.trim();
+        if detail.is_empty() {
+            bail!("Command failed with status {}", output.status);
+        }
+        bail!("Command failed: {detail}");
+    }
+    Ok(text)
+}
+
+fn windows_task_query() -> Result<String> {
+    run_capture_checked(Command::new("schtasks").args([
+        "/Query",
+        "/TN",
+        windows_task_name(),
+        "/FO",
+        "LIST",
+    ]))
+}
+
+fn windows_task_is_running() -> Result<bool> {
+    windows_task_query().map(|out| out.contains("Running"))
+}
+
+#[cfg(target_os = "windows")]
+fn apply_windows_daemon_spawn_flags(command: &mut Command) {
+    const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+    const DETACHED_PROCESS: u32 = 0x0000_0008;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    command.creation_flags(CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS | CREATE_NO_WINDOW);
+}
+
+#[cfg(not(target_os = "windows"))]
+fn apply_windows_daemon_spawn_flags(_command: &mut Command) {}
+
+fn start_windows(config: &Config) -> Result<()> {
+    if let Some(snapshot) = fresh_daemon_state(config) {
+        let pid = snapshot
+            .pid
+            .map(|p| p.to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+        println!(
+            "✅ Service already running (daemon pid {pid}, heartbeat {}s ago)",
+            snapshot.age_seconds
+        );
+        return Ok(());
+    }
+
+    match windows_task_query() {
+        Ok(_) => {
+            match run_checked(Command::new("schtasks").args(["/Run", "/TN", windows_task_name()])) {
+                Ok(()) => {
+                    println!("✅ Service started");
+                    Ok(())
+                }
+                Err(err) => start_windows_direct_daemon(config, &err.to_string()),
+            }
+        }
+        Err(err) => start_windows_direct_daemon(config, &err.to_string()),
+    }
+}
+
+fn start_windows_direct_daemon(config: &Config, reason: &str) -> Result<()> {
+    let exe = std::env::current_exe().context("Failed to resolve current executable")?;
+    let logs_dir = daemon_logs_dir(config);
+    fs::create_dir_all(&logs_dir)?;
+    let stdout_log = logs_dir.join("daemon.stdout.log");
+    let stderr_log = logs_dir.join("daemon.stderr.log");
+    let stdout = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&stdout_log)
+        .with_context(|| format!("Failed to open daemon stdout log {}", stdout_log.display()))?;
+    let stderr = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&stderr_log)
+        .with_context(|| format!("Failed to open daemon stderr log {}", stderr_log.display()))?;
+
+    let mut command = Command::new(&exe);
+    command
+        .arg("daemon")
+        .env("PATH", build_windows_daemon_path())
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(stdout))
+        .stderr(Stdio::from(stderr));
+    apply_windows_daemon_spawn_flags(&mut command);
+    let child = command
+        .spawn()
+        .with_context(|| format!("Failed to start daemon directly from {}", exe.display()))?;
+
+    println!("⚠️ Windows scheduled task unavailable: {reason}");
+    println!(
+        "✅ Service started via direct daemon fallback (pid {})",
+        child.id()
+    );
+    println!("   Logs: {}", logs_dir.display());
+    println!("   Run `construct service install` later to enable logon auto-start.");
+    Ok(())
+}
+
+fn stop_windows(config: &Config) -> Result<()> {
+    let _ = run_checked(Command::new("schtasks").args(["/End", "/TN", windows_task_name()]));
+    if let Some(snapshot) = fresh_daemon_state(config)
+        && let Some(pid) = snapshot.pid
+    {
+        let _ = run_checked(Command::new("taskkill").args(["/PID", &pid.to_string(), "/T", "/F"]));
+    }
+    let _ = fs::remove_file(crate::daemon::state_file_path(config));
+    Ok(())
+}
+
 fn start_linux(init_system: InitSystem) -> Result<()> {
     match init_system {
         InitSystem::Systemd => {
@@ -298,9 +456,7 @@ fn stop(config: &Config, init_system: InitSystem) -> Result<()> {
         let resolved = init_system.resolve()?;
         stop_linux(resolved)
     } else if cfg!(target_os = "windows") {
-        let _ = config;
-        let task_name = windows_task_name();
-        let _ = run_checked(Command::new("schtasks").args(["/End", "/TN", task_name]));
+        let _ = stop_windows(config);
         println!("✅ Service stopped");
         Ok(())
     } else {
@@ -391,11 +547,8 @@ fn status(config: &Config, init_system: InitSystem) -> Result<()> {
     }
 
     if cfg!(target_os = "windows") {
-        let _ = config;
         let task_name = windows_task_name();
-        let out =
-            run_capture(Command::new("schtasks").args(["/Query", "/TN", task_name, "/FO", "LIST"]));
-        match out {
+        match windows_task_query() {
             Ok(text) => {
                 let running = text.contains("Running");
                 println!(
@@ -411,6 +564,16 @@ fn status(config: &Config, init_system: InitSystem) -> Result<()> {
             Err(_) => {
                 println!("Service: ❌ not installed");
             }
+        }
+        if let Some(snapshot) = fresh_daemon_state(config) {
+            let pid = snapshot
+                .pid
+                .map(|p| p.to_string())
+                .unwrap_or_else(|| "unknown".to_string());
+            println!(
+                "Daemon fallback: ✅ running (pid {pid}, heartbeat {}s ago)",
+                snapshot.age_seconds
+            );
         }
         return Ok(());
     }
@@ -1750,6 +1913,48 @@ mod tests {
         let err = run_checked(Command::new("cmd").args(["/C", "exit /b 17"]))
             .expect_err("non-zero exit should error");
         assert!(err.to_string().contains("Command failed"));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn run_capture_checked_errors_on_non_zero_status_windows() {
+        let err =
+            run_capture_checked(Command::new("cmd").args(["/C", "echo nope 1>&2 && exit /b 17"]))
+                .expect_err("non-zero exit should error");
+        assert!(err.to_string().contains("nope"));
+    }
+
+    #[test]
+    fn fresh_daemon_state_reads_recent_heartbeat() {
+        let dir = tempfile::tempdir().expect("failed to create temp dir");
+        let mut config = Config::default();
+        config.config_path = dir.path().join("config.toml");
+        let pid = u64::from(std::process::id());
+        let state = serde_json::json!({
+            "pid": pid,
+            "updated_at": chrono::Utc::now().to_rfc3339(),
+        });
+        fs::write(dir.path().join("daemon_state.json"), state.to_string()).unwrap();
+
+        let snapshot = fresh_daemon_state(&config).expect("fresh state should be detected");
+
+        assert_eq!(snapshot.pid, Some(pid));
+        assert!(snapshot.age_seconds <= 1);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn fresh_daemon_state_rejects_dead_pid_windows() {
+        let dir = tempfile::tempdir().expect("failed to create temp dir");
+        let mut config = Config::default();
+        config.config_path = dir.path().join("config.toml");
+        let state = serde_json::json!({
+            "pid": 99_999_999_u64,
+            "updated_at": chrono::Utc::now().to_rfc3339(),
+        });
+        fs::write(dir.path().join("daemon_state.json"), state.to_string()).unwrap();
+
+        assert!(fresh_daemon_state(&config).is_none());
     }
 
     #[test]

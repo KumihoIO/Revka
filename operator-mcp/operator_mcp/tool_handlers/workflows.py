@@ -202,6 +202,8 @@ async def tool_get_workflow_status(args: dict[str, Any]) -> dict[str, Any]:
         "started_at": state.started_at,
         "completed_at": state.completed_at,
         "error": state.error or None,
+        "workflow_item_kref": state.workflow_item_kref,
+        "workflow_revision_kref": state.workflow_revision_kref,
         "steps_completed": progress["top_level_steps_completed"],
         "steps_total": progress["top_level_steps_total"],
         "top_level_steps_completed": progress["top_level_steps_completed"],
@@ -223,9 +225,15 @@ async def tool_get_workflow_status(args: dict[str, Any]) -> dict[str, Any]:
             "role": sr.role,
             "action": sr.action,
         }
+        if isinstance(sr.output_data, dict) and sr.output_data.get("template_name"):
+            entry["template_name"] = sr.output_data.get("template_name")
         if include_outputs:
             entry["output"] = sr.output[:2000]
             entry["error"] = sr.error
+            entry["input_data"] = sr.input_data
+            entry["output_data"] = sr.output_data
+            if isinstance(sr.output_data, dict) and sr.output_data.get("artifact_path"):
+                entry["artifact_path"] = sr.output_data.get("artifact_path")
         result["steps"][sid] = entry
 
     return result
