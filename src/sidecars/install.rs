@@ -87,7 +87,7 @@ pub async fn install_sidecars(opts: &SidecarInstallOptions) -> Result<()> {
         // Operator falls back to direct subprocess spawning when the
         // session-manager isn't available, so the runtime still works
         // — just without streaming timeline events.
-        if let Err(err) = install_session_manager(opts.dry_run) {
+        if let Err(err) = install_session_manager(opts.dry_run, opts.from_source.as_deref()) {
             eprintln!(
                 "    [warn] Session manager install failed: {err:#}\n    \
                  Operator will fall back to subprocess mode for spawned \
@@ -265,14 +265,20 @@ fn extract_operator_source(dest: &Path) -> Result<()> {
 /// this sidecar isn't installed — works, but loses the streaming
 /// timeline + cross-turn session preservation. So fresh installs without
 /// this step end up in degraded mode by default.
-fn install_session_manager(dry_run: bool) -> Result<()> {
+fn install_session_manager(dry_run: bool, from_source: Option<&Path>) -> Result<()> {
     let dir = construct_root()?
         .join("operator_mcp")
         .join("session-manager");
 
     eprintln!("==> Installing Session Manager → {}", dir.display());
     if dry_run {
-        eprintln!("    + extract embedded session-manager dist + package.json");
+        match from_source {
+            Some(repo) => eprintln!(
+                "    + use local session-manager dist: {}",
+                repo.join("operator-mcp").join("session-manager").display()
+            ),
+            None => eprintln!("    + extract embedded session-manager dist + package.json"),
+        }
         eprintln!("    + npm install --omit=dev");
         return Ok(());
     }
@@ -283,10 +289,17 @@ fn install_session_manager(dry_run: bool) -> Result<()> {
 
     std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
 
-    // Write embedded dist/ tree + package.json. Same shape as
-    // extract_operator_source but no need to filter — Cargo's package
-    // include already restricts SESSION_MANAGER_SRC to dist + package.json.
-    walk_session_manager(&SESSION_MANAGER_SRC, &dir)?;
+    if let Some(repo_root) = from_source {
+        let local_src = repo_root.join("operator-mcp").join("session-manager");
+        sync_session_manager_from_local(&local_src, &dir)?;
+        eprintln!("    [ok] local dist + package.json laid down");
+    } else {
+        // Write embedded dist/ tree + package.json. Same shape as
+        // extract_operator_source but no need to filter — Cargo's package
+        // include already restricts SESSION_MANAGER_SRC to dist + package.json.
+        walk_session_manager(&SESSION_MANAGER_SRC, &dir)?;
+        eprintln!("    [ok] dist + package.json laid down");
+    }
     let dist_index = dir.join("dist").join("index.js");
     if !dist_index.exists() {
         return Err(anyhow!(
@@ -294,8 +307,6 @@ fn install_session_manager(dry_run: bool) -> Result<()> {
              check Cargo.toml `include` whitelist (need /operator-mcp/session-manager/dist/**/*)"
         ));
     }
-    eprintln!("    [ok] dist + package.json laid down");
-
     // npm install --omit=dev fetches the production deps listed in
     // package.json (no dev deps — TypeScript compiler etc. aren't needed
     // since dist/ is prebuilt). The session-manager isn't a publishable
@@ -321,6 +332,60 @@ fn install_session_manager(dry_run: bool) -> Result<()> {
         "    [ok] entrypoint: node {}",
         dir.join("dist").join("index.js").display()
     );
+    Ok(())
+}
+
+fn sync_session_manager_from_local(src: &Path, dest: &Path) -> Result<()> {
+    let package_json = src.join("package.json");
+    let dist = src.join("dist");
+    let dist_index = dist.join("index.js");
+    if !package_json.is_file() || !dist_index.is_file() {
+        return Err(anyhow!(
+            "--from-source {} doesn't have a built session-manager; expected \
+             operator-mcp/session-manager/package.json and dist/index.js. \
+             Run `npm run build` in operator-mcp first.",
+            src.display()
+        ));
+    }
+
+    std::fs::create_dir_all(dest).with_context(|| format!("creating {}", dest.display()))?;
+    let dest_dist = dest.join("dist");
+    if dest_dist.exists() {
+        std::fs::remove_dir_all(&dest_dist)
+            .with_context(|| format!("removing {}", dest_dist.display()))?;
+    }
+    copy_dir_recursive(&dist, &dest_dist)?;
+    std::fs::copy(&package_json, dest.join("package.json")).with_context(|| {
+        format!(
+            "copying {} to {}",
+            package_json.display(),
+            dest.join("package.json").display()
+        )
+    })?;
+    Ok(())
+}
+
+fn copy_dir_recursive(src: &Path, dest: &Path) -> Result<()> {
+    std::fs::create_dir_all(dest).with_context(|| format!("creating {}", dest.display()))?;
+    for entry in std::fs::read_dir(src).with_context(|| format!("reading {}", src.display()))? {
+        let entry = entry.with_context(|| format!("reading entry under {}", src.display()))?;
+        let src_path = entry.path();
+        let dest_path = dest.join(entry.file_name());
+        let file_type = entry
+            .file_type()
+            .with_context(|| format!("reading file type for {}", src_path.display()))?;
+        if file_type.is_dir() {
+            copy_dir_recursive(&src_path, &dest_path)?;
+        } else if file_type.is_file() {
+            if let Some(parent) = dest_path.parent() {
+                std::fs::create_dir_all(parent)
+                    .with_context(|| format!("creating {}", parent.display()))?;
+            }
+            std::fs::copy(&src_path, &dest_path).with_context(|| {
+                format!("copying {} to {}", src_path.display(), dest_path.display())
+            })?;
+        }
+    }
     Ok(())
 }
 
@@ -619,6 +684,42 @@ mod tests {
         assert!(dest.join("session-manager").join("package.json").exists());
         assert!(dest.join("runlogs").join("agent.jsonl").exists());
         assert!(dest.join("workflow_presets.json").exists());
+        Ok(())
+    }
+
+    #[test]
+    fn sync_session_manager_from_local_replaces_embedded_dist() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let src = tmp.path().join("src").join("session-manager");
+        let dest = tmp.path().join("install").join("session-manager");
+
+        std::fs::create_dir_all(src.join("dist").join("providers"))?;
+        std::fs::write(src.join("package.json"), r#"{"name":"local"}"#)?;
+        std::fs::write(src.join("dist").join("index.js"), "local index\n")?;
+        std::fs::write(
+            src.join("dist").join("providers").join("codex.js"),
+            "local codex\n",
+        )?;
+
+        std::fs::create_dir_all(dest.join("dist").join("providers"))?;
+        std::fs::write(dest.join("package.json"), r#"{"name":"embedded"}"#)?;
+        std::fs::write(
+            dest.join("dist").join("providers").join("codex.js"),
+            "old codex\n",
+        )?;
+        std::fs::write(dest.join("dist").join("stale.js"), "stale\n")?;
+
+        sync_session_manager_from_local(&src, &dest)?;
+
+        assert_eq!(
+            std::fs::read_to_string(dest.join("dist").join("providers").join("codex.js"))?,
+            "local codex\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dest.join("package.json"))?,
+            r#"{"name":"local"}"#
+        );
+        assert!(!dest.join("dist").join("stale.js").exists());
         Ok(())
     }
 }

@@ -129,7 +129,16 @@ def _build_command(
     mcp_servers: dict[str, Any] | None = None,
 ) -> list[str]:
     if agent_type == "codex":
-        cmd = [_resolve_cli("codex"), "exec", "--full-auto", "--skip-git-repo-check"]
+        # Approval flags are top-level Codex options, so they must precede `exec`.
+        cmd = [
+            _resolve_cli("codex"),
+            "--ask-for-approval",
+            "never",
+            "--sandbox",
+            "danger-full-access",
+            "exec",
+            "--skip-git-repo-check",
+        ]
         if mcp_servers:
             cmd.extend(_codex_mcp_overrides(mcp_servers))
         return cmd
