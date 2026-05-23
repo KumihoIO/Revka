@@ -1094,6 +1094,12 @@ export default function StepConfigPanel({
             />
           </div>
 
+          <Checkbox
+            checked={data.compression || false}
+            onChange={(v) => onUpdate(node.id, { compression: v })}
+            label="Compression"
+          />
+
           {skillSection}
 
           {/* Retry */}

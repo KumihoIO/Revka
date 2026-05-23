@@ -190,6 +190,52 @@ def interpolate(template: str, state: WorkflowState) -> str:
     return _VAR_RE.sub(_resolve, template)
 
 
+def _compress_step_handoff(step: StepDef, result: StepResult) -> StepResult:
+    """Compress large completed step outputs before downstream interpolation."""
+    if not step.compression or result.status != "completed":
+        return result
+
+    from ..token_compression import compress_text
+
+    out = result.model_copy(deep=True)
+    compression_meta: dict[str, Any] = {}
+
+    compressed_output, output_stats = compress_text(out.output)
+    if output_stats is not None:
+        out.output = compressed_output
+        compression_meta["output"] = output_stats
+
+    def compress_value(value: Any, path: str) -> Any:
+        if isinstance(value, str):
+            compressed, stats = compress_text(value)
+            if stats is not None:
+                compression_meta[f"output_data.{path}"] = stats
+            return compressed
+        if isinstance(value, list):
+            return [compress_value(item, f"{path}[{idx}]") for idx, item in enumerate(value)]
+        if isinstance(value, dict):
+            return {
+                key: (
+                    val if key == "token_compression"
+                    else compress_value(val, f"{path}.{key}" if path else str(key))
+                )
+                for key, val in value.items()
+            }
+        return value
+
+    out.output_data = compress_value(out.output_data, "")
+    if compression_meta:
+        existing = out.output_data.get("token_compression")
+        if isinstance(existing, dict):
+            merged = dict(existing)
+            merged.update(compression_meta)
+            out.output_data["token_compression"] = merged
+        else:
+            out.output_data["token_compression"] = compression_meta
+        out.input_data["compression"] = True
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Checkpoint persistence
 # ---------------------------------------------------------------------------
@@ -4598,6 +4644,8 @@ def dry_run_workflow(wf: WorkflowDef, inputs: dict[str, Any]) -> dict[str, Any]:
             "type": step.type.value,
             "depends_on": step.depends_on,
         }
+        if step.compression:
+            entry["compression"] = True
 
         if step.type == StepType.AGENT:
             cfg = step.agent
@@ -5808,7 +5856,7 @@ async def _execute_step_with_retry(
             StepType.HUMAN_APPROVAL, StepType.HUMAN_INPUT,
             StepType.FOR_EACH,
         ):
-            return result
+            return _compress_step_handoff(step, result)
 
         last_result = result
         if attempt < step.retry:
@@ -5937,6 +5985,7 @@ async def _exec_parallel(
             return
         async with semaphore:
             r = await _dispatch_step(sub_step, state, cwd, wf)
+            r = _compress_step_handoff(sub_step, r)
             results[sub_id] = r
             state.step_results[sub_id] = r
 
