@@ -644,6 +644,7 @@ class StepDef(BaseModel):
     skills: list[str] = Field(default_factory=list)
     assign: str = ""  # Pre-assigned agent template or ID
     description: str = ""
+    compression: bool = False  # Compress large output/output_data strings before downstream handoff.
 
     # Type-specific configs — only one populated based on `type`
     agent: AgentStepConfig | None = None

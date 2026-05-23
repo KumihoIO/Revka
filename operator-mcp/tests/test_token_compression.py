@@ -1,4 +1,5 @@
 from operator_mcp.token_compression import (
+    DEFAULT_AGENT_MESSAGE_MAX_CHARS,
     build_skill_pointer_manifest,
     compress_agent_result,
     compress_skill_content,
@@ -6,6 +7,8 @@ from operator_mcp.token_compression import (
 )
 from operator_mcp.agent_subprocess import compose_agent_prompt
 from operator_mcp.mcp_injection import build_system_prompt
+from operator_mcp.workflow.executor import _compress_step_handoff
+from operator_mcp.workflow.schema import StepDef, StepResult, StepType
 
 
 def test_compress_text_preserves_error_and_tail():
@@ -43,6 +46,42 @@ def test_compress_agent_result_keeps_schema():
 def test_small_agent_result_is_unchanged_object():
     result = {"agent_id": "a1", "last_message": "done"}
     assert compress_agent_result(result, max_chars=800) is result
+
+
+def test_workflow_step_handoff_compression_preserves_schema():
+    step = StepDef(id="draft", type=StepType.AGENT, compression=True)
+    result = StepResult(
+        step_id="draft",
+        status="completed",
+        output="x" * 5000,
+        output_data={
+            "artifact_path": "/tmp/draft.md",
+            "artifact_content": "ERROR: important\n" + ("y\n" * 5000),
+            "nested": {"log": "z" * 5000},
+        },
+    )
+
+    out = _compress_step_handoff(step, result)
+
+    assert out.step_id == "draft"
+    assert out.status == "completed"
+    assert len(out.output) <= DEFAULT_AGENT_MESSAGE_MAX_CHARS
+    assert out.output_data["artifact_path"] == "/tmp/draft.md"
+    assert len(out.output_data["artifact_content"]) <= DEFAULT_AGENT_MESSAGE_MAX_CHARS
+    assert len(out.output_data["nested"]["log"]) <= DEFAULT_AGENT_MESSAGE_MAX_CHARS
+    assert out.output_data["token_compression"]["output"]["axis"] == "workflow_data"
+    assert (
+        out.output_data["token_compression"]["output_data.artifact_content"]["axis"]
+        == "workflow_data"
+    )
+    assert out.input_data["compression"] is True
+
+
+def test_workflow_step_handoff_compression_is_opt_in():
+    step = StepDef(id="draft", type=StepType.AGENT)
+    result = StepResult(step_id="draft", status="completed", output="x" * 5000)
+
+    assert _compress_step_handoff(step, result) is result
 
 
 def test_operator_prompts_include_terse_handoff_contract():

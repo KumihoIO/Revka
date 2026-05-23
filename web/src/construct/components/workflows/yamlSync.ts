@@ -52,6 +52,8 @@ export interface TaskDefinition {
   params?: Record<string, string>;
   /** When true, executor skips the step and passes inputs straight through as output_data */
   disabled?: boolean;
+  /** When true, executor compresses large output/output_data strings before downstream handoff */
+  compression?: boolean;
   /** Pre-assigned pool agent template name */
   assign?: string;
   /** Pool persona binding for agent steps — resolves `AgentStepConfig.template`
@@ -364,6 +366,8 @@ export interface TaskNodeData {
   skills: string[];
   /** When true, executor skips the step and passes inputs straight through as output_data */
   disabled?: boolean;
+  /** When true, executor compresses large output/output_data strings before downstream handoff */
+  compression: boolean;
   /** Pre-assigned pool agent template name */
   assign: string;
   /** Pool persona binding (`agent.template`) — set by Architect's persona
@@ -784,6 +788,7 @@ function parseStep(s: YAMLObj): TaskDefinition | null {
     params: paramCount > 0 ? ({ _count: String(paramCount) } as Record<string, string>) : undefined,
     assign: asStr(s.assign),
     disabled: asBool(s.disabled),
+    compression: asBool(s.compression),
     retry: asNum(s.retry),
     retry_delay: asNum(s.retry_delay) ?? asNum(s.retryDelay),
     channel: asStr(s.channel) as TaskDefinition['channel'] | undefined,
@@ -1434,6 +1439,7 @@ export function tasksToFlow(tasks: TaskDefinition[]): { nodes: Node<TaskNodeData
       agentHints: task.agent_hints,
       skills: task.skills,
       disabled: task.disabled ?? false,
+      compression: task.compression ?? false,
       assign: task.assign || '',
       template: task.template || '',
       paramCount: task.params ? Object.keys(task.params).length : 0,
@@ -2223,6 +2229,7 @@ export function flowToTasks(nodes: Node<TaskNodeData>[], edges: Edge[]): TaskDef
       retry: d.retry > 0 ? d.retry : undefined,
       retry_delay: d.retryDelay !== 5 ? d.retryDelay : undefined,
       disabled: d.disabled === true ? true : undefined,
+      compression: d.compression === true ? true : undefined,
       // Auth profile binding only emitted on the step types that consume it.
       auth: ['agent', 'shell', 'python', 'email', 'a2a'].includes(st) && d.auth
         ? d.auth
@@ -2530,6 +2537,7 @@ export function tasksToYaml(tasks: TaskDefinition[], meta?: Partial<WorkflowMeta
     if (task.retry && task.retry > 0) lines.push(`    retry: ${task.retry}`);
     if (task.retry_delay && task.retry_delay !== 5) lines.push(`    retry_delay: ${task.retry_delay}`);
     if (task.disabled === true) lines.push(`    disabled: true`);
+    if (task.compression === true) lines.push(`    compression: true`);
     // Conditional steps emit canonical `conditional.branches` form.
     // Legacy flat `condition`/`on_true`/`on_false` keys are no longer
     // emitted — the backend bridges them on load for forward compat,

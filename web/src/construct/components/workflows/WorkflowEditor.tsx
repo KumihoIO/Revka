@@ -442,6 +442,7 @@ function defaultNodeData(id: string, overrides?: Partial<TaskNodeData>): TaskNod
     type: 'agent',
     agentHints: [],
     skills: [],
+    compression: false,
     assign: '',
     template: '',
     paramCount: 0,

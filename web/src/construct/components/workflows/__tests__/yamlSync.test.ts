@@ -1096,3 +1096,34 @@ steps:
   assert.equal(tasks3[0]!.metadata_target, 'revision');
   assert.equal(tasks3[1]!.resolve_metadata_source, 'artifact');
 });
+
+test('step compression flag round-trips through YAML and flow nodes', () => {
+  const yaml = `
+steps:
+  - id: generate
+    type: agent
+    compression: true
+    agent:
+      prompt: "Generate a large report"
+  - id: consume
+    type: output
+    depends_on: [generate]
+    output:
+      template: "\${generate.output}"
+`;
+
+  const tasks1 = parseWorkflowYaml(yaml);
+  assert.equal(tasks1[0]!.compression, true);
+
+  const { nodes, edges } = tasksToFlow(tasks1);
+  assert.equal(nodes[0]!.data.compression, true);
+
+  const tasks2 = flowToTasks(nodes, edges);
+  assert.equal(tasks2[0]!.compression, true);
+
+  const yaml2 = tasksToYaml(tasks2);
+  assert.match(yaml2, /compression:\s+true/);
+
+  const tasks3 = parseWorkflowYaml(yaml2);
+  assert.equal(tasks3[0]!.compression, true);
+});
