@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
+from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
@@ -133,7 +135,7 @@ class TestShell:
 
     async def test_stdout_truncation_flag(self, tmp_path):
         # Print 5000 chars — exceeds the 4000 cap.
-        cfg = ShellStepConfig(command="python3 -c \"print('x'*5000)\"", timeout=10)
+        cfg = ShellStepConfig(command=f'"{sys.executable}" -c "print(\'x\'*5000)"', timeout=10)
         step = StepDef(id="s", type=StepType.SHELL, shell=cfg)
         result = await _exec_shell(step, _state(), str(tmp_path))
         assert result.output_data["stdout_truncated"] is True
@@ -201,6 +203,7 @@ class TestResolve:
             "tag": "published",
             "name_pattern": "",
             "space": "",
+            "artifact_name": "",
             "mode": "latest",
             "metadata_source": "revision",
             "fail_if_missing": True,
@@ -231,6 +234,35 @@ class TestResolve:
         assert calls["metadata_source"] == "item"
         assert result.input_data["metadata_source"] == "item"
         assert result.output_data["metadata_source"] == "item"
+
+    async def test_passes_artifact_name_to_resolver(self):
+        calls: dict[str, Any] = {}
+
+        async def fake_resolve(**kwargs):
+            calls.update(kwargs)
+            return {
+                "kref": "kref:rev:abc",
+                "item_kref": "kref:item:def",
+                "name": "MyEntity",
+                "metadata": {"summary": "artifact summary"},
+                "metadata_source": "artifact",
+                "artifact": {"name": "summary.md", "kref": "kref:artifact:1"},
+                "artifact_metadata": {"summary": "artifact summary"},
+            }
+
+        cfg = ResolveStepConfig(
+            kind="report",
+            metadata_source="artifact",
+            artifact_name="summary.md",
+        )
+        step = StepDef(id="r", type=StepType.RESOLVE, resolve=cfg)
+        with patch("operator_mcp.workflow.memory.resolve_entity", fake_resolve):
+            result = await _exec_resolve(step, _state())
+
+        assert calls["artifact_name"] == "summary.md"
+        assert result.input_data["artifact_name"] == "summary.md"
+        assert result.output_data["artifact_summary"] == "artifact summary"
+        assert result.output_data["artifact_found"] is True
 
     async def test_captures_query_on_miss(self):
         async def fake_resolve(**kwargs):
@@ -358,6 +390,7 @@ class TestOutput:
             template="# ${inputs.title}",
             entity_name="report-${inputs.title}",
             entity_kind="report",
+            artifact_summary_model="claude-haiku-4-5-20251001",
         )
         step = StepDef(id="publish", type=StepType.OUTPUT, output=cfg)
 
@@ -365,6 +398,7 @@ class TestOutput:
             assert kwargs["content"] == "# Q1"
             assert kwargs["content_format"] == "markdown"
             assert kwargs["metadata_target"] == "item"
+            assert kwargs["artifact_summary_model"] == "claude-haiku-4-5-20251001"
             return {
                 "item_kref": "kref://Construct/WorkflowOutputs/report.report",
                 "revision_kref": "kref://Construct/WorkflowOutputs/report.report?r=7",
@@ -372,6 +406,7 @@ class TestOutput:
                 "artifact_kref": "kref://Construct/WorkflowOutputs/report.report?r=7#a1",
                 "artifact_attached": True,
                 "artifact_error": "",
+                "artifact_summary": "summary",
                 "tag_applied": True,
                 "tag_error": "",
                 "metadata_target": "item",
@@ -386,6 +421,7 @@ class TestOutput:
         assert result.status == "completed"
         assert result.output_data["entity_registered"] is True
         assert result.output_data["entity_artifact_attached"] is True
+        assert result.output_data["entity_artifact_summary"] == "summary"
         assert result.output_data["entity_metadata_target"] == "item"
         assert result.output_data["artifact_path"] == "/tmp/publish.md"
         assert result.output_data["entity_artifact_kref"].endswith("#a1")
@@ -542,6 +578,7 @@ class TestForEach:
         from operator_mcp.patterns import refinement
 
         monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
 
         calls: list[tuple[str, str]] = []
 
@@ -585,8 +622,8 @@ class TestForEach:
         assert iter_1.read_text(encoding="utf-8") == "# draft 1\n"
         assert iter_2.read_text(encoding="utf-8") == "# draft 2\n"
         assert not (art_dir / "draft.md").exists()
-        assert state.step_results["draft__iter_1"].output_data["artifact_path"] == str(iter_1)
-        assert state.step_results["draft__iter_2"].output_data["artifact_path"] == str(iter_2)
+        assert Path(state.step_results["draft__iter_1"].output_data["artifact_path"]) == iter_1
+        assert Path(state.step_results["draft__iter_2"].output_data["artifact_path"]) == iter_2
         assert state.step_results["draft__iter_1"].step_id == "draft__iter_1"
         assert state.step_results["draft__iter_2"].step_id == "draft__iter_2"
         # The base alias intentionally points at the latest iteration for
@@ -594,7 +631,7 @@ class TestForEach:
         # the latest isolated file rather than a shared `draft.md`.
         assert state.step_results["draft"].step_id == "draft"
         assert state.step_results["draft"].agent_id == "agent-2"
-        assert state.step_results["draft"].output_data["artifact_path"] == str(iter_2)
+        assert Path(state.step_results["draft"].output_data["artifact_path"]) == iter_2
 
     async def test_output_entity_artifacts_are_iteration_qualified(self, tmp_path):
         """Output steps inside for_each must publish distinct files per iteration."""

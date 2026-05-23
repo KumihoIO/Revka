@@ -1062,6 +1062,7 @@ steps:
       template: "body"
       entity_name: "report"
       entity_kind: "Report"
+      artifact_summary_model: "claude-haiku-4-5-20251001"
       metadata_target: revision
       entity_metadata:
         topic: "Q1"
@@ -1072,27 +1073,38 @@ steps:
       kind: "Report"
       tag: "ready"
       mode: "latest"
+      artifact_name: "content.md"
       metadata_source: artifact
       fields: [topic]
 `;
 
   const tasks1 = parseWorkflowYaml(yaml);
   assert.equal(tasks1[0]!.metadata_target, 'revision');
+  assert.equal(tasks1[0]!.artifact_summary_model, 'claude-haiku-4-5-20251001');
+  assert.equal(tasks1[1]!.resolve_artifact_name, 'content.md');
   assert.equal(tasks1[1]!.resolve_metadata_source, 'artifact');
 
   const { nodes, edges } = tasksToFlow(tasks1);
   assert.equal(nodes[0]!.data.entityMetadataTarget, 'revision');
+  assert.equal(nodes[0]!.data.artifactSummaryModel, 'claude-haiku-4-5-20251001');
+  assert.equal(nodes[1]!.data.resolveArtifactName, 'content.md');
   assert.equal(nodes[1]!.data.resolveMetadataSource, 'artifact');
 
   const tasks2 = flowToTasks(nodes, edges);
   assert.equal(tasks2[0]!.metadata_target, 'revision');
+  assert.equal(tasks2[0]!.artifact_summary_model, 'claude-haiku-4-5-20251001');
+  assert.equal(tasks2[1]!.resolve_artifact_name, 'content.md');
   assert.equal(tasks2[1]!.resolve_metadata_source, 'artifact');
 
   const yaml2 = tasksToYaml(tasks2);
+  assert.match(yaml2, /artifact_summary_model:\s+claude-haiku-4-5-20251001/);
   assert.match(yaml2, /metadata_target:\s+revision/);
+  assert.match(yaml2, /artifact_name:\s+content\.md/);
   assert.match(yaml2, /metadata_source:\s+artifact/);
 
   const tasks3 = parseWorkflowYaml(yaml2);
   assert.equal(tasks3[0]!.metadata_target, 'revision');
+  assert.equal(tasks3[0]!.artifact_summary_model, 'claude-haiku-4-5-20251001');
+  assert.equal(tasks3[1]!.resolve_artifact_name, 'content.md');
   assert.equal(tasks3[1]!.resolve_metadata_source, 'artifact');
 });

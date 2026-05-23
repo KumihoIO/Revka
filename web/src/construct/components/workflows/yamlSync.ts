@@ -127,6 +127,7 @@ export interface TaskDefinition {
   entity_space?: string;
   entity_metadata?: Record<string, string>;
   metadata_target?: string;
+  artifact_summary_model?: string;
   /** Handoff: from_step */
   handoff_from?: string;
   /** Handoff: to agent type or template name */
@@ -186,6 +187,7 @@ export interface TaskDefinition {
   resolve_tag?: string;
   resolve_name_pattern?: string;
   resolve_space?: string;
+  resolve_artifact_name?: string;
   resolve_mode?: string;        // "latest" | "all"
   resolve_fields?: string[];
   resolve_metadata_source?: string;
@@ -419,6 +421,7 @@ export interface TaskNodeData {
   entitySpace: string;
   entityMetadata: Record<string, string>;
   entityMetadataTarget: string;
+  artifactSummaryModel: string;
   handoffFrom: string;
   handoffTo: string;
   handoffReason: string;
@@ -475,6 +478,7 @@ export interface TaskNodeData {
   resolveTag: string;
   resolveNamePattern: string;
   resolveSpace: string;
+  resolveArtifactName: string;
   resolveMode: string;
   resolveFields: string[];
   resolveMetadataSource: string;
@@ -952,6 +956,7 @@ function parseStep(s: YAMLObj): TaskDefinition | null {
     t.entity_tag = asStr(output.entity_tag);
     t.entity_space = asStr(output.entity_space);
     t.metadata_target = asStr(output.metadata_target);
+    t.artifact_summary_model = asStr(output.artifact_summary_model);
     if (isObj(output.entity_metadata)) {
       const meta: Record<string, string> = {};
       for (const [k, v] of Object.entries(output.entity_metadata)) {
@@ -1035,6 +1040,7 @@ function parseStep(s: YAMLObj): TaskDefinition | null {
     t.resolve_tag = asStr(resolve.tag);
     t.resolve_name_pattern = asStr(resolve.name_pattern);
     t.resolve_space = asStr(resolve.space);
+    t.resolve_artifact_name = asStr(resolve.artifact_name);
     t.resolve_mode = asStr(resolve.mode);
     t.resolve_fields = asStrArr(resolve.fields);
     t.resolve_metadata_source = asStr(resolve.metadata_source);
@@ -1473,6 +1479,7 @@ export function tasksToFlow(tasks: TaskDefinition[]): { nodes: Node<TaskNodeData
       entitySpace: task.entity_space || '',
       entityMetadata: task.entity_metadata || {},
       entityMetadataTarget: task.metadata_target || 'item',
+      artifactSummaryModel: task.artifact_summary_model || '',
       handoffFrom: task.handoff_from || '',
       handoffTo: task.handoff_to || '',
       handoffReason: task.handoff_reason || '',
@@ -1515,6 +1522,7 @@ export function tasksToFlow(tasks: TaskDefinition[]): { nodes: Node<TaskNodeData
       resolveTag: task.resolve_tag ?? 'published',
       resolveNamePattern: task.resolve_name_pattern ?? '',
       resolveSpace: task.resolve_space ?? '',
+      resolveArtifactName: task.resolve_artifact_name ?? '',
       resolveMode: task.resolve_mode ?? 'latest',
       resolveFields: task.resolve_fields ?? [],
       resolveMetadataSource: task.resolve_metadata_source ?? 'revision',
@@ -1824,6 +1832,7 @@ const INTERPOLATION_TEXT_FIELDS: ReadonlyArray<keyof TaskDefinition> = [
   'resolve_tag',
   'resolve_name_pattern',
   'resolve_space',
+  'resolve_artifact_name',
   'condition',
   'goto_condition',
   'human_input_message',
@@ -2341,6 +2350,7 @@ export function flowToTasks(nodes: Node<TaskNodeData>[], edges: Edge[]): TaskDef
       if (d.entityMetadataTarget && d.entityMetadataTarget !== 'item') {
         base.metadata_target = d.entityMetadataTarget;
       }
+      if (d.artifactSummaryModel) base.artifact_summary_model = d.artifactSummaryModel;
     }
     if (st === 'handoff') {
       if (d.handoffFrom) base.handoff_from = d.handoffFrom;
@@ -2382,6 +2392,7 @@ export function flowToTasks(nodes: Node<TaskNodeData>[], edges: Edge[]): TaskDef
       if (d.resolveTag) base.resolve_tag = d.resolveTag;
       if (d.resolveNamePattern) base.resolve_name_pattern = d.resolveNamePattern;
       if (d.resolveSpace) base.resolve_space = d.resolveSpace;
+      if (d.resolveArtifactName) base.resolve_artifact_name = d.resolveArtifactName;
       if (d.resolveMode) base.resolve_mode = d.resolveMode;
       if (d.resolveFields?.length) base.resolve_fields = d.resolveFields;
       if (d.resolveMetadataSource && d.resolveMetadataSource !== 'revision') {
@@ -2778,6 +2789,9 @@ export function tasksToYaml(tasks: TaskDefinition[], meta?: Partial<WorkflowMeta
       if (task.entity_kind) lines.push(`      entity_kind: ${yamlEscape(task.entity_kind)}`);
       if (task.entity_tag) lines.push(`      entity_tag: ${yamlEscape(task.entity_tag)}`);
       if (task.entity_space) lines.push(`      entity_space: ${yamlEscape(task.entity_space)}`);
+      if (task.artifact_summary_model) {
+        lines.push(`      artifact_summary_model: ${yamlEscape(task.artifact_summary_model)}`);
+      }
       if (task.metadata_target && task.metadata_target !== 'item') {
         lines.push(`      metadata_target: ${yamlEscape(task.metadata_target)}`);
       }
@@ -2862,6 +2876,9 @@ export function tasksToYaml(tasks: TaskDefinition[], meta?: Partial<WorkflowMeta
       lines.push(`      tag: "${task.resolve_tag || 'published'}"`);
       lines.push(`      name_pattern: "${task.resolve_name_pattern || ''}"`);
       lines.push(`      space: "${task.resolve_space || ''}"`);
+      if (task.resolve_artifact_name) {
+        lines.push(`      artifact_name: ${yamlEscape(task.resolve_artifact_name)}`);
+      }
       lines.push(`      mode: "${task.resolve_mode || 'latest'}"`);
       if (task.resolve_metadata_source && task.resolve_metadata_source !== 'revision') {
         lines.push(`      metadata_source: ${yamlEscape(task.resolve_metadata_source)}`);

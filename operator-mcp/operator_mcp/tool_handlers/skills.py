@@ -8,6 +8,7 @@ from typing import Any
 from urllib.parse import unquote, urlparse
 
 from .._log import _log
+from ..artifact_summary import summarize_artifact_metadata
 from ..construct_config import memory_project, workspace_dir
 from ..kumiho_clients import KumihoAgentPoolClient
 from ..skill_loader import list_skills as list_local_skills
@@ -172,6 +173,9 @@ def _skill_summary(
     if artifact:
         result["artifact_kref"] = str(artifact.get("kref") or "")
         result["artifact_name"] = str(artifact.get("name") or _SKILL_ARTIFACT_NAME)
+        artifact_meta = artifact.get("metadata") if isinstance(artifact.get("metadata"), dict) else {}
+        if artifact_meta.get("summary"):
+            result["artifact_summary"] = str(artifact_meta["summary"])
     return result
 
 
@@ -232,6 +236,7 @@ async def tool_capture_skill(args: dict[str, Any], pool_client: KumihoAgentPoolC
     procedure = args["procedure"]
     learned_from = args.get("learned_from", "")
     change_summary = args.get("change_summary", "")
+    summary_model = str(args.get("summary_model") or "").strip()
     source_revision_krefs = args.get("source_revision_krefs") or []
     project = memory_project()
     space = "Skills"
@@ -301,7 +306,18 @@ async def tool_capture_skill(args: dict[str, Any], pool_client: KumihoAgentPoolC
         if not rev_kref:
             return {"error": "Failed to capture skill: revision creation returned no kref"}
 
-        artifact = await pool_client.create_artifact(rev_kref, _SKILL_ARTIFACT_NAME, str(artifact_path))
+        artifact_metadata = await summarize_artifact_metadata(
+            procedure,
+            artifact_name=_SKILL_ARTIFACT_NAME,
+            content_format="markdown",
+            summary_model=summary_model,
+        )
+        artifact = await pool_client.create_artifact(
+            rev_kref,
+            _SKILL_ARTIFACT_NAME,
+            str(artifact_path),
+            artifact_metadata or None,
+        )
         artifact_kref = str(artifact.get("kref") or "") if isinstance(artifact, dict) else ""
         if not artifact_kref:
             return {"error": "Failed to capture skill: create_artifact returned no kref"}
@@ -319,6 +335,7 @@ async def tool_capture_skill(args: dict[str, Any], pool_client: KumihoAgentPoolC
         "revision_kref": rev_kref,
         "artifact_kref": artifact_kref,
         "artifact_path": str(artifact_path),
+        "artifact_summary": artifact_metadata.get("summary", ""),
         "updated_existing": bool(previous_revision_kref),
         "previous_revision_kref": previous_revision_kref,
         "previous_artifact_path": previous_artifact_path,
