@@ -134,6 +134,40 @@ The `action` field provides shorthand: `action: research` auto-sets
 > merged into `output_data`. This means `${agent_step.output_data.any_key}` works
 > without any extra configuration — just have the agent return a JSON object.
 
+#### Agent output artifacts and dependency handoff
+
+Agent steps persist their full text output to disk and expose the path as
+`${agent_step.output_data.artifact_path}`. Use this path when a downstream
+agent needs exact prior context without inlining the full upstream output into
+its prompt.
+
+When you connect an agent step to another agent in the dashboard editor, the
+target prompt is auto-populated with a small dependency handoff block that
+points at `${source.output_data.artifact_path}`. The downstream agent should
+read that file only when it needs the full context.
+
+For step types that do not produce `output_data.artifact_path`, keep using
+`${step.output}` or a specific `${step.output_data.field}`. Explicit
+`${step.output}` interpolation is still supported, but it should be reserved
+for short values because it inlines the upstream text into the next prompt.
+
+```yaml
+- id: draft
+  type: agent
+  agent:
+    prompt: "Write the full draft."
+
+- id: review
+  type: agent
+  depends_on: [draft]
+  agent:
+    prompt: |
+      Dependency handoff from draft:
+      - artifact_path: ${draft.output_data.artifact_path}
+
+      Read artifact_path for the complete draft, then review it.
+```
+
 ### `shell` — Run a shell command
 
 ```yaml
@@ -746,6 +780,11 @@ The validator runs 6 passes before execution:
 5. **Variable references** — warns if `${step_id.*}` references unknown steps
 6. **Trigger validation** — checks trigger fields, warns on unmapped required inputs
 
+Agent steps with `depends_on` must reference each dependency in `agent.prompt`.
+Prefer `${upstream.output_data.artifact_path}` when the upstream agent produced
+a full output artifact. Use `${upstream.output}` only for short inline handoffs
+or for step types that do not produce an artifact path.
+
 To validate without executing, ask the operator to dry-run a workflow. The
 operator's `dry_run_workflow` tool parses the YAML, runs all 6 passes, and
 reports errors/warnings without starting execution.
@@ -838,7 +877,12 @@ steps:
   - id: process
     type: agent
     depends_on: [gather]
-    agent: { agent_type: codex, role: coder, prompt: "Using: ${gather.output}" }
+    agent:
+      agent_type: codex
+      role: coder
+      prompt: |
+        Read the upstream artifact before processing:
+        ${gather.output_data.artifact_path}
 
   - id: report
     type: output
@@ -863,8 +907,9 @@ steps:
     depends_on: [analyst_a, analyst_b]
     agent:
       prompt: |
-        Angle A: ${analyst_a.output}
-        Angle B: ${analyst_b.output}
+        Angle A artifact: ${analyst_a.output_data.artifact_path}
+        Angle B artifact: ${analyst_b.output_data.artifact_path}
+        Read both artifacts for the full analysis.
         Synthesize into one recommendation.
 ```
 
@@ -879,7 +924,9 @@ steps:
   - id: review
     type: agent
     depends_on: [implement]
-    agent: { role: reviewer, prompt: "Review: ${implement.output}" }
+    agent:
+      role: reviewer
+      prompt: "Review the implementation artifact: ${implement.output_data.artifact_path}"
 
   - id: check
     type: conditional

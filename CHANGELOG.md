@@ -7,6 +7,21 @@ Version numbers follow CalVer (`YYYY.M.D`).
 
 - No unreleased changes yet.
 
+## [2026.5.15] - 2026-05-23
+
+### Workflow Editor
+
+- Clarified the step compression control as `Compress Output Handoff`, with a
+  tooltip explaining that it compresses completed output for later steps, not
+  the current step's input prompt.
+- Changed editor-created agent dependency handoffs to pass upstream
+  `output_data.artifact_path` references instead of inlining `${step.output}`.
+
+### Packaging
+
+- Bumped the Rust package, web package, package lock, and Tauri desktop
+  metadata to `2026.5.15`.
+
 ## [2026.5.14] - 2026-05-21
 
 ### Highlights

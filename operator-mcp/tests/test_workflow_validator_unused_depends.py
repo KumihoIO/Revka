@@ -2,13 +2,14 @@
 
 The Architect repeatedly generated synthesize/combine steps with correct
 ``depends_on`` but a prompt that didn't reference any of those upstream
-outputs (e.g. ``"Combine the two upstream research reports."`` with
+outputs or artifact paths (e.g. ``"Combine the two upstream research reports."`` with
 ``depends_on: [research_a, research_b]``). The runtime then started the
 agent with no actual content from upstream. PR #170's auto-derive only
 fires when references already exist, so the inverse case slips through.
 
 This rule errors (not warns) so ``propose_workflow_yaml`` rejects the
-proposal and the LLM is forced to add the ``${X.output}`` reference.
+proposal and the LLM is forced to add a reference such as
+``${X.output_data.artifact_path}``.
 """
 from __future__ import annotations
 
@@ -112,6 +113,25 @@ class TestAgentUnusedDependsOn:
                 "type": "agent",
                 "depends_on": ["a"],
                 "agent": {"prompt": "consume ${a.output_data.summary}"},
+            },
+        ]))
+        result = validate_workflow(wf)
+        assert not _has_unused_dep_error(result, "b", "a")
+
+    def test_artifact_path_ref_counts(self):
+        """${a.output_data.artifact_path} is the preferred full-context handoff."""
+        wf = load_workflow_from_dict(_wf([
+            {"id": "a", "type": "agent", "agent": {"prompt": "A"}},
+            {
+                "id": "b",
+                "type": "agent",
+                "depends_on": ["a"],
+                "agent": {
+                    "prompt": (
+                        "Read upstream context from "
+                        "${a.output_data.artifact_path}"
+                    )
+                },
             },
         ]))
         result = validate_workflow(wf)
