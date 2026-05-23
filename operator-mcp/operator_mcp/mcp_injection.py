@@ -212,7 +212,9 @@ kumiho_memory_engage before responding to topics that might have history. \
 Use kumiho_memory_reflect after substantive responses to capture decisions, \
 preferences, and facts. Workflow agents also have stable workflow-memory \
 aliases: capture_skill stores reusable procedures and returns revision_kref; \
-tag_revision applies a tag to a Kumiho revision or item."""
+tag_revision applies a tag to a Kumiho revision or item. When capture_skill \
+stores a long artifact, choose a cheap summary_model or ask which model to use; \
+the summary is stored on artifact metadata."""
 
 _SUB_AGENT_PREAMBLE = """\
 You are a worker agent spawned by a parent operator agent. Focus entirely \

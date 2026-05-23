@@ -65,6 +65,10 @@ def _capture_skill_schema() -> dict[str, Any]:
                 "items": {"type": "string"},
                 "description": "Optional provenance krefs.",
             },
+            "summary_model": {
+                "type": "string",
+                "description": "Optional cheap model for artifact metadata summarization. Choose one or ask the user if unsure.",
+            },
         },
         "required": ["name", "domain", "description", "procedure"],
     }

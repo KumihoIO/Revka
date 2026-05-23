@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 
 from .._log import _log
+from ..artifact_summary import summarize_artifact_metadata
 from ..construct_config import harness_project
 
 
@@ -598,6 +599,7 @@ async def publish_workflow_entity(
     run_id: str,
     step_id: str,
     artifact_path_override: str | None = None,
+    artifact_summary_model: str = "",
 ) -> dict[str, Any] | None:
     """Register a workflow output as a Kumiho entity and tag it.
 
@@ -757,12 +759,22 @@ async def publish_workflow_entity(
                     if artifact_path_override
                     else f"{step_id}{ext}"
                 )
+                artifact_metadata: dict[str, Any] = dict(user_meta) if target == "artifact" else {}
+                artifact_metadata.update(
+                    await summarize_artifact_metadata(
+                        content,
+                        artifact_name=artifact_file_name,
+                        content_format=content_format,
+                        summary_model=artifact_summary_model,
+                        existing_metadata=artifact_metadata,
+                    )
+                )
                 artifact = await _kumiho_with_timeout(
                     KUMIHO_SDK.create_artifact(
                         rev_kref,
                         artifact_file_name,
                         artifact_path,
-                        user_meta if target == "artifact" else None,
+                        artifact_metadata or None,
                     ),
                     "attach workflow entity artifact",
                     run_id=run_id,
@@ -813,6 +825,7 @@ async def publish_workflow_entity(
             "artifact_kref": artifact_kref,
             "artifact_attached": artifact_attached,
             "artifact_error": artifact_error,
+            "artifact_summary": artifact_metadata.get("summary", "") if artifact_path else "",
             "tag_applied": tag_applied,
             "tag_error": tag_error,
             "metadata_target": target,
@@ -833,6 +846,7 @@ async def resolve_entity(
     tag: str = "published",
     name_pattern: str = "",
     space: str = "",
+    artifact_name: str = "",
     mode: str = "latest",
     metadata_source: str = "revision",
 ) -> dict[str, Any] | list[dict[str, Any]] | None:
@@ -896,18 +910,26 @@ async def resolve_entity(
         rev_meta = dict(rev.get("metadata", {}) or {})
         artifact_meta: dict[str, Any] = {}
         artifact_info: dict[str, Any] | None = None
-        if source == "artifact":
-            try:
-                artifacts = await KUMIHO_SDK.get_artifacts(rev.get("kref", ""))
-            except Exception as exc:
-                _log(f"resolve_entity: failed to fetch artifacts for {rev.get('kref', '')}: {exc}")
-                artifacts = []
-            if artifacts:
-                default_name = rev.get("default_artifact", "")
+        try:
+            artifacts = await KUMIHO_SDK.get_artifacts(rev.get("kref", ""))
+        except Exception as exc:
+            _log(f"resolve_entity: failed to fetch artifacts for {rev.get('kref', '')}: {exc}")
+            artifacts = []
+        if artifacts:
+            default_name = rev.get("default_artifact", "")
+            if artifact_name:
+                artifact_info = next((a for a in artifacts if a.get("name") == artifact_name), None)
+                if artifact_info is None:
+                    _log(
+                        f"resolve_entity: artifact_name={artifact_name!r} not found "
+                        f"on revision {rev.get('kref', '')}"
+                    )
+            else:
                 artifact_info = next(
                     (a for a in artifacts if default_name and a.get("name") == default_name),
                     artifacts[0],
                 )
+            if artifact_info is not None:
                 artifact_meta = dict(artifact_info.get("metadata", {}) or {})
 
         selected_meta = (
@@ -925,6 +947,8 @@ async def resolve_entity(
         if artifact_info is not None:
             rev["artifact"] = artifact_info
             rev["artifact_metadata"] = artifact_meta
+            if artifact_meta.get("summary"):
+                rev["artifact_summary"] = str(artifact_meta["summary"])
         return rev
 
     if mode == "latest":

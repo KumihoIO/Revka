@@ -1103,7 +1103,10 @@ async def list_tools() -> list[Tool]:
                 "do not use memory_store for skill-guide captures. The tool stores SKILL.md as a "
                 "revision artifact under the Construct workspace artifact tree, keeps agent provenance "
                 "in revision metadata rather than in the item name, and reads the previous published "
-                "SKILL.md artifact when updating an existing skill so the new revision can improve it."
+                "SKILL.md artifact when updating an existing skill so the new revision can improve it. "
+                "If the procedure is long, either choose a cheap summarization model for summary_model "
+                "or ask the user which model to use; the resulting summary is stored on the artifact "
+                "metadata, not on revision metadata."
             ),
             inputSchema={
                 "type": "object",
@@ -1140,6 +1143,10 @@ async def list_tools() -> list[Tool]:
                         "type": "array",
                         "items": {"type": "string"},
                         "description": "Optional revision/artifact krefs this skill revision was derived from.",
+                    },
+                    "summary_model": {
+                        "type": "string",
+                        "description": "Optional model for artifact metadata summarization, e.g. 'claude-haiku-4-5-20251001' or 'openai/gpt-5-mini'. Choose a cheap model or ask the user if unsure.",
                     },
                 },
                 "required": ["name", "domain", "description", "procedure"],
