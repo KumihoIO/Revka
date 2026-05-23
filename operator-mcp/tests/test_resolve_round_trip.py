@@ -230,9 +230,14 @@ class TestRoundTripNormalization:
         assert result["artifact_attached"] is True
         assert result["artifact_kref"].endswith("#artifact-1")
         assert result["tag_applied"] is True
-        assert result["artifact_path"].endswith("/final-output.md")
+        assert result["artifact_path"].replace("\\", "/").endswith("/final-output.md")
         assert fake_sdk.create_artifact_calls == [
-            (result["revision_kref"], "final-output.md", result["artifact_path"], {})
+            (
+                result["revision_kref"],
+                "final-output.md",
+                result["artifact_path"],
+                {"summary": "report", "summary_source": "extractive"},
+            )
         ]
         assert fake_sdk.tag_revision_calls == [
             (result["revision_kref"], "ready")
@@ -403,6 +408,8 @@ class TestRoundTripNormalization:
         assert result["metadata_source"] == "revision"
         assert result["item_metadata"]["k"] == "v"
         assert "k" not in result["metadata"]
+        assert result["artifact_metadata"]["summary"] == "hello"
+        assert result["artifact_summary"] == "hello"
 
     async def test_resolve_can_read_item_metadata(self, fake_sdk):
         result = await _publish_then_resolve(
@@ -445,8 +452,80 @@ class TestRoundTripNormalization:
         assert result["metadata_source"] == "artifact"
         assert result["metadata"]["k"] == "v"
         assert result["artifact_metadata"]["k"] == "v"
+        assert result["artifact_metadata"]["summary"] == "hello"
+        assert result["artifact_summary"] == "hello"
         artifact_call = fake_sdk.create_artifact_calls[-1]
-        assert artifact_call[3] == {"k": "v"}
+        assert artifact_call[3] == {
+            "k": "v",
+            "summary": "hello",
+            "summary_source": "extractive",
+        }
+
+    async def test_resolve_can_select_named_artifact(self, fake_sdk):
+        published = await publish_workflow_entity(
+            entity_name="report",
+            entity_kind="Report",
+            entity_tag="ready",
+            entity_space="Construct/WorkflowOutputs",
+            entity_metadata={},
+            content="# report",
+            content_format="markdown",
+            workflow_name="wf",
+            run_id="r1",
+            step_id="final-output",
+        )
+        assert published is not None
+
+        await fake_sdk.create_artifact(
+            published["revision_kref"],
+            "details.md",
+            str("details.md"),
+            {"summary": "Detailed artifact summary", "kind": "details"},
+        )
+
+        result = await resolve_entity(
+            kind="Report",
+            tag="ready",
+            space="Construct/WorkflowOutputs",
+            mode="latest",
+            metadata_source="artifact",
+            artifact_name="details.md",
+        )
+
+        assert result is not None
+        assert isinstance(result, dict)
+        assert result["artifact"]["name"] == "details.md"
+        assert result["artifact_metadata"]["summary"] == "Detailed artifact summary"
+        assert result["metadata"]["kind"] == "details"
+
+    async def test_resolve_artifact_name_does_not_fall_back_to_first_artifact(self, fake_sdk):
+        published = await publish_workflow_entity(
+            entity_name="report",
+            entity_kind="Report",
+            entity_tag="ready",
+            entity_space="Construct/WorkflowOutputs",
+            entity_metadata={},
+            content="# report",
+            content_format="markdown",
+            workflow_name="wf",
+            run_id="r1",
+            step_id="final-output",
+        )
+        assert published is not None
+
+        result = await resolve_entity(
+            kind="Report",
+            tag="ready",
+            space="Construct/WorkflowOutputs",
+            mode="latest",
+            metadata_source="artifact",
+            artifact_name="missing.md",
+        )
+
+        assert result is not None
+        assert isinstance(result, dict)
+        assert "artifact" not in result
+        assert result["metadata"] == {}
 
 
 # ---------------------------------------------------------------------------

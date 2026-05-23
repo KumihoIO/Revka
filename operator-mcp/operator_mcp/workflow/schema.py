@@ -392,6 +392,7 @@ class OutputStepConfig(BaseModel):
     metadata_target: Literal["item", "revision", "artifact"] = "item"
                                           # Where entity_metadata is written.
                                           # item preserves legacy trigger auto-map behavior.
+    artifact_summary_model: str = ""      # Optional cheap model used to write artifact.metadata.summary
 
 
 class ResolveStepConfig(BaseModel):
@@ -400,6 +401,7 @@ class ResolveStepConfig(BaseModel):
     tag: str = "published"                              # Tag to match (supports ${...} interpolation)
     name_pattern: str = ""                              # Optional name filter (glob/regex; supports ${...} interpolation)
     space: str = ""                                     # Optional space path filter (supports ${...} interpolation)
+    artifact_name: str = ""                             # Optional artifact filename to select from the matched revision
     mode: Literal["latest", "all"] = "latest"           # latest = single newest; all = list
     fields: list[str] = Field(default_factory=list)     # Specific metadata fields to extract (empty = all)
     metadata_source: Literal["revision", "item", "artifact"] = "revision"

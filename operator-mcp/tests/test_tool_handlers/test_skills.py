@@ -63,9 +63,14 @@ class FakeSkillPool:
         self.created_revisions.append((item_kref, metadata, tag))
         return rev
 
-    async def create_artifact(self, revision_kref, name, location):
-        artifact = {"kref": f"{revision_kref}#{name}", "name": name, "location": location}
-        self.created_artifacts.append((revision_kref, name, location))
+    async def create_artifact(self, revision_kref, name, location, metadata=None):
+        artifact = {
+            "kref": f"{revision_kref}#{name}",
+            "name": name,
+            "location": location,
+            "metadata": metadata or {},
+        }
+        self.created_artifacts.append((revision_kref, name, location, metadata or {}))
         return artifact
 
     async def tag_revision(self, revision_kref, tag):
@@ -247,7 +252,16 @@ class TestToolCaptureSkill:
         artifact_path = tmp_path / "artifact" / "cognitivememory" / "skills" / "rust-error-handling-pattern" / "skill" / "SKILL.md"
         assert result["artifact_path"] == str(artifact_path)
         assert artifact_path.read_text(encoding="utf-8").startswith("# Rust Error Handling")
-        assert pool.created_artifacts == [(result["revision_kref"], "SKILL.md", str(artifact_path))]
+        assert pool.created_artifacts == [(
+            result["revision_kref"],
+            "SKILL.md",
+            str(artifact_path),
+            {
+                "summary": "Rust Error Handling: Use anyhow at boundaries.",
+                "summary_source": "extractive",
+            },
+        )]
+        assert result["artifact_summary"] == "Rust Error Handling: Use anyhow at boundaries."
 
     async def test_updates_existing_skill_and_reads_previous_artifact(self, tmp_path):
         pool = FakeSkillPool()

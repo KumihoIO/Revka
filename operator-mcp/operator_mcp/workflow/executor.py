@@ -2350,6 +2350,7 @@ async def _exec_output(step: StepDef, state: WorkflowState) -> StepResult:
         "entity_space": cfg.entity_space or "",
         "entity_name": interpolate(cfg.entity_name, state) if cfg.entity_name else "",
         "metadata_target": cfg.metadata_target,
+        "artifact_summary_model": cfg.artifact_summary_model,
     }
 
     result = StepResult(
@@ -2397,6 +2398,7 @@ async def _exec_output(step: StepDef, state: WorkflowState) -> StepResult:
             workflow_name=state.workflow_name,
             run_id=state.run_id,
             step_id=artifact_step_id,
+            artifact_summary_model=cfg.artifact_summary_model,
         )
         if not entity_result:
             result.status = "failed"
@@ -2426,6 +2428,8 @@ async def _exec_output(step: StepDef, state: WorkflowState) -> StepResult:
             result.output_data["entity_artifact_kref"] = entity_result["artifact_kref"]
         if entity_result.get("artifact_error"):
             result.output_data["entity_artifact_error"] = entity_result["artifact_error"]
+        if entity_result.get("artifact_summary"):
+            result.output_data["entity_artifact_summary"] = entity_result["artifact_summary"]
         if entity_result.get("tag_error"):
             result.output_data["entity_tag_error"] = entity_result["tag_error"]
         if not result.output_data["entity_artifact_attached"]:
@@ -2453,11 +2457,13 @@ async def _exec_resolve(step: StepDef, state: WorkflowState) -> StepResult:
     resolved_tag = interpolate(cfg.tag, state)
     resolved_name_pattern = interpolate(cfg.name_pattern, state) if cfg.name_pattern else ""
     resolved_space = interpolate(cfg.space, state) if cfg.space else ""
+    resolved_artifact_name = interpolate(cfg.artifact_name, state) if cfg.artifact_name else ""
     input_data: dict[str, Any] = {
         "kind": resolved_kind,
         "tag": resolved_tag,
         "name_pattern": resolved_name_pattern,
         "space": resolved_space,
+        "artifact_name": resolved_artifact_name,
         "mode": cfg.mode,
         "metadata_source": cfg.metadata_source,
         "fail_if_missing": cfg.fail_if_missing,
@@ -2467,6 +2473,7 @@ async def _exec_resolve(step: StepDef, state: WorkflowState) -> StepResult:
         ("tag", cfg.tag, resolved_tag),
         ("name_pattern", cfg.name_pattern, resolved_name_pattern),
         ("space", cfg.space, resolved_space),
+        ("artifact_name", cfg.artifact_name, resolved_artifact_name),
     ):
         if raw and raw != resolved:
             input_data[f"{key}_expression"] = raw
@@ -2495,6 +2502,7 @@ async def _exec_resolve(step: StepDef, state: WorkflowState) -> StepResult:
             tag=resolved_tag,
             name_pattern=resolved_name_pattern,
             space=resolved_space,
+            artifact_name=resolved_artifact_name,
             mode=cfg.mode,
             metadata_source=cfg.metadata_source,
         )
@@ -2536,6 +2544,9 @@ async def _exec_resolve(step: StepDef, state: WorkflowState) -> StepResult:
             output_data["revision_metadata"] = entity["revision_metadata"]
         if isinstance(entity.get("artifact_metadata"), dict):
             output_data["artifact_metadata"] = entity["artifact_metadata"]
+            artifact_summary = str(entity["artifact_metadata"].get("summary") or "")
+            if artifact_summary:
+                output_data["artifact_summary"] = artifact_summary
         # Extract metadata
         meta = entity.get("metadata", {})
         if cfg.fields:
@@ -2554,6 +2565,7 @@ async def _exec_resolve(step: StepDef, state: WorkflowState) -> StepResult:
         artifact = entity.get("artifact", {}) if isinstance(entity.get("artifact"), dict) else {}
         if artifact:
             artifact_location = artifact.get("location", "")
+            output_data["artifact_found"] = True
             if artifact.get("kref"):
                 output_data["artifact_kref"] = artifact.get("kref")
             if artifact.get("name"):
@@ -2563,6 +2575,8 @@ async def _exec_resolve(step: StepDef, state: WorkflowState) -> StepResult:
                 if not art_path:
                     art_path = artifact_location
                     output_data["artifact_path"] = art_path
+        elif resolved_artifact_name:
+            output_data["artifact_found"] = False
         if art_path and os.path.isfile(art_path):
             try:
                 with open(art_path, "r", encoding="utf-8") as fh:
@@ -2597,6 +2611,8 @@ async def _exec_resolve(step: StepDef, state: WorkflowState) -> StepResult:
         summary_parts.append(f"name_pattern={resolved_name_pattern!r}")
     if resolved_space:
         summary_parts.append(f"space={resolved_space!r}")
+    if resolved_artifact_name:
+        summary_parts.append(f"artifact_name={resolved_artifact_name!r}")
     summary = f"Resolved {' '.join(summary_parts)}"
     if output_data.get("found"):
         summary += f" → {output_data.get('name', output_data.get('item_kref', ''))}"

@@ -2416,6 +2416,16 @@ export default function StepConfigPanel({
                     <p style={helperStyle()}>Item keeps trigger auto-mapping; revision is the resolve default.</p>
                   </div>
                   <div>
+                    <label style={labelStyle}>Artifact Summary Model</label>
+                    <input
+                      type="text"
+                      value={data.artifactSummaryModel || ''}
+                      onChange={(e) => onUpdate(node.id, { artifactSummaryModel: e.target.value })}
+                      placeholder="claude-haiku-4-5-20251001"
+                      style={monoInputStyle}
+                    />
+                  </div>
+                  <div>
                     <label style={labelStyle}>Metadata</label>
                     {Object.entries(data.entityMetadata || {}).map(([mk, mv]) => (
                       <div key={mk} style={{ display: 'flex', gap: 4, alignItems: 'center', marginBottom: 4 }}>
@@ -3109,6 +3119,19 @@ export default function StepConfigPanel({
                   value={data.resolveSpace || ''}
                   onChange={(next) => onUpdate(node.id, { resolveSpace: next })}
                   placeholder="e.g. Construct/${inputs.team}/WorkflowOutputs"
+                  rows={1}
+                  style={monoInputStyle}
+                  stepIds={dagStepIds}
+                  workflowInputs={dagInputs}
+                  triggerFields={dagTriggerFields}
+                />
+              </div>
+              <div>
+                <label style={labelStyle}>Artifact Name</label>
+                <ExpressionTextarea
+                  value={data.resolveArtifactName || ''}
+                  onChange={(next) => onUpdate(node.id, { resolveArtifactName: next })}
+                  placeholder="SKILL.md"
                   rows={1}
                   style={monoInputStyle}
                   stepIds={dagStepIds}
