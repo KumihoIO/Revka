@@ -125,7 +125,7 @@ function buildContextPreface(workflowName: string): string {
     '- ONLY use a `type: parallel` step when you need to explicitly group children, e.g. for join-strategy semantics or sub-workflow encapsulation. When you do use it, you MUST populate `parallel.steps: [child_id_1, child_id_2, ...]` listing each child step ID.',
     '- Wrong: `type: parallel` with no `parallel.steps` — the step is an orphan and `propose_workflow_yaml` will reject it.',
     '- Right (preferred for simple cases): just declare the steps as siblings without depends_on. They parallelize automatically. Add depends_on on the consumer step (e.g. `combine_report.depends_on: [research_a, research_b]`) so the consumer waits for all of them.',
-    '- Whenever a step\'s prompt/command/template references another step via `${X.output_data.artifact_path}`, `${X.output}`, or `${X.status}`, also list X in that step\'s `depends_on`. The runtime infers missing deps automatically, but explicit declarations are clearer.',
+    '- Whenever a step\'s prompt/command/template references another step via `\${X.output_data.artifact_path}`, `\${X.output}`, or `\${X.status}`, also list X in that step\'s `depends_on`. The runtime infers missing deps automatically, but explicit declarations are clearer.',
     '- Chaining steps — concrete example. WRONG (proposal will be REJECTED):',
     '    prompt: "Combine the two upstream research reports."',
     '    depends_on: [research_a, research_b]',
