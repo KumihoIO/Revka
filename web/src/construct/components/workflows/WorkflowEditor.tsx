@@ -86,6 +86,7 @@ import AgentPicker from './AgentPicker';
 import ArchitectPanel from './ArchitectPanel';
 import RevisionHistoryStrip from './RevisionHistoryStrip';
 import { withAgentVisuals } from './agentVisuals';
+import { buildAutoInsertedDependencyReference } from './handoffPrompt';
 import { useAgentRoster } from './useAgentRoster';
 import { resolveCssVar } from '@/construct/lib/orchestration';
 import {
@@ -150,14 +151,16 @@ export default function WorkflowEditor(props: WorkflowEditorProps) {
 // Edge auto-insert helpers
 // ---------------------------------------------------------------------------
 
-// Map step type → the TaskNodeData field that holds the user-facing primary
+// Map step type -> the TaskNodeData field that holds the user-facing primary
 // text (the prompt / command / template / message). When the user wires an
-// edge into one of these step types we auto-append `${source.output}` so the
-// canvas action implies the matching `${ref}` interpolation in the target's
-// text — without this, the edge alone yields a `depends_on` that PR #182's
-// validator rejects as unused. Step types not in this map (parallel, goto,
-// tag, deprecate, human_approval, human_input, for_each, …) have no obvious
-// text field; the edge alone is enough.
+// edge into one of these step types we auto-append an interpolation snippet so
+// the canvas action implies a real data handoff in the target text. Agent
+// prompts receive an artifact-path handoff when the source is an agent step,
+// because agent steps persist their full output to disk. Sources without a
+// reliable artifact path keep the inline `${source.output}` fallback.
+// Step types not in this map (parallel, goto, tag, deprecate, human_approval,
+// human_input, for_each, ...) have no obvious text field; the edge alone is
+// enough.
 const STEP_PRIMARY_TEXT_FIELD: Record<string, keyof TaskNodeData> = {
   agent: 'prompt',
   shell: 'shellCommand',
@@ -1885,12 +1888,13 @@ function WorkflowEditorInner({
       };
       setEdges((eds) => [...eds, applyWireStyle(newEdge, wireStyle)]);
 
-      // Auto-insert `${source.output}` into the target's primary text field so
-      // the wired edge implies the matching interpolation. Skip when source ===
-      // target (self-loop), when the edge is a conditional branch (branch
-      // handles route control flow, not data), when the target type has no
-      // primary text field, or when the target already references this source
-      // somewhere.
+      // Auto-insert a dependency reference into the target's primary text field
+      // so the wired edge implies the matching interpolation. Agent prompts get
+      // a small artifact-path handoff when the source step has a full-output
+      // artifact; other cases keep the compact `${source.output}` reference.
+      // Skip self-loops, conditional branches,
+      // targets without a primary text field, and targets that already mention
+      // the source.
       const sourceId = connection.source;
       const targetId = connection.target;
       setNodes((nds) =>
@@ -1904,8 +1908,10 @@ function WorkflowEditorInner({
           if (sourceId !== targetId && !isBranch) {
             const primaryField = STEP_PRIMARY_TEXT_FIELD[nextData.type];
             if (primaryField && !targetAlreadyReferencesSource(nextData, sourceId)) {
+              const sourceNode = nds.find((candidate) => candidate.id === sourceId);
+              const sourceType = (sourceNode?.data as TaskNodeData | undefined)?.type;
               const current = (nextData[primaryField] as string | undefined) ?? '';
-              const ref = `\${${sourceId}.output}`;
+              const ref = buildAutoInsertedDependencyReference(sourceId, nextData.type, sourceType);
               const updated = current.length === 0 ? ref : `${current}\n\n${ref}`;
               nextData = { ...nextData, [primaryField]: updated };
             }

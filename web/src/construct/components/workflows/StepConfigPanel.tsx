@@ -1094,12 +1094,6 @@ export default function StepConfigPanel({
             />
           </div>
 
-          <Checkbox
-            checked={data.compression || false}
-            onChange={(v) => onUpdate(node.id, { compression: v })}
-            label="Compression"
-          />
-
           {skillSection}
 
           {/* Retry */}
@@ -1344,11 +1338,19 @@ export default function StepConfigPanel({
               </div>
 
               <div>
-                <label style={labelStyle}>Prompt</label>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 4 }}>
+                  <label style={{ ...labelStyle, marginBottom: 0 }}>Prompt</label>
+                  <Checkbox
+                    checked={data.compression || false}
+                    onChange={(v) => onUpdate(node.id, { compression: v })}
+                    label="Compress Output Handoff"
+                    title="Compresses this step's completed output before later steps use it. It does not reduce this step's input prompt; artifacts/files stay unchanged."
+                  />
+                </div>
                 <ExpressionTextarea
                   value={data.prompt}
                   onChange={(next) => onUpdate(node.id, { prompt: next })}
-                  placeholder="Agent prompt template (supports ${step_id.output} interpolation)"
+                  placeholder="Agent prompt template (prefer ${step_id.output_data.artifact_path} for full upstream output)"
                   rows={6}
                   style={monoInputStyle}
                   stepIds={dagStepIds}
@@ -3559,13 +3561,18 @@ function Checkbox({
   checked,
   onChange,
   label,
+  title,
 }: {
   checked: boolean;
   onChange: (next: boolean) => void;
   label: string;
+  title?: string;
 }) {
   return (
-    <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer', userSelect: 'none' }}>
+    <label
+      title={title}
+      style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer', userSelect: 'none' }}
+    >
       <input
         type="checkbox"
         checked={checked}

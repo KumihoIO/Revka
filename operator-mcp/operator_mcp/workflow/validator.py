@@ -471,7 +471,7 @@ def _check_agent_unused_depends(
     mention them — e.g. ``depends_on: [research_a, research_b]`` paired
     with prompt ``"Combine the upstream reports."``. The runtime starts
     the agent with no actual content from the upstream steps because
-    nothing in the prompt expands to their output.
+    nothing in the prompt expands to their output or artifact path.
 
     Agent-only: notify/cleanup/output and other step types may legitimately
     use depends_on purely for ordering without consuming a value.
@@ -508,8 +508,9 @@ def _check_agent_unused_depends(
             if dep not in referenced:
                 result.add_error(
                     f"Step '{step.id}' depends on '{dep}' but its agent.prompt "
-                    f"does not reference ${{{dep}.output}} (or any other "
-                    f"${{{dep}.*}} field). Either reference an upstream field "
+                    f"does not reference ${{{dep}.output_data.artifact_path}} "
+                    f"(preferred for full upstream context) or any other "
+                    f"${{{dep}.*}} field. Either reference an upstream field "
                     f"in the prompt, or drop '{dep}' from depends_on if you "
                     f"only need it for ordering.",
                     step.id,
