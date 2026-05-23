@@ -271,11 +271,19 @@ pub async fn handle_api_mcp_call(
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
     {
-        // Some JSON-RPC calls (e.g. those scoped to a session) require the
-        // per-session bearer the MCP server issued via POST /session. That
-        // token is opaque to the gateway; pass it through so callers that
-        // already hold one can reuse it.
+        // JSON-RPC calls require the per-session bearer the MCP server issued
+        // via POST /session. That token is opaque to the gateway; pass it
+        // through so callers that already hold one can reuse it.
         req = req.header(header::AUTHORIZATION, auth);
+    }
+    if let Some(session) = headers
+        .get("X-Construct-Session")
+        .and_then(|v| v.to_str().ok())
+    {
+        // The MCP server validates the bearer token against its session id.
+        // Without this header the proxy path returns 401 even though session
+        // creation succeeded.
+        req = req.header("X-Construct-Session", session);
     }
     match req.send().await {
         Ok(resp) => {
@@ -330,6 +338,12 @@ pub async fn handle_api_mcp_session_events(
         .and_then(|v| v.to_str().ok())
     {
         req = req.header(header::AUTHORIZATION, auth);
+    }
+    if let Some(session) = headers
+        .get("X-Construct-Session")
+        .and_then(|v| v.to_str().ok())
+    {
+        req = req.header("X-Construct-Session", session);
     }
     let upstream = match req.send().await {
         Ok(r) => r,
