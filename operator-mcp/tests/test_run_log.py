@@ -121,6 +121,13 @@ class TestRunLogRecording:
         })
         assert log.get_summary()["status"] == "idle"
 
+    def test_record_error_status_changed_maps_to_failed(self, log):
+        log.record_event({
+            "event": {"type": "status_changed", "status": "error"},
+            "timestamp": "2025-01-01T00:00:00Z",
+        })
+        assert log.get_summary()["status"] == "failed"
+
     def test_record_turn_completed_usage(self, log):
         log.record_event({
             "event": {
@@ -140,12 +147,15 @@ class TestRunLogRecording:
         assert summary["status"] == "failed"
         assert summary["error_count"] == 1
         assert summary["last_failing_command"]["command"] == "npm test"
+        assert summary["exit_code"] == 1
+        assert summary["stderr_tail"] == "error"
         assert summary["last_message"] == "FAIL"
 
     def test_subprocess_success(self, log):
         log.record_subprocess("npm build", exit_code=0, stdout="OK")
         summary = log.get_summary()
         assert summary["status"] == "completed"
+        assert summary["exit_code"] == 0
         assert summary["error_count"] == 0
         assert summary["last_message"] == "OK"
 
@@ -160,6 +170,49 @@ class TestRunLogRecording:
         summary = loaded.get_summary()
         assert summary["status"] == "completed"
         assert summary["last_message"] == "OK"
+
+    def test_subprocess_failure_metadata_replays_from_disk(self, log, tmp_path):
+        log.record_subprocess("codex exec", exit_code=2, stderr="bootstrap failed")
+        _LOGS.clear()
+
+        with patch("operator_mcp.run_log._RUNLOGS_DIR", str(tmp_path)):
+            loaded = load_log_from_disk("test-agent-1")
+
+        assert loaded is not None
+        summary = loaded.get_summary()
+        assert summary["status"] == "failed"
+        assert summary["exit_code"] == 2
+        assert summary["stderr_tail"] == "bootstrap failed"
+
+    def test_turn_failed_records_exit_and_stderr_tail(self, log):
+        log.record_event({
+            "event": {
+                "type": "turn_failed",
+                "turnId": "t1",
+                "error": "Process exited with code 42",
+                "exitCode": 42,
+                "stderrTail": "not logged in",
+            },
+            "timestamp": "2025-01-01T00:00:00Z",
+        })
+
+        summary = log.get_summary()
+        assert summary["status"] == "failed"
+        assert summary["error_count"] == 1
+        assert summary["exit_code"] == 42
+        assert summary["stderr_tail"] == "not logged in"
+
+    def test_lifecycle_error_marks_failed(self, log):
+        log.record_lifecycle_error(
+            "Agent died during initialization",
+            code="agent_bootstrap_failed",
+            stderr_tail="spawn failed",
+        )
+
+        summary = log.get_summary()
+        assert summary["status"] == "failed"
+        assert summary["error_count"] == 1
+        assert summary["stderr_tail"] == "spawn failed"
 
     def test_workflow_subprocess_output_prefers_full_stdout_buffer(self, log):
         from operator_mcp.agent_state import AGENTS, ManagedAgent

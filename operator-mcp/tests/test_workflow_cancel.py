@@ -29,13 +29,9 @@ import time
 import pytest
 
 from operator_mcp.tool_handlers.workflows import tool_cancel_workflow
-from operator_mcp.workflow.executor import (
-    ACTIVE_WORKFLOWS,
-    _exec_shell,
-    execute_workflow,
-    workflow_progress_snapshot,
-)
+import operator_mcp.workflow.executor as executor
 from operator_mcp.workflow.schema import (
+    AgentStepConfig,
     ForEachStepConfig,
     PythonStepConfig,
     ShellStepConfig,
@@ -78,7 +74,7 @@ def isolate_workflow_locks(tmp_path, monkeypatch):
 class TestCancelTool:
     def setup_method(self) -> None:
         # Each test owns its own active-registry slot; clear stale entries.
-        ACTIVE_WORKFLOWS.clear()
+        executor.ACTIVE_WORKFLOWS.clear()
 
     @pytest.mark.asyncio
     async def test_unknown_run_returns_cancelled_false(self) -> None:
@@ -91,7 +87,7 @@ class TestCancelTool:
     @pytest.mark.asyncio
     async def test_active_run_flips_flag(self) -> None:
         state = _state_for("r1")
-        ACTIVE_WORKFLOWS["r1"] = state
+        executor.ACTIVE_WORKFLOWS["r1"] = state
         assert state.cancel_requested is False
         res = await tool_cancel_workflow({"run_id": "r1"})
         assert res["cancelled"] is True
@@ -101,7 +97,7 @@ class TestCancelTool:
     @pytest.mark.asyncio
     async def test_idempotent_double_call(self) -> None:
         state = _state_for("r2")
-        ACTIVE_WORKFLOWS["r2"] = state
+        executor.ACTIVE_WORKFLOWS["r2"] = state
         first = await tool_cancel_workflow({"run_id": "r2"})
         second = await tool_cancel_workflow({"run_id": "r2"})
         assert first["cancelled"] is True
@@ -111,7 +107,7 @@ class TestCancelTool:
     @pytest.mark.asyncio
     async def test_terminal_state_returns_cancelled_false(self) -> None:
         state = _state_for("r3", status=WorkflowStatus.COMPLETED)
-        ACTIVE_WORKFLOWS["r3"] = state
+        executor.ACTIVE_WORKFLOWS["r3"] = state
         res = await tool_cancel_workflow({"run_id": "r3"})
         assert res["cancelled"] is False
         assert res["reason"] == "already_terminal"
@@ -156,14 +152,14 @@ class TestExecutorCooperativeCancel:
             # Wait until s2 starts, then cancel.
             for _ in range(200):
                 await asyncio.sleep(0.05)
-                for state in ACTIVE_WORKFLOWS.values():
+                for state in executor.ACTIVE_WORKFLOWS.values():
                     if state.workflow_name == "cancel-mid" and "s1" in state.step_results:
                         state.cancel_requested = True
                         return
 
         asyncio.create_task(trip_cancel_when_s1_done())
         t0 = time.monotonic()
-        final = await execute_workflow(wf, inputs={}, cwd=str(tmp_path))
+        final = await executor.execute_workflow(wf, inputs={}, cwd=str(tmp_path))
         elapsed = time.monotonic() - t0
 
         assert final.status == WorkflowStatus.CANCELLED
@@ -191,7 +187,7 @@ class TestExecutorCooperativeCancel:
         )
         state = _state_for("locked-resume-run")
 
-        final = await execute_workflow(wf, inputs={}, cwd=str(tmp_path), resume_state=state)
+        final = await executor.execute_workflow(wf, inputs={}, cwd=str(tmp_path), resume_state=state)
 
         assert final.status == WorkflowStatus.CANCELLED
         assert final.error == "Duplicate execution prevented by run lock"
@@ -218,7 +214,7 @@ class TestShellSubprocessKill:
 
         asyncio.create_task(trip_cancel())
         t0 = time.monotonic()
-        result = await _exec_shell(step, state, str(tmp_path))
+        result = await executor._exec_shell(step, state, str(tmp_path))
         elapsed = time.monotonic() - t0
 
         assert result.status == "failed"
@@ -253,7 +249,7 @@ class TestShellSubprocessKill:
                     return
 
         asyncio.create_task(snapshot_pid())
-        result = await _exec_shell(step, state, str(tmp_path))
+        result = await executor._exec_shell(step, state, str(tmp_path))
         assert result.status == "failed"
         assert "timed out" in result.error
         # Proc untracked
@@ -314,7 +310,7 @@ class TestShellProcessGroupKill:
 
         asyncio.create_task(snapshot_parent_pid())
         asyncio.create_task(trip_cancel_after_child_written())
-        result = await _exec_shell(step, state, str(tmp_path))
+        result = await executor._exec_shell(step, state, str(tmp_path))
         assert result.status == "failed"
         assert "Cancelled" in result.error
 
@@ -364,7 +360,7 @@ class TestForEachCancelBetweenIterations:
         async def trip_cancel_after_two_iters() -> None:
             for _ in range(400):
                 await asyncio.sleep(0.05)
-                for s in ACTIVE_WORKFLOWS.values():
+                for s in executor.ACTIVE_WORKFLOWS.values():
                     if s.workflow_name != "for-each-cancel":
                         continue
                     done = sum(
@@ -377,7 +373,7 @@ class TestForEachCancelBetweenIterations:
                         return
 
         asyncio.create_task(trip_cancel_after_two_iters())
-        final = await execute_workflow(wf, inputs={}, cwd=str(tmp_path))
+        final = await executor.execute_workflow(wf, inputs={}, cwd=str(tmp_path))
 
         assert final.status == WorkflowStatus.CANCELLED
         loop_result = final.step_results.get("loop")
@@ -404,7 +400,6 @@ def test_recovery_module_only_exposes_run_lock_helpers() -> None:
 
 def test_mark_stale_checkpoint_preserves_retry_state(tmp_path, monkeypatch) -> None:
     """Startup stale marking keeps checkpoints loadable for explicit Retry."""
-    import operator_mcp.workflow.executor as executor
     from operator_mcp.workflow.memory import _mark_checkpoint_failed
 
     home = tmp_path / "home"
@@ -461,7 +456,7 @@ def test_workflow_progress_snapshot_splits_loop_instances() -> None:
         output="two",
     )
 
-    progress = workflow_progress_snapshot(state)
+    progress = executor.workflow_progress_snapshot(state)
 
     assert progress["top_level_steps_completed"] == 2
     assert progress["top_level_steps_total"] == 2
@@ -515,6 +510,121 @@ async def test_wait_for_agent_initializing_timeout_is_bounded(tmp_path, monkeypa
 
 
 @pytest.mark.asyncio
+async def test_wait_for_agent_prompt_only_runlog_times_out(tmp_path, monkeypatch) -> None:
+    import operator_mcp.patterns.refinement as refinement
+    import operator_mcp.tool_handlers.agents as agents
+    from operator_mcp.agent_state import AGENTS, ManagedAgent
+
+    class RunningSidecar:
+        async def get_agent(self, _agent_id):
+            return {"status": "running"}
+
+        async def get_events(self, _agent_id, since=0):
+            return []
+
+        async def interrupt_agent(self, _agent_id):
+            return {"ok": True}
+
+        async def close_agent(self, _agent_id):
+            return {"closed": True}
+
+    class PromptOnlyLog:
+        def __init__(self):
+            self.lifecycle_errors: list[dict] = []
+
+        def get_summary(self):
+            return {
+                "total_events": 2,
+                "last_message": "",
+                "tool_call_count": 0,
+                "error_count": 0,
+            }
+
+        def record_lifecycle_error(self, message, **kwargs):
+            self.lifecycle_errors.append({"message": message, **kwargs})
+
+    fake_log = PromptOnlyLog()
+    monkeypatch.setenv("CONSTRUCT_AGENT_INITIALIZING_TIMEOUT_SECS", "0.1")
+    monkeypatch.setattr(agents, "_sidecar_client", RunningSidecar())
+    monkeypatch.setattr(agents, "_event_consumer", None)
+    monkeypatch.setattr(refinement, "get_log", lambda _agent_id: fake_log)
+
+    agent = ManagedAgent(
+        id="prompt-only-agent",
+        agent_type="codex",
+        title="Prompt only",
+        cwd=str(tmp_path),
+        status="running",
+    )
+    agent._sidecar_id = "sidecar-prompt-only-agent"
+    AGENTS[agent.id] = agent
+
+    try:
+        output = await refinement._wait_for_agent(agent, timeout=0.3)
+    finally:
+        AGENTS.pop(agent.id, None)
+
+    assert "INITIALIZATION TIMEOUT" in output
+    assert agent.status == "error"
+    assert fake_log.lifecycle_errors
+    assert fake_log.lifecycle_errors[-1]["code"] == "agent_initialization_timeout"
+
+
+@pytest.mark.asyncio
+async def test_wait_for_agent_dead_health_fails_running_agent(tmp_path, monkeypatch) -> None:
+    import operator_mcp.patterns.refinement as refinement
+    import operator_mcp.tool_handlers.agents as agents
+    from operator_mcp.agent_state import AGENTS, ManagedAgent
+
+    class RunningSidecar:
+        async def get_agent(self, _agent_id):
+            return {"status": "running"}
+
+        async def interrupt_agent(self, _agent_id):
+            return {"ok": True}
+
+        async def close_agent(self, _agent_id):
+            return {"closed": True}
+
+    class DeadMonitor:
+        def get_health(self, _agent_id):
+            return {"health": "dead", "status": "running", "alive": False}
+
+    class FakeLog:
+        def get_summary(self):
+            return {}
+
+        def record_lifecycle_error(self, *_args, **_kwargs):
+            return None
+
+    monkeypatch.setattr(agents, "_sidecar_client", RunningSidecar())
+    monkeypatch.setattr(agents, "_event_consumer", None)
+    monkeypatch.setattr(refinement, "get_log", lambda _agent_id: FakeLog())
+    monkeypatch.setattr(
+        "operator_mcp.heartbeat.get_heartbeat_monitor",
+        lambda: DeadMonitor(),
+    )
+
+    agent = ManagedAgent(
+        id="dead-health-agent",
+        agent_type="codex",
+        title="Dead",
+        cwd=str(tmp_path),
+        status="running",
+    )
+    agent._sidecar_id = "sidecar-dead-health-agent"
+    AGENTS[agent.id] = agent
+
+    try:
+        output = await refinement._wait_for_agent(agent, timeout=1.0)
+    finally:
+        AGENTS.pop(agent.id, None)
+
+    assert "DEAD AGENT" in output
+    assert agent.status == "error"
+
+
+@pytest.mark.asyncio
 async def test_wait_for_subprocess_agent_prompt_only_timeout_is_bounded(tmp_path, monkeypatch) -> None:
     import operator_mcp.patterns.refinement as refinement
     from operator_mcp.agent_state import AGENTS, ManagedAgent
@@ -553,6 +663,131 @@ async def test_wait_for_subprocess_agent_prompt_only_timeout_is_bounded(tmp_path
 
 
 @pytest.mark.asyncio
+async def test_agent_retry_cleans_failed_child_agent(monkeypatch, tmp_path) -> None:
+    from operator_mcp.agent_state import AGENTS, ManagedAgent
+
+    attempts = {"count": 0}
+    bad_agent = ManagedAgent(
+        id="failed-child-agent",
+        agent_type="codex",
+        title="Failed child",
+        cwd=str(tmp_path),
+        status="error",
+    )
+    AGENTS[bad_agent.id] = bad_agent
+
+    async def fake_dispatch(step, state, cwd, wf):
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            return StepResult(
+                step_id=step.id,
+                status="failed",
+                error="Agent died during initialization",
+                output_data={"managed_agent_id": bad_agent.id},
+            )
+        return StepResult(step_id=step.id, status="completed", output="ok")
+
+    monkeypatch.setattr(executor, "_dispatch_step", fake_dispatch)
+
+    step = StepDef(
+        id="agent-step",
+        type=StepType.AGENT,
+        retry=1,
+        retry_delay=0,
+        agent=AgentStepConfig(agent_type="codex", tools="none", prompt="Do it."),
+    )
+    state = WorkflowState(workflow_name="retry-cleanup", run_id="retry-cleanup-run")
+    wf = WorkflowDef(name="retry-cleanup", steps=[step], checkpoint=False)
+
+    result = await executor._execute_step_with_retry(step, state, str(tmp_path), wf)
+
+    assert result.status == "completed"
+    assert attempts["count"] == 2
+    assert bad_agent.id not in AGENTS
+
+
+@pytest.mark.asyncio
+async def test_agent_step_cancel_does_not_retry(monkeypatch, tmp_path) -> None:
+    attempts = {"count": 0}
+    cleanup = {"called": False}
+    state = WorkflowState(workflow_name="cancel-no-retry", run_id="cancel-no-retry-run")
+
+    async def fake_dispatch(step, dispatch_state, cwd, wf):
+        attempts["count"] += 1
+        dispatch_state.cancel_requested = True
+        return StepResult(
+            step_id=step.id,
+            status="failed",
+            error="Cancelled by user",
+            output_data={"managed_agent_id": "agent-to-stop"},
+        )
+
+    async def fake_cleanup(result):
+        cleanup["called"] = True
+
+    monkeypatch.setattr(executor, "_dispatch_step", fake_dispatch)
+    monkeypatch.setattr(executor, "_cleanup_failed_agent_attempt", fake_cleanup)
+
+    step = StepDef(
+        id="agent-step",
+        type=StepType.AGENT,
+        retry=3,
+        retry_delay=0,
+        agent=AgentStepConfig(agent_type="codex", tools="none", prompt="Do it."),
+    )
+    wf = WorkflowDef(name="cancel-no-retry", steps=[step], checkpoint=False)
+
+    result = await executor._execute_step_with_retry(step, state, str(tmp_path), wf)
+
+    assert result.status == "failed"
+    assert result.error == "Cancelled by user"
+    assert attempts["count"] == 1
+    assert cleanup["called"] is True
+
+
+@pytest.mark.asyncio
+async def test_wait_for_agent_cancel_check_cancels_child(tmp_path, monkeypatch) -> None:
+    import operator_mcp.patterns.refinement as refinement
+    import operator_mcp.tool_handlers.agents as agents
+    from operator_mcp.agent_state import AGENTS, ManagedAgent
+
+    cancelled: dict[str, bool] = {}
+
+    async def fake_cancel(agent):
+        cancelled["called"] = True
+
+    class FakeSidecar:
+        async def get_agent(self, _agent_id):
+            return {"status": "running"}
+
+    monkeypatch.setattr(refinement, "_cancel_timed_out_agent", fake_cancel)
+    monkeypatch.setattr(agents, "_sidecar_client", FakeSidecar())
+
+    agent = ManagedAgent(
+        id="cancel-check-agent",
+        agent_type="codex",
+        title="Cancel check",
+        cwd=str(tmp_path),
+        status="running",
+    )
+    agent._sidecar_id = "cancel-check-sidecar"
+    AGENTS[agent.id] = agent
+
+    try:
+        output = await refinement._wait_for_agent(
+            agent,
+            timeout=5.0,
+            cancel_check=lambda: True,
+        )
+    finally:
+        AGENTS.pop(agent.id, None)
+
+    assert output == "[CANCELLED]"
+    assert cancelled["called"] is True
+    assert agent.status == "cancelled"
+
+
+@pytest.mark.asyncio
 async def test_refinement_subprocess_fallback_injects_workflow_memory_alias(tmp_path, monkeypatch) -> None:
     import operator_mcp.patterns.refinement as refinement
     import operator_mcp.tool_handlers.agents as agents
@@ -572,7 +807,7 @@ async def test_refinement_subprocess_fallback_injects_workflow_memory_alias(tmp_
         done.set_result(None)
         agent._reader_task = done
 
-    async def fake_wait(agent, *, timeout):
+    async def fake_wait(agent, *, timeout, cancel_check=None):
         return "ok"
 
     monkeypatch.setattr(agents, "_try_sidecar_create", fake_try_sidecar_create)

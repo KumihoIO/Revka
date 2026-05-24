@@ -109,6 +109,7 @@ export interface ClaudeSessionHandle {
   turnSeq: number;
   usage: AgentUsage;
   recoveryAttempts: number;
+  stderr: string;
 }
 
 /**
@@ -187,7 +188,7 @@ function normalizeMcpServers(
 /**
  * Build Claude SDK options from a Construct session config.
  */
-function buildClaudeOptions(config: AgentSessionConfig): ClaudeOptions {
+function buildClaudeOptions(config: AgentSessionConfig, onStderr?: (data: string) => void): ClaudeOptions {
   const opts: ClaudeOptions = {
     cwd: config.cwd,
     permissionMode: "bypassPermissions" as any,
@@ -199,6 +200,7 @@ function buildClaudeOptions(config: AgentSessionConfig): ClaudeOptions {
       ...(config.env ?? {}),
     },
     stderr: (data: string) => {
+      onStderr?.(data);
       log(`stderr: ${data.trim()}`);
     },
   };
@@ -261,7 +263,12 @@ function createToolCallStreamState(): ToolCallStreamState {
 /**
  * Translate a raw SDK message into zero or more AgentStreamEvents.
  */
-function translateMessage(message: any, turnId: string, state: ToolCallStreamState): AgentStreamEvent[] {
+function translateMessage(
+  message: any,
+  turnId: string,
+  state: ToolCallStreamState,
+  stderrTail = "",
+): AgentStreamEvent[] {
   const events: AgentStreamEvent[] = [];
 
   switch (message.type) {
@@ -316,7 +323,7 @@ function translateMessage(message: any, turnId: string, state: ToolCallStreamSta
         events.push({ type: "turn_completed", turnId, usage: extractUsage(message) });
       } else {
         const error = message.error ?? message.message ?? "Unknown error";
-        events.push({ type: "turn_failed", turnId, error: String(error) });
+        events.push({ type: "turn_failed", turnId, error: String(error), stderrTail });
       }
       break;
     }
@@ -432,6 +439,7 @@ export function createClaudeSession(
     turnSeq: 0,
     usage: {},
     recoveryAttempts: 0,
+    stderr: "",
   };
 
   // Accumulate all events across pump restarts for recovery context
@@ -446,7 +454,13 @@ export function createClaudeSession(
     // Push initial user message
     input.push(buildUserMessage(prompt));
 
-    const options = buildClaudeOptions(config);
+    handle.stderr = "";
+    const options = buildClaudeOptions(config, (data) => {
+      handle.stderr += data;
+      if (handle.stderr.length > 8000) {
+        handle.stderr = handle.stderr.slice(-8000);
+      }
+    });
     const q = claudeQuery({ prompt: input.iterable, options });
     handle.query = q;
 
@@ -467,7 +481,7 @@ export function createClaudeSession(
             handle.claudeSessionId = message.session_id;
           }
 
-          const events = translateMessage(message, turnId, streamState);
+          const events = translateMessage(message, turnId, streamState, handle.stderr.slice(-2000));
           for (const event of events) {
             if (event.type === "turn_completed" && event.usage) {
               event.usage = {
@@ -535,7 +549,12 @@ export function createClaudeSession(
         }
 
         log(`Query pump error: ${error}`);
-        onEvent({ type: "turn_failed", turnId, error });
+        onEvent({
+          type: "turn_failed",
+          turnId,
+          error,
+          stderrTail: handle.stderr.slice(-2000),
+        });
         onEvent({ type: "status_changed", status: "error" });
       }
     })();

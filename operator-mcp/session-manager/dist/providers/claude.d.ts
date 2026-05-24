@@ -19,6 +19,7 @@ export interface ClaudeSessionHandle {
     turnSeq: number;
     usage: AgentUsage;
     recoveryAttempts: number;
+    stderr: string;
 }
 /**
  * Create a Claude agent session and start the query pump.
