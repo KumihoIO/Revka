@@ -260,7 +260,13 @@ export function createCodexSession(config, onEvent) {
             }
             else {
                 const error = handle.stderr.slice(-500) || `Process exited with code ${code}`;
-                onEvent({ type: "turn_failed", turnId, error });
+                onEvent({
+                    type: "turn_failed",
+                    turnId,
+                    error,
+                    exitCode: code,
+                    stderrTail: handle.stderr.slice(-2000),
+                });
                 onEvent({ type: "status_changed", status: "error" });
             }
         });
@@ -268,7 +274,13 @@ export function createCodexSession(config, onEvent) {
             handle.process = null;
             if (handle.closed)
                 return;
-            onEvent({ type: "turn_failed", turnId, error: err.message });
+            onEvent({
+                type: "turn_failed",
+                turnId,
+                error: err.message,
+                exitCode: null,
+                stderrTail: handle.stderr.slice(-2000),
+            });
             onEvent({ type: "status_changed", status: "error" });
         });
     };

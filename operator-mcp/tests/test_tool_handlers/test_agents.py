@@ -207,6 +207,38 @@ class TestToolWaitForAgent:
         result = await tool_wait_for_agent({"agent_id": "a2"})
         assert result["status"] == "error"
 
+    async def test_dead_health_running_agent_returns_error(self, tmp_path, monkeypatch):
+        class DeadMonitor:
+            def get_health(self, _agent_id):
+                return {"health": "dead", "status": "running", "alive": False}
+
+        class FakeLog:
+            def record_lifecycle_error(self, *_args, **_kwargs):
+                return None
+
+        agent = ManagedAgent(
+            id="a-dead",
+            agent_type="codex",
+            title="Dead",
+            cwd=str(tmp_path),
+            status="running",
+        )
+        AGENTS[agent.id] = agent
+        monkeypatch.setattr(
+            "operator_mcp.heartbeat.get_heartbeat_monitor",
+            lambda: DeadMonitor(),
+        )
+        monkeypatch.setattr(
+            "operator_mcp.tool_handlers.agents.get_or_create_log",
+            lambda *_args, **_kwargs: FakeLog(),
+        )
+
+        result = await tool_wait_for_agent({"agent_id": agent.id, "timeout": 1})
+
+        assert result["status"] == "error"
+        assert result["error"] == "Agent health is dead while status is running"
+        assert agent.status == "error"
+
 
 # ---------------------------------------------------------------------------
 # tool_send_agent_prompt

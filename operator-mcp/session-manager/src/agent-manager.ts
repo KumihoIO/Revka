@@ -268,6 +268,7 @@ export class AgentManager {
           closed: false,
           turnSeq: 0,
           usage: state.usage,
+          stderr: "",
         } as ClaudeSessionHandle;
 
         resumed++;

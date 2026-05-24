@@ -16,6 +16,7 @@ import json
 import os
 import re
 import uuid
+from collections.abc import Callable
 from typing import Any
 
 from .._log import _log
@@ -30,7 +31,7 @@ from ..failure_classification import (
     RUNTIME_ENV_ERROR,
     VALIDATION_ERROR,
 )
-from ..run_log import get_log
+from ..run_log import get_log, get_or_create_log
 
 
 # ---------------------------------------------------------------------------
@@ -157,6 +158,108 @@ def _subprocess_progress_marker(agent: ManagedAgent, runlog_dir: str) -> int:
     return runlog_size + len(agent.stdout_buffer or "") + len(agent.stderr_buffer or "")
 
 
+def _initializing_timeout_secs(timeout: float) -> float:
+    try:
+        configured = float(os.getenv("CONSTRUCT_AGENT_INITIALIZING_TIMEOUT_SECS", "180"))
+    except (TypeError, ValueError):
+        configured = 180.0
+    return min(timeout, max(0.1, configured))
+
+
+def _agent_run_log(agent: ManagedAgent):
+    sidecar_id = getattr(agent, "_sidecar_id", None)
+    run_log = get_log(agent.id)
+    if run_log is None and sidecar_id:
+        run_log = get_log(sidecar_id)
+    return run_log
+
+
+def _agent_run_summary(agent: ManagedAgent) -> dict[str, Any]:
+    run_log = _agent_run_log(agent)
+    if not run_log:
+        return {}
+    try:
+        return run_log.get_summary()
+    except Exception:
+        return {}
+
+
+def _prompt_only_runlog(summary: dict[str, Any], agent: ManagedAgent) -> bool:
+    if (agent.stdout_buffer or "").strip() or (agent.stderr_buffer or "").strip():
+        return False
+    if str(summary.get("last_message") or "").strip():
+        return False
+    if int(summary.get("tool_call_count") or 0) > 0:
+        return False
+    if int(summary.get("error_count") or 0) > 0:
+        return False
+    total_events = int(summary.get("total_events") or 0)
+    return total_events == 0 or total_events <= 2
+
+
+def _failure_detail_from_summary(summary: dict[str, Any], agent: ManagedAgent) -> str:
+    stderr_tail = str(summary.get("stderr_tail") or "").strip()
+    if stderr_tail:
+        return stderr_tail[-1000:]
+    failing = summary.get("last_failing_command")
+    if isinstance(failing, dict):
+        for key in ("stderr_tail", "stderr", "error", "message"):
+            value = str(failing.get(key) or "").strip()
+            if value:
+                return value[-1000:]
+    if (agent.stderr_buffer or "").strip():
+        return agent.stderr_buffer.strip()[-1000:]
+    return ""
+
+
+def _record_lifecycle_failure(
+    agent: ManagedAgent,
+    message: str,
+    *,
+    code: str,
+    detail: dict[str, Any] | None = None,
+) -> None:
+    sidecar_id = getattr(agent, "_sidecar_id", None)
+    runlog_id = sidecar_id or agent.id
+    run_log = _agent_run_log(agent)
+    if run_log is None:
+        run_log = get_or_create_log(
+            runlog_id,
+            title=agent.title,
+            agent_type=agent.agent_type,
+            cwd=agent.cwd,
+        )
+    stderr_tail = (agent.stderr_buffer or "").strip()
+    try:
+        run_log.record_lifecycle_error(
+            message,
+            code=code,
+            stderr_tail=stderr_tail[-2000:] if stderr_tail else "",
+            detail=detail,
+        )
+    except Exception as exc:
+        _log(f"refinement: failed to record lifecycle error for {agent.id[:8]}: {exc}")
+
+
+def _dead_health(agent: ManagedAgent) -> dict[str, Any] | None:
+    try:
+        from ..heartbeat import get_heartbeat_monitor
+        monitor = get_heartbeat_monitor()
+        for aid in (agent.id, getattr(agent, "_sidecar_id", None)):
+            if not aid:
+                continue
+            health = monitor.get_health(aid)
+            if (
+                health
+                and health.get("health") == "dead"
+                and health.get("status") == "running"
+            ):
+                return health
+    except Exception:
+        return None
+    return None
+
+
 async def _cancel_timed_out_agent(agent: ManagedAgent) -> None:
     """Cancel a timed-out agent to stop it from burning tokens."""
     try:
@@ -166,7 +269,22 @@ async def _cancel_timed_out_agent(agent: ManagedAgent) -> None:
         _log(f"refinement: failed to cancel agent {agent.id[:8]}: {exc}")
 
 
-async def _wait_for_agent(agent: ManagedAgent, *, timeout: float = 300.0) -> str:
+def _cancel_check_requested(cancel_check: Callable[[], bool] | None) -> bool:
+    if cancel_check is None:
+        return False
+    try:
+        return bool(cancel_check())
+    except Exception as exc:
+        _log(f"refinement: cancel_check failed: {exc}")
+        return False
+
+
+async def _wait_for_agent(
+    agent: ManagedAgent,
+    *,
+    timeout: float = 300.0,
+    cancel_check: Callable[[], bool] | None = None,
+) -> str:
     """Wait for an agent to complete and return its last message.
 
     Includes zombie detection: if sidecar reports 'running' but no new
@@ -181,11 +299,7 @@ async def _wait_for_agent(agent: ManagedAgent, *, timeout: float = 300.0) -> str
     _ZOMBIE_MIN = 180.0               # floor: 3 minutes
     _ZOMBIE_RATIO = 0.4               # 40% of step timeout
     _LIVENESS_CHECK_INTERVAL = 30.0   # how often to fetch event counts
-    try:
-        _INITIALIZING_TIMEOUT = float(os.getenv("CONSTRUCT_AGENT_INITIALIZING_TIMEOUT_SECS", "180"))
-    except (TypeError, ValueError):
-        _INITIALIZING_TIMEOUT = 180.0
-    _INITIALIZING_TIMEOUT = min(timeout, max(0.1, _INITIALIZING_TIMEOUT))
+    _INITIALIZING_TIMEOUT = _initializing_timeout_secs(timeout)
     _RUNLOG_DIR = os.path.expanduser("~/.construct/operator_mcp/runlogs")
 
     zombie_window = max(_ZOMBIE_MIN, timeout * _ZOMBIE_RATIO)
@@ -206,8 +320,14 @@ async def _wait_for_agent(agent: ManagedAgent, *, timeout: float = 300.0) -> str
             next_liveness_check = loop_time() + _LIVENESS_CHECK_INTERVAL
             consecutive_empty = 0          # track repeated 0-event responses
             last_runlog_size = -1          # cross-verification via local file
+            last_seen_status = ""
 
             while loop_time() < deadline:
+                if _cancel_check_requested(cancel_check):
+                    _log(f"refinement: cancellation requested for agent {agent.id[:8]}; cancelling")
+                    await _cancel_timed_out_agent(agent)
+                    agent.status = "cancelled"
+                    return "[CANCELLED]"
                 if agent.status in ("completed", "error", "closed"):
                     break
                 try:
@@ -218,14 +338,73 @@ async def _wait_for_agent(agent: ManagedAgent, *, timeout: float = 300.0) -> str
                         return "[AGENT VANISHED]"
 
                     status = info.get("status", "")
+                    last_seen_status = status
                     now = loop_time()
+                    health = _dead_health(agent)
+                    if health:
+                        message = "Agent health is dead while sidecar status is running"
+                        _log(f"refinement: agent {agent.id[:8]} {message}; marking failed")
+                        _record_lifecycle_failure(
+                            agent,
+                            message,
+                            code="agent_dead_while_running",
+                            detail={"health": health},
+                        )
+                        await _cancel_timed_out_agent(agent)
+                        agent.status = "error"
+                        return f"[DEAD AGENT — {message}]"
+
                     if status in ("idle", "error", "closed"):
                         agent.status = "completed" if status == "idle" else status
+                        if status == "error":
+                            try:
+                                from ..tool_handlers.agents import _sync_sidecar_events
+                                await _sync_sidecar_events(agent.id, sidecar_id)
+                            except Exception:
+                                pass
+                            summary = _agent_run_summary(agent)
+                            if _prompt_only_runlog(summary, agent):
+                                detail = _failure_detail_from_summary(summary, agent)
+                                message = "Agent died during initialization"
+                                if detail:
+                                    message = f"{message}: {detail}"
+                                _record_lifecycle_failure(
+                                    agent,
+                                    message,
+                                    code="agent_bootstrap_failed",
+                                    detail={"sidecar_status": status, "summary": summary},
+                                )
+                                return f"[AGENT DIED DURING INITIALIZATION] {detail}".rstrip()
                         break
+
+                    if now - poll_start >= _INITIALIZING_TIMEOUT:
+                        summary = _agent_run_summary(agent)
+                        if _prompt_only_runlog(summary, agent) and last_event_count <= 2:
+                            message = (
+                                f"Agent initialization timeout: no useful activity after "
+                                f"{_INITIALIZING_TIMEOUT:.0f}s"
+                            )
+                            _log(f"refinement: agent {agent.id[:8]} {message}; marking failed")
+                            _record_lifecycle_failure(
+                                agent,
+                                message,
+                                code="agent_initialization_timeout",
+                                detail={"summary": summary},
+                            )
+                            await _cancel_timed_out_agent(agent)
+                            agent.status = "error"
+                            return f"[INITIALIZATION TIMEOUT after {_INITIALIZING_TIMEOUT:.0f}s]"
+
                     if status == "initializing" and now - poll_start >= _INITIALIZING_TIMEOUT:
                         _log(
                             f"refinement: agent {agent.id[:8]} stayed initializing for "
                             f"{now - poll_start:.0f}s; marking failed"
+                        )
+                        _record_lifecycle_failure(
+                            agent,
+                            f"Agent stayed initializing for {_INITIALIZING_TIMEOUT:.0f}s",
+                            code="agent_initializing_timeout",
+                            detail={"sidecar_status": status},
                         )
                         await _cancel_timed_out_agent(agent)
                         agent.status = "error"
@@ -250,6 +429,12 @@ async def _wait_for_agent(agent: ManagedAgent, *, timeout: float = 300.0) -> str
                                     else:
                                         _log(f"refinement: agent {agent.id[:8]} never produced "
                                              f"events after {consecutive_empty} checks — zombie")
+                                        _record_lifecycle_failure(
+                                            agent,
+                                            "Agent died during initialization: never produced events",
+                                            code="agent_bootstrap_no_events",
+                                            detail={"consecutive_empty": consecutive_empty},
+                                        )
                                         await _cancel_timed_out_agent(agent)
                                         agent.status = "error"
                                         return "[ZOMBIE — never produced events]"
@@ -268,6 +453,12 @@ async def _wait_for_agent(agent: ManagedAgent, *, timeout: float = 300.0) -> str
                                     _log(f"refinement: agent {agent.id[:8]} no progress for "
                                          f"{stale:.0f}s (events frozen at {event_count}, "
                                          f"runlog static) — zombie confirmed")
+                                    _record_lifecycle_failure(
+                                        agent,
+                                        f"Agent made no progress for {stale:.0f}s",
+                                        code="agent_progress_stalled",
+                                        detail={"event_count": event_count, "stale_seconds": stale},
+                                    )
                                     await _cancel_timed_out_agent(agent)
                                     agent.status = "error"
                                     return f"[ZOMBIE — no progress for {stale:.0f}s]"
@@ -286,6 +477,24 @@ async def _wait_for_agent(agent: ManagedAgent, *, timeout: float = 300.0) -> str
                 await asyncio.sleep(sleep_for)
                 poll_interval = min(poll_interval * 1.2, 5.0)
             else:
+                summary = _agent_run_summary(agent)
+                if last_seen_status == "initializing" or (
+                    _prompt_only_runlog(summary, agent) and last_event_count <= 2
+                ):
+                    message = (
+                        f"Agent initialization timeout: no useful activity after "
+                        f"{_INITIALIZING_TIMEOUT:.0f}s"
+                    )
+                    _log(f"refinement: agent {agent.id[:8]} {message}; marking failed")
+                    _record_lifecycle_failure(
+                        agent,
+                        message,
+                        code="agent_initialization_timeout",
+                        detail={"sidecar_status": last_seen_status, "summary": summary},
+                    )
+                    await _cancel_timed_out_agent(agent)
+                    agent.status = "error"
+                    return f"[INITIALIZATION TIMEOUT after {_INITIALIZING_TIMEOUT:.0f}s]"
                 _log(f"refinement: agent {agent.id[:8]} timed out ({timeout}s), cancelling")
                 await _cancel_timed_out_agent(agent)
                 return f"[TIMEOUT after {timeout}s]"
@@ -296,6 +505,11 @@ async def _wait_for_agent(agent: ManagedAgent, *, timeout: float = 300.0) -> str
         last_marker = _subprocess_progress_marker(agent, _RUNLOG_DIR)
 
         while loop_time() < deadline:
+            if _cancel_check_requested(cancel_check):
+                _log(f"refinement: cancellation requested for subprocess agent {agent.id[:8]}; cancelling")
+                await _cancel_timed_out_agent(agent)
+                agent.status = "cancelled"
+                return "[CANCELLED]"
             if agent._reader_task.done():
                 break
 
@@ -312,6 +526,12 @@ async def _wait_for_agent(agent: ManagedAgent, *, timeout: float = 300.0) -> str
                     f"refinement: subprocess agent {agent.id[:8]} produced no output for "
                     f"{idle_for:.0f}s; marking failed"
                 )
+                _record_lifecycle_failure(
+                    agent,
+                    f"Agent initialization timeout: no subprocess output after {_INITIALIZING_TIMEOUT:.0f}s",
+                    code="agent_initialization_timeout",
+                    detail={"idle_seconds": idle_for},
+                )
                 await _cancel_timed_out_agent(agent)
                 agent.status = "error"
                 return f"[INITIALIZATION TIMEOUT after {_INITIALIZING_TIMEOUT:.0f}s]"
@@ -327,12 +547,27 @@ async def _wait_for_agent(agent: ManagedAgent, *, timeout: float = 300.0) -> str
             await _cancel_timed_out_agent(agent)
             return f"[TIMEOUT after {timeout}s]"
 
+    if agent.status == "error":
+        summary = _agent_run_summary(agent)
+        detail = _failure_detail_from_summary(summary, agent)
+        if not detail and (agent.stdout_buffer or "").strip():
+            detail = agent.stdout_buffer.strip()[-1000:]
+        if detail or _prompt_only_runlog(summary, agent) or not str(summary.get("last_message") or "").strip():
+            message = "Agent died during initialization"
+            if detail:
+                message = f"{message}: {detail}"
+            _record_lifecycle_failure(
+                agent,
+                message,
+                code="agent_bootstrap_failed",
+                detail={"summary": summary},
+            )
+            return f"[AGENT DIED DURING INITIALIZATION] {detail}".rstrip()
+
     if not sidecar_id and agent.stdout_buffer:
         return agent.stdout_buffer
 
-    run_log = get_log(agent.id)
-    if run_log is None and sidecar_id:
-        run_log = get_log(sidecar_id)
+    run_log = _agent_run_log(agent)
     if run_log:
         summary = run_log.get_summary()
         return summary.get("last_message", "")
@@ -351,6 +586,7 @@ async def _spawn_and_wait(
     include_memory: bool = True,
     include_operator: bool = True,
     env_extra: dict[str, str] | None = None,
+    cancel_check: Callable[[], bool] | None = None,
 ) -> tuple[ManagedAgent, str]:
     """Spawn an agent, wait for completion, return (agent, output_text).
 
@@ -441,7 +677,7 @@ async def _spawn_and_wait(
             agent.status = "error"
             return agent, agent.stderr_buffer[-2000:] if agent.stderr_buffer else "spawn failed"
 
-    output = await _wait_for_agent(agent, timeout=timeout)
+    output = await _wait_for_agent(agent, timeout=timeout, cancel_check=cancel_check)
     return agent, output
 
 

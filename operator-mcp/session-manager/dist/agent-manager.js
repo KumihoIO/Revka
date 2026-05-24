@@ -238,6 +238,7 @@ export class AgentManager {
                     closed: false,
                     turnSeq: 0,
                     usage: state.usage,
+                    stderr: "",
                 };
                 resumed++;
                 updateAgentStatus(state.id, "idle");

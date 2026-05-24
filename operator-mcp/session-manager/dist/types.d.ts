@@ -58,6 +58,8 @@ export type AgentStreamEvent = {
     type: "turn_failed";
     turnId: string;
     error: string;
+    exitCode?: number | null;
+    stderrTail?: string;
 } | {
     type: "timeline";
     item: TimelineItem;
