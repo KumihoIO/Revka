@@ -60,6 +60,8 @@ class RunLog:
         self._last_message: str = ""
         self._usage: dict[str, Any] = {}
         self._status: str = "initializing"
+        self._last_exit_code: int | None = None
+        self._stderr_tail: str = ""
 
         # Write header entry
         self._append({
@@ -176,21 +178,32 @@ class RunLog:
             })
 
         elif ev_type == "turn_failed":
+            exit_code = inner.get("exitCode", inner.get("exit_code"))
+            stderr_tail = inner.get("stderrTail", inner.get("stderr_tail", ""))
             entry = {
                 "kind": "turn_failed",
                 "ts": timestamp,
                 "turn_id": inner.get("turnId", ""),
                 "error": inner.get("error", ""),
             }
+            if exit_code is not None:
+                entry["exit_code"] = exit_code
+                self._last_exit_code = exit_code
+            if stderr_tail:
+                entry["stderr_tail"] = str(stderr_tail)[-2000:]
+                self._stderr_tail = entry["stderr_tail"]
             self._append(entry)
             self._errors.append(entry)
+            self._status = "failed"
+            self._last_failing_command = entry
 
         elif ev_type == "status_changed":
-            self._status = inner.get("status", "")
+            status = inner.get("status", "")
+            self._status = "failed" if status == "error" else status
             self._append({
                 "kind": "status_changed",
                 "ts": timestamp,
-                "status": self._status,
+                "status": status,
             })
 
         elif ev_type == "session_started":
@@ -221,8 +234,12 @@ class RunLog:
             "exit_code": exit_code,
             "stdout": stdout[-5000:] if stdout else "",
             "stderr": stderr[-2000:] if stderr else "",
+            "stderr_tail": stderr[-2000:] if stderr else "",
         }
         self._append(entry)
+        self._last_exit_code = exit_code
+        if stderr:
+            self._stderr_tail = stderr[-2000:]
         if exit_code is None or exit_code != 0:
             self._status = "failed"
             self._errors.append(entry)
@@ -231,6 +248,37 @@ class RunLog:
             self._status = "completed"
         if stdout:
             self._last_message = stdout.strip()
+
+    def record_lifecycle_error(
+        self,
+        message: str,
+        *,
+        code: str = "",
+        exit_code: int | None = None,
+        stderr_tail: str = "",
+        detail: dict[str, Any] | None = None,
+    ) -> None:
+        """Record a terminal lifecycle failure outside the normal event stream."""
+        entry: dict[str, Any] = {
+            "kind": "lifecycle_error",
+            "message": message,
+        }
+        if code:
+            entry["code"] = code
+        if exit_code is not None:
+            entry["exit_code"] = exit_code
+        if stderr_tail:
+            entry["stderr_tail"] = stderr_tail[-2000:]
+        if detail:
+            entry["detail"] = detail
+        self._append(entry)
+        self._status = "failed"
+        self._errors.append(entry)
+        self._last_failing_command = entry
+        if exit_code is not None:
+            self._last_exit_code = exit_code
+        if stderr_tail:
+            self._stderr_tail = stderr_tail[-2000:]
 
     def record_prompt(self, prompt: str) -> None:
         """Record the initial prompt sent to the agent."""
@@ -255,6 +303,8 @@ class RunLog:
             "error_count": len(self._errors),
             "files_touched": sorted(self._files_touched),
             "last_failing_command": self._last_failing_command,
+            "exit_code": self._last_exit_code,
+            "stderr_tail": self._stderr_tail,
             "last_message": self._last_message[-2000:] if self._last_message else "",
             "usage": self._usage,
         }
@@ -374,6 +424,8 @@ def load_log_from_disk(agent_id: str) -> RunLog | None:
     log._last_message = ""
     log._usage = {}
     log._status = "unknown"
+    log._last_exit_code = None
+    log._stderr_tail = ""
     log.title = ""
     log.agent_type = ""
     log.cwd = ""
@@ -407,10 +459,20 @@ def load_log_from_disk(agent_id: str) -> RunLog | None:
                     text = entry.get("text", "")
                     if text:
                         log._last_message = text
-                elif kind in ("error", "turn_failed"):
+                elif kind in ("error", "turn_failed", "lifecycle_error"):
                     log._errors.append(entry)
+                    if kind in ("turn_failed", "lifecycle_error"):
+                        log._status = "failed"
+                        log._last_failing_command = entry
+                        exit_code = entry.get("exit_code")
+                        if exit_code is not None:
+                            log._last_exit_code = exit_code
+                        stderr_tail = entry.get("stderr_tail", "")
+                        if stderr_tail:
+                            log._stderr_tail = str(stderr_tail)[-2000:]
                 elif kind == "status_changed":
-                    log._status = entry.get("status", "")
+                    status = entry.get("status", "")
+                    log._status = "failed" if status == "error" else status
                 elif kind == "turn_completed":
                     usage = entry.get("usage", {})
                     if usage:
@@ -421,12 +483,16 @@ def load_log_from_disk(agent_id: str) -> RunLog | None:
                         }
                 elif kind == "subprocess":
                     exit_code = entry.get("exit_code")
+                    log._last_exit_code = exit_code
                     if exit_code is None or exit_code != 0:
                         log._status = "failed"
                         log._errors.append(entry)
                         log._last_failing_command = entry
                     else:
                         log._status = "completed"
+                    stderr_tail = entry.get("stderr_tail") or entry.get("stderr", "")
+                    if stderr_tail:
+                        log._stderr_tail = str(stderr_tail)[-2000:]
                     stdout = entry.get("stdout", "")
                     if stdout:
                         log._last_message = stdout.strip()

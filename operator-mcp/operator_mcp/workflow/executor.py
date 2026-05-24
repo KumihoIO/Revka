@@ -1203,6 +1203,7 @@ async def _exec_agent(step: StepDef, state: WorkflowState, cwd: str) -> StepResu
         include_memory=include_memory,
         include_operator=include_operator,
         env_extra=agent_env_extra or None,
+        cancel_check=lambda: state.cancel_requested,
     )
 
     agent_output, files = _get_agent_output(agent.id)
@@ -1218,6 +1219,7 @@ async def _exec_agent(step: StepDef, state: WorkflowState, cwd: str) -> StepResu
     if agent_succeeded and not effective.strip():
         _log(f"agent step '{step.id}': agent completed but returned empty output — marking as failed")
         agent_succeeded = False
+    cancelled_by_workflow = agent.status == "cancelled" or state.cancel_requested
 
     # Persist full agent output to disk immediately.  The in-memory output
     # can be lost on daemon restart and the Kumiho metadata only stores a
@@ -1254,7 +1256,8 @@ async def _exec_agent(step: StepDef, state: WorkflowState, cwd: str) -> StepResu
             "required_tools": required_tools,
             "prompt_preview": prompt[:1000],
         },
-        error=(effective[:2000] if agent.status == "error"
+        error=("Cancelled by user" if cancelled_by_workflow
+               else effective[:2000] if agent.status == "error"
                else "Agent returned empty output" if not agent_succeeded and not effective.strip()
                else ""),
     )
@@ -1262,6 +1265,23 @@ async def _exec_agent(step: StepDef, state: WorkflowState, cwd: str) -> StepResu
     result.output_data["template_name"] = cfg.template or ""
     result.output_data["agent_type"] = cfg.agent_type
     result.output_data["role"] = cfg.role
+    result.output_data["managed_agent_id"] = agent.id
+    if getattr(agent, "_sidecar_id", None):
+        result.output_data["sidecar_id"] = getattr(agent, "_sidecar_id")
+    try:
+        from ..run_log import get_log
+        run_log = get_log(effective_agent_id) or get_log(agent.id)
+        if run_log:
+            run_summary = run_log.get_summary()
+            if run_summary.get("exit_code") is not None:
+                result.output_data["exit_code"] = run_summary.get("exit_code")
+            if run_summary.get("stderr_tail"):
+                result.output_data["stderr_tail"] = run_summary.get("stderr_tail")
+    except Exception as exc:
+        _log(
+            f"agent step '{step.id}': run-log summary enrichment skipped "
+            f"for agent {agent.id[:8]}: {exc}"
+        )
     if artifact_path:
         result.output_data["artifact_path"] = artifact_path
     # Store skills so they persist to Kumiho metadata for live/historical views
@@ -5836,6 +5856,30 @@ async def execute_workflow(
 # Step dispatch with retry
 # ---------------------------------------------------------------------------
 
+async def _cleanup_failed_agent_attempt(result: StepResult) -> None:
+    """Stop and unregister a failed workflow child agent before retrying."""
+    from ..agent_state import AGENTS
+
+    managed_id = str(result.output_data.get("managed_agent_id") or "")
+    lookup_ids = [managed_id, str(result.agent_id or "")]
+    agent = next((AGENTS[aid] for aid in lookup_ids if aid and aid in AGENTS), None)
+    if agent is None and result.agent_id:
+        for candidate in AGENTS.values():
+            if getattr(candidate, "_sidecar_id", None) == result.agent_id:
+                agent = candidate
+                break
+    if agent is None:
+        return
+
+    try:
+        from ..tool_handlers.agents import _cancel_one, agent_is_active
+        if agent_is_active(agent) or agent.status in ("initializing", "running", "cancelling"):
+            await _cancel_one(agent)
+    except Exception as exc:
+        _log(f"workflow: failed to cancel agent retry attempt {agent.id[:8]}: {exc}")
+    finally:
+        AGENTS.pop(agent.id, None)
+
 async def _execute_step_with_retry(
     step: StepDef,
     state: WorkflowState,
@@ -5851,6 +5895,13 @@ async def _execute_step_with_retry(
         result.duration_s = round(time.monotonic() - t0, 2)
         result.retries_used = attempt
 
+        if state.cancel_requested or state.status == WorkflowStatus.CANCELLED:
+            if result.status != "completed" and not result.error:
+                result.error = "Cancelled by user"
+            if step.type == StepType.AGENT and result.status != "completed":
+                await _cleanup_failed_agent_attempt(result)
+            return result
+
         if result.status == "completed" or step.type in (
             StepType.CONDITIONAL, StepType.GOTO,
             StepType.HUMAN_APPROVAL, StepType.HUMAN_INPUT,
@@ -5860,6 +5911,8 @@ async def _execute_step_with_retry(
 
         last_result = result
         if attempt < step.retry:
+            if step.type == StepType.AGENT:
+                await _cleanup_failed_agent_attempt(result)
             _log(f"workflow: step '{step.id}' failed (attempt {attempt+1}), retrying...")
             await asyncio.sleep(step.retry_delay)
 

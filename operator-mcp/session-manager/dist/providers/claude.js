@@ -157,7 +157,7 @@ function normalizeMcpServers(servers) {
 /**
  * Build Claude SDK options from a Construct session config.
  */
-function buildClaudeOptions(config) {
+function buildClaudeOptions(config, onStderr) {
     const opts = {
         cwd: config.cwd,
         permissionMode: "bypassPermissions",
@@ -169,6 +169,7 @@ function buildClaudeOptions(config) {
             ...(config.env ?? {}),
         },
         stderr: (data) => {
+            onStderr?.(data);
             log(`stderr: ${data.trim()}`);
         },
     };
@@ -210,7 +211,7 @@ function createToolCallStreamState() {
 /**
  * Translate a raw SDK message into zero or more AgentStreamEvents.
  */
-function translateMessage(message, turnId, state) {
+function translateMessage(message, turnId, state, stderrTail = "") {
     const events = [];
     switch (message.type) {
         case "assistant": {
@@ -266,7 +267,7 @@ function translateMessage(message, turnId, state) {
             }
             else {
                 const error = message.error ?? message.message ?? "Unknown error";
-                events.push({ type: "turn_failed", turnId, error: String(error) });
+                events.push({ type: "turn_failed", turnId, error: String(error), stderrTail });
             }
             break;
         }
@@ -381,6 +382,7 @@ export function createClaudeSession(config, onEvent) {
         turnSeq: 0,
         usage: {},
         recoveryAttempts: 0,
+        stderr: "",
     };
     // Accumulate all events across pump restarts for recovery context
     const accumulatedEvents = [];
@@ -391,7 +393,13 @@ export function createClaudeSession(config, onEvent) {
         handle.input = input;
         // Push initial user message
         input.push(buildUserMessage(prompt));
-        const options = buildClaudeOptions(config);
+        handle.stderr = "";
+        const options = buildClaudeOptions(config, (data) => {
+            handle.stderr += data;
+            if (handle.stderr.length > 8000) {
+                handle.stderr = handle.stderr.slice(-8000);
+            }
+        });
         const q = claudeQuery({ prompt: input.iterable, options });
         handle.query = q;
         const turnId = `turn-${++handle.turnSeq}`;
@@ -408,7 +416,7 @@ export function createClaudeSession(config, onEvent) {
                     if (message.type === "system" && message.subtype === "init" && message.session_id) {
                         handle.claudeSessionId = message.session_id;
                     }
-                    const events = translateMessage(message, turnId, streamState);
+                    const events = translateMessage(message, turnId, streamState, handle.stderr.slice(-2000));
                     for (const event of events) {
                         if (event.type === "turn_completed" && event.usage) {
                             event.usage = {
@@ -473,7 +481,12 @@ export function createClaudeSession(config, onEvent) {
                     return;
                 }
                 log(`Query pump error: ${error}`);
-                onEvent({ type: "turn_failed", turnId, error });
+                onEvent({
+                    type: "turn_failed",
+                    turnId,
+                    error,
+                    stderrTail: handle.stderr.slice(-2000),
+                });
                 onEvent({ type: "status_changed", status: "error" });
             }
         })();

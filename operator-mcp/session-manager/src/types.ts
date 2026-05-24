@@ -65,7 +65,7 @@ export interface AgentSessionInfo {
 export type AgentStreamEvent =
   | { type: "turn_started"; turnId: string }
   | { type: "turn_completed"; turnId: string; usage?: AgentUsage }
-  | { type: "turn_failed"; turnId: string; error: string }
+  | { type: "turn_failed"; turnId: string; error: string; exitCode?: number | null; stderrTail?: string }
   | { type: "timeline"; item: TimelineItem }
   | { type: "status_changed"; status: AgentStatus }
   | { type: "session_started"; sessionId: string; provider: AgentProvider }
