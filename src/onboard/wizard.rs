@@ -15,6 +15,7 @@ use crate::i18n::{self, Lang};
 use crate::memory::{
     default_memory_backend_key, memory_backend_profile, selectable_memory_backends,
 };
+use crate::onboard::kumiho_cloud::{KumihoCloudClient, OnboardingConfig, PlanOption, RegionOption};
 use crate::providers::{
     canonical_china_provider_name, is_glm_alias, is_glm_cn_alias, is_minimax_alias,
     is_moonshot_alias, is_qianfan_alias, is_qwen_alias, is_qwen_oauth_alias, is_zai_alias,
@@ -3809,41 +3810,36 @@ fn setup_memory() -> Result<MemorySetupResult> {
     let backend = backend_key_from_choice(choice);
     let profile = memory_backend_profile(backend);
 
-    let mut kumiho_api_url: Option<String> = None;
+    let kumiho_api_url: Option<String> = None;
     let mut kumiho_service_token: Option<String> = None;
 
     // If Kumiho selected, collect connection details.
     if backend == "kumiho" {
         println!();
-        print_bullet("Kumiho requires a running FastAPI instance with Neo4j.");
+        print_bullet(&t!("memory-kumiho-managed-default"));
+        print_bullet(&t!("memory-kumiho-no-endpoint"));
         println!();
 
-        let api_url = Input::new()
-            .with_prompt(format!("  {}", t!("memory-kumiho-api-url")))
-            .default("https://api.kumiho.cloud".to_string())
-            .interact_text()?;
-        kumiho_api_url = Some(api_url);
-
-        let token = Input::new()
-            .with_prompt(format!("  {}", t!("memory-kumiho-token")))
-            .interact_text()?;
-        kumiho_service_token = Some(token.trim().to_string());
+        kumiho_service_token = setup_kumiho_service_token()?;
 
         println!(
             "  {} Kumiho API: {}",
             style("✓").green().bold(),
-            style(
-                kumiho_api_url
-                    .as_deref()
-                    .unwrap_or("https://api.kumiho.cloud")
-            )
-            .green()
+            style(t!("memory-kumiho-api-managed")).green()
         );
-        println!(
-            "  {} Service token: {}",
-            style("✓").green().bold(),
-            style("configured").green()
-        );
+        if kumiho_service_token.is_some() {
+            println!(
+                "  {} Service token: {}",
+                style("✓").green().bold(),
+                style(t!("memory-kumiho-token-configured")).green()
+            );
+        } else {
+            println!(
+                "  {} Service token: {}",
+                style("!").yellow().bold(),
+                style(t!("memory-kumiho-token-not-configured")).yellow()
+            );
+        }
     }
 
     let auto_save = profile.auto_save_default
@@ -3866,6 +3862,283 @@ fn setup_memory() -> Result<MemorySetupResult> {
         kumiho_api_url,
         kumiho_service_token,
     })
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum KumihoTokenSetupChoice {
+    CloudAccount,
+    ExistingToken,
+    Skip,
+}
+
+fn setup_kumiho_service_token() -> Result<Option<String>> {
+    let options = [
+        t!("memory-kumiho-token-cloud"),
+        t!("memory-kumiho-token-existing"),
+        t!("memory-kumiho-token-skip"),
+    ];
+    let choice = Select::new()
+        .with_prompt(format!("  {}", t!("memory-kumiho-token-setup")))
+        .items(options)
+        .default(0)
+        .interact()?;
+
+    match kumiho_token_setup_choice(choice) {
+        KumihoTokenSetupChoice::CloudAccount => match run_kumiho_cloud_token_flow() {
+            Ok(token) => Ok(Some(token)),
+            Err(error) => {
+                println!(
+                    "  {} {}",
+                    style("!").yellow().bold(),
+                    t!("memory-kumiho-cloud-failed", err = error.to_string())
+                );
+                let paste = Confirm::new()
+                    .with_prompt(format!("  {}", t!("memory-kumiho-paste-existing")))
+                    .default(true)
+                    .interact()?;
+                if paste {
+                    prompt_existing_kumiho_token()
+                } else {
+                    Ok(None)
+                }
+            }
+        },
+        KumihoTokenSetupChoice::ExistingToken => prompt_existing_kumiho_token(),
+        KumihoTokenSetupChoice::Skip => Ok(None),
+    }
+}
+
+fn kumiho_token_setup_choice(choice: usize) -> KumihoTokenSetupChoice {
+    match choice {
+        0 => KumihoTokenSetupChoice::CloudAccount,
+        1 => KumihoTokenSetupChoice::ExistingToken,
+        _ => KumihoTokenSetupChoice::Skip,
+    }
+}
+
+fn prompt_existing_kumiho_token() -> Result<Option<String>> {
+    let token: String = dialoguer::Password::new()
+        .with_prompt(format!("  {}", t!("memory-kumiho-token")))
+        .allow_empty_password(true)
+        .interact()?;
+    let token = token.trim().to_string();
+    Ok((!token.is_empty()).then_some(token))
+}
+
+fn run_kumiho_cloud_token_flow() -> Result<String> {
+    let client = KumihoCloudClient::from_env()?;
+    let config = client.fetch_config()?;
+
+    let email: String = Input::new()
+        .with_prompt(format!("  {}", t!("memory-kumiho-account-email")))
+        .interact_text()?;
+    let password: String = dialoguer::Password::new()
+        .with_prompt(format!("  {}", t!("memory-kumiho-account-password")))
+        .allow_empty_password(false)
+        .interact()?;
+
+    let auth = client.sign_up_or_sign_in(&config.firebase, email.trim(), &password)?;
+    let mut session = auth.session;
+
+    if !auth.created_account {
+        if let Ok(existing_tenant) = client.fetch_tenant(&config.endpoints, &session.id_token) {
+            let tenant_label = existing_tenant
+                .tenant_id
+                .as_deref()
+                .unwrap_or("configured")
+                .to_string();
+            println!(
+                "  {} {}",
+                style("✓").green().bold(),
+                style(t!("memory-kumiho-existing-tenant", tenant = tenant_label)).green()
+            );
+            let use_existing = Confirm::new()
+                .with_prompt(format!("  {}", t!("memory-kumiho-token-for-existing")))
+                .default(true)
+                .interact()?;
+            if use_existing {
+                return issue_kumiho_service_token(
+                    &client,
+                    &config,
+                    &session,
+                    Some(&existing_tenant),
+                );
+            }
+        }
+    }
+
+    let display_name = prompt_optional_value(&format!("  {}", t!("memory-kumiho-display-name")))?;
+    if let Some(ref name) = display_name {
+        match client.update_display_name(&config.firebase, &session.id_token, name) {
+            Ok(updated) => session = updated,
+            Err(error) => println!(
+                "  {} {}",
+                style("!").yellow().bold(),
+                t!(
+                    "memory-kumiho-display-name-warning",
+                    err = error.to_string()
+                )
+            ),
+        }
+    }
+
+    let organization_name = prompt_optional_value(&format!("  {}", t!("memory-kumiho-org-name")))?;
+    let plan = select_kumiho_plan(&config)?;
+    let region = select_kumiho_region(&config)?;
+
+    let checkout_session_id = if plan.requires_checkout {
+        let checkout = client.create_checkout_session(
+            &config.endpoints,
+            &session.id_token,
+            &plan.code,
+            &region.code,
+            organization_name.as_deref(),
+        )?;
+        println!();
+        println!(
+            "  {} {}",
+            style("$").cyan().bold(),
+            t!("memory-kumiho-payment-browser")
+        );
+        println!("  {}", style(&checkout.checkout_url).cyan());
+        let _ = Input::new()
+            .with_prompt(format!("  {}", t!("memory-kumiho-checkout-enter")))
+            .allow_empty(true)
+            .interact_text()?;
+        Some(checkout.session_id)
+    } else {
+        None
+    };
+
+    let signup = loop {
+        match client.create_signup(
+            &config.endpoints,
+            &session.id_token,
+            &plan.code,
+            &region.code,
+            display_name.as_deref(),
+            organization_name.as_deref(),
+            checkout_session_id.as_deref(),
+        ) {
+            Ok(signup) => break signup,
+            Err(error) if plan.requires_checkout => {
+                println!(
+                    "  {} {}",
+                    style("!").yellow().bold(),
+                    t!("memory-kumiho-checkout-unverified", err = error.to_string())
+                );
+                let retry = Confirm::new()
+                    .with_prompt(format!("  {}", t!("memory-kumiho-checkout-retry")))
+                    .default(true)
+                    .interact()?;
+                if !retry {
+                    return Err(error);
+                }
+            }
+            Err(error) => return Err(error),
+        }
+    };
+
+    let tenant_info = client
+        .fetch_tenant(&config.endpoints, &session.id_token)
+        .ok();
+    let token = issue_kumiho_service_token(&client, &config, &session, tenant_info.as_ref())?;
+
+    println!(
+        "  {} {}",
+        style("✓").green().bold(),
+        style(t!(
+            "memory-kumiho-tenant",
+            tenant = tenant_info
+                .as_ref()
+                .and_then(|info| info.tenant_id.as_deref())
+                .unwrap_or(signup.tenant_id.as_str())
+                .to_string()
+        ))
+        .green()
+    );
+
+    Ok(token)
+}
+
+fn issue_kumiho_service_token(
+    client: &KumihoCloudClient,
+    config: &OnboardingConfig,
+    session: &crate::onboard::kumiho_cloud::FirebaseSession,
+    tenant_info: Option<&crate::onboard::kumiho_cloud::TenantInfo>,
+) -> Result<String> {
+    let control_plane_url = tenant_info
+        .and_then(|info| info.control_plane_url.as_deref())
+        .unwrap_or(config.endpoints.control_plane.as_str());
+    let token_name = Input::new()
+        .with_prompt(format!("  {}", t!("memory-kumiho-token-name")))
+        .default("Construct onboard".to_string())
+        .interact_text()?;
+    let token_name = normalize_optional_prompt_value(token_name)
+        .unwrap_or_else(|| "Construct onboard".to_string());
+    let service_token =
+        client.create_service_token(control_plane_url, &session.id_token, &token_name)?;
+
+    Ok(service_token.token)
+}
+
+fn prompt_optional_value(prompt: &str) -> Result<Option<String>> {
+    let value = Input::new()
+        .with_prompt(prompt)
+        .allow_empty(true)
+        .interact_text()?;
+    let trimmed = value.trim().to_string();
+    Ok((!trimmed.is_empty()).then_some(trimmed))
+}
+
+fn normalize_optional_prompt_value(value: String) -> Option<String> {
+    let trimmed = value.trim().to_string();
+    (!trimmed.is_empty()).then_some(trimmed)
+}
+
+fn select_kumiho_plan(config: &OnboardingConfig) -> Result<PlanOption> {
+    if config.plans.is_empty() {
+        bail!("Kumiho onboarding config did not include any plans");
+    }
+    let labels: Vec<String> = config
+        .plans
+        .iter()
+        .map(|plan| {
+            if plan.requires_checkout {
+                format!("{} ({})", plan.label, t!("memory-kumiho-checkout-required"))
+            } else {
+                plan.label.clone()
+            }
+        })
+        .collect();
+    let default = config
+        .plans
+        .iter()
+        .position(|plan| plan.code == "free")
+        .unwrap_or(0);
+    let idx = Select::new()
+        .with_prompt(format!("  {}", t!("memory-kumiho-tier")))
+        .items(&labels)
+        .default(default)
+        .interact()?;
+    Ok(config.plans[idx].clone())
+}
+
+fn select_kumiho_region(config: &OnboardingConfig) -> Result<RegionOption> {
+    if config.regions.is_empty() {
+        bail!("Kumiho onboarding config did not include any regions");
+    }
+    let labels: Vec<String> = config
+        .regions
+        .iter()
+        .map(|region| format!("{} ({})", region.label, region.code))
+        .collect();
+    let idx = Select::new()
+        .with_prompt(format!("  {}", t!("memory-kumiho-region")))
+        .items(&labels)
+        .default(0)
+        .interact()?;
+    Ok(config.regions[idx].clone())
 }
 
 // ── Step 3: Channels ────────────────────────────────────────────
@@ -8005,6 +8278,28 @@ mod tests {
         assert!(!config.hygiene_enabled);
         assert_eq!(config.archive_after_days, 0);
         assert_eq!(config.purge_after_days, 0);
+    }
+
+    #[test]
+    fn kumiho_token_setup_choice_maps_menu_indexes() {
+        assert_eq!(
+            kumiho_token_setup_choice(0),
+            KumihoTokenSetupChoice::CloudAccount
+        );
+        assert_eq!(
+            kumiho_token_setup_choice(1),
+            KumihoTokenSetupChoice::ExistingToken
+        );
+        assert_eq!(kumiho_token_setup_choice(99), KumihoTokenSetupChoice::Skip);
+    }
+
+    #[test]
+    fn normalize_optional_prompt_value_trims_blank_values() {
+        assert_eq!(
+            normalize_optional_prompt_value("  Construct  ".to_string()).as_deref(),
+            Some("Construct")
+        );
+        assert!(normalize_optional_prompt_value("   ".to_string()).is_none());
     }
 
     #[test]
