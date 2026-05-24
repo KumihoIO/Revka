@@ -1277,8 +1277,11 @@ async def _exec_agent(step: StepDef, state: WorkflowState, cwd: str) -> StepResu
                 result.output_data["exit_code"] = run_summary.get("exit_code")
             if run_summary.get("stderr_tail"):
                 result.output_data["stderr_tail"] = run_summary.get("stderr_tail")
-    except Exception:
-        pass
+    except Exception as exc:
+        _log(
+            f"agent step '{step.id}': run-log summary enrichment skipped "
+            f"for agent {agent.id[:8]}: {exc}"
+        )
     if artifact_path:
         result.output_data["artifact_path"] = artifact_path
     # Store skills so they persist to Kumiho metadata for live/historical views

@@ -29,12 +29,7 @@ import time
 import pytest
 
 from operator_mcp.tool_handlers.workflows import tool_cancel_workflow
-from operator_mcp.workflow.executor import (
-    ACTIVE_WORKFLOWS,
-    _exec_shell,
-    execute_workflow,
-    workflow_progress_snapshot,
-)
+import operator_mcp.workflow.executor as executor
 from operator_mcp.workflow.schema import (
     AgentStepConfig,
     ForEachStepConfig,
@@ -79,7 +74,7 @@ def isolate_workflow_locks(tmp_path, monkeypatch):
 class TestCancelTool:
     def setup_method(self) -> None:
         # Each test owns its own active-registry slot; clear stale entries.
-        ACTIVE_WORKFLOWS.clear()
+        executor.ACTIVE_WORKFLOWS.clear()
 
     @pytest.mark.asyncio
     async def test_unknown_run_returns_cancelled_false(self) -> None:
@@ -92,7 +87,7 @@ class TestCancelTool:
     @pytest.mark.asyncio
     async def test_active_run_flips_flag(self) -> None:
         state = _state_for("r1")
-        ACTIVE_WORKFLOWS["r1"] = state
+        executor.ACTIVE_WORKFLOWS["r1"] = state
         assert state.cancel_requested is False
         res = await tool_cancel_workflow({"run_id": "r1"})
         assert res["cancelled"] is True
@@ -102,7 +97,7 @@ class TestCancelTool:
     @pytest.mark.asyncio
     async def test_idempotent_double_call(self) -> None:
         state = _state_for("r2")
-        ACTIVE_WORKFLOWS["r2"] = state
+        executor.ACTIVE_WORKFLOWS["r2"] = state
         first = await tool_cancel_workflow({"run_id": "r2"})
         second = await tool_cancel_workflow({"run_id": "r2"})
         assert first["cancelled"] is True
@@ -112,7 +107,7 @@ class TestCancelTool:
     @pytest.mark.asyncio
     async def test_terminal_state_returns_cancelled_false(self) -> None:
         state = _state_for("r3", status=WorkflowStatus.COMPLETED)
-        ACTIVE_WORKFLOWS["r3"] = state
+        executor.ACTIVE_WORKFLOWS["r3"] = state
         res = await tool_cancel_workflow({"run_id": "r3"})
         assert res["cancelled"] is False
         assert res["reason"] == "already_terminal"
@@ -157,14 +152,14 @@ class TestExecutorCooperativeCancel:
             # Wait until s2 starts, then cancel.
             for _ in range(200):
                 await asyncio.sleep(0.05)
-                for state in ACTIVE_WORKFLOWS.values():
+                for state in executor.ACTIVE_WORKFLOWS.values():
                     if state.workflow_name == "cancel-mid" and "s1" in state.step_results:
                         state.cancel_requested = True
                         return
 
         asyncio.create_task(trip_cancel_when_s1_done())
         t0 = time.monotonic()
-        final = await execute_workflow(wf, inputs={}, cwd=str(tmp_path))
+        final = await executor.execute_workflow(wf, inputs={}, cwd=str(tmp_path))
         elapsed = time.monotonic() - t0
 
         assert final.status == WorkflowStatus.CANCELLED
@@ -192,7 +187,7 @@ class TestExecutorCooperativeCancel:
         )
         state = _state_for("locked-resume-run")
 
-        final = await execute_workflow(wf, inputs={}, cwd=str(tmp_path), resume_state=state)
+        final = await executor.execute_workflow(wf, inputs={}, cwd=str(tmp_path), resume_state=state)
 
         assert final.status == WorkflowStatus.CANCELLED
         assert final.error == "Duplicate execution prevented by run lock"
@@ -219,7 +214,7 @@ class TestShellSubprocessKill:
 
         asyncio.create_task(trip_cancel())
         t0 = time.monotonic()
-        result = await _exec_shell(step, state, str(tmp_path))
+        result = await executor._exec_shell(step, state, str(tmp_path))
         elapsed = time.monotonic() - t0
 
         assert result.status == "failed"
@@ -254,7 +249,7 @@ class TestShellSubprocessKill:
                     return
 
         asyncio.create_task(snapshot_pid())
-        result = await _exec_shell(step, state, str(tmp_path))
+        result = await executor._exec_shell(step, state, str(tmp_path))
         assert result.status == "failed"
         assert "timed out" in result.error
         # Proc untracked
@@ -315,7 +310,7 @@ class TestShellProcessGroupKill:
 
         asyncio.create_task(snapshot_parent_pid())
         asyncio.create_task(trip_cancel_after_child_written())
-        result = await _exec_shell(step, state, str(tmp_path))
+        result = await executor._exec_shell(step, state, str(tmp_path))
         assert result.status == "failed"
         assert "Cancelled" in result.error
 
@@ -365,7 +360,7 @@ class TestForEachCancelBetweenIterations:
         async def trip_cancel_after_two_iters() -> None:
             for _ in range(400):
                 await asyncio.sleep(0.05)
-                for s in ACTIVE_WORKFLOWS.values():
+                for s in executor.ACTIVE_WORKFLOWS.values():
                     if s.workflow_name != "for-each-cancel":
                         continue
                     done = sum(
@@ -378,7 +373,7 @@ class TestForEachCancelBetweenIterations:
                         return
 
         asyncio.create_task(trip_cancel_after_two_iters())
-        final = await execute_workflow(wf, inputs={}, cwd=str(tmp_path))
+        final = await executor.execute_workflow(wf, inputs={}, cwd=str(tmp_path))
 
         assert final.status == WorkflowStatus.CANCELLED
         loop_result = final.step_results.get("loop")
@@ -405,7 +400,6 @@ def test_recovery_module_only_exposes_run_lock_helpers() -> None:
 
 def test_mark_stale_checkpoint_preserves_retry_state(tmp_path, monkeypatch) -> None:
     """Startup stale marking keeps checkpoints loadable for explicit Retry."""
-    import operator_mcp.workflow.executor as executor
     from operator_mcp.workflow.memory import _mark_checkpoint_failed
 
     home = tmp_path / "home"
@@ -462,7 +456,7 @@ def test_workflow_progress_snapshot_splits_loop_instances() -> None:
         output="two",
     )
 
-    progress = workflow_progress_snapshot(state)
+    progress = executor.workflow_progress_snapshot(state)
 
     assert progress["top_level_steps_completed"] == 2
     assert progress["top_level_steps_total"] == 2
@@ -670,7 +664,6 @@ async def test_wait_for_subprocess_agent_prompt_only_timeout_is_bounded(tmp_path
 
 @pytest.mark.asyncio
 async def test_agent_retry_cleans_failed_child_agent(monkeypatch, tmp_path) -> None:
-    import operator_mcp.workflow.executor as executor
     from operator_mcp.agent_state import AGENTS, ManagedAgent
 
     attempts = {"count": 0}
@@ -715,8 +708,6 @@ async def test_agent_retry_cleans_failed_child_agent(monkeypatch, tmp_path) -> N
 
 @pytest.mark.asyncio
 async def test_agent_step_cancel_does_not_retry(monkeypatch, tmp_path) -> None:
-    import operator_mcp.workflow.executor as executor
-
     attempts = {"count": 0}
     cleanup = {"called": False}
     state = WorkflowState(workflow_name="cancel-no-retry", run_id="cancel-no-retry-run")

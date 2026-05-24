@@ -360,8 +360,11 @@ async def _wait_for_agent(
                             try:
                                 from ..tool_handlers.agents import _sync_sidecar_events
                                 await _sync_sidecar_events(agent.id, sidecar_id)
-                            except Exception:
-                                pass
+                            except Exception as exc:
+                                _log(
+                                    f"refinement: sidecar event sync failed "
+                                    f"for {agent.id[:8]}: {exc}"
+                                )
                             summary = _agent_run_summary(agent)
                             if _prompt_only_runlog(summary, agent):
                                 detail = _failure_detail_from_summary(summary, agent)
