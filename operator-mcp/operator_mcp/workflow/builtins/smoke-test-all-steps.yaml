@@ -20,6 +20,7 @@ description: |
     - `agent`, `handoff`, `supervisor`,
       `group_chat`, `map_reduce`       (need agent provider; parallel-any)
     - `tag`, `deprecate`               (need real Kumiho kref; parallel-any)
+    - `kumiho_context`                 (needs Kumiho SDK; parallel-any)
     - `resolve`                        (uses fail_if_missing: false)
 
   Run with:
@@ -261,13 +262,31 @@ steps:
       item_kref: "kref://smoke-test/placeholder-not-real"
       reason: "smoke-test cleanup"
 
+  - id: kumiho_context_probe
+    name: "Kumiho context — fail-soft probe"
+    type: kumiho_context
+    kumiho:
+      project: Construct
+      mode: semantic_context
+      seed:
+        queries: ["smoke-test no-op context"]
+      traversal:
+        max_depth: 0
+      filters:
+        max_items: 5
+      output:
+        include_artifact_summaries: false
+        include_edge_map: false
+        include_conflict_warnings: true
+        include_missing_context: true
+
   - id: cluster_c_kumiho_writes
-    name: "Cluster C — tag/deprecate (parallel any)"
+    name: "Cluster C — Kumiho memory probes (parallel any)"
     type: parallel
     parallel:
-      steps: [cluster_anchor_c, tag_round_trip, deprecate_round_trip]
+      steps: [cluster_anchor_c, tag_round_trip, deprecate_round_trip, kumiho_context_probe]
       join: any
-      max_concurrency: 3
+      max_concurrency: 4
 
   # Cluster D: handoff (needs a real source agent_id, will fail soft)
   - id: cluster_anchor_d

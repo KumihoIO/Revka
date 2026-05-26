@@ -274,6 +274,13 @@ export default function StepConfigPanel({
   const approvalApproveKeywordsDraftState = useCommaListDraft(data.humanApprovalApproveKeywords || [], node.id);
   const approvalRejectKeywordsDraftState = useCommaListDraft(data.humanApprovalRejectKeywords || [], node.id);
   const mapReduceSplitsDraftState = useCommaListDraft(data.mapReduceSplits || [], node.id);
+  const kumihoSeedBundlesDraftState = useCommaListDraft(data.kumihoSeedBundles || [], node.id);
+  const kumihoSeedKrefsDraftState = useCommaListDraft(data.kumihoSeedKrefs || [], node.id);
+  const kumihoSeedQueriesDraftState = useCommaListDraft(data.kumihoSeedQueries || [], node.id);
+  const kumihoTraversalEdgeTypesDraftState = useCommaListDraft(data.kumihoTraversalEdgeTypes || [], node.id);
+  const kumihoIncludeKindsDraftState = useCommaListDraft(data.kumihoFiltersIncludeKinds || [], node.id);
+  const kumihoExcludeTagsDraftState = useCommaListDraft(data.kumihoFiltersExcludeTags || [], node.id);
+  const kumihoTagPreferenceDraftState = useCommaListDraft(data.kumihoLockTagPreference || [], node.id);
 
   const handleNameChange = useCallback(
     (nextName: string) => {
@@ -505,6 +512,7 @@ export default function StepConfigPanel({
 
   const skillSection = stepType !== 'conditional' &&
     stepType !== 'compute' &&
+    stepType !== 'kumiho_context' &&
     stepType !== 'human_input' &&
     stepType !== 'notify' &&
     stepType !== 'tag' &&
@@ -3187,6 +3195,227 @@ export default function StepConfigPanel({
             </div>
           )}
 
+          {/* ── Kumiho Context ── */}
+          {stepType === 'kumiho_context' && (
+            <div style={sectionShellStyle}>
+              <div style={sectionTitleStyle}>Kumiho Context Config</div>
+              <div>
+                <label style={labelStyle}>Project</label>
+                <ExpressionTextarea
+                  value={data.kumihoProject || ''}
+                  onChange={(next) => onUpdate(node.id, { kumihoProject: next })}
+                  placeholder="ManghanDev"
+                  rows={1}
+                  style={monoInputStyle}
+                  stepIds={dagStepIds}
+                  workflowInputs={dagInputs}
+                  triggerFields={dagTriggerFields}
+                />
+              </div>
+              <div>
+                <label style={labelStyle}>Mode</label>
+                <select
+                  value={data.kumihoMode || 'graph_augmented_context'}
+                  onChange={(e) => onUpdate(node.id, { kumihoMode: e.target.value })}
+                  style={inputStyle}
+                >
+                  <option value="graph_augmented_context">graph_augmented_context</option>
+                  <option value="bundle_context">bundle_context</option>
+                  <option value="semantic_context">semantic_context</option>
+                </select>
+              </div>
+              <div>
+                <label style={labelStyle}>Seed Bundles</label>
+                <textarea
+                  value={kumihoSeedBundlesDraftState.draft}
+                  onFocus={kumihoSeedBundlesDraftState.startEditing}
+                  onChange={(e) => kumihoSeedBundlesDraftState.setDraft(e.target.value)}
+                  onBlur={() => onUpdate(node.id, { kumihoSeedBundles: kumihoSeedBundlesDraftState.commit() })}
+                  placeholder="manghan-main-canon, manghan-active-storylines"
+                  rows={2}
+                  style={monoInputStyle}
+                />
+              </div>
+              <div>
+                <label style={labelStyle}>Seed Krefs</label>
+                <textarea
+                  value={kumihoSeedKrefsDraftState.draft}
+                  onFocus={kumihoSeedKrefsDraftState.startEditing}
+                  onChange={(e) => kumihoSeedKrefsDraftState.setDraft(e.target.value)}
+                  onBlur={() => onUpdate(node.id, { kumihoSeedKrefs: kumihoSeedKrefsDraftState.commit() })}
+                  placeholder="${latest-production-episode.output_data.kref}"
+                  rows={2}
+                  style={monoInputStyle}
+                />
+              </div>
+              <div>
+                <label style={labelStyle}>Seed Queries</label>
+                <textarea
+                  value={kumihoSeedQueriesDraftState.draft}
+                  onFocus={kumihoSeedQueriesDraftState.startEditing}
+                  onChange={(e) => kumihoSeedQueriesDraftState.setDraft(e.target.value)}
+                  onBlur={() => onUpdate(node.id, { kumihoSeedQueries: kumihoSeedQueriesDraftState.commit() })}
+                  placeholder="${inputs.episode_goal}, ${inputs.must_include}"
+                  rows={3}
+                  style={monoInputStyle}
+                />
+              </div>
+              <div>
+                <label style={labelStyle}>Traversal Depth</label>
+                <input
+                  type="number"
+                  min={0}
+                  max={3}
+                  value={data.kumihoTraversalMaxDepth ?? 2}
+                  onChange={(e) => onUpdate(node.id, { kumihoTraversalMaxDepth: Math.min(3, Math.max(0, parseInt(e.target.value) || 0)) })}
+                  style={inputStyle}
+                />
+              </div>
+              <div>
+                <label style={labelStyle}>Traversal Direction</label>
+                <select
+                  value={data.kumihoTraversalDirection || 'both'}
+                  onChange={(e) => onUpdate(node.id, { kumihoTraversalDirection: e.target.value })}
+                  style={inputStyle}
+                >
+                  <option value="both">both</option>
+                  <option value="out">out</option>
+                  <option value="in">in</option>
+                </select>
+              </div>
+              <div>
+                <label style={labelStyle}>Edge Types</label>
+                <input
+                  type="text"
+                  value={kumihoTraversalEdgeTypesDraftState.draft}
+                  onFocus={kumihoTraversalEdgeTypesDraftState.startEditing}
+                  onChange={(e) => kumihoTraversalEdgeTypesDraftState.setDraft(e.target.value)}
+                  onBlur={() => onUpdate(node.id, { kumihoTraversalEdgeTypes: kumihoTraversalEdgeTypesDraftState.commit() })}
+                  placeholder="DEPENDS_ON, REFERENCES, ADVANCES, UPDATES, CONTRADICTS"
+                  style={monoInputStyle}
+                />
+              </div>
+              <div>
+                <label style={labelStyle}>Include Kinds</label>
+                <textarea
+                  value={kumihoIncludeKindsDraftState.draft}
+                  onFocus={kumihoIncludeKindsDraftState.startEditing}
+                  onChange={(e) => kumihoIncludeKindsDraftState.setDraft(e.target.value)}
+                  onBlur={() => onUpdate(node.id, { kumihoFiltersIncludeKinds: kumihoIncludeKindsDraftState.commit() })}
+                  placeholder="canon-rule, character-state, storyline, webnovel-episode"
+                  rows={2}
+                  style={monoInputStyle}
+                />
+              </div>
+              <div>
+                <label style={labelStyle}>Exclude Tags</label>
+                <input
+                  type="text"
+                  value={kumihoExcludeTagsDraftState.draft}
+                  onFocus={kumihoExcludeTagsDraftState.startEditing}
+                  onChange={(e) => kumihoExcludeTagsDraftState.setDraft(e.target.value)}
+                  onBlur={() => onUpdate(node.id, { kumihoFiltersExcludeTags: kumihoExcludeTagsDraftState.commit() })}
+                  placeholder="deprecated"
+                  style={monoInputStyle}
+                />
+              </div>
+              <div>
+                <label style={labelStyle}>Max Items</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={100}
+                  value={data.kumihoFiltersMaxItems ?? 50}
+                  onChange={(e) => onUpdate(node.id, { kumihoFiltersMaxItems: Math.min(100, Math.max(1, parseInt(e.target.value) || 50)) })}
+                  style={inputStyle}
+                />
+              </div>
+              <div>
+                <label style={labelStyle}>Ranking Method</label>
+                <select
+                  value={data.kumihoRankingMethod || 'hybrid'}
+                  onChange={(e) => onUpdate(node.id, { kumihoRankingMethod: e.target.value })}
+                  style={inputStyle}
+                >
+                  <option value="hybrid">hybrid</option>
+                  <option value="graph">graph</option>
+                  <option value="semantic">semantic</option>
+                  <option value="none">none</option>
+                </select>
+              </div>
+              <div>
+                <label style={labelStyle}>Semantic Query</label>
+                <ExpressionTextarea
+                  value={data.kumihoRankingSemanticQuery || ''}
+                  onChange={(next) => onUpdate(node.id, { kumihoRankingSemanticQuery: next })}
+                  placeholder="${inputs.episode_goal} ${inputs.must_include}"
+                  rows={2}
+                  style={monoInputStyle}
+                  stepIds={dagStepIds}
+                  workflowInputs={dagInputs}
+                  triggerFields={dagTriggerFields}
+                />
+              </div>
+              <div>
+                <label style={labelStyle}>Tag Preference</label>
+                <input
+                  type="text"
+                  value={kumihoTagPreferenceDraftState.draft}
+                  onFocus={kumihoTagPreferenceDraftState.startEditing}
+                  onChange={(e) => kumihoTagPreferenceDraftState.setDraft(e.target.value)}
+                  onBlur={() => onUpdate(node.id, { kumihoLockTagPreference: kumihoTagPreferenceDraftState.commit() })}
+                  placeholder="current, active, production-ready, ready, published, latest"
+                  style={monoInputStyle}
+                />
+              </div>
+              <div>
+                <label style={labelStyle}>Output Format</label>
+                <input
+                  type="text"
+                  value={data.kumihoOutputFormat || 'context_pack'}
+                  onChange={(e) => onUpdate(node.id, { kumihoOutputFormat: e.target.value })}
+                  placeholder="episode_context_pack"
+                  style={monoInputStyle}
+                />
+              </div>
+              <div>
+                <label style={labelStyle}>Max Artifact Chars</label>
+                <input
+                  type="number"
+                  min={0}
+                  value={data.kumihoOutputMaxArtifactCharsPerItem ?? 3000}
+                  onChange={(e) => onUpdate(node.id, { kumihoOutputMaxArtifactCharsPerItem: Math.max(0, parseInt(e.target.value) || 0) })}
+                  style={inputStyle}
+                />
+              </div>
+              <Checkbox
+                checked={data.kumihoOutputIncludeArtifactSummaries ?? true}
+                onChange={(v) => onUpdate(node.id, { kumihoOutputIncludeArtifactSummaries: v })}
+                label="Artifact summaries"
+              />
+              <Checkbox
+                checked={data.kumihoOutputIncludeArtifactContent ?? false}
+                onChange={(v) => onUpdate(node.id, { kumihoOutputIncludeArtifactContent: v })}
+                label="Artifact content"
+              />
+              <Checkbox
+                checked={data.kumihoOutputIncludeEdgeMap ?? true}
+                onChange={(v) => onUpdate(node.id, { kumihoOutputIncludeEdgeMap: v })}
+                label="Edge map"
+              />
+              <Checkbox
+                checked={data.kumihoOutputIncludeConflictWarnings ?? true}
+                onChange={(v) => onUpdate(node.id, { kumihoOutputIncludeConflictWarnings: v })}
+                label="Conflict warnings"
+              />
+              <Checkbox
+                checked={data.kumihoOutputIncludeMissingContext ?? true}
+                onChange={(v) => onUpdate(node.id, { kumihoOutputIncludeMissingContext: v })}
+                label="Missing context"
+              />
+            </div>
+          )}
+
           {/* ── MapReduce ── */}
           {stepType === 'map_reduce' && (
             <div style={sectionShellStyle}>
@@ -3506,6 +3735,7 @@ export default function StepConfigPanel({
             stepType !== 'human_input' &&
             stepType !== 'notify' &&
             stepType !== 'tag' &&
+            stepType !== 'kumiho_context' &&
             stepType !== 'deprecate' && (
               <div>
                 <label style={labelStyle}>Agent Hints</label>

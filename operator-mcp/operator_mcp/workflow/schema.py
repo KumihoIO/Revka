@@ -13,6 +13,7 @@ Step types:
   - human_approval: Pause for human confirmation before proceeding.
   - output: Emit structured output from the workflow.
   - a2a: Send a task to an external A2A agent.
+  - kumiho_context: Compile locked graph context from Kumiho.
 """
 from __future__ import annotations
 
@@ -47,6 +48,7 @@ class StepType(str, Enum):
     GROUP_CHAT = "group_chat"
     HANDOFF = "handoff"
     RESOLVE = "resolve"
+    KUMIHO_CONTEXT = "kumiho_context"
     FOR_EACH = "for_each"
     TAG = "tag"
     DEPRECATE = "deprecate"
@@ -409,6 +411,101 @@ class ResolveStepConfig(BaseModel):
     fail_if_missing: bool = True                        # Fail step if no entity found
 
 
+class KumihoSeedItemConfig(BaseModel):
+    """Search-based seed item for a kumiho_context step."""
+    kind: str = ""
+    name_pattern: str = ""
+    tag: str = ""
+    mode: Literal["latest", "all"] = "latest"
+    optional: bool = False
+
+
+class KumihoSeedConfig(BaseModel):
+    """Initial bundle, kref, item, and query seeds for kumiho_context."""
+    bundles: list[Any] = Field(default_factory=list)
+    krefs: list[str] = Field(default_factory=list)
+    items: list[KumihoSeedItemConfig] = Field(default_factory=list)
+    queries: list[str] = Field(default_factory=list)
+
+
+class KumihoTraversalConfig(BaseModel):
+    """Revision-edge traversal controls for kumiho_context."""
+    max_depth: int = Field(default=2, ge=0, le=3)
+    direction: Literal["out", "in", "both"] = "both"
+    edge_types: list[str] = Field(
+        default_factory=lambda: [
+            "DEPENDS_ON",
+            "REFERENCES",
+            "ADVANCES",
+            "UPDATES",
+            "CONTRADICTS",
+        ]
+    )
+
+
+class KumihoFiltersConfig(BaseModel):
+    """Candidate filters and hard caps for kumiho_context."""
+    include_kinds: list[str] = Field(default_factory=list)
+    exclude_kinds: list[str] = Field(default_factory=list)
+    include_tags: list[str] = Field(default_factory=list)
+    exclude_tags: list[str] = Field(default_factory=lambda: ["deprecated"])
+    spaces: list[str] = Field(default_factory=list)
+    max_items: int = Field(default=50, ge=1, le=100)
+    max_revisions_per_item: int = Field(default=1, ge=1, le=5)
+
+
+class KumihoRankingConfig(BaseModel):
+    """Ranking controls for kumiho_context candidate selection."""
+    method: Literal["none", "graph", "semantic", "hybrid"] = "hybrid"
+    semantic_query: str = ""
+    prefer_recent: bool = True
+    prefer_current_tags: bool = True
+    boost_kinds: dict[str, float] = Field(default_factory=dict)
+    boost_edge_types: dict[str, float] = Field(default_factory=dict)
+
+
+class KumihoLockConfig(BaseModel):
+    """Revision locking controls for kumiho_context."""
+    revisions: bool = True
+    tag_preference: list[str] = Field(
+        default_factory=lambda: [
+            "current",
+            "active",
+            "production-ready",
+            "ready",
+            "published",
+            "latest",
+        ]
+    )
+
+
+class KumihoOutputConfig(BaseModel):
+    """Output formatting and artifact loading controls for kumiho_context."""
+    format: str = "context_pack"
+    include_artifact_summaries: bool = True
+    include_artifact_content: bool = False
+    max_artifact_chars_per_item: int = Field(default=3000, ge=0, le=20_000)
+    max_total_artifact_chars: int = Field(default=60_000, ge=0, le=200_000)
+    include_edge_map: bool = True
+    include_conflict_warnings: bool = True
+    include_missing_context: bool = True
+    include_source_krefs: bool = True
+
+
+class KumihoContextConfig(BaseModel):
+    """Config for 'kumiho_context' graph-augmented context compilation."""
+    project: str = ""
+    mode: Literal["bundle_context", "semantic_context", "graph_augmented_context"] = (
+        "graph_augmented_context"
+    )
+    seed: KumihoSeedConfig = Field(default_factory=KumihoSeedConfig)
+    traversal: KumihoTraversalConfig = Field(default_factory=KumihoTraversalConfig)
+    filters: KumihoFiltersConfig = Field(default_factory=KumihoFiltersConfig)
+    ranking: KumihoRankingConfig = Field(default_factory=KumihoRankingConfig)
+    lock: KumihoLockConfig = Field(default_factory=KumihoLockConfig)
+    output: KumihoOutputConfig = Field(default_factory=KumihoOutputConfig)
+
+
 class TagStepConfig(BaseModel):
     """Config for 'tag' step type — re-tag an existing Kumiho entity revision."""
     item_kref: str                              # kref of the item (supports ${} interpolation)
@@ -619,6 +716,7 @@ ACTION_DEFAULTS: dict[str, dict[str, str]] = {
     "gate":        {"type": "conditional",  "role": "",      "agent_type": ""},
     "human_input": {"type": "human_input",  "role": "",      "agent_type": ""},
     "resolve":     {"type": "resolve"},
+    "kumiho_context": {"type": "kumiho_context"},
     "compute":     {"type": "compute"},
 }
 
@@ -664,6 +762,7 @@ class StepDef(BaseModel):
     output: OutputStepConfig | None = None
     a2a: A2AStepConfig | None = None
     resolve: ResolveStepConfig | None = None
+    kumiho: KumihoContextConfig | None = None
     for_each: ForEachStepConfig | None = None
     # Orchestration patterns
     map_reduce: MapReduceStepConfig | None = None
@@ -830,6 +929,8 @@ class StepDef(BaseModel):
 
     def get_config(self) -> BaseModel | None:
         """Return the type-specific config for this step."""
+        if self.type == StepType.KUMIHO_CONTEXT:
+            return self.kumiho
         return getattr(self, self.type.value, None)
 
     def resolve_agent_config(self) -> AgentStepConfig:

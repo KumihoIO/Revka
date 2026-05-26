@@ -194,6 +194,30 @@ export interface TaskDefinition {
   resolve_fields?: string[];
   resolve_metadata_source?: string;
   resolve_fail_if_missing?: boolean;
+  // --- Kumiho Context: graph-augmented context compiler ---
+  kumiho_config?: Record<string, unknown>;
+  kumiho_project?: string;
+  kumiho_mode?: string;
+  kumiho_seed_bundles?: string[];
+  kumiho_seed_krefs?: string[];
+  kumiho_seed_queries?: string[];
+  kumiho_seed_items?: unknown[];
+  kumiho_traversal_max_depth?: number;
+  kumiho_traversal_direction?: string;
+  kumiho_traversal_edge_types?: string[];
+  kumiho_filters_include_kinds?: string[];
+  kumiho_filters_exclude_tags?: string[];
+  kumiho_filters_max_items?: number;
+  kumiho_ranking_method?: string;
+  kumiho_ranking_semantic_query?: string;
+  kumiho_lock_tag_preference?: string[];
+  kumiho_output_format?: string;
+  kumiho_output_include_artifact_summaries?: boolean;
+  kumiho_output_include_artifact_content?: boolean;
+  kumiho_output_max_artifact_chars_per_item?: number;
+  kumiho_output_include_edge_map?: boolean;
+  kumiho_output_include_conflict_warnings?: boolean;
+  kumiho_output_include_missing_context?: boolean;
   // --- ForEach: sequential loop ---
   for_each_steps?: string[];
   for_each_range?: string;
@@ -487,6 +511,30 @@ export interface TaskNodeData {
   resolveFields: string[];
   resolveMetadataSource: string;
   resolveFailIfMissing: boolean;
+  // Kumiho context
+  kumihoConfig: Record<string, unknown>;
+  kumihoProject: string;
+  kumihoMode: string;
+  kumihoSeedBundles: string[];
+  kumihoSeedKrefs: string[];
+  kumihoSeedQueries: string[];
+  kumihoSeedItems: unknown[];
+  kumihoTraversalMaxDepth: number;
+  kumihoTraversalDirection: string;
+  kumihoTraversalEdgeTypes: string[];
+  kumihoFiltersIncludeKinds: string[];
+  kumihoFiltersExcludeTags: string[];
+  kumihoFiltersMaxItems: number;
+  kumihoRankingMethod: string;
+  kumihoRankingSemanticQuery: string;
+  kumihoLockTagPreference: string[];
+  kumihoOutputFormat: string;
+  kumihoOutputIncludeArtifactSummaries: boolean;
+  kumihoOutputIncludeArtifactContent: boolean;
+  kumihoOutputMaxArtifactCharsPerItem: number;
+  kumihoOutputIncludeEdgeMap: boolean;
+  kumihoOutputIncludeConflictWarnings: boolean;
+  kumihoOutputIncludeMissingContext: boolean;
   // ForEach
   forEachSteps: string[];
   forEachRange: string;
@@ -633,6 +681,7 @@ export const ACTION_TO_TYPE: Record<string, string> = {
   output: 'output', conditional: 'conditional', group_chat: 'group_chat',
   supervisor: 'supervisor', map_reduce: 'map_reduce', handoff: 'handoff',
   a2a: 'a2a', resolve: 'resolve', for_each: 'for_each',
+  kumiho_context: 'kumiho_context',
   human_approval: 'human_approval',
   // New step types — see operator_mcp/workflow/schema.py
   python: 'python', compute: 'compute', email: 'email',
@@ -695,6 +744,20 @@ const asStrArr = (v: YAMLValue): string[] | undefined => {
   if (!Array.isArray(v)) return undefined;
   const out = v.map((x) => asStr(x)).filter((s): s is string => !!s && s.length > 0);
   return out;
+};
+
+const cloneYamlObject = (v: YAMLValue): Record<string, unknown> | undefined => {
+  if (!isObj(v)) return undefined;
+  try {
+    return JSON.parse(JSON.stringify(v)) as Record<string, unknown>;
+  } catch {
+    return { ...v };
+  }
+};
+
+const getObj = (obj: YAMLObj | undefined, key: string): YAMLObj | undefined => {
+  const value = obj?.[key];
+  return isObj(value) ? value : undefined;
 };
 
 const asPosition = (v: YAMLValue): WorkflowNodePosition | undefined => {
@@ -1050,6 +1113,51 @@ function parseStep(s: YAMLObj): TaskDefinition | null {
     t.resolve_fields = asStrArr(resolve.fields);
     t.resolve_metadata_source = asStr(resolve.metadata_source);
     t.resolve_fail_if_missing = asBool(resolve.fail_if_missing);
+  }
+
+  const kumiho = isObj(s.kumiho) ? s.kumiho : undefined;
+  if (kumiho) {
+    t.kumiho_config = cloneYamlObject(kumiho);
+    t.kumiho_project = asStr(kumiho.project);
+    t.kumiho_mode = asStr(kumiho.mode);
+    const seed = getObj(kumiho, 'seed');
+    if (seed) {
+      t.kumiho_seed_bundles = asStrArr(seed.bundles);
+      t.kumiho_seed_krefs = asStrArr(seed.krefs);
+      t.kumiho_seed_queries = asStrArr(seed.queries);
+      if (Array.isArray(seed.items)) t.kumiho_seed_items = seed.items;
+    }
+    const traversal = getObj(kumiho, 'traversal');
+    if (traversal) {
+      t.kumiho_traversal_max_depth = asNum(traversal.max_depth);
+      t.kumiho_traversal_direction = asStr(traversal.direction);
+      t.kumiho_traversal_edge_types = asStrArr(traversal.edge_types);
+    }
+    const filters = getObj(kumiho, 'filters');
+    if (filters) {
+      t.kumiho_filters_include_kinds = asStrArr(filters.include_kinds);
+      t.kumiho_filters_exclude_tags = asStrArr(filters.exclude_tags);
+      t.kumiho_filters_max_items = asNum(filters.max_items);
+    }
+    const ranking = getObj(kumiho, 'ranking');
+    if (ranking) {
+      t.kumiho_ranking_method = asStr(ranking.method);
+      t.kumiho_ranking_semantic_query = asStr(ranking.semantic_query);
+    }
+    const lock = getObj(kumiho, 'lock');
+    if (lock) {
+      t.kumiho_lock_tag_preference = asStrArr(lock.tag_preference);
+    }
+    const output = getObj(kumiho, 'output');
+    if (output) {
+      t.kumiho_output_format = asStr(output.format);
+      t.kumiho_output_include_artifact_summaries = asBool(output.include_artifact_summaries);
+      t.kumiho_output_include_artifact_content = asBool(output.include_artifact_content);
+      t.kumiho_output_max_artifact_chars_per_item = asNum(output.max_artifact_chars_per_item);
+      t.kumiho_output_include_edge_map = asBool(output.include_edge_map);
+      t.kumiho_output_include_conflict_warnings = asBool(output.include_conflict_warnings);
+      t.kumiho_output_include_missing_context = asBool(output.include_missing_context);
+    }
   }
 
   const tagStep = isObj(s.tag_step) ? s.tag_step : undefined;
@@ -1533,6 +1641,29 @@ export function tasksToFlow(tasks: TaskDefinition[]): { nodes: Node<TaskNodeData
       resolveFields: task.resolve_fields ?? [],
       resolveMetadataSource: task.resolve_metadata_source ?? 'revision',
       resolveFailIfMissing: task.resolve_fail_if_missing ?? true,
+      kumihoConfig: task.kumiho_config ?? {},
+      kumihoProject: task.kumiho_project ?? '',
+      kumihoMode: task.kumiho_mode ?? 'graph_augmented_context',
+      kumihoSeedBundles: task.kumiho_seed_bundles ?? [],
+      kumihoSeedKrefs: task.kumiho_seed_krefs ?? [],
+      kumihoSeedQueries: task.kumiho_seed_queries ?? [],
+      kumihoSeedItems: task.kumiho_seed_items ?? [],
+      kumihoTraversalMaxDepth: task.kumiho_traversal_max_depth ?? 2,
+      kumihoTraversalDirection: task.kumiho_traversal_direction ?? 'both',
+      kumihoTraversalEdgeTypes: task.kumiho_traversal_edge_types ?? ['DEPENDS_ON', 'REFERENCES', 'ADVANCES', 'UPDATES', 'CONTRADICTS'],
+      kumihoFiltersIncludeKinds: task.kumiho_filters_include_kinds ?? [],
+      kumihoFiltersExcludeTags: task.kumiho_filters_exclude_tags ?? ['deprecated'],
+      kumihoFiltersMaxItems: task.kumiho_filters_max_items ?? 50,
+      kumihoRankingMethod: task.kumiho_ranking_method ?? 'hybrid',
+      kumihoRankingSemanticQuery: task.kumiho_ranking_semantic_query ?? '',
+      kumihoLockTagPreference: task.kumiho_lock_tag_preference ?? ['current', 'active', 'production-ready', 'ready', 'published', 'latest'],
+      kumihoOutputFormat: task.kumiho_output_format ?? 'context_pack',
+      kumihoOutputIncludeArtifactSummaries: task.kumiho_output_include_artifact_summaries ?? true,
+      kumihoOutputIncludeArtifactContent: task.kumiho_output_include_artifact_content ?? false,
+      kumihoOutputMaxArtifactCharsPerItem: task.kumiho_output_max_artifact_chars_per_item ?? 3000,
+      kumihoOutputIncludeEdgeMap: task.kumiho_output_include_edge_map ?? true,
+      kumihoOutputIncludeConflictWarnings: task.kumiho_output_include_conflict_warnings ?? true,
+      kumihoOutputIncludeMissingContext: task.kumiho_output_include_missing_context ?? true,
       forEachSteps: task.for_each_steps || [],
       forEachRange: task.for_each_range || '',
       forEachItems: task.for_each_items || [],
@@ -1811,6 +1942,59 @@ export function tasksToFlow(tasks: TaskDefinition[]): { nodes: Node<TaskNodeData
   return { nodes, edges };
 }
 
+function composeKumihoConfigFromNode(data: TaskNodeData): Record<string, unknown> {
+  const base = isObj(data.kumihoConfig as YAMLValue)
+    ? cloneYamlObject(data.kumihoConfig as YAMLValue) ?? {}
+    : {};
+  const seed = isObj(base.seed as YAMLValue) ? { ...(base.seed as Record<string, unknown>) } : {};
+  const traversal = isObj(base.traversal as YAMLValue) ? { ...(base.traversal as Record<string, unknown>) } : {};
+  const filters = isObj(base.filters as YAMLValue) ? { ...(base.filters as Record<string, unknown>) } : {};
+  const ranking = isObj(base.ranking as YAMLValue) ? { ...(base.ranking as Record<string, unknown>) } : {};
+  const lock = isObj(base.lock as YAMLValue) ? { ...(base.lock as Record<string, unknown>) } : {};
+  const output = isObj(base.output as YAMLValue) ? { ...(base.output as Record<string, unknown>) } : {};
+
+  seed.bundles = data.kumihoSeedBundles || [];
+  seed.krefs = data.kumihoSeedKrefs || [];
+  seed.queries = data.kumihoSeedQueries || [];
+  if (data.kumihoSeedItems?.length) seed.items = data.kumihoSeedItems;
+
+  traversal.max_depth = data.kumihoTraversalMaxDepth ?? 2;
+  traversal.direction = data.kumihoTraversalDirection || 'both';
+  traversal.edge_types = data.kumihoTraversalEdgeTypes || [];
+
+  filters.include_kinds = data.kumihoFiltersIncludeKinds || [];
+  filters.exclude_tags = data.kumihoFiltersExcludeTags || ['deprecated'];
+  filters.max_items = data.kumihoFiltersMaxItems ?? 50;
+
+  ranking.method = data.kumihoRankingMethod || 'hybrid';
+  ranking.semantic_query = data.kumihoRankingSemanticQuery || '';
+  ranking.prefer_recent = (ranking.prefer_recent as boolean | undefined) ?? true;
+  ranking.prefer_current_tags = (ranking.prefer_current_tags as boolean | undefined) ?? true;
+
+  lock.revisions = (lock.revisions as boolean | undefined) ?? true;
+  lock.tag_preference = data.kumihoLockTagPreference || [];
+
+  output.format = data.kumihoOutputFormat || 'context_pack';
+  output.include_artifact_summaries = data.kumihoOutputIncludeArtifactSummaries ?? true;
+  output.include_artifact_content = data.kumihoOutputIncludeArtifactContent ?? false;
+  output.max_artifact_chars_per_item = data.kumihoOutputMaxArtifactCharsPerItem ?? 3000;
+  output.include_edge_map = data.kumihoOutputIncludeEdgeMap ?? true;
+  output.include_conflict_warnings = data.kumihoOutputIncludeConflictWarnings ?? true;
+  output.include_missing_context = data.kumihoOutputIncludeMissingContext ?? true;
+
+  return {
+    ...base,
+    project: data.kumihoProject || '',
+    mode: data.kumihoMode || 'graph_augmented_context',
+    seed,
+    traversal,
+    filters,
+    ranking,
+    lock,
+    output,
+  };
+}
+
 /** Text fields on a TaskDefinition that may contain `${step_id.<field>}`
  *  interpolations referencing other steps. Limited to the obvious
  *  text-bearing fields LLMs and humans write — we don't traverse params or
@@ -1969,6 +2153,18 @@ function collectStepRefs(task: TaskDefinition, nodeIds: Set<string>): Set<string
         addStepRefsFromText(value, nodeIds, refs, aliasToId);
       }
     }
+  }
+  if (task.kumiho_config) {
+    const scan = (value: unknown) => {
+      if (typeof value === 'string' && value) {
+        addStepRefsFromText(value, nodeIds, refs, aliasToId);
+      } else if (Array.isArray(value)) {
+        value.forEach(scan);
+      } else if (isObj(value)) {
+        Object.values(value).forEach(scan);
+      }
+    };
+    scan(task.kumiho_config);
   }
   return refs;
 }
@@ -2407,6 +2603,31 @@ export function flowToTasks(nodes: Node<TaskNodeData>[], edges: Edge[]): TaskDef
       }
       if (d.resolveFailIfMissing === false) base.resolve_fail_if_missing = false;
     }
+    if (st === 'kumiho_context') {
+      base.kumiho_config = composeKumihoConfigFromNode(d);
+      base.kumiho_project = d.kumihoProject;
+      base.kumiho_mode = d.kumihoMode;
+      base.kumiho_seed_bundles = d.kumihoSeedBundles;
+      base.kumiho_seed_krefs = d.kumihoSeedKrefs;
+      base.kumiho_seed_queries = d.kumihoSeedQueries;
+      base.kumiho_seed_items = d.kumihoSeedItems;
+      base.kumiho_traversal_max_depth = d.kumihoTraversalMaxDepth;
+      base.kumiho_traversal_direction = d.kumihoTraversalDirection;
+      base.kumiho_traversal_edge_types = d.kumihoTraversalEdgeTypes;
+      base.kumiho_filters_include_kinds = d.kumihoFiltersIncludeKinds;
+      base.kumiho_filters_exclude_tags = d.kumihoFiltersExcludeTags;
+      base.kumiho_filters_max_items = d.kumihoFiltersMaxItems;
+      base.kumiho_ranking_method = d.kumihoRankingMethod;
+      base.kumiho_ranking_semantic_query = d.kumihoRankingSemanticQuery;
+      base.kumiho_lock_tag_preference = d.kumihoLockTagPreference;
+      base.kumiho_output_format = d.kumihoOutputFormat;
+      base.kumiho_output_include_artifact_summaries = d.kumihoOutputIncludeArtifactSummaries;
+      base.kumiho_output_include_artifact_content = d.kumihoOutputIncludeArtifactContent;
+      base.kumiho_output_max_artifact_chars_per_item = d.kumihoOutputMaxArtifactCharsPerItem;
+      base.kumiho_output_include_edge_map = d.kumihoOutputIncludeEdgeMap;
+      base.kumiho_output_include_conflict_warnings = d.kumihoOutputIncludeConflictWarnings;
+      base.kumiho_output_include_missing_context = d.kumihoOutputIncludeMissingContext;
+    }
     if (st === 'for_each') {
       if (d.forEachSteps.length > 0) base.for_each_steps = d.forEachSteps;
       if (d.forEachRange) base.for_each_range = d.forEachRange;
@@ -2465,6 +2686,66 @@ export function flowToTasks(nodes: Node<TaskNodeData>[], edges: Edge[]): TaskDef
     }
     return base;
   });
+}
+
+function composeKumihoConfigFromTask(task: TaskDefinition): Record<string, unknown> {
+  const base = task.kumiho_config ? { ...task.kumiho_config } : {};
+  return {
+    ...base,
+    project: task.kumiho_project || String(base.project || ''),
+    mode: task.kumiho_mode || String(base.mode || 'graph_augmented_context'),
+    seed: {
+      ...(isObj(base.seed as YAMLValue) ? (base.seed as Record<string, unknown>) : {}),
+      bundles: task.kumiho_seed_bundles || [],
+      krefs: task.kumiho_seed_krefs || [],
+      queries: task.kumiho_seed_queries || [],
+      ...(task.kumiho_seed_items?.length ? { items: task.kumiho_seed_items } : {}),
+    },
+    traversal: {
+      ...(isObj(base.traversal as YAMLValue) ? (base.traversal as Record<string, unknown>) : {}),
+      max_depth: task.kumiho_traversal_max_depth ?? 2,
+      direction: task.kumiho_traversal_direction || 'both',
+      edge_types: task.kumiho_traversal_edge_types || [],
+    },
+    filters: {
+      ...(isObj(base.filters as YAMLValue) ? (base.filters as Record<string, unknown>) : {}),
+      include_kinds: task.kumiho_filters_include_kinds || [],
+      exclude_tags: task.kumiho_filters_exclude_tags || ['deprecated'],
+      max_items: task.kumiho_filters_max_items ?? 50,
+    },
+    ranking: {
+      ...(isObj(base.ranking as YAMLValue) ? (base.ranking as Record<string, unknown>) : {}),
+      method: task.kumiho_ranking_method || 'hybrid',
+      semantic_query: task.kumiho_ranking_semantic_query || '',
+    },
+    lock: {
+      ...(isObj(base.lock as YAMLValue) ? (base.lock as Record<string, unknown>) : {}),
+      revisions: true,
+      tag_preference: task.kumiho_lock_tag_preference || [],
+    },
+    output: {
+      ...(isObj(base.output as YAMLValue) ? (base.output as Record<string, unknown>) : {}),
+      format: task.kumiho_output_format || 'context_pack',
+      include_artifact_summaries: task.kumiho_output_include_artifact_summaries ?? true,
+      include_artifact_content: task.kumiho_output_include_artifact_content ?? false,
+      max_artifact_chars_per_item: task.kumiho_output_max_artifact_chars_per_item ?? 3000,
+      include_edge_map: task.kumiho_output_include_edge_map ?? true,
+      include_conflict_warnings: task.kumiho_output_include_conflict_warnings ?? true,
+      include_missing_context: task.kumiho_output_include_missing_context ?? true,
+    },
+  };
+}
+
+function pushYamlObject(lines: string[], indent: number, value: unknown): void {
+  const dumped = YAML.dump(value, {
+    noRefs: true,
+    lineWidth: -1,
+    sortKeys: false,
+  }).trimEnd();
+  const pad = ' '.repeat(indent);
+  for (const line of dumped.split('\n')) {
+    lines.push(`${pad}${line}`);
+  }
 }
 
 export function tasksToYaml(tasks: TaskDefinition[], meta?: Partial<WorkflowMeta>): string {
@@ -2897,6 +3178,10 @@ export function tasksToYaml(tasks: TaskDefinition[], meta?: Partial<WorkflowMeta
         lines.push(`      fields: []`);
       }
       lines.push(`      fail_if_missing: ${task.resolve_fail_if_missing !== false ? 'true' : 'false'}`);
+    }
+    if (stepType === 'kumiho_context') {
+      lines.push(`    kumiho:`);
+      pushYamlObject(lines, 6, composeKumihoConfigFromTask(task));
     }
     if (stepType === 'for_each' && task.for_each_steps && task.for_each_steps.length > 0) {
       lines.push(`    for_each:`);

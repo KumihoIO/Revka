@@ -51,6 +51,7 @@ from .schema import (
     GroupChatStepConfig,
     HandoffStepConfig,
     ResolveStepConfig,
+    KumihoContextConfig,
     ForEachStepConfig,
     TagStepConfig,
     DeprecateStepConfig,
@@ -2649,6 +2650,76 @@ async def _exec_resolve(step: StepDef, state: WorkflowState) -> StepResult:
     )
 
 
+def _interpolate_config_value(value: Any, state: WorkflowState) -> Any:
+    """Recursively interpolate strings inside a JSON-like config object."""
+    if isinstance(value, str):
+        return interpolate(value, state)
+    if isinstance(value, list):
+        return [_interpolate_config_value(v, state) for v in value]
+    if isinstance(value, dict):
+        return {str(k): _interpolate_config_value(v, state) for k, v in value.items()}
+    return value
+
+
+async def _exec_kumiho_context(step: StepDef, state: WorkflowState) -> StepResult:
+    """Compile a graph-augmented Kumiho context pack for downstream agents."""
+    cfg: KumihoContextConfig = step.kumiho or KumihoContextConfig()
+    raw_config = cfg.model_dump(mode="python")
+    resolved_config = _interpolate_config_value(raw_config, state)
+
+    input_data: dict[str, Any] = {
+        "project": resolved_config.get("project", ""),
+        "mode": resolved_config.get("mode", "graph_augmented_context"),
+        "seed_bundle_count": len(resolved_config.get("seed", {}).get("bundles", []) or []),
+        "seed_kref_count": len(resolved_config.get("seed", {}).get("krefs", []) or []),
+        "seed_query_count": len(resolved_config.get("seed", {}).get("queries", []) or []),
+        "traversal": resolved_config.get("traversal", {}),
+        "filters": resolved_config.get("filters", {}),
+        "lock": resolved_config.get("lock", {}),
+        "output": resolved_config.get("output", {}),
+    }
+
+    if not str(resolved_config.get("project") or "").strip():
+        return StepResult(
+            step_id=step.id,
+            status="failed",
+            error="kumiho_context step requires 'kumiho.project'",
+            input_data=input_data,
+            output_data={"found": False},
+            action=step.action or "kumiho_context",
+        )
+
+    try:
+        from operator_mcp.workflow.kumiho_context import compile_kumiho_context
+
+        output_data = await compile_kumiho_context(
+            resolved_config,
+            workflow=state.workflow_name,
+            step_id=step.id,
+        )
+    except Exception as exc:
+        return StepResult(
+            step_id=step.id,
+            status="failed",
+            error=f"kumiho_context failed: {exc}",
+            input_data=input_data,
+            output_data={"found": False},
+            action=step.action or "kumiho_context",
+        )
+
+    artifact_content = str(output_data.get("artifact_content") or "")
+    error = output_data.get("error")
+    return StepResult(
+        step_id=step.id,
+        status="completed",
+        output=artifact_content[:6000],
+        input_data=input_data,
+        output_data=output_data,
+        error=str(error.get("message", "")) if isinstance(error, dict) else "",
+        action=step.action or "kumiho_context",
+    )
+
+
 async def _exec_tag(step: StepDef, state: WorkflowState) -> StepResult:
     """Re-tag an existing Kumiho entity revision."""
     cfg: TagStepConfig = step.tag_step or TagStepConfig(item_kref="", tag="")
@@ -4779,6 +4850,15 @@ def dry_run_workflow(wf: WorkflowDef, inputs: dict[str, Any]) -> dict[str, Any]:
                 entry["to_agent_type"] = cfg.to_agent_type
             agent_count += 1
 
+        elif step.type == StepType.KUMIHO_CONTEXT:
+            cfg = step.kumiho
+            if cfg:
+                entry["project"] = cfg.project
+                entry["mode"] = cfg.mode
+                entry["seed_bundle_count"] = len(cfg.seed.bundles)
+                entry["max_depth"] = cfg.traversal.max_depth
+                entry["max_items"] = cfg.filters.max_items
+
         if step.retry > 0:
             entry["retry"] = step.retry
 
@@ -5966,6 +6046,8 @@ async def _dispatch_step(
             return await _exec_handoff(step, state, cwd)
         elif step.type == StepType.RESOLVE:
             return await _exec_resolve(step, state)
+        elif step.type == StepType.KUMIHO_CONTEXT:
+            return await _exec_kumiho_context(step, state)
         elif step.type == StepType.FOR_EACH:
             return await _exec_for_each(step, state, cwd, wf)
         elif step.type == StepType.TAG:

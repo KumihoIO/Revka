@@ -389,6 +389,16 @@ def _check_step_configs(wf: WorkflowDef, valid_ids: set[str],
                         step.id, "handoff",
                     )
 
+        elif step.type == StepType.KUMIHO_CONTEXT:
+            if config is None:
+                result.add_error("'kumiho_context' step missing kumiho config", step.id, "kumiho")
+            elif not getattr(config, "project", "").strip():
+                result.add_error(
+                    "'kumiho_context' step requires kumiho.project",
+                    step.id,
+                    "kumiho.project",
+                )
+
         elif step.type == StepType.FOR_EACH:
             if config is None:
                 result.add_error("'for_each' step missing config", step.id, "for_each")
@@ -539,18 +549,17 @@ def _check_variable_refs(wf: WorkflowDef, valid_ids: set[str],
         texts: list[str] = []
         config = step.get_config()
         if config:
-            for field_name in config.model_fields:
-                val = getattr(config, field_name, None)
-                if isinstance(val, str):
-                    texts.append(val)
-                elif isinstance(val, list):
-                    for item in val:
-                        if isinstance(item, str):
-                            texts.append(item)
-                elif isinstance(val, dict):
-                    for dv in val.values():
-                        if isinstance(dv, str):
-                            texts.append(dv)
+            def _collect(value: Any) -> None:
+                if isinstance(value, str):
+                    texts.append(value)
+                elif isinstance(value, list):
+                    for item in value:
+                        _collect(item)
+                elif isinstance(value, dict):
+                    for dv in value.values():
+                        _collect(dv)
+
+            _collect(config.model_dump(mode="python"))
         # Also check output config fields (entity_metadata, template) on StepDef directly
         if step.output:
             if step.output.template:
