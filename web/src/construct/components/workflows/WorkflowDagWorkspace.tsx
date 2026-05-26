@@ -99,7 +99,6 @@ export default function WorkflowDagWorkspace({
       height={height}
       fill={fill}
       overlay={overlay}
-      autoFocusNodeId={selectedTaskId}
       minimapColor={(node) => {
         const data = node.data as TaskNodeData;
         return resolveCssVar(workflowActionTone(data.type));

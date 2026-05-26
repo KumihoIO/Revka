@@ -841,6 +841,31 @@ async def publish_workflow_entity(
 # Resolve a Kumiho entity by kind + tag (used by resolve step type)
 # ---------------------------------------------------------------------------
 
+def _deprecated_flag(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+    return bool(value)
+
+
+def _revision_skip_reason(rev: dict[str, Any], requested_tag: str) -> str:
+    if _deprecated_flag(rev.get("deprecated")):
+        return "revision is deprecated"
+    tag = (requested_tag or "").strip()
+    if not tag:
+        return ""
+    tags = rev.get("tags")
+    if isinstance(tags, (list, tuple, set)):
+        normalized = {str(t) for t in tags}
+        if tag not in normalized:
+            return f"revision is not tagged {tag!r}"
+    elif "tag" in rev and rev.get("tag") is not None:
+        if str(rev.get("tag")) != tag:
+            return f"revision is not tagged {tag!r}"
+    return ""
+
+
 async def resolve_entity(
     kind: str,
     tag: str = "published",
@@ -866,8 +891,12 @@ async def resolve_entity(
     items = await KUMIHO_SDK.list_items(context)
     _log(f"resolve_entity: list_items({context}) → {len(items)} items")
 
-    # Filter by kind
-    matched = [it for it in items if it.get("kind") == kind]
+    # Filter by kind and ignore deprecated items even if an SDK/backend
+    # accidentally returned them in a default list call.
+    matched = [
+        it for it in items
+        if it.get("kind") == kind and not _deprecated_flag(it.get("deprecated"))
+    ]
     _log(f"resolve_entity: kind={kind} → {len(matched)} items")
 
     # Filter by name pattern if provided. Kumiho stores item names as
@@ -960,6 +989,13 @@ async def resolve_entity(
                 continue
             rev = await KUMIHO_SDK.get_latest_revision(item_kref, tag=tag)
             if rev:
+                skip_reason = _revision_skip_reason(rev, tag)
+                if skip_reason:
+                    _log(
+                        f"resolve_entity: item {item.get('name')} kref={item_kref} "
+                        f"skipped — {skip_reason}"
+                    )
+                    continue
                 rev = await _decorate_revision(item, rev)
                 _log(
                     f"resolve_entity: matched {item.get('name')} "
@@ -984,6 +1020,13 @@ async def resolve_entity(
                 continue
             rev = await KUMIHO_SDK.get_latest_revision(item_kref, tag=tag)
             if rev:
+                skip_reason = _revision_skip_reason(rev, tag)
+                if skip_reason:
+                    _log(
+                        f"resolve_entity: item {item.get('name')} kref={item_kref} "
+                        f"skipped — {skip_reason}"
+                    )
+                    continue
                 results.append(await _decorate_revision(item, rev))
         return results if results else None
 

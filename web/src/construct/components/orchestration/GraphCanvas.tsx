@@ -4,14 +4,12 @@ import {
   MiniMap,
   ReactFlow,
   ReactFlowProvider,
-  useReactFlow,
   type Edge,
   type EdgeTypes,
   type Node,
   type NodeMouseHandler,
   type NodeTypes,
 } from '@xyflow/react';
-import { useEffect } from 'react';
 import type { ReactNode } from 'react';
 import '@xyflow/react/dist/style.css';
 
@@ -28,7 +26,6 @@ type GraphCanvasProps<TNode extends Node = Node> = {
   fill?: boolean;
   emptyState?: string;
   overlay?: ReactNode;
-  autoFocusNodeId?: string | null;
 };
 
 function GraphCanvasInner<TNode extends Node = Node>({
@@ -42,25 +39,7 @@ function GraphCanvasInner<TNode extends Node = Node>({
   fill,
   emptyState = 'No graph data available.',
   overlay,
-  autoFocusNodeId,
 }: GraphCanvasProps<TNode>) {
-  const reactFlow = useReactFlow<TNode>();
-
-  useEffect(() => {
-    if (!autoFocusNodeId) return;
-    const node = nodes.find((candidate) => candidate.id === autoFocusNodeId);
-    if (!node || node.hidden) return;
-
-    const width = node.width ?? 240;
-    const nodeHeight = node.height ?? 120;
-    const zoom = Math.max(reactFlow.getZoom?.() ?? 1, 0.85);
-    void reactFlow.setCenter(
-      node.position.x + width / 2,
-      node.position.y + nodeHeight / 2,
-      { zoom, duration: 240 },
-    );
-  }, [autoFocusNodeId, nodes, reactFlow]);
-
   const sizeStyle = fill ? { flex: '1 1 0%', minHeight: 0 } : { height };
 
   if (nodes.length === 0) {
