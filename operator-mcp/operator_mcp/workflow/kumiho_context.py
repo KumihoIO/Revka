@@ -5,6 +5,7 @@ import os
 from copy import deepcopy
 from datetime import datetime
 from typing import Any
+from urllib.parse import unquote, urlparse
 
 from .._log import _log
 
@@ -77,6 +78,24 @@ def _is_revision_kref(value: str) -> bool:
 
 def _item_kref_from_revision_kref(value: str) -> str:
     return value.split("#", 1)[0].split("?", 1)[0]
+
+
+def _artifact_location_to_path(location: str) -> str:
+    if not location:
+        return ""
+    if not location.startswith("file://"):
+        return location
+    parsed = urlparse(location)
+    if parsed.netloc and parsed.path:
+        raw = f"//{parsed.netloc}{parsed.path}"
+    elif parsed.netloc:
+        raw = parsed.netloc
+    else:
+        raw = parsed.path or location[len("file://"):]
+    raw = unquote(raw)
+    if len(raw) >= 3 and raw[0] == "/" and raw[2] == ":":
+        raw = raw[1:]
+    return raw
 
 
 def _revision_sort_key(rev: dict[str, Any]) -> tuple[str, int, str]:
@@ -800,9 +819,14 @@ class KumihoContextCompiler:
                     or str(rev_meta.get("content_preview") or "")
                 )
             location = str(artifact.get("location") or "") if artifact else ""
-            if (include_content or (include_summaries and not summary)) and location and os.path.isfile(location):
+            artifact_path = _artifact_location_to_path(location)
+            if (
+                (include_content or (include_summaries and not summary))
+                and artifact_path
+                and os.path.isfile(artifact_path)
+            ):
                 try:
-                    with open(location, "r", encoding="utf-8") as fh:
+                    with open(artifact_path, "r", encoding="utf-8") as fh:
                         raw = fh.read()
                     remaining = max(total_cap - total_used, 0)
                     limit = min(per_item_cap, remaining)

@@ -14,6 +14,7 @@ import re
 from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any
+from urllib.parse import unquote, urlparse
 
 from .._log import _log
 
@@ -80,6 +81,24 @@ def _is_revision_kref(value: str) -> bool:
 
 def _item_kref_from_revision_kref(value: str) -> str:
     return value.split("#", 1)[0].split("?", 1)[0]
+
+
+def _artifact_location_to_path(location: str) -> str:
+    if not location:
+        return ""
+    if not location.startswith("file://"):
+        return location
+    parsed = urlparse(location)
+    if parsed.netloc and parsed.path:
+        raw = f"//{parsed.netloc}{parsed.path}"
+    elif parsed.netloc:
+        raw = parsed.netloc
+    else:
+        raw = parsed.path or location[len("file://"):]
+    raw = unquote(raw)
+    if len(raw) >= 3 and raw[0] == "/" and raw[2] == ":":
+        raw = raw[1:]
+    return raw
 
 
 def _member_item_kref(member: dict[str, Any]) -> str:
@@ -223,7 +242,7 @@ class KumihoBundleUpdater:
         if not bundle_ref:
             self._record_error(result, "missing_bundle_ref", "bundle update requires bundle")
             return result
-        if self._is_protected(bundle_ref):
+        if self._is_protected(bundle_ref) and not self.allow_protected:
             self._record_error(
                 result,
                 "protected_bundle",
@@ -455,6 +474,7 @@ class KumihoPatchApplier:
         self.project = str(self.cfg.get("project") or "").strip()
         self.patch_kref = str(self.cfg.get("patch_kref") or "").strip()
         self.dry_run = _as_bool(self.cfg.get("dry_run", True))
+        self.allow_auto_apply = _as_bool(self.cfg.get("allow_auto_apply", False))
         self.approval = _as_dict(self.cfg.get("approval"))
         self.apply = _as_dict(self.cfg.get("apply"))
         self.tag_policy = _as_dict(self.cfg.get("tag_policy"))
@@ -473,7 +493,7 @@ class KumihoPatchApplier:
         if not self.patch_kref:
             return self._blocked("missing_patch_kref", "kumiho.patch_kref is required")
         if not self.dry_run and self.approval.get("required", True):
-            if not _as_bool(self.approval.get("approved", False)):
+            if not _as_bool(self.approval.get("approved", False)) and not self.allow_auto_apply:
                 return self._blocked("approval_required", "Patch application requires approval")
 
         self.patch_revision = await self.sdk.get_revision(self.patch_kref) or {}
@@ -490,7 +510,7 @@ class KumihoPatchApplier:
             return self._finish(True, False, planned, [], [], [], [], "")
 
         created_revisions, created_items = await self._apply_revision_updates()
-        created_edges = await self._apply_edges()
+        created_edges = await self._apply_edges(created_revisions)
         await self._apply_patch_tags()
         bundle_updates = await self._apply_bundle_updates(created_revisions, created_items)
         apply_report_kref = await self._save_apply_report(created_revisions, created_items, created_edges, bundle_updates)
@@ -559,9 +579,10 @@ class KumihoPatchApplier:
             if parsed:
                 return parsed
             location = str(artifact.get("location") or artifact.get("path") or "")
-            if location and os.path.isfile(location):
+            artifact_path = _artifact_location_to_path(location)
+            if artifact_path and os.path.isfile(artifact_path):
                 try:
-                    with open(location, "r", encoding="utf-8") as fh:
+                    with open(artifact_path, "r", encoding="utf-8") as fh:
                         parsed = self._parse_patch_value(fh.read())
                     if parsed:
                         return parsed
@@ -825,13 +846,20 @@ class KumihoPatchApplier:
                 tags_removed.append(tag_s)
         return tags_added, tags_removed
 
-    async def _apply_edges(self) -> list[dict[str, Any]]:
+    async def _apply_edges(self, created_revisions: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if not self.apply.get("create_edges", True):
             return []
+        revision_remap = {
+            str(rev.get("old_revision_kref")): str(rev.get("new_revision_kref"))
+            for rev in created_revisions
+            if rev.get("old_revision_kref") and rev.get("new_revision_kref")
+        }
         created: list[dict[str, Any]] = []
         for edge in self._proposed_edges():
             source = str(edge.get("from") or edge.get("source") or "")
             target = str(edge.get("to") or edge.get("target") or "")
+            source = revision_remap.get(source, source)
+            target = revision_remap.get(target, target)
             edge_type = str(edge.get("edge_type") or "")
             if not source or not target or not edge_type:
                 self.errors.append(_error("invalid_edge", "Proposed edge requires from, to, and edge_type"))

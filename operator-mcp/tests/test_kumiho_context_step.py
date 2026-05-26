@@ -276,3 +276,34 @@ async def test_kumiho_context_reports_missing_required_bundle(fake_sdk):
     assert result.output_data["found"] is False
     assert result.output_data["error"]["type"] == "missing_bundle"
     assert result.output_data["locked_manifest"] == []
+
+
+@pytest.mark.asyncio
+async def test_kumiho_context_reads_file_uri_artifact_summary(fake_sdk, tmp_path):
+    content_path = tmp_path / "state.md"
+    content_path.write_text("File URI state summary for current character state.", encoding="utf-8")
+    rev_kref = "kref://ManghanDev/CharacterStates/handoyoon.character-state?r=12"
+    fake_sdk.revisions[rev_kref]["metadata"] = {}
+    fake_sdk.artifacts[rev_kref] = [
+        {
+            "name": "state.md",
+            "kref": "artifact://state-file",
+            "location": content_path.as_uri(),
+            "metadata": {},
+        }
+    ]
+    cfg = KumihoContextConfig(
+        project="ManghanDev",
+        mode="bundle_context",
+        seed=KumihoSeedConfig(bundles=["manghan-main-canon"]),
+        traversal=KumihoTraversalConfig(max_depth=0),
+        filters=KumihoFiltersConfig(include_kinds=["character-state"]),
+    )
+    step = StepDef(id="episode-context", type=StepType.KUMIHO_CONTEXT, kumiho=cfg)
+
+    result = await _exec_kumiho_context(step, _state())
+
+    assert result.status == "completed"
+    assert result.output_data["context_pack"]["relevant_items"][0]["summary"] == (
+        "File URI state summary for current character state."
+    )

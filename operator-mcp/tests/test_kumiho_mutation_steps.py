@@ -139,6 +139,7 @@ class FakeKumihoMutationSDK:
             "kref://ManghanDev/Bundles/manghan-applied-canon-patches.bundle": [],
             "kref://ManghanDev/Bundles/manghan-current-character-states.bundle": [],
         }
+        self.artifacts_by_revision: dict[str, list[dict[str, Any]]] = {}
         self.created_revisions: list[dict[str, Any]] = []
         self.created_edges: list[dict[str, Any]] = []
         self.artifacts: list[dict[str, Any]] = []
@@ -188,7 +189,7 @@ class FakeKumihoMutationSDK:
         return self.revisions.get(revision_kref)
 
     async def get_artifacts(self, revision_kref: str):
-        return []
+        return list(self.artifacts_by_revision.get(revision_kref, []))
 
     async def create_revision(self, item_kref: str, metadata: dict[str, Any], tag: str | None = None):
         number = sum(1 for rev in self.revisions.values() if rev.get("item_kref") == item_kref) + 1
@@ -295,6 +296,33 @@ async def test_kumiho_bundle_update_rejects_protected_bundle(fake_sdk):
 
 
 @pytest.mark.asyncio
+async def test_kumiho_bundle_update_allows_protected_bundle_with_override(fake_sdk):
+    cfg = KumihoBundleUpdateConfig(
+        project="ManghanDev",
+        mode="add_members",
+        allow_protected=True,
+        updates=[
+            KumihoBundleUpdateEntryConfig(
+                bundle="manghan-current-character-states",
+                add=[
+                    KumihoBundleMemberConfig(
+                        item_kref="kref://ManghanDev/CharacterStates/handoyoon.character-state"
+                    )
+                ],
+            )
+        ],
+    )
+    step = StepDef(id="bundle-update", type=StepType.KUMIHO_BUNDLE_UPDATE, kumiho=cfg)
+
+    result = await _exec_kumiho_bundle_update(step, _state())
+
+    assert result.status == "completed"
+    assert result.output_data["bundles"][0]["added"] == [
+        "kref://ManghanDev/CharacterStates/handoyoon.character-state"
+    ]
+
+
+@pytest.mark.asyncio
 async def test_kumiho_patch_apply_dry_run_plans_without_mutation(fake_sdk):
     cfg = KumihoPatchApplyConfig(
         project="ManghanDev",
@@ -347,9 +375,55 @@ async def test_kumiho_patch_apply_creates_revision_tags_edge_and_bundle_moves(fa
     assert ("kref://ManghanDev/CharacterStates/handoyoon.character-state?r=2", "current") in fake_sdk.tags_added
     assert ("kref://ManghanDev/CharacterStates/handoyoon.character-state?r=1", "current") in fake_sdk.tags_removed
     assert fake_sdk.created_edges[0]["edge_type"] == "UPDATES"
+    assert fake_sdk.created_edges[0]["target_kref"] == "kref://ManghanDev/CharacterStates/handoyoon.character-state?r=2"
     assert {"item_kref": "kref://ManghanDev/Patches/mg-ep-027-canon-patch.canon-patch"} not in fake_sdk.bundle_members[
         "kref://ManghanDev/Bundles/manghan-pending-canon-patches.bundle"
     ]
     assert {"item_kref": "kref://ManghanDev/Patches/mg-ep-027-canon-patch.canon-patch"} in fake_sdk.bundle_members[
         "kref://ManghanDev/Bundles/manghan-applied-canon-patches.bundle"
     ]
+    assert {"item_kref": "kref://ManghanDev/CharacterStates/handoyoon.character-state"} in fake_sdk.bundle_members[
+        "kref://ManghanDev/Bundles/manghan-current-character-states.bundle"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_kumiho_patch_apply_loads_file_uri_patch_artifact(fake_sdk, tmp_path):
+    patch_kref = "kref://ManghanDev/Patches/mg-ep-027-canon-patch.canon-patch?r=1"
+    fake_sdk.revisions[patch_kref]["metadata"] = {}
+    patch_path = tmp_path / "canon-patch.yaml"
+    patch_path.write_text(
+        """
+canon_patch:
+  patch_id: artifact-patch
+  patch_status: candidate
+  proposed_revision_updates:
+    character_states:
+      - item_name: handoyoon
+        item_kind: character-state
+        previous_revision_kref: kref://ManghanDev/CharacterStates/handoyoon.character-state?r=1
+        proposed_change_summary: Loaded from file URI artifact.
+        proposed_artifact_patch: "## Current State\\n- Loaded from file URI artifact."
+        evidence_locator: Ep.027 artifact fixture
+""".strip(),
+        encoding="utf-8",
+    )
+    fake_sdk.artifacts_by_revision[patch_kref] = [
+        {
+            "name": "canon-patch.yaml",
+            "location": patch_path.as_uri(),
+            "metadata": {},
+        }
+    ]
+    cfg = KumihoPatchApplyConfig(
+        project="ManghanDev",
+        patch_kref=patch_kref,
+        dry_run=True,
+        approval=KumihoPatchApprovalConfig(required=False),
+    )
+    step = StepDef(id="apply-patch", type=StepType.KUMIHO_PATCH_APPLY, kumiho=cfg)
+
+    result = await _exec_kumiho_patch_apply(step, _state())
+
+    assert result.status == "completed"
+    assert result.output_data["planned_operations"][0]["summary"] == "Loaded from file URI artifact."

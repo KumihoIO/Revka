@@ -431,7 +431,9 @@ class KumihoSDKClient:
         metadata: dict[str, str] | None = None,
     ) -> None:
         def _call():
-            tool_create_edge(source_rev_kref, target_rev_kref, edge_type, metadata=metadata)
+            r = tool_create_edge(source_rev_kref, target_rev_kref, edge_type, metadata=metadata)
+            if isinstance(r, dict) and "error" in r:
+                raise RuntimeError(r["error"])
         await asyncio.to_thread(_call)
 
     async def get_edges(self, rev_kref: str, direction: int = 0) -> list[dict[str, str]]:
