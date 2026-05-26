@@ -539,17 +539,87 @@ def _seed_item(
     name: str,
     kind: str,
     tag: str = "published",
+    item_deprecated: bool = False,
+    revision_deprecated: bool = False,
 ) -> str:
     """Insert an item with a Kumiho-stored ``<base>.<kind>`` name and a
     revision tagged ``tag``. Returns the item kref."""
     sdk._kref_counter += 1
     item_kref = f"kref://item/{sdk._kref_counter}"
-    item = {"kref": item_kref, "name": name, "kind": kind, "metadata": {}}
+    item = {
+        "kref": item_kref,
+        "name": name,
+        "kind": kind,
+        "metadata": {},
+        "deprecated": item_deprecated,
+    }
     sdk.items_by_space.setdefault(space, []).append(item)
     sdk._kref_counter += 1
     rev_kref = f"kref://rev/{sdk._kref_counter}"
-    sdk.revisions_by_kref[item_kref] = {"kref": rev_kref, "metadata": {}, "tag": tag}
+    sdk.revisions_by_kref[item_kref] = {
+        "kref": rev_kref,
+        "metadata": {},
+        "tag": tag,
+        "tags": [tag] if tag else [],
+        "deprecated": revision_deprecated,
+    }
     return item_kref
+
+
+@pytest.mark.asyncio
+class TestDeprecatedResolution:
+    SPACE = "Construct/WorkflowOutputs/Github"
+
+    async def test_resolve_skips_deprecated_item(self, fake_sdk):
+        _seed_item(
+            fake_sdk,
+            space=self.SPACE,
+            name="old-report.research",
+            kind="research",
+            item_deprecated=True,
+        )
+        result = await resolve_entity(
+            kind="research",
+            tag="published",
+            space=self.SPACE,
+            mode="latest",
+        )
+        assert result is None
+
+    async def test_resolve_skips_deprecated_revision(self, fake_sdk):
+        _seed_item(
+            fake_sdk,
+            space=self.SPACE,
+            name="old-report.research",
+            kind="research",
+            revision_deprecated=True,
+        )
+        result = await resolve_entity(
+            kind="research",
+            tag="published",
+            space=self.SPACE,
+            mode="latest",
+        )
+        assert result is None
+
+    async def test_resolve_does_not_accept_latest_fallback_for_requested_tag(self, fake_sdk):
+        # The fake SDK intentionally returns the only revision regardless of
+        # requested tag, matching the production fallback risk. Resolve must
+        # still enforce the requested tag when revision tag metadata is present.
+        _seed_item(
+            fake_sdk,
+            space=self.SPACE,
+            name="draft-report.research",
+            kind="research",
+            tag="latest",
+        )
+        result = await resolve_entity(
+            kind="research",
+            tag="published",
+            space=self.SPACE,
+            mode="latest",
+        )
+        assert result is None
 
 
 @pytest.mark.asyncio

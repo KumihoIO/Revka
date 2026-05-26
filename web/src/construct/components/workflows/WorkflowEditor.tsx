@@ -928,6 +928,8 @@ const DETAILS_PANEL_MIN_WIDTH = 300;
 const DETAILS_PANEL_MAX_WIDTH = 620;
 const DETAILS_PANEL_DEFAULT_WIDTH = 352;
 const COPY_PASTE_OFFSET = 36;
+const LARGE_GRAPH_NODE_THRESHOLD = 80;
+const LARGE_GRAPH_EDGE_THRESHOLD = 120;
 const WIRE_STYLE_OPTIONS: Array<{
   value: WorkflowWireStyle;
   label: string;
@@ -962,6 +964,10 @@ function applyWireStyle(edge: Edge, wireStyle: WorkflowWireStyle): Edge {
 
 function applyWireStyleToEdges(edges: Edge[], wireStyle: WorkflowWireStyle): Edge[] {
   return edges.map((edge) => applyWireStyle(edge, wireStyle));
+}
+
+function isSemanticFlowChange(change: { type: string }): boolean {
+  return change.type !== 'select' && change.type !== 'dimensions';
 }
 
 function isValidWorkflowPosition(value: unknown): value is WorkflowNodePosition {
@@ -1332,6 +1338,14 @@ function WorkflowEditorInner({
   const { screenToFlowPosition, fitView } = useReactFlow();
   const canvasRef = useRef<HTMLDivElement>(null);
   const lastPointerFlowPositionRef = useRef<WorkflowNodePosition | null>(null);
+  const pointerFrameRef = useRef<number | null>(null);
+  const pendingPointerRef = useRef<{ clientX: number; clientY: number } | null>(null);
+  const initialYamlRef = useRef<string>('');
+  const suppressDirtyEffectRef = useRef(true);
+  const [dirty, setDirty] = useState(false);
+  const markDirty = useCallback(() => {
+    if (!suppressDirtyEffectRef.current) setDirty(true);
+  }, []);
 
   // Parse initial workflow definition.
   const { initialNodes, initialEdges } = useMemo(() => {
@@ -1345,11 +1359,47 @@ function WorkflowEditorInner({
     return { initialNodes: positioned, initialEdges: applyWireStyleToEdges(edges, wireStyle) };
   }, [workflow]);
 
-  const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
-  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
+  const [nodes, setNodesRaw, onNodesChangeRaw] = useNodesState(initialNodes);
+  const [edges, setEdgesRaw, onEdgesChangeRaw] = useEdgesState(initialEdges);
+  const setNodes = useCallback<typeof setNodesRaw>(
+    (value) => {
+      markDirty();
+      setNodesRaw(value);
+    },
+    [markDirty, setNodesRaw],
+  );
+  const setEdges = useCallback<typeof setEdgesRaw>(
+    (value) => {
+      markDirty();
+      setEdgesRaw(value);
+    },
+    [markDirty, setEdgesRaw],
+  );
+  const onNodesChange = useCallback<typeof onNodesChangeRaw>(
+    (changes) => {
+      if (changes.some(isSemanticFlowChange)) markDirty();
+      onNodesChangeRaw(changes);
+    },
+    [markDirty, onNodesChangeRaw],
+  );
+  const onEdgesChange = useCallback<typeof onEdgesChangeRaw>(
+    (changes) => {
+      if (changes.some(isSemanticFlowChange)) markDirty();
+      onEdgesChangeRaw(changes);
+    },
+    [markDirty, onEdgesChangeRaw],
+  );
   const liveNodes = useMemo(
     () => withAgentVisuals(withLiveDependencyCounts(nodes as Node<TaskNodeData>[], edges), poolAgents),
     [nodes, edges, poolAgents],
+  );
+  const largeGraphMode =
+    liveNodes.length > LARGE_GRAPH_NODE_THRESHOLD || edges.length > LARGE_GRAPH_EDGE_THRESHOLD;
+  const renderEdges = useMemo(
+    () => largeGraphMode
+      ? edges.map((edge) => (edge.animated === false ? edge : { ...edge, animated: false }))
+      : edges,
+    [edges, largeGraphMode],
   );
 
   useEffect(() => {
@@ -1358,8 +1408,8 @@ function WorkflowEditorInner({
     } catch {
       /* ignore */
     }
-    setEdges((eds) => applyWireStyleToEdges(eds, wireStyle));
-  }, [wireStyle, setEdges]);
+    setEdgesRaw((eds) => applyWireStyleToEdges(eds, wireStyle));
+  }, [wireStyle, setEdgesRaw]);
 
   const selectedNode = useMemo(
     () => (selectedNodeId ? liveNodes.find((n) => n.id === selectedNodeId) ?? null : null),
@@ -1409,6 +1459,28 @@ function WorkflowEditorInner({
     },
     [screenToFlowPosition],
   );
+  const schedulePointerFlowPosition = useCallback(
+    (clientX: number, clientY: number) => {
+      pendingPointerRef.current = { clientX, clientY };
+      if (pointerFrameRef.current !== null) return;
+      pointerFrameRef.current = window.requestAnimationFrame(() => {
+        pointerFrameRef.current = null;
+        const pending = pendingPointerRef.current;
+        pendingPointerRef.current = null;
+        if (pending) rememberPointerFlowPosition(pending.clientX, pending.clientY);
+      });
+    },
+    [rememberPointerFlowPosition],
+  );
+
+  useEffect(() => {
+    return () => {
+      if (pointerFrameRef.current !== null) {
+        window.cancelAnimationFrame(pointerFrameRef.current);
+        pointerFrameRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     try {
@@ -1754,21 +1826,15 @@ function WorkflowEditorInner({
   }, []);
 
   // ── Real-time updates (P1.2) ────────────────────────────────────────────
-  // `lastSyncedYaml` is the round-tripped YAML the editor was last hydrated
-  // from — either the prop on mount or a remote revision applied via SSE.
-  // Comparing the current graph's YAML against it tells us whether the user
-  // has unsaved local edits (the `dirty` flag below).
-  //
-  // We normalize the baseline through a parse → serialize pass so formatting
-  // differences (key ordering, whitespace) don't make the editor look dirty
-  // immediately on mount.
-  const initialYamlRef = useRef<string>('');
-  const [lastSyncedYaml, setLastSyncedYaml] = useState<string>('');
+  // Keep dirty tracking cheap. Large graphs were previously serialized to
+  // YAML on every render just to answer "has anything changed?", which made
+  // dragging and saving expensive.
   // Hydrate the baseline once per workflow load.
   useEffect(() => {
+    suppressDirtyEffectRef.current = true;
+    setDirty(false);
     if (!workflow?.definition) {
       initialYamlRef.current = '';
-      setLastSyncedYaml('');
       return;
     }
     try {
@@ -1777,12 +1843,18 @@ function WorkflowEditorInner({
         description: workflow.description,
       }, workflow.name);
       initialYamlRef.current = normalized;
-      setLastSyncedYaml(normalized);
     } catch {
       initialYamlRef.current = workflow.definition;
-      setLastSyncedYaml(workflow.definition);
     }
   }, [workflow?.kref, workflow?.definition, workflow?.name, workflow?.description]);
+
+  useEffect(() => {
+    if (suppressDirtyEffectRef.current) {
+      suppressDirtyEffectRef.current = false;
+      return;
+    }
+    setDirty(true);
+  }, [workflowMeta, name, description, tags]);
   const [pendingRemoteUpdate, setPendingRemoteUpdate] =
     useState<WorkflowRevisionPublishedEvent | null>(null);
   const [remotePill, setRemotePill] = useState<{
@@ -2383,11 +2455,11 @@ function WorkflowEditorInner({
 
   // Open YAML drawer (used by EditorCommandList row + ⌘I shortcut).
   const openYamlPanel = useCallback(() => {
-    const tasks = flowToTasks(liveNodes, edges);
+    const tasks = flowToTasks(nodes as Node<TaskNodeData>[], edges);
     setYamlText(tasksToYaml(tasks, { ...workflowMeta, name, description }));
     setYamlDirty(false);
     setShowAdvanced(true);
-  }, [liveNodes, edges, workflowMeta, name, description]);
+  }, [nodes, edges, workflowMeta, name, description]);
   // Keep the ⌘I keydown effect's ref pointed at the latest closure.
   openYamlPanelRef.current = openYamlPanel;
 
@@ -2404,20 +2476,15 @@ function WorkflowEditorInner({
     }
   };
 
-  // ── Compute current YAML for dirty detection ────────────────────────────
-  // Cheap to recompute (the editor already does this on Save / YAML toggle);
-  // re-running it as a memo only when nodes/edges/meta change avoids stale-
-  // dirty bugs.
+  // Architect only needs the full YAML while the panel is open. Keeping this
+  // lazy avoids full-graph YAML serialization on every canvas interaction.
   const currentYaml = useMemo(() => {
-    const tasks = flowToTasks(liveNodes, edges);
+    if (!architectPanelOpen) return initialYamlRef.current;
+    const tasks = flowToTasks(nodes as Node<TaskNodeData>[], edges);
     return tasksToYaml(tasks, { ...workflowMeta, name, description });
-  }, [liveNodes, edges, workflowMeta, name, description]);
+  }, [architectPanelOpen, nodes, edges, workflowMeta, name, description]);
 
-  const dirty = useMemo(() => {
-    // No baseline yet (create mode with no edits) — never dirty.
-    if (!lastSyncedYaml && !initialYamlRef.current) return false;
-    return currentYaml !== (lastSyncedYaml || initialYamlRef.current);
-  }, [currentYaml, lastSyncedYaml]);
+  const cycleDetected = useMemo(() => hasCycle(nodes, edges), [nodes, edges]);
 
   // ── Apply a remote revision to the canvas ────────────────────────────────
   // Fetches the new YAML, replaces the in-memory graph, briefly highlights
@@ -2454,12 +2521,6 @@ function WorkflowEditorInner({
             : n,
         );
 
-        setNodes(markedNodes);
-        setEdges(applyWireStyleToEdges(newEdges, wireStyle));
-        setWorkflowMeta(newMeta);
-        setName(nextName);
-        setDescription(nextDescription);
-        setYamlDirty(false);
         // Normalize the baseline through the same pipeline the dirty check
         // uses (parse → tasksToYaml) so a clean apply doesn't immediately
         // register as "dirty" because of formatting differences.
@@ -2468,8 +2529,15 @@ function WorkflowEditorInner({
           name: nextName,
           description: nextDescription,
         });
-        setLastSyncedYaml(normalized);
         initialYamlRef.current = normalized;
+        suppressDirtyEffectRef.current = true;
+        setDirty(false);
+        setNodesRaw(markedNodes);
+        setEdgesRaw(applyWireStyleToEdges(newEdges, wireStyle));
+        setWorkflowMeta(newMeta);
+        setName(nextName);
+        setDescription(nextDescription);
+        setYamlDirty(false);
         taskIdCounter.current = newTasks.length;
         setPendingRemoteUpdate(null);
         setRemotePill({
@@ -2479,7 +2547,7 @@ function WorkflowEditorInner({
 
         if (changedIds.size > 0) {
           setTimeout(() => {
-            setNodes((nds) =>
+            setNodesRaw((nds) =>
               nds.map((n) => {
                 const data = n.data as TaskNodeData & { justUpdated?: boolean };
                 if (!data.justUpdated) return n;
@@ -2499,7 +2567,7 @@ function WorkflowEditorInner({
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [liveNodes, edges, setNodes, setEdges, wireStyle],
+    [liveNodes, edges, setNodesRaw, setEdgesRaw, wireStyle],
   );
 
   // Stable refs so the SSE callback doesn't re-subscribe on every state change.
@@ -2568,12 +2636,12 @@ function WorkflowEditorInner({
     if (!name.trim()) return setError('Workflow name is required.');
     if (!description.trim()) return setError('Workflow description is required.');
     if (liveNodes.length === 0) return setError('Add at least one step to the workflow.');
-    if (hasCycle(liveNodes, edges)) return setError('Cannot save: workflow has cycles.');
+    if (cycleDetected) return setError('Cannot save: workflow has cycles.');
     if (yamlDirty) {
       return setError('Apply the YAML changes to the graph before saving.');
     }
 
-    const tasks = flowToTasks(liveNodes, edges);
+    const tasks = flowToTasks(nodes as Node<TaskNodeData>[], edges);
     const definition = tasksToYaml(tasks, {
       ...workflowMeta,
       name: name.trim(),
@@ -2587,22 +2655,22 @@ function WorkflowEditorInner({
         version: workflowMeta.version || '',
         tags,
       });
+      initialYamlRef.current = definition;
+      setDirty(false);
+      onCancel();
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Save failed.';
       setError(message);
     }
-  }, [name, description, tags, liveNodes, edges, workflowMeta, yamlDirty, onSave]);
+  }, [name, description, tags, liveNodes.length, nodes, edges, workflowMeta, yamlDirty, cycleDetected, onSave, onCancel]);
 
   // ── Sync YAML when toggling drawer ──────────────────────────────────────
   useEffect(() => {
-    if (showAdvanced) {
-      if (!yamlDirty) {
-        const tasks = flowToTasks(liveNodes, edges);
-        setYamlText(tasksToYaml(tasks, { ...workflowMeta, name, description }));
-      }
+    if (showAdvanced && !yamlDirty) {
+      const tasks = flowToTasks(nodes as Node<TaskNodeData>[], edges);
+      setYamlText(tasksToYaml(tasks, { ...workflowMeta, name, description }));
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showAdvanced, currentYaml]);
+  }, [showAdvanced, yamlDirty, nodes, edges, workflowMeta, name, description]);
 
   // ── Run-to-here ─────────────────────────────────────────────────────────
   // Closure preview is best-effort — backend re-derives authoritatively.
@@ -2708,7 +2776,6 @@ function WorkflowEditorInner({
 
   // ── Render ──────────────────────────────────────────────────────────────
   const isEmpty = liveNodes.length === 0;
-  const cycleDetected = hasCycle(liveNodes, edges);
   const runToHereActive = Boolean(
     runLog?.open && !isTerminalRunStatus(runLog.status),
   );
@@ -3331,7 +3398,7 @@ function WorkflowEditorInner({
                 className="construct-graph"
                 style={{ flex: 1, position: 'relative' }}
                 onMouseMove={(e) => {
-                  rememberPointerFlowPosition(e.clientX, e.clientY);
+                  schedulePointerFlowPosition(e.clientX, e.clientY);
                 }}
                 onMouseDown={(e) => {
                   rememberPointerFlowPosition(e.clientX, e.clientY);
@@ -3345,7 +3412,7 @@ function WorkflowEditorInner({
               >
                 <ReactFlow
                   nodes={liveNodes}
-                  edges={edges}
+                  edges={renderEdges}
                   onNodesChange={onNodesChange}
                   onEdgesChange={onEdgesChange}
                   onConnect={onConnect}
@@ -3365,13 +3432,14 @@ function WorkflowEditorInner({
                   nodeTypes={allNodeTypes}
                   connectionLineType={CONNECTION_LINE_TYPE[wireStyle]}
                   fitView
+                  onlyRenderVisibleElements={largeGraphMode}
                   elementsSelectable
                   edgesFocusable
                   deleteKeyCode={['Backspace', 'Delete']}
                   style={{ background: 'transparent' }}
                   defaultEdgeOptions={{
                     type: wireStyle,
-                    animated: true,
+                    animated: !largeGraphMode,
                     selectable: true,
                     style: GATE_EDGE_STYLES.default,
                     markerEnd: { type: MarkerType.ArrowClosed, color: GATE_EDGE_STYLES.default.stroke },
