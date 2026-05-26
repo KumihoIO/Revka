@@ -164,6 +164,7 @@ fn install_operator(python: &Path, dry_run: bool, from_source: Option<&Path>) ->
         eprintln!("    + create {}", venv.display());
         eprintln!("    + pip install operator-mcp");
         eprintln!("    + sync flat operator package into {}", dir.display());
+        eprintln!("    + sync operator skills into ~/.construct/skills");
         eprintln!("    + write {}", launcher.display());
         return Ok(());
     }
@@ -232,6 +233,9 @@ fn install_operator(python: &Path, dry_run: bool, from_source: Option<&Path>) ->
 
     sync_operator_flat_package(&install_src.join("operator_mcp"), &dir)?;
     eprintln!("    [ok] flat operator package synced: {}", dir.display());
+
+    let synced_skills = sync_operator_skills(&install_src.join("skills"))?;
+    eprintln!("    [ok] operator skills synced: {synced_skills}");
 
     write_launcher(&launcher, OPERATOR_LAUNCHER_SRC)?;
     eprintln!("    [ok] launcher: {}", launcher.display());
@@ -468,6 +472,43 @@ fn sync_operator_flat_package(package_src: &Path, install_dir: &Path) -> Result<
     std::fs::create_dir_all(install_dir)
         .with_context(|| format!("creating {}", install_dir.display()))?;
     sync_operator_flat_dir(package_src, install_dir)
+}
+
+fn sync_operator_skills(skills_src: &Path) -> Result<usize> {
+    if !skills_src.is_dir() {
+        return Ok(0);
+    }
+
+    let skills_dest = construct_root()?.join("skills");
+    std::fs::create_dir_all(&skills_dest)
+        .with_context(|| format!("creating {}", skills_dest.display()))?;
+
+    let mut copied = 0usize;
+    for entry in std::fs::read_dir(skills_src)
+        .with_context(|| format!("reading {}", skills_src.display()))?
+    {
+        let entry =
+            entry.with_context(|| format!("reading entry under {}", skills_src.display()))?;
+        let src_path = entry.path();
+        if !entry
+            .file_type()
+            .with_context(|| format!("reading file type for {}", src_path.display()))?
+            .is_file()
+        {
+            continue;
+        }
+        if src_path.extension().and_then(|ext| ext.to_str()) != Some("md") {
+            continue;
+        }
+
+        let dest_path = skills_dest.join(entry.file_name());
+        std::fs::copy(&src_path, &dest_path).with_context(|| {
+            format!("copying {} to {}", src_path.display(), dest_path.display())
+        })?;
+        copied += 1;
+    }
+
+    Ok(copied)
 }
 
 fn sync_operator_flat_dir(src: &Path, dest: &Path) -> Result<()> {
