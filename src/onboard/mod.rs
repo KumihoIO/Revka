@@ -1,4 +1,5 @@
 pub mod builtin_workflows;
+mod kumiho_cloud;
 pub mod wizard;
 
 // Re-exported for CLI and external use
