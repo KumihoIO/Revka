@@ -20,7 +20,8 @@ description: |
     - `agent`, `handoff`, `supervisor`,
       `group_chat`, `map_reduce`       (need agent provider; parallel-any)
     - `tag`, `deprecate`               (need real Kumiho kref; parallel-any)
-    - `kumiho_context`                 (needs Kumiho SDK; parallel-any)
+    - `kumiho_context`, `kumiho_bundle_update`,
+      `kumiho_patch_apply`             (need Kumiho SDK/data; parallel-any)
     - `resolve`                        (uses fail_if_missing: false)
 
   Run with:
@@ -238,7 +239,7 @@ steps:
       join: any
       max_concurrency: 3
 
-  # Cluster C: tag + deprecate. Each operates on a constant placeholder
+  # Cluster C: Kumiho probes. Each operates on a constant placeholder
   # kref. They will fail in environments without that kref (the common
   # case), but the parallel-any with the notify sibling still completes.
   - id: cluster_anchor_c
@@ -280,13 +281,43 @@ steps:
         include_conflict_warnings: true
         include_missing_context: true
 
+  - id: kumiho_bundle_update_probe
+    name: "Kumiho bundle update — fail-soft probe"
+    type: kumiho_bundle_update
+    kumiho:
+      project: Construct
+      mode: add_members
+      create_if_missing: false
+      idempotent: true
+      updates:
+        - bundle: "smoke-test-nonexistent-bundle"
+          add:
+            - item_kref: "kref://smoke-test/placeholder-not-real"
+              reason: "smoke-test placeholder"
+
+  - id: kumiho_patch_apply_probe
+    name: "Kumiho patch apply — dry-run fail-soft probe"
+    type: kumiho_patch_apply
+    kumiho:
+      project: Construct
+      patch_kref: "kref://smoke-test/patch-not-real.canon-patch?r=1"
+      dry_run: true
+      approval:
+        required: false
+
   - id: cluster_c_kumiho_writes
     name: "Cluster C — Kumiho memory probes (parallel any)"
     type: parallel
     parallel:
-      steps: [cluster_anchor_c, tag_round_trip, deprecate_round_trip, kumiho_context_probe]
+      steps:
+        - cluster_anchor_c
+        - tag_round_trip
+        - deprecate_round_trip
+        - kumiho_context_probe
+        - kumiho_bundle_update_probe
+        - kumiho_patch_apply_probe
       join: any
-      max_concurrency: 4
+      max_concurrency: 6
 
   # Cluster D: handoff (needs a real source agent_id, will fail soft)
   - id: cluster_anchor_d

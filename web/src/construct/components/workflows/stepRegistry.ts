@@ -258,6 +258,22 @@ export const STEP_TYPES: StepTypeDef[] = [
     searchTags: ['context', 'graph', 'canon', 'bundle', 'kumiho', 'memory'],
   },
   {
+    type: 'kumiho_bundle_update',
+    label: 'Bundle Update',
+    category: 'memory',
+    icon: GitBranch,
+    description: 'Add, remove, or replace Kumiho bundle members idempotently.',
+    searchTags: ['bundle', 'membership', 'kumiho', 'mutation', 'append'],
+  },
+  {
+    type: 'kumiho_patch_apply',
+    label: 'Patch Apply',
+    category: 'memory',
+    icon: CheckCircle,
+    description: 'Dry-run or apply an approved Kumiho canon patch.',
+    searchTags: ['patch', 'canon', 'apply', 'approval', 'kumiho', 'mutation'],
+  },
+  {
     type: 'tag',
     label: 'Tag',
     category: 'memory',

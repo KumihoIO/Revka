@@ -194,7 +194,7 @@ export interface TaskDefinition {
   resolve_fields?: string[];
   resolve_metadata_source?: string;
   resolve_fail_if_missing?: boolean;
-  // --- Kumiho Context: graph-augmented context compiler ---
+  // --- Kumiho steps: context compiler and mutation steps ---
   kumiho_config?: Record<string, unknown>;
   kumiho_project?: string;
   kumiho_mode?: string;
@@ -218,6 +218,37 @@ export interface TaskDefinition {
   kumiho_output_include_edge_map?: boolean;
   kumiho_output_include_conflict_warnings?: boolean;
   kumiho_output_include_missing_context?: boolean;
+  kumiho_create_if_missing?: boolean;
+  kumiho_idempotent?: boolean;
+  kumiho_fail_if_missing_bundle?: boolean;
+  kumiho_fail_if_missing_item?: boolean;
+  kumiho_allow_protected?: boolean;
+  kumiho_updates?: unknown[];
+  kumiho_patch_kref?: string;
+  kumiho_dry_run?: boolean;
+  kumiho_allow_auto_apply?: boolean;
+  kumiho_approval_required?: boolean;
+  kumiho_approval_approved?: boolean | string;
+  kumiho_approval_approved_by?: string;
+  kumiho_approval_note?: string;
+  kumiho_apply_create_revisions?: boolean;
+  kumiho_apply_create_edges?: boolean;
+  kumiho_apply_update_tags?: boolean;
+  kumiho_apply_untag_previous_current?: boolean;
+  kumiho_apply_update_bundles?: boolean;
+  kumiho_apply_save_apply_report?: boolean;
+  kumiho_new_revision_tags?: string[];
+  kumiho_patch_tags_remove?: string[];
+  kumiho_patch_tags_add?: string[];
+  kumiho_pending_patch_bundle?: string;
+  kumiho_applied_patch_bundle?: string;
+  kumiho_current_state_bundle?: string;
+  kumiho_active_storyline_bundle?: string;
+  kumiho_active_foreshadow_bundle?: string;
+  kumiho_timeline_bundle?: string;
+  kumiho_require_evidence_locator?: boolean;
+  kumiho_source_episode_kref?: string;
+  kumiho_source_context_pack_kref?: string;
   // --- ForEach: sequential loop ---
   for_each_steps?: string[];
   for_each_range?: string;
@@ -511,7 +542,7 @@ export interface TaskNodeData {
   resolveFields: string[];
   resolveMetadataSource: string;
   resolveFailIfMissing: boolean;
-  // Kumiho context
+  // Kumiho steps
   kumihoConfig: Record<string, unknown>;
   kumihoProject: string;
   kumihoMode: string;
@@ -535,6 +566,37 @@ export interface TaskNodeData {
   kumihoOutputIncludeEdgeMap: boolean;
   kumihoOutputIncludeConflictWarnings: boolean;
   kumihoOutputIncludeMissingContext: boolean;
+  kumihoCreateIfMissing: boolean;
+  kumihoIdempotent: boolean;
+  kumihoFailIfMissingBundle: boolean;
+  kumihoFailIfMissingItem: boolean;
+  kumihoAllowProtected: boolean;
+  kumihoUpdates: unknown[];
+  kumihoPatchKref: string;
+  kumihoDryRun: boolean;
+  kumihoAllowAutoApply: boolean;
+  kumihoApprovalRequired: boolean;
+  kumihoApprovalApproved: boolean | string;
+  kumihoApprovalApprovedBy: string;
+  kumihoApprovalNote: string;
+  kumihoApplyCreateRevisions: boolean;
+  kumihoApplyCreateEdges: boolean;
+  kumihoApplyUpdateTags: boolean;
+  kumihoApplyUntagPreviousCurrent: boolean;
+  kumihoApplyUpdateBundles: boolean;
+  kumihoApplySaveApplyReport: boolean;
+  kumihoNewRevisionTags: string[];
+  kumihoPatchTagsRemove: string[];
+  kumihoPatchTagsAdd: string[];
+  kumihoPendingPatchBundle: string;
+  kumihoAppliedPatchBundle: string;
+  kumihoCurrentStateBundle: string;
+  kumihoActiveStorylineBundle: string;
+  kumihoActiveForeshadowBundle: string;
+  kumihoTimelineBundle: string;
+  kumihoRequireEvidenceLocator: boolean;
+  kumihoSourceEpisodeKref: string;
+  kumihoSourceContextPackKref: string;
   // ForEach
   forEachSteps: string[];
   forEachRange: string;
@@ -682,6 +744,8 @@ export const ACTION_TO_TYPE: Record<string, string> = {
   supervisor: 'supervisor', map_reduce: 'map_reduce', handoff: 'handoff',
   a2a: 'a2a', resolve: 'resolve', for_each: 'for_each',
   kumiho_context: 'kumiho_context',
+  kumiho_bundle_update: 'kumiho_bundle_update',
+  kumiho_patch_apply: 'kumiho_patch_apply',
   human_approval: 'human_approval',
   // New step types — see operator_mcp/workflow/schema.py
   python: 'python', compute: 'compute', email: 'email',
@@ -1157,6 +1221,57 @@ function parseStep(s: YAMLObj): TaskDefinition | null {
       t.kumiho_output_include_edge_map = asBool(output.include_edge_map);
       t.kumiho_output_include_conflict_warnings = asBool(output.include_conflict_warnings);
       t.kumiho_output_include_missing_context = asBool(output.include_missing_context);
+    }
+    t.kumiho_create_if_missing = asBool(kumiho.create_if_missing);
+    t.kumiho_idempotent = asBool(kumiho.idempotent);
+    t.kumiho_fail_if_missing_bundle = asBool(kumiho.fail_if_missing_bundle);
+    t.kumiho_fail_if_missing_item = asBool(kumiho.fail_if_missing_item);
+    t.kumiho_allow_protected = asBool(kumiho.allow_protected);
+    if (Array.isArray(kumiho.updates)) t.kumiho_updates = kumiho.updates;
+    t.kumiho_patch_kref = asStr(kumiho.patch_kref);
+    t.kumiho_dry_run = asBool(kumiho.dry_run);
+    t.kumiho_allow_auto_apply = asBool(kumiho.allow_auto_apply);
+    const approval = getObj(kumiho, 'approval');
+    if (approval) {
+      t.kumiho_approval_required = asBool(approval.required);
+      t.kumiho_approval_approved = typeof approval.approved === 'boolean'
+        ? approval.approved
+        : asStr(approval.approved);
+      t.kumiho_approval_approved_by = asStr(approval.approved_by);
+      t.kumiho_approval_note = asStr(approval.approval_note);
+    }
+    const apply = getObj(kumiho, 'apply');
+    if (apply) {
+      t.kumiho_apply_create_revisions = asBool(apply.create_revisions);
+      t.kumiho_apply_create_edges = asBool(apply.create_edges);
+      t.kumiho_apply_update_tags = asBool(apply.update_tags);
+      t.kumiho_apply_untag_previous_current = asBool(apply.untag_previous_current);
+      t.kumiho_apply_update_bundles = asBool(apply.update_bundles);
+      t.kumiho_apply_save_apply_report = asBool(apply.save_apply_report);
+    }
+    const tagPolicy = getObj(kumiho, 'tag_policy');
+    if (tagPolicy) {
+      t.kumiho_new_revision_tags = asStrArr(tagPolicy.new_revision_tags);
+      const patchTags = getObj(tagPolicy, 'patch_tags');
+      if (patchTags) {
+        t.kumiho_patch_tags_remove = asStrArr(patchTags.remove);
+        t.kumiho_patch_tags_add = asStrArr(patchTags.add);
+      }
+    }
+    const bundlePolicy = getObj(kumiho, 'bundle_policy');
+    if (bundlePolicy) {
+      t.kumiho_pending_patch_bundle = asStr(bundlePolicy.pending_patch_bundle);
+      t.kumiho_applied_patch_bundle = asStr(bundlePolicy.applied_patch_bundle);
+      t.kumiho_current_state_bundle = asStr(bundlePolicy.current_state_bundle);
+      t.kumiho_active_storyline_bundle = asStr(bundlePolicy.active_storyline_bundle);
+      t.kumiho_active_foreshadow_bundle = asStr(bundlePolicy.active_foreshadow_bundle);
+      t.kumiho_timeline_bundle = asStr(bundlePolicy.timeline_bundle);
+    }
+    const evidence = getObj(kumiho, 'evidence');
+    if (evidence) {
+      t.kumiho_require_evidence_locator = asBool(evidence.require_evidence_locator);
+      t.kumiho_source_episode_kref = asStr(evidence.source_episode_kref);
+      t.kumiho_source_context_pack_kref = asStr(evidence.source_context_pack_kref);
     }
   }
 
@@ -1643,7 +1758,9 @@ export function tasksToFlow(tasks: TaskDefinition[]): { nodes: Node<TaskNodeData
       resolveFailIfMissing: task.resolve_fail_if_missing ?? true,
       kumihoConfig: task.kumiho_config ?? {},
       kumihoProject: task.kumiho_project ?? '',
-      kumihoMode: task.kumiho_mode ?? 'graph_augmented_context',
+      kumihoMode: task.kumiho_mode ?? (
+        task.type === 'kumiho_bundle_update' ? 'add_members' : 'graph_augmented_context'
+      ),
       kumihoSeedBundles: task.kumiho_seed_bundles ?? [],
       kumihoSeedKrefs: task.kumiho_seed_krefs ?? [],
       kumihoSeedQueries: task.kumiho_seed_queries ?? [],
@@ -1664,6 +1781,37 @@ export function tasksToFlow(tasks: TaskDefinition[]): { nodes: Node<TaskNodeData
       kumihoOutputIncludeEdgeMap: task.kumiho_output_include_edge_map ?? true,
       kumihoOutputIncludeConflictWarnings: task.kumiho_output_include_conflict_warnings ?? true,
       kumihoOutputIncludeMissingContext: task.kumiho_output_include_missing_context ?? true,
+      kumihoCreateIfMissing: task.kumiho_create_if_missing ?? false,
+      kumihoIdempotent: task.kumiho_idempotent ?? true,
+      kumihoFailIfMissingBundle: task.kumiho_fail_if_missing_bundle ?? true,
+      kumihoFailIfMissingItem: task.kumiho_fail_if_missing_item ?? true,
+      kumihoAllowProtected: task.kumiho_allow_protected ?? false,
+      kumihoUpdates: task.kumiho_updates ?? [],
+      kumihoPatchKref: task.kumiho_patch_kref ?? '',
+      kumihoDryRun: task.kumiho_dry_run ?? true,
+      kumihoAllowAutoApply: task.kumiho_allow_auto_apply ?? false,
+      kumihoApprovalRequired: task.kumiho_approval_required ?? true,
+      kumihoApprovalApproved: task.kumiho_approval_approved ?? false,
+      kumihoApprovalApprovedBy: task.kumiho_approval_approved_by ?? '',
+      kumihoApprovalNote: task.kumiho_approval_note ?? '',
+      kumihoApplyCreateRevisions: task.kumiho_apply_create_revisions ?? true,
+      kumihoApplyCreateEdges: task.kumiho_apply_create_edges ?? true,
+      kumihoApplyUpdateTags: task.kumiho_apply_update_tags ?? true,
+      kumihoApplyUntagPreviousCurrent: task.kumiho_apply_untag_previous_current ?? true,
+      kumihoApplyUpdateBundles: task.kumiho_apply_update_bundles ?? true,
+      kumihoApplySaveApplyReport: task.kumiho_apply_save_apply_report ?? true,
+      kumihoNewRevisionTags: task.kumiho_new_revision_tags ?? ['current', 'approved'],
+      kumihoPatchTagsRemove: task.kumiho_patch_tags_remove ?? ['candidate'],
+      kumihoPatchTagsAdd: task.kumiho_patch_tags_add ?? ['applied'],
+      kumihoPendingPatchBundle: task.kumiho_pending_patch_bundle ?? '',
+      kumihoAppliedPatchBundle: task.kumiho_applied_patch_bundle ?? '',
+      kumihoCurrentStateBundle: task.kumiho_current_state_bundle ?? '',
+      kumihoActiveStorylineBundle: task.kumiho_active_storyline_bundle ?? '',
+      kumihoActiveForeshadowBundle: task.kumiho_active_foreshadow_bundle ?? '',
+      kumihoTimelineBundle: task.kumiho_timeline_bundle ?? '',
+      kumihoRequireEvidenceLocator: task.kumiho_require_evidence_locator ?? true,
+      kumihoSourceEpisodeKref: task.kumiho_source_episode_kref ?? '',
+      kumihoSourceContextPackKref: task.kumiho_source_context_pack_kref ?? '',
       forEachSteps: task.for_each_steps || [],
       forEachRange: task.for_each_range || '',
       forEachItems: task.for_each_items || [],
@@ -1942,10 +2090,72 @@ export function tasksToFlow(tasks: TaskDefinition[]): { nodes: Node<TaskNodeData
   return { nodes, edges };
 }
 
-function composeKumihoConfigFromNode(data: TaskNodeData): Record<string, unknown> {
+function composeKumihoConfigFromNode(data: TaskNodeData, stepType = 'kumiho_context'): Record<string, unknown> {
   const base = isObj(data.kumihoConfig as YAMLValue)
     ? cloneYamlObject(data.kumihoConfig as YAMLValue) ?? {}
     : {};
+  if (stepType === 'kumiho_bundle_update') {
+    return {
+      ...base,
+      project: data.kumihoProject || '',
+      mode: data.kumihoMode || 'add_members',
+      create_if_missing: data.kumihoCreateIfMissing ?? false,
+      idempotent: data.kumihoIdempotent ?? true,
+      fail_if_missing_bundle: data.kumihoFailIfMissingBundle ?? true,
+      fail_if_missing_item: data.kumihoFailIfMissingItem ?? true,
+      allow_protected: data.kumihoAllowProtected ?? false,
+      updates: data.kumihoUpdates || [],
+    };
+  }
+  if (stepType === 'kumiho_patch_apply') {
+    const approval = isObj(base.approval as YAMLValue) ? { ...(base.approval as Record<string, unknown>) } : {};
+    const apply = isObj(base.apply as YAMLValue) ? { ...(base.apply as Record<string, unknown>) } : {};
+    const tagPolicy = isObj(base.tag_policy as YAMLValue) ? { ...(base.tag_policy as Record<string, unknown>) } : {};
+    const patchTags = isObj(tagPolicy.patch_tags as YAMLValue) ? { ...(tagPolicy.patch_tags as Record<string, unknown>) } : {};
+    const bundlePolicy = isObj(base.bundle_policy as YAMLValue) ? { ...(base.bundle_policy as Record<string, unknown>) } : {};
+    const evidence = isObj(base.evidence as YAMLValue) ? { ...(base.evidence as Record<string, unknown>) } : {};
+
+    approval.required = data.kumihoApprovalRequired ?? true;
+    approval.approved = data.kumihoApprovalApproved ?? false;
+    approval.approved_by = data.kumihoApprovalApprovedBy || '';
+    approval.approval_note = data.kumihoApprovalNote || '';
+
+    apply.create_revisions = data.kumihoApplyCreateRevisions ?? true;
+    apply.create_edges = data.kumihoApplyCreateEdges ?? true;
+    apply.update_tags = data.kumihoApplyUpdateTags ?? true;
+    apply.untag_previous_current = data.kumihoApplyUntagPreviousCurrent ?? true;
+    apply.update_bundles = data.kumihoApplyUpdateBundles ?? true;
+    apply.save_apply_report = data.kumihoApplySaveApplyReport ?? true;
+
+    tagPolicy.new_revision_tags = data.kumihoNewRevisionTags || ['current', 'approved'];
+    patchTags.remove = data.kumihoPatchTagsRemove || ['candidate'];
+    patchTags.add = data.kumihoPatchTagsAdd || ['applied'];
+    tagPolicy.patch_tags = patchTags;
+
+    bundlePolicy.pending_patch_bundle = data.kumihoPendingPatchBundle || '';
+    bundlePolicy.applied_patch_bundle = data.kumihoAppliedPatchBundle || '';
+    bundlePolicy.current_state_bundle = data.kumihoCurrentStateBundle || '';
+    bundlePolicy.active_storyline_bundle = data.kumihoActiveStorylineBundle || '';
+    bundlePolicy.active_foreshadow_bundle = data.kumihoActiveForeshadowBundle || '';
+    bundlePolicy.timeline_bundle = data.kumihoTimelineBundle || '';
+
+    evidence.require_evidence_locator = data.kumihoRequireEvidenceLocator ?? true;
+    evidence.source_episode_kref = data.kumihoSourceEpisodeKref || '';
+    evidence.source_context_pack_kref = data.kumihoSourceContextPackKref || '';
+
+    return {
+      ...base,
+      project: data.kumihoProject || '',
+      patch_kref: data.kumihoPatchKref || '',
+      dry_run: data.kumihoDryRun ?? true,
+      allow_auto_apply: data.kumihoAllowAutoApply ?? false,
+      approval,
+      apply,
+      tag_policy: tagPolicy,
+      bundle_policy: bundlePolicy,
+      evidence,
+    };
+  }
   const seed = isObj(base.seed as YAMLValue) ? { ...(base.seed as Record<string, unknown>) } : {};
   const traversal = isObj(base.traversal as YAMLValue) ? { ...(base.traversal as Record<string, unknown>) } : {};
   const filters = isObj(base.filters as YAMLValue) ? { ...(base.filters as Record<string, unknown>) } : {};
@@ -2603,8 +2813,8 @@ export function flowToTasks(nodes: Node<TaskNodeData>[], edges: Edge[]): TaskDef
       }
       if (d.resolveFailIfMissing === false) base.resolve_fail_if_missing = false;
     }
-    if (st === 'kumiho_context') {
-      base.kumiho_config = composeKumihoConfigFromNode(d);
+    if (st === 'kumiho_context' || st === 'kumiho_bundle_update' || st === 'kumiho_patch_apply') {
+      base.kumiho_config = composeKumihoConfigFromNode(d, st);
       base.kumiho_project = d.kumihoProject;
       base.kumiho_mode = d.kumihoMode;
       base.kumiho_seed_bundles = d.kumihoSeedBundles;
@@ -2627,6 +2837,37 @@ export function flowToTasks(nodes: Node<TaskNodeData>[], edges: Edge[]): TaskDef
       base.kumiho_output_include_edge_map = d.kumihoOutputIncludeEdgeMap;
       base.kumiho_output_include_conflict_warnings = d.kumihoOutputIncludeConflictWarnings;
       base.kumiho_output_include_missing_context = d.kumihoOutputIncludeMissingContext;
+      base.kumiho_create_if_missing = d.kumihoCreateIfMissing;
+      base.kumiho_idempotent = d.kumihoIdempotent;
+      base.kumiho_fail_if_missing_bundle = d.kumihoFailIfMissingBundle;
+      base.kumiho_fail_if_missing_item = d.kumihoFailIfMissingItem;
+      base.kumiho_allow_protected = d.kumihoAllowProtected;
+      base.kumiho_updates = d.kumihoUpdates;
+      base.kumiho_patch_kref = d.kumihoPatchKref;
+      base.kumiho_dry_run = d.kumihoDryRun;
+      base.kumiho_allow_auto_apply = d.kumihoAllowAutoApply;
+      base.kumiho_approval_required = d.kumihoApprovalRequired;
+      base.kumiho_approval_approved = d.kumihoApprovalApproved;
+      base.kumiho_approval_approved_by = d.kumihoApprovalApprovedBy;
+      base.kumiho_approval_note = d.kumihoApprovalNote;
+      base.kumiho_apply_create_revisions = d.kumihoApplyCreateRevisions;
+      base.kumiho_apply_create_edges = d.kumihoApplyCreateEdges;
+      base.kumiho_apply_update_tags = d.kumihoApplyUpdateTags;
+      base.kumiho_apply_untag_previous_current = d.kumihoApplyUntagPreviousCurrent;
+      base.kumiho_apply_update_bundles = d.kumihoApplyUpdateBundles;
+      base.kumiho_apply_save_apply_report = d.kumihoApplySaveApplyReport;
+      base.kumiho_new_revision_tags = d.kumihoNewRevisionTags;
+      base.kumiho_patch_tags_remove = d.kumihoPatchTagsRemove;
+      base.kumiho_patch_tags_add = d.kumihoPatchTagsAdd;
+      base.kumiho_pending_patch_bundle = d.kumihoPendingPatchBundle;
+      base.kumiho_applied_patch_bundle = d.kumihoAppliedPatchBundle;
+      base.kumiho_current_state_bundle = d.kumihoCurrentStateBundle;
+      base.kumiho_active_storyline_bundle = d.kumihoActiveStorylineBundle;
+      base.kumiho_active_foreshadow_bundle = d.kumihoActiveForeshadowBundle;
+      base.kumiho_timeline_bundle = d.kumihoTimelineBundle;
+      base.kumiho_require_evidence_locator = d.kumihoRequireEvidenceLocator;
+      base.kumiho_source_episode_kref = d.kumihoSourceEpisodeKref;
+      base.kumiho_source_context_pack_kref = d.kumihoSourceContextPackKref;
     }
     if (st === 'for_each') {
       if (d.forEachSteps.length > 0) base.for_each_steps = d.forEachSteps;
@@ -2690,6 +2931,62 @@ export function flowToTasks(nodes: Node<TaskNodeData>[], edges: Edge[]): TaskDef
 
 function composeKumihoConfigFromTask(task: TaskDefinition): Record<string, unknown> {
   const base = task.kumiho_config ? { ...task.kumiho_config } : {};
+  if (task.type === 'kumiho_bundle_update') {
+    return {
+      ...base,
+      project: task.kumiho_project || String(base.project || ''),
+      mode: task.kumiho_mode || String(base.mode || 'add_members'),
+      create_if_missing: task.kumiho_create_if_missing ?? false,
+      idempotent: task.kumiho_idempotent ?? true,
+      fail_if_missing_bundle: task.kumiho_fail_if_missing_bundle ?? true,
+      fail_if_missing_item: task.kumiho_fail_if_missing_item ?? true,
+      allow_protected: task.kumiho_allow_protected ?? false,
+      updates: task.kumiho_updates || [],
+    };
+  }
+  if (task.type === 'kumiho_patch_apply') {
+    const approval = isObj(base.approval as YAMLValue) ? { ...(base.approval as Record<string, unknown>) } : {};
+    const apply = isObj(base.apply as YAMLValue) ? { ...(base.apply as Record<string, unknown>) } : {};
+    const tagPolicy = isObj(base.tag_policy as YAMLValue) ? { ...(base.tag_policy as Record<string, unknown>) } : {};
+    const patchTags = isObj(tagPolicy.patch_tags as YAMLValue) ? { ...(tagPolicy.patch_tags as Record<string, unknown>) } : {};
+    const bundlePolicy = isObj(base.bundle_policy as YAMLValue) ? { ...(base.bundle_policy as Record<string, unknown>) } : {};
+    const evidence = isObj(base.evidence as YAMLValue) ? { ...(base.evidence as Record<string, unknown>) } : {};
+    approval.required = task.kumiho_approval_required ?? true;
+    approval.approved = task.kumiho_approval_approved ?? false;
+    approval.approved_by = task.kumiho_approval_approved_by || '';
+    approval.approval_note = task.kumiho_approval_note || '';
+    apply.create_revisions = task.kumiho_apply_create_revisions ?? true;
+    apply.create_edges = task.kumiho_apply_create_edges ?? true;
+    apply.update_tags = task.kumiho_apply_update_tags ?? true;
+    apply.untag_previous_current = task.kumiho_apply_untag_previous_current ?? true;
+    apply.update_bundles = task.kumiho_apply_update_bundles ?? true;
+    apply.save_apply_report = task.kumiho_apply_save_apply_report ?? true;
+    tagPolicy.new_revision_tags = task.kumiho_new_revision_tags || ['current', 'approved'];
+    patchTags.remove = task.kumiho_patch_tags_remove || ['candidate'];
+    patchTags.add = task.kumiho_patch_tags_add || ['applied'];
+    tagPolicy.patch_tags = patchTags;
+    bundlePolicy.pending_patch_bundle = task.kumiho_pending_patch_bundle || '';
+    bundlePolicy.applied_patch_bundle = task.kumiho_applied_patch_bundle || '';
+    bundlePolicy.current_state_bundle = task.kumiho_current_state_bundle || '';
+    bundlePolicy.active_storyline_bundle = task.kumiho_active_storyline_bundle || '';
+    bundlePolicy.active_foreshadow_bundle = task.kumiho_active_foreshadow_bundle || '';
+    bundlePolicy.timeline_bundle = task.kumiho_timeline_bundle || '';
+    evidence.require_evidence_locator = task.kumiho_require_evidence_locator ?? true;
+    evidence.source_episode_kref = task.kumiho_source_episode_kref || '';
+    evidence.source_context_pack_kref = task.kumiho_source_context_pack_kref || '';
+    return {
+      ...base,
+      project: task.kumiho_project || String(base.project || ''),
+      patch_kref: task.kumiho_patch_kref || String(base.patch_kref || ''),
+      dry_run: task.kumiho_dry_run ?? true,
+      allow_auto_apply: task.kumiho_allow_auto_apply ?? false,
+      approval,
+      apply,
+      tag_policy: tagPolicy,
+      bundle_policy: bundlePolicy,
+      evidence,
+    };
+  }
   return {
     ...base,
     project: task.kumiho_project || String(base.project || ''),
@@ -3179,7 +3476,7 @@ export function tasksToYaml(tasks: TaskDefinition[], meta?: Partial<WorkflowMeta
       }
       lines.push(`      fail_if_missing: ${task.resolve_fail_if_missing !== false ? 'true' : 'false'}`);
     }
-    if (stepType === 'kumiho_context') {
+    if (stepType === 'kumiho_context' || stepType === 'kumiho_bundle_update' || stepType === 'kumiho_patch_apply') {
       lines.push(`    kumiho:`);
       pushYamlObject(lines, 6, composeKumihoConfigFromTask(task));
     }

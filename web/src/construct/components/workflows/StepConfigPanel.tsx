@@ -281,6 +281,9 @@ export default function StepConfigPanel({
   const kumihoIncludeKindsDraftState = useCommaListDraft(data.kumihoFiltersIncludeKinds || [], node.id);
   const kumihoExcludeTagsDraftState = useCommaListDraft(data.kumihoFiltersExcludeTags || [], node.id);
   const kumihoTagPreferenceDraftState = useCommaListDraft(data.kumihoLockTagPreference || [], node.id);
+  const kumihoNewRevisionTagsDraftState = useCommaListDraft(data.kumihoNewRevisionTags || [], node.id);
+  const kumihoPatchTagsRemoveDraftState = useCommaListDraft(data.kumihoPatchTagsRemove || [], node.id);
+  const kumihoPatchTagsAddDraftState = useCommaListDraft(data.kumihoPatchTagsAdd || [], node.id);
 
   const handleNameChange = useCallback(
     (nextName: string) => {
@@ -513,6 +516,8 @@ export default function StepConfigPanel({
   const skillSection = stepType !== 'conditional' &&
     stepType !== 'compute' &&
     stepType !== 'kumiho_context' &&
+    stepType !== 'kumiho_bundle_update' &&
+    stepType !== 'kumiho_patch_apply' &&
     stepType !== 'human_input' &&
     stepType !== 'notify' &&
     stepType !== 'tag' &&
@@ -3416,6 +3421,280 @@ export default function StepConfigPanel({
             </div>
           )}
 
+          {/* ── Kumiho Bundle Update ── */}
+          {stepType === 'kumiho_bundle_update' && (
+            <div style={sectionShellStyle}>
+              <div style={sectionTitleStyle}>Kumiho Bundle Update Config</div>
+              <div>
+                <label style={labelStyle}>Project</label>
+                <ExpressionTextarea
+                  value={data.kumihoProject || ''}
+                  onChange={(next) => onUpdate(node.id, { kumihoProject: next })}
+                  placeholder="ManghanDev"
+                  rows={1}
+                  style={monoInputStyle}
+                  stepIds={dagStepIds}
+                  workflowInputs={dagInputs}
+                  triggerFields={dagTriggerFields}
+                />
+              </div>
+              <div>
+                <label style={labelStyle}>Mode</label>
+                <select
+                  value={data.kumihoMode || 'add_members'}
+                  onChange={(e) => onUpdate(node.id, { kumihoMode: e.target.value })}
+                  style={inputStyle}
+                >
+                  <option value="add_members">add_members</option>
+                  <option value="remove_members">remove_members</option>
+                  <option value="replace_members">replace_members</option>
+                  <option value="mixed">mixed</option>
+                </select>
+              </div>
+              <Checkbox
+                checked={data.kumihoCreateIfMissing ?? false}
+                onChange={(v) => onUpdate(node.id, { kumihoCreateIfMissing: v })}
+                label="Create missing bundles"
+              />
+              <Checkbox
+                checked={data.kumihoIdempotent ?? true}
+                onChange={(v) => onUpdate(node.id, { kumihoIdempotent: v })}
+                label="Idempotent"
+              />
+              <Checkbox
+                checked={data.kumihoFailIfMissingBundle ?? true}
+                onChange={(v) => onUpdate(node.id, { kumihoFailIfMissingBundle: v })}
+                label="Fail if bundle missing"
+              />
+              <Checkbox
+                checked={data.kumihoFailIfMissingItem ?? true}
+                onChange={(v) => onUpdate(node.id, { kumihoFailIfMissingItem: v })}
+                label="Fail if item missing"
+              />
+              <Checkbox
+                checked={data.kumihoAllowProtected ?? false}
+                onChange={(v) => onUpdate(node.id, { kumihoAllowProtected: v })}
+                label="Allow protected bundles"
+              />
+              <div>
+                <label style={labelStyle}>Updates JSON</label>
+                <textarea
+                  key={`kumiho-updates-${node.id}`}
+                  defaultValue={JSON.stringify(data.kumihoUpdates || [], null, 2)}
+                  onBlur={(e) => {
+                    try {
+                      const parsed = JSON.parse(e.target.value || '[]');
+                      onUpdate(node.id, { kumihoUpdates: Array.isArray(parsed) ? parsed : [] });
+                    } catch {
+                      // Keep the previous structured value; YAML editor remains available for advanced edits.
+                    }
+                  }}
+                  rows={8}
+                  style={monoInputStyle}
+                />
+                <p style={helperStyle()}>Array of bundle update objects. Advanced YAML fields are preserved through kumiho_config.</p>
+              </div>
+            </div>
+          )}
+
+          {/* ── Kumiho Patch Apply ── */}
+          {stepType === 'kumiho_patch_apply' && (
+            <div style={sectionShellStyle}>
+              <div style={sectionTitleStyle}>Kumiho Patch Apply Config</div>
+              <div>
+                <label style={labelStyle}>Project</label>
+                <ExpressionTextarea
+                  value={data.kumihoProject || ''}
+                  onChange={(next) => onUpdate(node.id, { kumihoProject: next })}
+                  placeholder="ManghanDev"
+                  rows={1}
+                  style={monoInputStyle}
+                  stepIds={dagStepIds}
+                  workflowInputs={dagInputs}
+                  triggerFields={dagTriggerFields}
+                />
+              </div>
+              <div>
+                <label style={labelStyle}>Patch Kref</label>
+                <ExpressionTextarea
+                  value={data.kumihoPatchKref || ''}
+                  onChange={(next) => onUpdate(node.id, { kumihoPatchKref: next })}
+                  placeholder="${canon-patch-loader.output_data.kref}"
+                  rows={1}
+                  style={monoInputStyle}
+                  stepIds={dagStepIds}
+                  workflowInputs={dagInputs}
+                  triggerFields={dagTriggerFields}
+                />
+              </div>
+              <Checkbox
+                checked={data.kumihoDryRun ?? true}
+                onChange={(v) => onUpdate(node.id, { kumihoDryRun: v })}
+                label="Dry run"
+              />
+              <Checkbox
+                checked={data.kumihoApprovalRequired ?? true}
+                onChange={(v) => onUpdate(node.id, { kumihoApprovalRequired: v })}
+                label="Approval required"
+              />
+              <div>
+                <label style={labelStyle}>Approved Expression</label>
+                <ExpressionTextarea
+                  value={String(data.kumihoApprovalApproved ?? false)}
+                  onChange={(next) => onUpdate(node.id, { kumihoApprovalApproved: next })}
+                  placeholder="${patch-approval.output_data.approved}"
+                  rows={1}
+                  style={monoInputStyle}
+                  stepIds={dagStepIds}
+                  workflowInputs={dagInputs}
+                  triggerFields={dagTriggerFields}
+                />
+              </div>
+              <div>
+                <label style={labelStyle}>Approved By</label>
+                <ExpressionTextarea
+                  value={data.kumihoApprovalApprovedBy || ''}
+                  onChange={(next) => onUpdate(node.id, { kumihoApprovalApprovedBy: next })}
+                  placeholder="${patch-approval.output_data.approved_by}"
+                  rows={1}
+                  style={monoInputStyle}
+                  stepIds={dagStepIds}
+                  workflowInputs={dagInputs}
+                  triggerFields={dagTriggerFields}
+                />
+              </div>
+              <div>
+                <label style={labelStyle}>Approval Note</label>
+                <ExpressionTextarea
+                  value={data.kumihoApprovalNote || ''}
+                  onChange={(next) => onUpdate(node.id, { kumihoApprovalNote: next })}
+                  placeholder="${patch-approval.output_data.note}"
+                  rows={2}
+                  style={monoInputStyle}
+                  stepIds={dagStepIds}
+                  workflowInputs={dagInputs}
+                  triggerFields={dagTriggerFields}
+                />
+              </div>
+              <Checkbox
+                checked={data.kumihoApplyCreateRevisions ?? true}
+                onChange={(v) => onUpdate(node.id, { kumihoApplyCreateRevisions: v })}
+                label="Create revisions"
+              />
+              <Checkbox
+                checked={data.kumihoApplyCreateEdges ?? true}
+                onChange={(v) => onUpdate(node.id, { kumihoApplyCreateEdges: v })}
+                label="Create edges"
+              />
+              <Checkbox
+                checked={data.kumihoApplyUpdateTags ?? true}
+                onChange={(v) => onUpdate(node.id, { kumihoApplyUpdateTags: v })}
+                label="Update tags"
+              />
+              <Checkbox
+                checked={data.kumihoApplyUntagPreviousCurrent ?? true}
+                onChange={(v) => onUpdate(node.id, { kumihoApplyUntagPreviousCurrent: v })}
+                label="Untag previous current"
+              />
+              <Checkbox
+                checked={data.kumihoApplyUpdateBundles ?? true}
+                onChange={(v) => onUpdate(node.id, { kumihoApplyUpdateBundles: v })}
+                label="Update bundles"
+              />
+              <Checkbox
+                checked={data.kumihoApplySaveApplyReport ?? true}
+                onChange={(v) => onUpdate(node.id, { kumihoApplySaveApplyReport: v })}
+                label="Save apply report"
+              />
+              <div>
+                <label style={labelStyle}>New Revision Tags</label>
+                <input
+                  type="text"
+                  value={kumihoNewRevisionTagsDraftState.draft}
+                  onFocus={kumihoNewRevisionTagsDraftState.startEditing}
+                  onChange={(e) => kumihoNewRevisionTagsDraftState.setDraft(e.target.value)}
+                  onBlur={() => onUpdate(node.id, { kumihoNewRevisionTags: kumihoNewRevisionTagsDraftState.commit() })}
+                  placeholder="current, approved"
+                  style={monoInputStyle}
+                />
+              </div>
+              <div>
+                <label style={labelStyle}>Patch Tags Remove</label>
+                <input
+                  type="text"
+                  value={kumihoPatchTagsRemoveDraftState.draft}
+                  onFocus={kumihoPatchTagsRemoveDraftState.startEditing}
+                  onChange={(e) => kumihoPatchTagsRemoveDraftState.setDraft(e.target.value)}
+                  onBlur={() => onUpdate(node.id, { kumihoPatchTagsRemove: kumihoPatchTagsRemoveDraftState.commit() })}
+                  placeholder="candidate"
+                  style={monoInputStyle}
+                />
+              </div>
+              <div>
+                <label style={labelStyle}>Patch Tags Add</label>
+                <input
+                  type="text"
+                  value={kumihoPatchTagsAddDraftState.draft}
+                  onFocus={kumihoPatchTagsAddDraftState.startEditing}
+                  onChange={(e) => kumihoPatchTagsAddDraftState.setDraft(e.target.value)}
+                  onBlur={() => onUpdate(node.id, { kumihoPatchTagsAdd: kumihoPatchTagsAddDraftState.commit() })}
+                  placeholder="applied"
+                  style={monoInputStyle}
+                />
+              </div>
+              {([
+                ['Pending Patch Bundle', 'kumihoPendingPatchBundle', 'manghan-pending-canon-patches'],
+                ['Applied Patch Bundle', 'kumihoAppliedPatchBundle', 'manghan-applied-canon-patches'],
+                ['Current State Bundle', 'kumihoCurrentStateBundle', 'manghan-current-character-states'],
+                ['Active Storyline Bundle', 'kumihoActiveStorylineBundle', 'manghan-active-storylines'],
+                ['Active Foreshadow Bundle', 'kumihoActiveForeshadowBundle', 'manghan-active-foreshadow'],
+                ['Timeline Bundle', 'kumihoTimelineBundle', 'manghan-timeline-events'],
+              ] as Array<[string, keyof TaskNodeData, string]>).map(([label, key, placeholder]) => (
+                <div key={String(key)}>
+                  <label style={labelStyle}>{label}</label>
+                  <input
+                    type="text"
+                    value={String(data[key] || '')}
+                    onChange={(e) => onUpdate(node.id, { [key]: e.target.value } as Partial<TaskNodeData>)}
+                    placeholder={placeholder}
+                    style={monoInputStyle}
+                  />
+                </div>
+              ))}
+              <Checkbox
+                checked={data.kumihoRequireEvidenceLocator ?? true}
+                onChange={(v) => onUpdate(node.id, { kumihoRequireEvidenceLocator: v })}
+                label="Require evidence_locator"
+              />
+              <div>
+                <label style={labelStyle}>Source Episode Kref</label>
+                <ExpressionTextarea
+                  value={data.kumihoSourceEpisodeKref || ''}
+                  onChange={(next) => onUpdate(node.id, { kumihoSourceEpisodeKref: next })}
+                  placeholder="${episode-loader.output_data.kref}"
+                  rows={1}
+                  style={monoInputStyle}
+                  stepIds={dagStepIds}
+                  workflowInputs={dagInputs}
+                  triggerFields={dagTriggerFields}
+                />
+              </div>
+              <div>
+                <label style={labelStyle}>Source Context Pack Kref</label>
+                <ExpressionTextarea
+                  value={data.kumihoSourceContextPackKref || ''}
+                  onChange={(next) => onUpdate(node.id, { kumihoSourceContextPackKref: next })}
+                  placeholder="${context-pack-loader.output_data.kref}"
+                  rows={1}
+                  style={monoInputStyle}
+                  stepIds={dagStepIds}
+                  workflowInputs={dagInputs}
+                  triggerFields={dagTriggerFields}
+                />
+              </div>
+            </div>
+          )}
+
           {/* ── MapReduce ── */}
           {stepType === 'map_reduce' && (
             <div style={sectionShellStyle}>
@@ -3736,6 +4015,8 @@ export default function StepConfigPanel({
             stepType !== 'notify' &&
             stepType !== 'tag' &&
             stepType !== 'kumiho_context' &&
+            stepType !== 'kumiho_bundle_update' &&
+            stepType !== 'kumiho_patch_apply' &&
             stepType !== 'deprecate' && (
               <div>
                 <label style={labelStyle}>Agent Hints</label>

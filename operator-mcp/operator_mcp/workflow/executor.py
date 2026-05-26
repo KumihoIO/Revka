@@ -52,6 +52,8 @@ from .schema import (
     HandoffStepConfig,
     ResolveStepConfig,
     KumihoContextConfig,
+    KumihoBundleUpdateConfig,
+    KumihoPatchApplyConfig,
     ForEachStepConfig,
     TagStepConfig,
     DeprecateStepConfig,
@@ -2663,7 +2665,11 @@ def _interpolate_config_value(value: Any, state: WorkflowState) -> Any:
 
 async def _exec_kumiho_context(step: StepDef, state: WorkflowState) -> StepResult:
     """Compile a graph-augmented Kumiho context pack for downstream agents."""
-    cfg: KumihoContextConfig = step.kumiho or KumihoContextConfig()
+    cfg = (
+        step.kumiho
+        if isinstance(step.kumiho, KumihoContextConfig)
+        else KumihoContextConfig.model_validate(step.kumiho or {})
+    )
     raw_config = cfg.model_dump(mode="python")
     resolved_config = _interpolate_config_value(raw_config, state)
 
@@ -2717,6 +2723,125 @@ async def _exec_kumiho_context(step: StepDef, state: WorkflowState) -> StepResul
         output_data=output_data,
         error=str(error.get("message", "")) if isinstance(error, dict) else "",
         action=step.action or "kumiho_context",
+    )
+
+
+async def _exec_kumiho_bundle_update(step: StepDef, state: WorkflowState) -> StepResult:
+    """Safely mutate Kumiho bundle membership."""
+    cfg = (
+        step.kumiho
+        if isinstance(step.kumiho, KumihoBundleUpdateConfig)
+        else KumihoBundleUpdateConfig.model_validate(step.kumiho or {})
+    )
+    raw_config = cfg.model_dump(mode="python", by_alias=True)
+    resolved_config = _interpolate_config_value(raw_config, state)
+    updates = resolved_config.get("updates", []) or []
+    input_data: dict[str, Any] = {
+        "project": resolved_config.get("project", ""),
+        "mode": resolved_config.get("mode", "add_members"),
+        "create_if_missing": bool(resolved_config.get("create_if_missing", False)),
+        "idempotent": bool(resolved_config.get("idempotent", True)),
+        "allow_protected": bool(resolved_config.get("allow_protected", False)),
+        "updates_count": len(updates) if isinstance(updates, list) else 0,
+    }
+    if not str(resolved_config.get("project") or "").strip():
+        return StepResult(
+            step_id=step.id,
+            status="failed",
+            error="kumiho_bundle_update step requires 'kumiho.project'",
+            input_data=input_data,
+            output_data={"success": False},
+            action=step.action or "kumiho_bundle_update",
+        )
+    try:
+        from operator_mcp.workflow.kumiho_mutation import run_kumiho_bundle_update
+
+        output_data = await run_kumiho_bundle_update(resolved_config)
+    except Exception as exc:
+        return StepResult(
+            step_id=step.id,
+            status="failed",
+            error=f"kumiho_bundle_update failed: {exc}",
+            input_data=input_data,
+            output_data={"success": False},
+            action=step.action or "kumiho_bundle_update",
+        )
+    artifact_content = str(output_data.get("artifact_content") or "")
+    errors = output_data.get("errors") if isinstance(output_data.get("errors"), list) else []
+    return StepResult(
+        step_id=step.id,
+        status="completed" if output_data.get("success", False) else "failed",
+        output=artifact_content[:6000],
+        input_data=input_data,
+        output_data=output_data,
+        error="; ".join(str(err.get("message", err)) for err in errors[:3]) if errors else "",
+        action=step.action or "kumiho_bundle_update",
+    )
+
+
+async def _exec_kumiho_patch_apply(step: StepDef, state: WorkflowState) -> StepResult:
+    """Dry-run or apply an approved Kumiho canon patch."""
+    cfg = (
+        step.kumiho
+        if isinstance(step.kumiho, KumihoPatchApplyConfig)
+        else KumihoPatchApplyConfig.model_validate(step.kumiho or {})
+    )
+    raw_config = cfg.model_dump(mode="python")
+    resolved_config = _interpolate_config_value(raw_config, state)
+    input_data: dict[str, Any] = {
+        "project": resolved_config.get("project", ""),
+        "patch_kref": resolved_config.get("patch_kref", ""),
+        "dry_run": bool(resolved_config.get("dry_run", True)),
+        "approval_required": bool(resolved_config.get("approval", {}).get("required", True)),
+        "apply": resolved_config.get("apply", {}),
+        "tag_policy": resolved_config.get("tag_policy", {}),
+        "bundle_policy": resolved_config.get("bundle_policy", {}),
+    }
+    if not str(resolved_config.get("project") or "").strip():
+        return StepResult(
+            step_id=step.id,
+            status="failed",
+            error="kumiho_patch_apply step requires 'kumiho.project'",
+            input_data=input_data,
+            output_data={"success": False, "applied": False},
+            action=step.action or "kumiho_patch_apply",
+        )
+    if not str(resolved_config.get("patch_kref") or "").strip():
+        return StepResult(
+            step_id=step.id,
+            status="failed",
+            error="kumiho_patch_apply step requires 'kumiho.patch_kref'",
+            input_data=input_data,
+            output_data={"success": False, "applied": False},
+            action=step.action or "kumiho_patch_apply",
+        )
+    try:
+        from operator_mcp.workflow.kumiho_mutation import run_kumiho_patch_apply
+
+        output_data = await run_kumiho_patch_apply(
+            resolved_config,
+            workflow=state.workflow_name,
+            step_id=step.id,
+        )
+    except Exception as exc:
+        return StepResult(
+            step_id=step.id,
+            status="failed",
+            error=f"kumiho_patch_apply failed: {exc}",
+            input_data=input_data,
+            output_data={"success": False, "applied": False},
+            action=step.action or "kumiho_patch_apply",
+        )
+    artifact_content = str(output_data.get("artifact_content") or "")
+    errors = output_data.get("errors") if isinstance(output_data.get("errors"), list) else []
+    return StepResult(
+        step_id=step.id,
+        status="completed" if output_data.get("success", False) else "failed",
+        output=artifact_content[:6000],
+        input_data=input_data,
+        output_data=output_data,
+        error="; ".join(str(err.get("message", err)) for err in errors[:3]) if errors else "",
+        action=step.action or "kumiho_patch_apply",
     )
 
 
@@ -4852,12 +4977,27 @@ def dry_run_workflow(wf: WorkflowDef, inputs: dict[str, Any]) -> dict[str, Any]:
 
         elif step.type == StepType.KUMIHO_CONTEXT:
             cfg = step.kumiho
-            if cfg:
+            if isinstance(cfg, KumihoContextConfig):
                 entry["project"] = cfg.project
                 entry["mode"] = cfg.mode
                 entry["seed_bundle_count"] = len(cfg.seed.bundles)
                 entry["max_depth"] = cfg.traversal.max_depth
                 entry["max_items"] = cfg.filters.max_items
+        elif step.type == StepType.KUMIHO_BUNDLE_UPDATE:
+            cfg = step.kumiho
+            if isinstance(cfg, KumihoBundleUpdateConfig):
+                entry["project"] = cfg.project
+                entry["mode"] = cfg.mode
+                entry["updates_count"] = len(cfg.updates)
+                entry["create_if_missing"] = cfg.create_if_missing
+                entry["idempotent"] = cfg.idempotent
+        elif step.type == StepType.KUMIHO_PATCH_APPLY:
+            cfg = step.kumiho
+            if isinstance(cfg, KumihoPatchApplyConfig):
+                entry["project"] = cfg.project
+                entry["patch_kref"] = cfg.patch_kref
+                entry["dry_run"] = cfg.dry_run
+                entry["approval_required"] = cfg.approval.required
 
         if step.retry > 0:
             entry["retry"] = step.retry
@@ -6048,6 +6188,10 @@ async def _dispatch_step(
             return await _exec_resolve(step, state)
         elif step.type == StepType.KUMIHO_CONTEXT:
             return await _exec_kumiho_context(step, state)
+        elif step.type == StepType.KUMIHO_BUNDLE_UPDATE:
+            return await _exec_kumiho_bundle_update(step, state)
+        elif step.type == StepType.KUMIHO_PATCH_APPLY:
+            return await _exec_kumiho_patch_apply(step, state)
         elif step.type == StepType.FOR_EACH:
             return await _exec_for_each(step, state, cwd, wf)
         elif step.type == StepType.TAG:
