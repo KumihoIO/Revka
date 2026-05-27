@@ -51,6 +51,16 @@ class TestLoadSkill:
             content = load_skill("missing")
             assert content is None
 
+    def test_load_kumiho_sdk_skill(self, skills_dir, tmp_path):
+        kumiho_dir = tmp_path / "kumiho_skills"
+        kumiho_dir.mkdir()
+        (kumiho_dir / "kumiho-sdk.md").write_text("# Kumiho SDK\nExact graph operations.")
+
+        with patch("operator_mcp.skill_loader._SKILLS_DIRS", [str(kumiho_dir)]):
+            content = load_skill("kumiho-sdk")
+            assert content is not None
+            assert "Kumiho SDK" in content
+
 
 class TestListSkills:
     def test_list_all(self, skills_dir):
@@ -126,3 +136,13 @@ class TestLoadSkillsForPattern:
              }):
             content = load_skills_for_pattern("team")
             assert "\n\n---\n\n" in content
+
+    def test_kumiho_pattern(self, tmp_path):
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir()
+        (skills_dir / "kumiho-sdk.md").write_text("# Kumiho SDK\nUse exact krefs.")
+
+        with patch("operator_mcp.skill_loader._SKILLS_DIRS", [str(skills_dir)]), \
+             patch("operator_mcp.skill_loader._SKILL_FILES", {"kumiho-sdk": "kumiho-sdk.md"}):
+            content = load_skills_for_pattern("kumiho")
+            assert "Kumiho SDK" in content

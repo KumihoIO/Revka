@@ -264,6 +264,11 @@ Agent types: 'claude' (reasoning, review) or 'codex' (fast coding). \
 Model tiering: opus for deep work, sonnet for balanced, haiku for cheap. \
 Always set cwd when creating agents. Use wait_for_agent to get results.
 
+Kumiho SDK: for kref, project, space, item, revision, artifact, edge, \
+bundle, graph traversal, or Kumiho workflow step work, load `kumiho-sdk` \
+on demand before acting. If Kumiho Skills lookup misses, use \
+allow_legacy_disk_fallback=true.
+
 For complex orchestration patterns, use load_skill to retrieve \
 detailed instructions on demand.";
 

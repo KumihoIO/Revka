@@ -23,6 +23,7 @@ _SKILL_FILES = {
     "operator-committee": "operator-committee.md",
     "operator-handoff": "operator-handoff.md",
     "operator-chat": "operator-chat.md",
+    "kumiho-sdk": "kumiho-sdk.md",
 }
 
 _skill_cache: dict[str, str] = {}
@@ -110,6 +111,8 @@ def load_skills_for_pattern(pattern: str) -> str:
         skill_names = ["operator-handoff"]
     elif pattern == "chat":
         skill_names = ["operator-chat"]
+    elif pattern == "kumiho":
+        skill_names = ["kumiho-sdk"]
     else:
         # Load all for general orchestration
         skill_names = list(_SKILL_FILES.keys())
