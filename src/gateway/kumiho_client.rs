@@ -132,6 +132,17 @@ pub struct KumihoClient {
 // ── Response types (match Kumiho FastAPI JSON) ──────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectResponse {
+    pub name: String,
+    pub description: Option<String>,
+    #[serde(default)]
+    pub deprecated: bool,
+    pub created_at: Option<String>,
+    #[serde(default)]
+    pub metadata: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ItemResponse {
     pub kref: String,
     pub name: String,
@@ -1102,6 +1113,69 @@ impl KumihoClient {
         }
     }
 
+    /// Create a project and return the project-shaped response used by the
+    /// Asset Browser. Kumiho project creation is idempotent in practice; on a
+    /// 409 we return a minimal response so the caller can refresh the project
+    /// list through the normal read path.
+    pub async fn create_project(
+        &self,
+        project_name: &str,
+        description: Option<String>,
+    ) -> Result<ProjectResponse> {
+        let body = CreateProjectBody {
+            name: project_name.to_string(),
+            description,
+        };
+
+        if let Some(result) = self
+            .bridge_json(
+                Method::POST,
+                "/projects",
+                Vec::new(),
+                Some(serde_json::to_value(&body).unwrap_or_default()),
+            )
+            .await
+        {
+            match result {
+                Ok(project) => return Ok(project),
+                Err(KumihoError::Api { status: 409, .. }) => {
+                    return Ok(ProjectResponse {
+                        name: project_name.to_string(),
+                        description: body.description,
+                        deprecated: false,
+                        created_at: None,
+                        metadata: HashMap::new(),
+                    });
+                }
+                Err(e) => return Err(e),
+            }
+        }
+
+        let resp = self
+            .send_no_retry(|| {
+                self.client
+                    .post(self.url("/projects"))
+                    .header("X-Kumiho-Token", &self.service_token)
+                    .json(&body)
+            })
+            .await?;
+
+        if resp.status().as_u16() == 409 {
+            return Ok(ProjectResponse {
+                name: project_name.to_string(),
+                description: body.description,
+                deprecated: false,
+                created_at: None,
+                metadata: HashMap::new(),
+            });
+        }
+
+        let resp = self.check_response(resp).await?;
+        resp.json::<ProjectResponse>()
+            .await
+            .map_err(|e| KumihoError::Decode(e.to_string()))
+    }
+
     // ── Space management ────────────────────────────────────────────
 
     /// Ensure a space exists (idempotent).  Ignores 409 Conflict (already exists).
@@ -1190,6 +1264,73 @@ impl KumihoClient {
             let _ = self.check_response(resp).await?;
             Ok(())
         }
+    }
+
+    /// Create a space under the provided parent and return the created space.
+    /// On idempotent 409, return a minimal space descriptor for immediate UI
+    /// selection; a subsequent refresh will hydrate author/timestamp fields.
+    pub async fn create_space(&self, parent_path: &str, space_name: &str) -> Result<SpaceResponse> {
+        let body = CreateSpaceBody {
+            parent_path: parent_path.to_string(),
+            name: space_name.to_string(),
+        };
+        let path = format!(
+            "{}/{}",
+            parent_path.trim_end_matches('/'),
+            space_name.trim_matches('/')
+        );
+
+        if let Some(result) = self
+            .bridge_json(
+                Method::POST,
+                "/spaces",
+                Vec::new(),
+                Some(serde_json::to_value(&body).unwrap_or_default()),
+            )
+            .await
+        {
+            match result {
+                Ok(space) => return Ok(space),
+                Err(KumihoError::Api { status: 409, .. }) => {
+                    return Ok(SpaceResponse {
+                        path,
+                        name: space_name.to_string(),
+                        parent_path: Some(parent_path.to_string()),
+                        created_at: None,
+                        author: None,
+                        username: None,
+                        author_display: None,
+                    });
+                }
+                Err(e) => return Err(e),
+            }
+        }
+
+        let resp = self
+            .send_no_retry(|| {
+                self.client
+                    .post(self.url("/spaces"))
+                    .header("X-Kumiho-Token", &self.service_token)
+                    .json(&body)
+            })
+            .await?;
+
+        if resp.status().as_u16() == 409 {
+            return Ok(SpaceResponse {
+                path,
+                name: space_name.to_string(),
+                parent_path: Some(parent_path.to_string()),
+                created_at: None,
+                author: None,
+                username: None,
+                author_display: None,
+            });
+        }
+
+        let resp = self.check_response(resp).await?;
+        resp.json::<SpaceResponse>()
+            .await
+            .map_err(|e| KumihoError::Decode(e.to_string()))
     }
 
     /// List spaces under a parent path (optionally recursive).
@@ -1645,6 +1786,36 @@ impl KumihoClient {
                     .header("X-Kumiho-Token", &self.service_token)
                     .query(&[("kref", revision_kref)])
                     .json(&body)
+            })
+            .await?;
+
+        let _ = self.check_response(resp).await?;
+        Ok(())
+    }
+
+    /// Remove a tag from a revision.
+    pub async fn untag_revision(&self, revision_kref: &str, tag: &str) -> Result<()> {
+        if let Some(result) = self
+            .bridge_unit(
+                Method::DELETE,
+                "/revisions/tags",
+                vec![
+                    ("kref".to_string(), revision_kref.to_string()),
+                    ("tag".to_string(), tag.to_string()),
+                ],
+                None,
+            )
+            .await
+        {
+            return result;
+        }
+
+        let resp = self
+            .send_no_retry(|| {
+                self.client
+                    .delete(self.url("/revisions/tags"))
+                    .header("X-Kumiho-Token", &self.service_token)
+                    .query(&[("kref", revision_kref), ("tag", tag)])
             })
             .await?;
 

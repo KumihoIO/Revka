@@ -1699,8 +1699,18 @@ pub async fn run_gateway_with_mcp_registry(
     const ASSET_EDIT_MAX_BODY: usize = 2 * 1024 * 1024;
     let asset_router = Router::new()
         .route(
+            "/api/assets/projects",
+            post(api_assets::handle_create_project),
+        )
+        .route("/api/assets/spaces", post(api_assets::handle_create_space))
+        .route("/api/assets/items", post(api_assets::handle_create_item))
+        .route(
             "/api/assets/items/deprecate",
             post(api_assets::handle_deprecate_item),
+        )
+        .route(
+            "/api/assets/revisions",
+            post(api_assets::handle_create_revision),
         )
         .route(
             "/api/assets/revisions/deprecate",
@@ -1709,6 +1719,29 @@ pub async fn run_gateway_with_mcp_registry(
         .route(
             "/api/assets/revisions/publish",
             post(api_assets::handle_publish_revision),
+        )
+        .route(
+            "/api/assets/revisions/tags",
+            post(api_assets::handle_tag_revision).delete(api_assets::handle_untag_revision),
+        )
+        .route(
+            "/api/assets/bundles",
+            get(api_assets::handle_list_bundles).post(api_assets::handle_create_bundle),
+        )
+        .route(
+            "/api/assets/bundles/members",
+            get(api_assets::handle_list_bundle_members)
+                .post(api_assets::handle_add_bundle_member)
+                .delete(api_assets::handle_remove_bundle_member),
+        )
+        .route("/api/assets/edges", post(api_assets::handle_create_edge))
+        .route(
+            "/api/assets/dependency-graph",
+            get(api_assets::handle_dependency_graph),
+        )
+        .route(
+            "/api/assets/artifacts",
+            post(api_assets::handle_create_artifact),
         )
         .route(
             "/api/assets/artifacts/deprecate",
