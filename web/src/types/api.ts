@@ -651,6 +651,52 @@ export interface KumihoSearchResult {
   matched_in?: string[];
 }
 
+export interface KumihoBundleMemberInfo {
+  item_kref: string;
+  added_at?: string | null;
+  added_by?: string | null;
+  added_in_revision?: number | null;
+}
+
+export interface KumihoBundleMemberDetail {
+  membership: KumihoBundleMemberInfo;
+  item?: KumihoItem | null;
+  latest_revision?: KumihoRevision | null;
+  current_revision?: KumihoRevision | null;
+  error?: string | null;
+}
+
+export interface KumihoBundleMembersDetailResponse {
+  members: KumihoBundleMemberDetail[];
+  total_count?: number | null;
+}
+
+export interface KumihoAssetGraphNode {
+  kref: string;
+  item_kref?: string | null;
+  item_name?: string | null;
+  kind?: string | null;
+  revision_number?: number | null;
+  tags: string[];
+  metadata: Record<string, string>;
+  artifacts: KumihoArtifact[];
+  incoming_edges: KumihoEdge[];
+  outgoing_edges: KumihoEdge[];
+  created_at?: string | null;
+  missing: boolean;
+}
+
+export interface KumihoAssetDependencyGraphResponse {
+  center_kref: string;
+  direction: string;
+  depth: number;
+  edge_type?: string | null;
+  node_limit: number;
+  truncated: boolean;
+  nodes: KumihoAssetGraphNode[];
+  edges: KumihoEdge[];
+}
+
 // ---------------------------------------------------------------------------
 // Memory Graph (Obsidian-style visualization)
 // ---------------------------------------------------------------------------

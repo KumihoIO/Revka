@@ -547,9 +547,11 @@ class Handler(BaseHTTPRequestHandler):
             return {"members": [_bundle_member(m) for m in members], "total_count": total}
 
         if method == "POST" and path == "/edges":
+            source_kref = body.get("source_kref") or body["source_revision_kref"]
+            target_kref = body.get("target_kref") or body["target_revision_kref"]
             edge = client.create_edge(
-                client.get_revision(body["source_revision_kref"]),
-                client.get_revision(body["target_revision_kref"]),
+                client.get_revision(source_kref),
+                client.get_revision(target_kref),
                 body["edge_type"],
                 metadata=body.get("metadata") or {},
             )

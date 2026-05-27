@@ -10,6 +10,7 @@ use super::AppState;
 use super::api::require_auth;
 use super::kumiho_client::build_kumiho_client;
 use super::kumiho_client::{ArtifactResponse, RevisionResponse};
+use crate::security::SecurityPolicy;
 use axum::{
     Json,
     extract::{Query, State},
@@ -56,6 +57,10 @@ pub async fn handle_artifact_body(
                 .into_response();
         }
     };
+
+    if let Err(response) = validate_artifact_read_path(&state, &path) {
+        return response;
+    }
 
     let meta = match tokio::fs::metadata(&path).await {
         Ok(m) => m,
@@ -157,6 +162,38 @@ fn resolve_location(raw: &str) -> Result<PathBuf, String> {
     }
 
     Ok(expanded)
+}
+
+fn validate_artifact_read_path(state: &AppState, path: &Path) -> Result<(), Response> {
+    let policy = {
+        let config = state.config.lock();
+        SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir)
+    };
+
+    let raw = path.to_string_lossy();
+    if !policy.is_path_allowed(&raw) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({
+                "error": "artifact path is not allowed by workspace policy",
+            })),
+        )
+            .into_response());
+    }
+
+    if let Ok(resolved) = path.canonicalize() {
+        if !policy.is_resolved_path_allowed(&resolved) {
+            return Err((
+                StatusCode::FORBIDDEN,
+                Json(serde_json::json!({
+                    "error": "artifact path resolves outside the workspace and allowed roots",
+                })),
+            )
+                .into_response());
+        }
+    }
+
+    Ok(())
 }
 
 async fn fallback_from_revision_metadata(

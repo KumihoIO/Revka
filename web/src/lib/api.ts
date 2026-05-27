@@ -35,9 +35,14 @@ import type {
   RevisionOperation,
   ReviseWorkflowResponse,
   RevisionListResponse,
+  KumihoAssetDependencyGraphResponse,
   KumihoArtifact,
+  KumihoBundleMembersDetailResponse,
+  KumihoEdge,
   KumihoItem,
+  KumihoProject,
   KumihoRevision,
+  KumihoSpace,
   SkinSummary,
 } from '../types/api';
 import { clearToken, getToken, setToken } from './auth';
@@ -1158,6 +1163,163 @@ export async function kumihoProxy<T>(
   const qsStr = qs.toString();
   const cleanPath = path.startsWith('/') ? path.slice(1) : path;
   return apiFetch<T>(`/api/kumiho/${cleanPath}${qsStr ? `?${qsStr}` : ''}`);
+}
+
+export interface AssetCreateProjectRequest {
+  name: string;
+  description?: string;
+}
+
+export interface AssetCreateSpaceRequest {
+  parent_path: string;
+  name: string;
+}
+
+export interface AssetCreateItemRequest {
+  space_path: string;
+  item_name: string;
+  kind: string;
+  metadata?: Record<string, string>;
+}
+
+export interface AssetCreateRevisionRequest {
+  item_kref: string;
+  metadata?: Record<string, string>;
+}
+
+export interface AssetCreateBundleRequest {
+  space_path: string;
+  bundle_name: string;
+  metadata?: Record<string, string>;
+}
+
+export interface AssetCreateArtifactRequest {
+  revision_kref: string;
+  name: string;
+  location: string;
+  metadata?: Record<string, string>;
+  content?: string;
+  write_file?: boolean;
+  overwrite?: boolean;
+  validate_exists?: boolean;
+}
+
+export interface AssetCreateEdgeRequest {
+  source_kref: string;
+  target_kref: string;
+  edge_type: string;
+  metadata?: Record<string, string>;
+}
+
+export interface AssetBundleMemberRequest {
+  bundle_kref: string;
+  item_kref: string;
+  metadata?: Record<string, string>;
+  allow_protected?: boolean;
+}
+
+export async function createAssetProject(request: AssetCreateProjectRequest): Promise<KumihoProject> {
+  return apiFetch<{ project: KumihoProject }>('/api/assets/projects', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  }).then((data) => data.project);
+}
+
+export async function createAssetSpace(request: AssetCreateSpaceRequest): Promise<KumihoSpace> {
+  return apiFetch<{ space: KumihoSpace }>('/api/assets/spaces', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  }).then((data) => data.space);
+}
+
+export async function createAssetItem(request: AssetCreateItemRequest): Promise<KumihoItem> {
+  return apiFetch<{ item: KumihoItem }>('/api/assets/items', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  }).then((data) => data.item);
+}
+
+export async function createAssetRevision(request: AssetCreateRevisionRequest): Promise<KumihoRevision> {
+  return apiFetch<{ revision: KumihoRevision }>('/api/assets/revisions', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  }).then((data) => data.revision);
+}
+
+export async function createAssetBundle(request: AssetCreateBundleRequest): Promise<KumihoItem> {
+  return apiFetch<{ bundle: KumihoItem }>('/api/assets/bundles', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  }).then((data) => data.bundle);
+}
+
+export async function fetchAssetBundles(project: string): Promise<KumihoItem[]> {
+  const qs = new URLSearchParams({ project });
+  return apiFetch<{ bundles: KumihoItem[] }>(`/api/assets/bundles?${qs.toString()}`)
+    .then((data) => data.bundles);
+}
+
+export async function fetchAssetBundleMembers(bundleKref: string): Promise<KumihoBundleMembersDetailResponse> {
+  const qs = new URLSearchParams({ bundle_kref: bundleKref });
+  return apiFetch<KumihoBundleMembersDetailResponse>(`/api/assets/bundles/members?${qs.toString()}`);
+}
+
+export async function addAssetBundleMember(request: AssetBundleMemberRequest): Promise<void> {
+  await apiFetch('/api/assets/bundles/members', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  });
+}
+
+export async function removeAssetBundleMember(request: AssetBundleMemberRequest): Promise<void> {
+  await apiFetch('/api/assets/bundles/members', {
+    method: 'DELETE',
+    body: JSON.stringify(request),
+  });
+}
+
+export async function createAssetArtifact(request: AssetCreateArtifactRequest): Promise<KumihoArtifact> {
+  return apiFetch<{ artifact: KumihoArtifact }>('/api/assets/artifacts', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  }).then((data) => data.artifact);
+}
+
+export async function createAssetEdge(request: AssetCreateEdgeRequest): Promise<KumihoEdge> {
+  return apiFetch<{ edge: KumihoEdge }>('/api/assets/edges', {
+    method: 'POST',
+    body: JSON.stringify(request),
+  }).then((data) => data.edge);
+}
+
+export async function tagAssetRevision(kref: string, tag: string): Promise<KumihoRevision> {
+  return apiFetch<{ revision: KumihoRevision }>('/api/assets/revisions/tags', {
+    method: 'POST',
+    body: JSON.stringify({ kref, tag }),
+  }).then((data) => data.revision);
+}
+
+export async function untagAssetRevision(kref: string, tag: string): Promise<KumihoRevision> {
+  return apiFetch<{ revision: KumihoRevision }>('/api/assets/revisions/tags', {
+    method: 'DELETE',
+    body: JSON.stringify({ kref, tag }),
+  }).then((data) => data.revision);
+}
+
+export async function fetchAssetDependencyGraph(params: {
+  revision_kref: string;
+  direction?: string;
+  depth?: number;
+  edge_type?: string;
+  node_limit?: number;
+}): Promise<KumihoAssetDependencyGraphResponse> {
+  const qs = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null && value !== '') {
+      qs.set(key, String(value));
+    }
+  }
+  return apiFetch<KumihoAssetDependencyGraphResponse>(`/api/assets/dependency-graph?${qs.toString()}`);
 }
 
 export async function toggleAssetItemDeprecation(kref: string, deprecated: boolean): Promise<KumihoItem> {
