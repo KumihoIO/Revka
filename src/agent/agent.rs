@@ -75,6 +75,8 @@ const EMPTY_FINAL_AFTER_TOOLS_RETRY_PROMPT: &str = "The previous model response 
 const EMPTY_FINAL_AFTER_TOOLS_FALLBACK: &str = "I completed tool work, but the model returned an empty final response. Please retry the request or ask me to summarize the latest tool results.";
 pub(crate) const EMPTY_FINAL_FALLBACK: &str =
     "The model returned an empty response. Please retry the request.";
+pub(crate) const POST_TOOL_FINALIZING_NOTICE: &str =
+    "Tool work completed. Preparing final response...";
 
 /// True when the current turn's user message carries the Architect
 /// editor-state marker.  See [`ARCHITECT_EDITOR_STATE_MARKER`].
@@ -2096,6 +2098,14 @@ impl Agent {
                     })
                     .await;
             }
+            if !results.is_empty() {
+                let _ = event_tx
+                    .send(TurnEvent::OperatorStatus {
+                        phase: "completed".into(),
+                        detail: POST_TOOL_FINALIZING_NOTICE.into(),
+                    })
+                    .await;
+            }
 
             let formatted = self.tool_dispatcher.format_results(&results);
             self.history.push(formatted);
@@ -3164,6 +3174,13 @@ mod tests {
         let has_tool_result = events
             .iter()
             .any(|e| matches!(e, TurnEvent::ToolResult { name, .. } if name == "echo"));
+        let has_post_tool_notice = events.iter().any(|e| {
+            matches!(
+                e,
+                TurnEvent::OperatorStatus { phase, detail }
+                    if phase == "completed" && detail == POST_TOOL_FINALIZING_NOTICE
+            )
+        });
         assert!(
             has_tool_call,
             "Should have emitted a ToolCall event for 'echo'"
@@ -3171,6 +3188,10 @@ mod tests {
         assert!(
             has_tool_result,
             "Should have emitted a ToolResult event for 'echo'"
+        );
+        assert!(
+            has_post_tool_notice,
+            "Should have emitted a post-tool completion notice"
         );
     }
 }

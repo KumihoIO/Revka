@@ -3555,6 +3555,15 @@ pub(crate) async fn run_tool_call_loop(
             }
         }
 
+        if let Some(ref tx) = on_delta {
+            let _ = tx
+                .send(DraftEvent::Content(format!(
+                    "{}\n",
+                    crate::agent::agent::POST_TOOL_FINALIZING_NOTICE
+                )))
+                .await;
+        }
+
         // Add assistant message with tool calls + tool results to history.
         // Native mode: use JSON-structured messages so convert_messages() can
         // reconstruct proper OpenAI-format tool_calls and tool result messages.
@@ -7524,6 +7533,7 @@ mod tests {
         .expect("streaming tool loop should execute tool and finish");
 
         let mut visible_deltas = String::new();
+        let mut saw_post_tool_notice = false;
         while let Some(delta) = rx.recv().await {
             match delta {
                 DraftEvent::Clear => {
@@ -7531,6 +7541,9 @@ mod tests {
                 }
                 DraftEvent::Progress(_) => {}
                 DraftEvent::Content(text) => {
+                    if text.contains(crate::agent::agent::POST_TOOL_FINALIZING_NOTICE) {
+                        saw_post_tool_notice = true;
+                    }
                     visible_deltas.push_str(&text);
                 }
             }
@@ -7541,6 +7554,10 @@ mod tests {
         assert_eq!(provider.stream_calls.load(Ordering::SeqCst), 2);
         assert_eq!(provider.chat_calls.load(Ordering::SeqCst), 0);
         assert_eq!(visible_deltas, "done");
+        assert!(
+            saw_post_tool_notice,
+            "draft stream should show a post-tool completion notice before final synthesis"
+        );
         assert!(
             !visible_deltas.contains("<tool_call"),
             "draft text should not leak streamed tool payload markers"
