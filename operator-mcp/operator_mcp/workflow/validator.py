@@ -389,6 +389,97 @@ def _check_step_configs(wf: WorkflowDef, valid_ids: set[str],
                         step.id, "handoff",
                     )
 
+        elif step.type == StepType.KUMIHO_CONTEXT:
+            if config is None:
+                result.add_error("'kumiho_context' step missing kumiho config", step.id, "kumiho")
+            elif not getattr(config, "project", "").strip():
+                result.add_error(
+                    "'kumiho_context' step requires kumiho.project",
+                    step.id,
+                    "kumiho.project",
+                )
+
+        elif step.type == StepType.KUMIHO_BUNDLE_UPDATE:
+            if config is None:
+                result.add_error("'kumiho_bundle_update' step missing kumiho config", step.id, "kumiho")
+            else:
+                if not getattr(config, "project", "").strip():
+                    result.add_error(
+                        "'kumiho_bundle_update' step requires kumiho.project",
+                        step.id,
+                        "kumiho.project",
+                    )
+                updates = getattr(config, "updates", [])
+                if not updates:
+                    result.add_error(
+                        "'kumiho_bundle_update' step requires at least one update",
+                        step.id,
+                        "kumiho.updates",
+                    )
+                mode = getattr(config, "mode", "")
+                for idx, update in enumerate(updates):
+                    if not getattr(update, "bundle", "").strip():
+                        result.add_error(
+                            "bundle update requires bundle",
+                            step.id,
+                            f"kumiho.updates[{idx}].bundle",
+                        )
+                    has_add = bool(getattr(update, "add", []))
+                    has_remove = bool(getattr(update, "remove", []))
+                    has_replace = bool(getattr(update, "replace", None))
+                    if not (has_add or has_remove or has_replace):
+                        result.add_error(
+                            "bundle update requires add, remove, or replace",
+                            step.id,
+                            f"kumiho.updates[{idx}]",
+                        )
+                    if mode == "add_members" and (has_remove or has_replace):
+                        result.add_error(
+                            "mode add_members only allows add operations",
+                            step.id,
+                            f"kumiho.updates[{idx}]",
+                        )
+                    if mode == "remove_members" and (has_add or has_replace):
+                        result.add_error(
+                            "mode remove_members only allows remove operations",
+                            step.id,
+                            f"kumiho.updates[{idx}]",
+                        )
+                    if mode == "replace_members" and (has_add or has_remove):
+                        result.add_error(
+                            "mode replace_members only allows replace operations",
+                            step.id,
+                            f"kumiho.updates[{idx}]",
+                        )
+
+        elif step.type == StepType.KUMIHO_PATCH_APPLY:
+            if config is None:
+                result.add_error("'kumiho_patch_apply' step missing kumiho config", step.id, "kumiho")
+            else:
+                if not getattr(config, "project", "").strip():
+                    result.add_error(
+                        "'kumiho_patch_apply' step requires kumiho.project",
+                        step.id,
+                        "kumiho.project",
+                    )
+                if not getattr(config, "patch_kref", "").strip():
+                    result.add_error(
+                        "'kumiho_patch_apply' step requires kumiho.patch_kref",
+                        step.id,
+                        "kumiho.patch_kref",
+                    )
+                dry_run = bool(getattr(config, "dry_run", True))
+                approval = getattr(config, "approval", None)
+                allow_auto_apply = bool(getattr(config, "allow_auto_apply", False))
+                if not dry_run and approval and getattr(approval, "required", True):
+                    approved = getattr(approval, "approved", False)
+                    if approved is False and not allow_auto_apply:
+                        result.add_warning(
+                            "kumiho_patch_apply is high-risk and will block at runtime unless approval.approved resolves truthy",
+                            step.id,
+                            "kumiho.approval.approved",
+                        )
+
         elif step.type == StepType.FOR_EACH:
             if config is None:
                 result.add_error("'for_each' step missing config", step.id, "for_each")
@@ -539,18 +630,17 @@ def _check_variable_refs(wf: WorkflowDef, valid_ids: set[str],
         texts: list[str] = []
         config = step.get_config()
         if config:
-            for field_name in config.model_fields:
-                val = getattr(config, field_name, None)
-                if isinstance(val, str):
-                    texts.append(val)
-                elif isinstance(val, list):
-                    for item in val:
-                        if isinstance(item, str):
-                            texts.append(item)
-                elif isinstance(val, dict):
-                    for dv in val.values():
-                        if isinstance(dv, str):
-                            texts.append(dv)
+            def _collect(value: Any) -> None:
+                if isinstance(value, str):
+                    texts.append(value)
+                elif isinstance(value, list):
+                    for item in value:
+                        _collect(item)
+                elif isinstance(value, dict):
+                    for dv in value.values():
+                        _collect(dv)
+
+            _collect(config.model_dump(mode="python"))
         # Also check output config fields (entity_metadata, template) on StepDef directly
         if step.output:
             if step.output.template:

@@ -197,6 +197,10 @@ def _scan_step_for_refs(step: StepDef) -> set[str]:
     if step.resolve is not None:
         _scan_text(step.resolve.name_pattern)
         _scan_text(step.resolve.space)
+    # kumiho_context — seed krefs/queries, ranking query, and filters may
+    # template off upstream resolve/compute outputs.
+    if step.kumiho is not None:
+        _scan_value(step.kumiho.model_dump(mode="python"))
     # handoff
     if step.handoff is not None:
         _scan_text(step.handoff.reason)

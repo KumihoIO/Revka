@@ -67,7 +67,7 @@ export const CATEGORY_META: Record<StepCategory, { label: string; description: s
   },
   memory: {
     label: 'Memory',
-    description: 'Resolve, tag, and deprecate Kumiho entities.',
+    description: 'Resolve, compile, tag, and deprecate Kumiho entities.',
   },
 };
 
@@ -248,6 +248,30 @@ export const STEP_TYPES: StepTypeDef[] = [
     icon: Search,
     description: 'Look up a Kumiho entity by kind/tag/name and load its fields.',
     searchTags: ['lookup', 'fetch', 'find', 'kumiho', 'entity'],
+  },
+  {
+    type: 'kumiho_context',
+    label: 'Kumiho Context',
+    category: 'memory',
+    icon: Network,
+    description: 'Compile locked graph context from Kumiho bundles, krefs, and queries.',
+    searchTags: ['context', 'graph', 'canon', 'bundle', 'kumiho', 'memory'],
+  },
+  {
+    type: 'kumiho_bundle_update',
+    label: 'Bundle Update',
+    category: 'memory',
+    icon: GitBranch,
+    description: 'Add, remove, or replace Kumiho bundle members idempotently.',
+    searchTags: ['bundle', 'membership', 'kumiho', 'mutation', 'append'],
+  },
+  {
+    type: 'kumiho_patch_apply',
+    label: 'Patch Apply',
+    category: 'memory',
+    icon: CheckCircle,
+    description: 'Dry-run or apply an approved Kumiho canon patch.',
+    searchTags: ['patch', 'canon', 'apply', 'approval', 'kumiho', 'mutation'],
   },
   {
     type: 'tag',

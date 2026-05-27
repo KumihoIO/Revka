@@ -521,6 +521,60 @@ function defaultNodeData(id: string, overrides?: Partial<TaskNodeData>): TaskNod
     resolveFields: [],
     resolveMetadataSource: 'revision',
     resolveFailIfMissing: true,
+    kumihoConfig: {},
+    kumihoProject: '',
+    kumihoMode: 'graph_augmented_context',
+    kumihoSeedBundles: [],
+    kumihoSeedKrefs: [],
+    kumihoSeedQueries: [],
+    kumihoSeedItems: [],
+    kumihoTraversalMaxDepth: 2,
+    kumihoTraversalDirection: 'both',
+    kumihoTraversalEdgeTypes: ['DEPENDS_ON', 'REFERENCES', 'ADVANCES', 'UPDATES', 'CONTRADICTS'],
+    kumihoFiltersIncludeKinds: [],
+    kumihoFiltersExcludeTags: ['deprecated'],
+    kumihoFiltersMaxItems: 50,
+    kumihoRankingMethod: 'hybrid',
+    kumihoRankingSemanticQuery: '',
+    kumihoLockTagPreference: ['current', 'active', 'production-ready', 'ready', 'published', 'latest'],
+    kumihoOutputFormat: 'context_pack',
+    kumihoOutputIncludeArtifactSummaries: true,
+    kumihoOutputIncludeArtifactContent: false,
+    kumihoOutputMaxArtifactCharsPerItem: 3000,
+    kumihoOutputIncludeEdgeMap: true,
+    kumihoOutputIncludeConflictWarnings: true,
+    kumihoOutputIncludeMissingContext: true,
+    kumihoCreateIfMissing: false,
+    kumihoIdempotent: true,
+    kumihoFailIfMissingBundle: true,
+    kumihoFailIfMissingItem: true,
+    kumihoAllowProtected: false,
+    kumihoUpdates: [],
+    kumihoPatchKref: '',
+    kumihoDryRun: true,
+    kumihoAllowAutoApply: false,
+    kumihoApprovalRequired: true,
+    kumihoApprovalApproved: false,
+    kumihoApprovalApprovedBy: '',
+    kumihoApprovalNote: '',
+    kumihoApplyCreateRevisions: true,
+    kumihoApplyCreateEdges: true,
+    kumihoApplyUpdateTags: true,
+    kumihoApplyUntagPreviousCurrent: true,
+    kumihoApplyUpdateBundles: true,
+    kumihoApplySaveApplyReport: true,
+    kumihoNewRevisionTags: ['current', 'approved'],
+    kumihoPatchTagsRemove: ['candidate'],
+    kumihoPatchTagsAdd: ['applied'],
+    kumihoPendingPatchBundle: '',
+    kumihoAppliedPatchBundle: '',
+    kumihoCurrentStateBundle: '',
+    kumihoActiveStorylineBundle: '',
+    kumihoActiveForeshadowBundle: '',
+    kumihoTimelineBundle: '',
+    kumihoRequireEvidenceLocator: true,
+    kumihoSourceEpisodeKref: '',
+    kumihoSourceContextPackKref: '',
     mapReduceTask: '',
     mapReduceSplits: [],
     mapReduceMapper: 'claude',
@@ -618,6 +672,12 @@ function defaultNodeData(id: string, overrides?: Partial<TaskNodeData>): TaskNod
 function defaultsForType(type: string): Partial<TaskNodeData> {
   if (type === 'compute') {
     return { type, computeOutputs: { value: '${{ 1 }}' } };
+  }
+  if (type === 'kumiho_bundle_update') {
+    return { type, kumihoMode: 'add_members', kumihoIdempotent: true };
+  }
+  if (type === 'kumiho_patch_apply') {
+    return { type, kumihoDryRun: true, kumihoApprovalRequired: true };
   }
   return { type };
 }

@@ -13,13 +13,16 @@ Step types:
   - human_approval: Pause for human confirmation before proceeding.
   - output: Emit structured output from the workflow.
   - a2a: Send a task to an external A2A agent.
+  - kumiho_context: Compile locked graph context from Kumiho.
+  - kumiho_bundle_update: Safely mutate Kumiho bundle membership.
+  - kumiho_patch_apply: Apply an approved canon patch to Kumiho.
 """
 from __future__ import annotations
 
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 # ---------------------------------------------------------------------------
@@ -47,6 +50,9 @@ class StepType(str, Enum):
     GROUP_CHAT = "group_chat"
     HANDOFF = "handoff"
     RESOLVE = "resolve"
+    KUMIHO_CONTEXT = "kumiho_context"
+    KUMIHO_BUNDLE_UPDATE = "kumiho_bundle_update"
+    KUMIHO_PATCH_APPLY = "kumiho_patch_apply"
     FOR_EACH = "for_each"
     TAG = "tag"
     DEPRECATE = "deprecate"
@@ -409,6 +415,226 @@ class ResolveStepConfig(BaseModel):
     fail_if_missing: bool = True                        # Fail step if no entity found
 
 
+class KumihoSeedItemConfig(BaseModel):
+    """Search-based seed item for a kumiho_context step."""
+    kind: str = ""
+    name_pattern: str = ""
+    tag: str = ""
+    mode: Literal["latest", "all"] = "latest"
+    optional: bool = False
+
+
+class KumihoSeedConfig(BaseModel):
+    """Initial bundle, kref, item, and query seeds for kumiho_context."""
+    bundles: list[Any] = Field(default_factory=list)
+    krefs: list[str] = Field(default_factory=list)
+    items: list[KumihoSeedItemConfig] = Field(default_factory=list)
+    queries: list[str] = Field(default_factory=list)
+
+
+class KumihoTraversalConfig(BaseModel):
+    """Revision-edge traversal controls for kumiho_context."""
+    max_depth: int = Field(default=2, ge=0, le=3)
+    direction: Literal["out", "in", "both"] = "both"
+    edge_types: list[str] = Field(
+        default_factory=lambda: [
+            "DEPENDS_ON",
+            "REFERENCES",
+            "ADVANCES",
+            "UPDATES",
+            "CONTRADICTS",
+        ]
+    )
+
+
+class KumihoFiltersConfig(BaseModel):
+    """Candidate filters and hard caps for kumiho_context."""
+    include_kinds: list[str] = Field(default_factory=list)
+    exclude_kinds: list[str] = Field(default_factory=list)
+    include_tags: list[str] = Field(default_factory=list)
+    exclude_tags: list[str] = Field(default_factory=lambda: ["deprecated"])
+    spaces: list[str] = Field(default_factory=list)
+    max_items: int = Field(default=50, ge=1, le=100)
+    max_revisions_per_item: int = Field(default=1, ge=1, le=5)
+
+
+class KumihoRankingConfig(BaseModel):
+    """Ranking controls for kumiho_context candidate selection."""
+    method: Literal["none", "graph", "semantic", "hybrid"] = "hybrid"
+    semantic_query: str = ""
+    prefer_recent: bool = True
+    prefer_current_tags: bool = True
+    boost_kinds: dict[str, float] = Field(default_factory=dict)
+    boost_edge_types: dict[str, float] = Field(default_factory=dict)
+
+
+class KumihoLockConfig(BaseModel):
+    """Revision locking controls for kumiho_context."""
+    revisions: bool = True
+    tag_preference: list[str] = Field(
+        default_factory=lambda: [
+            "current",
+            "active",
+            "production-ready",
+            "ready",
+            "published",
+            "latest",
+        ]
+    )
+
+
+class KumihoOutputConfig(BaseModel):
+    """Output formatting and artifact loading controls for kumiho_context."""
+    format: str = "context_pack"
+    include_artifact_summaries: bool = True
+    include_artifact_content: bool = False
+    max_artifact_chars_per_item: int = Field(default=3000, ge=0, le=20_000)
+    max_total_artifact_chars: int = Field(default=60_000, ge=0, le=200_000)
+    include_edge_map: bool = True
+    include_conflict_warnings: bool = True
+    include_missing_context: bool = True
+    include_source_krefs: bool = True
+
+
+class KumihoContextConfig(BaseModel):
+    """Config for 'kumiho_context' graph-augmented context compilation."""
+    project: str = ""
+    mode: Literal["bundle_context", "semantic_context", "graph_augmented_context"] = (
+        "graph_augmented_context"
+    )
+    seed: KumihoSeedConfig = Field(default_factory=KumihoSeedConfig)
+    traversal: KumihoTraversalConfig = Field(default_factory=KumihoTraversalConfig)
+    filters: KumihoFiltersConfig = Field(default_factory=KumihoFiltersConfig)
+    ranking: KumihoRankingConfig = Field(default_factory=KumihoRankingConfig)
+    lock: KumihoLockConfig = Field(default_factory=KumihoLockConfig)
+    output: KumihoOutputConfig = Field(default_factory=KumihoOutputConfig)
+
+
+class KumihoBundleMemberConfig(BaseModel):
+    """Bundle membership entry for kumiho_bundle_update."""
+    item_kref: str = ""
+    reason: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class KumihoBundleReplaceMatchConfig(BaseModel):
+    """Matcher for replacement operations inside a bundle."""
+    kind: str = ""
+    name_pattern: str = ""
+
+
+class KumihoBundleReplaceConfig(BaseModel):
+    """Replace matching bundle members with an explicit member set."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    match: KumihoBundleReplaceMatchConfig = Field(default_factory=KumihoBundleReplaceMatchConfig)
+    with_items: list[KumihoBundleMemberConfig] = Field(default_factory=list, alias="with")
+
+
+class KumihoBundleUpdateEntryConfig(BaseModel):
+    """One bundle mutation target."""
+    bundle: str = ""
+    add: list[KumihoBundleMemberConfig] = Field(default_factory=list)
+    remove: list[KumihoBundleMemberConfig] = Field(default_factory=list)
+    replace: KumihoBundleReplaceConfig | None = None
+
+
+class KumihoBundleUpdateConfig(BaseModel):
+    """Config for 'kumiho_bundle_update' membership mutations."""
+    project: str = ""
+    mode: Literal["add_members", "remove_members", "replace_members", "mixed"] = "add_members"
+    create_if_missing: bool = False
+    idempotent: bool = True
+    fail_if_missing_bundle: bool | None = None
+    fail_if_missing_item: bool = True
+    allow_protected: bool = False
+    updates: list[KumihoBundleUpdateEntryConfig] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def default_missing_bundle_policy(self) -> "KumihoBundleUpdateConfig":
+        if self.fail_if_missing_bundle is None:
+            self.fail_if_missing_bundle = not self.create_if_missing
+        return self
+
+
+class KumihoPatchApprovalConfig(BaseModel):
+    """Approval gate for high-risk patch application."""
+    required: bool = True
+    approved: bool | str = False
+    approved_by: str = ""
+    approval_note: str = ""
+
+
+class KumihoPatchApplyFlagsConfig(BaseModel):
+    """Mutation toggles for kumiho_patch_apply."""
+    create_revisions: bool = True
+    create_edges: bool = True
+    update_tags: bool = True
+    untag_previous_current: bool = True
+    update_bundles: bool = True
+    save_apply_report: bool = True
+
+
+class KumihoPatchTagsConfig(BaseModel):
+    """Tag mutations for the patch item itself."""
+    remove: list[str] = Field(default_factory=lambda: ["candidate"])
+    add: list[str] = Field(default_factory=lambda: ["applied"])
+
+
+class KumihoPatchTagPolicyConfig(BaseModel):
+    """Revision and patch tag policy for patch application."""
+    new_revision_tags: list[str] = Field(default_factory=lambda: ["current", "approved"])
+    old_revision_tags_remove: list[str] = Field(default_factory=lambda: ["current"])
+    patch_tags: KumihoPatchTagsConfig = Field(default_factory=KumihoPatchTagsConfig)
+    status_tag_mapping: dict[str, str] = Field(
+        default_factory=lambda: {
+            "introduced": "active",
+            "advanced": "active",
+            "resolved": "resolved",
+            "deferred": "deferred",
+        }
+    )
+
+
+class KumihoPatchBundlePolicyConfig(BaseModel):
+    """Bundle names updated after a patch is applied."""
+    pending_patch_bundle: str = ""
+    applied_patch_bundle: str = ""
+    current_state_bundle: str = ""
+    active_storyline_bundle: str = ""
+    active_foreshadow_bundle: str = ""
+    timeline_bundle: str = ""
+
+
+class KumihoPatchEvidenceConfig(BaseModel):
+    """Evidence requirements and source provenance for patch application."""
+    require_evidence_locator: bool = True
+    source_episode_kref: str = ""
+    source_context_pack_kref: str = ""
+
+
+class KumihoPatchValidationConfig(BaseModel):
+    """Strictness controls for pre-mutation validation."""
+    stale_patch_policy: Literal["fail", "warn"] = "fail"
+    unresolved_conflict_policy: Literal["fail", "warn"] = "fail"
+    missing_evidence_policy: Literal["fail", "warn"] = "fail"
+    allowed_stale_patch: bool = False
+
+
+class KumihoPatchApplyConfig(BaseModel):
+    """Config for 'kumiho_patch_apply' canon mutation commits."""
+    project: str = ""
+    patch_kref: str = ""
+    dry_run: bool = True
+    allow_auto_apply: bool = False
+    approval: KumihoPatchApprovalConfig = Field(default_factory=KumihoPatchApprovalConfig)
+    apply: KumihoPatchApplyFlagsConfig = Field(default_factory=KumihoPatchApplyFlagsConfig)
+    tag_policy: KumihoPatchTagPolicyConfig = Field(default_factory=KumihoPatchTagPolicyConfig)
+    bundle_policy: KumihoPatchBundlePolicyConfig = Field(default_factory=KumihoPatchBundlePolicyConfig)
+    evidence: KumihoPatchEvidenceConfig = Field(default_factory=KumihoPatchEvidenceConfig)
+    validation: KumihoPatchValidationConfig = Field(default_factory=KumihoPatchValidationConfig)
+
+
 class TagStepConfig(BaseModel):
     """Config for 'tag' step type — re-tag an existing Kumiho entity revision."""
     item_kref: str                              # kref of the item (supports ${} interpolation)
@@ -619,6 +845,9 @@ ACTION_DEFAULTS: dict[str, dict[str, str]] = {
     "gate":        {"type": "conditional",  "role": "",      "agent_type": ""},
     "human_input": {"type": "human_input",  "role": "",      "agent_type": ""},
     "resolve":     {"type": "resolve"},
+    "kumiho_context": {"type": "kumiho_context"},
+    "kumiho_bundle_update": {"type": "kumiho_bundle_update"},
+    "kumiho_patch_apply": {"type": "kumiho_patch_apply"},
     "compute":     {"type": "compute"},
 }
 
@@ -664,6 +893,7 @@ class StepDef(BaseModel):
     output: OutputStepConfig | None = None
     a2a: A2AStepConfig | None = None
     resolve: ResolveStepConfig | None = None
+    kumiho: Any | None = None
     for_each: ForEachStepConfig | None = None
     # Orchestration patterns
     map_reduce: MapReduceStepConfig | None = None
@@ -821,6 +1051,23 @@ class StepDef(BaseModel):
             data.pop(k, None)
         return data
 
+    @model_validator(mode="after")
+    def coerce_kumiho_config(self) -> "StepDef":
+        """Interpret the shared ``kumiho:`` block according to step type."""
+        if self.kumiho is None:
+            return self
+        raw = self.kumiho.model_dump(mode="python") if isinstance(self.kumiho, BaseModel) else self.kumiho
+        if self.type == StepType.KUMIHO_CONTEXT:
+            if not isinstance(self.kumiho, KumihoContextConfig):
+                self.kumiho = KumihoContextConfig.model_validate(raw)
+        elif self.type == StepType.KUMIHO_BUNDLE_UPDATE:
+            if not isinstance(self.kumiho, KumihoBundleUpdateConfig):
+                self.kumiho = KumihoBundleUpdateConfig.model_validate(raw)
+        elif self.type == StepType.KUMIHO_PATCH_APPLY:
+            if not isinstance(self.kumiho, KumihoPatchApplyConfig):
+                self.kumiho = KumihoPatchApplyConfig.model_validate(raw)
+        return self
+
     @field_validator("name", mode="before")
     @classmethod
     def default_name(cls, v: str, info: Any) -> str:
@@ -830,6 +1077,12 @@ class StepDef(BaseModel):
 
     def get_config(self) -> BaseModel | None:
         """Return the type-specific config for this step."""
+        if self.type in {
+            StepType.KUMIHO_CONTEXT,
+            StepType.KUMIHO_BUNDLE_UPDATE,
+            StepType.KUMIHO_PATCH_APPLY,
+        }:
+            return self.kumiho if isinstance(self.kumiho, BaseModel) else None
         return getattr(self, self.type.value, None)
 
     def resolve_agent_config(self) -> AgentStepConfig:
