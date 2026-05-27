@@ -147,6 +147,7 @@ pub struct BundleMemberBody {
 #[derive(Deserialize)]
 pub struct AssetBundlesQuery {
     pub project: String,
+    pub space_path: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -899,15 +900,27 @@ pub async fn handle_list_bundles(
 
     let client = build_kumiho_client(&state);
     let root = format!("/{project}");
-    let spaces = match client.list_spaces(&root, true).await {
-        Ok(spaces) => spaces,
-        Err(e) => return kumiho_err(e),
-    };
+    let paths = if let Some(space_path) = query.space_path.as_deref() {
+        let space_path = space_path.trim();
+        if space_path != root && !space_path.starts_with(&format!("{root}/")) {
+            return json_error(
+                StatusCode::BAD_REQUEST,
+                "space_path must belong to the selected project",
+            );
+        }
+        vec![space_path.to_string()]
+    } else {
+        let spaces = match client.list_spaces(&root, true).await {
+            Ok(spaces) => spaces,
+            Err(e) => return kumiho_err(e),
+        };
 
-    let mut paths = vec![root];
-    paths.extend(spaces.into_iter().map(|space| space.path));
-    paths.sort();
-    paths.dedup();
+        let mut paths = vec![root];
+        paths.extend(spaces.into_iter().map(|space| space.path));
+        paths.sort();
+        paths.dedup();
+        paths
+    };
 
     let mut bundles = Vec::new();
     for path in paths {

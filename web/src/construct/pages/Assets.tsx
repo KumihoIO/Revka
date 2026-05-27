@@ -454,20 +454,26 @@ function CollapsibleSection({
 function BundleBrowser({
   bundles,
   members,
+  childSpaces,
+  currentSpacePath,
   selectedBundleKref,
   selectedBundleProtected,
   loadingBundles,
   loadingMembers,
+  onNavigateSpace,
   onSelectBundle,
   onOpenMember,
   onCopyKref,
 }: {
   bundles: KumihoItem[];
   members: KumihoBundleMemberDetail[];
+  childSpaces: KumihoSpace[];
+  currentSpacePath: string | null;
   selectedBundleKref: string | null;
   selectedBundleProtected: boolean;
   loadingBundles: boolean;
   loadingMembers: boolean;
+  onNavigateSpace: (space: KumihoSpace) => void;
   onSelectBundle: (bundle: KumihoItem) => void;
   onOpenMember: (member: KumihoBundleMemberDetail) => void;
   onCopyKref: (kref: string) => void;
@@ -475,10 +481,35 @@ function BundleBrowser({
   return (
     <div className="grid min-h-full grid-cols-[minmax(14rem,0.38fr)_minmax(0,1fr)]">
       <div className="border-r" style={{ borderColor: 'var(--construct-border-soft)' }}>
+        <div className="border-b px-4 py-2.5 text-[11px] font-semibold uppercase tracking-[0.12em]" style={{ borderColor: 'var(--construct-border-soft)', color: 'var(--construct-text-faint)' }}>
+          Spaces
+        </div>
+        {childSpaces.length === 0 ? (
+          <div className="border-b px-4 py-3 text-xs" style={{ borderColor: 'var(--construct-border-soft)', color: 'var(--construct-text-faint)' }}>
+            No child spaces
+          </div>
+        ) : childSpaces.map((space) => (
+          <button
+            key={space.path}
+            type="button"
+            onClick={() => onNavigateSpace(space)}
+            className="flex w-full items-center gap-2 border-b px-4 py-3 text-left transition hover:brightness-125"
+            style={{ borderColor: 'var(--construct-border-soft)' }}
+          >
+            <FolderOpen className="h-4 w-4 shrink-0" style={{ color: '#38bdf8' }} />
+            <span className="min-w-0 flex-1 truncate text-sm font-medium" style={{ color: 'var(--construct-text-primary)' }}>
+              {space.name}
+            </span>
+            <ChevronRight className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--construct-text-faint)' }} />
+          </button>
+        ))}
+        <div className="border-b px-4 py-2.5 text-[11px] font-semibold uppercase tracking-[0.12em]" style={{ borderColor: 'var(--construct-border-soft)', color: 'var(--construct-text-faint)' }}>
+          Bundles in {currentSpacePath ?? 'selected space'}
+        </div>
         {loadingBundles ? (
           <div className="p-4"><StateMessage tone="loading" compact title="Loading bundles..." /></div>
         ) : bundles.length === 0 ? (
-          <div className="p-4"><StateMessage compact title="No bundles" description="No Kumiho bundle items were found in this project." /></div>
+          <div className="p-4"><StateMessage compact title="No bundles" description="No Kumiho bundle items were found in this space." /></div>
         ) : bundles.map((bundle) => {
           const active = bundle.kref === selectedBundleKref;
           const protectedBundle = PROTECTED_BUNDLES.has(bundleNameFromKref(bundle.kref));
@@ -1404,7 +1435,7 @@ export default function Assets() {
       return;
     }
     setLoadingBundles(true);
-    fetchAssetBundles(selectedProject)
+    fetchAssetBundles(selectedProject, currentSpacePath ?? `/${selectedProject}`)
       .then((nextBundles) => {
         setBundles(nextBundles);
         setSelectedBundleKref((current) => {
@@ -1415,9 +1446,10 @@ export default function Assets() {
       .catch((err) => {
         console.error('[Assets] Failed to load bundles:', err);
         setBundles([]);
+        setSelectedBundleKref(null);
       })
       .finally(() => setLoadingBundles(false));
-  }, [reloadNonce, selectedProject]);
+  }, [currentSpacePath, reloadNonce, selectedProject]);
 
   useEffect(() => {
     if (!selectedBundleKref) {
@@ -1446,6 +1478,8 @@ export default function Assets() {
     setSearchQuery('');
     setSearchResults([]);
     setSearching(false);
+    setSelectedBundleKref(null);
+    setBundleMembers([]);
   }, [currentSpacePath]);
 
   const navigateToBreadcrumb = useCallback((index: number) => {
@@ -1457,6 +1491,8 @@ export default function Assets() {
     setSearchQuery('');
     setSearchResults([]);
     setSearching(false);
+    setSelectedBundleKref(null);
+    setBundleMembers([]);
   }, []);
 
   const handleSearchChange = useCallback((query: string) => {
@@ -1495,6 +1531,8 @@ export default function Assets() {
     setSearchQuery('');
     setSearchResults([]);
     setSearching(false);
+    setSelectedBundleKref(null);
+    setBundleMembers([]);
   }, []);
 
   const handleSelectItem = useCallback((item: KumihoItem) => {
@@ -1911,7 +1949,7 @@ export default function Assets() {
               </div>
             ) : (
               <div className="text-xs" style={{ color: 'var(--construct-text-faint)' }}>
-                {bundles.length} bundles
+                {bundles.length} bundles in space
               </div>
             )}
           </div>
@@ -1938,10 +1976,13 @@ export default function Assets() {
               <BundleBrowser
                 bundles={bundles}
                 members={bundleMembers}
+                childSpaces={childSpaces}
+                currentSpacePath={currentSpacePath}
                 selectedBundleKref={selectedBundleKref}
                 selectedBundleProtected={selectedBundleProtected}
                 loadingBundles={loadingBundles}
                 loadingMembers={loadingBundleMembers}
+                onNavigateSpace={navigateToSpace}
                 onSelectBundle={(bundle) => setSelectedBundleKref(bundle.kref)}
                 onOpenMember={(member) => {
                   if (member.item) void handleOpenKref(member.item.kref);
