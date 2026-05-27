@@ -722,15 +722,10 @@ impl Agent {
                     );
                     crate::agent::kumiho::warn_if_kumiho_advanced_missing(config, kumiho_advanced);
                     if config.mcp.deferred_loading {
-                        let operator_prefix =
-                            format!("{}__", crate::agent::operator::OPERATOR_SERVER_NAME);
-
-                        // Eagerly load operator tools so they are always
-                        // available without a tool_search round-trip.
                         let all_names = registry.tool_names();
                         let mut eager_count = 0usize;
                         for name in &all_names {
-                            if name.starts_with(&operator_prefix) {
+                            if crate::tools::mcp_deferred::is_operator_seat_eager_tool(name) {
                                 if let Some(def) = registry.get_tool_def(name).await {
                                     let wrapper: std::sync::Arc<dyn tools::Tool> =
                                         std::sync::Arc::new(tools::McpToolWrapper::new(
@@ -747,14 +742,17 @@ impl Agent {
                             }
                         }
 
-                        // Defer everything else (kumiho-memory, etc.)
+                        // Keep the dashboard path on the same fast lane as
+                        // channels/CLI: core operator tools and Kumiho memory
+                        // reflexes are eager, the broader tool surface stays
+                        // discoverable via tool_search.
                         let deferred_set = tools::DeferredMcpToolSet::from_registry_filtered(
                             std::sync::Arc::clone(&registry),
-                            |name| !name.starts_with(&operator_prefix),
+                            |name| !crate::tools::mcp_deferred::is_operator_seat_eager_tool(name),
                         )
                         .await;
                         tracing::info!(
-                            "MCP hybrid: {} eager operator tool(s), {} deferred stub(s) from {} server(s)",
+                            "MCP hybrid: {} eager operator-seat tool(s), {} deferred stub(s) from {} server(s)",
                             eager_count,
                             deferred_set.len(),
                             registry.server_count()

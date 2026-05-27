@@ -542,6 +542,27 @@ mod tests {
     }
 
     #[test]
+    fn operator_seat_eager_set_keeps_memory_reflexes_and_defers_bulk_tools() {
+        assert!(is_operator_seat_eager_tool(
+            "construct-operator__create_agent"
+        ));
+        assert!(is_operator_seat_eager_tool(
+            "kumiho-memory__kumiho_memory_engage"
+        ));
+        assert!(is_operator_seat_eager_tool(
+            "kumiho-memory__kumiho_memory_reflect"
+        ));
+
+        assert!(!is_operator_seat_eager_tool(
+            "construct-operator__list_workflows"
+        ));
+        assert!(!is_operator_seat_eager_tool(
+            "kumiho-memory__kumiho_memory_store"
+        ));
+        assert!(!is_operator_seat_eager_tool("github__search_issues"));
+    }
+
+    #[test]
     fn build_deferred_section_empty_when_no_stubs() {
         let set = DeferredMcpToolSet {
             stubs: vec![],

@@ -57,6 +57,12 @@ capture_skill, list_skills, load_skill, search_clawhub, browse_clawhub, \
 install_from_clawhub, list_nodes, invoke_node, get_session_history, \
 archive_session, compact_conversation, store_compaction.
 
+Kumiho SDK skill: for Kumiho SDK/REST/MCP work involving krefs, projects, \
+spaces, items, revisions, artifacts, edges, bundles, graph traversal, or \
+workflow Kumiho steps, load `kumiho-sdk` on demand before acting. If Kumiho \
+Skills lookup misses, call load_skill with allow_legacy_disk_fallback=true. \
+Do not inline the full skill unless the task needs exact API details.
+
 Roles: CODER (codex) — implementation/debugging. REVIEWER (codex) — \
 code review/quality. RESEARCHER (claude) — exploration/analysis.
 
