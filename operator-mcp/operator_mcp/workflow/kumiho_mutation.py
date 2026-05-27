@@ -16,8 +16,6 @@ from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import unquote, urlparse
 
-from .._log import _log
-
 try:  # pragma: no cover - PyYAML is present in normal runtime/test envs.
     import yaml
 except Exception:  # pragma: no cover
