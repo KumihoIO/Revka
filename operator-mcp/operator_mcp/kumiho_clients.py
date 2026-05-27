@@ -24,6 +24,10 @@ _KUMIHO_IMPORT_ERROR: BaseException | None = None
 # has answered `initialize`, which makes the whole sidecar unavailable. Keep
 # auto-config lazy by suppressing it only while importing the tool functions.
 _AUTO_CONFIGURE = os.environ.pop("KUMIHO_AUTO_CONFIGURE", None)
+tool_batch_get_revisions = None  # type: ignore[assignment]
+tool_get_item = None  # type: ignore[assignment]
+tool_get_item_revisions = None  # type: ignore[assignment]
+tool_get_revision = None  # type: ignore[assignment]
 try:
     from kumiho.mcp_server import (
         _ensure_configured,
@@ -58,6 +62,13 @@ try:
         from kumiho.mcp_server import tool_batch_get_revisions
     except ImportError:
         tool_batch_get_revisions = None  # type: ignore[assignment]
+
+    try:
+        from kumiho.mcp_server import tool_get_item, tool_get_item_revisions, tool_get_revision
+    except ImportError:
+        tool_get_item = None  # type: ignore[assignment]
+        tool_get_item_revisions = None  # type: ignore[assignment]
+        tool_get_revision = None  # type: ignore[assignment]
 except Exception as exc:
     _HAS_KUMIHO = False
     _KUMIHO_IMPORT_ERROR = exc
@@ -138,6 +149,73 @@ class KumihoSDKClient:
             if not include_deprecated:
                 items = [i for i in items if not i.get("deprecated")]
             return items
+        return await asyncio.to_thread(_call)
+
+    async def search_items(
+        self,
+        context: str = "",
+        name: str = "",
+        kind: str = "",
+        include_metadata: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Search Kumiho items without creating or modifying graph state."""
+        def _call():
+            r = tool_search_items(
+                context_filter=context,
+                name_filter=name,
+                kind_filter=kind,
+                include_metadata=include_metadata,
+            )
+            if "error" in r:
+                _log(f"search_items error: {r['error']}")
+                return []
+            return r.get("items", [])
+        return await asyncio.to_thread(_call)
+
+    async def get_item(self, item_kref: str) -> dict[str, Any] | None:
+        """Fetch an item by kref."""
+        if tool_get_item is None:
+            return None
+        def _call():
+            r = tool_get_item(item_kref)
+            if "error" in r:
+                return None
+            return r.get("item", r)
+        return await asyncio.to_thread(_call)
+
+    async def get_item_revisions(
+        self,
+        item_kref: str,
+        include_metadata: bool = True,
+    ) -> list[dict[str, Any]]:
+        """Fetch all revisions for an item."""
+        if tool_get_item_revisions is None:
+            return []
+        def _call():
+            r = tool_get_item_revisions(item_kref, include_metadata=include_metadata)
+            if "error" in r:
+                return []
+            return r.get("revisions", [])
+        return await asyncio.to_thread(_call)
+
+    async def get_revision(self, revision_kref: str) -> dict[str, Any] | None:
+        """Fetch one exact revision by revision kref."""
+        if tool_get_revision is None:
+            return None
+        def _call():
+            r = tool_get_revision(revision_kref)
+            if "error" in r:
+                return None
+            return r.get("revision", r)
+        return await asyncio.to_thread(_call)
+
+    async def get_revision_by_tag(self, item_kref: str, tag: str) -> dict[str, Any] | None:
+        """Fetch a revision by tag without falling back to latest."""
+        def _call():
+            r = tool_get_revision_by_tag(item_kref, tag)
+            if "error" in r:
+                return None
+            return r.get("revision", r)
         return await asyncio.to_thread(_call)
 
     async def create_item(
@@ -353,7 +431,9 @@ class KumihoSDKClient:
         metadata: dict[str, str] | None = None,
     ) -> None:
         def _call():
-            tool_create_edge(source_rev_kref, target_rev_kref, edge_type, metadata=metadata)
+            r = tool_create_edge(source_rev_kref, target_rev_kref, edge_type, metadata=metadata)
+            if isinstance(r, dict) and "error" in r:
+                raise RuntimeError(r["error"])
         await asyncio.to_thread(_call)
 
     async def get_edges(self, rev_kref: str, direction: int = 0) -> list[dict[str, str]]:
