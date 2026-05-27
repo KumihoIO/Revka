@@ -315,7 +315,9 @@ function parseKref(kref?: string | null): ParsedKref | null {
   if (!normalized?.startsWith('kref://')) return null;
   const selectorIndex = normalized.indexOf('?');
   const itemKref = selectorIndex >= 0 ? normalized.slice(0, selectorIndex) : normalized;
-  const revisionKref = normalized.includes('?r=') || normalized.includes('&r=') ? normalized : null;
+  const selector = selectorIndex >= 0 ? normalized.slice(selectorIndex + 1) : '';
+  const selectorParams = new URLSearchParams(selector);
+  const revisionKref = selectorParams.has('r') || selectorParams.has('t') ? normalized : null;
   const rest = itemKref.slice('kref://'.length);
   const parts = rest.split('/').filter(Boolean);
   if (parts.length < 2) return null;
@@ -1324,12 +1326,26 @@ export default function Assets() {
     setEdges([]);
 
     kumihoProxy<KumihoRevision[]>('/revisions', { item_kref: selectedItem.kref })
-      .then((data) => {
-        const sorted = [...data].sort((a, b) => b.number - a.number);
-        setRevisions(sorted);
-        const requested = requestedRevisionKref
+      .then(async (data) => {
+        let sorted = [...data].sort((a, b) => b.number - a.number);
+        let requested = requestedRevisionKref
           ? sorted.find((revision) => revision.kref === requestedRevisionKref)
           : null;
+        if (!requested && requestedRevisionKref) {
+          try {
+            const resolved = await kumihoProxy<KumihoRevision>('/revisions/by-kref', {
+              kref: requestedRevisionKref,
+            });
+            if (resolved.item_kref === selectedItem.kref) {
+              sorted = [resolved, ...sorted.filter((revision) => revision.kref !== resolved.kref)]
+                .sort((a, b) => b.number - a.number);
+              requested = resolved;
+            }
+          } catch {
+            // Fall back to latest if the requested tag selector cannot be resolved.
+          }
+        }
+        setRevisions(sorted);
         setSelectedRevision(requested ?? sorted[0] ?? null);
       })
       .catch(() => setRevisions([]))

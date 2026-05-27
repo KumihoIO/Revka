@@ -12,6 +12,7 @@ use super::kumiho_client::{
     ArtifactResponse, BundleMemberInfo, EdgeResponse, ItemResponse, KumihoClient, KumihoError,
     RevisionResponse, kumiho_error_to_response,
 };
+use crate::security::SecurityPolicy;
 use axum::{
     Json,
     extract::{Query, State},
@@ -20,6 +21,8 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::ffi::OsString;
+use std::io;
 use std::path::{Path, PathBuf};
 
 const MAX_EDIT_BYTES: usize = 1024 * 1024;
@@ -366,6 +369,65 @@ fn location_from_path(path: &Path, file_uri: bool) -> String {
     }
 }
 
+fn intended_resolved_path(path: &Path) -> io::Result<PathBuf> {
+    if path.exists() {
+        return path.canonicalize();
+    }
+
+    let mut ancestor = path;
+    let mut missing: Vec<OsString> = Vec::new();
+    while !ancestor.exists() {
+        if let Some(name) = ancestor.file_name() {
+            missing.push(name.to_os_string());
+        }
+        ancestor = ancestor
+            .parent()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no existing path ancestor"))?;
+    }
+
+    let mut resolved = ancestor.canonicalize()?;
+    for component in missing.iter().rev() {
+        resolved.push(component);
+    }
+    Ok(resolved)
+}
+
+fn validate_artifact_local_path(
+    state: &AppState,
+    path: &Path,
+    operation: &str,
+) -> Result<(), Response> {
+    let policy = {
+        let config = state.config.lock();
+        SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir)
+    };
+
+    let raw = path.to_string_lossy();
+    if !policy.is_path_allowed(&raw) {
+        return Err(json_error(
+            StatusCode::FORBIDDEN,
+            format!(
+                "artifact {operation} path is not allowed by workspace policy; move it under the workspace or an allowed root"
+            ),
+        ));
+    }
+
+    let resolved = intended_resolved_path(path).map_err(|e| {
+        json_error(
+            StatusCode::BAD_REQUEST,
+            format!("failed to resolve artifact {operation} path: {e}"),
+        )
+    })?;
+    if !policy.is_resolved_path_allowed(&resolved) {
+        return Err(json_error(
+            StatusCode::FORBIDDEN,
+            format!("artifact {operation} path resolves outside the workspace and allowed roots"),
+        ));
+    }
+
+    Ok(())
+}
+
 fn revision_location(path: &Path, revision_number: i32) -> PathBuf {
     let parent = path.parent().unwrap_or_else(|| Path::new("/"));
     let stem = path
@@ -580,6 +642,9 @@ pub async fn handle_create_artifact(
             Ok(path) => path,
             Err(msg) => return json_error(StatusCode::BAD_REQUEST, msg),
         };
+        if let Err(response) = validate_artifact_local_path(&state, &path, "write") {
+            return response;
+        }
         if tokio::fs::metadata(&path).await.is_ok() && !body.overwrite {
             return json_error(
                 StatusCode::CONFLICT,
@@ -606,6 +671,9 @@ pub async fn handle_create_artifact(
             Ok(path) => path,
             Err(msg) => return json_error(StatusCode::BAD_REQUEST, msg),
         };
+        if let Err(response) = validate_artifact_local_path(&state, &path, "link validation") {
+            return response;
+        }
         if tokio::fs::metadata(&path).await.is_err() {
             return json_error(StatusCode::BAD_REQUEST, "artifact file does not exist");
         }
@@ -1312,5 +1380,20 @@ mod tests {
         assert_eq!(normalize_graph_direction(Some("dependents")), "incoming");
         assert_eq!(normalize_graph_direction(Some("both")), "both");
         assert_eq!(normalize_graph_direction(None), "both");
+    }
+
+    #[test]
+    fn intended_resolved_path_keeps_missing_tail_under_existing_parent() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let target = temp.path().join("nested").join("artifact.md");
+        let resolved = intended_resolved_path(&target).expect("resolve intended path");
+        assert_eq!(
+            resolved,
+            temp.path()
+                .canonicalize()
+                .expect("canonical tempdir")
+                .join("nested")
+                .join("artifact.md")
+        );
     }
 }

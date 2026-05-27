@@ -680,8 +680,8 @@ struct RemoveBundleMemberBody {
 
 #[derive(Serialize)]
 struct CreateEdgeBody {
-    source_revision_kref: String,
-    target_revision_kref: String,
+    source_kref: String,
+    target_kref: String,
     edge_type: String,
     #[serde(skip_serializing_if = "HashMap::is_empty")]
     metadata: HashMap<String, String>,
@@ -2412,8 +2412,8 @@ impl KumihoClient {
         metadata: HashMap<String, String>,
     ) -> Result<EdgeResponse> {
         let body = CreateEdgeBody {
-            source_revision_kref: source_kref.to_string(),
-            target_revision_kref: target_kref.to_string(),
+            source_kref: source_kref.to_string(),
+            target_kref: target_kref.to_string(),
             edge_type: edge_type.to_string(),
             metadata,
         };
@@ -3111,6 +3111,27 @@ mod tests {
             item_kref_without_selectors("kref://Project/Skills/example.skill"),
             "kref://Project/Skills/example.skill"
         );
+    }
+
+    #[test]
+    fn create_edge_body_uses_rest_field_names() {
+        let body = CreateEdgeBody {
+            source_kref: "kref://Project/A/source.item?r=1".into(),
+            target_kref: "kref://Project/A/target.item?r=1".into(),
+            edge_type: "DEPENDS_ON".into(),
+            metadata: HashMap::new(),
+        };
+        let value = serde_json::to_value(body).expect("serialize edge body");
+        assert_eq!(
+            value.get("source_kref").and_then(|v| v.as_str()),
+            Some("kref://Project/A/source.item?r=1")
+        );
+        assert_eq!(
+            value.get("target_kref").and_then(|v| v.as_str()),
+            Some("kref://Project/A/target.item?r=1")
+        );
+        assert!(value.get("source_revision_kref").is_none());
+        assert!(value.get("target_revision_kref").is_none());
     }
 
     // ── Bounded-retry-time tests (Finding #2) ────────────────────────
