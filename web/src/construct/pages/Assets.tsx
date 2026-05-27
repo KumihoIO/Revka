@@ -633,10 +633,10 @@ function CreateActionModal({
   const [name, setName] = useState('');
   const [kind, setKind] = useState(selectedItem?.kind ?? 'character-state');
   const [metadataText, setMetadataText] = useState('');
-  const [artifactName, setArtifactName] = useState('content.md');
+  const [artifactName, setArtifactName] = useState(action === 'context-pack' ? 'CONTEXT_PACK.md' : 'content.md');
   const [location, setLocation] = useState('');
   const [content, setContent] = useState(ITEM_KIND_TEMPLATES[kind] ?? '');
-  const [writeFile, setWriteFile] = useState(false);
+  const [writeFile, setWriteFile] = useState(['item', 'artifact', 'context-pack'].includes(action));
   const [overwrite, setOverwrite] = useState(false);
   const [targetRevisionKref, setTargetRevisionKref] = useState(selectedRevision?.kref ?? '');
   const [targetItemKref, setTargetItemKref] = useState(selectedItem?.kref ?? '');
@@ -688,9 +688,10 @@ function CreateActionModal({
       if (action === 'item') {
         const item = await createAssetItem({ space_path: resolvedSpacePath, item_name: name, kind, metadata });
         let revision: KumihoRevision | undefined;
-        if (content.trim() || location.trim()) {
+        const shouldCreateArtifact = writeFile || Boolean(location.trim());
+        if (content.trim() || shouldCreateArtifact) {
           revision = await createAssetRevision({ item_kref: item.kref, metadata: { created_by: 'construct-asset-browser' } });
-          if (location.trim()) {
+          if (shouldCreateArtifact) {
             await createAssetArtifact({
               revision_kref: revision.kref,
               name: artifactName,
@@ -791,7 +792,7 @@ function CreateActionModal({
         ].join('\n');
         await createAssetArtifact({
           revision_kref: revision.kref,
-          name: 'CONTEXT_PACK.md',
+          name: artifactName || 'CONTEXT_PACK.md',
           location,
           content: manifest,
           write_file: writeFile,
@@ -876,7 +877,12 @@ function CreateActionModal({
             </label>
             <label className="text-xs font-semibold uppercase tracking-[0.1em]" style={{ color: 'var(--construct-text-faint)' }}>
               Location / path reference
-              <input className="construct-input mt-1 font-mono text-xs" value={location} onChange={(event) => setLocation(event.target.value)} placeholder="file:///G:/path/content.md" />
+              <input
+                className="construct-input mt-1 font-mono text-xs"
+                value={location}
+                onChange={(event) => setLocation(event.target.value)}
+                placeholder={writeFile ? 'Auto: Construct workspace/artifacts/kumiho/... when blank' : 'file:///G:/path/content.md'}
+              />
             </label>
           </>
         ) : null}
@@ -884,9 +890,14 @@ function CreateActionModal({
       {['item', 'artifact', 'context-pack'].includes(action) ? (
         <div className="mt-3 space-y-2">
           <div className="flex flex-wrap gap-3 text-xs" style={{ color: 'var(--construct-text-secondary)' }}>
-            <label className="inline-flex items-center gap-2"><input type="checkbox" checked={writeFile} onChange={(event) => setWriteFile(event.target.checked)} /> Create/write file</label>
+            <label className="inline-flex items-center gap-2"><input type="checkbox" checked={writeFile} onChange={(event) => setWriteFile(event.target.checked)} /> Create/write file under Construct workspace when location is blank</label>
             <label className="inline-flex items-center gap-2"><input type="checkbox" checked={overwrite} onChange={(event) => setOverwrite(event.target.checked)} /> Overwrite existing file</label>
           </div>
+          {writeFile && !location.trim() ? (
+            <div className="rounded-[8px] border px-3 py-2 text-xs" style={{ borderColor: 'var(--construct-border-soft)', color: 'var(--construct-text-faint)' }}>
+              The gateway will store this artifact under the configured Construct workspace at <span className="font-mono">artifacts/kumiho/&lt;project&gt;/&lt;space&gt;/&lt;item&gt;/r&lt;revision&gt;/&lt;artifact&gt;</span>.
+            </div>
+          ) : null}
           <textarea className="construct-input min-h-[14rem] w-full resize-y font-mono text-xs leading-5" value={content} onChange={(event) => setContent(event.target.value)} spellCheck={false} />
         </div>
       ) : null}
