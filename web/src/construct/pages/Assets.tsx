@@ -454,20 +454,26 @@ function CollapsibleSection({
 function BundleBrowser({
   bundles,
   members,
+  childSpaces,
+  currentSpacePath,
   selectedBundleKref,
   selectedBundleProtected,
   loadingBundles,
   loadingMembers,
+  onNavigateSpace,
   onSelectBundle,
   onOpenMember,
   onCopyKref,
 }: {
   bundles: KumihoItem[];
   members: KumihoBundleMemberDetail[];
+  childSpaces: KumihoSpace[];
+  currentSpacePath: string | null;
   selectedBundleKref: string | null;
   selectedBundleProtected: boolean;
   loadingBundles: boolean;
   loadingMembers: boolean;
+  onNavigateSpace: (space: KumihoSpace) => void;
   onSelectBundle: (bundle: KumihoItem) => void;
   onOpenMember: (member: KumihoBundleMemberDetail) => void;
   onCopyKref: (kref: string) => void;
@@ -475,10 +481,35 @@ function BundleBrowser({
   return (
     <div className="grid min-h-full grid-cols-[minmax(14rem,0.38fr)_minmax(0,1fr)]">
       <div className="border-r" style={{ borderColor: 'var(--construct-border-soft)' }}>
+        <div className="border-b px-4 py-2.5 text-[11px] font-semibold uppercase tracking-[0.12em]" style={{ borderColor: 'var(--construct-border-soft)', color: 'var(--construct-text-faint)' }}>
+          Spaces
+        </div>
+        {childSpaces.length === 0 ? (
+          <div className="border-b px-4 py-3 text-xs" style={{ borderColor: 'var(--construct-border-soft)', color: 'var(--construct-text-faint)' }}>
+            No child spaces
+          </div>
+        ) : childSpaces.map((space) => (
+          <button
+            key={space.path}
+            type="button"
+            onClick={() => onNavigateSpace(space)}
+            className="flex w-full items-center gap-2 border-b px-4 py-3 text-left transition hover:brightness-125"
+            style={{ borderColor: 'var(--construct-border-soft)' }}
+          >
+            <FolderOpen className="h-4 w-4 shrink-0" style={{ color: '#38bdf8' }} />
+            <span className="min-w-0 flex-1 truncate text-sm font-medium" style={{ color: 'var(--construct-text-primary)' }}>
+              {space.name}
+            </span>
+            <ChevronRight className="h-3.5 w-3.5 shrink-0" style={{ color: 'var(--construct-text-faint)' }} />
+          </button>
+        ))}
+        <div className="border-b px-4 py-2.5 text-[11px] font-semibold uppercase tracking-[0.12em]" style={{ borderColor: 'var(--construct-border-soft)', color: 'var(--construct-text-faint)' }}>
+          Bundles in {currentSpacePath ?? 'selected space'}
+        </div>
         {loadingBundles ? (
           <div className="p-4"><StateMessage tone="loading" compact title="Loading bundles..." /></div>
         ) : bundles.length === 0 ? (
-          <div className="p-4"><StateMessage compact title="No bundles" description="No Kumiho bundle items were found in this project." /></div>
+          <div className="p-4"><StateMessage compact title="No bundles" description="No Kumiho bundle items were found in this space." /></div>
         ) : bundles.map((bundle) => {
           const active = bundle.kref === selectedBundleKref;
           const protectedBundle = PROTECTED_BUNDLES.has(bundleNameFromKref(bundle.kref));
@@ -602,10 +633,10 @@ function CreateActionModal({
   const [name, setName] = useState('');
   const [kind, setKind] = useState(selectedItem?.kind ?? 'character-state');
   const [metadataText, setMetadataText] = useState('');
-  const [artifactName, setArtifactName] = useState('content.md');
+  const [artifactName, setArtifactName] = useState(action === 'context-pack' ? 'CONTEXT_PACK.md' : 'content.md');
   const [location, setLocation] = useState('');
   const [content, setContent] = useState(ITEM_KIND_TEMPLATES[kind] ?? '');
-  const [writeFile, setWriteFile] = useState(false);
+  const [writeFile, setWriteFile] = useState(['item', 'artifact', 'context-pack'].includes(action));
   const [overwrite, setOverwrite] = useState(false);
   const [targetRevisionKref, setTargetRevisionKref] = useState(selectedRevision?.kref ?? '');
   const [targetItemKref, setTargetItemKref] = useState(selectedItem?.kref ?? '');
@@ -657,9 +688,10 @@ function CreateActionModal({
       if (action === 'item') {
         const item = await createAssetItem({ space_path: resolvedSpacePath, item_name: name, kind, metadata });
         let revision: KumihoRevision | undefined;
-        if (content.trim() || location.trim()) {
+        const shouldCreateArtifact = writeFile || Boolean(location.trim());
+        if (content.trim() || shouldCreateArtifact) {
           revision = await createAssetRevision({ item_kref: item.kref, metadata: { created_by: 'construct-asset-browser' } });
-          if (location.trim()) {
+          if (shouldCreateArtifact) {
             await createAssetArtifact({
               revision_kref: revision.kref,
               name: artifactName,
@@ -760,7 +792,7 @@ function CreateActionModal({
         ].join('\n');
         await createAssetArtifact({
           revision_kref: revision.kref,
-          name: 'CONTEXT_PACK.md',
+          name: artifactName || 'CONTEXT_PACK.md',
           location,
           content: manifest,
           write_file: writeFile,
@@ -845,7 +877,12 @@ function CreateActionModal({
             </label>
             <label className="text-xs font-semibold uppercase tracking-[0.1em]" style={{ color: 'var(--construct-text-faint)' }}>
               Location / path reference
-              <input className="construct-input mt-1 font-mono text-xs" value={location} onChange={(event) => setLocation(event.target.value)} placeholder="file:///G:/path/content.md" />
+              <input
+                className="construct-input mt-1 font-mono text-xs"
+                value={location}
+                onChange={(event) => setLocation(event.target.value)}
+                placeholder={writeFile ? 'Auto: Construct workspace/artifacts/kumiho/... when blank' : 'file:///G:/path/content.md'}
+              />
             </label>
           </>
         ) : null}
@@ -853,9 +890,14 @@ function CreateActionModal({
       {['item', 'artifact', 'context-pack'].includes(action) ? (
         <div className="mt-3 space-y-2">
           <div className="flex flex-wrap gap-3 text-xs" style={{ color: 'var(--construct-text-secondary)' }}>
-            <label className="inline-flex items-center gap-2"><input type="checkbox" checked={writeFile} onChange={(event) => setWriteFile(event.target.checked)} /> Create/write file</label>
+            <label className="inline-flex items-center gap-2"><input type="checkbox" checked={writeFile} onChange={(event) => setWriteFile(event.target.checked)} /> Create/write file under Construct workspace when location is blank</label>
             <label className="inline-flex items-center gap-2"><input type="checkbox" checked={overwrite} onChange={(event) => setOverwrite(event.target.checked)} /> Overwrite existing file</label>
           </div>
+          {writeFile && !location.trim() ? (
+            <div className="rounded-[8px] border px-3 py-2 text-xs" style={{ borderColor: 'var(--construct-border-soft)', color: 'var(--construct-text-faint)' }}>
+              The gateway will store this artifact under the configured Construct workspace at <span className="font-mono">artifacts/kumiho/&lt;project&gt;/&lt;space&gt;/&lt;item&gt;/r&lt;revision&gt;/&lt;artifact&gt;</span>.
+            </div>
+          ) : null}
           <textarea className="construct-input min-h-[14rem] w-full resize-y font-mono text-xs leading-5" value={content} onChange={(event) => setContent(event.target.value)} spellCheck={false} />
         </div>
       ) : null}
@@ -1404,7 +1446,7 @@ export default function Assets() {
       return;
     }
     setLoadingBundles(true);
-    fetchAssetBundles(selectedProject)
+    fetchAssetBundles(selectedProject, currentSpacePath ?? `/${selectedProject}`)
       .then((nextBundles) => {
         setBundles(nextBundles);
         setSelectedBundleKref((current) => {
@@ -1415,9 +1457,10 @@ export default function Assets() {
       .catch((err) => {
         console.error('[Assets] Failed to load bundles:', err);
         setBundles([]);
+        setSelectedBundleKref(null);
       })
       .finally(() => setLoadingBundles(false));
-  }, [reloadNonce, selectedProject]);
+  }, [currentSpacePath, reloadNonce, selectedProject]);
 
   useEffect(() => {
     if (!selectedBundleKref) {
@@ -1446,6 +1489,8 @@ export default function Assets() {
     setSearchQuery('');
     setSearchResults([]);
     setSearching(false);
+    setSelectedBundleKref(null);
+    setBundleMembers([]);
   }, [currentSpacePath]);
 
   const navigateToBreadcrumb = useCallback((index: number) => {
@@ -1457,6 +1502,8 @@ export default function Assets() {
     setSearchQuery('');
     setSearchResults([]);
     setSearching(false);
+    setSelectedBundleKref(null);
+    setBundleMembers([]);
   }, []);
 
   const handleSearchChange = useCallback((query: string) => {
@@ -1495,6 +1542,8 @@ export default function Assets() {
     setSearchQuery('');
     setSearchResults([]);
     setSearching(false);
+    setSelectedBundleKref(null);
+    setBundleMembers([]);
   }, []);
 
   const handleSelectItem = useCallback((item: KumihoItem) => {
@@ -1911,7 +1960,7 @@ export default function Assets() {
               </div>
             ) : (
               <div className="text-xs" style={{ color: 'var(--construct-text-faint)' }}>
-                {bundles.length} bundles
+                {bundles.length} bundles in space
               </div>
             )}
           </div>
@@ -1938,10 +1987,13 @@ export default function Assets() {
               <BundleBrowser
                 bundles={bundles}
                 members={bundleMembers}
+                childSpaces={childSpaces}
+                currentSpacePath={currentSpacePath}
                 selectedBundleKref={selectedBundleKref}
                 selectedBundleProtected={selectedBundleProtected}
                 loadingBundles={loadingBundles}
                 loadingMembers={loadingBundleMembers}
+                onNavigateSpace={navigateToSpace}
                 onSelectBundle={(bundle) => setSelectedBundleKref(bundle.kref)}
                 onOpenMember={(member) => {
                   if (member.item) void handleOpenKref(member.item.kref);

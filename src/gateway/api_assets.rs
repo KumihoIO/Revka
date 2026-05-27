@@ -6,6 +6,7 @@
 
 use super::AppState;
 use super::api::require_auth;
+use super::api_agents::{ascii_storage_segment, sanitize_upload_filename};
 use super::kumiho_client::build_kumiho_client;
 use super::kumiho_client::invalidate_proxy_cache;
 use super::kumiho_client::{
@@ -147,6 +148,7 @@ pub struct BundleMemberBody {
 #[derive(Deserialize)]
 pub struct AssetBundlesQuery {
     pub project: String,
+    pub space_path: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -367,6 +369,50 @@ fn location_from_path(path: &Path, file_uri: bool) -> String {
     } else {
         path
     }
+}
+
+fn revision_kref_query_value<'a>(query: &'a str, key: &str) -> Option<&'a str> {
+    query.split('&').find_map(|part| {
+        let (candidate, value) = part.split_once('=')?;
+        (candidate == key).then_some(value)
+    })
+}
+
+fn default_artifact_path(
+    workspace_dir: &Path,
+    revision_kref: &str,
+    artifact_name: &str,
+) -> Result<PathBuf, String> {
+    let rest = revision_kref
+        .trim()
+        .strip_prefix("kref://")
+        .ok_or_else(|| "revision kref must start with kref://".to_string())?;
+    let (entity, query) = rest
+        .split_once('?')
+        .ok_or_else(|| "revision kref must include an exact revision selector".to_string())?;
+    let mut parts = entity.split('/').filter(|part| !part.is_empty());
+    let project = parts
+        .next()
+        .ok_or_else(|| "revision kref is missing project".to_string())?;
+    let mut path_parts: Vec<&str> = parts.collect();
+    let item = path_parts
+        .pop()
+        .ok_or_else(|| "revision kref is missing item name".to_string())?;
+    let revision = revision_kref_query_value(query, "r")
+        .ok_or_else(|| "revision kref must include an exact r= revision selector".to_string())?;
+
+    let mut path = workspace_dir
+        .join("artifacts")
+        .join("kumiho")
+        .join(ascii_storage_segment(project, "project"));
+    for segment in path_parts {
+        path = path.join(ascii_storage_segment(segment, "space"));
+    }
+    path = path
+        .join(ascii_storage_segment(item, "item"))
+        .join(format!("r{}", ascii_storage_segment(revision, "latest")))
+        .join(sanitize_upload_filename(artifact_name));
+    Ok(path)
 }
 
 fn intended_resolved_path(path: &Path) -> io::Result<PathBuf> {
@@ -632,10 +678,28 @@ pub async fn handle_create_artifact(
         Ok(value) => value,
         Err(response) => return response,
     };
-    let location = match normalize_artifact_location(&body.location) {
-        Ok(value) => value,
-        Err(msg) => return json_error(StatusCode::BAD_REQUEST, msg),
+    let auto_location = body.write_file && body.location.trim().is_empty();
+    let location = if auto_location {
+        let workspace_dir = state.config.lock().workspace_dir.clone();
+        match default_artifact_path(&workspace_dir, &revision_kref, &name) {
+            Ok(path) => location_from_path(&path, false),
+            Err(msg) => return json_error(StatusCode::BAD_REQUEST, msg),
+        }
+    } else {
+        match normalize_artifact_location(&body.location) {
+            Ok(value) => value,
+            Err(msg) => return json_error(StatusCode::BAD_REQUEST, msg),
+        }
     };
+    let mut metadata = body.metadata;
+    if auto_location {
+        metadata
+            .entry("storage".to_string())
+            .or_insert_with(|| "construct-workspace".to_string());
+        metadata
+            .entry("generated_location".to_string())
+            .or_insert_with(|| "true".to_string());
+    }
 
     if body.write_file {
         let path = match resolve_location(&location) {
@@ -680,7 +744,7 @@ pub async fn handle_create_artifact(
     }
 
     match build_kumiho_client(&state)
-        .create_artifact(&revision_kref, &name, &location, body.metadata)
+        .create_artifact(&revision_kref, &name, &location, metadata)
         .await
     {
         Ok(artifact) => {
@@ -899,15 +963,27 @@ pub async fn handle_list_bundles(
 
     let client = build_kumiho_client(&state);
     let root = format!("/{project}");
-    let spaces = match client.list_spaces(&root, true).await {
-        Ok(spaces) => spaces,
-        Err(e) => return kumiho_err(e),
-    };
+    let paths = if let Some(space_path) = query.space_path.as_deref() {
+        let space_path = space_path.trim();
+        if space_path != root && !space_path.starts_with(&format!("{root}/")) {
+            return json_error(
+                StatusCode::BAD_REQUEST,
+                "space_path must belong to the selected project",
+            );
+        }
+        vec![space_path.to_string()]
+    } else {
+        let spaces = match client.list_spaces(&root, true).await {
+            Ok(spaces) => spaces,
+            Err(e) => return kumiho_err(e),
+        };
 
-    let mut paths = vec![root];
-    paths.extend(spaces.into_iter().map(|space| space.path));
-    paths.sort();
-    paths.dedup();
+        let mut paths = vec![root];
+        paths.extend(spaces.into_iter().map(|space| space.path));
+        paths.sort();
+        paths.dedup();
+        paths
+    };
 
     let mut bundles = Vec::new();
     for path in paths {
@@ -1380,6 +1456,40 @@ mod tests {
         assert_eq!(normalize_graph_direction(Some("dependents")), "incoming");
         assert_eq!(normalize_graph_direction(Some("both")), "both");
         assert_eq!(normalize_graph_direction(None), "both");
+    }
+
+    #[test]
+    fn default_artifact_path_uses_construct_workspace_layout() {
+        let workspace = Path::new("C:/Users/example/.construct/workspace");
+        let path = default_artifact_path(
+            workspace,
+            "kref://ManghanDev/Characters/handoyoon.character-state?r=12",
+            "STATE.md",
+        )
+        .expect("default artifact path");
+        assert_eq!(
+            path,
+            workspace
+                .join("artifacts")
+                .join("kumiho")
+                .join("manghandev")
+                .join("characters")
+                .join("handoyoon-character-state")
+                .join("r12")
+                .join("STATE.md")
+        );
+    }
+
+    #[test]
+    fn default_artifact_path_requires_exact_revision_selector() {
+        let workspace = Path::new("C:/Users/example/.construct/workspace");
+        let err = default_artifact_path(
+            workspace,
+            "kref://ManghanDev/Characters/handoyoon.character-state?t=current",
+            "STATE.md",
+        )
+        .expect_err("tag selector should not be enough for file storage");
+        assert!(err.contains("exact r= revision selector"));
     }
 
     #[test]

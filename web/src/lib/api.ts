@@ -1253,8 +1253,9 @@ export async function createAssetBundle(request: AssetCreateBundleRequest): Prom
   }).then((data) => data.bundle);
 }
 
-export async function fetchAssetBundles(project: string): Promise<KumihoItem[]> {
+export async function fetchAssetBundles(project: string, spacePath?: string | null): Promise<KumihoItem[]> {
   const qs = new URLSearchParams({ project });
+  if (spacePath) qs.set('space_path', spacePath);
   return apiFetch<{ bundles: KumihoItem[] }>(`/api/assets/bundles?${qs.toString()}`)
     .then((data) => data.bundles);
 }
