@@ -1690,6 +1690,7 @@ impl Agent {
         // ── Turn loop ──────────────────────────────────────────────────
         let mut saw_tool_calls = false;
         let mut empty_final_retries = 0usize;
+        let mut post_tool_notice_sent = false;
 
         for _ in 0..self.config.max_tool_iterations {
             // Token-aware compression — keeps the Operator chat under the
@@ -2098,10 +2099,11 @@ impl Agent {
                     })
                     .await;
             }
-            if !results.is_empty() {
+            if !results.is_empty() && !post_tool_notice_sent {
+                post_tool_notice_sent = true;
                 let _ = event_tx
                     .send(TurnEvent::OperatorStatus {
-                        phase: "completed".into(),
+                        phase: "finalizing".into(),
                         detail: POST_TOOL_FINALIZING_NOTICE.into(),
                     })
                     .await;
@@ -3178,7 +3180,7 @@ mod tests {
             matches!(
                 e,
                 TurnEvent::OperatorStatus { phase, detail }
-                    if phase == "completed" && detail == POST_TOOL_FINALIZING_NOTICE
+                    if phase == "finalizing" && detail == POST_TOOL_FINALIZING_NOTICE
             )
         });
         assert!(

@@ -42,6 +42,7 @@ export function operatorPhaseIcon(phase: string): string {
     case 'collecting': case 'collected': return '\u{1f4cb}';
     case 'checking': case 'listing': case 'searching': return '\u{1f50d}';
     case 'saving': return '\u{1f4be}';
+    case 'finalizing': return '\u23f3';
     case 'spawned': case 'completed': return '\u2705';
     case 'failed': return '\u274c';
     case 'blocked': return '\u{1f6d1}';
