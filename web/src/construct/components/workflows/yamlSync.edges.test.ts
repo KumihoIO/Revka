@@ -33,6 +33,60 @@ function edgePairs(edges: { source: string; target: string }[]): Set<string> {
   return new Set(edges.map((e) => `${e.source}->${e.target}`));
 }
 
+test('tasksToFlow emits static edges by default', () => {
+  const yaml = `
+steps:
+  - id: source
+    type: shell
+    shell:
+      command: "echo source"
+  - id: fanout
+    type: parallel
+    parallel:
+      steps: [branch_a, branch_b]
+      join: all
+  - id: branch_a
+    type: shell
+    shell:
+      command: "echo a"
+  - id: branch_b
+    type: shell
+    shell:
+      command: "echo b"
+  - id: consume
+    type: agent
+    depends_on: [fanout]
+    agent:
+      agent_type: claude
+      role: summarizer
+      prompt: "Use \${source.output}"
+  - id: gate
+    type: conditional
+    conditional:
+      branches:
+        - condition: "\${consume.output_data.status} == 'ok'"
+          goto: done
+        - condition: default
+          goto: retry
+  - id: done
+    type: shell
+    shell:
+      command: "echo done"
+  - id: retry
+    type: shell
+    shell:
+      command: "echo retry"
+`;
+  const tasks = parseWorkflowYaml(yaml);
+  const { edges } = tasksToFlow(tasks);
+  assert.ok(edges.length > 0, 'expected the fixture to exercise edge creation');
+  assert.deepEqual(
+    edges.filter((edge) => edge.animated).map((edge) => edge.id),
+    [],
+    'static workflow graphs should not animate every edge',
+  );
+});
+
 test('parallel.steps emits parent → child edges', () => {
   const yaml = `
 steps:
