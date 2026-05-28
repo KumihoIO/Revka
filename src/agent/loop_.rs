@@ -2355,6 +2355,7 @@ pub(crate) async fn run_tool_call_loop(
         .collect();
     let mut consecutive_identical_outputs: usize = 0;
     let mut last_tool_output_hash: Option<u64> = None;
+    let mut post_tool_notice_sent = false;
 
     let mut loop_detector = crate::agent::loop_detector::LoopDetector::new(
         crate::agent::loop_detector::LoopDetectorConfig {
@@ -3555,13 +3556,16 @@ pub(crate) async fn run_tool_call_loop(
             }
         }
 
-        if let Some(ref tx) = on_delta {
-            let _ = tx
-                .send(DraftEvent::Content(format!(
-                    "{}\n",
-                    crate::agent::agent::POST_TOOL_FINALIZING_NOTICE
-                )))
-                .await;
+        if !post_tool_notice_sent {
+            if let Some(ref tx) = on_delta {
+                post_tool_notice_sent = true;
+                let _ = tx
+                    .send(DraftEvent::Progress(format!(
+                        "{}\n",
+                        crate::agent::agent::POST_TOOL_FINALIZING_NOTICE
+                    )))
+                    .await;
+            }
         }
 
         // Add assistant message with tool calls + tool results to history.
@@ -7539,11 +7543,12 @@ mod tests {
                 DraftEvent::Clear => {
                     visible_deltas.clear();
                 }
-                DraftEvent::Progress(_) => {}
-                DraftEvent::Content(text) => {
+                DraftEvent::Progress(text) => {
                     if text.contains(crate::agent::agent::POST_TOOL_FINALIZING_NOTICE) {
                         saw_post_tool_notice = true;
                     }
+                }
+                DraftEvent::Content(text) => {
                     visible_deltas.push_str(&text);
                 }
             }
@@ -7562,6 +7567,81 @@ mod tests {
             !visible_deltas.contains("<tool_call"),
             "draft text should not leak streamed tool payload markers"
         );
+    }
+
+    #[tokio::test]
+    async fn run_tool_call_loop_emits_post_tool_notice_once_across_tool_rounds() {
+        let provider = StreamingScriptedProvider::from_text_responses(vec![
+            r#"<tool_call>
+{"name":"count_tool","arguments":{"value":"A"}}
+</tool_call>"#,
+            r#"<tool_call>
+{"name":"count_tool","arguments":{"value":"B"}}
+</tool_call>"#,
+            "done",
+        ]);
+        let invocations = Arc::new(AtomicUsize::new(0));
+        let tools_registry: Vec<Box<dyn Tool>> = vec![Box::new(CountingTool::new(
+            "count_tool",
+            Arc::clone(&invocations),
+        ))];
+        let mut history = vec![
+            ChatMessage::system("test-system"),
+            ChatMessage::user("run multiple tool rounds"),
+        ];
+        let observer = NoopObserver;
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<DraftEvent>(64);
+
+        let result = run_tool_call_loop(
+            &provider,
+            &mut history,
+            &tools_registry,
+            &observer,
+            "mock-provider",
+            "mock-model",
+            0.0,
+            true,
+            None,
+            "telegram",
+            None,
+            &crate::config::MultimodalConfig::default(),
+            5,
+            None,
+            Some(tx),
+            None,
+            &[],
+            &[],
+            None,
+            None,
+            &crate::config::PacingConfig::default(),
+            0,
+            0,
+            None,
+        )
+        .await
+        .expect("streaming tool loop should execute multiple tool rounds and finish");
+
+        let mut notice_count = 0usize;
+        let mut visible_deltas = String::new();
+        while let Some(delta) = rx.recv().await {
+            match delta {
+                DraftEvent::Clear => visible_deltas.clear(),
+                DraftEvent::Progress(text) => {
+                    if text.contains(crate::agent::agent::POST_TOOL_FINALIZING_NOTICE) {
+                        notice_count += 1;
+                    }
+                }
+                DraftEvent::Content(text) => visible_deltas.push_str(&text),
+            }
+        }
+
+        assert_eq!(result, "done");
+        assert_eq!(invocations.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            notice_count, 1,
+            "post-tool completion notice should not repeat for every tool round"
+        );
+        assert_eq!(visible_deltas, "done");
     }
 
     #[tokio::test]
