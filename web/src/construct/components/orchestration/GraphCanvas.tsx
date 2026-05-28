@@ -24,6 +24,8 @@ type GraphCanvasProps<TNode extends Node = Node> = {
   height?: string;
   /** When true, the canvas fills its flex parent (flex: 1 + min-h-0). */
   fill?: boolean;
+  onlyRenderVisibleElements?: boolean;
+  showMiniMap?: boolean;
   emptyState?: string;
   overlay?: ReactNode;
 };
@@ -37,6 +39,8 @@ function GraphCanvasInner<TNode extends Node = Node>({
   minimapColor,
   height = '30rem',
   fill,
+  onlyRenderVisibleElements = false,
+  showMiniMap = true,
   emptyState = 'No graph data available.',
   overlay,
 }: GraphCanvasProps<TNode>) {
@@ -75,6 +79,7 @@ function GraphCanvasInner<TNode extends Node = Node>({
         nodesConnectable={false}
         panOnDrag
         elementsSelectable
+        onlyRenderVisibleElements={onlyRenderVisibleElements}
         minZoom={0.35}
         maxZoom={2}
         proOptions={{ hideAttribution: true }}
@@ -89,20 +94,22 @@ function GraphCanvasInner<TNode extends Node = Node>({
             borderRadius: '12px',
           }}
         />
-        <MiniMap
-          position="bottom-right"
-          pannable
-          zoomable
-          nodeColor={minimapColor}
-          style={{
-            background: 'var(--construct-bg-panel-strong)',
-            border: '1px solid var(--construct-border-soft)',
-            borderRadius: '12px',
-            width: 220,
-            height: 150,
-          }}
-          maskColor="rgba(0, 0, 0, 0.24)"
-        />
+        {showMiniMap ? (
+          <MiniMap
+            position="bottom-right"
+            pannable
+            zoomable
+            nodeColor={minimapColor}
+            style={{
+              background: 'var(--construct-bg-panel-strong)',
+              border: '1px solid var(--construct-border-soft)',
+              borderRadius: '12px',
+              width: 220,
+              height: 150,
+            }}
+            maskColor="rgba(0, 0, 0, 0.24)"
+          />
+        ) : null}
       </ReactFlow>
     </div>
   );
