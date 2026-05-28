@@ -138,6 +138,35 @@ class KumihoSDKClient:
                 _log(f"create_space warning: {r['error']}")
         await asyncio.to_thread(_call)
 
+    async def ensure_space_path(self, space_path: str) -> None:
+        """Ensure every level of a Kumiho space path exists."""
+        parts = space_path.strip("/").split("/")
+        if not parts or not parts[0]:
+            return
+
+        project = parts[0]
+        if len(parts) == 1:
+            def _call_project() -> None:
+                r = tool_create_project(project)
+                if "error" in r and "already exists" not in r["error"].lower():
+                    _log(f"create_project warning: {r['error']}")
+
+            await asyncio.to_thread(_call_project)
+            return
+
+        await self.ensure_space(project, parts[1])
+
+        for i in range(2, len(parts)):
+            parent_path = "/" + "/".join(parts[:i])
+            segment = parts[i]
+
+            def _call_nested(p=project, s=segment, pp=parent_path) -> None:
+                r = tool_create_space(p, s, parent_path=pp)
+                if "error" in r and "already exists" not in r["error"].lower():
+                    _log(f"create_space({pp}/{s}) warning: {r['error']}")
+
+            await asyncio.to_thread(_call_nested)
+
     async def list_items(self, space_path: str, include_deprecated: bool = False) -> list[dict[str, Any]]:
         def _call():
             clean_path = space_path.lstrip("/")
@@ -288,6 +317,8 @@ class KumihoSDKClient:
     # -- Bundle operations (for teams) -----------------------------------------
 
     async def create_bundle(self, space_path: str, name: str, metadata: dict[str, str] | None = None) -> dict[str, Any]:
+        await self.ensure_space_path(space_path)
+
         def _call():
             clean_path = space_path.lstrip("/")
             _log(f"create_bundle: space={clean_path!r} name={name!r}")
