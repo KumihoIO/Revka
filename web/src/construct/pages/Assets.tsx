@@ -109,6 +109,9 @@ type ParsedKref = {
 
 type ForceNode = KumihoAssetGraphNode & {
   id: string;
+  graphDepth: number;
+  graphDegree: number;
+  val: number;
   x?: number;
   y?: number;
 };
@@ -117,6 +120,14 @@ type ForceLink = {
   source: string | ForceNode;
   target: string | ForceNode;
   edge: KumihoEdge;
+  curveOffset: number;
+};
+
+type LabelBox = {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
 };
 
 const KIND_MAP: Record<string, KindMeta> = {
@@ -128,6 +139,15 @@ const KIND_MAP: Record<string, KindMeta> = {
   bundle: { icon: Package, color: '#2dd4bf', bg: 'rgba(45, 212, 191, 0.1)', border: 'rgba(45, 212, 191, 0.25)' },
   config: { icon: Settings, color: '#a1a1aa', bg: 'rgba(161, 161, 170, 0.1)', border: 'rgba(161, 161, 170, 0.25)' },
   workflow: { icon: Workflow, color: '#fb923c', bg: 'rgba(251, 146, 60, 0.1)', border: 'rgba(251, 146, 60, 0.25)' },
+  character: { icon: Bot, color: '#38bdf8', bg: 'rgba(56, 189, 248, 0.1)', border: 'rgba(56, 189, 248, 0.25)' },
+  'character-state': { icon: Bot, color: '#2dd4bf', bg: 'rgba(45, 212, 191, 0.1)', border: 'rgba(45, 212, 191, 0.25)' },
+  storyline: { icon: GitBranch, color: '#f59e0b', bg: 'rgba(245, 158, 11, 0.1)', border: 'rgba(245, 158, 11, 0.25)' },
+  'foreshadow-thread': { icon: Sparkles, color: '#c084fc', bg: 'rgba(192, 132, 252, 0.1)', border: 'rgba(192, 132, 252, 0.25)' },
+  'canon-rule': { icon: Ban, color: '#f87171', bg: 'rgba(248, 113, 113, 0.1)', border: 'rgba(248, 113, 113, 0.25)' },
+  'timeline-event': { icon: MapPinned, color: '#60a5fa', bg: 'rgba(96, 165, 250, 0.1)', border: 'rgba(96, 165, 250, 0.25)' },
+  'webnovel-episode': { icon: BookOpen, color: '#34d399', bg: 'rgba(52, 211, 153, 0.1)', border: 'rgba(52, 211, 153, 0.25)' },
+  'canon-patch': { icon: Edit3, color: '#fb7185', bg: 'rgba(251, 113, 133, 0.1)', border: 'rgba(251, 113, 133, 0.25)' },
+  'context-pack': { icon: Package, color: '#818cf8', bg: 'rgba(129, 140, 248, 0.1)', border: 'rgba(129, 140, 248, 0.25)' },
 };
 
 const DEFAULT_KIND: KindMeta = {
@@ -157,6 +177,25 @@ const EDGE_TYPES = [
   'RELATED_TO',
   'RESOLVES',
 ];
+
+const GRAPH_DEPTH_OPTIONS = [1, 2, 3] as const;
+const GRAPH_NODE_LIMIT_OPTIONS = [80, 120, 160, 200] as const;
+
+const GRAPH_EDGE_VISUALS: Record<string, { color: string; glow: string; label: string }> = {
+  DEPENDS_ON: { color: '#f59e0b', glow: 'rgba(245,158,11,0.18)', label: 'depends' },
+  DERIVED_FROM: { color: '#22d3ee', glow: 'rgba(34,211,238,0.18)', label: 'derived' },
+  REFERENCES: { color: '#60a5fa', glow: 'rgba(96,165,250,0.18)', label: 'refs' },
+  ADVANCES: { color: '#34d399', glow: 'rgba(52,211,153,0.18)', label: 'advances' },
+  FORESHADOWS: { color: '#a78bfa', glow: 'rgba(167,139,250,0.18)', label: 'foreshadows' },
+  PAYOFF_TARGET: { color: '#f472b6', glow: 'rgba(244,114,182,0.18)', label: 'payoff' },
+  UPDATES: { color: '#2dd4bf', glow: 'rgba(45,212,191,0.18)', label: 'updates' },
+  CONTRADICTS: { color: '#f87171', glow: 'rgba(248,113,113,0.22)', label: 'contradicts' },
+  BLOCKS: { color: '#fb7185', glow: 'rgba(251,113,133,0.22)', label: 'blocks' },
+  RELATED_TO: { color: '#a1a1aa', glow: 'rgba(161,161,170,0.14)', label: 'related' },
+  RESOLVES: { color: '#84cc16', glow: 'rgba(132,204,22,0.18)', label: 'resolves' },
+};
+
+const DEFAULT_GRAPH_EDGE_VISUAL = { color: '#94a3b8', glow: 'rgba(148,163,184,0.14)', label: 'edge' };
 
 const ITEM_KIND_TEMPLATES: Record<string, string> = {
   character: [
@@ -344,6 +383,47 @@ function bundleNameFromKref(kref?: string | null): string {
   return leaf.split('.')[0] || leaf;
 }
 
+function graphNodeLabel(node: Pick<KumihoAssetGraphNode, 'item_name' | 'kref'>): string {
+  return node.item_name || bundleNameFromKref(node.kref) || node.kref;
+}
+
+function graphEdgeKey(edge: KumihoEdge): string {
+  return `${edge.source_kref}\n${edge.edge_type}\n${edge.target_kref}`;
+}
+
+function graphEdgePairKey(edge: KumihoEdge): string {
+  return `${edge.source_kref}\n${edge.target_kref}`;
+}
+
+function graphEdgeVisual(edgeType: string) {
+  return GRAPH_EDGE_VISUALS[edgeType] ?? DEFAULT_GRAPH_EDGE_VISUAL;
+}
+
+function truncateLabel(label: string, maxLength: number): string {
+  if (label.length <= maxLength) return label;
+  return `${label.slice(0, Math.max(0, maxLength - 1))}...`;
+}
+
+function roundedRect(ctx: CanvasRenderingContext2D, x: number, y: number, width: number, height: number, radius: number) {
+  const r = Math.min(radius, width / 2, height / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + width, y, x + width, y + height, r);
+  ctx.arcTo(x + width, y + height, x, y + height, r);
+  ctx.arcTo(x, y + height, x, y, r);
+  ctx.arcTo(x, y, x + width, y, r);
+  ctx.closePath();
+}
+
+function labelBoxOverlaps(box: LabelBox, boxes: LabelBox[]): boolean {
+  return boxes.some((other) => (
+    box.x1 < other.x2
+    && box.x2 > other.x1
+    && box.y1 < other.y2
+    && box.y2 > other.y1
+  ));
+}
+
 function itemDisplayName(item?: KumihoItem | null): string {
   return item?.item_name || item?.name || item?.kref.split('/').pop()?.split('.')[0] || 'item';
 }
@@ -413,6 +493,130 @@ function TagChip({ label, tone }: { label: string; tone: string }) {
       <Tag className="h-2.5 w-2.5" />
       {label}
     </span>
+  );
+}
+
+const METADATA_PRIORITY = [
+  'source_heading',
+  'title',
+  'summary',
+  'role_summary',
+  'status',
+  'timeline_position',
+  'current_location',
+  'current_goal',
+  'known_information',
+  'open_threads',
+  'embedding_text',
+  '_search_text',
+  'updated_by',
+  'created_by',
+  'tenant_id',
+];
+
+function sortedMetadataEntries(metadata?: Record<string, string>): [string, string][] {
+  const entries = Object.entries(metadata ?? {});
+  return entries.sort(([a], [b]) => {
+    const aIndex = METADATA_PRIORITY.indexOf(a);
+    const bIndex = METADATA_PRIORITY.indexOf(b);
+    if (aIndex !== -1 || bIndex !== -1) {
+      return (aIndex === -1 ? Number.MAX_SAFE_INTEGER : aIndex) - (bIndex === -1 ? Number.MAX_SAFE_INTEGER : bIndex);
+    }
+    return a.localeCompare(b);
+  });
+}
+
+function metadataKeyLabel(key: string): string {
+  return key.replace(/^_+/, '').replace(/_/g, ' ');
+}
+
+function metadataPreview(value: string): string {
+  return value.length > 220 ? `${value.slice(0, 217)}...` : value;
+}
+
+function DetailStat({ label, value, tone }: { label: string; value: string | number; tone?: string }) {
+  return (
+    <div className="rounded-[8px] border px-3 py-2" style={{ borderColor: 'var(--construct-border-soft)', background: 'rgba(255,255,255,0.025)' }}>
+      <div className="text-[10px] font-semibold uppercase tracking-[0.08em]" style={{ color: 'var(--construct-text-faint)' }}>{label}</div>
+      <div className="mt-1 truncate text-sm font-semibold" style={{ color: tone ?? 'var(--construct-text-primary)' }}>{value}</div>
+    </div>
+  );
+}
+
+function MetadataSection({ metadata, maxVisible = 8 }: { metadata?: Record<string, string>; maxVisible?: number }) {
+  const entries = sortedMetadataEntries(metadata);
+  const visible = entries.slice(0, maxVisible);
+  const hidden = Math.max(0, entries.length - visible.length);
+
+  return (
+    <section className="space-y-2">
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-xs font-semibold uppercase tracking-[0.12em]" style={{ color: 'var(--construct-text-faint)' }}>Metadata</div>
+        <span className="rounded-full border px-2 py-0.5 text-[10px] font-semibold" style={{ borderColor: 'var(--construct-border-soft)', color: 'var(--construct-text-muted)' }}>
+          {entries.length} keys
+        </span>
+      </div>
+      {visible.length > 0 ? (
+        <div className="space-y-2">
+          {visible.map(([key, value]) => (
+            <div key={key} className="rounded-[8px] border p-2.5" style={{ borderColor: 'var(--construct-border-soft)', background: 'rgba(255,255,255,0.025)' }}>
+              <div className="mb-1 truncate text-[10px] font-semibold uppercase tracking-[0.08em]" style={{ color: 'var(--construct-signal-selected)' }}>
+                {metadataKeyLabel(key)}
+              </div>
+              <div className="break-words text-xs leading-5" style={{ color: 'var(--construct-text-secondary)' }}>
+                {metadataPreview(value)}
+              </div>
+            </div>
+          ))}
+          {hidden > 0 ? (
+            <div className="text-[11px]" style={{ color: 'var(--construct-text-faint)' }}>
+              +{hidden} more metadata keys in raw view
+            </div>
+          ) : null}
+        </div>
+      ) : (
+        <div className="rounded-[8px] border px-3 py-4 text-xs" style={{ borderColor: 'var(--construct-border-soft)', color: 'var(--construct-text-faint)' }}>
+          No metadata on this node.
+        </div>
+      )}
+      {entries.length > 0 ? (
+        <details className="rounded-[8px] border" style={{ borderColor: 'var(--construct-border-soft)' }}>
+          <summary className="cursor-pointer px-3 py-2 text-xs font-semibold" style={{ color: 'var(--construct-text-muted)' }}>Raw JSON</summary>
+          <pre className="max-h-56 overflow-auto border-t p-3 text-[11px] leading-5" style={{ borderColor: 'var(--construct-border-soft)', background: 'var(--construct-bg-elevated)', color: 'var(--construct-text-secondary)' }}>
+            {JSON.stringify(metadata ?? {}, null, 2)}
+          </pre>
+        </details>
+      ) : null}
+    </section>
+  );
+}
+
+function ArtifactStrip({ artifacts }: { artifacts: KumihoArtifact[] }) {
+  if (artifacts.length === 0) {
+    return <div className="text-xs" style={{ color: 'var(--construct-text-faint)' }}>No artifacts attached.</div>;
+  }
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {artifacts.slice(0, 4).map((artifact) => (
+        <span key={artifact.kref} className="max-w-full truncate rounded-full border px-2 py-1 text-[10px] font-semibold" style={{ borderColor: 'var(--construct-border-soft)', color: 'var(--construct-text-secondary)' }} title={artifact.location || artifact.kref}>
+          {artifact.name || bundleNameFromKref(artifact.kref)}
+        </span>
+      ))}
+      {artifacts.length > 4 ? (
+        <span className="rounded-full border px-2 py-1 text-[10px] font-semibold" style={{ borderColor: 'var(--construct-border-soft)', color: 'var(--construct-text-faint)' }}>
+          +{artifacts.length - 4}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+function KrefBlock({ label, kref }: { label: string; kref: string }) {
+  return (
+    <div className="rounded-[8px] border p-2.5" style={{ borderColor: 'var(--construct-border-soft)', background: 'rgba(255,255,255,0.025)' }}>
+      <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.08em]" style={{ color: 'var(--construct-text-faint)' }}>{label}</div>
+      <CopyableKref kref={kref} />
+    </div>
   );
 }
 
@@ -935,15 +1139,19 @@ function DependencyGraphModal({
   onOpenKref: (kref: string) => void;
 }) {
   const graphRef = useRef<any>(null);
+  const labelBoxesRef = useRef<LabelBox[]>([]);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [graph, setGraph] = useState<KumihoAssetDependencyGraphResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [direction, setDirection] = useState('both');
-  const [depth, setDepth] = useState(1);
+  const [depth, setDepth] = useState(2);
+  const [nodeLimit, setNodeLimit] = useState(120);
   const [edgeType, setEdgeType] = useState('all');
   const [selectedNode, setSelectedNode] = useState<KumihoAssetGraphNode | null>(null);
   const [selectedEdge, setSelectedEdge] = useState<KumihoEdge | null>(null);
+  const [hoveredNodeKref, setHoveredNodeKref] = useState<string | null>(null);
+  const [hoveredEdgeKey, setHoveredEdgeKey] = useState<string | null>(null);
   const [dimensions, setDimensions] = useState({ width: 720, height: 460 });
 
   const load = useCallback(() => {
@@ -954,16 +1162,18 @@ function DependencyGraphModal({
       direction,
       depth,
       edge_type: edgeType === 'all' ? undefined : edgeType,
-      node_limit: 100,
+      node_limit: nodeLimit,
     })
       .then((data) => {
         setGraph(data);
         setSelectedNode(data.nodes.find((node) => node.kref === data.center_kref) ?? data.nodes[0] ?? null);
         setSelectedEdge(null);
+        setHoveredNodeKref(null);
+        setHoveredEdgeKey(null);
       })
       .catch((err) => setError(err instanceof Error ? err.message : 'Failed to load dependency graph.'))
       .finally(() => setLoading(false));
-  }, [depth, direction, edgeType, revision.kref]);
+  }, [depth, direction, edgeType, nodeLimit, revision.kref]);
 
   useEffect(() => {
     load();
@@ -981,46 +1191,262 @@ function DependencyGraphModal({
 
   const graphData = useMemo(() => {
     if (!graph) return { nodes: [] as ForceNode[], links: [] as ForceLink[] };
-    const nodes = graph.nodes.map((node) => ({ ...node, id: node.kref }));
-    const nodeIds = new Set(nodes.map((node) => node.id));
-    const links = graph.edges
+    const nodeIds = new Set(graph.nodes.map((node) => node.kref));
+    const baseLinks = graph.edges
       .filter((edge) => nodeIds.has(edge.source_kref) && nodeIds.has(edge.target_kref))
       .map((edge) => ({ source: edge.source_kref, target: edge.target_kref, edge }));
+    const adjacency = new Map<string, string[]>();
+    const degreeByKref = new Map<string, number>();
+    for (const node of graph.nodes) {
+      adjacency.set(node.kref, []);
+      degreeByKref.set(node.kref, 0);
+    }
+    for (const link of baseLinks) {
+      adjacency.get(link.edge.source_kref)?.push(link.edge.target_kref);
+      adjacency.get(link.edge.target_kref)?.push(link.edge.source_kref);
+      degreeByKref.set(link.edge.source_kref, (degreeByKref.get(link.edge.source_kref) ?? 0) + 1);
+      degreeByKref.set(link.edge.target_kref, (degreeByKref.get(link.edge.target_kref) ?? 0) + 1);
+    }
+
+    const depthByKref = new Map<string, number>([[graph.center_kref, 0]]);
+    const queue = [graph.center_kref];
+    for (let index = 0; index < queue.length; index += 1) {
+      const current = queue[index]!;
+      const currentDepth = depthByKref.get(current) ?? 0;
+      if (currentDepth >= graph.depth) continue;
+      for (const neighbor of adjacency.get(current) ?? []) {
+        if (depthByKref.has(neighbor)) continue;
+        depthByKref.set(neighbor, currentDepth + 1);
+        queue.push(neighbor);
+      }
+    }
+
+    const rings = new Map<number, string[]>();
+    for (const node of graph.nodes) {
+      const ring = depthByKref.get(node.kref) ?? graph.depth;
+      const bucket = rings.get(ring) ?? [];
+      bucket.push(node.kref);
+      rings.set(ring, bucket);
+    }
+    const ringPosition = new Map<string, { index: number; total: number }>();
+    for (const krefs of rings.values()) {
+      for (const [index, kref] of krefs.entries()) {
+        ringPosition.set(kref, { index, total: Math.max(1, krefs.length) });
+      }
+    }
+
+    const nodes = graph.nodes.map((node) => {
+      const graphDepth = depthByKref.get(node.kref) ?? graph.depth;
+      const degree = degreeByKref.get(node.kref) ?? 0;
+      const position = ringPosition.get(node.kref);
+      const angle = position ? (position.index / position.total) * Math.PI * 2 - Math.PI / 2 : 0;
+      const radius = graphDepth === 0 ? 0 : 160 + graphDepth * 150;
+      return {
+        ...node,
+        id: node.kref,
+        graphDepth,
+        graphDegree: degree,
+        val: graphDepth === 0 ? 9 : Math.min(8, 3.5 + degree * 0.22),
+        x: graphDepth === 0 ? 0 : Math.cos(angle) * radius,
+        y: graphDepth === 0 ? 0 : Math.sin(angle) * radius,
+      };
+    });
+
+    const pairTotals = new Map<string, number>();
+    for (const link of baseLinks) {
+      const key = graphEdgePairKey(link.edge);
+      pairTotals.set(key, (pairTotals.get(key) ?? 0) + 1);
+    }
+    const pairIndexes = new Map<string, number>();
+    const links = baseLinks.map((link) => {
+      const key = graphEdgePairKey(link.edge);
+      const index = pairIndexes.get(key) ?? 0;
+      pairIndexes.set(key, index + 1);
+      const total = pairTotals.get(key) ?? 1;
+      return {
+        ...link,
+        curveOffset: total > 1 ? (index - (total - 1) / 2) * 18 : 0,
+      };
+    });
+
     return { nodes, links };
   }, [graph]);
+
+  const selectedEdgeKey = selectedEdge ? graphEdgeKey(selectedEdge) : null;
+  const edgeLegend = useMemo(() => {
+    if (!graph) return [];
+    const counts = new Map<string, number>();
+    for (const edge of graph.edges) {
+      counts.set(edge.edge_type, (counts.get(edge.edge_type) ?? 0) + 1);
+    }
+    return Array.from(counts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 6);
+  }, [graph]);
+  const nodeLegend = useMemo(() => {
+    if (!graph) return [];
+    const counts = new Map<string, number>();
+    for (const node of graph.nodes) {
+      const kind = node.kind || 'unknown';
+      counts.set(kind, (counts.get(kind) ?? 0) + 1);
+    }
+    return Array.from(counts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 6);
+  }, [graph]);
+
+  useEffect(() => {
+    const api = graphRef.current;
+    if (!api || graphData.nodes.length === 0) return;
+    api.d3Force?.('charge')?.strength?.(-360);
+    api.d3Force?.('collide')?.radius?.((node: ForceNode) => (node.graphDepth === 0 ? 34 : 24));
+    api.d3Force?.('link')?.distance?.((link: ForceLink) => {
+      const source = typeof link.source === 'object' ? link.source : null;
+      const target = typeof link.target === 'object' ? link.target : null;
+      const outerDepth = Math.max(source?.graphDepth ?? 1, target?.graphDepth ?? 1);
+      return 120 + outerDepth * 50;
+    })?.strength?.(0.35);
+    api.d3ReheatSimulation?.();
+    const timer = window.setTimeout(() => api.zoomToFit?.(450, 96), 650);
+    return () => window.clearTimeout(timer);
+  }, [graphData]);
 
   const paintNode = useCallback((node: ForceNode, ctx: CanvasRenderingContext2D, globalScale: number) => {
     const x = node.x ?? 0;
     const y = node.y ?? 0;
     const isCenter = node.kref === revision.kref;
-    const radius = isCenter ? 7 : 5;
+    const isSelected = node.kref === selectedNode?.kref;
+    const isHovered = node.kref === hoveredNodeKref;
+    const radius = isCenter ? 9 : Math.max(5, Math.min(8, 4 + node.graphDegree * 0.12));
     const meta = getKindMeta(node.kind ?? '');
+
+    if (isCenter || isSelected || isHovered) {
+      ctx.beginPath();
+      ctx.arc(x, y, radius + (isCenter ? 10 : 7), 0, 2 * Math.PI);
+      ctx.fillStyle = isCenter ? 'rgba(45,212,191,0.18)' : `${meta.color}26`;
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(x, y, radius + (isCenter ? 4 : 3), 0, 2 * Math.PI);
+      ctx.strokeStyle = isCenter ? 'rgba(45,212,191,0.7)' : `${meta.color}80`;
+      ctx.lineWidth = isCenter ? 1.8 : 1.2;
+      ctx.stroke();
+    }
+
     ctx.beginPath();
     ctx.arc(x, y, radius, 0, 2 * Math.PI);
     ctx.fillStyle = node.missing ? '#f59e0b' : meta.color;
     ctx.fill();
-    ctx.lineWidth = isCenter ? 2 : 1;
-    ctx.strokeStyle = isCenter ? '#ffffff' : 'rgba(255,255,255,0.35)';
+    ctx.lineWidth = isCenter || isSelected ? 2 : 1;
+    ctx.strokeStyle = isCenter ? '#ffffff' : isSelected ? meta.color : 'rgba(255,255,255,0.38)';
     ctx.stroke();
-    const label = node.item_name ?? node.kref.split('/').pop() ?? node.kref;
-    const fontSize = Math.max(9, 12 / globalScale);
-    ctx.font = `${fontSize}px sans-serif`;
-    ctx.fillStyle = 'rgba(230,235,245,0.9)';
-    ctx.fillText(label.slice(0, 42), x + radius + 4, y + 3);
-  }, [revision.kref]);
 
-  const paintLink = useCallback((link: ForceLink, ctx: CanvasRenderingContext2D) => {
+    const forcedLabel = isCenter || isSelected || isHovered;
+    const showLabel = forcedLabel
+      || globalScale > 1.16
+      || (globalScale > 0.82 && node.graphDepth <= 1 && node.graphDegree >= 2);
+    if (!showLabel) return;
+
+    const label = truncateLabel(graphNodeLabel(node), isCenter || isSelected || isHovered ? 34 : 24);
+    const fontSize = Math.max(9, Math.min(12, 11 / globalScale));
+    ctx.font = `${isCenter || isSelected ? '700' : '600'} ${fontSize}px Inter, system-ui, sans-serif`;
+    const textWidth = ctx.measureText(label).width;
+    const labelWidth = textWidth + 14;
+    const labelHeight = fontSize + 8;
+    const labelX = x + radius + 8;
+    const labelY = y - labelHeight / 2;
+    const labelBox = {
+      x1: labelX - 4,
+      y1: labelY - 3,
+      x2: labelX + labelWidth + 4,
+      y2: labelY + labelHeight + 3,
+    };
+    if (!forcedLabel && labelBoxOverlaps(labelBox, labelBoxesRef.current)) return;
+    labelBoxesRef.current.push(labelBox);
+
+    roundedRect(ctx, labelX, labelY, labelWidth, labelHeight, 7);
+    ctx.fillStyle = isCenter || isSelected
+      ? 'rgba(4, 17, 18, 0.92)'
+      : 'rgba(7, 16, 18, 0.82)';
+    ctx.fill();
+    ctx.strokeStyle = isCenter || isSelected ? `${meta.color}88` : 'rgba(148,163,184,0.22)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(235, 245, 245, 0.94)';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, labelX + 7, y);
+  }, [hoveredNodeKref, revision.kref, selectedNode?.kref]);
+
+  const paintLink = useCallback((link: ForceLink, ctx: CanvasRenderingContext2D, globalScale: number) => {
     const source = link.source as ForceNode;
     const target = link.target as ForceNode;
     if (source.x == null || source.y == null || target.x == null || target.y == null) return;
-    const critical = ['CONTRADICTS', 'BLOCKS'].includes(link.edge.edge_type);
-    ctx.strokeStyle = critical ? 'rgba(248,113,113,0.9)' : 'rgba(148,163,184,0.42)';
-    ctx.lineWidth = critical ? 1.7 : 1;
+    const edgeKey = graphEdgeKey(link.edge);
+    const isActive = edgeKey === selectedEdgeKey || edgeKey === hoveredEdgeKey;
+    const visual = graphEdgeVisual(link.edge.edge_type);
+    const dx = target.x - source.x;
+    const dy = target.y - source.y;
+    const distance = Math.max(1, Math.hypot(dx, dy));
+    const normalX = -dy / distance;
+    const normalY = dx / distance;
+    const controlX = (source.x + target.x) / 2 + normalX * link.curveOffset;
+    const controlY = (source.y + target.y) / 2 + normalY * link.curveOffset;
+
+    if (isActive) {
+      ctx.beginPath();
+      ctx.moveTo(source.x, source.y);
+      ctx.quadraticCurveTo(controlX, controlY, target.x, target.y);
+      ctx.strokeStyle = visual.glow;
+      ctx.lineWidth = 7;
+      ctx.stroke();
+    }
+
     ctx.beginPath();
     ctx.moveTo(source.x, source.y);
-    ctx.lineTo(target.x, target.y);
+    ctx.quadraticCurveTo(controlX, controlY, target.x, target.y);
+    ctx.strokeStyle = visual.color;
+    ctx.globalAlpha = isActive ? 0.92 : 0.5;
+    ctx.lineWidth = isActive ? 2.3 : 1.2;
     ctx.stroke();
-  }, []);
+    ctx.globalAlpha = 1;
+
+    const arrowT = 0.82;
+    const arrowX = (1 - arrowT) ** 2 * source.x + 2 * (1 - arrowT) * arrowT * controlX + arrowT ** 2 * target.x;
+    const arrowY = (1 - arrowT) ** 2 * source.y + 2 * (1 - arrowT) * arrowT * controlY + arrowT ** 2 * target.y;
+    const tangentX = 2 * (1 - arrowT) * (controlX - source.x) + 2 * arrowT * (target.x - controlX);
+    const tangentY = 2 * (1 - arrowT) * (controlY - source.y) + 2 * arrowT * (target.y - controlY);
+    const angle = Math.atan2(tangentY, tangentX);
+    const arrowSize = isActive ? 6 : 4.5;
+    ctx.beginPath();
+    ctx.moveTo(arrowX, arrowY);
+    ctx.lineTo(arrowX - arrowSize * Math.cos(angle - 0.55), arrowY - arrowSize * Math.sin(angle - 0.55));
+    ctx.lineTo(arrowX - arrowSize * Math.cos(angle + 0.55), arrowY - arrowSize * Math.sin(angle + 0.55));
+    ctx.closePath();
+    ctx.fillStyle = visual.color;
+    ctx.globalAlpha = isActive ? 1 : 0.62;
+    ctx.fill();
+    ctx.globalAlpha = 1;
+
+    const showEdgeLabel = isActive || (globalScale > 1.55 && graphData.links.length <= 30);
+    if (!showEdgeLabel) return;
+    const label = visual.label || link.edge.edge_type.toLowerCase();
+    const fontSize = Math.max(8, Math.min(10, 9 / globalScale));
+    ctx.font = `700 ${fontSize}px Inter, system-ui, sans-serif`;
+    const labelWidth = ctx.measureText(label).width + 12;
+    const labelHeight = fontSize + 7;
+    const labelX = controlX - labelWidth / 2;
+    const labelY = controlY - labelHeight / 2;
+    roundedRect(ctx, labelX, labelY, labelWidth, labelHeight, 6);
+    ctx.fillStyle = 'rgba(5, 14, 16, 0.88)';
+    ctx.fill();
+    ctx.strokeStyle = `${visual.color}88`;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(235, 245, 245, 0.9)';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, controlX, controlY + 0.5);
+  }, [graphData.links.length, hoveredEdgeKey, selectedEdgeKey]);
 
   return (
     <Modal title="Dependency Graph" description="A local revision-centered graph for dependency, provenance, and impact analysis." onClose={onClose} size="2xl">
@@ -1030,8 +1456,25 @@ function DependencyGraphModal({
           <option value="incoming">Dependents</option>
           <option value="both">Both</option>
         </select>
-        <select className="construct-input h-9 py-0 text-xs" value={depth} onChange={(event) => setDepth(Number(event.target.value))}>
-          {[1, 2, 3].map((value) => <option key={value} value={value}>Depth {value}</option>)}
+        <div className="inline-flex h-9 overflow-hidden rounded-[8px] border" style={{ borderColor: 'var(--construct-border-soft)' }}>
+          {GRAPH_DEPTH_OPTIONS.map((value) => (
+            <button
+              key={value}
+              type="button"
+              className="px-3 text-xs font-semibold transition"
+              style={{
+                color: depth === value ? 'var(--construct-text-primary)' : 'var(--construct-text-muted)',
+                background: depth === value ? 'color-mix(in srgb, var(--construct-signal-selected) 18%, transparent)' : 'transparent',
+                borderRight: value === GRAPH_DEPTH_OPTIONS[GRAPH_DEPTH_OPTIONS.length - 1] ? 'none' : '1px solid var(--construct-border-soft)',
+              }}
+              onClick={() => setDepth(value)}
+            >
+              Depth {value}
+            </button>
+          ))}
+        </div>
+        <select className="construct-input h-9 py-0 text-xs" value={nodeLimit} onChange={(event) => setNodeLimit(Number(event.target.value))}>
+          {GRAPH_NODE_LIMIT_OPTIONS.map((value) => <option key={value} value={value}>Nodes {value}</option>)}
         </select>
         <select className="construct-input h-9 py-0 text-xs" value={edgeType} onChange={(event) => setEdgeType(event.target.value)}>
           <option value="all">All edge types</option>
@@ -1046,7 +1489,7 @@ function DependencyGraphModal({
           Copy center kref
         </button>
       </div>
-      <div className="grid min-h-[32rem] gap-4 lg:grid-cols-[minmax(0,1fr)_22rem]">
+      <div className="grid min-h-[32rem] gap-4 lg:grid-cols-[minmax(0,1fr)_24rem]">
         <div ref={containerRef} className="relative min-h-[30rem] overflow-hidden rounded-[12px] border" style={{ borderColor: 'var(--construct-border-soft)', background: 'color-mix(in srgb, var(--construct-bg-panel-strong) 94%, transparent)' }}>
           {loading ? <div className="absolute inset-0 z-10 flex items-center justify-center"><StateMessage tone="loading" title="Loading graph..." /></div> : null}
           {error ? <div className="absolute inset-0 z-10 flex items-center justify-center p-6"><StateMessage tone="error" title="Graph failed" description={error} /></div> : null}
@@ -1058,17 +1501,26 @@ function DependencyGraphModal({
               height={dimensions.height}
               backgroundColor="transparent"
               nodeRelSize={4}
+              nodeVal={(node: ForceNode) => node.val}
+              nodeLabel={(node: ForceNode) => {
+                const parts = [graphNodeLabel(node), node.kind, `r${node.revision_number ?? '?'}`].filter(Boolean);
+                return `${parts.join(' · ')}\n${node.kref}`;
+              }}
               nodeCanvasObject={paintNode}
               nodePointerAreaPaint={(node: ForceNode, color: string, ctx: CanvasRenderingContext2D) => {
                 const x = node.x ?? 0;
                 const y = node.y ?? 0;
                 ctx.beginPath();
-                ctx.arc(x, y, 12, 0, 2 * Math.PI);
+                ctx.arc(x, y, 18, 0, 2 * Math.PI);
                 ctx.fillStyle = color;
                 ctx.fill();
               }}
+              linkLabel={(link: ForceLink) => `${link.edge.edge_type}\n${link.edge.source_kref}\n-> ${link.edge.target_kref}`}
               linkCanvasObject={paintLink}
               linkCanvasObjectMode={() => 'replace'}
+              onRenderFramePre={() => {
+                labelBoxesRef.current = [];
+              }}
               onNodeClick={(node: ForceNode) => {
                 setSelectedNode(node);
                 setSelectedEdge(null);
@@ -1076,42 +1528,122 @@ function DependencyGraphModal({
               onLinkClick={(link: ForceLink) => {
                 setSelectedEdge(link.edge);
               }}
+              onNodeHover={(node: ForceNode | null) => setHoveredNodeKref(node?.kref ?? null)}
+              onLinkHover={(link: ForceLink | null) => setHoveredEdgeKey(link ? graphEdgeKey(link.edge) : null)}
               cooldownTicks={160}
               d3AlphaDecay={0.018}
               d3VelocityDecay={0.28}
               warmupTicks={40}
             />
           ) : null}
+          {!loading && !error && graph ? (
+            <div className="pointer-events-none absolute left-3 top-3 z-10 flex flex-wrap items-center gap-2 rounded-[10px] border px-3 py-2 text-[11px] font-medium" style={{ borderColor: 'var(--construct-border-soft)', background: 'color-mix(in srgb, var(--construct-bg-panel-strong) 92%, transparent)', color: 'var(--construct-text-secondary)' }}>
+              <span><strong style={{ color: 'var(--construct-text-primary)' }}>{graph.nodes.length}</strong> nodes</span>
+              <span><strong style={{ color: 'var(--construct-text-primary)' }}>{graph.edges.length}</strong> edges</span>
+              <span>depth {graph.depth}</span>
+            </div>
+          ) : null}
+          {!loading && !error && graph?.truncated ? (
+            <div className="pointer-events-none absolute right-3 top-3 z-10 rounded-[10px] border px-3 py-2 text-[11px] font-semibold" style={{ borderColor: 'color-mix(in srgb, var(--construct-status-warning) 35%, transparent)', background: 'rgba(67, 52, 18, 0.72)', color: 'var(--construct-status-warning)' }}>
+              Truncated at {graph.node_limit}
+            </div>
+          ) : null}
+          {!loading && !error && (nodeLegend.length > 0 || edgeLegend.length > 0) ? (
+            <div className="pointer-events-none absolute bottom-3 left-3 z-10 flex max-w-[78%] flex-col gap-2 rounded-[10px] border px-3 py-2" style={{ borderColor: 'var(--construct-border-soft)', background: 'color-mix(in srgb, var(--construct-bg-panel-strong) 92%, transparent)' }}>
+              {nodeLegend.length > 0 ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[10px] font-semibold uppercase tracking-[0.08em]" style={{ color: 'var(--construct-text-faint)' }}>Nodes</span>
+                  {nodeLegend.map(([kind, count]) => {
+                    const meta = getKindMeta(kind);
+                    return (
+                      <span key={kind} className="inline-flex items-center gap-1.5 text-[10px] font-semibold uppercase" style={{ color: 'var(--construct-text-secondary)' }}>
+                        <span className="h-2.5 w-2.5 rounded-full" style={{ background: meta.color, boxShadow: `0 0 10px ${meta.color}` }} />
+                        {kind} {count}
+                      </span>
+                    );
+                  })}
+                </div>
+              ) : null}
+              {edgeLegend.length > 0 ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[10px] font-semibold uppercase tracking-[0.08em]" style={{ color: 'var(--construct-text-faint)' }}>Edges</span>
+                  {edgeLegend.map(([type, count]) => {
+                    const visual = graphEdgeVisual(type);
+                    return (
+                      <span key={type} className="inline-flex items-center gap-1.5 text-[10px] font-semibold uppercase" style={{ color: 'var(--construct-text-secondary)' }}>
+                        <span className="h-0.5 w-5 rounded-full" style={{ background: visual.color, boxShadow: `0 0 10px ${visual.color}` }} />
+                        {type} {count}
+                      </span>
+                    );
+                  })}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
         </div>
-        <div className="min-h-0 overflow-y-auto rounded-[12px] border p-3" style={{ borderColor: 'var(--construct-border-soft)' }}>
+        <div className="min-h-0 overflow-y-auto rounded-[12px] border p-4" style={{ borderColor: 'var(--construct-border-soft)', background: 'linear-gradient(180deg, rgba(255,255,255,0.035), rgba(255,255,255,0.015))' }}>
           {selectedEdge ? (
-            <div className="space-y-3">
-              <div className="text-xs font-semibold uppercase tracking-[0.12em]" style={{ color: 'var(--construct-text-faint)' }}>Edge</div>
-              <TagChip label={selectedEdge.edge_type} tone="var(--construct-status-warning)" />
-              <CopyableKref kref={selectedEdge.source_kref} />
-              <ArrowRight className="h-4 w-4" style={{ color: 'var(--construct-text-faint)' }} />
-              <CopyableKref kref={selectedEdge.target_kref} />
-              <pre className="overflow-auto rounded-[8px] p-2 text-xs" style={{ background: 'var(--construct-bg-elevated)', color: 'var(--construct-text-secondary)' }}>{JSON.stringify(selectedEdge.metadata ?? {}, null, 2)}</pre>
+            <div className="space-y-4">
+              <div className="rounded-[10px] border p-3" style={{ borderColor: `${graphEdgeVisual(selectedEdge.edge_type).color}55`, background: graphEdgeVisual(selectedEdge.edge_type).glow }}>
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <div className="text-xs font-semibold uppercase tracking-[0.12em]" style={{ color: 'var(--construct-text-faint)' }}>Relationship</div>
+                    <div className="mt-2 text-lg font-semibold" style={{ color: 'var(--construct-text-primary)' }}>{graphEdgeVisual(selectedEdge.edge_type).label}</div>
+                  </div>
+                  <TagChip label={selectedEdge.edge_type} tone={graphEdgeVisual(selectedEdge.edge_type).color} />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <KrefBlock label="Source" kref={selectedEdge.source_kref} />
+                <div className="flex justify-center">
+                  <div className="rounded-full border p-1.5" style={{ borderColor: 'var(--construct-border-soft)', color: graphEdgeVisual(selectedEdge.edge_type).color }}>
+                    <ArrowRight className="h-4 w-4" />
+                  </div>
+                </div>
+                <KrefBlock label="Target" kref={selectedEdge.target_kref} />
+              </div>
+
+              <MetadataSection metadata={selectedEdge.metadata} maxVisible={6} />
             </div>
           ) : selectedNode ? (
-            <div className="space-y-3">
-              <div className="flex items-center justify-between gap-2">
-                <div className="text-xs font-semibold uppercase tracking-[0.12em]" style={{ color: 'var(--construct-text-faint)' }}>Revision Node</div>
-                <button type="button" className="construct-button h-8 px-2 text-xs" onClick={() => onOpenKref(selectedNode.kref)}>
-                  <ArrowRight className="h-3.5 w-3.5" />
-                  Open
-                </button>
+            <div className="space-y-4">
+              <div className="rounded-[10px] border p-3" style={{ borderColor: `${getKindMeta(selectedNode.kind ?? '').color}55`, background: getKindMeta(selectedNode.kind ?? '').bg }}>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-xs font-semibold uppercase tracking-[0.12em]" style={{ color: 'var(--construct-text-faint)' }}>Revision Node</div>
+                    <div className="mt-2 truncate text-lg font-semibold" style={{ color: 'var(--construct-text-primary)' }} title={graphNodeLabel(selectedNode)}>
+                      {graphNodeLabel(selectedNode)}
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {selectedNode.kind ? <TagChip label={selectedNode.kind} tone={getKindMeta(selectedNode.kind).color} /> : null}
+                      {selectedNode.revision_number ? <TagChip label={`r${selectedNode.revision_number}`} tone="var(--construct-text-faint)" /> : null}
+                      {selectedNode.tags.slice(0, 3).map((tag) => <TagChip key={tag} label={tag} tone="var(--construct-text-faint)" />)}
+                      {selectedNode.tags.length > 3 ? <TagChip label={`+${selectedNode.tags.length - 3}`} tone="var(--construct-text-faint)" /> : null}
+                    </div>
+                  </div>
+                  <button type="button" className="construct-button h-8 px-2 text-xs" onClick={() => onOpenKref(selectedNode.kref)}>
+                    <ArrowRight className="h-3.5 w-3.5" />
+                    Open
+                  </button>
+                </div>
               </div>
-              <div className="text-sm font-semibold" style={{ color: 'var(--construct-text-primary)' }}>{selectedNode.item_name ?? 'Unknown item'}</div>
-              <div className="flex flex-wrap gap-1.5">
-                {selectedNode.kind ? <TagChip label={selectedNode.kind} tone="#2dd4bf" /> : null}
-                {selectedNode.revision_number ? <TagChip label={`r${selectedNode.revision_number}`} tone="var(--construct-text-faint)" /> : null}
-                {selectedNode.tags.map((tag) => <TagChip key={tag} label={tag} tone="var(--construct-text-faint)" />)}
+
+              <div className="grid grid-cols-2 gap-2">
+                <DetailStat label="Artifacts" value={selectedNode.artifacts.length} tone={getKindMeta(selectedNode.kind ?? '').color} />
+                <DetailStat label="Revision" value={selectedNode.revision_number ? `r${selectedNode.revision_number}` : '--'} />
+                <DetailStat label="Incoming" value={selectedNode.incoming_edges.length} />
+                <DetailStat label="Outgoing" value={selectedNode.outgoing_edges.length} />
               </div>
-              <CopyableKref kref={selectedNode.kref} />
-              <div className="text-xs" style={{ color: 'var(--construct-text-faint)' }}>Artifacts: {selectedNode.artifacts.length}</div>
-              <div className="text-xs" style={{ color: 'var(--construct-text-faint)' }}>Incoming: {selectedNode.incoming_edges.length} / Outgoing: {selectedNode.outgoing_edges.length}</div>
-              <pre className="max-h-48 overflow-auto rounded-[8px] p-2 text-xs" style={{ background: 'var(--construct-bg-elevated)', color: 'var(--construct-text-secondary)' }}>{JSON.stringify(selectedNode.metadata ?? {}, null, 2)}</pre>
+
+              <KrefBlock label="Revision kref" kref={selectedNode.kref} />
+
+              <section className="space-y-2">
+                <div className="text-xs font-semibold uppercase tracking-[0.12em]" style={{ color: 'var(--construct-text-faint)' }}>Artifacts</div>
+                <ArtifactStrip artifacts={selectedNode.artifacts} />
+              </section>
+
+              <MetadataSection metadata={selectedNode.metadata} />
             </div>
           ) : (
             <StateMessage compact title="Select a node" description="Click a node or edge to inspect its Kumiho details." />
