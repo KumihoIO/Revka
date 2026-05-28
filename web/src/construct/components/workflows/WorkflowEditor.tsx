@@ -1456,10 +1456,10 @@ function WorkflowEditorInner({
   const largeGraphMode =
     liveNodes.length > LARGE_GRAPH_NODE_THRESHOLD || edges.length > LARGE_GRAPH_EDGE_THRESHOLD;
   const renderEdges = useMemo(
-    () => largeGraphMode
+    () => edges.some((edge) => edge.animated)
       ? edges.map((edge) => (edge.animated === false ? edge : { ...edge, animated: false }))
       : edges,
-    [edges, largeGraphMode],
+    [edges],
   );
 
   useEffect(() => {
@@ -1720,7 +1720,7 @@ function WorkflowEditorInner({
             source,
             target,
             type: wireStyle,
-            animated: true,
+            animated: false,
             selectable: true,
             interactionWidth: 20,
             style: edgeStyle,
@@ -1796,7 +1796,7 @@ function WorkflowEditorInner({
           target: id,
           sourceHandle: handle,
           type: wireStyle,
-          animated: true,
+          animated: false,
           selectable: true,
           interactionWidth: 20,
           style: edgeStyle,
@@ -1814,7 +1814,7 @@ function WorkflowEditorInner({
           target: detail.target.taskId,
           sourceHandle: null,
           type: wireStyle,
-          animated: true,
+          animated: false,
           selectable: true,
           interactionWidth: 20,
           style: edgeStyle,
@@ -2009,7 +2009,7 @@ function WorkflowEditorInner({
         sourceHandle: connection.sourceHandle,
         target: connection.target,
         type: wireStyle,
-        animated: true,
+        animated: false,
         selectable: true,
         interactionWidth: 20,
         style: edgeStyle,
@@ -2220,7 +2220,7 @@ function WorkflowEditorInner({
                 sourceHandle: handle,
                 target: branch.goto,
                 type: wireStyle,
-                animated: true,
+                animated: false,
                 selectable: true,
                 interactionWidth: 20,
                 style,
@@ -3499,7 +3499,7 @@ function WorkflowEditorInner({
                   style={{ background: 'transparent' }}
                   defaultEdgeOptions={{
                     type: wireStyle,
-                    animated: !largeGraphMode,
+                    animated: false,
                     selectable: true,
                     style: GATE_EDGE_STYLES.default,
                     markerEnd: { type: MarkerType.ArrowClosed, color: GATE_EDGE_STYLES.default.stroke },

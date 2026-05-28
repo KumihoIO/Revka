@@ -17,6 +17,9 @@ import { buildWorkflowEdgeStyle, resolveCssVar, workflowActionTone } from '../..
 import { withAgentVisuals } from './agentVisuals';
 import { useAgentRoster } from './useAgentRoster';
 
+const LARGE_DAG_NODE_THRESHOLD = 40;
+const LARGE_DAG_EDGE_THRESHOLD = 60;
+
 export default function WorkflowDagWorkspace({
   definition,
   stepResults,
@@ -44,9 +47,11 @@ export default function WorkflowDagWorkspace({
 }) {
   const { agents } = useAgentRoster();
 
-  const { nodes, edges, tasks } = useMemo(() => {
+  const { nodes, edges, tasks, largeGraphMode } = useMemo(() => {
     const parsed = parseWorkflowYaml(definition);
     const flow = tasksToFlow(parsed);
+    const isLargeGraph =
+      flow.nodes.length > LARGE_DAG_NODE_THRESHOLD || flow.edges.length > LARGE_DAG_EDGE_THRESHOLD;
     const tasksById = new Map(parsed.map((task) => [task.id, task]));
     const hidden = new Set(hiddenTaskIds ?? []);
     const blocked = new Set(blockedTaskIds ?? []);
@@ -76,11 +81,16 @@ export default function WorkflowDagWorkspace({
         selected: node.id === selectedTaskId,
         hidden: hidden.has(node.id),
       })) as Node<TaskNodeData>[],
-      edges: flow.edges.map((edge) => ({
-        ...edge,
-        ...buildWorkflowEdgeStyle({ edge, tasksById, stepResults, selectedTaskId }),
-        hidden: hidden.has(edge.source) || hidden.has(edge.target),
-      })) as Edge[],
+      edges: flow.edges.map((edge) => {
+        const styledEdge = buildWorkflowEdgeStyle({ edge, tasksById, stepResults, selectedTaskId });
+        return {
+          ...edge,
+          ...styledEdge,
+          animated: isLargeGraph ? false : styledEdge.animated,
+          hidden: hidden.has(edge.source) || hidden.has(edge.target),
+        };
+      }) as Edge[],
+      largeGraphMode: isLargeGraph,
     };
   }, [agents, blockedTaskIds, definition, failingTaskIds, hiddenTaskIds, runningTaskIds, selectedTaskId, stepResults]);
 
@@ -99,6 +109,8 @@ export default function WorkflowDagWorkspace({
       height={height}
       fill={fill}
       overlay={overlay}
+      onlyRenderVisibleElements={largeGraphMode}
+      showMiniMap={!largeGraphMode}
       minimapColor={(node) => {
         const data = node.data as TaskNodeData;
         return resolveCssVar(workflowActionTone(data.type));
