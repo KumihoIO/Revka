@@ -226,6 +226,13 @@ def _get_agent_output(agent_id: str) -> tuple[str, list[str]]:
         run_log = get_log(sidecar_id)
 
     if run_log:
+        entries = run_log.get_full_log(limit=1000)
+        for entry in reversed(entries):
+            if entry.get("kind") == "subprocess" and entry.get("stdout"):
+                return (
+                    str(entry.get("stdout", "")),
+                    run_log.get_summary().get("files_touched", []),
+                )
         summary = run_log.get_summary()
         return (
             summary.get("last_message", ""),

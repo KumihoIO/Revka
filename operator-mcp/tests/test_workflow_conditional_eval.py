@@ -108,6 +108,11 @@ class TestBasicComparisons:
             "review.output_data.score >= inputs.threshold", state
         ) is True
 
+    def test_exact_expression_wrapper_condition(self, state):
+        assert _eval_condition(
+            "${{ review.output_data.score >= inputs.threshold }}", state
+        ) is True
+
 
 # ---------------------------------------------------------------------------
 # _eval_condition — boolean operators / parens

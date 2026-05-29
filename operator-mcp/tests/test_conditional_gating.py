@@ -10,8 +10,8 @@ and running.
 The fix gates "exclusive non-matched" steps lazily at scheduling time:
 steps reachable transitively only from a non-matched goto target are
 marked ``skipped`` when the scheduler picks them up. Steps reachable via
-the matched branch OR via some path outside the conditional are NOT
-gated.
+the matched branch are NOT gated. Shared pre-gate data dependencies do not
+rescue loser-branch work.
 """
 from __future__ import annotations
 
@@ -21,7 +21,6 @@ from operator_mcp.workflow.executor import (
     ACTIVE_WORKFLOWS,
     _build_forward_deps_map,
     _forward_closure,
-    _is_reachable_outside_conditional,
     _is_step_gated_by_conditional,
     execute_workflow,
 )
@@ -260,11 +259,16 @@ class TestBranchGating:
             "loser", fake_state, wf2, fwd
         ), "loser IS exclusive non-matched"
 
-    def test_step_reachable_outside_conditional_runs(self):
-        """A step that has another upstream dependency NOT transiting the
-        conditional must not be gated."""
+    def test_non_matched_branch_with_shared_pregate_deps_stays_gated(self):
+        """Shared pre-gate data deps must not rescue loser-branch work.
+
+        This mirrors the manghan episode workflow: the production branch steps
+        referenced context/final-auditor data produced before the gate, so the
+        old outside-route rescue let them run even when the final gate matched
+        the blocked branch.
+        """
         wf = WorkflowDef(
-            name="gating-outside",
+            name="gating-shared-pregate",
             steps=[
                 _shell_step("seed", "/tmp/seed"),
                 _cond_step(
@@ -273,16 +277,11 @@ class TestBranchGating:
                         ConditionalBranch(condition="default", goto="winner", value="'go'"),
                         ConditionalBranch(condition="default", goto="loser", value="'no'"),
                     ],
+                    depends_on=["seed"],
                 ),
                 _shell_step("winner", "/tmp/w", depends_on=["gate"]),
-                # ``downstream`` depends on BOTH the non-matched target AND
-                # an independent seed that doesn't transit ``gate``.
-                _shell_step(
-                    "downstream",
-                    "/tmp/d",
-                    depends_on=["loser", "seed"],
-                ),
-                _shell_step("loser", "/tmp/l", depends_on=["gate"]),
+                _shell_step("loser", "/tmp/l", depends_on=["gate", "seed"]),
+                _shell_step("downstream", "/tmp/d", depends_on=["loser", "seed"]),
             ],
             checkpoint=False,
         )
@@ -293,10 +292,8 @@ class TestBranchGating:
             "matched_goto": "winner",
             "non_matched_gotos": ["loser"],
         }
-        # ``downstream`` has an external dep on ``seed`` — not gated.
-        assert not _is_step_gated_by_conditional("downstream", state, wf, fwd)
-        # ``loser`` only descends from the conditional — gated.
         assert _is_step_gated_by_conditional("loser", state, wf, fwd)
+        assert _is_step_gated_by_conditional("downstream", state, wf, fwd)
 
     @pytest.mark.asyncio
     async def test_nested_conditionals(self, tmp_path):
@@ -516,30 +513,36 @@ class TestBranchGating:
 
 
 class TestReachableOutside:
-    def test_root_outside_returns_true(self):
-        """A step that has an upstream ROOT not via cond_id is reachable
-        outside."""
+    def test_conditional_ancestor_dep_is_not_outside_route(self):
+        """Pre-gate data feeding the conditional must not rescue a loser branch."""
         wf = WorkflowDef(
-            name="ro-test",
+            name="ro-ancestor",
             steps=[
                 _shell_step("seed", "/tmp/s"),
-                _shell_step("gate", "/tmp/g"),  # acts as the conditional id stand-in
-                _shell_step("target", "/tmp/t", depends_on=["seed", "gate"]),
+                _cond_step(
+                    "gate",
+                    branches=[
+                        ConditionalBranch(condition="default", goto="winner"),
+                        ConditionalBranch(condition="default", goto="loser"),
+                    ],
+                    depends_on=["seed"],
+                ),
+                _shell_step("winner", "/tmp/w", depends_on=["gate"]),
+                # Inferred data dependency on ``seed`` is an ancestor of the
+                # conditional, so it is not an independent route around gate.
+                _shell_step("loser", "/tmp/l", depends_on=["gate", "seed"]),
             ],
             checkpoint=False,
         )
-        assert _is_reachable_outside_conditional("target", "gate", wf) is True
+        fwd = _build_forward_deps_map(wf)
+        state = WorkflowState(workflow_name="t", run_id="r")
+        state.conditional_branch_results["gate"] = {
+            "matched_branch_index": 0,
+            "matched_goto": "winner",
+            "non_matched_gotos": ["loser"],
+        }
 
-    def test_only_via_conditional_returns_false(self):
-        wf = WorkflowDef(
-            name="ro-test2",
-            steps=[
-                _shell_step("gate", "/tmp/g"),
-                _shell_step("target", "/tmp/t", depends_on=["gate"]),
-            ],
-            checkpoint=False,
-        )
-        assert _is_reachable_outside_conditional("target", "gate", wf) is False
+        assert _is_step_gated_by_conditional("loser", state, wf, fwd)
 
 
 # ── persistence: gating survives checkpoint/resume ──────────────────────
