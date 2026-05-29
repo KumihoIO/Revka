@@ -15,7 +15,7 @@ import os
 from typing import Any
 
 from .._log import _log
-from ..agent_state import AGENTS, POOL, normalize_agent_type, valid_agent_type
+from ..agent_state import POOL, normalize_agent_type, valid_agent_type
 from ..agent_subprocess import compose_agent_prompt
 from ..failure_classification import (
     bad_directory,

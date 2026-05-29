@@ -183,7 +183,8 @@ async def tool_google_agents_cli(args: dict[str, Any]) -> dict[str, Any]:
         proc.kill()
         try:
             await proc.wait()
-        except Exception:
+        except ProcessLookupError:
+            # The process may exit between timeout detection and cleanup.
             pass
         return {
             "status": "timeout",

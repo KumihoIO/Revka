@@ -16,7 +16,7 @@ import uuid
 from typing import Any, Callable
 
 from .._log import _log
-from ..agent_state import AGENTS, ManagedAgent, POOL, normalize_agent_type, valid_agent_type
+from ..agent_state import POOL, normalize_agent_type, valid_agent_type
 from ..agent_subprocess import compose_agent_prompt
 from ..failure_classification import classified_error, VALIDATION_ERROR
 from .refinement import _spawn_and_wait, _wait_for_agent
