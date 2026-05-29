@@ -338,6 +338,7 @@ Phase 3 (optional, weeks) — Rust executor
 | `~/.construct/operator/session-manager/src/agent-manager.ts` | TypeScript | Agent lifecycle, session state |
 | `~/.construct/operator/session-manager/src/providers/claude.ts` | TypeScript | Claude SDK query pump |
 | `~/.construct/operator/session-manager/src/providers/codex.ts` | TypeScript | Codex subprocess management |
+| `~/.construct/operator/session-manager/src/providers/google-agents.ts` | TypeScript | Google Agents CLI subprocess management |
 | `~/.construct/operator/session-manager/src/persistence.ts` | TypeScript | Agent state persistence to disk |
 | `~/.construct/operator/session-manager/src/event-emitter.ts` | TypeScript | SSE event broadcasting |
 | `~/.construct/operator/operator_mcp.py` | Python | Full operator MCP (40+ tools) |
