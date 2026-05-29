@@ -112,7 +112,7 @@ steps:                         # 최소 한 개 단계 필수
     role: researcher           # coder, researcher, reviewer 등
     prompt: |
       Research ${inputs.topic} and summarize findings.
-    output_fields: [summary, score] # 선택 — 필수 구조화 출력 계약
+    output_fields: [summary, score] # 설정하면 해당 구조화 필드가 필수
     model: null                # 선택 — 모델 오버라이드
     timeout: 300               # 초 (기본 300)
     template: my-template      # 선택 — 에이전트 풀 템플릿

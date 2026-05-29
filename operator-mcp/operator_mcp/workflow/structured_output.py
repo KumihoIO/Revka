@@ -1,8 +1,11 @@
 """Shared helpers for workflow agent structured output contracts."""
 from __future__ import annotations
 
+import re
 from typing import Any
 
+
+OUTPUT_FIELD_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 RESERVED_OUTPUT_DATA_FIELDS = {
     "template_name",
@@ -16,6 +19,11 @@ RESERVED_OUTPUT_DATA_FIELDS = {
     "skills",
     "structured_output_missing",
 }
+
+
+def is_valid_output_field_name(field: str) -> bool:
+    """Return true when an output field is addressable as output_data.<field>."""
+    return bool(OUTPUT_FIELD_NAME_RE.fullmatch(field))
 
 
 def structured_output_instruction(fields: list[str]) -> str:

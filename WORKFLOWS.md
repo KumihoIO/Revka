@@ -118,7 +118,7 @@ steps:                         # At least one step required
     role: researcher           # coder, researcher, reviewer, etc.
     prompt: |
       Research ${inputs.topic} and summarize findings.
-    output_fields: [summary, score] # Optional required structured output contract
+    output_fields: [summary, score] # When set, these structured fields are required
     model: null                # Optional model override
     timeout: 300               # Seconds (default 300)
     template: my-template      # Optional agent pool template

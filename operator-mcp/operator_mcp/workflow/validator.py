@@ -26,7 +26,7 @@ from .schema import (
     GotoStepConfig,
     ParallelStepConfig,
 )
-from .structured_output import RESERVED_OUTPUT_DATA_FIELDS
+from .structured_output import RESERVED_OUTPUT_DATA_FIELDS, is_valid_output_field_name
 
 
 # ---------------------------------------------------------------------------
@@ -102,6 +102,9 @@ _VAR_PATTERN = re.compile(r"\$\{(?!\{)([^}]+)\}")
 _STEP_REF_RE = re.compile(r"\$\{(?!\{)([a-zA-Z_][a-zA-Z0-9_-]*)(?:\.[a-zA-Z_][a-zA-Z0-9_.-]*)?\}")
 _EXPR_TEMPLATE_RE = re.compile(r"\$\{\{\s*(.*?)\s*\}\}", re.DOTALL)
 _EXPR_ROOT_FALLBACK_RE = re.compile(r"(?<![A-Za-z0-9_.])([A-Za-z_][A-Za-z0-9_-]*)\s*\.")
+_OUTPUT_DATA_REF_RE = re.compile(
+    r"(?<![A-Za-z0-9_.-])([A-Za-z0-9_-]+)\.output_data\.([A-Za-z_][A-Za-z0-9_]*)"
+)
 
 
 def _extract_var_refs(text: str) -> list[str]:
@@ -138,6 +141,24 @@ def _extract_expr_ref_namespaces(text: str) -> set[str]:
             if isinstance(root, ast.Name):
                 refs.add(root.id)
     return refs
+
+
+def _extract_output_data_refs(text: str) -> list[tuple[str, str]]:
+    """Return (step_ref, output_data_field) refs from templates/expressions."""
+    if not isinstance(text, str) or not text:
+        return []
+    return [(m.group(1), m.group(2)) for m in _OUTPUT_DATA_REF_RE.finditer(text)]
+
+
+def _collect_string_values(value: Any, out: list[str]) -> None:
+    if isinstance(value, str):
+        out.append(value)
+    elif isinstance(value, list):
+        for item in value:
+            _collect_string_values(item, out)
+    elif isinstance(value, dict):
+        for dv in value.values():
+            _collect_string_values(dv, out)
 
 
 # ---------------------------------------------------------------------------
@@ -213,6 +234,14 @@ def _check_step_configs(wf: WorkflowDef, valid_ids: set[str],
             # default AgentStepConfig from action + agent_hints at executor time
             # when step.agent is None.
             if step.agent:
+                for field in step.agent.output_fields:
+                    if not is_valid_output_field_name(field):
+                        result.add_error(
+                            "agent.output_fields entries must be addressable as "
+                            f"output_data.<field> identifiers: '{field}'",
+                            step.id,
+                            "agent.output_fields",
+                        )
                 reserved = sorted(
                     set(step.agent.output_fields) & RESERVED_OUTPUT_DATA_FIELDS
                 )
@@ -619,6 +648,58 @@ def _check_agent_unused_depends(
                 )
 
 
+def _check_agent_output_contract_refs(
+    wf: WorkflowDef, valid_ids: set[str], result: ValidationResult
+) -> None:
+    """Warn when an agent output_data field is referenced without a contract."""
+    alias_to_id = {
+        sid.replace("-", "_"): sid
+        for sid in valid_ids
+        if "-" in sid and sid.replace("-", "_") not in valid_ids
+    }
+    step_by_id = {step.id: step for step in wf.steps}
+    seen: set[tuple[str, str, str]] = set()
+
+    for consumer in wf.steps:
+        texts: list[str] = []
+        config = consumer.get_config()
+        if config:
+            _collect_string_values(config.model_dump(mode="python"), texts)
+        if consumer.output:
+            if consumer.output.template:
+                texts.append(consumer.output.template)
+            if consumer.output.entity_name:
+                texts.append(consumer.output.entity_name)
+            if consumer.output.entity_kind:
+                texts.append(consumer.output.entity_kind)
+            if consumer.output.entity_metadata:
+                for dv in consumer.output.entity_metadata.values():
+                    if isinstance(dv, str):
+                        texts.append(dv)
+
+        for text in texts:
+            for step_ref, field in _extract_output_data_refs(text):
+                source_id = alias_to_id.get(step_ref, step_ref)
+                source = step_by_id.get(source_id)
+                if not source or source.type != StepType.AGENT or not source.agent:
+                    continue
+                if field in RESERVED_OUTPUT_DATA_FIELDS:
+                    continue
+                if field in source.agent.output_fields:
+                    continue
+                key = (consumer.id, source.id, field)
+                if key in seen:
+                    continue
+                seen.add(key)
+                result.add_warning(
+                    f"{source.id}.output_data.{field} is referenced by "
+                    f"{consumer.id}, but {source.id} does not declare {field} "
+                    "in agent.output_fields.",
+                    consumer.id,
+                    "agent.output_fields",
+                )
+
+
 def _check_variable_refs(wf: WorkflowDef, valid_ids: set[str],
                          result: ValidationResult) -> None:
     """Check that ${step_id.field} references point to existing steps.
@@ -640,17 +721,7 @@ def _check_variable_refs(wf: WorkflowDef, valid_ids: set[str],
         texts: list[str] = []
         config = step.get_config()
         if config:
-            def _collect(value: Any) -> None:
-                if isinstance(value, str):
-                    texts.append(value)
-                elif isinstance(value, list):
-                    for item in value:
-                        _collect(item)
-                elif isinstance(value, dict):
-                    for dv in value.values():
-                        _collect(dv)
-
-            _collect(config.model_dump(mode="python"))
+            _collect_string_values(config.model_dump(mode="python"), texts)
         # Also check output config fields (entity_metadata, template) on StepDef directly
         if step.output:
             if step.output.template:
@@ -729,6 +800,9 @@ def validate_workflow(wf: WorkflowDef) -> ValidationResult:
 
     # Pass 5.5: agent steps must reference each declared dependency
     _check_agent_unused_depends(wf, valid_ids, result)
+
+    # Pass 5.6: agent output_data references should match declared contracts
+    _check_agent_output_contract_refs(wf, valid_ids, result)
 
     # --- Pass 6: Trigger definitions ----------------------------------------
     for i, trigger in enumerate(wf.triggers):

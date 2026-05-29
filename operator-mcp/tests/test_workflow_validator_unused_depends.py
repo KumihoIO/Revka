@@ -212,3 +212,89 @@ class TestAgentStructuredOutputContractValidation:
         result = validate_workflow(wf)
 
         assert result.valid
+
+    def test_invalid_output_field_name_is_rejected(self):
+        wf = load_workflow_from_dict(_wf([
+            {
+                "id": "review",
+                "type": "agent",
+                "agent": {
+                    "prompt": "review",
+                    "output_fields": ["production-ready"],
+                },
+            },
+        ]))
+
+        result = validate_workflow(wf)
+
+        assert not result.valid
+        assert any(
+            e.step_id == "review"
+            and e.field == "agent.output_fields"
+            and "output_data.<field> identifiers" in e.message
+            for e in result.errors
+        )
+
+    def test_downstream_undeclared_agent_output_data_ref_warns(self):
+        wf = load_workflow_from_dict(_wf([
+            {
+                "id": "final-canon-auditor",
+                "type": "agent",
+                "agent": {
+                    "prompt": "review",
+                    "output_fields": ["verdict"],
+                },
+            },
+            {
+                "id": "route",
+                "type": "agent",
+                "depends_on": ["final-canon-auditor"],
+                "agent": {
+                    "prompt": (
+                        "${{ final_canon_auditor.output_data.production_ready "
+                        "== true }}"
+                    ),
+                },
+            },
+        ]))
+
+        result = validate_workflow(wf)
+
+        assert result.valid
+        assert any(
+            w.step_id == "route"
+            and w.field == "agent.output_fields"
+            and "final-canon-auditor.output_data.production_ready" in w.message
+            for w in result.warnings
+        )
+
+    def test_declared_and_builtin_agent_output_data_refs_do_not_warn(self):
+        wf = load_workflow_from_dict(_wf([
+            {
+                "id": "review",
+                "type": "agent",
+                "agent": {
+                    "prompt": "review",
+                    "output_fields": ["production_ready"],
+                },
+            },
+            {
+                "id": "route",
+                "type": "agent",
+                "depends_on": ["review"],
+                "agent": {
+                    "prompt": (
+                        "${review.output_data.production_ready} "
+                        "${review.output_data.artifact_path}"
+                    ),
+                },
+            },
+        ]))
+
+        result = validate_workflow(wf)
+
+        assert result.valid
+        assert not any(
+            "does not declare" in w.message
+            for w in result.warnings
+        )

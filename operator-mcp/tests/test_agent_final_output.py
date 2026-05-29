@@ -15,12 +15,18 @@ from operator_mcp.workflow.schema import (
 )
 
 
-async def _run_agent_step(monkeypatch, tmp_path, output: str, cfg: AgentStepConfig):
+async def _run_agent_step(
+    monkeypatch,
+    tmp_path,
+    output: str,
+    cfg: AgentStepConfig,
+    agent_status: str = "completed",
+):
     captured: dict[str, str] = {}
 
     async def fake_spawn_and_wait(*args, **_kwargs):
         captured["prompt"] = args[3]
-        agent = SimpleNamespace(id="agent-1", status="completed")
+        agent = SimpleNamespace(id="agent-1", status=agent_status)
         return agent, output
 
     def fake_get_agent_output(agent_id):
@@ -95,6 +101,35 @@ async def test_exec_agent_injects_structured_output_instruction(monkeypatch, tmp
     assert captured["prompt"].index("audit canon") < captured["prompt"].index(
         "STRUCTURED OUTPUT REQUIRED"
     )
+    assert "STRUCTURED OUTPUT REQUIRED" in result.input_data["prompt_preview"]
+    assert "production_ready: <value>" in result.input_data["prompt_preview"]
+
+
+@pytest.mark.asyncio
+async def test_exec_agent_prompt_preview_keeps_contract_after_long_prompt(
+    monkeypatch, tmp_path
+):
+    output = """FINAL_OUTPUT:
+  verdict: APPROVED
+  production_ready: true
+"""
+
+    result, _captured = await _run_agent_step(
+        monkeypatch,
+        tmp_path,
+        output,
+        AgentStepConfig(
+            prompt="audit canon\n" + ("long context\n" * 200),
+            output_fields=["verdict", "production_ready"],
+        ),
+    )
+
+    assert result.status == "completed"
+    assert "... [prompt truncated before structured output] ..." in result.input_data[
+        "prompt_preview"
+    ]
+    assert "STRUCTURED OUTPUT REQUIRED" in result.input_data["prompt_preview"]
+    assert "production_ready: <value>" in result.input_data["prompt_preview"]
 
 
 @pytest.mark.asyncio
@@ -119,6 +154,29 @@ async def test_exec_agent_fails_when_required_structured_field_missing(
     assert result.error == "structured_output_missing: production_ready"
     assert result.output_data["structured_output_missing"] == ["production_ready"]
     assert result.output_data["verdict"] == "APPROVED"
+
+
+@pytest.mark.asyncio
+async def test_exec_agent_failed_status_preserves_error_and_records_missing_fields(
+    monkeypatch, tmp_path
+):
+    result, _captured = await _run_agent_step(
+        monkeypatch,
+        tmp_path,
+        "agent provider failed",
+        AgentStepConfig(
+            prompt="audit canon",
+            output_fields=["verdict", "production_ready"],
+        ),
+        agent_status="error",
+    )
+
+    assert result.status == "failed"
+    assert result.error == "agent provider failed"
+    assert result.output_data["structured_output_missing"] == [
+        "verdict",
+        "production_ready",
+    ]
 
 
 @pytest.mark.asyncio
