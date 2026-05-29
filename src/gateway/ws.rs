@@ -6,6 +6,7 @@
 //! ```text
 //! Server -> Client: {"type":"session_start","session_id":"...","name":"...","resumed":true,"message_count":42}
 //! Client -> Server: {"type":"message","content":"Hello"}
+//! Client -> Server: {"type":"steer","content":"Prefer the smaller fix"} (during an active turn)
 //! Server -> Client: {"type":"chunk","content":"Hi! "}
 //! Server -> Client: {"type":"tool_call","name":"shell","args":{...}}
 //! Server -> Client: {"type":"tool_result","name":"shell","output":"..."}
@@ -395,6 +396,16 @@ async fn handle_socket(
                         "message": "No active Operator turn to stop."
                     });
                     let _ = sender.send(Message::Text(stopped.to_string().into())).await;
+                    continue;
+                }
+
+                if msg_type == "steer" {
+                    let err = serde_json::json!({
+                        "type": "error",
+                        "message": "No active Operator turn to steer.",
+                        "code": "NO_ACTIVE_TURN"
+                    });
+                    let _ = sender.send(Message::Text(err.to_string().into())).await;
                     continue;
                 }
 
@@ -843,6 +854,7 @@ async fn process_chat_message(
 
     // Channel for streaming turn events from the agent.
     let (event_tx, mut event_rx) = tokio::sync::mpsc::channel::<TurnEvent>(64);
+    let (steering_tx, steering_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
 
     // Run the streamed turn concurrently: the agent produces events
     // while we forward them to the WebSocket below.  We cannot move
@@ -910,9 +922,11 @@ async fn process_chat_message(
         .cost_tracker
         .clone()
         .map(|tracker| crate::agent::cost::ToolLoopCostTrackingContext::new(tracker, "gateway"));
-    let turn_fut = crate::agent::loop_::TOOL_LOOP_COST_TRACKING_CONTEXT
-        .scope(cost_tracking_context, async {
-            agent.turn_streamed(&content_owned, event_tx).await
+    let turn_fut =
+        crate::agent::loop_::TOOL_LOOP_COST_TRACKING_CONTEXT.scope(cost_tracking_context, async {
+            agent
+                .turn_streamed_with_steering(&content_owned, event_tx, Some(steering_rx))
+                .await
         });
 
     // Drive the turn and relays in one select loop so the WebSocket can
@@ -997,6 +1011,36 @@ async fn process_chat_message(
                             "phase": "queued",
                             "detail": "Current response is still running; the dashboard queues follow-up messages locally."
                         });
+                        let _ = sender.send(Message::Text(notice.to_string().into())).await;
+                    }
+                    "steer" => {
+                        let steering = parsed["content"].as_str().unwrap_or("").trim();
+                        let notice = if steering.is_empty() {
+                            serde_json::json!({
+                                "type": "error",
+                                "message": "Steering content cannot be empty",
+                                "code": "EMPTY_CONTENT"
+                            })
+                        } else if steering_tx.send(steering.to_string()).is_ok() {
+                            if let Some(ref backend) = state.session_backend {
+                                let note = format!(
+                                    "[Steering note during active turn]\n{steering}"
+                                );
+                                let user_msg = crate::providers::ChatMessage::user(note);
+                                let _ = backend.append(session_key, &user_msg);
+                            }
+                            serde_json::json!({
+                                "type": "operator_status",
+                                "phase": "steering",
+                                "detail": "Steering note accepted; it will apply at the next Operator boundary."
+                            })
+                        } else {
+                            serde_json::json!({
+                                "type": "operator_status",
+                                "phase": "steering",
+                                "detail": "Current response is already past the steering boundary."
+                            })
+                        };
                         let _ = sender.send(Message::Text(notice.to_string().into())).await;
                     }
                     _ => {}

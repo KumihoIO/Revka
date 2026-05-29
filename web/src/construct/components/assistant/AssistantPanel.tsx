@@ -8,7 +8,9 @@ import {
   Code2,
   Columns2,
   Copy,
+  GitBranch,
   Loader2,
+  ListPlus,
   MessageSquare,
   Paperclip,
   Plus,
@@ -39,6 +41,7 @@ import XTerminal from './XTerminal';
 import CodeTab, { basename, type CodeSession, toolLabel } from './CodeTab';
 import ActivityCard from './ActivityCard';
 import AttachmentChip from './AttachmentChip';
+import MarkdownMessage from './MarkdownMessage';
 import SlashCommandMenu from './SlashCommandMenu';
 import {
   matchCommands,
@@ -319,7 +322,7 @@ function ChatPane({
 }) {
   const { open } = useV2Assistant();
   const { setTheme } = useTheme();
-  const { setLocale } = useT();
+  const { setLocale, t } = useT();
   const {
     activities,
     addAttachment,
@@ -338,6 +341,7 @@ function ChatPane({
     streamingContent,
     streamingThinking,
     queuedTurns,
+    steerCurrentTurn,
     stopCurrentTurn,
     stopping,
     typing,
@@ -361,6 +365,9 @@ function ChatPane({
   // Otherwise pressing Esc would just flicker — matchCommands would keep
   // returning the same list on every render.
   const [slashDismissed, setSlashDismissed] = useState(false);
+  const [sendMode, setSendMode] = useState<'queue' | 'steer'>('queue');
+  const [autoScroll, setAutoScroll] = useState(true);
+  const autoScrollRef = useRef(true);
 
   // Concurrently upload a list of files (e.g. multi-select from the
   // file picker, or multiple drag-drop items). Errors on individual
@@ -513,16 +520,37 @@ function ChatPane({
     setTimeout(() => setCopiedId((curr) => (curr === id ? null : curr)), 1200);
   }, []);
 
-  useEffect(() => {
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = 'auto') => {
+    scrollRef.current?.scrollTo({
+      top: scrollRef.current.scrollHeight,
+      behavior,
+    });
+  }, []);
+
+  const handleScroll = useCallback(() => {
+    const node = scrollRef.current;
+    if (!node) return;
+    const nextAutoScroll = node.scrollHeight - node.scrollTop - node.clientHeight < 72;
+    autoScrollRef.current = nextAutoScroll;
+    setAutoScroll(nextAutoScroll);
+  }, []);
+
+  useLayoutEffect(() => {
     if (!visible) return;
+    if (!autoScrollRef.current) return;
     const frame = requestAnimationFrame(() => {
-      scrollRef.current?.scrollTo({
-        top: scrollRef.current.scrollHeight,
-        behavior: open ? 'smooth' : 'auto',
-      });
+      scrollToBottom(open ? 'smooth' : 'auto');
     });
     return () => cancelAnimationFrame(frame);
-  }, [activities, messages, open, streamingContent, streamingThinking, typing, visible]);
+  }, [activities, messages.length, open, scrollToBottom, streamingContent, streamingThinking, typing, visible]);
+
+  useEffect(() => {
+    if (!open || !visible) return;
+    autoScrollRef.current = true;
+    setAutoScroll(true);
+    const frame = requestAnimationFrame(() => scrollToBottom('auto'));
+    return () => cancelAnimationFrame(frame);
+  }, [open, scrollToBottom, visible]);
 
   // Focus the message input each time the panel opens *and* this pane
   // is the visible one. The 320ms delay matches the panel's 300ms
@@ -552,6 +580,13 @@ function ChatPane({
     },
     [colors],
   );
+
+  const submitComposer = useCallback(() => {
+    if (typing && sendMode === 'steer' && attachments.length === 0) {
+      if (steerCurrentTurn()) return;
+    }
+    handleSend();
+  }, [attachments.length, handleSend, sendMode, steerCurrentTurn, typing]);
 
   return (
     <div
@@ -583,29 +618,32 @@ function ChatPane({
         </div>
       )}
 
-      <div
-        ref={scrollRef}
-        className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden p-4 font-mono leading-6"
-        style={{ fontSize: `${config.fontSize}px` }}
-      >
-        {messages.length === 0 && !typing ? (
-          <div className="flex h-full flex-col items-center justify-center text-center">
-            <pre className="text-xs" style={{ color: 'var(--construct-text-faint)' }}>
+      <div className="relative min-h-0 flex-1">
+        <div
+          ref={scrollRef}
+          onScroll={handleScroll}
+          className="h-full overflow-y-auto overflow-x-hidden p-4 font-mono leading-6"
+          style={{ fontSize: `${config.fontSize}px` }}
+        >
+          {messages.length === 0 && !typing ? (
+            <div className="flex h-full flex-col items-center justify-center text-center">
+              <pre className="text-xs" style={{ color: 'var(--construct-text-faint)' }}>
 {`┌──────────────────────────────┐
 │  session ready · ask away    │
 └──────────────────────────────┘`}
-            </pre>
-            <p className="mt-3 max-w-xs text-xs leading-5" style={{ color: 'var(--construct-text-muted)' }}>
-              {placeholder}
-            </p>
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {messages.map((msg) => {
+              </pre>
+              <p className="mt-3 max-w-xs text-xs leading-5" style={{ color: 'var(--construct-text-muted)' }}>
+                {placeholder}
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {messages.map((msg) => {
               const prefix = msg.role === 'user' ? 'you' : msg.role === 'operator' ? 'sys' : 'op';
               const color = roleColor(msg.role);
               const glow = roleGlow(msg.role);
               const copied = copiedId === msg.id;
+              const contentColor = msg.role === 'user' ? 'var(--construct-text-secondary)' : color;
               return (
                 <div key={msg.id} className="group">
                   {/* Persisted activity log (collapsed by default) — shown ABOVE the
@@ -623,11 +661,15 @@ function ChatPane({
                       ))}
                     </div>
                   )}
-                  <div className="whitespace-pre-wrap break-words">
-                    <span style={{ color, textShadow: glow, fontWeight: 600 }}>{prefix} {'>'} </span>
-                    <span style={{ color: msg.role === 'user' ? 'var(--construct-text-secondary)' : color, textShadow: glow }}>
-                      {msg.content}
-                    </span>
+                  <div className="flex min-w-0 items-start gap-1 break-words">
+                    <span className="shrink-0" style={{ color, textShadow: glow, fontWeight: 600 }}>{prefix} {'>'} </span>
+                    <div className="min-w-0 flex-1" style={{ color: contentColor, textShadow: glow }}>
+                      {msg.markdown && msg.role !== 'user' ? (
+                        <MarkdownMessage content={msg.content} color={contentColor} textShadow={glow} />
+                      ) : (
+                        <span className="whitespace-pre-wrap break-words">{msg.content}</span>
+                      )}
+                    </div>
                   </div>
                   {/* Footer row: timestamp on the left, copy-to-clipboard on the right.
                       Lives BELOW the message text per design — easier to reach with
@@ -694,23 +736,47 @@ function ChatPane({
               </div>
             )}
 
-            {typing && (streamingContent || streamingThinking) && (
-              <div className="whitespace-pre-wrap break-words">
-                <span style={{ color: colors.primary, textShadow: colors.glow, fontWeight: 600 }}>
+              {typing && (streamingContent || streamingThinking) && (
+                <div className="flex min-w-0 items-start gap-1 break-words">
+                  <span className="shrink-0" style={{ color: colors.primary, textShadow: colors.glow, fontWeight: 600 }}>
                   op {'>'}{' '}
-                </span>
-                <span style={{ color: colors.primary, textShadow: colors.glow }}>
-                  {streamingContent || '…'}
-                </span>
-              </div>
-            )}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    {streamingContent ? (
+                      <MarkdownMessage content={streamingContent} color={colors.primary} textShadow={colors.glow} />
+                    ) : (
+                      <span style={{ color: colors.primary, textShadow: colors.glow }}>…</span>
+                    )}
+                  </div>
+                </div>
+              )}
 
-            {typing && !streamingContent && !streamingThinking && activities.length === 0 && (
-              <div className="animate-pulse" style={{ color: colors.primary, textShadow: colors.glow }}>
-                op {'>'} ▊
-              </div>
-            )}
-          </div>
+              {typing && !streamingContent && !streamingThinking && activities.length === 0 && (
+                <div className="animate-pulse" style={{ color: colors.primary, textShadow: colors.glow }}>
+                  op {'>'} ▊
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+        {!autoScroll && (
+          <button
+            type="button"
+            onClick={() => {
+              autoScrollRef.current = true;
+              setAutoScroll(true);
+              scrollToBottom('smooth');
+            }}
+            className="absolute bottom-3 right-4 z-10 rounded border px-2 py-1 font-mono text-[10px] uppercase shadow-lg transition-colors hover:bg-white/5 focus:outline-none focus-visible:ring-1 focus-visible:ring-current"
+            style={{
+              borderColor: 'var(--construct-border-soft)',
+              background: 'var(--construct-bg-surface)',
+              color: colors.primary,
+              textShadow: colors.glow,
+            }}
+          >
+            {t('agent.jump_to_latest')}
+          </button>
         )}
       </div>
 
@@ -843,11 +909,11 @@ function ChatPane({
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
                 if (runSlashFromInput()) return;
-                handleSend();
+                submitComposer();
               }
             }}
             onPaste={onPaste}
-            placeholder={connected ? (typing ? 'queue next message…' : 'message…') : 'connecting…'}
+            placeholder={connected ? (typing ? (sendMode === 'steer' ? t('agent.placeholder_steer_next_step') : t('agent.placeholder_queue_next')) : t('agent.placeholder_message')) : t('agent.placeholder_connecting')}
             disabled={!connected}
             // `focus-visible:outline-none` overrides the global `:focus-visible`
             // ring set in index.css (2px accent outline) — without it Tailwind's
@@ -867,6 +933,44 @@ function ChatPane({
             }}
           />
           {typing && (
+            <div
+              className="flex h-7 shrink-0 items-center overflow-hidden rounded border"
+              style={{ borderColor: 'var(--construct-border-soft)' }}
+              aria-label={t('agent.send_mode')}
+            >
+              <button
+                type="button"
+                onClick={() => setSendMode('queue')}
+                title={t('agent.queue_after_current_response')}
+                className="inline-flex h-full items-center gap-1 px-1.5 font-mono text-[10px] uppercase transition-colors hover:bg-white/5 focus:outline-none focus-visible:ring-1 focus-visible:ring-current"
+                style={{
+                  background: sendMode === 'queue' ? 'color-mix(in srgb, var(--construct-bg-surface) 88%, transparent)' : 'transparent',
+                  color: sendMode === 'queue' ? colors.secondary : 'var(--construct-text-faint)',
+                  textShadow: sendMode === 'queue' ? colors.glowSecondary : 'none',
+                }}
+              >
+                <ListPlus className="h-3 w-3" />
+                {t('agent.send_mode_queue')}
+              </button>
+              <button
+                type="button"
+                onClick={() => setSendMode('steer')}
+                title={attachments.length > 0 ? t('agent.steer_text_only') : t('agent.steer_next_step')}
+                disabled={attachments.length > 0 || uploadingCount > 0}
+                className="inline-flex h-full items-center gap-1 border-l px-1.5 font-mono text-[10px] uppercase transition-colors hover:bg-white/5 focus:outline-none focus-visible:ring-1 focus-visible:ring-current disabled:cursor-not-allowed disabled:opacity-35"
+                style={{
+                  borderColor: 'var(--construct-border-soft)',
+                  background: sendMode === 'steer' ? 'color-mix(in srgb, var(--construct-bg-surface) 88%, transparent)' : 'transparent',
+                  color: sendMode === 'steer' ? colors.primary : 'var(--construct-text-faint)',
+                  textShadow: sendMode === 'steer' ? colors.glow : 'none',
+                }}
+              >
+                <GitBranch className="h-3 w-3" />
+                {t('agent.send_mode_steer')}
+              </button>
+            </div>
+          )}
+          {typing && (
             <button
               type="button"
               onClick={stopCurrentTurn}
@@ -883,15 +987,17 @@ function ChatPane({
           )}
           <button
             type="button"
-            onClick={() => handleSend()}
+            onClick={submitComposer}
             disabled={!connected || (!input.trim() && attachments.length === 0) || uploadingCount > 0}
-            aria-label={typing ? 'Queue message' : 'Send message'}
+            aria-label={typing && sendMode === 'steer' && attachments.length === 0 ? t('agent.steer_next_step') : typing ? t('agent.queue_message') : t('agent.send_message')}
             title={
               !connected
-                ? 'Disconnected'
+                ? t('agent.disconnected')
                 : typing
-                  ? 'Queue after current response'
-                  : 'Send (Enter)'
+                  ? sendMode === 'steer' && attachments.length === 0
+                    ? t('agent.steer_next_step')
+                    : t('agent.queue_after_current_response')
+                  : t('agent.send_enter')
             }
             className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded transition-all hover:bg-white/5 focus:outline-none focus-visible:ring-2 focus-visible:ring-current disabled:cursor-not-allowed disabled:opacity-30"
             style={{

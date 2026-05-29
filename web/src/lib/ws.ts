@@ -155,6 +155,16 @@ export class WebSocketClient {
     this.ws.send(JSON.stringify(payload));
   }
 
+  /** Send a steering note for the currently active agent turn. */
+  sendSteer(content: string, pageContext?: string): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      throw new Error('WebSocket is not connected');
+    }
+    const payload: Record<string, unknown> = { type: 'steer', content };
+    if (pageContext) payload.page_context = pageContext;
+    this.ws.send(JSON.stringify(payload));
+  }
+
   /** Request cancellation of the active agent turn for this WebSocket session. */
   sendStop(): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {

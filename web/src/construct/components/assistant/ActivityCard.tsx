@@ -11,6 +11,84 @@ interface ActivityCardProps {
   fontSize?: number;
 }
 
+function looksLikeDiff(detail: string): boolean {
+  const lines = detail.split(/\r?\n/);
+  const hasDiffHeader = lines.some((line) =>
+    line.startsWith('diff --git')
+    || line.startsWith('@@')
+    || line.startsWith('--- ')
+    || line.startsWith('+++ ')
+    || line.startsWith('*** Begin Patch')
+    || line.startsWith('*** Update File:')
+    || line.startsWith('*** Add File:')
+    || line.startsWith('*** Delete File:'),
+  );
+  const hasAddition = lines.some((line) =>
+    line.startsWith('+') && !line.startsWith('+++'),
+  );
+  const hasDeletion = lines.some((line) =>
+    line.startsWith('-') && !line.startsWith('---'),
+  );
+  return hasDiffHeader || (hasAddition && hasDeletion);
+}
+
+function DiffDetail({ detail, fontSize }: { detail: string; fontSize: string }) {
+  return (
+    <div
+      className="overflow-auto rounded-[4px] border font-mono"
+      style={{
+        borderColor: 'var(--construct-border-soft)',
+        background: 'var(--construct-bg-base)',
+        fontSize,
+        lineHeight: 1.45,
+        maxHeight: '28rem',
+        textShadow: 'none',
+      }}
+    >
+      {detail.split(/\r?\n/).map((line, index) => {
+        const isAddition = line.startsWith('+') && !line.startsWith('+++');
+        const isDeletion = line.startsWith('-') && !line.startsWith('---');
+        const isHeader =
+          line.startsWith('diff --git')
+          || line.startsWith('@@')
+          || line.startsWith('--- ')
+          || line.startsWith('+++ ')
+          || line.startsWith('*** ');
+        return (
+          <div
+            key={`${index}-${line.slice(0, 16)}`}
+            className="grid min-w-max grid-cols-[2.5rem_1fr]"
+            style={{
+              background: isAddition
+                ? 'color-mix(in srgb, var(--construct-status-success) 12%, transparent)'
+                : isDeletion
+                  ? 'color-mix(in srgb, var(--construct-status-danger) 12%, transparent)'
+                  : isHeader
+                    ? 'color-mix(in srgb, var(--construct-bg-surface) 75%, transparent)'
+                    : 'transparent',
+              color: isAddition
+                ? 'var(--construct-status-success)'
+                : isDeletion
+                  ? 'var(--construct-status-danger)'
+                  : isHeader
+                    ? 'var(--construct-text-primary)'
+                    : 'var(--construct-text-secondary)',
+            }}
+          >
+            <span
+              className="select-none border-r px-2 text-right"
+              style={{ borderColor: 'var(--construct-border-soft)', color: 'var(--construct-text-faint)' }}
+            >
+              {isAddition ? '+' : isDeletion ? '-' : ''}
+            </span>
+            <span className="whitespace-pre px-2">{line}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 /**
  * Collapsible card for an Operator activity (tool call, tool result,
  * thinking trace, or status phase).
@@ -25,7 +103,7 @@ interface ActivityCardProps {
  * collapse into a header-only line that doesn't accept clicks.
  */
 export default function ActivityCard({ event, accent, fontSize }: ActivityCardProps) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(event.kind === 'thinking');
   const [copied, setCopied] = useState(false);
 
   const hasDetail = !!event.detail && event.detail.trim().length > 0;
@@ -97,18 +175,22 @@ export default function ActivityCard({ event, accent, fontSize }: ActivityCardPr
             background: 'var(--construct-bg-base)',
           }}
         >
-          <pre
-            className="overflow-x-auto whitespace-pre-wrap break-words font-mono"
-            style={{
-              color: 'var(--construct-text-secondary)',
-              fontSize: detailFs,
-              lineHeight: 1.5,
-              maxHeight: '20rem',
-              overflowY: 'auto',
-            }}
-          >
-            {event.detail}
-          </pre>
+          {looksLikeDiff(event.detail ?? '') ? (
+            <DiffDetail detail={event.detail ?? ''} fontSize={detailFs} />
+          ) : (
+            <pre
+              className="overflow-x-auto whitespace-pre-wrap break-words font-mono"
+              style={{
+                color: 'var(--construct-text-secondary)',
+                fontSize: detailFs,
+                lineHeight: 1.5,
+                maxHeight: '20rem',
+                overflowY: 'auto',
+              }}
+            >
+              {event.detail}
+            </pre>
+          )}
           <button
             type="button"
             onClick={onCopy}

@@ -99,6 +99,57 @@ pub(crate) fn filter_tool_specs_for_architect(tool_specs: &mut Vec<ToolSpec>, us
     });
 }
 
+fn steering_note_message(note: &str) -> String {
+    format!(
+        "[Steering note from the user during this in-flight turn]\n{}\n\nAdjust the next model/tool step accordingly. Do not treat this as a separate queued task.",
+        note.trim()
+    )
+}
+
+async fn apply_pending_steering_notes(
+    history: &mut Vec<ConversationMessage>,
+    steering_rx: &mut Option<tokio::sync::mpsc::UnboundedReceiver<String>>,
+    event_tx: &tokio::sync::mpsc::Sender<TurnEvent>,
+) {
+    let Some(rx) = steering_rx.as_mut() else {
+        return;
+    };
+    let mut notes = Vec::new();
+    loop {
+        match rx.try_recv() {
+            Ok(note) => {
+                let trimmed = note.trim();
+                if !trimmed.is_empty() {
+                    notes.push(trimmed.to_string());
+                }
+            }
+            Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
+            Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => break,
+        }
+    }
+    if notes.is_empty() {
+        return;
+    }
+
+    let steering = notes
+        .iter()
+        .map(|note| steering_note_message(note))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    history.push(ConversationMessage::Chat(ChatMessage::user(steering)));
+    let detail = if notes.len() == 1 {
+        "Steering note captured for the next Operator step."
+    } else {
+        "Steering notes captured for the next Operator step."
+    };
+    let _ = event_tx
+        .send(TurnEvent::OperatorStatus {
+            phase: "steering".into(),
+            detail: detail.into(),
+        })
+        .await;
+}
+
 /// Approximate context window (tokens) for a given model name.
 ///
 /// Used by `turn_streamed` to size `ContextCompressor` so the Operator chat
@@ -1643,6 +1694,19 @@ impl Agent {
         user_message: &str,
         event_tx: tokio::sync::mpsc::Sender<TurnEvent>,
     ) -> Result<String> {
+        self.turn_streamed_with_steering(user_message, event_tx, None)
+            .await
+    }
+
+    /// Stream a turn while accepting best-effort steering notes from the
+    /// dashboard. Notes are applied at model/tool boundaries so provider/tool
+    /// invariants stay valid.
+    pub async fn turn_streamed_with_steering(
+        &mut self,
+        user_message: &str,
+        event_tx: tokio::sync::mpsc::Sender<TurnEvent>,
+        mut steering_rx: Option<tokio::sync::mpsc::UnboundedReceiver<String>>,
+    ) -> Result<String> {
         // ── Preamble (identical to turn) ───────────────────────────────
         if self.history.is_empty() {
             let system_prompt = self.build_system_prompt()?;
@@ -1693,6 +1757,8 @@ impl Agent {
         let mut post_tool_notice_sent = false;
 
         for _ in 0..self.config.max_tool_iterations {
+            apply_pending_steering_notes(&mut self.history, &mut steering_rx, &event_tx).await;
+
             // Token-aware compression — keeps the Operator chat under the
             // model's context window.  Without this, accumulating tool
             // results (Manus task output, Kumiho revisions, web fetches)
@@ -1985,6 +2051,19 @@ impl Agent {
                 resp
             };
 
+            if !got_stream
+                && let Some(reasoning) = response
+                    .reasoning_content
+                    .as_deref()
+                    .filter(|value| !value.trim().is_empty())
+            {
+                let _ = event_tx
+                    .send(TurnEvent::Thinking {
+                        delta: reasoning.to_string(),
+                    })
+                    .await;
+            }
+
             let (text, calls) = self.tool_dispatcher.parse_response(&response);
             if calls.is_empty() {
                 let mut final_text = if text.is_empty() {
@@ -2040,6 +2119,7 @@ impl Agent {
                     .push(ConversationMessage::Chat(ChatMessage::assistant(
                         final_text.clone(),
                     )));
+                apply_pending_steering_notes(&mut self.history, &mut steering_rx, &event_tx).await;
                 self.trim_history();
 
                 return Ok(final_text);
@@ -3114,6 +3194,89 @@ mod tests {
         }
     }
 
+    struct SteeringCaptureProvider {
+        call_count: Arc<Mutex<usize>>,
+        second_call_messages: Arc<Mutex<Vec<String>>>,
+    }
+
+    #[async_trait]
+    impl Provider for SteeringCaptureProvider {
+        async fn chat_with_system(
+            &self,
+            _system_prompt: Option<&str>,
+            _message: &str,
+            _model: &str,
+            _temperature: f64,
+        ) -> Result<String> {
+            Ok("ok".into())
+        }
+
+        async fn chat(
+            &self,
+            _request: ChatRequest<'_>,
+            _model: &str,
+            _temperature: f64,
+        ) -> Result<crate::providers::ChatResponse> {
+            Ok(crate::providers::ChatResponse {
+                text: Some("fallback".into()),
+                tool_calls: vec![],
+                usage: None,
+                reasoning_content: None,
+            })
+        }
+
+        fn supports_native_tools(&self) -> bool {
+            true
+        }
+
+        fn stream_chat(
+            &self,
+            request: ChatRequest<'_>,
+            _model: &str,
+            _temperature: f64,
+            _options: crate::providers::traits::StreamOptions,
+        ) -> futures_util::stream::BoxStream<
+            'static,
+            crate::providers::traits::StreamResult<crate::providers::traits::StreamEvent>,
+        > {
+            use futures_util::stream::{self, StreamExt};
+            let mut count = self.call_count.lock();
+            *count += 1;
+            if *count == 1 {
+                let tc =
+                    crate::providers::traits::StreamEvent::ToolCall(crate::providers::ToolCall {
+                        id: "tc_steer_1".into(),
+                        name: "echo".into(),
+                        arguments: "{}".into(),
+                    });
+                stream::iter(vec![
+                    Ok(tc),
+                    Ok(crate::providers::traits::StreamEvent::Final),
+                ])
+                .boxed()
+            } else {
+                *self.second_call_messages.lock() = request
+                    .messages
+                    .iter()
+                    .map(|message| message.content.clone())
+                    .collect();
+                let chunk = crate::providers::traits::StreamEvent::TextDelta(
+                    crate::providers::traits::StreamChunk {
+                        delta: "steered-done".into(),
+                        is_final: false,
+                        reasoning: None,
+                        token_count: 0,
+                    },
+                );
+                stream::iter(vec![
+                    Ok(chunk),
+                    Ok(crate::providers::traits::StreamEvent::Final),
+                ])
+                .boxed()
+            }
+        }
+    }
+
     #[tokio::test]
     async fn turn_streamed_passes_tool_specs_to_provider() {
         let tools_received = Arc::new(Mutex::new(Vec::new()));
@@ -3194,6 +3357,106 @@ mod tests {
         assert!(
             has_post_tool_notice,
             "Should have emitted a post-tool completion notice"
+        );
+    }
+
+    #[tokio::test]
+    async fn turn_streamed_emits_non_streaming_reasoning_content() {
+        let provider = Box::new(MockProvider {
+            responses: Mutex::new(vec![crate::providers::ChatResponse {
+                text: Some("done".into()),
+                tool_calls: vec![],
+                usage: None,
+                reasoning_content: Some(
+                    "I should inspect the current state before answering.".into(),
+                ),
+            }]),
+        });
+
+        let memory_cfg = crate::config::MemoryConfig {
+            backend: "none".into(),
+            ..crate::config::MemoryConfig::default()
+        };
+        let mem: Arc<dyn Memory> = Arc::from(
+            crate::memory::create_memory(&memory_cfg, std::path::Path::new("/tmp"), None)
+                .expect("memory creation should succeed with valid config"),
+        );
+
+        let observer: Arc<dyn Observer> = Arc::from(crate::observability::NoopObserver {});
+        let mut agent = Agent::builder()
+            .provider(provider)
+            .tools(vec![Box::new(MockTool)])
+            .memory(mem)
+            .observer(observer)
+            .tool_dispatcher(Box::new(NativeToolDispatcher))
+            .workspace_dir(std::path::PathBuf::from("/tmp"))
+            .build()
+            .expect("agent builder should succeed with valid config");
+
+        let (event_tx, mut event_rx) = tokio::sync::mpsc::channel::<TurnEvent>(64);
+        let response = agent
+            .turn_streamed("answer with context", event_tx)
+            .await
+            .unwrap();
+        assert_eq!(response, "done");
+
+        let mut events = Vec::new();
+        while let Ok(ev) = event_rx.try_recv() {
+            events.push(ev);
+        }
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                TurnEvent::Thinking { delta }
+                    if delta.contains("inspect the current state")
+            )),
+            "Expected a Thinking event for non-streaming reasoning content, got {events:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn turn_streamed_applies_preloaded_steering_note() {
+        let second_call_messages = Arc::new(Mutex::new(Vec::new()));
+        let provider = Box::new(SteeringCaptureProvider {
+            call_count: Arc::new(Mutex::new(0)),
+            second_call_messages: second_call_messages.clone(),
+        });
+
+        let memory_cfg = crate::config::MemoryConfig {
+            backend: "none".into(),
+            ..crate::config::MemoryConfig::default()
+        };
+        let mem: Arc<dyn Memory> = Arc::from(
+            crate::memory::create_memory(&memory_cfg, std::path::Path::new("/tmp"), None)
+                .expect("memory creation should succeed with valid config"),
+        );
+
+        let observer: Arc<dyn Observer> = Arc::from(crate::observability::NoopObserver {});
+        let mut agent = Agent::builder()
+            .provider(provider)
+            .tools(vec![Box::new(MockTool)])
+            .memory(mem)
+            .observer(observer)
+            .tool_dispatcher(Box::new(NativeToolDispatcher))
+            .workspace_dir(std::path::PathBuf::from("/tmp"))
+            .build()
+            .expect("agent builder should succeed with valid config");
+
+        let (event_tx, _event_rx) = tokio::sync::mpsc::channel::<TurnEvent>(64);
+        let (steering_tx, steering_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+        steering_tx
+            .send("prefer the smaller edit".into())
+            .expect("steering channel should be open");
+        let response = agent
+            .turn_streamed_with_steering("use the echo tool", event_tx, Some(steering_rx))
+            .await
+            .unwrap();
+
+        assert_eq!(response, "steered-done");
+        let captured = second_call_messages.lock().join("\n");
+        assert!(
+            captured.contains("prefer the smaller edit"),
+            "expected steering note in second provider call, got {captured}"
         );
     }
 }
