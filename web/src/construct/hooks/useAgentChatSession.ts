@@ -57,6 +57,14 @@ interface QueuedTurn {
   attachments: StagedAttachment[];
 }
 
+const MAX_RENDERED_TOOL_OUTPUT_CHARS = 12_000;
+
+function renderedToolOutput(output?: string): string | undefined {
+  if (!output) return output;
+  if (output.length <= MAX_RENDERED_TOOL_OUTPUT_CHARS) return output;
+  return `${output.slice(0, MAX_RENDERED_TOOL_OUTPUT_CHARS)}\n\n[Output truncated in chat view; copy or inspect the run log for the full result.]`;
+}
+
 export function useAgentChatSession({
   sessionId,
   sessionName,
@@ -369,7 +377,7 @@ export function useAgentChatSession({
           case 'tool_result': {
             markSendingTurnsSent();
             const toolName = msg.name ?? 'tool';
-            const output = msg.output && msg.output.length > 500 ? `${msg.output.slice(0, 500)}...` : msg.output;
+            const output = renderedToolOutput(msg.output);
             const previous = activitiesRef.current;
             const pendingIndex = [...previous]
               .reverse()
@@ -655,6 +663,35 @@ export function useAgentChatSession({
     }
   }, [stopping]);
 
+  const steerCurrentTurn = useCallback(() => {
+    const trimmed = input.trim();
+    if (!trimmed || !typingRef.current || !wsRef.current?.connected) return false;
+    if (attachments.length > 0 || uploadingCount > 0) return false;
+    try {
+      wsRef.current.sendSteer(trimmed, pageContext);
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: generateUUID(),
+          role: 'user',
+          content: `[steer] ${trimmed}`,
+          deliveryStatus: 'sending',
+          timestamp: new Date(),
+        },
+      ]);
+      setInput('');
+      clearDraftStore(draftKeyRef.current);
+      if (inputRef.current) {
+        inputRef.current.style.height = 'auto';
+        inputRef.current.focus();
+      }
+      return true;
+    } catch {
+      setError(t('agent.send_error'));
+      return false;
+    }
+  }, [attachments.length, clearDraftStore, input, pageContext, uploadingCount]);
+
   /** Send an arbitrary text turn without going through the textarea. Used
    *  by slash commands like `/architect` whose handler synthesizes a
    *  user-visible prompt rather than echoing the literal command. The
@@ -811,6 +848,7 @@ export function useAgentChatSession({
     streamingThinking,
     queuedTurns,
     stopCurrentTurn,
+    steerCurrentTurn,
     stopping,
     submitMessage,
     typing,
