@@ -61,6 +61,10 @@ from .schema import (
     ManusStepConfig,
     ManusRegisterOutputConfig,
 )
+from .structured_output import (
+    missing_required_output_fields,
+    structured_output_instruction,
+)
 from .validator import validate_workflow
 
 # ---------------------------------------------------------------------------
@@ -1286,12 +1290,29 @@ def _extract_structured_agent_output(text: str) -> dict[str, Any] | None:
     return None
 
 
+def _agent_prompt_preview(prompt: str, structured_suffix: str, limit: int = 1000) -> str:
+    """Return a bounded prompt preview that keeps structured-output contract visible."""
+    if len(prompt) <= limit:
+        return prompt
+    if not structured_suffix or not prompt.endswith(structured_suffix):
+        return prompt[:limit]
+
+    marker = "\n\n... [prompt truncated before structured output] ...\n\n"
+    prefix_budget = limit - len(marker) - len(structured_suffix)
+    if prefix_budget <= 0:
+        return structured_suffix[-limit:]
+    return f"{prompt[:prefix_budget].rstrip()}{marker}{structured_suffix}"
+
+
 async def _exec_agent(step: StepDef, state: WorkflowState, cwd: str) -> StepResult:
     """Execute an agent step."""
     from ..patterns.refinement import _spawn_and_wait, _get_agent_output
 
     cfg = step.resolve_agent_config()
     prompt = interpolate(cfg.prompt, state)
+    structured_suffix = structured_output_instruction(cfg.output_fields)
+    if structured_suffix:
+        prompt = f"{prompt.rstrip()}\n\n{structured_suffix}"
     required_tools = _agent_required_tools(step, cfg)
     agent_cwd = _workflow_agent_sandbox_cwd(state, step)
 
@@ -1392,7 +1413,7 @@ async def _exec_agent(step: StepDef, state: WorkflowState, cwd: str) -> StepResu
             "source_cwd": os.path.realpath(os.path.expanduser(cwd)),
             "tools": cfg.tools,
             "required_tools": required_tools,
-            "prompt_preview": prompt[:1000],
+            "prompt_preview": _agent_prompt_preview(prompt, structured_suffix),
         },
         error=("Cancelled by user" if cancelled_by_workflow
                else effective[:2000] if agent.status == "error"
@@ -1438,6 +1459,13 @@ async def _exec_agent(step: StepDef, state: WorkflowState, cwd: str) -> StepResu
             f"agent step '{step.id}': extracted {len(parsed_structured)} "
             "structured fields into output_data"
         )
+
+    missing_fields = missing_required_output_fields(cfg.output_fields, result.output_data)
+    if missing_fields:
+        result.output_data["structured_output_missing"] = missing_fields
+        if result.status == "completed":
+            result.status = "failed"
+            result.error = "structured_output_missing: " + ", ".join(missing_fields)
 
     if (
         result.status == "completed"

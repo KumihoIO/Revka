@@ -976,7 +976,7 @@ Notes:
 ## `[operator]`
 
 The Operator is a Python MCP server driving declarative YAML workflows with
-14 step types and 4+ orchestration patterns. It is automatically injected into
+typed steps and advanced orchestration patterns. It is automatically injected into
 every non-internal agent.
 
 | Key | Default | Purpose |
@@ -991,9 +991,16 @@ Notes:
 - Workflow checkpoints are written to `~/.construct/workflow_checkpoints/`.
 - Per-agent RunLog JSONL audit trails are written to
   `~/.construct/operator_mcp/runlogs/`.
-- Step types currently supported: `agent`, `shell`, `output`, `notify`, `a2a`,
-  `conditional`, `parallel`, `goto`, `human_approval`, `human_input`,
-  `map_reduce`, `supervisor`, `group_chat`, `handoff`.
+- Step types currently supported include `agent`, `shell`, `python`, `compute`,
+  `email`, `image`, `output`, `notify`, `a2a`, `conditional`, `parallel`,
+  `goto`, `human_approval`, `human_input`, `map_reduce`, `supervisor`,
+  `group_chat`, `handoff`, `resolve`, `kumiho_context`,
+  `kumiho_bundle_update`, `kumiho_patch_apply`, `for_each`, `tag`,
+  `deprecate`, and `manus`.
+- Agent steps may declare `agent.output_fields`. When set, the executor appends
+  structured-output instructions, parses direct JSON, final fenced `json`, or
+  `FINAL_OUTPUT:` YAML, and fails the step with `structured_output_missing` if
+  any declared field is absent.
 
 ## `[clawhub]`
 
