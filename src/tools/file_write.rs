@@ -4,6 +4,8 @@ use async_trait::async_trait;
 use serde_json::json;
 use std::sync::Arc;
 
+const MAX_WRITE_DIFF_CHARS: usize = 12_000;
+
 /// Write file contents with path sandboxing
 pub struct FileWriteTool {
     security: Arc<SecurityPolicy>,
@@ -13,6 +15,47 @@ impl FileWriteTool {
     pub fn new(security: Arc<SecurityPolicy>) -> Self {
         Self { security }
     }
+}
+
+fn push_prefixed_lines(out: &mut String, prefix: char, value: &str) {
+    if value.is_empty() {
+        out.push(prefix);
+        out.push('\n');
+        return;
+    }
+    for line in value.lines() {
+        out.push(prefix);
+        out.push_str(line);
+        out.push('\n');
+    }
+}
+
+fn truncate_diff(diff: String) -> String {
+    if diff.len() <= MAX_WRITE_DIFF_CHARS {
+        return diff;
+    }
+    let mut truncated = diff.chars().take(MAX_WRITE_DIFF_CHARS).collect::<String>();
+    truncated.push_str("\n[Diff truncated]");
+    truncated
+}
+
+fn render_write_diff(path: &str, previous: Option<&str>, next: &str) -> Option<String> {
+    if previous == Some(next) {
+        return None;
+    }
+    let mut diff = String::new();
+    diff.push_str("--- ");
+    diff.push_str(previous.map(|_| path).unwrap_or("/dev/null"));
+    diff.push('\n');
+    diff.push_str("+++ ");
+    diff.push_str(path);
+    diff.push('\n');
+    diff.push_str("@@\n");
+    if let Some(previous) = previous {
+        push_prefixed_lines(&mut diff, '-', previous);
+    }
+    push_prefixed_lines(&mut diff, '+', next);
+    Some(truncate_diff(diff))
 }
 
 #[async_trait]
@@ -157,12 +200,21 @@ impl Tool for FileWriteTool {
             });
         }
 
+        let previous_content = tokio::fs::read_to_string(&resolved_target).await.ok();
+
         match tokio::fs::write(&resolved_target, content).await {
-            Ok(()) => Ok(ToolResult {
-                success: true,
-                output: format!("Written {} bytes to {path}", content.len()),
-                error: None,
-            }),
+            Ok(()) => {
+                let mut output = format!("Written {} bytes to {path}", content.len());
+                if let Some(diff) = render_write_diff(path, previous_content.as_deref(), content) {
+                    output.push_str("\n\nDiff\n");
+                    output.push_str(&diff);
+                }
+                Ok(ToolResult {
+                    success: true,
+                    output,
+                    error: None,
+                })
+            }
             Err(e) => Ok(ToolResult {
                 success: false,
                 output: String::new(),
@@ -303,6 +355,10 @@ mod tests {
             .await
             .unwrap();
         assert!(result.success);
+        assert!(result.output.contains("--- exist.txt"));
+        assert!(result.output.contains("+++ exist.txt"));
+        assert!(result.output.contains("-old"));
+        assert!(result.output.contains("+new"));
 
         let content = tokio::fs::read_to_string(dir.join("exist.txt"))
             .await

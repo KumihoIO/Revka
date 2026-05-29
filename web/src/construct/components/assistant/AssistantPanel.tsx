@@ -913,7 +913,7 @@ function ChatPane({
               }
             }}
             onPaste={onPaste}
-            placeholder={connected ? (typing ? (sendMode === 'steer' ? t('agent.placeholder_steer_current') : t('agent.placeholder_queue_next')) : t('agent.placeholder_message')) : t('agent.placeholder_connecting')}
+            placeholder={connected ? (typing ? (sendMode === 'steer' ? t('agent.placeholder_steer_next_step') : t('agent.placeholder_queue_next')) : t('agent.placeholder_message')) : t('agent.placeholder_connecting')}
             disabled={!connected}
             // `focus-visible:outline-none` overrides the global `:focus-visible`
             // ring set in index.css (2px accent outline) — without it Tailwind's
@@ -955,7 +955,7 @@ function ChatPane({
               <button
                 type="button"
                 onClick={() => setSendMode('steer')}
-                title={attachments.length > 0 ? t('agent.steer_text_only') : t('agent.steer_current_response')}
+                title={attachments.length > 0 ? t('agent.steer_text_only') : t('agent.steer_next_step')}
                 disabled={attachments.length > 0 || uploadingCount > 0}
                 className="inline-flex h-full items-center gap-1 border-l px-1.5 font-mono text-[10px] uppercase transition-colors hover:bg-white/5 focus:outline-none focus-visible:ring-1 focus-visible:ring-current disabled:cursor-not-allowed disabled:opacity-35"
                 style={{
@@ -989,13 +989,13 @@ function ChatPane({
             type="button"
             onClick={submitComposer}
             disabled={!connected || (!input.trim() && attachments.length === 0) || uploadingCount > 0}
-            aria-label={typing && sendMode === 'steer' && attachments.length === 0 ? t('agent.steer_current_response') : typing ? t('agent.queue_message') : t('agent.send_message')}
+            aria-label={typing && sendMode === 'steer' && attachments.length === 0 ? t('agent.steer_next_step') : typing ? t('agent.queue_message') : t('agent.send_message')}
             title={
               !connected
                 ? t('agent.disconnected')
                 : typing
                   ? sendMode === 'steer' && attachments.length === 0
-                    ? t('agent.steer_current_response')
+                    ? t('agent.steer_next_step')
                     : t('agent.queue_after_current_response')
                   : t('agent.send_enter')
             }
