@@ -103,7 +103,7 @@ function DiffDetail({ detail, fontSize }: { detail: string; fontSize: string }) 
  * collapse into a header-only line that doesn't accept clicks.
  */
 export default function ActivityCard({ event, accent, fontSize }: ActivityCardProps) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(event.kind === 'thinking');
   const [copied, setCopied] = useState(false);
 
   const hasDetail = !!event.detail && event.detail.trim().length > 0;

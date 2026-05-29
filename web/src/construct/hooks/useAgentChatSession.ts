@@ -320,18 +320,25 @@ export function useAgentChatSession({
           case 'thinking': {
             markSendingTurnsSent();
             setTyping(true);
-            pendingThinkingRef.current += msg.content ?? '';
+            const delta = msg.content ?? '';
+            pendingThinkingRef.current += delta;
             setStreamingThinking(pendingThinkingRef.current);
             const previous = activitiesRef.current;
             const last = previous[previous.length - 1];
             const nextActivities = last?.kind === 'thinking'
               ? [
                   ...previous.slice(0, -1),
-                  { ...last, label: 'Reasoning...', detail: (last.detail ?? '') + (msg.content ?? '') },
+                  { ...last, label: t('agent.reasoning_trace_label'), detail: (last.detail ?? '') + delta },
                 ]
               : [
                   ...previous,
-                  { id: generateUUID(), kind: 'thinking' as const, label: 'Reasoning...', timestamp: new Date() },
+                  {
+                    id: generateUUID(),
+                    kind: 'thinking' as const,
+                    label: t('agent.reasoning_trace_label'),
+                    detail: delta || undefined,
+                    timestamp: new Date(),
+                  },
                 ];
             activitiesRef.current = nextActivities;
             setActivities(nextActivities);

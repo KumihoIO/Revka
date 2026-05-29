@@ -92,6 +92,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'agent.activity_input_label': '输入',
     'agent.activity_diff_label': '差异',
     'agent.activity_output_label': '输出',
+    'agent.reasoning_trace_label': '思考过程',
 
     // Tools
     'tools.name': '名称',
@@ -1575,6 +1576,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'agent.activity_input_label': 'Input',
     'agent.activity_diff_label': 'Diff',
     'agent.activity_output_label': 'Output',
+    'agent.reasoning_trace_label': 'Reasoning trace',
 
     // Tools
     'tools.name': 'Name',
@@ -3129,6 +3131,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'agent.activity_input_label': 'Girdi',
     'agent.activity_diff_label': 'Diff',
     'agent.activity_output_label': 'Çıktı',
+    'agent.reasoning_trace_label': 'Düşünce izi',
 
     // Tools
     'tools.name': 'Ad',
@@ -4540,6 +4543,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'agent.activity_input_label': '입력',
     'agent.activity_diff_label': 'Diff',
     'agent.activity_output_label': '출력',
+    'agent.reasoning_trace_label': '사고 과정',
 
     // Tools
     'tools.name': '이름',

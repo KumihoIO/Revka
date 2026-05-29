@@ -2051,6 +2051,19 @@ impl Agent {
                 resp
             };
 
+            if !got_stream
+                && let Some(reasoning) = response
+                    .reasoning_content
+                    .as_deref()
+                    .filter(|value| !value.trim().is_empty())
+            {
+                let _ = event_tx
+                    .send(TurnEvent::Thinking {
+                        delta: reasoning.to_string(),
+                    })
+                    .await;
+            }
+
             let (text, calls) = self.tool_dispatcher.parse_response(&response);
             if calls.is_empty() {
                 let mut final_text = if text.is_empty() {
@@ -3344,6 +3357,60 @@ mod tests {
         assert!(
             has_post_tool_notice,
             "Should have emitted a post-tool completion notice"
+        );
+    }
+
+    #[tokio::test]
+    async fn turn_streamed_emits_non_streaming_reasoning_content() {
+        let provider = Box::new(MockProvider {
+            responses: Mutex::new(vec![crate::providers::ChatResponse {
+                text: Some("done".into()),
+                tool_calls: vec![],
+                usage: None,
+                reasoning_content: Some(
+                    "I should inspect the current state before answering.".into(),
+                ),
+            }]),
+        });
+
+        let memory_cfg = crate::config::MemoryConfig {
+            backend: "none".into(),
+            ..crate::config::MemoryConfig::default()
+        };
+        let mem: Arc<dyn Memory> = Arc::from(
+            crate::memory::create_memory(&memory_cfg, std::path::Path::new("/tmp"), None)
+                .expect("memory creation should succeed with valid config"),
+        );
+
+        let observer: Arc<dyn Observer> = Arc::from(crate::observability::NoopObserver {});
+        let mut agent = Agent::builder()
+            .provider(provider)
+            .tools(vec![Box::new(MockTool)])
+            .memory(mem)
+            .observer(observer)
+            .tool_dispatcher(Box::new(NativeToolDispatcher))
+            .workspace_dir(std::path::PathBuf::from("/tmp"))
+            .build()
+            .expect("agent builder should succeed with valid config");
+
+        let (event_tx, mut event_rx) = tokio::sync::mpsc::channel::<TurnEvent>(64);
+        let response = agent
+            .turn_streamed("answer with context", event_tx)
+            .await
+            .unwrap();
+        assert_eq!(response, "done");
+
+        let mut events = Vec::new();
+        while let Ok(ev) = event_rx.try_recv() {
+            events.push(ev);
+        }
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                TurnEvent::Thinking { delta }
+                    if delta.contains("inspect the current state")
+            )),
+            "Expected a Thinking event for non-streaming reasoning content, got {events:?}"
         );
     }
 
