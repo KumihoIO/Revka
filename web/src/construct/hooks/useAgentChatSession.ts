@@ -111,16 +111,6 @@ function codeChangeDiffFromToolInput(toolName?: string, input?: string): string 
       ...prefixedLines('+', newString),
     ].join('\n');
   }
-  if (toolName === 'file_write') {
-    const content = typeof parsed?.content === 'string' ? parsed.content : undefined;
-    if (content === undefined) return undefined;
-    return [
-      '--- /dev/null',
-      `+++ ${path}`,
-      '@@',
-      ...prefixedLines('+', content),
-    ].join('\n');
-  }
   return undefined;
 }
 
