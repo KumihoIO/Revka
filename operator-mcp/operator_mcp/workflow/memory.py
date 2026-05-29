@@ -633,8 +633,18 @@ async def publish_workflow_entity(
         # Walk the full space path and ensure every segment exists. The SDK's
         # ensure_space only creates a single space directly under a project,
         # so deeper paths used to fail at create_item below with NOT_FOUND.
+        # This is best-effort: output publishing should not fail just because
+        # idempotent space creation is slow for an already-existing space. If
+        # the space truly is missing, create_item below returns NOT_FOUND and
+        # triggers one more ensure+retry with a clearer failure point.
         _log(f"workflow_memory: ensuring space {space_path} for entity {entity_name}")
-        await _ensure_space_path(space_path)
+        try:
+            await _ensure_space_path(space_path)
+        except TimeoutError as exc:
+            _log(
+                f"workflow_memory: ensure space {space_path} timed out; "
+                f"continuing to create_item for entity {entity_name}: {exc}"
+            )
 
         target = metadata_target if metadata_target in {"item", "revision", "artifact"} else "item"
         user_meta = dict(entity_metadata or {})

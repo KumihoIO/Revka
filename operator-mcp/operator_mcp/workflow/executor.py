@@ -17,6 +17,7 @@ import os
 import re
 import signal
 import subprocess
+import textwrap
 import time
 import uuid
 from datetime import datetime, timezone
@@ -69,6 +70,7 @@ from .validator import validate_workflow
 _VAR_RE = re.compile(r"\$\{(?!\{)([^}]+)\}")
 _EXPR_TEMPLATE_RE = re.compile(r"\$\{\{\s*(.*?)\s*\}\}", re.DOTALL)
 _COMPUTE_OUTPUT_KEY_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
+_FINAL_OUTPUT_RE = re.compile(r"(?im)^[ \t]*FINAL_OUTPUT[ \t]*:[ \t]*(.*)$")
 
 _WORKFLOW_MEMORY_ALIAS_TOOLS = {
     "capture_skill",
@@ -184,7 +186,16 @@ def interpolate(template: str, state: WorkflowState) -> str:
             # internal sentinels) can't be exfiltrated via interpolation.
             if key.startswith("_"):
                 return match.group(0)
-            return str(sr.output_data.get(key, ""))
+            output_data = dict(sr.output_data or {})
+            if sr.output and "FINAL_OUTPUT" in sr.output:
+                try:
+                    parsed = _extract_structured_agent_output(sr.output)
+                except Exception:
+                    parsed = None
+                if isinstance(parsed, dict):
+                    for k, v in parsed.items():
+                        output_data.setdefault(k, v)
+            return str(output_data.get(key, ""))
         if field == "agent_id":
             return sr.agent_id or ""
 
@@ -595,12 +606,25 @@ def _build_eval_names(
     for sid, sr in state.step_results.items():
         if sid.startswith("_"):
             continue
+        output_data = dict(sr.output_data or {})
+        # Defensive recovery: older subprocess/runlog paths could persist the
+        # raw FINAL_OUTPUT YAML in `output` but miss the parsed fields in
+        # `output_data`. Conditions such as `final_canon_auditor.output_data`
+        # must still see those structured fields or branch routing goes stale.
+        if sr.output and "FINAL_OUTPUT" in sr.output:
+            try:
+                parsed = _extract_structured_agent_output(sr.output)
+            except Exception:
+                parsed = None
+            if isinstance(parsed, dict):
+                for k, v in parsed.items():
+                    output_data.setdefault(k, v)
         entry = {
             "output": sr.output,
             "status": sr.status,
             "error": sr.error,
             "files": list(sr.files_touched),
-            "output_data": _safe_keys(sr.output_data),
+            "output_data": _safe_keys(output_data),
             "agent_id": sr.agent_id or "",
         }
         names[sid] = entry
@@ -696,6 +720,11 @@ def _eval_expression(
         InvalidExpression,
         NameNotDefined,
     )
+
+    stripped_expr = expr.strip()
+    matches = list(_EXPR_TEMPLATE_RE.finditer(stripped_expr))
+    if len(matches) == 1 and matches[0].span() == (0, len(stripped_expr)):
+        expr = matches[0].group(1)
 
     pre = _preprocess_expr(expr)
     # Resolve any remaining ${...} via the legacy interpolator. New-style
@@ -1151,6 +1180,112 @@ def _preflight_required_tool_visibility(wf: WorkflowDef) -> str | None:
     return None
 
 
+def _parse_json_mapping(text: str) -> dict[str, Any] | None:
+    try:
+        obj = json.loads(text)
+    except (json.JSONDecodeError, ValueError, TypeError):
+        return None
+    return obj if isinstance(obj, dict) else None
+
+
+def _string_key_mapping(obj: dict[Any, Any]) -> dict[str, Any]:
+    return {str(k): v for k, v in obj.items() if k is not None}
+
+
+def _parse_yaml_mapping(text: str) -> dict[str, Any] | None:
+    candidate = textwrap.dedent(text).strip()
+    if not candidate:
+        return None
+
+    fenced = re.match(
+        r"^```(?:ya?ml|json)?\s*\n(.*?)\n\s*```",
+        candidate,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if fenced:
+        candidate = fenced.group(1).strip()
+
+    try:
+        import yaml
+
+        obj = yaml.safe_load(candidate)
+    except Exception:
+        return None
+
+    if isinstance(obj, dict):
+        final_output = obj.get("FINAL_OUTPUT")
+        if len(obj) == 1 and isinstance(final_output, dict):
+            return _string_key_mapping(final_output)
+        return _string_key_mapping(obj)
+    return None
+
+
+def _parse_yaml_prefix_mapping(text: str) -> dict[str, Any] | None:
+    """Parse the largest line prefix that is a YAML mapping.
+
+    Codex CLI appends footers like ``tokens used`` after otherwise-valid
+    ``FINAL_OUTPUT`` YAML. A full-tail parse fails on that footer, so trim from
+    the end until the structured payload parses. This is bounded to the last
+    400 lines to keep pathological agent output cheap.
+    """
+    lines = textwrap.dedent(text).strip("\n").splitlines()
+    if not lines:
+        return None
+    max_lines = min(len(lines), 400)
+    for end in range(max_lines, 0, -1):
+        parsed = _parse_yaml_mapping("\n".join(lines[:end]))
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _extract_final_output_mapping(text: str) -> dict[str, Any] | None:
+    matches = list(_FINAL_OUTPUT_RE.finditer(text))
+    if not matches:
+        return None
+
+    match = matches[-1]
+    inline = match.group(1).strip()
+    tail = text[match.end():]
+    candidate = f"{inline}\n{tail}" if inline else tail
+
+    parsed = _parse_yaml_mapping(candidate)
+    if parsed is not None:
+        return parsed
+
+    parsed = _parse_yaml_prefix_mapping(candidate)
+    if parsed is not None:
+        return parsed
+
+    # Fallback for uncommon but valid YAML that keeps FINAL_OUTPUT as the root
+    # mapping key. The caller still receives the inner fields directly.
+    return _parse_yaml_prefix_mapping(text[match.start():])
+
+
+def _extract_structured_agent_output(text: str) -> dict[str, Any] | None:
+    stripped = text.strip()
+    if not stripped:
+        return None
+
+    # Format 1: entire output is a JSON object.
+    if stripped.startswith("{") and stripped.endswith("}"):
+        parsed = _parse_json_mapping(stripped)
+        if parsed is not None:
+            return parsed
+
+    # Format 2: explicit final YAML/JSON payload after a FINAL_OUTPUT: sentinel.
+    parsed = _extract_final_output_mapping(text)
+    if parsed is not None:
+        return parsed
+
+    # Format 3: markdown with fenced ```json block (extract LAST one).
+    json_blocks = re.findall(r"```json\s*\n(.*?)\n\s*```", text, re.DOTALL)
+    if json_blocks:
+        return _parse_json_mapping(json_blocks[-1])
+
+    return None
+
+
 async def _exec_agent(step: StepDef, state: WorkflowState, cwd: str) -> StepResult:
     """Execute an agent step."""
     from ..patterns.refinement import _spawn_and_wait, _get_agent_output
@@ -1293,37 +1428,16 @@ async def _exec_agent(step: StepDef, state: WorkflowState, cwd: str) -> StepResu
 
     # If the agent output contains structured data, merge keys into output_data
     # for downstream access via ${step_id.output_data.field}.
-    # Supports two formats:
-    #   1. Entire output is JSON object → parse directly
-    #   2. Markdown with a fenced ```json block → extract and parse the block
-    stripped = effective.strip()
-    parsed_json: dict | None = None
-
-    # Format 1: entire output is a JSON object
-    if stripped.startswith("{") and stripped.endswith("}"):
-        try:
-            obj = json.loads(stripped)
-            if isinstance(obj, dict):
-                parsed_json = obj
-        except (json.JSONDecodeError, ValueError):
-            pass
-
-    # Format 2: markdown with fenced ```json block (extract LAST one)
-    if parsed_json is None:
-        json_blocks = re.findall(r'```json\s*\n(.*?)\n\s*```', effective, re.DOTALL)
-        if json_blocks:
-            try:
-                obj = json.loads(json_blocks[-1])  # Use the last JSON block
-                if isinstance(obj, dict):
-                    parsed_json = obj
-            except (json.JSONDecodeError, ValueError):
-                pass
-
-    if parsed_json is not None:
-        for k, v in parsed_json.items():
+    # Supports direct JSON, FINAL_OUTPUT YAML/JSON, and fenced ```json blocks.
+    parsed_structured = _extract_structured_agent_output(effective)
+    if parsed_structured is not None:
+        for k, v in parsed_structured.items():
             if k not in result.output_data:  # Don't clobber executor fields
                 result.output_data[k] = v
-        _log(f"agent step '{step.id}': extracted {len(parsed_json)} structured fields into output_data")
+        _log(
+            f"agent step '{step.id}': extracted {len(parsed_structured)} "
+            "structured fields into output_data"
+        )
 
     if (
         result.status == "completed"
@@ -5236,24 +5350,39 @@ def _forward_closure(node: str, forward: dict[str, set[str]]) -> set[str]:
     return out
 
 
+def _dependency_ancestor_closure(step_id: str, wf: WorkflowDef) -> set[str]:
+    """Return explicit depends_on ancestors of ``step_id``, excluding itself."""
+    out: set[str] = set()
+    queue: list[str] = [step_id]
+    while queue:
+        sid = queue.pop()
+        step = wf.step_by_id(sid)
+        if not step:
+            continue
+        for dep in step.depends_on:
+            if dep not in out:
+                out.add(dep)
+                queue.append(dep)
+    return out
+
+
 def _is_reachable_outside_conditional(
     step_id: str,
     cond_id: str,
     wf: WorkflowDef,
+    forward: dict[str, set[str]] | None = None,
 ) -> bool:
-    """Return True if ``step_id`` has a depends_on ancestor that doesn't
-    transit through ``cond_id``.
+    """Return True if ``step_id`` has an upstream route outside ``cond_id``.
 
-    Walks the ancestor DAG upward. If we reach any root (step with no
-    ``depends_on``) other than via ``cond_id``, the step has an external
-    source and must not be gated. Implementation: BFS up depends_on edges,
-    blocking traversal through ``cond_id``. If the BFS finds any step that
-    has no depends_on at all (a true root), or that has at least one dep
-    we never reach, then there's an external source.
-
-    Concretely: a step is "reachable outside" iff there exists some root
-    ancestor reachable WITHOUT passing through cond_id.
+    Shared pre-gate dependencies are not outside routes. A loser-branch step
+    may depend on both the conditional and data produced before the conditional;
+    those ancestors still flow through the same gate and must not rescue the
+    blocked branch. Independent roots, sibling conditionals, and other upstream
+    nodes that are neither ancestors nor downstream of ``cond_id`` do rescue it.
     """
+    forward = forward if forward is not None else _build_forward_deps_map(wf)
+    cond_ancestors = _dependency_ancestor_closure(cond_id, wf)
+    cond_downstream = _forward_closure(cond_id, forward)
     visited: set[str] = set()
     queue: list[str] = [step_id]
     while queue:
@@ -5264,10 +5393,21 @@ def _is_reachable_outside_conditional(
         step = wf.step_by_id(sid)
         if not step:
             continue
-        # A root step (no depends_on) that we reached without going through
-        # cond_id means there's an external path: this step (or an ancestor
-        # of it) starts independent of cond_id.
-        if not step.depends_on and sid != cond_id:
+        if sid != step_id and sid != cond_id:
+            if sid in cond_ancestors:
+                # Pre-gate shared data is part of the conditional's own input
+                # frontier, not an alternate route around the gate.
+                continue
+            if sid not in cond_downstream:
+                return True
+        # Preserve existing root behavior for branch targets that are not tied
+        # to the conditional by depends_on edges at all.
+        if (
+            not step.depends_on
+            and sid != cond_id
+            and sid not in cond_ancestors
+            and (sid == step_id or sid not in cond_downstream)
+        ):
             return True
         for dep in step.depends_on:
             if dep == cond_id:
@@ -5285,6 +5425,16 @@ def _is_step_gated_by_conditional(
     forward: dict[str, set[str]],
 ) -> bool:
     """True iff ``step_id`` is reachable only via a non-matched conditional branch."""
+    matched_closures: dict[str, set[str]] = {}
+    matched_targets: dict[str, str] = {}
+    for other_cond_id, info in state.conditional_branch_results.items():
+        tgt = info.get("matched_goto")
+        if tgt:
+            matched_targets[other_cond_id] = tgt
+            closure = {tgt}
+            closure.update(_forward_closure(tgt, forward))
+            matched_closures[other_cond_id] = closure
+
     for cond_id, info in state.conditional_branch_results.items():
         matched_target = info.get("matched_goto")
         non_matched_targets = info.get("non_matched_gotos") or []
@@ -5301,19 +5451,33 @@ def _is_step_gated_by_conditional(
         if step_id not in non_matched_closure:
             continue
 
-        # Rescue 1: a step also in the matched branch's closure is not gated
-        # (the matched path supplies it).
-        if matched_target:
-            matched_closure: set[str] = {matched_target}
-            matched_closure.update(_forward_closure(matched_target, forward))
-            if step_id in matched_closure:
+        # Rescue 1: a step also in this conditional's matched branch closure is
+        # not gated. Also rescue convergent sinks matched by a different
+        # conditional only when that other conditional does not live downstream
+        # of this conditional; otherwise nested loser steps would be rescued by
+        # their own inner conditional even though the outer branch did not match.
+        if step_id in matched_closures.get(cond_id, set()):
+            continue
+        rescued_by_independent_match = False
+        for other_cond_id, closure in matched_closures.items():
+            if other_cond_id == cond_id or step_id not in closure:
                 continue
-
-        # Rescue 2: a step reachable from outside this conditional's downstream
-        # subgraph is not gated (some other path will satisfy it).
-        if _is_reachable_outside_conditional(step_id, cond_id, wf):
+            if cond_id in closure:
+                continue
+            if other_cond_id in _forward_closure(cond_id, forward):
+                other_target = matched_targets.get(other_cond_id, "")
+                if other_target and other_target not in matched_closures.get(cond_id, set()):
+                    continue
+            rescued_by_independent_match = True
+            break
+        if rescued_by_independent_match:
             continue
 
+        # A step in a non-matched branch closure must stay gated. Earlier builds
+        # tried to "rescue" steps that also referenced pre-gate data dependencies
+        # (for example context-pack/final-auditor outputs). That let loser-branch
+        # work execute after a conditional matched the other branch. Shared joins
+        # are already rescued above when they are also in the matched closure.
         return True
 
     return False

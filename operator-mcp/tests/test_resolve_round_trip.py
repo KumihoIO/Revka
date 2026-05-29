@@ -247,6 +247,31 @@ class TestRoundTripNormalization:
             ("tag_revision", result["revision_kref"], "ready"),
         ]
 
+    async def test_publish_continues_when_initial_space_ensure_times_out(self, fake_sdk, monkeypatch):
+        async def timeout_ensure(_path: str) -> None:
+            raise TimeoutError("ensure space timed out")
+
+        monkeypatch.setattr(memory_mod, "_ensure_space_path", timeout_ensure)
+
+        result = await publish_workflow_entity(
+            entity_name="report",
+            entity_kind="Report",
+            entity_tag="ready",
+            entity_space="Construct/WorkflowOutputs",
+            entity_metadata={"k": "v"},
+            content="# report",
+            content_format="markdown",
+            workflow_name="wf",
+            run_id="r1",
+            step_id="final-output",
+        )
+
+        assert result is not None
+        assert result["item_kref"].startswith("kref://item/")
+        assert result["artifact_attached"] is True
+        assert result["tag_applied"] is True
+        assert fake_sdk.create_item_calls == ["Construct/WorkflowOutputs"]
+
     async def test_publish_reports_artifact_attach_failure_without_tagging(self, fake_sdk):
         async def fail_create_artifact(*_args: Any, **_kwargs: Any) -> Any:
             raise RuntimeError("revision already published")
