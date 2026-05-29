@@ -305,7 +305,10 @@ class RunLog:
             "last_failing_command": self._last_failing_command,
             "exit_code": self._last_exit_code,
             "stderr_tail": self._stderr_tail,
-            "last_message": self._last_message[-2000:] if self._last_message else "",
+            # Keep enough tail for structured FINAL_OUTPUT YAML. A 2k tail can
+            # chop off the sentinel/top-level fields, causing workflow agent
+            # output parsing to miss keys like `production_ready`.
+            "last_message": self._last_message[-5000:] if self._last_message else "",
             "usage": self._usage,
         }
 
