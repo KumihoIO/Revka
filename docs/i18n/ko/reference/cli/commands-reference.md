@@ -99,6 +99,9 @@ IDE 및 도구 통합용 ACP(Agent Control Protocol) 서버를 띄웁니다.
 메모:
 
 - `gateway`는 임베디드 React 웹 대시보드를 `http://<host>:<port>/`(기본 `127.0.0.1:42617`)에 띄우고, REST API·SSE(`/api/events`)·WebSocket 엔드포인트(`/ws/chat`, `/ws/canvas/{id}`, `/ws/nodes`)도 제공합니다.
+- `/ws/chat`은 턴 시작에 `{"type":"message","content":"..."}`, 활성 턴
+  조정에 `{"type":"steer","content":"..."}`, 활성 턴 취소에
+  `{"type":"stop"}`을 받습니다.
 - `daemon`은 게이트웨이와 설정된 모든 채널·하트비트·크론 스케줄러를 함께 굴립니다. 부팅 후에도 살려 두려면 `construct service install` + `construct service start`를 쓰세요.
 - 페어링: `construct gateway get-paircode`가 현재 디바이스 페어 코드를 출력합니다 (`--new`로 회전).
 

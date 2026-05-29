@@ -57,12 +57,71 @@ interface QueuedTurn {
   attachments: StagedAttachment[];
 }
 
-const MAX_RENDERED_TOOL_OUTPUT_CHARS = 12_000;
+const DEFAULT_RENDERED_TOOL_OUTPUT_CHARS = 500;
+const DIFF_RENDERED_TOOL_OUTPUT_CHARS = 12_000;
 
-function renderedToolOutput(output?: string): string | undefined {
+function looksLikeDiffOutput(output?: string): boolean {
+  if (!output) return false;
+  return /(^|\n)(diff --git|@@ |--- |\+\+\+ |\*\*\* Begin Patch|\*\*\* Update File:)/.test(output);
+}
+
+function isCodeChangeTool(toolName?: string): boolean {
+  return toolName === 'file_edit' || toolName === 'file_write';
+}
+
+function renderedToolOutput(toolName?: string, output?: string): string | undefined {
   if (!output) return output;
-  if (output.length <= MAX_RENDERED_TOOL_OUTPUT_CHARS) return output;
-  return `${output.slice(0, MAX_RENDERED_TOOL_OUTPUT_CHARS)}\n\n[Output truncated in chat view; copy or inspect the run log for the full result.]`;
+  const limit =
+    looksLikeDiffOutput(output) || isCodeChangeTool(toolName)
+      ? DIFF_RENDERED_TOOL_OUTPUT_CHARS
+      : DEFAULT_RENDERED_TOOL_OUTPUT_CHARS;
+  if (output.length <= limit) return output;
+  return `${output.slice(0, limit)}\n\n${t('agent.tool_output_truncated')}`;
+}
+
+function safeParseObject(text?: string): Record<string, unknown> | undefined {
+  if (!text) return undefined;
+  try {
+    const parsed = JSON.parse(text);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function prefixedLines(prefix: string, value: string): string[] {
+  const lines = value.length > 0 ? value.split(/\r?\n/) : [''];
+  return lines.map((line) => `${prefix}${line}`);
+}
+
+function codeChangeDiffFromToolInput(toolName?: string, input?: string): string | undefined {
+  const parsed = safeParseObject(input);
+  const path = typeof parsed?.path === 'string' ? parsed.path : 'file';
+  if (toolName === 'file_edit') {
+    const oldString = typeof parsed?.old_string === 'string' ? parsed.old_string : undefined;
+    const newString = typeof parsed?.new_string === 'string' ? parsed.new_string : undefined;
+    if (oldString === undefined || newString === undefined) return undefined;
+    return [
+      `--- ${path}`,
+      `+++ ${path}`,
+      '@@',
+      ...prefixedLines('-', oldString),
+      ...prefixedLines('+', newString),
+    ].join('\n');
+  }
+  if (toolName === 'file_write') {
+    const content = typeof parsed?.content === 'string' ? parsed.content : undefined;
+    if (content === undefined) return undefined;
+    return [
+      '--- /dev/null',
+      `+++ ${path}`,
+      '@@',
+      ...prefixedLines('+', content),
+    ].join('\n');
+  }
+  return undefined;
 }
 
 export function useAgentChatSession({
@@ -377,7 +436,7 @@ export function useAgentChatSession({
           case 'tool_result': {
             markSendingTurnsSent();
             const toolName = msg.name ?? 'tool';
-            const output = renderedToolOutput(msg.output);
+            const output = renderedToolOutput(toolName, msg.output);
             const previous = activitiesRef.current;
             const pendingIndex = [...previous]
               .reverse()
@@ -391,9 +450,11 @@ export function useAgentChatSession({
               ? previous.map((activity, index) => {
                   if (index !== actualIndex) return activity;
                   const input = activity.detail?.trim();
+                  const diff = codeChangeDiffFromToolInput(toolName, input);
                   const detail = [
-                    input ? `Input\n${input}` : '',
-                    output ? `Output\n${output}` : '',
+                    input ? `${t('agent.activity_input_label')}\n${input}` : '',
+                    diff ? `${t('agent.activity_diff_label')}\n${diff}` : '',
+                    output ? `${t('agent.activity_output_label')}\n${output}` : '',
                   ].filter(Boolean).join('\n\n');
                   return {
                     ...activity,
@@ -674,7 +735,7 @@ export function useAgentChatSession({
         {
           id: generateUUID(),
           role: 'user',
-          content: `[steer] ${trimmed}`,
+          content: `${t('agent.steer_prefix')} ${trimmed}`,
           deliveryStatus: 'sending',
           timestamp: new Date(),
         },

@@ -82,6 +82,14 @@ _Source English version updated 2026-04-21; localized version may be stale until
 - `construct gateway [--host <HOST>] [--port <PORT>]`
 - `construct daemon [--host <HOST>] [--port <PORT>]`
 
+提示：
+
+- `gateway` 提供嵌入式 React Web 仪表盘、REST API、SSE (`/api/events`) 和
+  WebSocket 端点 (`/ws/chat`, `/ws/canvas/{id}`, `/ws/nodes`)。
+- `/ws/chat` 接受 `{"type":"message","content":"..."}` 来启动一轮对话，在活动
+  轮次中接受 `{"type":"steer","content":"..."}` 来调整下一步，并接受
+  `{"type":"stop"}` 来取消活动轮次。
+
 ### `estop`
 
 - `construct estop`（启动 `kill-all`）

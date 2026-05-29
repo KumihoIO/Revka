@@ -50,6 +50,14 @@ Xác minh lần cuối: **2026-02-20**.
 - `construct gateway [--host <HOST>] [--port <PORT>]`
 - `construct daemon [--host <HOST>] [--port <PORT>]`
 
+Ghi chú:
+
+- `gateway` phục vụ dashboard React nhúng, REST API, SSE (`/api/events`) và
+  các WebSocket endpoint (`/ws/chat`, `/ws/canvas/{id}`, `/ws/nodes`).
+- `/ws/chat` nhận `{"type":"message","content":"..."}` để bắt đầu một lượt,
+  `{"type":"steer","content":"..."}` khi lượt đang chạy để điều chỉnh bước
+  tiếp theo, và `{"type":"stop"}` để hủy lượt đang chạy.
+
 ### `service`
 
 - `construct service install`

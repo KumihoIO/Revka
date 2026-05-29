@@ -100,6 +100,9 @@ Notes:
 - `gateway` hosts the embedded React web dashboard at `http://<host>:<port>/`
   (default `127.0.0.1:42617`), plus REST API, SSE (`/api/events`), and
   WebSocket endpoints (`/ws/chat`, `/ws/canvas/{id}`, `/ws/nodes`).
+- `/ws/chat` accepts `{"type":"message","content":"..."}` to start a turn,
+  `{"type":"steer","content":"..."}` while a turn is active, and
+  `{"type":"stop"}` to cancel the active turn.
 - `daemon` runs gateway + all configured channels + heartbeat + cron scheduler
   together. Use `construct service install` + `construct service start` to keep
   it resident on boot.

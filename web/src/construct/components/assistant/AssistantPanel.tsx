@@ -322,7 +322,7 @@ function ChatPane({
 }) {
   const { open } = useV2Assistant();
   const { setTheme } = useTheme();
-  const { setLocale } = useT();
+  const { setLocale, t } = useT();
   const {
     activities,
     addAttachment,
@@ -775,7 +775,7 @@ function ChatPane({
               textShadow: colors.glow,
             }}
           >
-            Jump to latest
+            {t('agent.jump_to_latest')}
           </button>
         )}
       </div>
@@ -913,7 +913,7 @@ function ChatPane({
               }
             }}
             onPaste={onPaste}
-            placeholder={connected ? (typing ? (sendMode === 'steer' ? 'steer current response…' : 'queue next message…') : 'message…') : 'connecting…'}
+            placeholder={connected ? (typing ? (sendMode === 'steer' ? t('agent.placeholder_steer_current') : t('agent.placeholder_queue_next')) : t('agent.placeholder_message')) : t('agent.placeholder_connecting')}
             disabled={!connected}
             // `focus-visible:outline-none` overrides the global `:focus-visible`
             // ring set in index.css (2px accent outline) — without it Tailwind's
@@ -936,12 +936,12 @@ function ChatPane({
             <div
               className="flex h-7 shrink-0 items-center overflow-hidden rounded border"
               style={{ borderColor: 'var(--construct-border-soft)' }}
-              aria-label="Send mode"
+              aria-label={t('agent.send_mode')}
             >
               <button
                 type="button"
                 onClick={() => setSendMode('queue')}
-                title="Queue after current response"
+                title={t('agent.queue_after_current_response')}
                 className="inline-flex h-full items-center gap-1 px-1.5 font-mono text-[10px] uppercase transition-colors hover:bg-white/5 focus:outline-none focus-visible:ring-1 focus-visible:ring-current"
                 style={{
                   background: sendMode === 'queue' ? 'color-mix(in srgb, var(--construct-bg-surface) 88%, transparent)' : 'transparent',
@@ -950,12 +950,12 @@ function ChatPane({
                 }}
               >
                 <ListPlus className="h-3 w-3" />
-                queue
+                {t('agent.send_mode_queue')}
               </button>
               <button
                 type="button"
                 onClick={() => setSendMode('steer')}
-                title={attachments.length > 0 ? 'Steering is text-only; attachments will queue instead' : 'Steer current response'}
+                title={attachments.length > 0 ? t('agent.steer_text_only') : t('agent.steer_current_response')}
                 disabled={attachments.length > 0 || uploadingCount > 0}
                 className="inline-flex h-full items-center gap-1 border-l px-1.5 font-mono text-[10px] uppercase transition-colors hover:bg-white/5 focus:outline-none focus-visible:ring-1 focus-visible:ring-current disabled:cursor-not-allowed disabled:opacity-35"
                 style={{
@@ -966,7 +966,7 @@ function ChatPane({
                 }}
               >
                 <GitBranch className="h-3 w-3" />
-                steer
+                {t('agent.send_mode_steer')}
               </button>
             </div>
           )}
@@ -989,15 +989,15 @@ function ChatPane({
             type="button"
             onClick={submitComposer}
             disabled={!connected || (!input.trim() && attachments.length === 0) || uploadingCount > 0}
-            aria-label={typing && sendMode === 'steer' && attachments.length === 0 ? 'Steer current response' : typing ? 'Queue message' : 'Send message'}
+            aria-label={typing && sendMode === 'steer' && attachments.length === 0 ? t('agent.steer_current_response') : typing ? t('agent.queue_message') : t('agent.send_message')}
             title={
               !connected
-                ? 'Disconnected'
+                ? t('agent.disconnected')
                 : typing
                   ? sendMode === 'steer' && attachments.length === 0
-                    ? 'Steer current response'
-                    : 'Queue after current response'
-                  : 'Send (Enter)'
+                    ? t('agent.steer_current_response')
+                    : t('agent.queue_after_current_response')
+                  : t('agent.send_enter')
             }
             className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded transition-all hover:bg-white/5 focus:outline-none focus-visible:ring-2 focus-visible:ring-current disabled:cursor-not-allowed disabled:opacity-30"
             style={{
