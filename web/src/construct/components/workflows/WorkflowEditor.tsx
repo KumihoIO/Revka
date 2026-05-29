@@ -69,6 +69,7 @@ import {
   parseWorkflowYaml,
   tasksToFlow,
   tasksToYaml,
+  validateAgentOutputContracts,
   type ConditionalBranchDefinition,
   type InputDef,
   type TaskDefinition,
@@ -2544,6 +2545,17 @@ function WorkflowEditorInner({
     return tasksToYaml(tasks, { ...workflowMeta, name, description });
   }, [architectPanelOpen, nodes, edges, workflowMeta, name, description]);
 
+  const outputContractWarnings = useMemo(() => {
+    const tasks = flowToTasks(nodes as Node<TaskNodeData>[], edges);
+    return validateAgentOutputContracts(tasks);
+  }, [nodes, edges]);
+  const firstOutputContractWarning = outputContractWarnings[0];
+  const outputContractWarning = firstOutputContractWarning
+    ? outputContractWarnings.length === 1
+      ? firstOutputContractWarning.message
+      : `${firstOutputContractWarning.message} (+${outputContractWarnings.length - 1} more)`
+    : null;
+
   const cycleDetected = useMemo(() => hasCycle(nodes, edges), [nodes, edges]);
 
   // ── Apply a remote revision to the canvas ────────────────────────────────
@@ -3079,6 +3091,22 @@ function WorkflowEditorInner({
         >
           <AlertTriangle size={14} style={{ display: 'inline', marginRight: 6 }} />
           {warning}
+        </div>
+      )}
+      {outputContractWarning && (
+        <div
+          style={{
+            margin: '8px 20px 0',
+            padding: '8px 12px',
+            borderRadius: 10,
+            border: '1px solid color-mix(in srgb, var(--construct-status-warning) 32%, transparent)',
+            background: 'color-mix(in srgb, var(--construct-status-warning) 10%, transparent)',
+            color: 'var(--construct-status-warning)',
+            fontSize: 13,
+          }}
+        >
+          <AlertTriangle size={14} style={{ display: 'inline', marginRight: 6 }} />
+          Missing output contract: {outputContractWarning}
         </div>
       )}
 

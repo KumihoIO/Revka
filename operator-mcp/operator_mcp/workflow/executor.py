@@ -61,6 +61,10 @@ from .schema import (
     ManusStepConfig,
     ManusRegisterOutputConfig,
 )
+from .structured_output import (
+    missing_required_output_fields,
+    structured_output_instruction,
+)
 from .validator import validate_workflow
 
 # ---------------------------------------------------------------------------
@@ -1292,6 +1296,9 @@ async def _exec_agent(step: StepDef, state: WorkflowState, cwd: str) -> StepResu
 
     cfg = step.resolve_agent_config()
     prompt = interpolate(cfg.prompt, state)
+    structured_suffix = structured_output_instruction(cfg.output_fields)
+    if structured_suffix:
+        prompt = f"{prompt.rstrip()}\n\n{structured_suffix}"
     required_tools = _agent_required_tools(step, cfg)
     agent_cwd = _workflow_agent_sandbox_cwd(state, step)
 
@@ -1438,6 +1445,12 @@ async def _exec_agent(step: StepDef, state: WorkflowState, cwd: str) -> StepResu
             f"agent step '{step.id}': extracted {len(parsed_structured)} "
             "structured fields into output_data"
         )
+
+    missing_fields = missing_required_output_fields(cfg.output_fields, result.output_data)
+    if missing_fields and result.status == "completed":
+        result.status = "failed"
+        result.error = "structured_output_missing: " + ", ".join(missing_fields)
+        result.output_data["structured_output_missing"] = missing_fields
 
     if (
         result.status == "completed"

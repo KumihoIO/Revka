@@ -174,7 +174,7 @@ steps:
           "outreach", "synergy", or "reach out". The reader should
           NOT be able to tell this was machine-written.
 
-        Output as a ```json``` block with fields:
+        Return the required structured output fields:
         - subject: string
         - body: string
 

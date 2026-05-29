@@ -172,3 +172,43 @@ class TestAgentUnusedDependsOn:
         assert _has_unused_dep_error(
             result, "synthesize_report_claude", "research_simai_codex"
         )
+
+
+class TestAgentStructuredOutputContractValidation:
+    def test_reserved_output_field_is_rejected(self):
+        wf = load_workflow_from_dict(_wf([
+            {
+                "id": "review",
+                "type": "agent",
+                "agent": {
+                    "prompt": "review",
+                    "output_fields": ["verdict", "artifact_path"],
+                },
+            },
+        ]))
+
+        result = validate_workflow(wf)
+
+        assert not result.valid
+        assert any(
+            e.step_id == "review"
+            and e.field == "agent.output_fields"
+            and "reserved field: artifact_path" in e.message
+            for e in result.errors
+        )
+
+    def test_user_output_fields_are_accepted(self):
+        wf = load_workflow_from_dict(_wf([
+            {
+                "id": "review",
+                "type": "agent",
+                "agent": {
+                    "prompt": "review",
+                    "output_fields": ["verdict", "production_ready"],
+                },
+            },
+        ]))
+
+        result = validate_workflow(wf)
+
+        assert result.valid

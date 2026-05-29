@@ -26,6 +26,7 @@ from .schema import (
     GotoStepConfig,
     ParallelStepConfig,
 )
+from .structured_output import RESERVED_OUTPUT_DATA_FIELDS
 
 
 # ---------------------------------------------------------------------------
@@ -211,7 +212,16 @@ def _check_step_configs(wf: WorkflowDef, valid_ids: set[str],
             # No hard requirement: StepDef.resolve_agent_config() synthesizes a
             # default AgentStepConfig from action + agent_hints at executor time
             # when step.agent is None.
-            pass
+            if step.agent:
+                reserved = sorted(
+                    set(step.agent.output_fields) & RESERVED_OUTPUT_DATA_FIELDS
+                )
+                for field in reserved:
+                    result.add_error(
+                        f"agent.output_fields contains reserved field: {field}",
+                        step.id,
+                        "agent.output_fields",
+                    )
 
         elif step.type == StepType.SHELL:
             if config is None or not getattr(config, "command", ""):

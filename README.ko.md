@@ -173,6 +173,21 @@ Dashboard는 세 개의 사이드바 섹션(Orchestration, Operations, Inspectio
 
 `type: notify`(role: notifier인 `agent`와 동일)와 같은 단축 별칭은 로딩 시 해석됩니다 — `workflow/schema.py`의 `_ACTION_ALIASES` 참조.
 
+### 에이전트 구조화 출력
+
+에이전트 단계는 필수 구조화 필드를 선언할 수 있습니다:
+
+```yaml
+agent:
+  output_fields: [verdict, production_ready]
+```
+
+`output_fields`가 설정되면 Construct는 에이전트 프롬프트에 최종 출력 지시를
+추가하고, 전체 JSON 객체, 마지막 fenced `json` 블록, 또는 `FINAL_OUTPUT:`
+YAML 블록을 파싱합니다. 선언된 필드가 없으면 단계가
+`structured_output_missing`으로 실패합니다. 다운스트림 단계는
+`${review.output_data.production_ready}` 같은 필드로 라우팅할 수 있습니다.
+
 ### 오케스트레이션 패턴
 
 **Parallel Execution** — 세 가지 조인 전략(ALL, ANY, MAJORITY)과 구성 가능한 동시성 제한(1-10)을 갖춘 동시 스텝 그룹.

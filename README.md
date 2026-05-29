@@ -181,6 +181,21 @@ Canonical types from `StepType` in `operator-mcp/operator_mcp/workflow/schema.py
 
 Editor actions like `action: notify` are resolved during loading via `ACTION_DEFAULTS` in `workflow/schema.py`; `notify` itself is also a real `StepType`.
 
+### Agent Structured Output
+
+Agent steps can declare required structured fields:
+
+```yaml
+agent:
+  output_fields: [verdict, production_ready]
+```
+
+When `output_fields` is set, Construct appends final-output instructions to the
+agent prompt, parses full JSON objects, final fenced `json` blocks, or
+`FINAL_OUTPUT:` YAML blocks, then fails the step with `structured_output_missing`
+if any declared field is absent. Downstream steps can route on fields such as
+`${review.output_data.production_ready}`.
+
 ### Orchestration Patterns
 
 **Parallel Execution** — concurrent step groups with three join strategies (ALL, ANY, MAJORITY) and configurable concurrency limits (1-10).
