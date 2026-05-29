@@ -17,6 +17,7 @@ import { createAgent, uploadAgentAvatar } from '@/lib/api';
 import { ApiError } from '@/lib/api';
 import type { AgentDefinition, AgentCreateRequest } from '@/types/api';
 import AgentAvatar from '@/construct/components/ui/AgentAvatar';
+import type { BuiltinAgentType } from './yamlSync';
 import { slugify } from './slugify';
 
 interface Props {
@@ -68,7 +69,7 @@ export default function NewPoolAgentModal({ open, onClose, onCreated }: Props) {
   // stop auto-deriving it from `name`.
   const [slugTouched, setSlugTouched] = useState(false);
   const [slug, setSlug] = useState('');
-  const [agentType, setAgentType] = useState<'claude' | 'codex'>('claude');
+  const [agentType, setAgentType] = useState<BuiltinAgentType>('claude');
   const [role, setRole] = useState('coder');
   const [model, setModel] = useState('');
   const [identity, setIdentity] = useState('');
@@ -359,7 +360,7 @@ export default function NewPoolAgentModal({ open, onClose, onCreated }: Props) {
                 padding: 2,
               }}
             >
-              {(['claude', 'codex'] as const).map((opt) => {
+              {(['claude', 'codex', 'google_agents'] as const).map((opt) => {
                 const selected = agentType === opt;
                 return (
                   <button

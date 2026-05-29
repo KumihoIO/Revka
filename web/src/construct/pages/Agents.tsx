@@ -615,6 +615,7 @@ function AgentEditorModal({
           <select className="construct-input" value={agentType} onChange={(event) => setAgentType(event.target.value)}>
             <option value="claude">Claude</option>
             <option value="codex">Codex</option>
+            <option value="google_agents">Google Agents CLI</option>
           </select>
         </label>
       </div>

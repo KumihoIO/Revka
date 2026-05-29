@@ -54,7 +54,7 @@ async def list_tools() -> list[Tool]:
     return [
         Tool(
             name="create_agent",
-            description="Spawn a child agent (claude or codex). The child runs in its own session and can be monitored via wait_for_agent and get_agent_activity.",
+            description="Spawn a child agent (claude, codex, or google_agents). The child runs in its own session and can be monitored via wait_for_agent and get_agent_activity.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -70,7 +70,7 @@ async def list_tools() -> list[Tool]:
                     "agent_type": {
                         "type": "string",
                         "description": "Agent type.",
-                        "enum": ["claude", "codex"],
+                        "enum": ["claude", "codex", "google_agents"],
                         "default": "claude",
                     },
                     "initial_prompt": {
@@ -300,9 +300,10 @@ async def _dispatch(name: str, args: dict[str, Any]) -> dict[str, Any]:
             return {"error": f"Directory does not exist: {expanded_cwd}"}
 
         # Policy check — sub-agents respect the same boundaries
+        from .agent_state import normalize_agent_type
         from .policy import load_policy
         policy = load_policy()
-        agent_type = args.get("agent_type", "claude")
+        agent_type = normalize_agent_type(args.get("agent_type", "claude"))
         policy_failures = policy.preflight_spawn(expanded_cwd, agent_type)
         if policy_failures:
             fail = policy_failures[0]

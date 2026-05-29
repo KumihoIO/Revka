@@ -14,7 +14,7 @@ export interface McpHttpServerConfig {
     headers?: Record<string, string>;
 }
 export type McpServerConfig = McpStdioServerConfig | McpHttpServerConfig;
-export type AgentProvider = "claude" | "codex";
+export type AgentProvider = "claude" | "codex" | "google_agents";
 export type AgentStatus = "initializing" | "running" | "idle" | "error" | "closed";
 export interface AgentUsage {
     inputTokens?: number;

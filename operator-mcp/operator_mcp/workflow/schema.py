@@ -4,7 +4,7 @@ Workflows are defined in YAML with typed steps, variable interpolation,
 conditional branching, parallel execution, and checkpoint support.
 
 Step types:
-  - agent: Spawn a Construct agent (claude/codex) with a prompt.
+  - agent: Spawn a Construct agent (claude/codex/google_agents) with a prompt.
   - shell: Run a shell command.
   - compute: Evaluate sandboxed expressions into typed outputs.
   - conditional: Branch based on expressions over prior step outputs.
@@ -23,6 +23,8 @@ from enum import Enum
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from ..agent_state import CANONICAL_AGENT_TYPES, normalize_agent_type
 
 
 # ---------------------------------------------------------------------------
@@ -96,7 +98,7 @@ class StepPosition(BaseModel):
 
 class AgentStepConfig(BaseModel):
     """Config for 'agent' step type."""
-    agent_type: Literal["claude", "codex"] = "claude"
+    agent_type: str = "claude"
     role: str = "coder"
     prompt: str = ""
     model: str | None = None
@@ -112,6 +114,16 @@ class AgentStepConfig(BaseModel):
     # Agent steps see this only via the get_auth_token MCP tool — never injected
     # into the system prompt or any other context.
     auth: str | None = None
+
+    @field_validator("agent_type", mode="before")
+    @classmethod
+    def normalize_agent_type_field(cls, value: Any) -> str:
+        normalized = normalize_agent_type(str(value or "claude"))
+        if normalized not in CANONICAL_AGENT_TYPES:
+            raise ValueError(
+                f"agent_type must be one of {', '.join(CANONICAL_AGENT_TYPES)}"
+            )
+        return normalized
 
 
 class ShellStepConfig(BaseModel):
@@ -842,6 +854,8 @@ ACTION_DEFAULTS: dict[str, dict[str, str]] = {
     "approve":   {"type": "human_approval", "role": "",   "agent_type": ""},
     "summarize": {"type": "agent", "role": "summarizer",  "agent_type": "claude"},
     "task":      {"type": "agent", "role": "coder",       "agent_type": "claude"},
+    "google_agents": {"type": "agent", "role": "coder",   "agent_type": "google_agents"},
+    "adk":       {"type": "agent", "role": "coder",       "agent_type": "google_agents"},
     "gate":        {"type": "conditional",  "role": "",      "agent_type": ""},
     "human_input": {"type": "human_input",  "role": "",      "agent_type": ""},
     "resolve":     {"type": "resolve"},
@@ -1096,9 +1110,12 @@ class StepDef(BaseModel):
         role = defaults["role"]
         agent_type = defaults["agent_type"]
         # Agent hints override defaults
-        if "codex" in self.agent_hints or "coder" in self.agent_hints:
+        normalized_hints = {normalize_agent_type(hint) for hint in self.agent_hints}
+        if "google_agents" in normalized_hints:
+            agent_type = "google_agents"
+        elif "codex" in normalized_hints or "coder" in self.agent_hints:
             agent_type = "codex"
-        elif "claude" in self.agent_hints or "researcher" in self.agent_hints or "reviewer" in self.agent_hints:
+        elif "claude" in normalized_hints or "researcher" in self.agent_hints or "reviewer" in self.agent_hints:
             agent_type = "claude"
         # Explicit role hints
         for hint in self.agent_hints:
@@ -1226,7 +1243,7 @@ class StepResult(BaseModel):
     output_data: dict[str, Any] = Field(default_factory=dict)
     error: str = ""
     agent_id: str | None = None
-    agent_type: str = ""  # "claude" or "codex" — which provider ran this step
+    agent_type: str = ""  # "claude", "codex", or "google_agents" — provider for this step
     role: str = ""        # "coder", "researcher", "reviewer", etc.
     action: str = ""      # Original action from workflow definition
     files_touched: list[str] = Field(default_factory=list)

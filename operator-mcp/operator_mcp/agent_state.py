@@ -10,6 +10,37 @@ from typing import Any
 
 from ._log import _log
 
+CANONICAL_AGENT_TYPES = ("claude", "codex", "google_agents")
+GOOGLE_AGENT_TYPE = "google_agents"
+AGENT_TYPE_ALIASES = {
+    "claude": "claude",
+    "claude_code": "claude",
+    "claude-code": "claude",
+    "codex": "codex",
+    "codex_cli": "codex",
+    "codex-cli": "codex",
+    "google": GOOGLE_AGENT_TYPE,
+    "adk": GOOGLE_AGENT_TYPE,
+    "google_adk": GOOGLE_AGENT_TYPE,
+    "google-adk": GOOGLE_AGENT_TYPE,
+    "google_agents": GOOGLE_AGENT_TYPE,
+    "google-agents": GOOGLE_AGENT_TYPE,
+    "google_agents_cli": GOOGLE_AGENT_TYPE,
+    "google-agents-cli": GOOGLE_AGENT_TYPE,
+    "agents-cli": GOOGLE_AGENT_TYPE,
+    "agents_cli": GOOGLE_AGENT_TYPE,
+}
+
+
+def normalize_agent_type(agent_type: str | None) -> str:
+    """Return the canonical Construct agent type for known CLI aliases."""
+    raw = str(agent_type or "").strip().lower()
+    return AGENT_TYPE_ALIASES.get(raw, raw)
+
+
+def valid_agent_type(agent_type: str | None) -> bool:
+    return normalize_agent_type(agent_type) in CANONICAL_AGENT_TYPES
+
 
 # ---------------------------------------------------------------------------
 # Agent dataclass — represents a running/completed agent subprocess
@@ -30,7 +61,7 @@ class CacheSafeParams:
 @dataclass
 class ManagedAgent:
     id: str
-    agent_type: str          # "claude" or "codex"
+    agent_type: str          # "claude", "codex", or "google_agents"
     title: str
     cwd: str
     status: str              # "running", "idle", "error", "closed"
@@ -70,7 +101,7 @@ MAX_CONCURRENT_AGENTS = 10
 @dataclass
 class AgentTemplate:
     name: str              # Unique template name, e.g. "rust-coder", "react-reviewer"
-    agent_type: str        # "claude" or "codex"
+    agent_type: str        # "claude", "codex", or "google_agents"
     role: str              # "coder", "reviewer", "researcher"
     capabilities: list[str]  # ["rust", "typescript", "testing", "security-audit"]
     description: str       # What this agent is good at
@@ -106,6 +137,8 @@ class AgentPool:
                     # Backward compat: strip unknown fields, default new ones
                     valid_fields = {f.name for f in AgentTemplate.__dataclass_fields__.values()}
                     filtered = {k: v for k, v in entry.items() if k in valid_fields}
+                    if "agent_type" in filtered:
+                        filtered["agent_type"] = normalize_agent_type(filtered.get("agent_type"))
                     self.templates[name] = AgentTemplate(**filtered)
             else:
                 os.makedirs(os.path.dirname(self.pool_path), exist_ok=True)
@@ -135,6 +168,7 @@ class AgentPool:
                 pass
 
     def add(self, template: AgentTemplate) -> None:
+        template.agent_type = normalize_agent_type(template.agent_type)
         self.templates[template.name] = template
         self._save()
 
@@ -188,7 +222,7 @@ class AgentPool:
 # ---------------------------------------------------------------------------
 
 _VALID_ROLES = {"coder", "reviewer", "researcher", "tester", "architect", "planner"}
-_VALID_AGENT_TYPES = {"claude", "codex"}
+_VALID_AGENT_TYPES = set(CANONICAL_AGENT_TYPES)
 
 
 @dataclass
@@ -240,9 +274,14 @@ def validate_template(t: AgentTemplate) -> TemplateValidation:
         score -= 25
 
     # Agent type validity
-    if t.agent_type not in _VALID_AGENT_TYPES:
-        v.errors.append(f"Invalid agent_type '{t.agent_type}'. Must be 'claude' or 'codex'")
+    canonical_agent_type = normalize_agent_type(t.agent_type)
+    if canonical_agent_type not in _VALID_AGENT_TYPES:
+        v.errors.append(
+            f"Invalid agent_type '{t.agent_type}'. Must be one of: {', '.join(CANONICAL_AGENT_TYPES)}"
+        )
         score -= 25
+    elif t.agent_type != canonical_agent_type:
+        v.warnings.append(f"agent_type '{t.agent_type}' will be normalized to '{canonical_agent_type}'")
 
     # Capability list
     if not t.capabilities:
@@ -266,7 +305,10 @@ def validate_template(t: AgentTemplate) -> TemplateValidation:
         score -= 5
 
     # Model validity (if specified)
-    if t.model and not any(prefix in t.model for prefix in ("claude-", "gpt-", "o1", "o3", "codex")):
+    if t.model and not any(
+        prefix in t.model
+        for prefix in ("claude-", "gpt-", "o1", "o3", "codex", "gemini", "google")
+    ):
         v.warnings.append(f"Unusual model '{t.model}' — verify it's supported by your provider")
 
     # Max turns sanity

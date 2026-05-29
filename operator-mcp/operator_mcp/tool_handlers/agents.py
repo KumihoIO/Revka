@@ -15,7 +15,17 @@ from datetime import datetime, timezone
 from typing import Any
 
 from .._log import _log
-from ..agent_state import AGENTS, MAX_CONCURRENT_AGENTS, AgentTemplate, CacheSafeParams, ManagedAgent, POOL
+from ..agent_state import (
+    AGENTS,
+    CANONICAL_AGENT_TYPES,
+    GOOGLE_AGENT_TYPE,
+    MAX_CONCURRENT_AGENTS,
+    AgentTemplate,
+    CacheSafeParams,
+    ManagedAgent,
+    POOL,
+    normalize_agent_type,
+)
 from ..failure_classification import (
     agent_not_found, agent_limit_exceeded, agent_busy,
     template_not_found, bad_directory, missing_cwd, invalid_param,
@@ -133,6 +143,11 @@ async def _try_sidecar_create(
     if not await _sidecar_client.ensure_running():
         return None
 
+    agent_type = normalize_agent_type(agent_type)
+    supports_mcp = agent_type != GOOGLE_AGENT_TYPE
+    include_memory = include_memory and supports_mcp
+    include_operator = include_operator and supports_mcp
+
     is_top_level = parent_id is None
 
     if cached_params:
@@ -224,9 +239,10 @@ async def tool_create_agent(args: dict[str, Any], journal: SessionJournal, pool_
     agent_type = args.get("agent_type")
     if agent_type is None:
         agent_type = tmpl.agent_type if tmpl else "claude"
+    agent_type = normalize_agent_type(agent_type)
 
-    if agent_type not in ("claude", "codex"):
-        return invalid_param("agent_type", agent_type, "'claude' or 'codex'")
+    if agent_type not in CANONICAL_AGENT_TYPES:
+        return invalid_param("agent_type", agent_type, f"one of: {', '.join(CANONICAL_AGENT_TYPES)}")
 
     # Model selection: explicit arg > template > None (use sidecar default)
     model = args.get("model")
@@ -344,6 +360,9 @@ async def tool_create_agent(args: dict[str, Any], journal: SessionJournal, pool_
     # defaults — both on by default, matching `_try_sidecar_create`.
     include_memory = args.get("include_memory", True)
     include_operator = args.get("include_operator", True)
+    if agent_type == GOOGLE_AGENT_TYPE:
+        include_memory = False
+        include_operator = False
 
     # Try sidecar first, fallback to subprocess
     sidecar_info = None

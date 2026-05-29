@@ -25,7 +25,7 @@ pub fn default_python_command() -> &'static str {
 /// Detect the `npm` executable on PATH. Returns the resolved absolute path
 /// on success, or an error with a download link when missing. Used by the
 /// session-manager sidecar installer (Node.js sidecar that drives the
-/// Claude Agent SDK and codex CLI).
+/// Claude Agent SDK, codex CLI, and Google Agents CLI).
 pub fn detect_npm() -> Result<PathBuf> {
     // On Windows the executable is npm.cmd; Command will resolve either name.
     let candidate = if cfg!(windows) { "npm.cmd" } else { "npm" };

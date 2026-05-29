@@ -537,6 +537,27 @@ Lưu ý:
 - Đặt file `.md`/`.txt` datasheet đặt tên theo bo mạch (ví dụ `nucleo-f401re.md`, `rpi-gpio.md`) trong `datasheet_dir` cho RAG.
 - Xem [hardware-peripherals-design.md](hardware-peripherals-design.md) để biết giao thức bo mạch và ghi chú firmware.
 
+## `[google_agents_cli]`
+
+Tích hợp Google Agents CLI cho các lệnh vòng đời ADK / Agent Platform. Mục này bật tool
+`google_agents_cli`; trong workflow và operator agent, chọn `agent_type: google_agents`.
+
+| Khóa | Mặc định | Mục đích |
+|---|---|---|
+| `enabled` | `false` | Bật tool `google_agents_cli` |
+| `timeout_secs` | `600` | Thời gian tối đa cho subprocess `agents-cli` |
+| `max_output_bytes` | `2097152` | Số byte stdout tối đa trước khi cắt bớt |
+| `env_passthrough` | `[]` | Biến môi trường bổ sung truyền vào subprocess |
+
+Lưu ý:
+
+- Cài đặt và xác thực `agents-cli` bên ngoài Construct. Tool chạy binary có sẵn trong `PATH`.
+- Các biến Google như `GOOGLE_API_KEY`, `GEMINI_API_KEY`,
+  `GOOGLE_APPLICATION_CREDENTIALS`, `GOOGLE_CLOUD_PROJECT`,
+  `GOOGLE_CLOUD_LOCATION` và `GOOGLE_GENAI_USE_VERTEXAI` được truyền mặc định khi có.
+- Dùng `agent_type: google_agents` cho bước agent chạy `agents-cli run` không tương tác.
+  Model thường được cấu hình trong project ADK.
+
 ## Giá trị mặc định liên quan bảo mật
 
 - Allowlist kênh mặc định từ chối tất cả (`[]` nghĩa là từ chối tất cả)

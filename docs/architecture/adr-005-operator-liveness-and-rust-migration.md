@@ -13,9 +13,9 @@ three-layer stack:
 ```
 Python Operator (workflow executor, refinement, recovery)
     ↓ Unix socket HTTP
-Node.js Session Manager (agent-manager.ts, claude/codex providers)
-    ↓ Claude Agent SDK / Codex CLI subprocess
-LLM Agent Processes (claude sessions, codex child processes)
+Node.js Session Manager (agent-manager.ts, claude/codex/google_agents providers)
+    ↓ Claude Agent SDK / Codex CLI / Google Agents CLI subprocess
+LLM Agent Processes (claude sessions, codex child processes, agents-cli runs)
 ```
 
 This architecture has produced a class of **cross-boundary state bugs** where

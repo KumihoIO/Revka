@@ -365,6 +365,11 @@
       - any-glob-to-any-file:
           - "src/tools/google_workspace.rs"
 
+"tool:google-agents":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "src/tools/google_agents_cli.rs"
+
 "tool:mcp":
   - changed-files:
       - any-glob-to-any-file:

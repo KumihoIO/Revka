@@ -46,7 +46,7 @@ pub struct SidecarInstallOptions {
     /// the Claude Agent SDK, which only accepts `ANTHROPIC_API_KEY`
     /// (pay-per-token) — it cannot use the user's Claude Pro/Max
     /// subscription OAuth. The default subprocess path
-    /// (`claude --print` + `codex exec`) uses each CLI's own OAuth and
+    /// (`claude --print` + `codex exec` + `agents-cli run`) uses each CLI's own OAuth and
     /// routes spawned-agent calls against the subscription, which is
     /// roughly 15–30× cheaper for equivalent work. See
     /// https://github.com/anthropics/claude-agent-sdk-python/issues/559.
@@ -100,7 +100,7 @@ pub async fn install_sidecars(opts: &SidecarInstallOptions) -> Result<()> {
         eprintln!(
             "    [info] Session Manager (Node.js sidecar) NOT installed.\n    \
                     Operator-spawned agents will use direct subprocess mode\n    \
-                    (`claude --print` + `codex exec`), which routes calls\n    \
+                    (`claude --print` + `codex exec` + `agents-cli run`), which routes calls\n    \
                     through each CLI's own OAuth → your Claude Pro/Max + Codex\n    \
                     CLI subscriptions. No per-call API spend on spawned agents.\n    \
                     To enable the streaming-event sidecar (uses ANTHROPIC_API_KEY,\n    \
@@ -263,7 +263,7 @@ fn extract_operator_source(dest: &Path) -> Result<()> {
 /// `~/.construct/operator_mcp/session-manager/`, then runs
 /// `npm install --omit=dev` to fetch its node_modules. The Operator MCP
 /// (Python) discovers and spawns this sidecar at runtime to drive the
-/// Claude Agent SDK and codex CLI with structured streaming events.
+/// Claude Agent SDK, codex CLI, and Google Agents CLI with structured events.
 ///
 /// Subprocess fallback in `agents.tool_create_agent` is what runs when
 /// this sidecar isn't installed — works, but loses the streaming

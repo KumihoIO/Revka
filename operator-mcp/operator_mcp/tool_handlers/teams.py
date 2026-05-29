@@ -11,7 +11,7 @@ from typing import Any
 
 from .._log import _log
 from ..construct_config import harness_project
-from ..agent_state import AGENTS, ManagedAgent
+from ..agent_state import AGENTS, ManagedAgent, normalize_agent_type
 from ..agent_subprocess import compose_agent_prompt, spawn_with_retry, _TEAM_SPAWN_STAGGER_SECS
 from ..budget_authority import BudgetGateError
 from ..failure_classification import (
@@ -1061,7 +1061,7 @@ async def tool_spawn_team(args: dict[str, Any], team_client: KumihoTeamClient, j
             for stagger_i, member_idx in enumerate(wave):
                 member = members[member_idx]
                 role = member.get("role", "coder")
-                agent_type = member.get("agent_type", "codex")
+                agent_type = normalize_agent_type(member.get("agent_type", "codex"))
                 name = member.get("name", "agent")
                 identity = member.get("identity", "")
                 expertise = member.get("expertise", [])

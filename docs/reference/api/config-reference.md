@@ -973,6 +973,30 @@ Notes:
   `Plans`, `Sessions`, `Goals`, `AgentTrust`, `ClawHub`, `Teams`, and
   `CognitiveMemory/Skills`.
 
+## `[google_agents_cli]`
+
+Google Agents CLI integration for ADK / Agent Platform lifecycle commands.
+This enables the `google_agents_cli` tool; workflow and operator agent
+selection uses `agent_type: google_agents`.
+
+| Key | Default | Purpose |
+|---|---|---|
+| `enabled` | `false` | Enable the `google_agents_cli` tool |
+| `timeout_secs` | `600` | Maximum subprocess runtime for `agents-cli` commands |
+| `max_output_bytes` | `2097152` | Maximum captured stdout bytes before truncation |
+| `env_passthrough` | `[]` | Extra environment variables to pass to the subprocess |
+
+Notes:
+
+- Install/authenticate `agents-cli` outside Construct. The tool runs the
+  existing binary from `PATH`.
+- Safe Google auth/project variables such as `GOOGLE_API_KEY`,
+  `GEMINI_API_KEY`, `GOOGLE_APPLICATION_CREDENTIALS`,
+  `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION`, and
+  `GOOGLE_GENAI_USE_VERTEXAI` are passed by default when present.
+- Use `agent_type: google_agents` for non-interactive `agents-cli run` agent
+  steps. The ADK project generally owns model selection.
+
 ## `[operator]`
 
 The Operator is a Python MCP server driving declarative YAML workflows with

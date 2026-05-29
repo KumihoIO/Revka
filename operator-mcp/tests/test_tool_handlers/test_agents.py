@@ -100,6 +100,15 @@ class TestToolCreateAgent:
         }, journal, mock_pool_client)
         assert "error" in result
 
+    async def test_google_agents_agent_type_alias(self, journal, mock_pool_client, tmp_path):
+        result = await tool_create_agent({
+            "title": "Google Agent",
+            "agent_type": "agents-cli",
+            "cwd": str(tmp_path),
+        }, journal, mock_pool_client)
+        assert result["type"] == "google_agents"
+        assert result["status"] == "idle"
+
     async def test_missing_cwd(self, journal, mock_pool_client):
         # The schema requires cwd, but the handler also validates at runtime
         # for non-schema-validating callers (and for the template-fallback

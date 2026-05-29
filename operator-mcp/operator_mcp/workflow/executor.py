@@ -25,6 +25,7 @@ from contextlib import contextmanager
 from typing import Any
 
 from .._log import _log
+from ..agent_state import GOOGLE_AGENT_TYPE, normalize_agent_type
 from ..agent_subprocess import compose_agent_prompt
 from ..construct_config import workspace_dir
 from ..failure_classification import classified_error, VALIDATION_ERROR
@@ -1142,6 +1143,8 @@ def _agent_required_tool_visible(
     base = _tool_base_name(tool)
     if not base:
         return True
+    if normalize_agent_type(cfg.agent_type) == GOOGLE_AGENT_TYPE:
+        return False
     if cfg.tools == "none":
         return False
     if base in _WORKFLOW_MEMORY_ALIAS_TOOLS:
@@ -1166,8 +1169,9 @@ def _preflight_required_tool_visibility(wf: WorkflowDef) -> str | None:
         if not required:
             continue
 
-        include_memory = cfg.tools in ("all", "memory")
-        include_operator = cfg.tools == "all"
+        supports_mcp = normalize_agent_type(cfg.agent_type) != GOOGLE_AGENT_TYPE
+        include_memory = supports_mcp and cfg.tools in ("all", "memory")
+        include_operator = supports_mcp and cfg.tools == "all"
         mcp_servers = build_mcp_servers(
             include_memory=include_memory,
             include_operator=include_operator,
@@ -1333,8 +1337,9 @@ async def _exec_agent(step: StepDef, state: WorkflowState, cwd: str) -> StepResu
     )
 
     # Determine MCP injection level from step config
-    include_memory = cfg.tools in ("all", "memory")
-    include_operator = cfg.tools == "all"
+    supports_mcp = normalize_agent_type(cfg.agent_type) != GOOGLE_AGENT_TYPE
+    include_memory = supports_mcp and cfg.tools in ("all", "memory")
+    include_operator = supports_mcp and cfg.tools == "all"
 
     # Auth profile binding: surfaced to the agent via the get_auth_token MCP
     # tool, NOT pre-injected into the system prompt or any agent context.

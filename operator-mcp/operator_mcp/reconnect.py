@@ -16,7 +16,7 @@ from __future__ import annotations
 from typing import Any
 
 from ._log import _log
-from .agent_state import AGENTS, ManagedAgent
+from .agent_state import AGENTS, ManagedAgent, normalize_agent_type
 
 _LAST_LOG_AT: dict[str, float] = {}
 _LOG_THROTTLE_SECS = 300.0
@@ -77,13 +77,13 @@ async def reconnect_agents(
 
         if je:
             agent_id = je.get("agent_id", sidecar_id)
-            agent_type = je.get("agent_type", "claude")
+            agent_type = normalize_agent_type(je.get("agent_type", "claude"))
             title = je.get("title", sa.get("title", sidecar_id[:8]))
             cwd = je.get("cwd", sa.get("cwd", ""))
         else:
             # No journal match — use sidecar data directly
             agent_id = sidecar_id
-            agent_type = sa.get("agentType", "claude")
+            agent_type = normalize_agent_type(sa.get("agentType", "claude"))
             title = sa.get("title", sidecar_id[:8])
             cwd = sa.get("cwd", "")
 

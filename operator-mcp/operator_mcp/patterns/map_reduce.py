@@ -15,7 +15,7 @@ import os
 from typing import Any
 
 from .._log import _log
-from ..agent_state import AGENTS, POOL
+from ..agent_state import AGENTS, POOL, normalize_agent_type, valid_agent_type
 from ..agent_subprocess import compose_agent_prompt
 from ..failure_classification import (
     bad_directory,
@@ -133,12 +133,12 @@ async def tool_map_reduce(args: dict[str, Any]) -> dict[str, Any]:
     reducer_template = _resolve_template(reducer_type)
     effective_mapper = (
         mapper_template.agent_type if mapper_template
-        else mapper_type if mapper_type in ("claude", "codex")
+        else normalize_agent_type(str(mapper_type)) if valid_agent_type(str(mapper_type))
         else "claude"
     )
     effective_reducer = (
         reducer_template.agent_type if reducer_template
-        else reducer_type if reducer_type in ("claude", "codex")
+        else normalize_agent_type(str(reducer_type)) if valid_agent_type(str(reducer_type))
         else "claude"
     )
     mapper_name = mapper_template.name if mapper_template else "mapper"

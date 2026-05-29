@@ -78,8 +78,8 @@ export const STEP_TYPES: StepTypeDef[] = [
     label: 'Agent',
     category: 'execution',
     icon: Bot,
-    description: 'Run an LLM agent (Claude, Codex) with a prompt and skills.',
-    searchTags: ['research', 'code', 'review', 'test', 'build', 'deploy', 'summarize', 'task', 'llm', 'claude', 'codex'],
+    description: 'Run an LLM agent (Claude, Codex, Google Agents CLI) with a prompt and skills.',
+    searchTags: ['research', 'code', 'review', 'test', 'build', 'deploy', 'summarize', 'task', 'llm', 'claude', 'codex', 'google_agents', 'agents-cli', 'adk'],
   },
   {
     type: 'shell',

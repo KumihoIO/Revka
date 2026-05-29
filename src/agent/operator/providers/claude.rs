@@ -30,6 +30,7 @@ Quick reference with examples:
     agent_type="codex",
     initial_prompt="Refactor src/db.rs to use connection pooling. Run tests."
   )
+  # Use agent_type="google_agents" for Google Agents CLI / ADK projects.
 
   # Wait for completion, then collect results
   wait_for_agent(agent_id="<id>")
@@ -37,6 +38,12 @@ Quick reference with examples:
 
   # Send follow-up work to an idle agent
   send_agent_prompt(agent_id="<id>", prompt="Now add integration tests.")
+
+  # Run Google Agents CLI lifecycle commands
+  google_agents_cli(
+    command=["deploy", "--no-wait"],
+    working_directory="/path/to/adk-project"
+  )
 
   # Deploy a pre-built team
   spawn_team(

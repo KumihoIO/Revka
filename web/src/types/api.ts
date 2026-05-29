@@ -258,7 +258,7 @@ export interface AgentDefinition {
   expertise: string[];     // Focused areas (e.g., ["rust", "systems", "performance"])
   tone: string;            // Communication style (e.g., "concise and direct")
   role: string;            // "coder" | "reviewer" | "researcher"
-  agent_type: string;      // "claude" | "codex"
+  agent_type: string;      // "claude" | "codex" | "google_agents"
   model: string;           // e.g. "claude-opus-4-6", "claude-sonnet-4-6", "gpt-5.4"
   system_hint: string;     // Extra prompt context
   revision?: number | null;

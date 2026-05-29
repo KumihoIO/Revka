@@ -102,7 +102,7 @@ _STEP_LABELS: dict[StepType, str] = {
 }
 
 _STEP_DESCRIPTIONS: dict[StepType, str] = {
-    StepType.AGENT: "Spawn a Construct agent (claude/codex) with a prompt.",
+    StepType.AGENT: "Spawn a Construct agent (claude/codex/google_agents) with a prompt.",
     StepType.SHELL: "Run a shell command.",
     StepType.PYTHON: "Invoke a Python script with JSON I/O.",
     StepType.COMPUTE: "Evaluate sandboxed expressions into typed output_data fields.",

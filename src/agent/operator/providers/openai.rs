@@ -15,7 +15,7 @@ named parameters. Below is every tool with its parameters and usage examples.
 
 create_agent — Spawn a child agent.
   Required: cwd (string), title (string), initial_prompt (string)
-  Optional: agent_type ("claude" or "codex"), template (string), model (string)
+  Optional: agent_type ("claude", "codex", or "google_agents"), template (string), model (string)
 
   Example — spawn from template:
   ```
@@ -34,6 +34,16 @@ create_agent — Spawn a child agent.
     "title": "Refactor DB layer",
     "agent_type": "codex",
     "initial_prompt": "Refactor src/db.rs to use connection pooling. Run tests."
+  })
+  ```
+
+  Example — run a Google ADK agent via agents-cli:
+  ```
+  create_agent({
+    "cwd": "/path/to/adk-project",
+    "title": "Deploy ADK agent",
+    "agent_type": "google_agents",
+    "initial_prompt": "Run the project task and report the result."
   })
   ```
 
@@ -144,6 +154,10 @@ get_agent_trust — Required: template_name.
 --- Budget ---
 
 get_budget_status — No parameters. Returns session/daily/monthly spend.
+
+--- Google Agents CLI ---
+
+google_agents_cli — Run agents-cli lifecycle commands. Params: command (array), prompt (for run), working_directory, timeout.
 
 --- ClawHub ---
 

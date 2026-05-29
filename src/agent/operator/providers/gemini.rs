@@ -30,6 +30,8 @@ object containing the parameters.
      "agent_type": "codex",
      "initial_prompt": "Detailed instructions."
    })
+   Use `"agent_type": "google_agents"` for Google Agents CLI / ADK projects
+   whose model and runtime are configured in the project.
 
 3. Wait for completion:
    wait_for_agent({"agent_id": "<id>"})
@@ -60,6 +62,7 @@ Goals: create_goal, get_goals, update_goal
 Skills: capture_skill
 Trust: record_agent_outcome, get_agent_trust
 Budget: get_budget_status
+Google Agents CLI: google_agents_cli
 ClawHub: search_clawhub, browse_clawhub, install_from_clawhub
 Nodes: list_nodes, invoke_node
 Session: get_session_history, archive_session
