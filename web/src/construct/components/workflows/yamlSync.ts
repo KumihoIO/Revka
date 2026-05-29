@@ -729,6 +729,121 @@ export interface WorkflowMeta {
 
 export type ParsedStep = TaskDefinition;
 
+export interface OutputDataRef {
+  stepId: string;
+  field: string;
+}
+
+export interface AgentOutputContractWarning {
+  consumerStepId: string;
+  sourceStepId: string;
+  field: string;
+  message: string;
+}
+
+export const AGENT_BUILTIN_OUTPUT_FIELDS = new Set([
+  'template_name',
+  'agent_type',
+  'role',
+  'managed_agent_id',
+  'sidecar_id',
+  'artifact_path',
+  'exit_code',
+  'stderr_tail',
+  'skills',
+  'structured_output_missing',
+]);
+
+const OUTPUT_DATA_REF_RE = /(^|[^A-Za-z0-9_.-])([A-Za-z0-9_-]+)\.output_data\.([A-Za-z_][A-Za-z0-9_]*)/g;
+
+export function findOutputDataRefs(text: string): OutputDataRef[] {
+  const refs: OutputDataRef[] = [];
+  if (!text) return refs;
+
+  OUTPUT_DATA_REF_RE.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = OUTPUT_DATA_REF_RE.exec(text)) !== null) {
+    const stepId = match[2];
+    const field = match[3];
+    if (!stepId || !field) continue;
+    refs.push({ stepId, field });
+  }
+  return refs;
+}
+
+function collectStringValues(value: unknown, out: string[]): void {
+  if (typeof value === 'string') {
+    out.push(value);
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) collectStringValues(item, out);
+    return;
+  }
+  if (value && typeof value === 'object') {
+    for (const item of Object.values(value as Record<string, unknown>)) {
+      collectStringValues(item, out);
+    }
+  }
+}
+
+function buildStepRefLookup(tasks: TaskDefinition[]): Map<string, TaskDefinition> {
+  const byRef = new Map<string, TaskDefinition>();
+  const ids = new Set(tasks.map((task) => task.id));
+  const aliasCounts = new Map<string, number>();
+
+  for (const task of tasks) {
+    byRef.set(task.id, task);
+    const alias = task.id.replace(/-/g, '_');
+    if (alias !== task.id) {
+      aliasCounts.set(alias, (aliasCounts.get(alias) ?? 0) + 1);
+    }
+  }
+
+  for (const task of tasks) {
+    const alias = task.id.replace(/-/g, '_');
+    if (alias !== task.id && !ids.has(alias) && aliasCounts.get(alias) === 1) {
+      byRef.set(alias, task);
+    }
+  }
+
+  return byRef;
+}
+
+export function validateAgentOutputContracts(
+  tasks: TaskDefinition[],
+): AgentOutputContractWarning[] {
+  const warnings: AgentOutputContractWarning[] = [];
+  const byRef = buildStepRefLookup(tasks);
+  const seen = new Set<string>();
+
+  for (const consumer of tasks) {
+    const texts: string[] = [];
+    collectStringValues(consumer, texts);
+
+    for (const text of texts) {
+      for (const ref of findOutputDataRefs(text)) {
+        const source = byRef.get(ref.stepId);
+        if (!source || source.type !== 'agent') continue;
+        if (AGENT_BUILTIN_OUTPUT_FIELDS.has(ref.field)) continue;
+        if ((source.agent_output_fields ?? []).includes(ref.field)) continue;
+
+        const key = `${consumer.id}|${source.id}|${ref.field}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        warnings.push({
+          consumerStepId: consumer.id,
+          sourceStepId: source.id,
+          field: ref.field,
+          message: `${source.id}.output_data.${ref.field} is referenced by ${consumer.id}, but ${source.id} does not declare ${ref.field} as a required structured output field.`,
+        });
+      }
+    }
+  }
+
+  return warnings;
+}
+
 /** Map editor action / friendly verb to canonical executor step type.
  *  Hoisted above the parser so YAML containing legacy `action:` can be
  *  canonicalized at parse time. Self-mapping entries make the lookup safe

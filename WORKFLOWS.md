@@ -118,6 +118,7 @@ steps:                         # At least one step required
     role: researcher           # coder, researcher, reviewer, etc.
     prompt: |
       Research ${inputs.topic} and summarize findings.
+    output_fields: [summary, score] # When set, these structured fields are required
     model: null                # Optional model override
     timeout: 300               # Seconds (default 300)
     template: my-template      # Optional agent pool template
@@ -130,9 +131,45 @@ steps:                         # At least one step required
 The `action` field provides shorthand: `action: research` auto-sets
 `type: agent`, `role: researcher`, `agent_type: claude` via `ACTION_DEFAULTS`.
 
-> **JSON auto-parse:** If an agent returns valid JSON, its keys are automatically
-> merged into `output_data`. This means `${agent_step.output_data.any_key}` works
-> without any extra configuration — just have the agent return a JSON object.
+#### Agent structured output
+
+Agent steps can expose structured fields through `output_data`.
+
+When `agent.output_fields` is set, Construct treats it as a required structured
+output contract:
+
+1. The executor appends structured-output instructions to the agent prompt.
+2. The agent must return every declared field.
+3. Missing fields fail the step with `structured_output_missing`.
+
+```yaml
+- id: final-canon-auditor
+  type: agent
+  agent:
+    role: reviewer
+    prompt: "Review canon consistency."
+    output_fields: [verdict, production_ready]
+```
+
+Recommended final format:
+
+```yaml
+FINAL_OUTPUT:
+  verdict: NEEDS_CHANGES
+  production_ready: false
+```
+
+Supported structured output formats:
+
+- Full JSON object: `{"verdict":"APPROVED","production_ready":true}`
+- Final fenced `json` block
+- Final `FINAL_OUTPUT:` YAML block
+
+The parsed fields are merged into `output_data`, so downstream steps can use
+`${final-canon-auditor.output_data.production_ready}` or expression aliases such
+as `final_canon_auditor.output_data.production_ready`. Agent outputs without
+`output_fields` remain backward compatible: valid JSON, fenced JSON, and
+`FINAL_OUTPUT` are parsed when present, but missing fields do not fail the step.
 
 #### Agent output artifacts and dependency handoff
 

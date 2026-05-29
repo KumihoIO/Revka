@@ -1275,7 +1275,7 @@ export default function StepConfigPanel({
               </div>
 
               <div>
-                <label style={labelStyle}>Output Fields</label>
+                <label style={labelStyle}>Required Structured Output Fields</label>
                 <input
                   type="text"
                   value={agentOutputFieldsDraftState.draft}
@@ -1288,9 +1288,17 @@ export default function StepConfigPanel({
                       (e.currentTarget as HTMLInputElement).blur();
                     }
                   }}
-                  placeholder="summary, decision, files_touched"
+                  placeholder="verdict, production_ready"
                   style={monoInputStyle}
                 />
+                <p style={helperStyle()}>
+                  Construct appends final-output instructions and fails this step if any named field is missing.
+                </p>
+                <pre style={{ ...helperStyle(), fontFamily: 'var(--font-mono)', whiteSpace: 'pre-wrap' }}>
+{`FINAL_OUTPUT:
+  verdict: ...
+  production_ready: ...`}
+                </pre>
               </div>
 
               <div style={{ paddingTop: 8, borderTop: '1px solid var(--pc-border)' }}>

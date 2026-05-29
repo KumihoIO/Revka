@@ -11,12 +11,14 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  findOutputDataRefs,
   flowToTasks,
   hasPersistedTaskPositions,
   parseWorkflowMeta,
   parseWorkflowYaml,
   tasksToFlow,
   tasksToYaml,
+  validateAgentOutputContracts,
   type TaskDefinition,
 } from '../yamlSync';
 
@@ -786,6 +788,60 @@ steps:
   assert.deepEqual(manus.manus_enable_skills, ['browse', 'code']);
   assert.deepEqual(manus.manus_force_skills, ['browse']);
   assert.equal(manus.manus_project_id, 'project-42');
+});
+
+test('findOutputDataRefs extracts template and expression output_data references', () => {
+  const refs = findOutputDataRefs(
+    "${final-canon-auditor.output_data.production_ready} ${{ final_canon_auditor.output_data.verdict == 'APPROVED' }}",
+  );
+
+  assert.deepEqual(refs, [
+    { stepId: 'final-canon-auditor', field: 'production_ready' },
+    { stepId: 'final_canon_auditor', field: 'verdict' },
+  ]);
+});
+
+test('agent output contract warning fires for undeclared downstream output_data field', () => {
+  const tasks = parseWorkflowYaml(`
+steps:
+  - id: final-canon-auditor
+    type: agent
+    agent:
+      prompt: "Review canon"
+      output_fields: [verdict]
+  - id: production-route-gate
+    type: agent
+    depends_on: [final-canon-auditor]
+    agent:
+      prompt: "Route on \${{ final_canon_auditor.output_data.production_ready == true }}"
+`);
+
+  const warnings = validateAgentOutputContracts(tasks);
+
+  assert.equal(warnings.length, 1);
+  const warning = warnings[0];
+  assert.ok(warning);
+  assert.equal(warning.sourceStepId, 'final-canon-auditor');
+  assert.equal(warning.consumerStepId, 'production-route-gate');
+  assert.equal(warning.field, 'production_ready');
+});
+
+test('agent output contract warning is skipped for declared and built-in fields', () => {
+  const tasks = parseWorkflowYaml(`
+steps:
+  - id: review
+    type: agent
+    agent:
+      prompt: "Review"
+      output_fields: [production_ready]
+  - id: gate
+    type: agent
+    depends_on: [review]
+    agent:
+      prompt: "Use \${review.output_data.production_ready} and \${review.output_data.artifact_path}"
+`);
+
+  assert.deepEqual(validateAgentOutputContracts(tasks), []);
 });
 
 test('manus step: full-fields round-trip preserves all manus_* fields and schema-as-object', () => {

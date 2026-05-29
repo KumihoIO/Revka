@@ -112,6 +112,7 @@ steps:                         # 최소 한 개 단계 필수
     role: researcher           # coder, researcher, reviewer 등
     prompt: |
       Research ${inputs.topic} and summarize findings.
+    output_fields: [summary, score] # 설정하면 해당 구조화 필드가 필수
     model: null                # 선택 — 모델 오버라이드
     timeout: 300               # 초 (기본 300)
     template: my-template      # 선택 — 에이전트 풀 템플릿
@@ -123,7 +124,46 @@ steps:                         # 최소 한 개 단계 필수
 
 `action` 필드는 단축형입니다: `action: research` 한 줄로 `ACTION_DEFAULTS`에 따라 `type: agent`, `role: researcher`, `agent_type: claude`가 자동 설정됩니다.
 
-> **JSON 자동 파싱:** 에이전트가 유효한 JSON을 반환하면 그 키들이 자동으로 `output_data`에 병합됩니다. 즉 추가 설정 없이 `${agent_step.output_data.any_key}`가 동작합니다 — 에이전트가 JSON 객체를 반환하기만 하면 됩니다.
+#### 에이전트 구조화 출력
+
+에이전트 단계는 `output_data`를 통해 구조화 필드를 노출할 수 있습니다.
+
+`agent.output_fields`가 설정되어 있으면 Construct는 이를 필수 구조화 출력
+계약으로 처리합니다:
+
+1. Executor가 에이전트 프롬프트에 구조화 출력 지시를 붙입니다.
+2. 에이전트는 선언된 모든 필드를 반환해야 합니다.
+3. 누락된 필드가 있으면 단계가 `structured_output_missing`으로 실패합니다.
+
+```yaml
+- id: final-canon-auditor
+  type: agent
+  agent:
+    role: reviewer
+    prompt: "Review canon consistency."
+    output_fields: [verdict, production_ready]
+```
+
+권장 최종 형식:
+
+```yaml
+FINAL_OUTPUT:
+  verdict: NEEDS_CHANGES
+  production_ready: false
+```
+
+지원되는 구조화 출력 형식:
+
+- 전체 JSON 객체: `{"verdict":"APPROVED","production_ready":true}`
+- 마지막 fenced `json` 블록
+- 마지막 `FINAL_OUTPUT:` YAML 블록
+
+파싱된 필드는 `output_data`에 병합되므로 다운스트림 단계는
+`${final-canon-auditor.output_data.production_ready}` 또는
+`final_canon_auditor.output_data.production_ready` 같은 표현식 alias를 사용할
+수 있습니다. `output_fields`가 없는 에이전트 출력은 기존 호환성을 유지합니다.
+유효한 JSON, fenced JSON, `FINAL_OUTPUT`은 있으면 파싱하지만, 필드 누락으로
+단계를 실패시키지는 않습니다.
 
 ### `shell` — 셸 명령 실행
 

@@ -105,7 +105,7 @@ class AgentStepConfig(BaseModel):
     max_turns: int = 3           # Max LLM turns (low default = no tool loops, saves tokens)
     tools: Literal["all", "memory", "none"] = "none"  # MCP tool injection level
     required_tools: list[str] = Field(default_factory=list)  # Preflight visibility guard
-    output_fields: list[str] = Field(default_factory=list)  # Expected structured fields in ```json block
+    output_fields: list[str] = Field(default_factory=list)  # Required structured output_data fields
     quality_check: QualityCheckConfig | None = None
     # Auth profile binding (encrypted credential, resolved at runtime via the
     # gateway's auth-profiles resolve endpoint). Format: "<provider>:<profile_name>".
