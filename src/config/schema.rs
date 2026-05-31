@@ -3943,7 +3943,7 @@ impl Default for GeminiCliConfig {
 /// Google Agents CLI tool configuration (`[google_agents_cli]` section).
 ///
 /// Runs the `agents-cli` lifecycle tool for Google ADK / Agent Platform
-/// projects. `agents-cli run` is used for non-interactive agent prompts;
+/// projects. `agents-cli run` is used for non-interactive ADK project prompts;
 /// other subcommands such as `deploy`, `eval run`, and `publish
 /// gemini-enterprise` are exposed through the tool's argv-style command
 /// parameter. Authentication uses the binary's own Google Cloud / AI Studio

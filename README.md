@@ -158,7 +158,7 @@ Canonical types from `StepType` in `operator-mcp/operator_mcp/workflow/schema.py
 
 | Step Type | Description |
 |-----------|-------------|
-| `agent` | Spawn a Construct agent (claude/codex/google_agents) with prompt, role, model, tools, timeout |
+| `agent` | Spawn a Construct coding agent (claude/codex) with prompt, role, model, tools, timeout |
 | `shell` | Execute shell commands with timeout and failure handling |
 | `python` | Run a Python script or inline Python with JSON I/O |
 | `email` | Send outbound email via SMTP with optional click tracking and dry-run |
@@ -262,14 +262,14 @@ Reusable agent definitions stored in `~/.construct/operator_mcp/agent_pool.json`
 | Field | Description |
 |-------|-------------|
 | `name` | Unique identifier |
-| `agent_type` | `claude`, `codex`, or `google_agents` |
+| `agent_type` | `claude` or `codex` |
 | `role` | coder, reviewer, researcher, tester, architect, planner |
 | `capabilities` | Skill tags (e.g., `["rust", "security-audit", "testing"]`) |
 | `description` | What this agent excels at |
 | `identity` | Rich identity statement |
 | `soul` | Personality and values |
 | `tone` | Communication style |
-| `model` | Model override for CLIs that accept one (Google Agents CLI usually uses the ADK project config) |
+| `model` | Model override for CLIs that accept one |
 | `system_hint` | Extra prompt context |
 | `allowed_tools` | Tool allowlist (None = all) |
 | `max_turns` | Conversation turn limit (default 200) |

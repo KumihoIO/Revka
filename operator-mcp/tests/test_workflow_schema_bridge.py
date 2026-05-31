@@ -121,19 +121,6 @@ class TestBridgePassthrough:
         dumped = step.model_dump(exclude_none=True)
         assert dumped["position"] == {"x": 120.5, "y": -44.0}
 
-    def test_google_agents_cli_agent_type_is_accepted(self) -> None:
-        step = StepDef.model_validate({
-            "id": "run-adk-agent",
-            "type": "agent",
-            "agent": {
-                "agent_type": "agents-cli",
-                "role": "tester",
-                "prompt": "Run the local ADK agent smoke test.",
-            },
-        })
-        assert step.agent is not None
-        assert step.agent.agent_type == "google_agents"
-
     def test_canonical_unchanged(self) -> None:
         step = StepDef.model_validate({
             "id": "gate",

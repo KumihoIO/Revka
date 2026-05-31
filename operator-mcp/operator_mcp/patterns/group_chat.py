@@ -16,7 +16,7 @@ import uuid
 from typing import Any, Callable
 
 from .._log import _log
-from ..agent_state import POOL, normalize_agent_type, valid_agent_type
+from ..agent_state import AGENTS, ManagedAgent, POOL
 from ..agent_subprocess import compose_agent_prompt
 from ..failure_classification import classified_error, VALIDATION_ERROR
 from .refinement import _spawn_and_wait, _wait_for_agent
@@ -41,7 +41,7 @@ def _pool_template(name: str):
 def _resolve_agent_descriptor(value: Any, fallback_name: str) -> dict[str, str]:
     if isinstance(value, dict):
         name = str(value.get("name") or fallback_name)
-        agent_type = normalize_agent_type(str(value.get("agent_type") or "claude"))
+        agent_type = str(value.get("agent_type") or "claude")
         role = str(value.get("role") or "participant")
         description = str(value.get("description") or f"Agent type: {agent_type}")
         return {"name": name, "agent_type": agent_type, "role": role, "description": description}
@@ -61,10 +61,9 @@ def _resolve_agent_descriptor(value: Any, fallback_name: str) -> dict[str, str]:
             "description": "\n".join(part for part in description_parts if part),
         }
 
-    normalized_hint = normalize_agent_type(hint)
-    agent_type = normalized_hint if valid_agent_type(normalized_hint) else "claude"
+    agent_type = hint if hint in ("claude", "codex") else "claude"
     return {
-        "name": fallback_name if valid_agent_type(normalized_hint) else hint,
+        "name": fallback_name if hint in ("claude", "codex") else hint,
         "agent_type": agent_type,
         "role": "participant",
         "description": f"Agent type: {agent_type}",

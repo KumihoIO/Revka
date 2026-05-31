@@ -13,9 +13,9 @@ three-layer stack:
 ```
 Python Operator (workflow executor, refinement, recovery)
     ↓ Unix socket HTTP
-Node.js Session Manager (agent-manager.ts, claude/codex/google_agents providers)
-    ↓ Claude Agent SDK / Codex CLI / Google Agents CLI subprocess
-LLM Agent Processes (claude sessions, codex child processes, agents-cli runs)
+Node.js Session Manager (agent-manager.ts, claude/codex providers)
+    ↓ Claude Agent SDK / Codex CLI subprocess
+LLM Agent Processes (claude sessions, codex child processes)
 ```
 
 This architecture has produced a class of **cross-boundary state bugs** where
@@ -338,7 +338,6 @@ Phase 3 (optional, weeks) — Rust executor
 | `~/.construct/operator/session-manager/src/agent-manager.ts` | TypeScript | Agent lifecycle, session state |
 | `~/.construct/operator/session-manager/src/providers/claude.ts` | TypeScript | Claude SDK query pump |
 | `~/.construct/operator/session-manager/src/providers/codex.ts` | TypeScript | Codex subprocess management |
-| `~/.construct/operator/session-manager/src/providers/google-agents.ts` | TypeScript | Google Agents CLI subprocess management |
 | `~/.construct/operator/session-manager/src/persistence.ts` | TypeScript | Agent state persistence to disk |
 | `~/.construct/operator/session-manager/src/event-emitter.ts` | TypeScript | SSE event broadcasting |
 | `~/.construct/operator/operator_mcp.py` | Python | Full operator MCP (40+ tools) |

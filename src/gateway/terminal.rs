@@ -16,7 +16,7 @@
 //!
 //! ## Tool-aware Code tab (M2)
 //!
-//! When `tool=<claude|codex|opencode|gemini|google_agents>` is passed in the query, this
+//! When `tool=<claude|codex|opencode|gemini>` is passed in the query, this
 //! handler spawns that CLI inside the PTY instead of the user's shell. When
 //! `mcp_session` and `mcp_token` are also present, a per-session MCP config
 //! file is written to a temp dir and exported via env vars so the CLI can
@@ -54,7 +54,7 @@ pub struct TerminalQuery {
     pub token: Option<String>,
     pub session_id: Option<String>,
     /// Optional CLI tool to launch instead of the default shell.
-    /// Known values: `claude` | `codex` | `opencode` | `gemini` | `google_agents`.
+    /// Known values: `claude` | `codex` | `opencode` | `gemini`.
     /// Anything else (or `None`) falls back to `$SHELL -l`.
     pub tool: Option<String>,
     /// Optional explicit working directory for the spawned process. Tilde
@@ -91,7 +91,6 @@ pub enum CodeTool {
     Codex,
     OpenCode,
     Gemini,
-    GoogleAgents,
 }
 
 impl CodeTool {
@@ -103,7 +102,6 @@ impl CodeTool {
             "codex" => Some(Self::Codex),
             "opencode" => Some(Self::OpenCode),
             "gemini" => Some(Self::Gemini),
-            "google_agents" | "google-agents" | "agents-cli" => Some(Self::GoogleAgents),
             _ => None,
         }
     }
@@ -115,14 +113,7 @@ impl CodeTool {
             Self::Codex => "codex",
             Self::OpenCode => "opencode",
             Self::Gemini => "gemini",
-            Self::GoogleAgents => "agents-cli",
         }
-    }
-
-    /// Whether this CLI can be wired to Construct's in-process MCP server via
-    /// a known config-file adapter.
-    pub fn supports_mcp_config(self) -> bool {
-        !matches!(self, Self::GoogleAgents)
     }
 
     /// Env variable each CLI (allegedly) looks at to find an MCP config file.
@@ -137,7 +128,6 @@ impl CodeTool {
             Self::Codex => "CODEX_MCP_CONFIG",
             Self::OpenCode => "OPENCODE_MCP_CONFIG",
             Self::Gemini => "GEMINI_MCP_CONFIG",
-            Self::GoogleAgents => "GOOGLE_AGENTS_MCP_CONFIG",
         }
     }
 }
@@ -285,15 +275,6 @@ pub fn write_cli_config(
                 files_written: vec![cfg_path],
             })
         }
-
-        // Google Agents CLI (`agents-cli`) does not currently expose a
-        // documented MCP config-file adapter equivalent to Claude/Codex/Gemini.
-        // The terminal still launches it, but we avoid redirecting HOME for MCP
-        // injection so user Google auth and project config remain visible.
-        CodeTool::GoogleAgents => Ok(CliInjection {
-            args: vec![],
-            files_written: vec![],
-        }),
     }
 }
 
@@ -466,10 +447,7 @@ fn plan_spawn(
     // variant calls `read_construct_mcp()` for the prod path. Split out so the
     // per-CLI adapter tests can pass in a fake discovery URL without needing
     // `~/.construct/mcp.json` on disk.
-    let discovery_url = if tool.map(CodeTool::supports_mcp_config).unwrap_or(false)
-        && mcp_session.is_some()
-        && mcp_token.is_some()
-    {
+    let discovery_url = if tool.is_some() && mcp_session.is_some() && mcp_token.is_some() {
         Some(
             read_construct_mcp()
                 .map_err(|e| format!("in-process MCP server not available: {e}"))?
@@ -494,36 +472,31 @@ fn plan_spawn_with_discovery(
                 .map_err(|_| format!("{} not found in PATH", t.binary()))?;
             let mut cmd = CommandBuilder::new(bin);
 
-            if t.supports_mcp_config() {
-                if let (Some(sess), Some(tok), Some(url)) = (mcp_session, mcp_token, mcp_url) {
-                    let dir =
-                        std::env::temp_dir().join(format!("construct-code-{}", Uuid::new_v4()));
-                    std::fs::create_dir_all(&dir).map_err(|e| format!("creating temp dir: {e}"))?;
+            if let (Some(sess), Some(tok), Some(url)) = (mcp_session, mcp_token, mcp_url) {
+                let dir = std::env::temp_dir().join(format!("construct-code-{}", Uuid::new_v4()));
+                std::fs::create_dir_all(&dir).map_err(|e| format!("creating temp dir: {e}"))?;
 
-                    // Per-CLI adapter: writes the right config file(s) under
-                    // `dir` (which we then expose to the child as HOME) and
-                    // returns any argv the CLI needs.
-                    let injection = write_cli_config(t, &dir, url, sess, tok)?;
-                    for a in &injection.args {
-                        cmd.arg(a);
-                    }
-
-                    // Redirect HOME + XDG_CONFIG_HOME so CLIs that read from
-                    // `~/.codex/...`, `~/.gemini/...`, `~/.config/opencode/...`
-                    // pick up our freshly written config instead of the user's
-                    // real dotfiles.
-                    cmd.env("HOME", &dir);
-                    cmd.env("XDG_CONFIG_HOME", dir.join(".config"));
-
-                    // Stable fallback env — harmless if unused.
-                    cmd.env("CONSTRUCT_MCP_URL", url);
-                    cmd.env("CONSTRUCT_MCP_SESSION", sess);
-                    cmd.env("CONSTRUCT_MCP_TOKEN", tok);
-
-                    (cmd, Some(TempSpawnDir(dir)))
-                } else {
-                    (cmd, None)
+                // Per-CLI adapter: writes the right config file(s) under
+                // `dir` (which we then expose to the child as HOME) and
+                // returns any argv the CLI needs.
+                let injection = write_cli_config(t, &dir, url, sess, tok)?;
+                for a in &injection.args {
+                    cmd.arg(a);
                 }
+
+                // Redirect HOME + XDG_CONFIG_HOME so CLIs that read from
+                // `~/.codex/...`, `~/.gemini/...`, `~/.config/opencode/...`
+                // pick up our freshly written config instead of the user's
+                // real dotfiles.
+                cmd.env("HOME", &dir);
+                cmd.env("XDG_CONFIG_HOME", dir.join(".config"));
+
+                // Stable fallback env — harmless if unused.
+                cmd.env("CONSTRUCT_MCP_URL", url);
+                cmd.env("CONSTRUCT_MCP_SESSION", sess);
+                cmd.env("CONSTRUCT_MCP_TOKEN", tok);
+
+                (cmd, Some(TempSpawnDir(dir)))
             } else {
                 (cmd, None)
             }
@@ -766,14 +739,6 @@ mod tests {
         assert_eq!(CodeTool::from_query("codex"), Some(CodeTool::Codex));
         assert_eq!(CodeTool::from_query("opencode"), Some(CodeTool::OpenCode));
         assert_eq!(CodeTool::from_query("gemini"), Some(CodeTool::Gemini));
-        assert_eq!(
-            CodeTool::from_query("google_agents"),
-            Some(CodeTool::GoogleAgents)
-        );
-        assert_eq!(
-            CodeTool::from_query("agents-cli"),
-            Some(CodeTool::GoogleAgents)
-        );
     }
 
     #[test]
@@ -790,7 +755,6 @@ mod tests {
         assert_eq!(CodeTool::Codex.binary(), "codex");
         assert_eq!(CodeTool::OpenCode.binary(), "opencode");
         assert_eq!(CodeTool::Gemini.binary(), "gemini");
-        assert_eq!(CodeTool::GoogleAgents.binary(), "agents-cli");
     }
 
     #[test]
@@ -799,11 +763,6 @@ mod tests {
         assert_eq!(CodeTool::Codex.config_env(), "CODEX_MCP_CONFIG");
         assert_eq!(CodeTool::OpenCode.config_env(), "OPENCODE_MCP_CONFIG");
         assert_eq!(CodeTool::Gemini.config_env(), "GEMINI_MCP_CONFIG");
-        assert_eq!(
-            CodeTool::GoogleAgents.config_env(),
-            "GOOGLE_AGENTS_MCP_CONFIG"
-        );
-        assert!(!CodeTool::GoogleAgents.supports_mcp_config());
     }
 
     #[test]

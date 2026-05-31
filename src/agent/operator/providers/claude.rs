@@ -30,7 +30,6 @@ Quick reference with examples:
     agent_type="codex",
     initial_prompt="Refactor src/db.rs to use connection pooling. Run tests."
   )
-  # Use agent_type="google_agents" for Google Agents CLI / ADK projects.
 
   # Wait for completion, then collect results
   wait_for_agent(agent_id="<id>")

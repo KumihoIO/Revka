@@ -5,12 +5,12 @@
  * On sidecar startup, persisted sessions with status "running" or "idle"
  * are eligible for resume via the Claude SDK's `resume` option.
  */
-import type { AgentProvider, AgentSessionInfo, AgentUsage } from "./types.js";
+import type { AgentSessionInfo, AgentUsage } from "./types.js";
 export interface PersistedAgentState {
     id: string;
     title: string;
     cwd: string;
-    agentType: AgentProvider;
+    agentType: "claude" | "codex";
     sessionId?: string;
     status: string;
     parentId?: string;

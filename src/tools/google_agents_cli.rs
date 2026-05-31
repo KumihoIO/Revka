@@ -84,7 +84,7 @@ impl Tool for GoogleAgentsCliTool {
                 },
                 "prompt": {
                     "type": "string",
-                    "description": "Prompt appended to `agents-cli run`. Use this instead of embedding long prompts in command tokens."
+                    "description": "Prompt appended to `agents-cli run`. Use this instead of embedding long ADK project prompts in command tokens."
                 },
                 "working_directory": {
                     "type": "string",

@@ -31,7 +31,7 @@ chat_create(name="loop-<task>", purpose="Iterative: <description>")
 ```
 create_agent(
     title="worker-<task>",
-    agent_type="codex",  # or claude / google_agents
+    agent_type="codex",  # or claude
     cwd="...",
     initial_prompt="<task with acceptance criteria>"
 )

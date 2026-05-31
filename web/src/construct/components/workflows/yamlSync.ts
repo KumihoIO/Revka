@@ -36,8 +36,6 @@ export interface WorkflowNodePosition {
   y: number;
 }
 
-export type BuiltinAgentType = 'claude' | 'codex' | 'google_agents';
-
 export interface TaskDefinition {
   id: string;
   name: string;
@@ -84,7 +82,7 @@ export interface TaskDefinition {
   /** Parallel join strategy */
   parallel_join?: 'all' | 'any' | 'majority';
   /** Agent step: agent_type */
-  agent_type?: BuiltinAgentType;
+  agent_type?: 'claude' | 'codex';
   /** Agent step: role */
   role?: string;
   /** Agent step: prompt (template) */
@@ -367,7 +365,7 @@ export interface TaskDefinition {
 export interface StepRunInfo {
   status: 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
   agent_id?: string;
-  agent_type?: string;  // "claude" | "codex" | "google_agents"
+  agent_type?: string;  // "claude" | "codex"
   role?: string;        // "coder" | "researcher" | "reviewer"
   template_name?: string; // agent pool template used
   action?: string;
@@ -400,22 +398,13 @@ const ACTION_AGENT_MAP: Record<string, { agent_type: string; role: string }> = {
   summarize: { agent_type: 'claude', role: 'summarizer' },
   task:      { agent_type: 'claude', role: 'coder' },
   agent:     { agent_type: 'claude', role: 'coder' },
-  google_agents: { agent_type: 'google_agents', role: 'coder' },
-  adk:       { agent_type: 'google_agents', role: 'coder' },
 };
 
 export function inferAgentFromTask(task: TaskDefinition): { agent_type: string; role: string } {
   const defaults = ACTION_AGENT_MAP[(task.type || '').toLowerCase()] ?? { agent_type: 'claude', role: 'coder' };
   let { agent_type, role } = defaults;
   // Agent hints override
-  if (
-    task.agent_hints.includes('google_agents') ||
-    task.agent_hints.includes('google-agents') ||
-    task.agent_hints.includes('agents-cli') ||
-    task.agent_hints.includes('adk') ||
-    task.agent_hints.includes('google')
-  ) agent_type = 'google_agents';
-  else if (task.agent_hints.includes('codex') || task.agent_hints.includes('coder')) agent_type = 'codex';
+  if (task.agent_hints.includes('codex') || task.agent_hints.includes('coder')) agent_type = 'codex';
   else if (task.agent_hints.includes('claude') || task.agent_hints.includes('researcher') || task.agent_hints.includes('reviewer')) agent_type = 'claude';
   for (const hint of task.agent_hints) {
     if (['coder', 'researcher', 'reviewer'].includes(hint)) { role = hint; break; }
@@ -1062,7 +1051,7 @@ function parseStep(s: YAMLObj): TaskDefinition | null {
   // Nested blocks --------------------------------------------------------
   const agent = isObj(s.agent) ? s.agent : undefined;
   if (agent) {
-    t.agent_type = (asStr(agent.agent_type) as BuiltinAgentType | undefined);
+    t.agent_type = (asStr(agent.agent_type) as 'claude' | 'codex' | undefined);
     t.role = asStr(agent.role);
     t.template = asStr(agent.template);
     t.prompt = asStr(agent.prompt);
@@ -2778,7 +2767,7 @@ export function flowToTasks(nodes: Node<TaskNodeData>[], edges: Edge[]): TaskDef
     };
     // Pass through executor-specific fields
     if (st === 'agent') {
-      if (d.agentType) base.agent_type = d.agentType as BuiltinAgentType;
+      if (d.agentType) base.agent_type = d.agentType as 'claude' | 'codex';
       if (d.role) base.role = d.role;
       if (d.prompt) base.prompt = d.prompt;
       if (d.timeout && d.timeout !== 300) base.timeout = d.timeout;

@@ -976,8 +976,8 @@ Notes:
 ## `[google_agents_cli]`
 
 Google Agents CLI integration for ADK / Agent Platform lifecycle commands.
-This enables the `google_agents_cli` tool; workflow and operator agent
-selection uses `agent_type: google_agents`.
+This enables the `google_agents_cli` tool. `agents-cli` is a lifecycle tool
+for coding agents, not a Construct `agent_type` or session provider.
 
 | Key | Default | Purpose |
 |---|---|---|
@@ -994,8 +994,9 @@ Notes:
   `GEMINI_API_KEY`, `GOOGLE_APPLICATION_CREDENTIALS`,
   `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION`, and
   `GOOGLE_GENAI_USE_VERTEXAI` are passed by default when present.
-- Use `agent_type: google_agents` for non-interactive `agents-cli run` agent
-  steps. The ADK project generally owns model selection.
+- Use a `claude` or `codex` agent when delegation is useful, and have that
+  agent call `google_agents_cli` for `agents-cli run`, `eval`, `deploy`, or
+  publish commands. The ADK project generally owns model selection.
 
 ## `[operator]`
 

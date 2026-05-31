@@ -11,7 +11,7 @@ import type { AssistantConfig, SchemeColors } from './assistantConfig';
 
 /* ── types ─────────────────────────────────────────── */
 
-export type CodeTool = 'claude' | 'codex' | 'opencode' | 'gemini' | 'google_agents' | 'operator';
+export type CodeTool = 'claude' | 'codex' | 'opencode' | 'gemini' | 'operator';
 
 export interface CodeSession {
   sessionId: string;
@@ -30,7 +30,6 @@ const TOOL_OPTIONS: ToolOption[] = [
   { key: 'codex', label: 'Codex' },
   { key: 'opencode', label: 'OpenCode' },
   { key: 'gemini', label: 'Gemini CLI' },
-  { key: 'google_agents', label: 'Google Agents CLI' },
   { key: 'operator', label: 'Construct Operator' },
 ];
 

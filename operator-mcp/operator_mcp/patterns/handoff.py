@@ -15,7 +15,7 @@ import uuid
 from typing import Any
 
 from .._log import _log
-from ..agent_state import AGENTS, POOL, normalize_agent_type, valid_agent_type
+from ..agent_state import AGENTS, ManagedAgent, POOL
 from ..agent_subprocess import compose_agent_prompt, spawn_agent
 from ..failure_classification import (
     agent_not_found,
@@ -150,7 +150,7 @@ async def tool_handoff_agent(args: dict[str, Any]) -> dict[str, Any]:
     # pool so dashboard-selected handoff receivers are not collapsed to claude.
     effective_type = (
         receiver_template.agent_type if receiver_template
-        else normalize_agent_type(str(to_agent_type)) if valid_agent_type(str(to_agent_type))
+        else to_agent_type if to_agent_type in ("claude", "codex")
         else "claude"
     )
     policy_failures = policy.preflight_spawn(cwd, effective_type)

@@ -47,14 +47,13 @@ gracefully to Python SDK, then to subprocess.
 │ Session Manager (TypeScript, Node.js sidecar)                   │
 │   ├── ClaudeSDKClient sessions (long-lived, multi-turn)         │
 │   ├── Codex AppServer sessions                                  │
-│   ├── Google Agents CLI runs (agents-cli run)                   │
 │   ├── Streaming timeline (NDJSON events)                        │
 │   ├── Chat rooms (inter-agent coordination)                     │
 │   ├── Permission flow (hooks → operator → user)                │
 │   └── Event broadcast (→ gateway channels)                      │
-│         ↕ Agent SDK / CLI subprocesses (claude/codex/agents-cli)│
+│         ↕ Agent SDK (NDJSON over stdio to claude/codex CLI)     │
 ├─────────────────────────────────────────────────────────────────┤
-│ Agent Sessions (claude / codex / google_agents)                 │
+│ Agent Sessions (claude / codex)                                 │
 │   ├── Injected MCP: kumiho-memory (gRPC → kumiho-server)        │
 │   ├── Injected MCP: operator-tools (subset for sub-agents)     │
 │   └── Injected MCP: channel-tools (post to channels)            │
@@ -123,8 +122,7 @@ GET    /chat/rooms          → list rooms
     │   ├── event-emitter.ts   # Broadcast to operator/gateway
     │   └── providers/
     │       ├── claude.ts      # ClaudeSDKClient wrapper
-    │       ├── codex.ts       # Codex AppServer wrapper
-    │       └── google-agents.ts # Google Agents CLI subprocess wrapper
+    │       └── codex.ts       # Codex AppServer wrapper
     └── node_modules/
 ```
 
@@ -161,7 +159,7 @@ async def _ensure_session_manager():
 // session-manager/src/agent-manager.ts
 async createAgent(config: {
     cwd: string;
-    agentType: 'claude' | 'codex' | 'google_agents';
+    agentType: 'claude' | 'codex';
     prompt: string;
     systemPrompt?: string;
     model?: string;

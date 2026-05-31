@@ -1,9 +1,8 @@
 """Agent subprocess spawn/monitor — CLI subprocess model.
 
-Workflow agents are spawned as provider CLI subprocesses. Claude/Codex
-prompts are written to temp .md files and piped via stdin to avoid ARG_MAX
-and shell-encoding issues with Korean/Unicode text. Google Agents CLI uses
-the documented `agents-cli run MESSAGE` argument form.
+Workflow agents are spawned as `claude --print` subprocesses.  Prompts
+are written to temp .md files and piped via stdin to avoid ARG_MAX and
+shell-encoding issues with Korean/Unicode text.
 """
 from __future__ import annotations
 
@@ -16,7 +15,7 @@ import tempfile
 from typing import Any
 
 from ._log import _log
-from .agent_state import GOOGLE_AGENT_TYPE, ManagedAgent, normalize_agent_type
+from .agent_state import ManagedAgent
 from .clean_env import build_agent_env, clean_build_caches
 from .journal import SessionJournal
 from .run_log import get_log, get_or_create_log
@@ -129,7 +128,6 @@ def _build_command(
     mcp_config_path: str | None = None,
     mcp_servers: dict[str, Any] | None = None,
 ) -> list[str]:
-    agent_type = normalize_agent_type(agent_type)
     if agent_type == "codex":
         # Approval flags are top-level Codex options, so they must precede `exec`.
         cmd = [
@@ -144,11 +142,6 @@ def _build_command(
         if mcp_servers:
             cmd.extend(_codex_mcp_overrides(mcp_servers))
         return cmd
-    if agent_type == GOOGLE_AGENT_TYPE:
-        # Google Agents CLI is an ADK / Agent Platform lifecycle runner, not a
-        # coding-agent CLI with stdin/MCP injection. `agents-cli run MESSAGE`
-        # is the documented non-interactive prompt path.
-        return [_resolve_cli("agents-cli"), "run"]
     # Prompt is piped via stdin — no -p flag, no ARG_MAX issues,
     # no shell encoding problems with Korean/Unicode text.
     cmd = [_resolve_cli("claude"), "--print", "--dangerously-skip-permissions"]
@@ -157,16 +150,6 @@ def _build_command(
     if mcp_config_path:
         cmd.extend(["--mcp-config", mcp_config_path])
     return cmd
-
-
-def _uses_prompt_argument(agent_type: str) -> bool:
-    return normalize_agent_type(agent_type) == GOOGLE_AGENT_TYPE
-
-
-def _command_preview(cmd: list[str], agent_type: str) -> str:
-    if _uses_prompt_argument(agent_type):
-        return " ".join(cmd[:2])
-    return " ".join(cmd[:3])
 
 
 async def _read_stream(stream: asyncio.StreamReader | None, agent: ManagedAgent, target: str) -> None:
@@ -237,7 +220,7 @@ async def _monitor_agent(
         run_log = get_log(agent.id)
         if run_log is not None:
             run_log.record_subprocess(
-                command=_command_preview(cmd, agent.agent_type),
+                command=" ".join(cmd[:3]),
                 exit_code=proc.returncode,
                 stdout=agent.stdout_buffer,
                 stderr=agent.stderr_buffer,
@@ -281,13 +264,10 @@ async def spawn_agent(
       - Claude: serialize to a temp JSON file and pass `--mcp-config <path>`
       - Codex: emit `-c mcp_servers.<name>.<field>=<toml-value>` overrides
     """
-    agent.agent_type = normalize_agent_type(agent.agent_type)
-
     # Claude consumes MCP config from a JSON file; codex doesn't read
-    # files (only `-c` overrides), and Google Agents CLI has no MCP
-    # injection surface for `agents-cli run`.
+    # files (only `-c` overrides) so we skip the write for codex agents.
     mcp_config_path: str | None = None
-    if mcp_servers and agent.agent_type == "claude":
+    if mcp_servers and agent.agent_type != "codex":
         mcp_config_path = _write_mcp_config_file(agent.id, mcp_servers)
 
     cmd = _build_command(
@@ -309,9 +289,6 @@ async def spawn_agent(
 
     # Write prompt to temp file for stdin pipe
     prompt_path = _write_prompt_file(agent.id, prompt)
-    prompt_via_arg = _uses_prompt_argument(agent.agent_type)
-    if prompt_via_arg:
-        cmd.append(prompt)
 
     # Workflow/pattern agents can enter the subprocess backend without going
     # through tool_create_agent, so seed their RunLog here. Top-level agents
@@ -326,16 +303,15 @@ async def spawn_agent(
         )
         run_log.record_prompt(prompt)
 
-    _log(f"Spawning agent {agent.id}: {_command_preview(cmd, agent.agent_type)}... ({len(prompt)} chars) in {cwd} [prompt={prompt_path}]")
+    _log(f"Spawning agent {agent.id}: {cmd[:3]}... ({len(prompt)} chars) in {cwd} [prompt={prompt_path}]")
     prompt_fh = None
     try:
-        if not prompt_via_arg:
-            prompt_fh = open(prompt_path, "r", encoding="utf-8")
+        prompt_fh = open(prompt_path, "r", encoding="utf-8")
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             cwd=cwd,
             env=env,
-            stdin=asyncio.subprocess.DEVNULL if prompt_via_arg else prompt_fh,
+            stdin=prompt_fh,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )

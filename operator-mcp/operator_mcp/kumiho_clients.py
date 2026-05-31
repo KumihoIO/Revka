@@ -15,7 +15,6 @@ import os
 from typing import Any
 
 from ._log import _log
-from .agent_state import normalize_agent_type
 from .construct_config import harness_project, kumiho_connection_config
 
 _KUMIHO_IMPORT_ERROR: BaseException | None = None
@@ -800,7 +799,7 @@ class KumihoAgentPoolClient:
         result = {
             "kref": item.get("kref", ""),
             "name": item.get("item_name", item.get("name", "unknown")),
-            "agent_type": normalize_agent_type(meta.get("agent_type", "codex")),
+            "agent_type": meta.get("agent_type", "codex"),
             "role": meta.get("role", "coder"),
             "capabilities": expertise,
             "description": description,

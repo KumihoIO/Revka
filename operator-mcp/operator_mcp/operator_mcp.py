@@ -66,7 +66,7 @@ async def list_tools() -> list[Tool]:
     return [
         Tool(
             name="create_agent",
-            description="Spawn a new agent subprocess (claude, codex, or google_agents CLI). Optionally use a template from the agent pool.",
+            description="Spawn a new coding-agent subprocess (claude or codex). Optionally use a template from the agent pool. For Google ADK lifecycle work, spawn claude/codex and let it call google_agents_cli.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -82,7 +82,7 @@ async def list_tools() -> list[Tool]:
                     "agent_type": {
                         "type": "string",
                         "description": "CLI to use. Overrides template agent_type if provided.",
-                        "enum": ["claude", "codex", "google_agents"],
+                        "enum": ["claude", "codex"],
                     },
                     "initial_prompt": {
                         "type": "string",
@@ -94,7 +94,7 @@ async def list_tools() -> list[Tool]:
                     },
                     "model": {
                         "type": "string",
-                        "description": "Model hint for CLIs that support model selection. Claude/Codex use this directly; Google Agents CLI projects usually choose the model in ADK project config.",
+                        "description": "Model hint for CLIs that support model selection.",
                     },
                     "allowed_tools": {
                         "type": "array",
@@ -421,7 +421,7 @@ async def list_tools() -> list[Tool]:
                     "agent_type": {
                         "type": "string",
                         "description": "CLI to use.",
-                        "enum": ["claude", "codex", "google_agents"],
+                        "enum": ["claude", "codex"],
                     },
                     "role": {
                         "type": "string",
@@ -459,7 +459,7 @@ async def list_tools() -> list[Tool]:
                     },
                     "model": {
                         "type": "string",
-                        "description": "Preferred model hint. Claude/Codex use this directly; Google Agents CLI projects usually choose the model in ADK project config.",
+                        "description": "Preferred model hint.",
                     },
                 },
                 "required": ["name", "agent_type", "role", "capabilities", "description"],

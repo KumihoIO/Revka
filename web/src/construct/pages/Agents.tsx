@@ -111,7 +111,6 @@ export default function Agents() {
 
   const activeCount = useMemo(() => agents.filter((agent) => !agent.deprecated).length, [agents]);
   const codexCount = useMemo(() => agents.filter((agent) => agent.agent_type === 'codex').length, [agents]);
-  const googleAgentsCount = useMemo(() => agents.filter((agent) => agent.agent_type === 'google_agents').length, [agents]);
 
   const handleSave = async (values: AgentFormValues) => {
     setSaving(true);
@@ -342,7 +341,7 @@ export default function Agents() {
                 </span>
               </div>
 
-              <div className="mt-3 grid gap-3 grid-cols-2 xl:grid-cols-4">
+              <div className="mt-3 grid gap-3 grid-cols-3">
                 <Panel className="p-3" variant="utility">
                   <div className="construct-kicker">{t('agents.stats.registry')}</div>
                   <div className="mt-1 text-lg font-semibold" style={{ color: 'var(--construct-text-primary)' }}>{agents.length}</div>
@@ -354,10 +353,6 @@ export default function Agents() {
                 <Panel className="p-3" variant="utility">
                   <div className="construct-kicker">{t('agents.stats.codex')}</div>
                   <div className="mt-1 text-lg font-semibold" style={{ color: 'var(--construct-text-primary)' }}>{codexCount}</div>
-                </Panel>
-                <Panel className="p-3" variant="utility">
-                  <div className="construct-kicker">{t('agents.stats.google')}</div>
-                  <div className="mt-1 text-lg font-semibold" style={{ color: 'var(--construct-text-primary)' }}>{googleAgentsCount}</div>
                 </Panel>
               </div>
 
@@ -620,7 +615,6 @@ function AgentEditorModal({
           <select className="construct-input" value={agentType} onChange={(event) => setAgentType(event.target.value)}>
             <option value="claude">Claude</option>
             <option value="codex">Codex</option>
-            <option value="google_agents">Google Agents CLI</option>
           </select>
         </label>
       </div>

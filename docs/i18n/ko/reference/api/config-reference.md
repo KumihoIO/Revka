@@ -805,8 +805,8 @@ Kumiho는 Construct의 정식 영속 그래프 메모리 백엔드입니다. 런
 ## `[google_agents_cli]`
 
 Google Agents CLI용 ADK / Agent Platform lifecycle 명령 통합입니다. 이 섹션은
-`google_agents_cli` 도구를 켜며, 워크플로와 operator 에이전트 선택은
-`agent_type: google_agents`를 사용합니다.
+`google_agents_cli` 도구를 켭니다. `agents-cli`는 코딩 에이전트를 돕는
+lifecycle 도구이지 Construct `agent_type`이나 세션 provider가 아닙니다.
 
 | 키 | 기본값 | 용도 |
 |---|---|---|
@@ -823,8 +823,9 @@ Google Agents CLI용 ADK / Agent Platform lifecycle 명령 통합입니다. 이 
   `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION`,
   `GOOGLE_GENAI_USE_VERTEXAI` 같은 Google 인증/프로젝트 변수는 존재하면
   기본 전달됩니다.
-- 비대화형 `agents-cli run` agent 단계에는 `agent_type: google_agents`를
-  사용하세요. 모델 선택은 보통 ADK project 설정이 담당합니다.
+- 위임이 필요하면 `claude` 또는 `codex` 에이전트를 사용하고, 그 에이전트가
+  `google_agents_cli`로 `agents-cli run`, `eval`, `deploy`, publish 명령을
+  실행하게 하세요. 모델 선택은 보통 ADK project 설정이 담당합니다.
 
 ## `[operator]`
 

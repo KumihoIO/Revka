@@ -54,7 +54,7 @@ Step 5 — Optionally send follow-up work:
 Agent lifecycle:
   - create_agent: Spawn a child agent
     Required params: cwd, title, initial_prompt
-    Optional params: agent_type ("claude"/"codex"/"google_agents"), template, model
+    Optional params: agent_type ("claude"/"codex"), template, model
   - wait_for_agent: Wait for completion
     Required params: agent_id
   - send_agent_prompt: Send follow-up work

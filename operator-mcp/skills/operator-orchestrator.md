@@ -24,7 +24,7 @@ Select agents from the pool or create ad-hoc:
 - **Coder agents** (`agent_type: codex`): Implementation, debugging, refactoring
 - **Reviewer agents** (`agent_type: claude`): Code review, architecture, investigation
 - **Researcher agents** (`agent_type: claude`): Exploration, planning, analysis
-- **Google ADK agents** (`agent_type: google_agents`): Run Google Agents CLI / ADK projects
+- **Google ADK lifecycle tasks**: Assign to Claude/Codex and use `google_agents_cli`
 
 Naming: `coder-<scope>`, `reviewer-<scope>`, `researcher-<scope>`
 

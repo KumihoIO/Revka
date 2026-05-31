@@ -9,7 +9,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Crosshair, Link2, Link2Off, Loader2, Lock, Search, Sparkles, Trash2, X } from 'lucide-react';
 import type { Node } from '@xyflow/react';
-import { type BuiltinAgentType, type ConditionalBranchDefinition, type TaskNodeData } from '@/construct/components/workflows/yamlSync';
+import { type ConditionalBranchDefinition, type TaskNodeData } from '@/construct/components/workflows/yamlSync';
 import type { SkillDefinition } from '@/types/api';
 import { fetchSkills, getChannels } from '@/lib/api';
 import Panel from '@/construct/components/ui/Panel';
@@ -24,8 +24,8 @@ import { slugify as slugifyShared, uniqueSlug } from './slugify';
 /** Step types that surface the encrypted auth-profile dropdown. */
 const AUTH_ELIGIBLE_STEP_TYPES = new Set(['agent', 'shell', 'python', 'email', 'a2a']);
 
-const AGENT_HINT_OPTIONS = ['coder', 'researcher', 'reviewer', 'google_agents', 'adk'];
-const BUILTIN_AGENT_OPTIONS: readonly BuiltinAgentType[] = ['claude', 'codex', 'google_agents'];
+const AGENT_HINT_OPTIONS = ['coder', 'researcher', 'reviewer'];
+const BUILTIN_AGENT_OPTIONS = ['claude', 'codex'] as const;
 
 function parseListInput(value: string): string[] {
   return value
@@ -1190,9 +1190,8 @@ export default function StepConfigPanel({
                     onChange={(e) => onUpdate(node.id, { agentType: e.target.value })}
                     style={inputStyle}
                   >
-                    {BUILTIN_AGENT_OPTIONS.map((agentType) => (
-                      <option key={agentType} value={agentType}>{agentType}</option>
-                    ))}
+                    <option value="claude">claude</option>
+                    <option value="codex">codex</option>
                   </select>
                 </div>
                 <div>

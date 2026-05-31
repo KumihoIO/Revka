@@ -15,7 +15,7 @@ named parameters. Below is every tool with its parameters and usage examples.
 
 create_agent — Spawn a child agent.
   Required: cwd (string), title (string), initial_prompt (string)
-  Optional: agent_type ("claude", "codex", or "google_agents"), template (string), model (string)
+  Optional: agent_type ("claude" or "codex"), template (string), model (string)
 
   Example — spawn from template:
   ```
@@ -37,13 +37,13 @@ create_agent — Spawn a child agent.
   })
   ```
 
-  Example — run a Google ADK agent via agents-cli:
+  Example — delegate Google ADK lifecycle work to a coding agent:
   ```
   create_agent({
     "cwd": "/path/to/adk-project",
     "title": "Deploy ADK agent",
-    "agent_type": "google_agents",
-    "initial_prompt": "Run the project task and report the result."
+    "agent_type": "codex",
+    "initial_prompt": "Use google_agents_cli to deploy this ADK project and report the result."
   })
   ```
 

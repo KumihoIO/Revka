@@ -65,8 +65,8 @@ Do not inline the full skill unless the task needs exact API details.
 
 Roles: CODER (codex) — implementation/debugging. REVIEWER (codex) — \
 code review/quality. RESEARCHER (claude) — exploration/analysis. \
-GOOGLE_AGENTS (google_agents) — run Google Agents CLI / ADK projects; \
-models are usually configured inside the ADK project.
+For Google ADK / Agent Platform lifecycle work, use a claude/codex agent \
+with the google_agents_cli tool; agents-cli is not a peer coding agent.
 
 Model tiering: opus — deep reasoning/review. sonnet — balanced coding. \
 haiku — fast/cheap triage. Set model based on role complexity.

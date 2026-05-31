@@ -8,7 +8,7 @@
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import type { AgentProvider, AgentSessionInfo, AgentUsage } from "./types.js";
+import type { AgentSessionInfo, AgentUsage } from "./types.js";
 
 const log = (msg: string) => process.stderr.write(`[session-mgr:persist] ${msg}\n`);
 
@@ -18,7 +18,7 @@ export interface PersistedAgentState {
   id: string;
   title: string;
   cwd: string;
-  agentType: AgentProvider;
+  agentType: "claude" | "codex";
   sessionId?: string;       // Claude SDK session ID (for resume)
   status: string;
   parentId?: string;

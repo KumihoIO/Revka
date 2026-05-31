@@ -30,7 +30,7 @@ from ._log import _log
 class WorkflowStep:
     """A single step in a workflow preset."""
     role: str                          # coder, reviewer, researcher, etc.
-    agent_type: str = "codex"          # claude, codex, or google_agents
+    agent_type: str = "codex"          # claude or codex
     name_suffix: str = ""              # appended to step title, e.g. "alice"
     depends_on: list[int] = field(default_factory=list)  # indices of prior steps
     review_loop: bool = False          # if True, run review_fix_loop after this step

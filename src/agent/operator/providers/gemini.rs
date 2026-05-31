@@ -30,8 +30,8 @@ object containing the parameters.
      "agent_type": "codex",
      "initial_prompt": "Detailed instructions."
    })
-   Use `"agent_type": "google_agents"` for Google Agents CLI / ADK projects
-   whose model and runtime are configured in the project.
+   For Google ADK lifecycle work, spawn claude/codex and instruct it to call
+   `google_agents_cli`; agents-cli is a tool for coding agents, not a provider.
 
 3. Wait for completion:
    wait_for_agent({"agent_id": "<id>"})

@@ -17,7 +17,7 @@ import os
 from typing import Any
 
 from .._log import _log
-from ..agent_state import POOL, normalize_agent_type, valid_agent_type
+from ..agent_state import AGENTS, POOL
 from ..construct_config import harness_project
 from ..failure_classification import (
     bad_directory,
@@ -125,7 +125,7 @@ def _parse_supervisor_action(text: str) -> dict[str, str]:
 
 
 def _resolve_agent_type(agent_hint: str) -> str:
-    """Resolve an agent hint to a concrete agent_type.
+    """Resolve an agent hint to a concrete agent_type (claude/codex).
 
     Checks pool templates first, falls back to literal if it's a valid type.
     """
@@ -134,9 +134,8 @@ def _resolve_agent_type(agent_hint: str) -> str:
         if tmpl.name.lower() == agent_hint.lower():
             return tmpl.agent_type
     # Check if it's a direct type
-    normalized = normalize_agent_type(agent_hint)
-    if valid_agent_type(normalized):
-        return normalized
+    if agent_hint.lower() in ("claude", "codex"):
+        return agent_hint.lower()
     # Default: use claude for research-like, codex for coding-like
     coding_hints = ("cod", "fix", "implement", "build", "write", "refactor")
     if any(h in agent_hint.lower() for h in coding_hints):

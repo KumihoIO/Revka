@@ -108,7 +108,7 @@ steps:                         # 최소 한 개 단계 필수
   type: agent
   depends_on: []
   agent:
-    agent_type: claude         # claude, codex 또는 google_agents
+    agent_type: claude         # claude 또는 codex
     role: researcher           # coder, researcher, reviewer 등
     prompt: |
       Research ${inputs.topic} and summarize findings.
@@ -122,11 +122,10 @@ steps:                         # 최소 한 개 단계 필수
   retry_delay: 10             # 재시도 간 10초 대기
 ```
 
-`agent_type: google_agents`는 Google Agents CLI / ADK 프로젝트를
-비대화형 `agents-cli run`으로 실행합니다. ADK 프로젝트가 보통 모델을
-선택하므로 `model`은 힌트로만 취급됩니다. 배포·평가 같은 lifecycle 명령은
-`shell` 단계에서 `agents-cli deploy`, `agents-cli eval run`처럼 실행하거나
-상위 Operator가 `google_agents_cli` 도구를 사용하게 하세요.
+Google Agents CLI / ADK lifecycle 작업은 `agent_type`이 아닙니다. 위임이
+필요하면 `claude` 또는 `codex` 에이전트를 띄우고 `google_agents_cli` 도구로
+`agents-cli run`, `agents-cli deploy`, `agents-cli eval run` 같은 명령을
+실행하게 하세요. 단순 명령은 `shell` 단계에서도 실행할 수 있습니다.
 
 `action` 필드는 단축형입니다: `action: research` 한 줄로 `ACTION_DEFAULTS`에 따라 `type: agent`, `role: researcher`, `agent_type: claude`가 자동 설정됩니다.
 

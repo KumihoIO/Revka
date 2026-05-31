@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from operator_mcp.agent_state import AgentPool, AgentTemplate, ManagedAgent, normalize_agent_type
+from operator_mcp.agent_state import AgentPool, AgentTemplate, ManagedAgent
 
 
 # ---------------------------------------------------------------------------
@@ -84,11 +84,6 @@ class TestAgentTemplate:
         assert t.default_cwd == "~/projects/frontend"
         assert t.system_hint == "Focus on accessibility"
 
-    def test_google_agents_type_alias_normalizes(self):
-        assert normalize_agent_type("agents-cli") == "google_agents"
-        assert normalize_agent_type("google-agents-cli") == "google_agents"
-        assert normalize_agent_type("adk") == "google_agents"
-
 
 # ---------------------------------------------------------------------------
 # AgentPool
@@ -128,13 +123,12 @@ class TestAgentPool:
     def test_persistence(self, pool_path):
         pool1 = AgentPool(pool_path)
         pool1.add(AgentTemplate(
-            name="persist-test", agent_type="google-agents-cli", role="coder",
+            name="persist-test", agent_type="claude", role="coder",
             capabilities=["go"], description="Go coder",
         ))
         pool2 = AgentPool(pool_path)
         assert "persist-test" in pool2.templates
         assert pool2.templates["persist-test"].description == "Go coder"
-        assert pool2.templates["persist-test"].agent_type == "google_agents"
 
     def test_record_use(self, pool_path):
         pool = AgentPool(pool_path)

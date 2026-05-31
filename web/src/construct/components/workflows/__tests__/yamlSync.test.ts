@@ -790,30 +790,6 @@ steps:
   assert.equal(manus.manus_project_id, 'project-42');
 });
 
-test('google_agents agent type round-trips through parse, flow, emit, parse', () => {
-  const yaml = `
-steps:
-  - id: google-run
-    type: agent
-    agent:
-      agent_type: google_agents
-      role: deployer
-      prompt: "Deploy the ADK agent with agents-cli."
-`;
-
-  const tasks1 = parseWorkflowYaml(yaml);
-  assert.equal(tasks1[0]!.agent_type, 'google_agents');
-
-  const { nodes, edges } = tasksToFlow(tasks1);
-  assert.equal(nodes[0]!.data.agentType, 'google_agents');
-
-  const yaml2 = tasksToYaml(flowToTasks(nodes, edges));
-  assert.match(yaml2, /agent_type:\s+google_agents/);
-
-  const tasks2 = parseWorkflowYaml(yaml2);
-  assert.equal(tasks2[0]!.agent_type, 'google_agents');
-});
-
 test('findOutputDataRefs extracts template and expression output_data references', () => {
   const refs = findOutputDataRefs(
     "${final-canon-auditor.output_data.production_ready} ${{ final_canon_auditor.output_data.verdict == 'APPROVED' }}",

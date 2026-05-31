@@ -540,7 +540,8 @@ Lưu ý:
 ## `[google_agents_cli]`
 
 Tích hợp Google Agents CLI cho các lệnh vòng đời ADK / Agent Platform. Mục này bật tool
-`google_agents_cli`; trong workflow và operator agent, chọn `agent_type: google_agents`.
+`google_agents_cli`. `agents-cli` là công cụ vòng đời cho coding agent, không phải
+Construct `agent_type` hoặc session provider.
 
 | Khóa | Mặc định | Mục đích |
 |---|---|---|
@@ -555,7 +556,8 @@ Lưu ý:
 - Các biến Google như `GOOGLE_API_KEY`, `GEMINI_API_KEY`,
   `GOOGLE_APPLICATION_CREDENTIALS`, `GOOGLE_CLOUD_PROJECT`,
   `GOOGLE_CLOUD_LOCATION` và `GOOGLE_GENAI_USE_VERTEXAI` được truyền mặc định khi có.
-- Dùng `agent_type: google_agents` cho bước agent chạy `agents-cli run` không tương tác.
+- Khi cần ủy quyền, dùng agent `claude` hoặc `codex` và yêu cầu agent đó gọi
+  `google_agents_cli` cho `agents-cli run`, `eval`, `deploy`, hoặc publish.
   Model thường được cấu hình trong project ADK.
 
 ## Giá trị mặc định liên quan bảo mật

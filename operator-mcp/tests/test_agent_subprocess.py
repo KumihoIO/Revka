@@ -60,14 +60,6 @@ class TestBuildCommand:
         ]
         assert "--skip-git-repo-check" in cmd
 
-    def test_google_agents_command(self):
-        cmd = _build_command("google_agents")
-        assert cmd == ["agents-cli", "run"]
-
-    def test_google_agents_alias_command(self):
-        cmd = _build_command("agents-cli")
-        assert cmd == ["agents-cli", "run"]
-
     def test_claude_command(self):
         cmd = _build_command("claude")
         assert cmd[0] == "claude"
@@ -110,12 +102,6 @@ class TestBuildCommand:
         # Each leaf becomes its own -c flag
         assert cmd.count("-c") == 3
         assert any('mcp_servers.operator-tools.command="/path/python3"' in a for a in cmd)
-
-    def test_google_agents_ignores_mcp_servers(self):
-        cmd = _build_command("google_agents", mcp_servers={
-            "operator-tools": {"command": "/path/python3", "args": ["/path/script.py"]},
-        })
-        assert cmd == ["agents-cli", "run"]
 
 
 class TestCodexMcpOverrides:

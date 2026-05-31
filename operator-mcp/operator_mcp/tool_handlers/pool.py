@@ -5,7 +5,7 @@ import json as _json
 from datetime import datetime, timezone
 from typing import Any
 
-from ..agent_state import CANONICAL_AGENT_TYPES, AgentTemplate, POOL, normalize_agent_type
+from ..agent_state import AgentTemplate, POOL
 from ..kumiho_clients import KumihoAgentPoolClient
 
 
@@ -39,7 +39,7 @@ async def tool_search_agent_pool(args: dict[str, Any], pool_client: KumihoAgentP
 
 async def tool_save_agent_template(args: dict[str, Any], pool_client: KumihoAgentPoolClient) -> dict[str, Any]:
     name = args["name"]
-    agent_type = normalize_agent_type(args["agent_type"])
+    agent_type = args["agent_type"]
     role = args["role"]
     capabilities = args["capabilities"]
     if isinstance(capabilities, str):
@@ -49,10 +49,8 @@ async def tool_save_agent_template(args: dict[str, Any], pool_client: KumihoAgen
             capabilities = [c.strip() for c in capabilities.split(",") if c.strip()]
     description = args["description"]
 
-    if agent_type not in CANONICAL_AGENT_TYPES:
-        return {
-            "error": f"Invalid agent_type: {agent_type}. Must be one of: {', '.join(CANONICAL_AGENT_TYPES)}."
-        }
+    if agent_type not in ("claude", "codex"):
+        return {"error": f"Invalid agent_type: {agent_type}. Must be 'claude' or 'codex'."}
     valid_roles = ("coder", "reviewer", "researcher", "tester", "architect", "planner")
     if role not in valid_roles:
         return {"error": f"Invalid role: {role}. Must be one of: {', '.join(valid_roles)}"}

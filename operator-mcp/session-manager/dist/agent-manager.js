@@ -8,7 +8,6 @@ import { randomUUID } from "node:crypto";
 import { AgentEventEmitter } from "./event-emitter.js";
 import { createClaudeSession, sendClaudeQuery, closeClaudeSession } from "./providers/claude.js";
 import { createCodexSession, sendCodexQuery, closeCodexSession } from "./providers/codex.js";
-import { createGoogleAgentsSession, sendGoogleAgentsQuery, closeGoogleAgentsSession, } from "./providers/google-agents.js";
 import { saveAgentState, removeAgentState, updateAgentStatus, getResumableStates } from "./persistence.js";
 const log = (msg) => process.stderr.write(`[session-mgr] ${msg}\n`);
 export class AgentManager {
@@ -59,9 +58,6 @@ export class AgentManager {
             else if (config.agentType === "codex") {
                 session.handle = createCodexSession(config, onEvent);
             }
-            else if (config.agentType === "google_agents") {
-                session.handle = createGoogleAgentsSession(config, onEvent);
-            }
             else {
                 throw new Error(`Unsupported agent type: ${config.agentType}`);
             }
@@ -110,7 +106,7 @@ export class AgentManager {
                 this.emitter.emit(agentId, event);
             });
         }
-        else if (session.config.agentType === "codex") {
+        else {
             sendCodexQuery(session.handle, prompt, (event) => {
                 session.events.push(event);
                 if (event.type === "status_changed")
@@ -126,26 +122,6 @@ export class AgentManager {
                 }
                 this.emitter.emit(agentId, event);
             });
-        }
-        else if (session.config.agentType === "google_agents") {
-            sendGoogleAgentsQuery(session.handle, prompt, (event) => {
-                session.events.push(event);
-                if (event.type === "status_changed")
-                    session.status = event.status;
-                if (event.type === "turn_completed" && event.usage) {
-                    session.usage = {
-                        inputTokens: (session.usage.inputTokens ?? 0) + (event.usage.inputTokens ?? 0),
-                        outputTokens: (session.usage.outputTokens ?? 0) + (event.usage.outputTokens ?? 0),
-                        totalCostUsd: (session.usage.totalCostUsd ?? 0) + (event.usage.totalCostUsd ?? 0),
-                        model: event.usage.model ?? session.usage.model,
-                        provider: event.usage.provider ?? session.usage.provider,
-                    };
-                }
-                this.emitter.emit(agentId, event);
-            });
-        }
-        else {
-            throw new Error(`Unsupported agent type: ${session.config.agentType}`);
         }
         session.status = "running";
         return this.getSessionInfo(session);
@@ -163,14 +139,8 @@ export class AgentManager {
             if (session.config.agentType === "claude") {
                 await closeClaudeSession(session.handle);
             }
-            else if (session.config.agentType === "codex") {
-                await closeCodexSession(session.handle);
-            }
-            else if (session.config.agentType === "google_agents") {
-                await closeGoogleAgentsSession(session.handle);
-            }
             else {
-                throw new Error(`Unsupported agent type: ${session.config.agentType}`);
+                await closeCodexSession(session.handle);
             }
         }
         catch (err) {
@@ -188,7 +158,7 @@ export class AgentManager {
         if (!session || session.status !== "running")
             return;
         log(`Interrupting agent ${agentId}`);
-        // For Claude: close the query, for process-based CLIs: kill the process.
+        // For Claude: close the query, for Codex: kill the process
         if (session.config.agentType === "claude") {
             const handle = session.handle;
             try {
@@ -196,16 +166,9 @@ export class AgentManager {
             }
             catch { /* ignore */ }
         }
-        else if (session.config.agentType === "codex") {
-            const handle = session.handle;
-            handle.process?.kill("SIGTERM");
-        }
-        else if (session.config.agentType === "google_agents") {
-            const handle = session.handle;
-            handle.process?.kill("SIGTERM");
-        }
         else {
-            throw new Error(`Unsupported agent type: ${session.config.agentType}`);
+            const handle = session.handle;
+            handle.process?.kill("SIGTERM");
         }
         session.status = "idle";
         this.emitter.emit(agentId, { type: "status_changed", status: "idle" });
