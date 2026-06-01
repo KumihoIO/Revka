@@ -52,7 +52,11 @@ def _normalize_command(args: dict[str, Any]) -> list[str] | None:
     if isinstance(raw, str):
         command = [raw]
     elif isinstance(raw, list):
-        command = [str(part) for part in raw]
+        if not all(isinstance(part, str) for part in raw):
+            raise ValueError("agents-cli command tokens must be strings")
+        command = list(raw)
+    elif raw is not None:
+        raise ValueError("agents-cli command must be a string or list of strings")
     else:
         command = []
 
@@ -80,6 +84,8 @@ def _validate_command(command: list[str], allow_interactive: bool) -> str | None
     for arg in command:
         if arg == "":
             return "agents-cli command contains an empty token"
+        if arg.strip() != arg:
+            return "agents-cli command tokens must not include leading or trailing whitespace"
         if "\0" in arg:
             return "agents-cli command contains a NUL byte"
         if not allow_interactive and arg in {"-i", "--interactive"}:
@@ -168,15 +174,24 @@ async def tool_google_agents_cli(args: dict[str, Any]) -> dict[str, Any]:
             code="bad_max_output_bytes",
             category=VALIDATION_ERROR,
         )
-    proc = await asyncio.create_subprocess_exec(
-        binary,
-        *command,
-        cwd=cwd,
-        env=_safe_env(args.get("env_passthrough")),
-        stdin=asyncio.subprocess.DEVNULL,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            binary,
+            *command,
+            cwd=cwd,
+            env=_safe_env(args.get("env_passthrough")),
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    except OSError as exc:
+        return classified_error(
+            f"Failed to execute agents-cli: {exc}",
+            code="agents_cli_spawn_failed",
+            category=RUNTIME_ENV_ERROR,
+            retryable=True,
+            detail={"command": _command_preview(command), "cwd": cwd},
+        )
     try:
         stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=timeout)
     except asyncio.TimeoutError:
