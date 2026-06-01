@@ -121,6 +121,9 @@ python3 scripts/demo/google_agents_cli_track2_evidence_gate.py \
   --write-template
 ```
 
+The gate also rejects placeholder-only evidence files such as `TODO` or
+`evidence`, and validates `.json` / `.jsonl` evidence as structured data.
+
 For the final pre-recording rehearsal, run the umbrella gate so local code
 readiness, Track 2 evidence, and optional PR health are captured in one JSON
 report:

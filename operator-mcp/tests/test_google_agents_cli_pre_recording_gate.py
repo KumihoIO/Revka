@@ -13,7 +13,7 @@ def _script() -> Path:
     return _repo_root() / "scripts" / "demo" / "google_agents_cli_pre_recording_gate.py"
 
 
-def _write(path: Path, text: str = "evidence") -> None:
+def _write(path: Path, text: str = "captured demo artifact") -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
 
@@ -70,17 +70,18 @@ def _complete_manifest() -> dict:
 
 
 def _write_complete_evidence(evidence_dir: Path) -> None:
-    for rel in [
-        "eval/baseline.json",
-        "eval/optimized.json",
-        "simulation/run-output.json",
-        "observability/trace.jsonl",
-        "optimizer/result.json",
-        "deploy/deploy-output.txt",
-        "deploy/rollback-plan.md",
-        "business/use-case.md",
-    ]:
-        _write(evidence_dir / rel)
+    files = {
+        "eval/baseline.json": '{"score": 0.42, "scenario": "heat wave"}',
+        "eval/optimized.json": '{"score": 0.86, "scenario": "heat wave"}',
+        "simulation/run-output.json": '{"scenario_count": 3, "edge_cases": ["heat wave"]}',
+        "observability/trace.jsonl": '{"trace_id": "trace-heat-wave-001", "tool_calls": 4}',
+        "optimizer/result.json": '{"measured_delta": 0.44, "changed": true}',
+        "deploy/deploy-output.txt": "deployed agent runtime projects/demo/locations/us-central1",
+        "deploy/rollback-plan.md": "Rollback by redeploying the previous Agent Runtime revision.",
+        "business/use-case.md": "Commercial property operator avoids peak pricing conflict.",
+    }
+    for rel, text in files.items():
+        _write(evidence_dir / rel, text)
     _write(evidence_dir / "optimizer/original-instructions.md", "Prioritize lowest cost.")
     _write(
         evidence_dir / "optimizer/optimized-instructions.md",

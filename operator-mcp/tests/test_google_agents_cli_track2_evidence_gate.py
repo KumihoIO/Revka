@@ -12,7 +12,7 @@ def _script() -> Path:
     return _repo_root() / "scripts" / "demo" / "google_agents_cli_track2_evidence_gate.py"
 
 
-def _write(path: Path, text: str = "evidence") -> None:
+def _write(path: Path, text: str = "captured demo artifact") -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
 
@@ -69,18 +69,18 @@ def _complete_manifest() -> dict:
 
 
 def _write_complete_evidence(evidence_dir: Path) -> None:
-    files = [
-        "eval/baseline.json",
-        "eval/optimized.json",
-        "simulation/run-output.json",
-        "observability/trace.jsonl",
-        "optimizer/result.json",
-        "deploy/deploy-output.txt",
-        "deploy/rollback-plan.md",
-        "business/use-case.md",
-    ]
-    for rel in files:
-        _write(evidence_dir / rel)
+    files = {
+        "eval/baseline.json": '{"score": 0.42, "scenario": "heat wave"}',
+        "eval/optimized.json": '{"score": 0.86, "scenario": "heat wave"}',
+        "simulation/run-output.json": '{"scenario_count": 3, "edge_cases": ["heat wave"]}',
+        "observability/trace.jsonl": '{"trace_id": "trace-heat-wave-001", "tool_calls": 4}',
+        "optimizer/result.json": '{"measured_delta": 0.44, "changed": true}',
+        "deploy/deploy-output.txt": "deployed agent runtime projects/demo/locations/us-central1",
+        "deploy/rollback-plan.md": "Rollback by redeploying the previous Agent Runtime revision.",
+        "business/use-case.md": "Commercial property operator avoids peak pricing conflict.",
+    }
+    for rel, text in files.items():
+        _write(evidence_dir / rel, text)
     _write(evidence_dir / "optimizer/original-instructions.md", "Prioritize lowest cost.")
     _write(
         evidence_dir / "optimizer/optimized-instructions.md",
@@ -128,6 +128,53 @@ def test_track2_evidence_gate_fails_missing_required_artifact(tmp_path):
     )
     assert optimization["status"] == "fail"
     assert "missing evidence file: eval/optimized.json" in optimization["failures"]
+
+
+def test_track2_evidence_gate_rejects_placeholder_artifact(tmp_path):
+    evidence_dir = tmp_path / "evidence"
+    manifest = _complete_manifest()
+    _write_complete_evidence(evidence_dir)
+    (evidence_dir / "business" / "use-case.md").write_text("TODO: replace me", encoding="utf-8")
+    (evidence_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    result = subprocess.run(
+        [sys.executable, str(_script()), "--evidence-dir", str(evidence_dir)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    report = json.loads(result.stdout)
+    b2b = next(item for item in report["checks"] if item["claim"] == "b2b_value")
+    assert b2b["status"] == "fail"
+    assert "placeholder evidence file: business/use-case.md" in b2b["failures"]
+
+
+def test_track2_evidence_gate_rejects_invalid_json_artifact(tmp_path):
+    evidence_dir = tmp_path / "evidence"
+    manifest = _complete_manifest()
+    _write_complete_evidence(evidence_dir)
+    (evidence_dir / "eval" / "baseline.json").write_text("not json", encoding="utf-8")
+    (evidence_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    result = subprocess.run(
+        [sys.executable, str(_script()), "--evidence-dir", str(evidence_dir)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    report = json.loads(result.stdout)
+    optimization = next(
+        item for item in report["checks"] if item["claim"] == "optimization_improvement"
+    )
+    assert optimization["status"] == "fail"
+    assert any(
+        item.startswith("invalid JSON evidence file eval/baseline.json")
+        for item in optimization["failures"]
+    )
 
 
 def test_track2_evidence_gate_emits_json_when_manifest_is_missing(tmp_path):

@@ -22,6 +22,17 @@ REQUIRED_CLAIMS = (
     "b2b_value",
 )
 
+PLACEHOLDER_EVIDENCE_TEXT = {
+    "",
+    "evidence",
+    "placeholder",
+    "todo",
+    "todo:",
+    "replace me",
+    "replace-me",
+    "sample",
+}
+
 
 def _template() -> dict[str, Any]:
     return {
@@ -111,6 +122,41 @@ def _number(value: Any) -> float | None:
     return None
 
 
+def _placeholder_file_failure(full: Path, rel: str) -> str | None:
+    if full.stat().st_size > 4096:
+        return None
+    try:
+        text = full.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return None
+    normalized = " ".join(text.strip().lower().split())
+    if normalized in PLACEHOLDER_EVIDENCE_TEXT or normalized.startswith("todo:"):
+        return f"placeholder evidence file: {rel}"
+    return None
+
+
+def _structured_file_failure(full: Path, rel: str) -> str | None:
+    if full.suffix == ".json":
+        try:
+            json.loads(full.read_text(encoding="utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            return f"invalid JSON evidence file {rel}: {exc}"
+    if full.suffix == ".jsonl":
+        try:
+            lines = [
+                line
+                for line in full.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            for line in lines:
+                json.loads(line)
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            return f"invalid JSONL evidence file {rel}: {exc}"
+        if not lines:
+            return f"empty JSONL evidence file: {rel}"
+    return None
+
+
 def _file_failures(base: Path, files: list[Any]) -> list[str]:
     failures: list[str] = []
     for rel in files:
@@ -127,6 +173,14 @@ def _file_failures(base: Path, files: list[Any]) -> list[str]:
             continue
         if full.stat().st_size == 0:
             failures.append(f"empty evidence file: {rel}")
+            continue
+        placeholder_failure = _placeholder_file_failure(full, rel)
+        if placeholder_failure:
+            failures.append(placeholder_failure)
+            continue
+        structured_failure = _structured_file_failure(full, rel)
+        if structured_failure:
+            failures.append(structured_failure)
     return failures
 
 
