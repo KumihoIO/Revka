@@ -825,7 +825,8 @@ lifecycle 도구이지 Construct `agent_type`이나 세션 provider가 아닙니
   기본 전달됩니다.
 - 위임이 필요하면 `claude` 또는 `codex` 에이전트를 사용하고, 그 에이전트가
   `google_agents_cli`로 `agents-cli run`, `eval`, `deploy`, publish 명령을
-  실행하게 하세요. 모델 선택은 보통 ADK project 설정이 담당합니다.
+  실행하게 하세요. 프로젝트/도구 상태 확인에는 `agents-cli info`를 사용하세요.
+  모델 선택은 보통 ADK project 설정이 담당합니다.
 
 ## `[operator]`
 

@@ -128,6 +128,23 @@ async def test_google_agents_cli_success_command(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_google_agents_cli_accepts_info_command(monkeypatch, tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _write_fake_agents_cli(bin_dir, "print('project info ok')")
+    _prepend_path(monkeypatch, bin_dir)
+    monkeypatch.setattr(google_agents_cli, "workspace_dir", lambda: str(workspace))
+
+    result = await google_agents_cli.tool_google_agents_cli({"command": ["info"]})
+
+    assert result["success"] is True
+    assert result["command"] == ["info"]
+    assert "project info ok" in result["output"]
+
+
+@pytest.mark.asyncio
 async def test_google_agents_cli_failed_command_preserves_stdout_and_stderr(monkeypatch, tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()

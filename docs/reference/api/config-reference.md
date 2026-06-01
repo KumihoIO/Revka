@@ -996,7 +996,8 @@ Notes:
   `GOOGLE_GENAI_USE_VERTEXAI` are passed by default when present.
 - Use a `claude` or `codex` agent when delegation is useful, and have that
   agent call `google_agents_cli` for `agents-cli run`, `eval`, `deploy`, or
-  publish commands. The ADK project generally owns model selection.
+  publish commands. Use `agents-cli info` to inspect project/tooling state.
+  The ADK project generally owns model selection.
 
 ## `[operator]`
 

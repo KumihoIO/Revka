@@ -35,6 +35,7 @@ ALLOWED_TOP_LEVEL_COMMANDS = {
     "deploy",
     "eval",
     "infra",
+    "info",
     "install",
     "lint",
     "login",

@@ -34,6 +34,7 @@ const ALLOWED_TOP_LEVEL_COMMANDS: &[&str] = &[
     "deploy",
     "eval",
     "infra",
+    "info",
     "install",
     "lint",
     "login",
@@ -70,7 +71,7 @@ impl Tool for GoogleAgentsCliTool {
     }
 
     fn description(&self) -> &str {
-        "Run Google Agents CLI (agents-cli) lifecycle commands for ADK/A2A agents: run, create, install, lint, eval, deploy, publish, infra, login --status, and cmd-info. Use for Google Agent Platform workflows, not as a generic shell."
+        "Run Google Agents CLI (agents-cli) lifecycle commands for ADK/A2A agents: run, scaffold, install, lint, eval, deploy, publish, infra, login --status, and info. Use for Google Agent Platform workflows, not as a generic shell."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -498,5 +499,10 @@ mod tests {
         assert!(!config.enabled);
         assert_eq!(config.timeout_secs, 600);
         assert_eq!(config.max_output_bytes, 2_097_152);
+    }
+
+    #[test]
+    fn google_agents_cli_accepts_current_info_command() {
+        assert!(validate_command(&["info".to_string()], false).is_ok());
     }
 }

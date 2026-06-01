@@ -558,7 +558,8 @@ Lưu ý:
   `GOOGLE_CLOUD_LOCATION` và `GOOGLE_GENAI_USE_VERTEXAI` được truyền mặc định khi có.
 - Khi cần ủy quyền, dùng agent `claude` hoặc `codex` và yêu cầu agent đó gọi
   `google_agents_cli` cho `agents-cli run`, `eval`, `deploy`, hoặc publish.
-  Model thường được cấu hình trong project ADK.
+  Dùng `agents-cli info` để kiểm tra trạng thái project/tooling. Model thường
+  được cấu hình trong project ADK.
 
 ## Giá trị mặc định liên quan bảo mật
 
