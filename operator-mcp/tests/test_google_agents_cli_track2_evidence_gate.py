@@ -275,6 +275,30 @@ def test_track2_evidence_gate_rejects_placeholder_artifact(tmp_path):
     assert "placeholder evidence file: business/use-case.md" in b2b["failures"]
 
 
+def test_track2_evidence_gate_rejects_large_padded_placeholder_artifact(tmp_path):
+    evidence_dir = tmp_path / "evidence"
+    manifest = _complete_manifest()
+    _write_complete_evidence(evidence_dir)
+    (evidence_dir / "business" / "use-case.md").write_text(
+        ("TODO replace me\n" * 500),
+        encoding="utf-8",
+    )
+    (evidence_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    result = subprocess.run(
+        [sys.executable, str(_script()), "--evidence-dir", str(evidence_dir)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    report = json.loads(result.stdout)
+    b2b = next(item for item in report["checks"] if item["claim"] == "b2b_value")
+    assert b2b["status"] == "fail"
+    assert "placeholder evidence file: business/use-case.md" in b2b["failures"]
+
+
 def test_track2_evidence_gate_rejects_invalid_json_artifact(tmp_path):
     evidence_dir = tmp_path / "evidence"
     manifest = _complete_manifest()

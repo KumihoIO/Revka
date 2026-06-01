@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +35,16 @@ PLACEHOLDER_EVIDENCE_TEXT = {
     "replace-me",
     "sample",
 }
+PLACEHOLDER_EVIDENCE_TOKENS = {
+    "evidence",
+    "me",
+    "placeholder",
+    "replace",
+    "replace-me",
+    "sample",
+    "todo",
+}
+PLACEHOLDER_SCAN_BYTES = 65_536
 
 
 def _template() -> dict[str, Any]:
@@ -274,14 +285,15 @@ def _number(value: Any) -> float | None:
 
 
 def _placeholder_file_failure(full: Path, rel: str) -> str | None:
-    if full.stat().st_size > 4096:
-        return None
     try:
-        text = full.read_text(encoding="utf-8")
-    except UnicodeDecodeError:
+        text = full.open("rb").read(PLACEHOLDER_SCAN_BYTES).decode("utf-8")
+    except (OSError, UnicodeDecodeError):
         return None
     normalized = " ".join(text.strip().lower().split())
     if normalized in PLACEHOLDER_EVIDENCE_TEXT or normalized.startswith("todo:"):
+        return f"placeholder evidence file: {rel}"
+    tokens = re.findall(r"[a-z0-9_-]+", normalized)
+    if tokens and all(token in PLACEHOLDER_EVIDENCE_TOKENS for token in tokens):
         return f"placeholder evidence file: {rel}"
     return None
 
