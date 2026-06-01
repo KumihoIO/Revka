@@ -161,11 +161,13 @@ python3 scripts/demo/google_agents_cli_track2_evidence_gate.py \
 
 The gate also rejects placeholder-only evidence files such as `TODO` or
 `evidence`, validates `.json` / `.jsonl` evidence as structured data, and
-cross-checks core artifact content against the manifest: existing-agent
-baseline pass/fail evidence, before/after metrics, simulation scenario counts,
-observability trace IDs, optimizer deltas, deployment project/region/resource
-text, rollback wording, mandatory Google platform technologies, and B2B
-narrative specificity.
+cross-checks core artifact content against the manifest: exact scenario-story
+alignment, existing-agent baseline pass/fail evidence, before/after metrics,
+simulation scenario counts and synthetic-scenario wording, observability trace
+IDs and trace-detail wording, optimizer deltas and optimizer invocation/source,
+deployment project/region/resource text, rollback wording, mandatory Google
+platform technologies plus the manifest platform values, and B2B narrative
+specificity across persona, workflow, inputs, actions, and measurable outcome.
 
 For the final pre-recording rehearsal, run the umbrella gate so local code
 readiness, Track 2 evidence, and optional PR health are captured in one JSON

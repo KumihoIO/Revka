@@ -99,9 +99,10 @@ def _complete_manifest() -> dict:
 def _write_complete_evidence(evidence_dir: Path) -> None:
     files = {
         "baseline/existing-agent.md": (
-            "Facility Energy Agent is the existing sandbox agent. It already handles "
-            "the normal occupancy and pricing day workflow, but before optimization "
-            "it fails the heat wave plus peak pricing edge case."
+            "Facility Energy Optimization uses Facility Energy Agent as the existing "
+            "sandbox agent. It already handles the normal occupancy and pricing day "
+            "workflow, but before optimization it fails the heat wave plus peak pricing "
+            "edge case."
         ),
         "baseline/normal-case.json": (
             '{"agent_name": "Facility Energy Agent", '
@@ -114,10 +115,17 @@ def _write_complete_evidence(evidence_dir: Path) -> None:
         "eval/baseline.json": '{"eval_success_rate": 0.42, "scenario": "heat wave"}',
         "eval/optimized.json": '{"eval_success_rate": 0.86, "scenario": "heat wave"}',
         "simulation/run-output.json": (
-            '{"scenario_count": 3, "edge_cases": ["heat wave plus peak pricing"]}'
+            '{"scenario_count": 3, "generator": "Agent Simulation synthetic scenario run", '
+            '"edge_cases": ["heat wave plus peak pricing"]}'
         ),
-        "observability/trace.jsonl": '{"trace_id": "trace-heat-wave-001", "tool_calls": 4}',
-        "optimizer/result.json": '{"measured_delta": 0.44, "changed": true}',
+        "observability/trace.jsonl": (
+            '{"trace_id": "trace-heat-wave-001", "tool_calls": 4, '
+            '"reasoning": "resolved comfort and cost conflict"}'
+        ),
+        "optimizer/result.json": (
+            '{"measured_delta": 0.44, "changed": true, '
+            '"command": ["agents-cli", "eval", "optimize"]}'
+        ),
         "deploy/deploy-output.txt": (
             "deployed agent runtime for project demo-project in us-central1 at "
             "projects/demo/locations/us-central1/agents/facility-energy"
@@ -129,10 +137,12 @@ def _write_complete_evidence(evidence_dir: Path) -> None:
             "Track 2 optimization workflow."
         ),
         "business/use-case.md": (
-            "Commercial property operations manager handles the Peak-demand incident response "
-            "workflow by combining occupancy, weather, and grid price inputs. The agent can "
-            "adjust setpoints and notify facilities team while preserving comfort and reducing "
-            "peak cost risk."
+            "Facility Energy Optimization helps the Commercial property operations manager "
+            "Balance occupant comfort against peak energy pricing. In the Peak-demand incident "
+            "response workflow, the agent combines occupancy, weather, and grid price inputs, "
+            "then can adjust setpoints and notify facilities team. Eval success rate improves "
+            "from 0.42 to 0.86, and the B2B outcome is Comfort maintained while reducing peak "
+            "cost risk."
         ),
     }
     for rel, text in files.items():

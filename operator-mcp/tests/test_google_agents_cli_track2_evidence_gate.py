@@ -85,9 +85,10 @@ def _complete_manifest() -> dict:
 def _write_complete_evidence(evidence_dir: Path) -> None:
     files = {
         "baseline/existing-agent.md": (
-            "Facility Energy Agent is the existing sandbox agent. It already handles "
-            "the normal occupancy and pricing day workflow, but before optimization "
-            "it fails the heat wave plus peak pricing edge case."
+            "Facility Energy Optimization uses Facility Energy Agent as the existing "
+            "sandbox agent. It already handles the normal occupancy and pricing day "
+            "workflow, but before optimization it fails the heat wave plus peak pricing "
+            "edge case."
         ),
         "baseline/normal-case.json": (
             '{"agent_name": "Facility Energy Agent", '
@@ -100,10 +101,17 @@ def _write_complete_evidence(evidence_dir: Path) -> None:
         "eval/baseline.json": '{"eval_success_rate": 0.42, "scenario": "heat wave"}',
         "eval/optimized.json": '{"eval_success_rate": 0.86, "scenario": "heat wave"}',
         "simulation/run-output.json": (
-            '{"scenario_count": 3, "edge_cases": ["heat wave plus peak pricing"]}'
+            '{"scenario_count": 3, "generator": "Agent Simulation synthetic scenario run", '
+            '"edge_cases": ["heat wave plus peak pricing"]}'
         ),
-        "observability/trace.jsonl": '{"trace_id": "trace-heat-wave-001", "tool_calls": 4}',
-        "optimizer/result.json": '{"measured_delta": 0.44, "changed": true}',
+        "observability/trace.jsonl": (
+            '{"trace_id": "trace-heat-wave-001", "tool_calls": 4, '
+            '"reasoning": "resolved comfort and cost conflict"}'
+        ),
+        "optimizer/result.json": (
+            '{"measured_delta": 0.44, "changed": true, '
+            '"command": ["agents-cli", "eval", "optimize"]}'
+        ),
         "deploy/deploy-output.txt": (
             "deployed agent runtime for project demo-project in us-central1 at "
             "projects/demo/locations/us-central1/agents/facility-energy"
@@ -115,10 +123,12 @@ def _write_complete_evidence(evidence_dir: Path) -> None:
             "Track 2 optimization workflow."
         ),
         "business/use-case.md": (
-            "Commercial property operations manager handles the Peak-demand incident response "
-            "workflow by combining occupancy, weather, and grid price inputs. The agent can "
-            "adjust setpoints and notify facilities team while preserving comfort and reducing "
-            "peak cost risk."
+            "Facility Energy Optimization helps the Commercial property operations manager "
+            "Balance occupant comfort against peak energy pricing. In the Peak-demand incident "
+            "response workflow, the agent combines occupancy, weather, and grid price inputs, "
+            "then can adjust setpoints and notify facilities team. Eval success rate improves "
+            "from 0.42 to 0.86, and the B2B outcome is Comfort maintained while reducing peak "
+            "cost risk."
         ),
     }
     for rel, text in files.items():
@@ -174,6 +184,51 @@ def test_track2_evidence_gate_rejects_missing_existing_agent_failure(tmp_path):
     )
     assert baseline["status"] == "fail"
     assert any("pre-optimization edge case" in item for item in baseline["failures"])
+
+
+def test_track2_evidence_gate_rejects_scenario_evidence_mismatch(tmp_path):
+    evidence_dir = tmp_path / "evidence"
+    manifest = _complete_manifest()
+    manifest["scenario"]["business_workflow"] = "Different procurement workflow"
+    _write_complete_evidence(evidence_dir)
+    (evidence_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    result = subprocess.run(
+        [sys.executable, str(_script()), "--evidence-dir", str(evidence_dir)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    report = json.loads(result.stdout)
+    assert any(
+        "scenario.business_workflow" in item for item in report["global_failures"]
+    )
+
+
+def test_track2_evidence_gate_rejects_optimizer_without_invocation_proof(tmp_path):
+    evidence_dir = tmp_path / "evidence"
+    manifest = _complete_manifest()
+    _write_complete_evidence(evidence_dir)
+    (evidence_dir / "optimizer" / "result.json").write_text(
+        '{"measured_delta": 0.44, "changed": true}',
+        encoding="utf-8",
+    )
+    (evidence_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    result = subprocess.run(
+        [sys.executable, str(_script()), "--evidence-dir", str(evidence_dir)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    report = json.loads(result.stdout)
+    optimizer = next(item for item in report["checks"] if item["claim"] == "agent_optimizer")
+    assert optimizer["status"] == "fail"
+    assert any("optimizer evidence must mention" in item for item in optimizer["failures"])
 
 
 def test_track2_evidence_gate_fails_missing_required_artifact(tmp_path):

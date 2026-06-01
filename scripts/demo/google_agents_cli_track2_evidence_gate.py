@@ -158,6 +158,8 @@ recording:
 - `scenario.b2b_persona`
 - `scenario.business_workflow`
 - `scenario.measurable_outcome`
+- Gate invariant: the evidence corpus must mention each scenario field, so the
+  manifest cannot describe a different story than the artifacts prove.
 
 ## Required Claims And Artifacts
 
@@ -194,7 +196,8 @@ recording:
 - File: `simulation/run-output.json` must contain numeric `scenario_count` and
   mention each edge-case string from the manifest.
 - Gate invariant: artifact `scenario_count` must be at least the manifest
-  `scenario_count`.
+  `scenario_count`, and the artifact must mention simulation or synthetic
+  scenarios.
 
 ### agent_observability
 
@@ -202,6 +205,8 @@ recording:
   runtime trace.
 - File: `observability/trace.jsonl` must be valid non-empty JSONL and contain
   every trace ID from the manifest.
+- Gate invariant: trace evidence must show details such as tool calls,
+  reasoning, retries, decisions, or conflict resolution.
 
 ### agent_optimizer
 
@@ -210,7 +215,8 @@ recording:
 - Files:
   - `optimizer/original-instructions.md`
   - `optimizer/optimized-instructions.md`
-  - `optimizer/result.json` with numeric `measured_delta`
+  - `optimizer/result.json` with numeric `measured_delta` and evidence of
+    `agents-cli eval optimize`, `adk optimize`, or Agent Optimizer
 - Gate invariant: optimized instructions must differ from original
   instructions, and result `measured_delta` must match the manifest.
 
@@ -226,7 +232,7 @@ recording:
 ### mandatory_google_platform
 
 - Manifest: set `intelligence`, `orchestration`, and `infrastructure`.
-- File: `platform/architecture.md` must mention:
+- File: `platform/architecture.md` must mention the manifest values and:
   - Gemini, or a third-party LLM deployed through Agent Platform
   - ADK, LangChain, or CrewAI orchestration
   - Google Cloud
@@ -237,7 +243,8 @@ recording:
 - Manifest: set `persona`, `workflow`, `inputs`, `actions`, and
   `measurable_outcome`.
 - File: `business/use-case.md` must be a concrete narrative of at least 25
-  words and mention the persona, workflow, and every action from the manifest.
+  words and mention the persona, workflow, every input, every action, and the
+  measurable outcome from the manifest.
 
 ## Notes
 
@@ -362,6 +369,10 @@ def _contains_any(text: str, terms: tuple[str, ...]) -> bool:
     return any(term in text for term in terms)
 
 
+def _contains_all(text: str, terms: tuple[str, ...]) -> bool:
+    return all(term in text for term in terms)
+
+
 def _claim_files(claim: dict[str, Any]) -> list[str]:
     files = claim.get("evidence_files")
     if isinstance(files, list) and all(isinstance(item, str) for item in files):
@@ -403,6 +414,43 @@ def _safe_evidence_path(base: Path, rel: Any) -> Path | None:
     if path.is_absolute() or ".." in path.parts:
         return None
     return base / path
+
+
+def _manifest_evidence_files(claims: dict[str, Any]) -> list[str]:
+    files: list[str] = []
+    for claim in claims.values():
+        if not isinstance(claim, dict):
+            continue
+        for rel in _claim_files(claim):
+            if rel not in files:
+                files.append(rel)
+        for key in (
+            "normal_case_evidence",
+            "edge_case_evidence",
+            "original_instructions_file",
+            "optimized_instructions_file",
+            "rollback_plan_file",
+        ):
+            rel = claim.get(key)
+            if isinstance(rel, str) and rel not in files:
+                files.append(rel)
+    return files
+
+
+def _check_scenario_alignment(
+    scenario: dict[str, Any],
+    claims: dict[str, Any],
+    base: Path,
+) -> list[str]:
+    failures = []
+    evidence_text = "\n".join(
+        _safe_text(base, rel) for rel in _manifest_evidence_files(claims)
+    ).lower()
+    for key in ("name", "b2b_persona", "business_workflow", "measurable_outcome"):
+        value = scenario.get(key)
+        if _nonempty_string(value) and value.lower() not in evidence_text:
+            failures.append(f"scenario evidence does not mention scenario.{key}: {value}")
+    return failures
 
 
 def _failures_for_files(base: Path, claim: dict[str, Any], files: list[Any]) -> list[str]:
@@ -529,6 +577,8 @@ def _check_simulation(claim: dict[str, Any], base: Path) -> list[str]:
         elif isinstance(count, int) and artifact_count < count:
             failures.append(f"{evidence_files[0]} scenario_count is lower than manifest claim")
         artifact_text = "\n".join(_safe_text(base, rel) for rel in evidence_files).lower()
+        if artifact_text and not _contains_any(artifact_text, ("simulation", "synthetic")):
+            failures.append("simulation evidence must mention simulation or synthetic scenarios")
         if isinstance(edge_cases, list):
             for edge_case in edge_cases:
                 if _nonempty_string(edge_case) and edge_case.lower() not in artifact_text:
@@ -551,6 +601,15 @@ def _check_observability(claim: dict[str, Any], base: Path) -> list[str]:
         for trace_id in trace_ids:
             if _nonempty_string(trace_id) and trace_id not in trace_text:
                 failures.append(f"observability evidence does not contain trace id: {trace_id}")
+    trace_text_lower = trace_text.lower()
+    if trace_text_lower and not _contains_any(
+        trace_text_lower,
+        ("tool", "reasoning", "decision", "conflict", "retry"),
+    ):
+        failures.append(
+            "observability evidence must show trace details such as tool calls, "
+            "reasoning, retries, or conflict resolution"
+        )
     return failures
 
 
@@ -577,6 +636,16 @@ def _check_optimizer(claim: dict[str, Any], base: Path) -> list[str]:
             failures.append(f"{rel} must contain numeric measured_delta")
         elif delta is not None and not _numbers_close(result_delta, delta):
             failures.append(f"{rel} measured_delta does not match manifest claim")
+    optimizer_text = "\n".join(_safe_text(base, rel) for rel in _claim_files(claim)).lower()
+    if optimizer_text and not (
+        _contains_all(optimizer_text, ("agents-cli", "eval", "optimize"))
+        or _contains_all(optimizer_text, ("adk", "optimize"))
+        or "agent optimizer" in optimizer_text
+    ):
+        failures.append(
+            "optimizer evidence must mention agents-cli eval optimize, adk optimize, "
+            "or Agent Optimizer"
+        )
     original_path = _safe_evidence_path(base, original)
     optimized_path = _safe_evidence_path(base, optimized)
     if original_path and optimized_path and original_path.is_file() and optimized_path.is_file():
@@ -639,6 +708,10 @@ def _check_platform(claim: dict[str, Any], base: Path) -> list[str]:
             failures.append(
                 "platform evidence must mention Agent Runtime, Cloud Run, or GKE"
             )
+        for key in ("intelligence", "orchestration", "infrastructure"):
+            value = claim.get(key)
+            if _nonempty_string(value) and value.lower() not in evidence_text:
+                failures.append(f"platform evidence does not mention {key}: {value}")
     return failures
 
 
@@ -659,10 +732,15 @@ def _check_b2b(claim: dict[str, Any], base: Path) -> list[str]:
     b2b_text = "\n".join(_safe_text(base, rel) for rel in _claim_files(claim)).lower()
     if b2b_text and len(b2b_text.split()) < 25:
         failures.append("b2b evidence must be a concrete narrative, not a one-line stub")
-    for key in ("persona", "workflow"):
+    for key in ("persona", "workflow", "measurable_outcome"):
         value = claim.get(key)
         if _nonempty_string(value) and value.lower() not in b2b_text:
             failures.append(f"b2b evidence does not mention {key}: {value}")
+    inputs = claim.get("inputs")
+    if isinstance(inputs, list):
+        for input_name in inputs:
+            if _nonempty_string(input_name) and input_name.lower() not in b2b_text:
+                failures.append(f"b2b evidence does not mention input: {input_name}")
     actions = claim.get("actions")
     if isinstance(actions, list):
         for action in actions:
@@ -699,6 +777,8 @@ def validate(manifest: dict[str, Any], evidence_dir: Path) -> dict[str, Any]:
     if not isinstance(claims, dict):
         global_failures.append("claims must be an object")
         claims = {}
+    elif isinstance(scenario, dict):
+        global_failures.extend(_check_scenario_alignment(scenario, claims, evidence_dir))
 
     for claim_name in REQUIRED_CLAIMS:
         claim, failures = _check_common(claim_name, claims.get(claim_name))
