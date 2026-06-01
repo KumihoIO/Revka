@@ -56,6 +56,12 @@ def _complete_manifest() -> dict:
                 "rollback_plan_file": "deploy/rollback-plan.md",
                 "evidence_files": ["deploy/deploy-output.txt"],
             },
+            "mandatory_google_platform": {
+                "intelligence": "Gemini API",
+                "orchestration": "Agent Development Kit",
+                "infrastructure": "Google Cloud Agent Runtime",
+                "evidence_files": ["platform/architecture.md"],
+            },
             "b2b_value": {
                 "persona": "Commercial property operations manager",
                 "workflow": "Peak-demand incident response",
@@ -82,6 +88,11 @@ def _write_complete_evidence(evidence_dir: Path) -> None:
             "projects/demo/locations/us-central1/agents/facility-energy"
         ),
         "deploy/rollback-plan.md": "Rollback by redeploying the previous Agent Runtime revision.",
+        "platform/architecture.md": (
+            "The demo agent uses Gemini API intelligence, Agent Development Kit (ADK) "
+            "orchestration, and Google Cloud Agent Runtime infrastructure for the "
+            "Track 2 optimization workflow."
+        ),
         "business/use-case.md": (
             "Commercial property operations manager handles the Peak-demand incident response "
             "workflow by combining occupancy, weather, and grid price inputs. The agent can "
@@ -114,7 +125,7 @@ def test_track2_evidence_gate_passes_complete_bundle(tmp_path):
     assert result.returncode == 0, result.stderr or result.stdout
     report = json.loads(result.stdout)
     assert report["passed"] is True
-    assert report["summary"] == {"failed": 0, "passed": 6, "total": 6}
+    assert report["summary"] == {"failed": 0, "passed": 7, "total": 7}
 
 
 def test_track2_evidence_gate_fails_missing_required_artifact(tmp_path):
@@ -235,6 +246,32 @@ def test_track2_evidence_gate_rejects_b2b_stub(tmp_path):
     assert "b2b evidence must be a concrete narrative, not a one-line stub" in b2b["failures"]
 
 
+def test_track2_evidence_gate_rejects_missing_platform_proof(tmp_path):
+    evidence_dir = tmp_path / "evidence"
+    manifest = _complete_manifest()
+    _write_complete_evidence(evidence_dir)
+    (evidence_dir / "platform" / "architecture.md").write_text(
+        "The project uses a generic cloud runtime and a model.",
+        encoding="utf-8",
+    )
+    (evidence_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    result = subprocess.run(
+        [sys.executable, str(_script()), "--evidence-dir", str(evidence_dir)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    report = json.loads(result.stdout)
+    platform = next(
+        item for item in report["checks"] if item["claim"] == "mandatory_google_platform"
+    )
+    assert "platform evidence must mention Google Cloud" in platform["failures"]
+    assert any("Gemini" in item for item in platform["failures"])
+
+
 def test_track2_evidence_gate_rejects_wrong_schema_version(tmp_path):
     evidence_dir = tmp_path / "evidence"
     manifest = _complete_manifest()
@@ -322,5 +359,6 @@ def test_track2_evidence_gate_writes_template(tmp_path):
         "agent_observability",
         "agent_optimizer",
         "live_google_cloud_deployment",
+        "mandatory_google_platform",
         "b2b_value",
     }

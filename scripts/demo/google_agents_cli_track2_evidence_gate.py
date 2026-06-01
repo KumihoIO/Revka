@@ -19,6 +19,7 @@ REQUIRED_CLAIMS = (
     "agent_observability",
     "agent_optimizer",
     "live_google_cloud_deployment",
+    "mandatory_google_platform",
     "b2b_value",
 )
 
@@ -86,6 +87,14 @@ def _template() -> dict[str, Any]:
                 "rollback_plan_file": "deploy/rollback-plan.md",
                 "evidence_files": [
                     "deploy/deploy-output.txt",
+                ],
+            },
+            "mandatory_google_platform": {
+                "intelligence": "TODO: Gemini API or third-party LLM through Agent Platform",
+                "orchestration": "TODO: ADK, LangChain, or CrewAI managed on Agent Platform",
+                "infrastructure": "TODO: Google Cloud runtime such as Agent Runtime, Cloud Run, or GKE",
+                "evidence_files": [
+                    "platform/architecture.md",
                 ],
             },
             "b2b_value": {
@@ -197,6 +206,10 @@ def _numeric_by_key(value: Any, key: str) -> float | None:
 
 def _numbers_close(left: float, right: float) -> bool:
     return abs(left - right) <= 0.000_001
+
+
+def _contains_any(text: str, terms: tuple[str, ...]) -> bool:
+    return any(term in text for term in terms)
 
 
 def _claim_files(claim: dict[str, Any]) -> list[str]:
@@ -400,6 +413,40 @@ def _check_deployment(claim: dict[str, Any], base: Path) -> list[str]:
     return failures
 
 
+def _check_platform(claim: dict[str, Any], base: Path) -> list[str]:
+    failures = []
+    for key in ("intelligence", "orchestration", "infrastructure"):
+        if not _nonempty_string(claim.get(key)):
+            failures.append(f"{key} is required")
+    failures.extend(_failures_for_files(base, claim, []))
+
+    evidence_text = "\n".join(_safe_text(base, rel) for rel in _claim_files(claim)).lower()
+    if evidence_text:
+        intelligence_ok = "gemini" in evidence_text or (
+            "agent platform" in evidence_text
+            and "llm" in evidence_text
+            and _contains_any(evidence_text, ("third-party", "third party"))
+        )
+        if not intelligence_ok:
+            failures.append(
+                "platform evidence must mention Gemini or a third-party LLM deployed through Agent Platform"
+            )
+        if not _contains_any(
+            evidence_text,
+            ("agent development kit", "adk", "langchain", "crewai"),
+        ):
+            failures.append(
+                "platform evidence must mention ADK, LangChain, or CrewAI orchestration"
+            )
+        if "google cloud" not in evidence_text:
+            failures.append("platform evidence must mention Google Cloud")
+        if not _contains_any(evidence_text, ("agent runtime", "cloud run", "gke")):
+            failures.append(
+                "platform evidence must mention Agent Runtime, Cloud Run, or GKE"
+            )
+    return failures
+
+
 def _check_b2b(claim: dict[str, Any], base: Path) -> list[str]:
     failures = []
     for key in ("persona", "workflow", "measurable_outcome"):
@@ -435,6 +482,7 @@ CHECKERS = {
     "agent_observability": _check_observability,
     "agent_optimizer": _check_optimizer,
     "live_google_cloud_deployment": _check_deployment,
+    "mandatory_google_platform": _check_platform,
     "b2b_value": _check_b2b,
 }
 
@@ -513,7 +561,15 @@ def _write_template(path: Path, force: bool) -> None:
         raise SystemExit(f"manifest already exists: {path}; use --force to replace it")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(_template(), indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    for dirname in ("eval", "simulation", "observability", "optimizer", "deploy", "business"):
+    for dirname in (
+        "eval",
+        "simulation",
+        "observability",
+        "optimizer",
+        "deploy",
+        "platform",
+        "business",
+    ):
         (path.parent / dirname).mkdir(exist_ok=True)
 
 

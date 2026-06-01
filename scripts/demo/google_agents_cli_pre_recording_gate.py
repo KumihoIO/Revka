@@ -385,9 +385,19 @@ def _build_report(args: argparse.Namespace, output_dir: Path) -> dict[str, Any]:
             checks.append(_check("github_pr_state", "fail", [str(exc)]))
 
     passed = all(item["status"] in {"pass", "skip"} for item in checks)
+    strict_blockers = []
+    if args.skip_track2_evidence:
+        strict_blockers.append("Track 2 evidence validation was skipped")
+    if not args.require_real_agents_cli_auth:
+        strict_blockers.append("real agents-cli authentication was not required")
+    for item in checks:
+        if item["status"] == "fail":
+            strict_blockers.append(f"{item['name']} failed")
     return {
         "gate": "google_agents_cli_pre_recording",
         "passed": passed,
+        "strict_final_recording_ready": passed and not strict_blockers,
+        "strict_final_blockers": strict_blockers,
         "repo": str(REPO_ROOT),
         "checks": checks,
         "summary": {

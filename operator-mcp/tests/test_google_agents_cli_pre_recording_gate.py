@@ -57,6 +57,12 @@ def _complete_manifest() -> dict:
                 "rollback_plan_file": "deploy/rollback-plan.md",
                 "evidence_files": ["deploy/deploy-output.txt"],
             },
+            "mandatory_google_platform": {
+                "intelligence": "Gemini API",
+                "orchestration": "Agent Development Kit",
+                "infrastructure": "Google Cloud Agent Runtime",
+                "evidence_files": ["platform/architecture.md"],
+            },
             "b2b_value": {
                 "persona": "Commercial property operations manager",
                 "workflow": "Peak-demand incident response",
@@ -83,6 +89,11 @@ def _write_complete_evidence(evidence_dir: Path) -> None:
             "projects/demo/locations/us-central1/agents/facility-energy"
         ),
         "deploy/rollback-plan.md": "Rollback by redeploying the previous Agent Runtime revision.",
+        "platform/architecture.md": (
+            "The demo agent uses Gemini API intelligence, Agent Development Kit (ADK) "
+            "orchestration, and Google Cloud Agent Runtime infrastructure for the "
+            "Track 2 optimization workflow."
+        ),
         "business/use-case.md": (
             "Commercial property operations manager handles the Peak-demand incident response "
             "workflow by combining occupancy, weather, and grid price inputs. The agent can "
@@ -128,6 +139,8 @@ def test_pre_recording_gate_passes_with_complete_track2_bundle(tmp_path):
     assert result.returncode == 0, result.stderr or result.stdout
     report = json.loads(output.read_text(encoding="utf-8"))
     assert report["passed"] is True
+    assert report["strict_final_recording_ready"] is False
+    assert "real agents-cli authentication was not required" in report["strict_final_blockers"]
     assert report["summary"]["failed"] == 0
     statuses = {item["name"]: item["status"] for item in report["checks"]}
     assert statuses["local_code_probe"] == "pass"
@@ -227,6 +240,8 @@ else:
 
     assert result.returncode == 0, result.stderr or result.stdout
     report = json.loads(output.read_text(encoding="utf-8"))
+    assert report["strict_final_recording_ready"] is False
+    assert "Track 2 evidence validation was skipped" in report["strict_final_blockers"]
     statuses = {item["name"]: item["status"] for item in report["checks"]}
     assert statuses["local_code_probe"] == "pass"
     assert statuses["track2_evidence_gate"] == "skip"
@@ -302,6 +317,7 @@ def test_pre_recording_gate_can_require_real_agents_cli_surface(tmp_path):
     real_cli = next(item for item in report["checks"] if item["name"] == "real_agents_cli")
     assert real_cli["status"] == "pass"
     assert real_cli["authenticated"] is False
+    assert report["strict_final_recording_ready"] is False
 
 
 def test_pre_recording_gate_can_require_real_agents_cli_auth(tmp_path):
@@ -334,3 +350,39 @@ def test_pre_recording_gate_can_require_real_agents_cli_auth(tmp_path):
     real_cli = next(item for item in report["checks"] if item["name"] == "real_agents_cli")
     assert real_cli["status"] == "fail"
     assert any("authenticated session" in item for item in real_cli["failures"])
+    assert "real_agents_cli failed" in report["strict_final_blockers"]
+
+
+def test_pre_recording_gate_reports_strict_final_ready_with_auth_and_evidence(tmp_path):
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    _write_fake_agents_cli(fake_bin, authenticated=True)
+    evidence_dir = tmp_path / "evidence"
+    _write_complete_evidence(evidence_dir)
+    output = tmp_path / "report.json"
+    env = {
+        **os.environ,
+        "PATH": str(fake_bin) + os.pathsep + os.environ.get("PATH", ""),
+    }
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(_script()),
+            "--evidence-dir",
+            str(evidence_dir),
+            "--require-real-agents-cli-auth",
+            "--output",
+            str(output),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    report = json.loads(output.read_text(encoding="utf-8"))
+    assert report["passed"] is True
+    assert report["strict_final_recording_ready"] is True
+    assert report["strict_final_blockers"] == []

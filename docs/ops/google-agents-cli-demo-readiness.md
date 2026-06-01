@@ -116,6 +116,7 @@ Do not treat the integration tests above as proof for these higher-level claims.
 | Agent Observability debugging | Trace screenshots/logs showing stalled reasoning, tool calls, retries, or conflict resolution |
 | Agent Optimizer refinement | The original instructions, optimized instructions, and measured behavior delta |
 | Live Google Cloud deployment | Project ID, region, deploy command output, service URL or Agent Platform resource, and rollback plan |
+| Mandatory Google platform technologies | Evidence that the demo uses Gemini or a third-party LLM through Agent Platform, ADK/LangChain/CrewAI orchestration, and Google Cloud infrastructure such as Agent Runtime, Cloud Run, or GKE |
 | B2B value proposition | A concrete business workflow, user persona, inputs, actions taken, and measurable business outcome |
 
 Use the Track 2 evidence gate to fail closed before recording if any of these
@@ -139,8 +140,8 @@ The gate also rejects placeholder-only evidence files such as `TODO` or
 `evidence`, validates `.json` / `.jsonl` evidence as structured data, and
 cross-checks core artifact content against the manifest: before/after metrics,
 simulation scenario counts, observability trace IDs, optimizer deltas,
-deployment project/region/resource text, rollback wording, and B2B narrative
-specificity.
+deployment project/region/resource text, rollback wording, mandatory Google
+platform technologies, and B2B narrative specificity.
 
 For the final pre-recording rehearsal, run the umbrella gate so local code
 readiness, Track 2 evidence, and optional PR health are captured in one JSON
@@ -156,6 +157,10 @@ python3 scripts/demo/google_agents_cli_pre_recording_gate.py \
 
 Use `--skip-track2-evidence` only for code-only smoke checks before live Agent
 Platform evidence exists. Do not use that skip flag for final video readiness.
+The umbrella report includes `strict_final_recording_ready`; treat it as the
+final go/no-go field for recording. It remains `false` when Track 2 evidence is
+skipped, real `agents-cli` authentication is not required, or any child gate
+fails.
 
 ## 7. Related Docs
 
