@@ -20,6 +20,11 @@ def test_google_agents_cli_demo_probe_generates_passing_evidence_bundle(tmp_path
     bundle = json.loads(output.read_text(encoding="utf-8"))
     assert bundle["passed"] is True
     assert bundle["summary"]["failed"] == 0
+    assert bundle["outcome_matrix"]["summary"] == {
+        "failed": 0,
+        "passed": 15,
+        "total": 15,
+    }
     assert {
         item["name"]
         for item in bundle["results"]
@@ -39,4 +44,24 @@ def test_google_agents_cli_demo_probe_generates_passing_evidence_bundle(tmp_path
         "missing_binary",
         "spawn_failure",
         "runtime_safety_policy",
+    }
+    assert {
+        item["id"]
+        for item in bundle["outcome_matrix"]["outcomes"]
+    } >= {
+        "existing_agent_tool_capability",
+        "cli_project_tooling_inspection",
+        "prompt_only_run",
+        "successful_lifecycle_command",
+        "cli_failure",
+        "missing_agents_cli_binary",
+        "malformed_command_input",
+        "interactive_login_attempt",
+        "bad_working_directory",
+        "timeout",
+        "large_output",
+        "spawn_failure",
+        "gemini_enterprise_publish_context",
+        "runtime_safety_policy",
+        "deploy_command_acceptance",
     }

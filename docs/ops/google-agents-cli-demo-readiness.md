@@ -55,6 +55,7 @@ enabled = true
 | Spawn failure | OS-level spawn errors return structured `agents_cli_spawn_failed` / retryable runtime errors in Operator MCP | `test_google_agents_cli_spawn_error_returns_structured_error` |
 | Gemini Enterprise publish context | `GEMINI_ENTERPRISE_APP_ID` is included in the safe env passthrough set when present | `google_agents_cli_safe_env_includes_enterprise_publish_id`; `operator-mcp/operator_mcp/tool_handlers/google_agents_cli.py` |
 | Runtime safety policy | Rust tool respects read-only mode and rate limits before executing external actions | `google_agents_cli_blocks_readonly`; `google_agents_cli_blocks_rate_limited` |
+| Deploy command acceptance | `deploy` is accepted as an `agents-cli` lifecycle command shape; final live deployment still requires separate Track 2 evidence | `deploy_acceptance`; `google_agents_cli_demo_probe.py` |
 
 ## 5. Pre-Recording Validation
 
@@ -71,13 +72,13 @@ git diff --check
 
 The demo probe uses a temporary fake `agents-cli` binary. It does not touch
 Google Cloud, but it produces a JSON evidence bundle for local readiness
-outcomes: source-level architecture guardrails, info, prompt-run redaction, eval
 outcomes: source-level architecture guardrails, info, successful lifecycle
 command reporting, prompt-run redaction, eval failure diagnostics, malformed
 input, interactive login blocking, workspace escape blocking, timeout,
 truncation, Gemini Enterprise env passthrough, deploy command acceptance,
 missing-binary handling, spawn-failure handling, and Rust runtime safety policy
-coverage.
+coverage. The JSON report includes `outcome_matrix`; every listed outcome must
+pass before the umbrella gate treats local code readiness as green.
 
 For the actual recording machine, also verify that the real installed
 `agents-cli` supports the command surface used in the demo:

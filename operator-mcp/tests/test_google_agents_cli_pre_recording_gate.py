@@ -145,6 +145,12 @@ def test_pre_recording_gate_passes_with_complete_track2_bundle(tmp_path):
     statuses = {item["name"]: item["status"] for item in report["checks"]}
     assert statuses["local_code_probe"] == "pass"
     assert statuses["track2_evidence_gate"] == "pass"
+    local_probe = next(item for item in report["checks"] if item["name"] == "local_code_probe")
+    assert local_probe["outcome_matrix_summary"] == {
+        "failed": 0,
+        "passed": 15,
+        "total": 15,
+    }
 
 
 def test_pre_recording_gate_fails_when_track2_evidence_is_missing(tmp_path):

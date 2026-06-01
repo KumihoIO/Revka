@@ -101,6 +101,19 @@ def _run_local_probe(output_dir: Path) -> dict[str, Any]:
     if report is not None and report.get("passed") is not True:
         failures.append("local probe report did not pass")
     summary = report.get("summary") if isinstance(report, dict) else None
+    outcome_matrix = report.get("outcome_matrix") if isinstance(report, dict) else None
+    outcome_summary = outcome_matrix.get("summary") if isinstance(outcome_matrix, dict) else None
+    failed_outcomes = []
+    if isinstance(outcome_matrix, dict):
+        outcomes = outcome_matrix.get("outcomes")
+        if isinstance(outcomes, list):
+            failed_outcomes = [
+                item
+                for item in outcomes
+                if isinstance(item, dict) and item.get("status") != "pass"
+            ]
+    if isinstance(outcome_summary, dict) and outcome_summary.get("failed"):
+        failures.append(f"local outcome matrix failures: {outcome_summary.get('failed')}")
     if isinstance(summary, dict) and summary.get("failed") != 0:
         failures.append(f"local probe failures: {summary.get('failed')}")
     return _check(
@@ -109,6 +122,8 @@ def _run_local_probe(output_dir: Path) -> dict[str, Any]:
         failures,
         artifact=str(artifact),
         summary=summary,
+        outcome_matrix_summary=outcome_summary,
+        failed_outcomes=failed_outcomes,
         stderr=result.stderr.strip(),
     )
 
@@ -428,6 +443,8 @@ def _strict_blocker_detail(item: dict[str, Any]) -> dict[str, Any]:
     for key in (
         "artifact",
         "summary",
+        "outcome_matrix_summary",
+        "failed_outcomes",
         "global_failures",
         "failed_claims",
         "failure_details",

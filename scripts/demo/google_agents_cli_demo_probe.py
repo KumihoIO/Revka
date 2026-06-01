@@ -38,6 +38,85 @@ class Probe:
     run: ProbeFn
 
 
+DEMO_OUTCOMES: tuple[dict[str, Any], ...] = (
+    {
+        "id": "existing_agent_tool_capability",
+        "title": "Existing agent uses Google lifecycle tooling",
+        "required_probes": ["architecture_guardrails"],
+    },
+    {
+        "id": "cli_project_tooling_inspection",
+        "title": "Current CLI project/tooling inspection",
+        "required_probes": ["info"],
+    },
+    {
+        "id": "prompt_only_run",
+        "title": "Prompt-only run",
+        "required_probes": ["prompt_run"],
+    },
+    {
+        "id": "successful_lifecycle_command",
+        "title": "Successful lifecycle command",
+        "required_probes": ["successful_lifecycle"],
+    },
+    {
+        "id": "cli_failure",
+        "title": "CLI failure",
+        "required_probes": ["eval_failure"],
+    },
+    {
+        "id": "missing_agents_cli_binary",
+        "title": "Missing agents-cli binary",
+        "required_probes": ["missing_binary"],
+    },
+    {
+        "id": "malformed_command_input",
+        "title": "Malformed command input",
+        "required_probes": ["invalid_command"],
+    },
+    {
+        "id": "interactive_login_attempt",
+        "title": "Interactive login attempt",
+        "required_probes": ["interactive_login"],
+    },
+    {
+        "id": "bad_working_directory",
+        "title": "Bad working directory",
+        "required_probes": ["bad_working_directory"],
+    },
+    {
+        "id": "timeout",
+        "title": "Timeout",
+        "required_probes": ["timeout"],
+    },
+    {
+        "id": "large_output",
+        "title": "Large output",
+        "required_probes": ["truncation"],
+    },
+    {
+        "id": "spawn_failure",
+        "title": "Spawn failure",
+        "required_probes": ["spawn_failure"],
+    },
+    {
+        "id": "gemini_enterprise_publish_context",
+        "title": "Gemini Enterprise publish context",
+        "required_probes": ["enterprise_env"],
+    },
+    {
+        "id": "runtime_safety_policy",
+        "title": "Runtime safety policy",
+        "required_probes": ["runtime_safety_policy"],
+    },
+    {
+        "id": "deploy_command_acceptance",
+        "title": "Deploy command acceptance",
+        "required_probes": ["deploy_acceptance"],
+    },
+)
+
+
 def _write_fake_agents_cli(bin_dir: Path) -> Path:
     script = bin_dir / ("agents-cli.exe" if os.name == "nt" else "agents-cli")
     script.write_text(
@@ -404,6 +483,43 @@ async def _run_probes(workspace: Path, fake_path: str) -> list[dict[str, Any]]:
     return results
 
 
+def _build_outcome_matrix(results: list[dict[str, Any]]) -> dict[str, Any]:
+    by_name = {item.get("name"): item for item in results}
+    outcomes: list[dict[str, Any]] = []
+    for outcome in DEMO_OUTCOMES:
+        required_probes = outcome["required_probes"]
+        missing = [name for name in required_probes if name not in by_name]
+        failed = [
+            name
+            for name in required_probes
+            if name in by_name and by_name[name].get("status") != "pass"
+        ]
+        failures = []
+        if missing:
+            failures.append("missing required probes: " + ", ".join(missing))
+        if failed:
+            failures.append("failed required probes: " + ", ".join(failed))
+        outcomes.append(
+            {
+                "id": outcome["id"],
+                "title": outcome["title"],
+                "required_probes": required_probes,
+                "status": "fail" if failures else "pass",
+                "failures": failures,
+            }
+        )
+
+    failed_outcomes = [item for item in outcomes if item["status"] != "pass"]
+    return {
+        "summary": {
+            "total": len(outcomes),
+            "passed": len(outcomes) - len(failed_outcomes),
+            "failed": len(failed_outcomes),
+        },
+        "outcomes": outcomes,
+    }
+
+
 async def _main_async(args: argparse.Namespace) -> int:
     original_path = os.environ.get("PATH", "")
     original_workspace = os.environ.get("CONSTRUCT_WORKSPACE")
@@ -436,16 +552,19 @@ async def _main_async(args: argparse.Namespace) -> int:
         os.environ["GEMINI_ENTERPRISE_APP_ID"] = original_enterprise_app
     construct_config._cached_workspace_dir = None
     failures = [item for item in results if item["status"] != "pass"]
+    outcome_matrix = _build_outcome_matrix(results)
+    failed_outcomes = outcome_matrix["summary"]["failed"]
     bundle = {
         "probe": "google_agents_cli_demo_readiness",
         "mode": "deterministic_fake_agents_cli",
         "repo": str(REPO_ROOT),
-        "passed": len(failures) == 0,
+        "passed": len(failures) == 0 and failed_outcomes == 0,
         "summary": {
             "total": len(results),
             "passed": len(results) - len(failures),
             "failed": len(failures),
         },
+        "outcome_matrix": outcome_matrix,
         "results": results,
     }
     text = json.dumps(bundle, indent=2, sort_keys=True)
@@ -453,7 +572,7 @@ async def _main_async(args: argparse.Namespace) -> int:
         Path(args.output).write_text(text + "\n", encoding="utf-8")
     if not args.quiet:
         print(text)
-    return 0 if not failures else 1
+    return 0 if not failures and failed_outcomes == 0 else 1
 
 
 def main(argv: list[str] | None = None) -> int:
