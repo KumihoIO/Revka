@@ -157,6 +157,55 @@ def _structured_file_failure(full: Path, rel: str) -> str | None:
     return None
 
 
+def _safe_text(base: Path, rel: Any) -> str:
+    path = _safe_evidence_path(base, rel)
+    if not path or not path.is_file():
+        return ""
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def _safe_json(base: Path, rel: Any) -> Any | None:
+    path = _safe_evidence_path(base, rel)
+    if not path or not path.is_file() or path.suffix != ".json":
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+
+
+def _numeric_by_key(value: Any, key: str) -> float | None:
+    if isinstance(value, dict):
+        for dict_key, dict_value in value.items():
+            if dict_key == key:
+                number = _number(dict_value)
+                if number is not None:
+                    return number
+            nested = _numeric_by_key(dict_value, key)
+            if nested is not None:
+                return nested
+    elif isinstance(value, list):
+        for item in value:
+            nested = _numeric_by_key(item, key)
+            if nested is not None:
+                return nested
+    return None
+
+
+def _numbers_close(left: float, right: float) -> bool:
+    return abs(left - right) <= 0.000_001
+
+
+def _claim_files(claim: dict[str, Any]) -> list[str]:
+    files = claim.get("evidence_files")
+    if isinstance(files, list) and all(isinstance(item, str) for item in files):
+        return files
+    return []
+
+
 def _file_failures(base: Path, files: list[Any]) -> list[str]:
     failures: list[str] = []
     for rel in files:
@@ -234,6 +283,20 @@ def _check_optimization(claim: dict[str, Any], base: Path) -> list[str]:
     elif not after > before:
         failures.append("after must be higher than before")
     failures.extend(_failures_for_files(base, claim, []))
+    evidence_files = _claim_files(claim)
+    if len(evidence_files) < 2:
+        failures.append("optimization evidence_files must include baseline and optimized JSON files")
+    elif _nonempty_string(metric) and before is not None and after is not None:
+        baseline_metric = _numeric_by_key(_safe_json(base, evidence_files[0]), metric)
+        optimized_metric = _numeric_by_key(_safe_json(base, evidence_files[1]), metric)
+        if baseline_metric is None:
+            failures.append(f"{evidence_files[0]} must contain numeric metric '{metric}'")
+        elif not _numbers_close(baseline_metric, before):
+            failures.append(f"{evidence_files[0]} metric '{metric}' does not match before")
+        if optimized_metric is None:
+            failures.append(f"{evidence_files[1]} must contain numeric metric '{metric}'")
+        elif not _numbers_close(optimized_metric, after):
+            failures.append(f"{evidence_files[1]} metric '{metric}' does not match after")
     return failures
 
 
@@ -250,6 +313,18 @@ def _check_simulation(claim: dict[str, Any], base: Path) -> list[str]:
     ):
         failures.append("edge_cases must list at least one concrete scenario")
     failures.extend(_failures_for_files(base, claim, []))
+    evidence_files = _claim_files(claim)
+    if evidence_files:
+        artifact_count = _numeric_by_key(_safe_json(base, evidence_files[0]), "scenario_count")
+        if artifact_count is None:
+            failures.append(f"{evidence_files[0]} must contain numeric scenario_count")
+        elif isinstance(count, int) and artifact_count < count:
+            failures.append(f"{evidence_files[0]} scenario_count is lower than manifest claim")
+        artifact_text = "\n".join(_safe_text(base, rel) for rel in evidence_files).lower()
+        if isinstance(edge_cases, list):
+            for edge_case in edge_cases:
+                if _nonempty_string(edge_case) and edge_case.lower() not in artifact_text:
+                    failures.append(f"simulation evidence does not mention edge case: {edge_case}")
     return failures
 
 
@@ -263,6 +338,11 @@ def _check_observability(claim: dict[str, Any], base: Path) -> list[str]:
     ):
         failures.append("trace_ids must list at least one concrete trace id")
     failures.extend(_failures_for_files(base, claim, []))
+    trace_text = "\n".join(_safe_text(base, rel) for rel in _claim_files(claim))
+    if isinstance(trace_ids, list):
+        for trace_id in trace_ids:
+            if _nonempty_string(trace_id) and trace_id not in trace_text:
+                failures.append(f"observability evidence does not contain trace id: {trace_id}")
     return failures
 
 
@@ -283,6 +363,12 @@ def _check_optimizer(claim: dict[str, Any], base: Path) -> list[str]:
     if delta is None or delta == 0:
         failures.append("measured_delta must be a non-zero number")
     failures.extend(_failures_for_files(base, claim, files))
+    for rel in _claim_files(claim):
+        result_delta = _numeric_by_key(_safe_json(base, rel), "measured_delta")
+        if result_delta is None:
+            failures.append(f"{rel} must contain numeric measured_delta")
+        elif delta is not None and not _numbers_close(result_delta, delta):
+            failures.append(f"{rel} measured_delta does not match manifest claim")
     original_path = _safe_evidence_path(base, original)
     optimized_path = _safe_evidence_path(base, optimized)
     if original_path and optimized_path and original_path.is_file() and optimized_path.is_file():
@@ -303,6 +389,14 @@ def _check_deployment(claim: dict[str, Any], base: Path) -> list[str]:
     if not files:
         failures.append("rollback_plan_file is required")
     failures.extend(_failures_for_files(base, claim, files))
+    deploy_text = "\n".join(_safe_text(base, rel) for rel in _claim_files(claim)).lower()
+    for key in ("project_id", "region", "resource"):
+        value = claim.get(key)
+        if _nonempty_string(value) and value.lower() not in deploy_text:
+            failures.append(f"deployment evidence does not mention {key}: {value}")
+    rollback_text = _safe_text(base, rollback).lower()
+    if _nonempty_string(rollback) and "rollback" not in rollback_text:
+        failures.append("rollback_plan_file must describe rollback")
     return failures
 
 
@@ -320,6 +414,18 @@ def _check_b2b(claim: dict[str, Any], base: Path) -> list[str]:
         ):
             failures.append(f"{key} must list at least one concrete item")
     failures.extend(_failures_for_files(base, claim, []))
+    b2b_text = "\n".join(_safe_text(base, rel) for rel in _claim_files(claim)).lower()
+    if b2b_text and len(b2b_text.split()) < 25:
+        failures.append("b2b evidence must be a concrete narrative, not a one-line stub")
+    for key in ("persona", "workflow"):
+        value = claim.get(key)
+        if _nonempty_string(value) and value.lower() not in b2b_text:
+            failures.append(f"b2b evidence does not mention {key}: {value}")
+    actions = claim.get("actions")
+    if isinstance(actions, list):
+        for action in actions:
+            if _nonempty_string(action) and action.lower() not in b2b_text:
+                failures.append(f"b2b evidence does not mention action: {action}")
     return failures
 
 
@@ -338,6 +444,8 @@ def validate(manifest: dict[str, Any], evidence_dir: Path) -> dict[str, Any]:
     scenario = manifest.get("scenario")
     claims = manifest.get("claims")
     global_failures = []
+    if manifest.get("schema_version") != 1:
+        global_failures.append("schema_version must be 1")
     if not isinstance(scenario, dict):
         global_failures.append("scenario must be an object")
     else:

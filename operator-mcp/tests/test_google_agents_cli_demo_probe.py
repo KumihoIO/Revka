@@ -24,6 +24,7 @@ def test_google_agents_cli_demo_probe_generates_passing_evidence_bundle(tmp_path
         item["name"]
         for item in bundle["results"]
     } >= {
+        "architecture_guardrails",
         "info",
         "prompt_run",
         "eval_failure",

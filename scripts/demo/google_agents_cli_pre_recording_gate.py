@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -36,6 +37,27 @@ def _run(cmd: list[str]) -> subprocess.CompletedProcess[str]:
         capture_output=True,
         text=True,
     )
+
+
+def _run_direct(cmd: list[str], timeout: float = 20.0) -> subprocess.CompletedProcess[str] | None:
+    try:
+        return subprocess.run(
+            cmd,
+            cwd=REPO_ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def _snippet(text: str, limit: int = 1200) -> str:
+    text = text.strip()
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "\n... [truncated]"
 
 
 def _load_json(path: Path) -> tuple[dict[str, Any] | None, str | None]:
@@ -109,6 +131,86 @@ def _run_track2_gate(evidence_dir: Path, output_dir: Path) -> dict[str, Any]:
         evidence_dir=str(evidence_dir),
         summary=summary,
         stderr=result.stderr.strip(),
+    )
+
+
+def _surface_command(
+    binary: str,
+    name: str,
+    args: list[str],
+    required_terms: list[str],
+) -> tuple[dict[str, Any], list[str]]:
+    result = _run_direct([binary, *args])
+    if result is None:
+        return {
+            "name": name,
+            "command": ["agents-cli", *args],
+            "returncode": None,
+            "stdout": "",
+            "stderr": "command failed to start or timed out",
+        }, [f"{name} failed to start or timed out"]
+    stdout = result.stdout or ""
+    stderr = result.stderr or ""
+    combined = f"{stdout}\n{stderr}".lower()
+    failures = []
+    if result.returncode != 0:
+        failures.append(f"{name} exited {result.returncode}")
+    for term in required_terms:
+        if term.lower() not in combined:
+            failures.append(f"{name} missing expected term: {term}")
+    return {
+        "name": name,
+        "command": ["agents-cli", *args],
+        "returncode": result.returncode,
+        "stdout": _snippet(stdout),
+        "stderr": _snippet(stderr),
+    }, failures
+
+
+def _run_real_agents_cli_gate(require_auth: bool) -> dict[str, Any]:
+    binary = shutil.which("agents-cli")
+    failures: list[str] = []
+    command_reports: list[dict[str, Any]] = []
+    if not binary:
+        return _check(
+            "real_agents_cli",
+            "fail",
+            ["agents-cli was not found in PATH"],
+            require_auth=require_auth,
+        )
+
+    surfaces = [
+        (
+            "top_level_help",
+            ["--help"],
+            ["run", "eval", "deploy", "publish", "info", "login", "Agent Development Lifecycle"],
+        ),
+        ("eval_help", ["eval", "--help"], ["run", "compare", "optimize"]),
+        ("eval_optimize_help", ["eval", "optimize", "--help"], ["GEPA", "adk optimize"]),
+        ("deploy_help", ["deploy", "--help"], ["Agent Runtime", "Cloud Run", "GKE", "--dry-run", "--status"]),
+        ("publish_help", ["publish", "--help"], ["gemini-enterprise"]),
+        ("info", ["info"], ["CLI version"]),
+        ("login_status", ["login", "--status"], ["Authentication"]),
+    ]
+    for name, args, required_terms in surfaces:
+        report, command_failures = _surface_command(binary, name, args, required_terms)
+        command_reports.append(report)
+        failures.extend(command_failures)
+
+    login_report = next((item for item in command_reports if item["name"] == "login_status"), {})
+    login_text = f"{login_report.get('stdout', '')}\n{login_report.get('stderr', '')}".lower()
+    authenticated = "not authenticated" not in login_text and "authenticated" in login_text
+    if require_auth and not authenticated:
+        failures.append("agents-cli login --status did not report an authenticated session")
+
+    return _check(
+        "real_agents_cli",
+        "fail" if failures else "pass",
+        failures,
+        binary=binary,
+        require_auth=require_auth,
+        authenticated=authenticated,
+        commands=command_reports,
     )
 
 
@@ -262,6 +364,8 @@ def _run_pr_gate(pr_number: int, repo: str) -> list[dict[str, Any]]:
 
 def _build_report(args: argparse.Namespace, output_dir: Path) -> dict[str, Any]:
     checks = [_run_local_probe(output_dir)]
+    if args.require_real_agents_cli or args.require_real_agents_cli_auth:
+        checks.append(_run_real_agents_cli_gate(args.require_real_agents_cli_auth))
     if args.skip_track2_evidence:
         checks.append(
             _check(
@@ -311,6 +415,16 @@ def main(argv: list[str] | None = None) -> int:
         "--skip-track2-evidence",
         action="store_true",
         help="Skip live Track 2 evidence validation; only for code-only smoke checks",
+    )
+    parser.add_argument(
+        "--require-real-agents-cli",
+        action="store_true",
+        help="Verify the installed agents-cli command surface with non-mutating commands",
+    )
+    parser.add_argument(
+        "--require-real-agents-cli-auth",
+        action="store_true",
+        help="Also require agents-cli login --status to report an authenticated session",
     )
     parser.add_argument("--pr-number", type=int, help="Optional PR number to verify with gh")
     parser.add_argument("--repo", default="KumihoIO/construct-os", help="GitHub repo for PR checks")

@@ -8,6 +8,7 @@ Use ``--output`` to keep the JSON evidence bundle for a demo checklist.
 from __future__ import annotations
 
 import argparse
+import ast
 import asyncio
 import json
 import os
@@ -109,6 +110,81 @@ async def _call(args: dict[str, Any]) -> dict[str, Any]:
     return await tool_google_agents_cli(args)
 
 
+def _dict_value(node: ast.Dict, key: str) -> ast.AST | None:
+    for dict_key, value in zip(node.keys, node.values):
+        if isinstance(dict_key, ast.Constant) and dict_key.value == key:
+            return value
+    return None
+
+
+def _string_list(node: ast.AST | None) -> list[str] | None:
+    if not isinstance(node, ast.List):
+        return None
+    values: list[str] = []
+    for item in node.elts:
+        if not isinstance(item, ast.Constant) or not isinstance(item.value, str):
+            return None
+        values.append(item.value)
+    return values
+
+
+def _operator_agent_type_enums() -> list[list[str]]:
+    source = (OPERATOR_MCP / "operator_mcp" / "operator_mcp.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    enums: list[list[str]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Dict):
+            continue
+        agent_type_schema = _dict_value(node, "agent_type")
+        if not isinstance(agent_type_schema, ast.Dict):
+            continue
+        enum = _string_list(_dict_value(agent_type_schema, "enum"))
+        if enum is not None:
+            enums.append(enum)
+    return enums
+
+
+async def _expect_architecture_guardrails() -> dict[str, Any]:
+    enums = _operator_agent_type_enums()
+    _assert(enums, "operator agent_type schemas should declare enum values")
+    for enum in enums:
+        _assert(enum == ["claude", "codex"], f"agent_type enum should be claude/codex only: {enum}")
+
+    source_checks = {
+        "operator_mcp": OPERATOR_MCP / "operator_mcp" / "operator_mcp.py",
+        "operator_core": REPO_ROOT / "src" / "agent" / "operator" / "core.rs",
+        "gateway_ws": REPO_ROOT / "src" / "gateway" / "ws.rs",
+        "rust_tool": REPO_ROOT / "src" / "tools" / "google_agents_cli.rs",
+    }
+    required_phrases = {
+        "operator_mcp": [
+            "spawn claude/codex and let it call google_agents_cli",
+            "Run Google Agents CLI (agents-cli) lifecycle commands",
+        ],
+        "operator_core": [
+            "with the google_agents_cli tool; agents-cli is not a peer coding agent",
+        ],
+        "gateway_ws": [
+            "agents-cli is not an agent_type",
+        ],
+        "rust_tool": [
+            "`agents-cli` is not a coding-agent replacement",
+            "never a shell",
+        ],
+    }
+    checked: list[str] = []
+    for name, path in source_checks.items():
+        text = path.read_text(encoding="utf-8")
+        for phrase in required_phrases[name]:
+            _assert(phrase in text, f"{name} missing guardrail phrase: {phrase}")
+        checked.append(name)
+
+    return {
+        "agent_type_enums": enums,
+        "checked_sources": checked,
+    }
+
+
 async def _expect_success_info() -> dict[str, Any]:
     result = await _call({"command": ["info"]})
     _assert(result.get("success") is True, "info command should succeed")
@@ -200,6 +276,11 @@ async def _expect_missing_binary(fake_path: str) -> dict[str, Any]:
 
 async def _run_probes(workspace: Path, fake_path: str) -> list[dict[str, Any]]:
     probes: list[Probe] = [
+        Probe(
+            "architecture_guardrails",
+            "agents-cli remains a tool capability for claude/codex agents, not an agent_type",
+            _expect_architecture_guardrails,
+        ),
         Probe("info", "Current project/tooling inspection", _expect_success_info),
         Probe("prompt_run", "Prompt-only agents-cli run with redacted preview", _expect_prompt_run_redaction),
         Probe("eval_failure", "Eval failure preserves stdout/stderr/exit code", _expect_eval_failure_diagnostics),

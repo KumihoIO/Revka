@@ -70,14 +70,24 @@ def _complete_manifest() -> dict:
 
 def _write_complete_evidence(evidence_dir: Path) -> None:
     files = {
-        "eval/baseline.json": '{"score": 0.42, "scenario": "heat wave"}',
-        "eval/optimized.json": '{"score": 0.86, "scenario": "heat wave"}',
-        "simulation/run-output.json": '{"scenario_count": 3, "edge_cases": ["heat wave"]}',
+        "eval/baseline.json": '{"eval_success_rate": 0.42, "scenario": "heat wave"}',
+        "eval/optimized.json": '{"eval_success_rate": 0.86, "scenario": "heat wave"}',
+        "simulation/run-output.json": (
+            '{"scenario_count": 3, "edge_cases": ["heat wave plus peak pricing"]}'
+        ),
         "observability/trace.jsonl": '{"trace_id": "trace-heat-wave-001", "tool_calls": 4}',
         "optimizer/result.json": '{"measured_delta": 0.44, "changed": true}',
-        "deploy/deploy-output.txt": "deployed agent runtime projects/demo/locations/us-central1",
+        "deploy/deploy-output.txt": (
+            "deployed agent runtime for project demo-project in us-central1 at "
+            "projects/demo/locations/us-central1/agents/facility-energy"
+        ),
         "deploy/rollback-plan.md": "Rollback by redeploying the previous Agent Runtime revision.",
-        "business/use-case.md": "Commercial property operator avoids peak pricing conflict.",
+        "business/use-case.md": (
+            "Commercial property operations manager handles the Peak-demand incident response "
+            "workflow by combining occupancy, weather, and grid price inputs. The agent can "
+            "adjust setpoints and notify facilities team while preserving comfort and reducing "
+            "peak cost risk."
+        ),
     }
     for rel, text in files.items():
         _write(evidence_dir / rel, text)
@@ -175,6 +185,73 @@ def test_track2_evidence_gate_rejects_invalid_json_artifact(tmp_path):
         item.startswith("invalid JSON evidence file eval/baseline.json")
         for item in optimization["failures"]
     )
+
+
+def test_track2_evidence_gate_rejects_metric_mismatch(tmp_path):
+    evidence_dir = tmp_path / "evidence"
+    manifest = _complete_manifest()
+    _write_complete_evidence(evidence_dir)
+    (evidence_dir / "eval" / "optimized.json").write_text(
+        '{"eval_success_rate": 0.43, "scenario": "heat wave"}',
+        encoding="utf-8",
+    )
+    (evidence_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    result = subprocess.run(
+        [sys.executable, str(_script()), "--evidence-dir", str(evidence_dir)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    report = json.loads(result.stdout)
+    optimization = next(
+        item for item in report["checks"] if item["claim"] == "optimization_improvement"
+    )
+    assert "eval/optimized.json metric 'eval_success_rate' does not match after" in optimization["failures"]
+
+
+def test_track2_evidence_gate_rejects_b2b_stub(tmp_path):
+    evidence_dir = tmp_path / "evidence"
+    manifest = _complete_manifest()
+    _write_complete_evidence(evidence_dir)
+    (evidence_dir / "business" / "use-case.md").write_text(
+        "Commercial property operations manager adjusts setpoints.",
+        encoding="utf-8",
+    )
+    (evidence_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    result = subprocess.run(
+        [sys.executable, str(_script()), "--evidence-dir", str(evidence_dir)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    report = json.loads(result.stdout)
+    b2b = next(item for item in report["checks"] if item["claim"] == "b2b_value")
+    assert "b2b evidence must be a concrete narrative, not a one-line stub" in b2b["failures"]
+
+
+def test_track2_evidence_gate_rejects_wrong_schema_version(tmp_path):
+    evidence_dir = tmp_path / "evidence"
+    manifest = _complete_manifest()
+    manifest["schema_version"] = 2
+    _write_complete_evidence(evidence_dir)
+    (evidence_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    result = subprocess.run(
+        [sys.executable, str(_script()), "--evidence-dir", str(evidence_dir)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    report = json.loads(result.stdout)
+    assert "schema_version must be 1" in report["global_failures"]
 
 
 def test_track2_evidence_gate_emits_json_when_manifest_is_missing(tmp_path):

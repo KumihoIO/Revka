@@ -71,14 +71,24 @@ def _complete_manifest() -> dict:
 
 def _write_complete_evidence(evidence_dir: Path) -> None:
     files = {
-        "eval/baseline.json": '{"score": 0.42, "scenario": "heat wave"}',
-        "eval/optimized.json": '{"score": 0.86, "scenario": "heat wave"}',
-        "simulation/run-output.json": '{"scenario_count": 3, "edge_cases": ["heat wave"]}',
+        "eval/baseline.json": '{"eval_success_rate": 0.42, "scenario": "heat wave"}',
+        "eval/optimized.json": '{"eval_success_rate": 0.86, "scenario": "heat wave"}',
+        "simulation/run-output.json": (
+            '{"scenario_count": 3, "edge_cases": ["heat wave plus peak pricing"]}'
+        ),
         "observability/trace.jsonl": '{"trace_id": "trace-heat-wave-001", "tool_calls": 4}',
         "optimizer/result.json": '{"measured_delta": 0.44, "changed": true}',
-        "deploy/deploy-output.txt": "deployed agent runtime projects/demo/locations/us-central1",
+        "deploy/deploy-output.txt": (
+            "deployed agent runtime for project demo-project in us-central1 at "
+            "projects/demo/locations/us-central1/agents/facility-energy"
+        ),
         "deploy/rollback-plan.md": "Rollback by redeploying the previous Agent Runtime revision.",
-        "business/use-case.md": "Commercial property operator avoids peak pricing conflict.",
+        "business/use-case.md": (
+            "Commercial property operations manager handles the Peak-demand incident response "
+            "workflow by combining occupancy, weather, and grid price inputs. The agent can "
+            "adjust setpoints and notify facilities team while preserving comfort and reducing "
+            "peak cost risk."
+        ),
     }
     for rel, text in files.items():
         _write(evidence_dir / rel, text)
@@ -225,3 +235,102 @@ else:
     assert statuses["github_review_threads"] == "pass"
     local_probe = next(item for item in report["checks"] if item["name"] == "local_code_probe")
     assert Path(local_probe["artifact"]).is_file()
+
+
+def _write_fake_agents_cli(bin_dir: Path, authenticated: bool = False) -> None:
+    fake_agents_cli = bin_dir / "agents-cli"
+    login_status = "Authenticated as demo@example.com" if authenticated else "Not authenticated"
+    fake_agents_cli.write_text(
+        f"""#!/usr/bin/env python3
+import sys
+
+args = sys.argv[1:]
+if args == ["--help"]:
+    print("Agents CLI - Agent Development Lifecycle toolchain")
+    print("Commands: run eval deploy publish info login")
+elif args == ["eval", "--help"]:
+    print("Subcommands: run compare optimize")
+elif args == ["eval", "optimize", "--help"]:
+    print("Optimize agent prompts using the GEPA framework")
+    print("This command runs adk optimize under the hood")
+elif args == ["deploy", "--help"]:
+    print("Deploy the agent to Agent Runtime, Cloud Run, or GKE")
+    print("--dry-run --status")
+elif args == ["publish", "--help"]:
+    print("Commands: gemini-enterprise")
+elif args == ["info"]:
+    print("CLI version: 0.2.1")
+elif args == ["login", "--status"]:
+    print("Authentication")
+    print("{login_status}")
+else:
+    print("unexpected agents-cli invocation: " + " ".join(args), file=sys.stderr)
+    sys.exit(2)
+""",
+        encoding="utf-8",
+    )
+    fake_agents_cli.chmod(0o755)
+
+
+def test_pre_recording_gate_can_require_real_agents_cli_surface(tmp_path):
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    _write_fake_agents_cli(fake_bin)
+    output = tmp_path / "report.json"
+    env = {
+        **os.environ,
+        "PATH": str(fake_bin) + os.pathsep + os.environ.get("PATH", ""),
+    }
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(_script()),
+            "--skip-track2-evidence",
+            "--require-real-agents-cli",
+            "--output",
+            str(output),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    report = json.loads(output.read_text(encoding="utf-8"))
+    real_cli = next(item for item in report["checks"] if item["name"] == "real_agents_cli")
+    assert real_cli["status"] == "pass"
+    assert real_cli["authenticated"] is False
+
+
+def test_pre_recording_gate_can_require_real_agents_cli_auth(tmp_path):
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    _write_fake_agents_cli(fake_bin, authenticated=False)
+    output = tmp_path / "report.json"
+    env = {
+        **os.environ,
+        "PATH": str(fake_bin) + os.pathsep + os.environ.get("PATH", ""),
+    }
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(_script()),
+            "--skip-track2-evidence",
+            "--require-real-agents-cli-auth",
+            "--output",
+            str(output),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert result.returncode == 1
+    report = json.loads(output.read_text(encoding="utf-8"))
+    real_cli = next(item for item in report["checks"] if item["name"] == "real_agents_cli")
+    assert real_cli["status"] == "fail"
+    assert any("authenticated session" in item for item in real_cli["failures"])

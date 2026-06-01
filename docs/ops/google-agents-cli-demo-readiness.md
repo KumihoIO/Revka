@@ -71,10 +71,24 @@ git diff --check
 
 The demo probe uses a temporary fake `agents-cli` binary. It does not touch
 Google Cloud, but it produces a JSON evidence bundle for local readiness
-outcomes: info, prompt-run redaction, eval failure diagnostics, malformed input,
-interactive login blocking, workspace escape blocking, timeout, truncation,
-Gemini Enterprise env passthrough, deploy command acceptance, and missing-binary
-handling.
+outcomes: source-level architecture guardrails, info, prompt-run redaction, eval
+failure diagnostics, malformed input, interactive login blocking, workspace
+escape blocking, timeout, truncation, Gemini Enterprise env passthrough, deploy
+command acceptance, and missing-binary handling.
+
+For the actual recording machine, also verify that the real installed
+`agents-cli` supports the command surface used in the demo:
+
+```bash
+python3 scripts/demo/google_agents_cli_pre_recording_gate.py \
+  --skip-track2-evidence \
+  --require-real-agents-cli \
+  --output /tmp/google_agents_cli_real_cli_gate.json
+```
+
+Add `--require-real-agents-cli-auth` for the final rehearsal if the recording
+will show live Google Cloud deployment or publishing. That stricter mode fails
+when `agents-cli login --status` does not report an authenticated session.
 
 For PR-backed demos, also verify:
 
@@ -122,7 +136,11 @@ python3 scripts/demo/google_agents_cli_track2_evidence_gate.py \
 ```
 
 The gate also rejects placeholder-only evidence files such as `TODO` or
-`evidence`, and validates `.json` / `.jsonl` evidence as structured data.
+`evidence`, validates `.json` / `.jsonl` evidence as structured data, and
+cross-checks core artifact content against the manifest: before/after metrics,
+simulation scenario counts, observability trace IDs, optimizer deltas,
+deployment project/region/resource text, rollback wording, and B2B narrative
+specificity.
 
 For the final pre-recording rehearsal, run the umbrella gate so local code
 readiness, Track 2 evidence, and optional PR health are captured in one JSON
@@ -131,6 +149,7 @@ report:
 ```bash
 python3 scripts/demo/google_agents_cli_pre_recording_gate.py \
   --evidence-dir .demo/google-agents-cli-track2 \
+  --require-real-agents-cli-auth \
   --pr-number 324 \
   --output /tmp/google_agents_cli_pre_recording_gate.json
 ```
