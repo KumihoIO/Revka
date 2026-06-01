@@ -25,7 +25,7 @@ if str(OPERATOR_MCP) not in sys.path:
     sys.path.insert(0, str(OPERATOR_MCP))
 
 from operator_mcp import construct_config  # noqa: E402
-from operator_mcp.tool_handlers.google_agents_cli import tool_google_agents_cli  # noqa: E402
+from operator_mcp.tool_handlers import google_agents_cli as google_agents_cli_handler  # noqa: E402
 
 
 ProbeFn = Callable[[], Awaitable[dict[str, Any]]]
@@ -107,7 +107,7 @@ def _assert(condition: bool, message: str) -> None:
 
 
 async def _call(args: dict[str, Any]) -> dict[str, Any]:
-    return await tool_google_agents_cli(args)
+    return await google_agents_cli_handler.tool_google_agents_cli(args)
 
 
 def _dict_value(node: ast.Dict, key: str) -> ast.AST | None:
@@ -193,6 +193,18 @@ async def _expect_success_info() -> dict[str, Any]:
     return result
 
 
+async def _expect_successful_lifecycle(workspace: Path) -> dict[str, Any]:
+    result = await _call({"command": ["lint"], "working_directory": "adk-project"})
+    expected_cwd = os.path.realpath(workspace / "adk-project")
+    _assert(result.get("success") is True, "successful lifecycle command should pass")
+    _assert(result.get("status") == "completed", "successful lifecycle status should be completed")
+    _assert(result.get("exit_code") == 0, "successful lifecycle should preserve exit code 0")
+    _assert(result.get("command") == ["lint"], "successful lifecycle command preview should be exact")
+    _assert(result.get("cwd") == expected_cwd, "successful lifecycle cwd should be resolved")
+    _assert("lint ok" in result.get("output", ""), "successful lifecycle stdout missing")
+    return result
+
+
 async def _expect_prompt_run_redaction() -> dict[str, Any]:
     result = await _call({"prompt": "simulate peak pricing and heat wave"})
     _assert(result.get("success") is True, "prompt-only run should succeed")
@@ -211,10 +223,24 @@ async def _expect_eval_failure_diagnostics() -> dict[str, Any]:
 
 
 async def _expect_invalid_command_shape() -> dict[str, Any]:
-    result = await _call({"command": ["run", 1]})
-    _assert(result.get("error_code") == "invalid_command", "non-string token should be invalid")
-    _assert("strings" in result.get("error", ""), "invalid token error should explain strings")
-    return result
+    cases = [
+        ({"command": ["run", 1]}, "strings"),
+        ({"command": {"name": "info"}}, "string or list"),
+        ({"command": [""]}, "empty"),
+        ({"command": [" run"]}, "whitespace"),
+        ({"command": ["not-a-google-agents-command"]}, "Unsupported"),
+        ({"command": ["run", "bad\0prompt"]}, "NUL"),
+    ]
+    results = []
+    for args, expected_error in cases:
+        result = await _call(args)
+        _assert(result.get("error_code") == "invalid_command", f"{args!r} should be invalid")
+        _assert(
+            expected_error in result.get("error", ""),
+            f"{args!r} error should mention {expected_error!r}",
+        )
+        results.append({"args": _scrub(args), "error": result.get("error")})
+    return {"cases": results}
 
 
 async def _expect_interactive_login_block() -> dict[str, Any]:
@@ -274,6 +300,47 @@ async def _expect_missing_binary(fake_path: str) -> dict[str, Any]:
     return result
 
 
+async def _expect_spawn_failure() -> dict[str, Any]:
+    temp_dir = Path(tempfile.mkdtemp(prefix="agents-cli-spawn-failure-"))
+    fake_binary = temp_dir / "agents-cli"
+    fake_binary.write_text("#!/bin/sh\n", encoding="utf-8")
+    original_which = google_agents_cli_handler.shutil.which
+    original_create_subprocess_exec = google_agents_cli_handler.asyncio.create_subprocess_exec
+
+    async def raise_os_error(*_args: Any, **_kwargs: Any) -> Any:
+        raise PermissionError("permission denied")
+
+    try:
+        google_agents_cli_handler.shutil.which = lambda _name: str(fake_binary)
+        google_agents_cli_handler.asyncio.create_subprocess_exec = raise_os_error
+        result = await _call({"command": ["login", "--status"]})
+    finally:
+        google_agents_cli_handler.shutil.which = original_which
+        google_agents_cli_handler.asyncio.create_subprocess_exec = original_create_subprocess_exec
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+    _assert(result.get("error_code") == "agents_cli_spawn_failed", "spawn error should be structured")
+    _assert(result.get("error_category") == "runtime_env_error", "spawn error category should be runtime")
+    _assert(result.get("retryable") is True, "spawn error should be retryable")
+    return result
+
+
+async def _expect_runtime_safety_policy() -> dict[str, Any]:
+    rust_tool = REPO_ROOT / "src" / "tools" / "google_agents_cli.rs"
+    source = rust_tool.read_text(encoding="utf-8")
+    required_fragments = [
+        "self.security.is_rate_limited()",
+        "enforce_tool_operation",
+        "ToolOperation::Act",
+        "record_action()",
+        "google_agents_cli_blocks_rate_limited",
+        "google_agents_cli_blocks_readonly",
+    ]
+    for fragment in required_fragments:
+        _assert(fragment in source, f"runtime safety source missing: {fragment}")
+    return {"checked_source": str(rust_tool), "required_fragments": required_fragments}
+
+
 async def _run_probes(workspace: Path, fake_path: str) -> list[dict[str, Any]]:
     probes: list[Probe] = [
         Probe(
@@ -282,6 +349,11 @@ async def _run_probes(workspace: Path, fake_path: str) -> list[dict[str, Any]]:
             _expect_architecture_guardrails,
         ),
         Probe("info", "Current project/tooling inspection", _expect_success_info),
+        Probe(
+            "successful_lifecycle",
+            "Successful lifecycle command reports status, exit code, cwd, preview, and stdout",
+            lambda: _expect_successful_lifecycle(workspace),
+        ),
         Probe("prompt_run", "Prompt-only agents-cli run with redacted preview", _expect_prompt_run_redaction),
         Probe("eval_failure", "Eval failure preserves stdout/stderr/exit code", _expect_eval_failure_diagnostics),
         Probe("invalid_command", "Malformed command input is rejected before spawn", _expect_invalid_command_shape),
@@ -299,6 +371,12 @@ async def _run_probes(workspace: Path, fake_path: str) -> list[dict[str, Any]]:
             "missing_binary",
             "Missing agents-cli binary returns structured error",
             lambda: _expect_missing_binary(fake_path),
+        ),
+        Probe("spawn_failure", "OS-level spawn errors return structured retryable errors", _expect_spawn_failure),
+        Probe(
+            "runtime_safety_policy",
+            "Rust tool enforces read-only mode and rate/action limits before execution",
+            _expect_runtime_safety_policy,
         ),
     ]
 

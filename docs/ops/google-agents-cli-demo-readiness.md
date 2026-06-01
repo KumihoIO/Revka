@@ -72,9 +72,12 @@ git diff --check
 The demo probe uses a temporary fake `agents-cli` binary. It does not touch
 Google Cloud, but it produces a JSON evidence bundle for local readiness
 outcomes: source-level architecture guardrails, info, prompt-run redaction, eval
-failure diagnostics, malformed input, interactive login blocking, workspace
-escape blocking, timeout, truncation, Gemini Enterprise env passthrough, deploy
-command acceptance, and missing-binary handling.
+outcomes: source-level architecture guardrails, info, successful lifecycle
+command reporting, prompt-run redaction, eval failure diagnostics, malformed
+input, interactive login blocking, workspace escape blocking, timeout,
+truncation, Gemini Enterprise env passthrough, deploy command acceptance,
+missing-binary handling, spawn-failure handling, and Rust runtime safety policy
+coverage.
 
 For the actual recording machine, also verify that the real installed
 `agents-cli` supports the command surface used in the demo:

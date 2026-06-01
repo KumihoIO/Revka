@@ -26,6 +26,7 @@ def test_google_agents_cli_demo_probe_generates_passing_evidence_bundle(tmp_path
     } >= {
         "architecture_guardrails",
         "info",
+        "successful_lifecycle",
         "prompt_run",
         "eval_failure",
         "invalid_command",
@@ -36,4 +37,6 @@ def test_google_agents_cli_demo_probe_generates_passing_evidence_bundle(tmp_path
         "enterprise_env",
         "deploy_acceptance",
         "missing_binary",
+        "spawn_failure",
+        "runtime_safety_policy",
     }
