@@ -115,6 +115,112 @@ def _template() -> dict[str, Any]:
     }
 
 
+def _capture_plan_text() -> str:
+    return """# Google Agents CLI Track 2 Evidence Capture Plan
+
+This file is a working checklist for the real demo rehearsal. Do not treat it
+as evidence. Replace the scaffold manifest values and capture the artifacts
+listed below before running the strict pre-recording gate.
+
+## Final Gate
+
+```bash
+agents-cli login -i
+python3 scripts/demo/google_agents_cli_pre_recording_gate.py \\
+  --evidence-dir .demo/google-agents-cli-track2 \\
+  --require-real-agents-cli-auth \\
+  --pr-number 324 \\
+  --output /tmp/google_agents_cli_pre_recording_gate.json
+```
+
+The final report must say `strict_final_recording_ready: true`.
+
+## Scenario
+
+Fill these fields in `manifest.json` with the exact business story shown in the
+recording:
+
+- `scenario.name`
+- `scenario.b2b_persona`
+- `scenario.business_workflow`
+- `scenario.measurable_outcome`
+
+## Required Claims And Artifacts
+
+### optimization_improvement
+
+- Manifest: set `metric_name`, numeric `before`, numeric `after`, and
+  `higher_is_better`.
+- Files:
+  - `eval/baseline.json` must contain the metric named by `metric_name` with
+    the same value as `before`.
+  - `eval/optimized.json` must contain the same metric with the same value as
+    `after`.
+- Gate invariant: `after` must improve over `before` according to
+  `higher_is_better`.
+
+### agent_simulation
+
+- Manifest: set `scenario_count` to the number of synthetic scenarios and list
+  every edge case shown in the video.
+- File: `simulation/run-output.json` must contain numeric `scenario_count` and
+  mention each edge-case string from the manifest.
+- Gate invariant: artifact `scenario_count` must be at least the manifest
+  `scenario_count`.
+
+### agent_observability
+
+- Manifest: list concrete trace IDs captured from Agent Observability or the
+  runtime trace.
+- File: `observability/trace.jsonl` must be valid non-empty JSONL and contain
+  every trace ID from the manifest.
+
+### agent_optimizer
+
+- Manifest: set `original_instructions_file`,
+  `optimized_instructions_file`, and non-zero numeric `measured_delta`.
+- Files:
+  - `optimizer/original-instructions.md`
+  - `optimizer/optimized-instructions.md`
+  - `optimizer/result.json` with numeric `measured_delta`
+- Gate invariant: optimized instructions must differ from original
+  instructions, and result `measured_delta` must match the manifest.
+
+### live_google_cloud_deployment
+
+- Manifest: set `project_id`, `region`, `resource`, and
+  `rollback_plan_file`.
+- Files:
+  - `deploy/deploy-output.txt` must mention the manifest project, region, and
+    resource.
+  - `deploy/rollback-plan.md` must describe rollback.
+
+### mandatory_google_platform
+
+- Manifest: set `intelligence`, `orchestration`, and `infrastructure`.
+- File: `platform/architecture.md` must mention:
+  - Gemini, or a third-party LLM deployed through Agent Platform
+  - ADK, LangChain, or CrewAI orchestration
+  - Google Cloud
+  - Agent Runtime, Cloud Run, or GKE
+
+### b2b_value
+
+- Manifest: set `persona`, `workflow`, `inputs`, `actions`, and
+  `measurable_outcome`.
+- File: `business/use-case.md` must be a concrete narrative of at least 25
+  words and mention the persona, workflow, and every action from the manifest.
+
+## Notes
+
+- Evidence files must stay under `.demo/google-agents-cli-track2`.
+- JSON files must parse as JSON; JSONL files must contain at least one valid
+  JSON line.
+- Placeholder-only text such as `TODO`, `placeholder`, `sample`, or
+  `replace me` fails the gate.
+"""
+
+
 def _is_todo(value: Any) -> bool:
     return isinstance(value, str) and value.strip().lower().startswith("todo:")
 
@@ -573,6 +679,13 @@ def _write_template(path: Path, force: bool) -> None:
         (path.parent / dirname).mkdir(exist_ok=True)
 
 
+def _write_capture_plan(path: Path, force: bool) -> None:
+    if path.exists() and not force:
+        raise SystemExit(f"capture plan already exists: {path}; use --force to replace it")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(_capture_plan_text(), encoding="utf-8")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -583,14 +696,32 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--manifest", help="Manifest path; defaults to <evidence-dir>/manifest.json")
     parser.add_argument("--output", help="Write JSON gate report to this path")
     parser.add_argument("--write-template", action="store_true", help="Create a manifest template and exit")
+    parser.add_argument(
+        "--write-capture-plan",
+        action="store_true",
+        help="Create a markdown checklist for collecting real Track 2 artifacts and exit",
+    )
+    parser.add_argument(
+        "--capture-plan",
+        help="Capture-plan path; defaults to <evidence-dir>/capture-plan.md",
+    )
     parser.add_argument("--force", action="store_true", help="Replace an existing template manifest")
     args = parser.parse_args(argv)
 
     evidence_dir = Path(args.evidence_dir).resolve()
     manifest_path = Path(args.manifest).resolve() if args.manifest else evidence_dir / "manifest.json"
+    capture_plan_path = (
+        Path(args.capture_plan).resolve()
+        if args.capture_plan
+        else evidence_dir / "capture-plan.md"
+    )
     if args.write_template:
         _write_template(manifest_path, args.force)
         print(f"Wrote Track 2 evidence template: {manifest_path}")
+    if args.write_capture_plan:
+        _write_capture_plan(capture_plan_path, args.force)
+        print(f"Wrote Track 2 evidence capture plan: {capture_plan_path}")
+    if args.write_template or args.write_capture_plan:
         return 0
 
     try:

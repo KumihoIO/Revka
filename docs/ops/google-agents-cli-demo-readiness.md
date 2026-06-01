@@ -136,6 +136,15 @@ python3 scripts/demo/google_agents_cli_track2_evidence_gate.py \
   --write-template
 ```
 
+To write the artifact capture checklist that maps each claim to the files and
+content the gate will require:
+
+```bash
+python3 scripts/demo/google_agents_cli_track2_evidence_gate.py \
+  --evidence-dir .demo/google-agents-cli-track2 \
+  --write-capture-plan
+```
+
 The gate also rejects placeholder-only evidence files such as `TODO` or
 `evidence`, validates `.json` / `.jsonl` evidence as structured data, and
 cross-checks core artifact content against the manifest: before/after metrics,

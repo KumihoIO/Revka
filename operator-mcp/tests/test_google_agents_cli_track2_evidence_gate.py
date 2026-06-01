@@ -362,3 +362,27 @@ def test_track2_evidence_gate_writes_template(tmp_path):
         "mandatory_google_platform",
         "b2b_value",
     }
+
+
+def test_track2_evidence_gate_writes_capture_plan(tmp_path):
+    evidence_dir = tmp_path / "evidence"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(_script()),
+            "--evidence-dir",
+            str(evidence_dir),
+            "--write-capture-plan",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    plan = (evidence_dir / "capture-plan.md").read_text(encoding="utf-8")
+    assert "strict_final_recording_ready: true" in plan
+    assert "mandatory_google_platform" in plan
+    assert "platform/architecture.md" in plan
+    assert "agents-cli login -i" in plan
