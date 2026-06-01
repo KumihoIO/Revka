@@ -64,7 +64,7 @@ Run these checks after rebasing the demo branch onto current `origin/main`:
 cargo fmt --all -- --check
 cargo test --lib google_agents_cli -- --nocapture
 python3 -m compileall -q operator-mcp/operator_mcp/tool_handlers/google_agents_cli.py operator-mcp/operator_mcp/operator_mcp.py
-pytest operator-mcp/tests/test_google_agents_cli_tool.py operator-mcp/tests/test_google_agents_cli_demo_probe.py -q
+pytest operator-mcp/tests/test_google_agents_cli_tool.py operator-mcp/tests/test_google_agents_cli_demo_probe.py operator-mcp/tests/test_google_agents_cli_track2_evidence_gate.py -q
 python3 scripts/demo/google_agents_cli_demo_probe.py --output /tmp/google_agents_cli_demo_probe.json
 git diff --check
 ```
@@ -103,6 +103,23 @@ Do not treat the integration tests above as proof for these higher-level claims.
 | Agent Optimizer refinement | The original instructions, optimized instructions, and measured behavior delta |
 | Live Google Cloud deployment | Project ID, region, deploy command output, service URL or Agent Platform resource, and rollback plan |
 | B2B value proposition | A concrete business workflow, user persona, inputs, actions taken, and measurable business outcome |
+
+Use the Track 2 evidence gate to fail closed before recording if any of these
+claims are missing concrete artifacts:
+
+```bash
+python3 scripts/demo/google_agents_cli_track2_evidence_gate.py \
+  --evidence-dir .demo/google-agents-cli-track2 \
+  --output /tmp/google_agents_cli_track2_evidence_gate.json
+```
+
+To scaffold the expected manifest and directory shape:
+
+```bash
+python3 scripts/demo/google_agents_cli_track2_evidence_gate.py \
+  --evidence-dir .demo/google-agents-cli-track2 \
+  --write-template
+```
 
 ## 7. Related Docs
 
