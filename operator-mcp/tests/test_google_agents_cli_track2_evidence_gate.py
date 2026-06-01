@@ -27,6 +27,14 @@ def _complete_manifest() -> dict:
             "measurable_outcome": "Eval success rate improves from 0.42 to 0.86",
         },
         "claims": {
+            "existing_agent_baseline": {
+                "agent_name": "Facility Energy Agent",
+                "normal_case": "normal occupancy and pricing day",
+                "edge_case": "heat wave plus peak pricing",
+                "normal_case_evidence": "baseline/normal-case.json",
+                "edge_case_evidence": "baseline/edge-case.json",
+                "evidence_files": ["baseline/existing-agent.md"],
+            },
             "optimization_improvement": {
                 "metric_name": "eval_success_rate",
                 "before": 0.42,
@@ -76,6 +84,19 @@ def _complete_manifest() -> dict:
 
 def _write_complete_evidence(evidence_dir: Path) -> None:
     files = {
+        "baseline/existing-agent.md": (
+            "Facility Energy Agent is the existing sandbox agent. It already handles "
+            "the normal occupancy and pricing day workflow, but before optimization "
+            "it fails the heat wave plus peak pricing edge case."
+        ),
+        "baseline/normal-case.json": (
+            '{"agent_name": "Facility Energy Agent", '
+            '"scenario": "normal occupancy and pricing day", "passed": true}'
+        ),
+        "baseline/edge-case.json": (
+            '{"agent_name": "Facility Energy Agent", '
+            '"scenario": "heat wave plus peak pricing", "passed": false, "failed": true}'
+        ),
         "eval/baseline.json": '{"eval_success_rate": 0.42, "scenario": "heat wave"}',
         "eval/optimized.json": '{"eval_success_rate": 0.86, "scenario": "heat wave"}',
         "simulation/run-output.json": (
@@ -125,7 +146,34 @@ def test_track2_evidence_gate_passes_complete_bundle(tmp_path):
     assert result.returncode == 0, result.stderr or result.stdout
     report = json.loads(result.stdout)
     assert report["passed"] is True
-    assert report["summary"] == {"failed": 0, "passed": 7, "total": 7}
+    assert report["summary"] == {"failed": 0, "passed": 8, "total": 8}
+
+
+def test_track2_evidence_gate_rejects_missing_existing_agent_failure(tmp_path):
+    evidence_dir = tmp_path / "evidence"
+    manifest = _complete_manifest()
+    _write_complete_evidence(evidence_dir)
+    (evidence_dir / "baseline" / "edge-case.json").write_text(
+        '{"agent_name": "Facility Energy Agent", '
+        '"scenario": "heat wave plus peak pricing", "passed": true}',
+        encoding="utf-8",
+    )
+    (evidence_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    result = subprocess.run(
+        [sys.executable, str(_script()), "--evidence-dir", str(evidence_dir)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    report = json.loads(result.stdout)
+    baseline = next(
+        item for item in report["checks"] if item["claim"] == "existing_agent_baseline"
+    )
+    assert baseline["status"] == "fail"
+    assert any("pre-optimization edge case" in item for item in baseline["failures"])
 
 
 def test_track2_evidence_gate_fails_missing_required_artifact(tmp_path):
@@ -354,6 +402,7 @@ def test_track2_evidence_gate_writes_template(tmp_path):
     assert result.returncode == 0, result.stderr or result.stdout
     manifest = json.loads((evidence_dir / "manifest.json").read_text(encoding="utf-8"))
     assert set(manifest["claims"]) >= {
+        "existing_agent_baseline",
         "optimization_improvement",
         "agent_simulation",
         "agent_observability",
@@ -383,6 +432,8 @@ def test_track2_evidence_gate_writes_capture_plan(tmp_path):
     assert result.returncode == 0, result.stderr or result.stdout
     plan = (evidence_dir / "capture-plan.md").read_text(encoding="utf-8")
     assert "strict_final_recording_ready: true" in plan
+    assert "existing_agent_baseline" in plan
+    assert "baseline/edge-case.json" in plan
     assert "mandatory_google_platform" in plan
     assert "platform/architecture.md" in plan
     assert "agents-cli login -i" in plan

@@ -124,6 +124,7 @@ Do not treat the integration tests above as proof for these higher-level claims.
 
 | Claim | Evidence needed |
 |---|---|
+| Existing-agent baseline | Proof that the demo starts from an existing sandbox agent, including a normal case it already passes and a harder pre-optimization edge case it fails |
 | Track 2 optimization improvement | Before/after eval scores, latency/cost/error-rate deltas, or a visible improvement in a repeatable scenario |
 | Agent Simulation coverage | Synthetic edge-case scenario definitions and run output |
 | Agent Observability debugging | Trace screenshots/logs showing stalled reasoning, tool calls, retries, or conflict resolution |
@@ -160,10 +161,11 @@ python3 scripts/demo/google_agents_cli_track2_evidence_gate.py \
 
 The gate also rejects placeholder-only evidence files such as `TODO` or
 `evidence`, validates `.json` / `.jsonl` evidence as structured data, and
-cross-checks core artifact content against the manifest: before/after metrics,
-simulation scenario counts, observability trace IDs, optimizer deltas,
-deployment project/region/resource text, rollback wording, mandatory Google
-platform technologies, and B2B narrative specificity.
+cross-checks core artifact content against the manifest: existing-agent
+baseline pass/fail evidence, before/after metrics, simulation scenario counts,
+observability trace IDs, optimizer deltas, deployment project/region/resource
+text, rollback wording, mandatory Google platform technologies, and B2B
+narrative specificity.
 
 For the final pre-recording rehearsal, run the umbrella gate so local code
 readiness, Track 2 evidence, and optional PR health are captured in one JSON

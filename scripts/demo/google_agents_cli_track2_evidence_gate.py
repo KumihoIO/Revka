@@ -14,6 +14,7 @@ from typing import Any
 
 
 REQUIRED_CLAIMS = (
+    "existing_agent_baseline",
     "optimization_improvement",
     "agent_simulation",
     "agent_observability",
@@ -45,6 +46,16 @@ def _template() -> dict[str, Any]:
             "measurable_outcome": "TODO: metric visible in the demo",
         },
         "claims": {
+            "existing_agent_baseline": {
+                "agent_name": "TODO: existing sandbox agent name",
+                "normal_case": "TODO: normal scenario the existing agent already handles",
+                "edge_case": "TODO: pre-optimization edge case that fails",
+                "normal_case_evidence": "baseline/normal-case.json",
+                "edge_case_evidence": "baseline/edge-case.json",
+                "evidence_files": [
+                    "baseline/existing-agent.md",
+                ],
+            },
             "optimization_improvement": {
                 "metric_name": "eval_success_rate",
                 "before": 0.0,
@@ -149,6 +160,20 @@ recording:
 - `scenario.measurable_outcome`
 
 ## Required Claims And Artifacts
+
+### existing_agent_baseline
+
+- Manifest: set `agent_name`, `normal_case`, `edge_case`,
+  `normal_case_evidence`, and `edge_case_evidence`.
+- Files:
+  - `baseline/existing-agent.md` must explain the existing agent before
+    optimization.
+  - `baseline/normal-case.json` must contain boolean `passed: true` for the
+    normal sandbox case.
+  - `baseline/edge-case.json` must contain boolean `passed: false` or
+    `failed: true` for the pre-optimization edge case.
+- Gate invariant: evidence must mention the manifest agent name, normal case,
+  and edge case so the demo cannot pass as a net-new agent build.
 
 ### optimization_improvement
 
@@ -313,6 +338,22 @@ def _numeric_by_key(value: Any, key: str) -> float | None:
     return None
 
 
+def _bool_by_key(value: Any, key: str) -> bool | None:
+    if isinstance(value, dict):
+        for dict_key, dict_value in value.items():
+            if dict_key == key and isinstance(dict_value, bool):
+                return dict_value
+            nested = _bool_by_key(dict_value, key)
+            if nested is not None:
+                return nested
+    elif isinstance(value, list):
+        for item in value:
+            nested = _bool_by_key(item, key)
+            if nested is not None:
+                return nested
+    return None
+
+
 def _numbers_close(left: float, right: float) -> bool:
     return abs(left - right) <= 0.000_001
 
@@ -385,6 +426,51 @@ def _check_common(claim_name: str, claim: Any) -> tuple[dict[str, Any], list[str
     if not isinstance(claim, dict):
         return {}, [f"{claim_name} must be an object"]
     return claim, []
+
+
+def _check_existing_agent_baseline(claim: dict[str, Any], base: Path) -> list[str]:
+    failures = []
+    for key in ("agent_name", "normal_case", "edge_case"):
+        if not _nonempty_string(claim.get(key)):
+            failures.append(f"{key} is required")
+
+    normal_case_evidence = claim.get("normal_case_evidence")
+    edge_case_evidence = claim.get("edge_case_evidence")
+    files = []
+    if _nonempty_string(normal_case_evidence):
+        files.append(normal_case_evidence)
+    else:
+        failures.append("normal_case_evidence is required")
+    if _nonempty_string(edge_case_evidence):
+        files.append(edge_case_evidence)
+    else:
+        failures.append("edge_case_evidence is required")
+
+    failures.extend(_failures_for_files(base, claim, files))
+
+    if _nonempty_string(normal_case_evidence):
+        normal_passed = _bool_by_key(_safe_json(base, normal_case_evidence), "passed")
+        if normal_passed is not True:
+            failures.append(
+                f"{normal_case_evidence} must contain boolean passed=true for the sandbox case"
+            )
+    if _nonempty_string(edge_case_evidence):
+        edge_passed = _bool_by_key(_safe_json(base, edge_case_evidence), "passed")
+        edge_failed = _bool_by_key(_safe_json(base, edge_case_evidence), "failed")
+        if edge_passed is not False and edge_failed is not True:
+            failures.append(
+                f"{edge_case_evidence} must contain boolean passed=false or failed=true "
+                "for the pre-optimization edge case"
+            )
+
+    evidence_text = "\n".join(
+        _safe_text(base, rel) for rel in [*files, *_claim_files(claim)]
+    ).lower()
+    for key in ("agent_name", "normal_case", "edge_case"):
+        value = claim.get(key)
+        if _nonempty_string(value) and value.lower() not in evidence_text:
+            failures.append(f"existing-agent evidence does not mention {key}: {value}")
+    return failures
 
 
 def _check_optimization(claim: dict[str, Any], base: Path) -> list[str]:
@@ -586,6 +672,7 @@ def _check_b2b(claim: dict[str, Any], base: Path) -> list[str]:
 
 
 CHECKERS = {
+    "existing_agent_baseline": _check_existing_agent_baseline,
     "optimization_improvement": _check_optimization,
     "agent_simulation": _check_simulation,
     "agent_observability": _check_observability,
@@ -671,6 +758,7 @@ def _write_template(path: Path, force: bool) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(_template(), indent=2, sort_keys=True) + "\n", encoding="utf-8")
     for dirname in (
+        "baseline",
         "eval",
         "simulation",
         "observability",

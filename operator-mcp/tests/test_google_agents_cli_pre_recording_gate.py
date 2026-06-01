@@ -41,6 +41,14 @@ def _complete_manifest() -> dict:
             "measurable_outcome": "Eval success rate improves from 0.42 to 0.86",
         },
         "claims": {
+            "existing_agent_baseline": {
+                "agent_name": "Facility Energy Agent",
+                "normal_case": "normal occupancy and pricing day",
+                "edge_case": "heat wave plus peak pricing",
+                "normal_case_evidence": "baseline/normal-case.json",
+                "edge_case_evidence": "baseline/edge-case.json",
+                "evidence_files": ["baseline/existing-agent.md"],
+            },
             "optimization_improvement": {
                 "metric_name": "eval_success_rate",
                 "before": 0.42,
@@ -90,6 +98,19 @@ def _complete_manifest() -> dict:
 
 def _write_complete_evidence(evidence_dir: Path) -> None:
     files = {
+        "baseline/existing-agent.md": (
+            "Facility Energy Agent is the existing sandbox agent. It already handles "
+            "the normal occupancy and pricing day workflow, but before optimization "
+            "it fails the heat wave plus peak pricing edge case."
+        ),
+        "baseline/normal-case.json": (
+            '{"agent_name": "Facility Energy Agent", '
+            '"scenario": "normal occupancy and pricing day", "passed": true}'
+        ),
+        "baseline/edge-case.json": (
+            '{"agent_name": "Facility Energy Agent", '
+            '"scenario": "heat wave plus peak pricing", "passed": false, "failed": true}'
+        ),
         "eval/baseline.json": '{"eval_success_rate": 0.42, "scenario": "heat wave"}',
         "eval/optimized.json": '{"eval_success_rate": 0.86, "scenario": "heat wave"}',
         "simulation/run-output.json": (
@@ -272,10 +293,13 @@ def test_pre_recording_gate_reports_track2_failed_claim_details(tmp_path):
     report = json.loads(output.read_text(encoding="utf-8"))
     track2 = next(item for item in report["checks"] if item["name"] == "track2_evidence_gate")
     assert track2["status"] == "fail"
+    assert "existing_agent_baseline" in track2["failed_claims"]
     assert "optimization_improvement" in track2["failed_claims"]
     assert any(item["claim"] == "agent_optimizer" for item in track2["failure_details"])
     assert any(
-        "track2_evidence_gate failed claims: optimization_improvement" in item
+        "track2_evidence_gate failed claims:" in item
+        and "existing_agent_baseline" in item
+        and "optimization_improvement" in item
         for item in report["strict_final_blockers"]
     )
     detail = next(
