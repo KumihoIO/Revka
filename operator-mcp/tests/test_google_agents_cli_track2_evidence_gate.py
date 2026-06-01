@@ -105,7 +105,8 @@ def _write_complete_evidence(evidence_dir: Path) -> None:
             '"edge_cases": ["heat wave plus peak pricing"]}'
         ),
         "observability/trace.jsonl": (
-            '{"trace_id": "trace-heat-wave-001", "tool_calls": 4, '
+            '{"trace_id": "trace-heat-wave-001", "source": "Agent Observability", '
+            '"tool_calls": 4, '
             '"reasoning": "resolved comfort and cost conflict"}'
         ),
         "optimizer/result.json": (
@@ -229,6 +230,58 @@ def test_track2_evidence_gate_rejects_optimizer_without_invocation_proof(tmp_pat
     optimizer = next(item for item in report["checks"] if item["claim"] == "agent_optimizer")
     assert optimizer["status"] == "fail"
     assert any("optimizer evidence must mention" in item for item in optimizer["failures"])
+
+
+def test_track2_evidence_gate_rejects_generic_simulation_proof(tmp_path):
+    evidence_dir = tmp_path / "evidence"
+    manifest = _complete_manifest()
+    _write_complete_evidence(evidence_dir)
+    (evidence_dir / "simulation" / "run-output.json").write_text(
+        '{"scenario_count": 3, "generator": "generic synthetic scenario run", '
+        '"edge_cases": ["heat wave plus peak pricing"]}',
+        encoding="utf-8",
+    )
+    (evidence_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    result = subprocess.run(
+        [sys.executable, str(_script()), "--evidence-dir", str(evidence_dir)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    report = json.loads(result.stdout)
+    simulation = next(item for item in report["checks"] if item["claim"] == "agent_simulation")
+    assert simulation["status"] == "fail"
+    assert "simulation evidence must mention Agent Simulation" in simulation["failures"]
+
+
+def test_track2_evidence_gate_rejects_generic_observability_trace(tmp_path):
+    evidence_dir = tmp_path / "evidence"
+    manifest = _complete_manifest()
+    _write_complete_evidence(evidence_dir)
+    (evidence_dir / "observability" / "trace.jsonl").write_text(
+        '{"trace_id": "trace-heat-wave-001", "tool_calls": 4, '
+        '"reasoning": "resolved comfort and cost conflict"}',
+        encoding="utf-8",
+    )
+    (evidence_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    result = subprocess.run(
+        [sys.executable, str(_script()), "--evidence-dir", str(evidence_dir)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    report = json.loads(result.stdout)
+    observability = next(
+        item for item in report["checks"] if item["claim"] == "agent_observability"
+    )
+    assert observability["status"] == "fail"
+    assert "observability evidence must mention Agent Observability" in observability["failures"]
 
 
 def test_track2_evidence_gate_fails_missing_required_artifact(tmp_path):

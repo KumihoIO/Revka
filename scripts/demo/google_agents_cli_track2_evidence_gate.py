@@ -88,7 +88,7 @@ def _template() -> dict[str, Any]:
             },
             "agent_observability": {
                 "trace_ids": [
-                    "TODO: trace id from Agent Observability or runtime trace",
+                    "TODO: trace id from Agent Observability",
                 ],
                 "evidence_files": [
                     "observability/trace.jsonl",
@@ -206,20 +206,20 @@ recording:
 
 - Manifest: set `scenario_count` to the number of synthetic scenarios and list
   every edge case shown in the video.
-- File: `simulation/run-output.json` must contain numeric `scenario_count` and
-  mention each edge-case string from the manifest.
+- File: `simulation/run-output.json` must contain numeric `scenario_count`,
+  mention Agent Simulation, and mention each edge-case string from the manifest.
 - Gate invariant: artifact `scenario_count` must be at least the manifest
-  `scenario_count`, and the artifact must mention simulation or synthetic
-  scenarios.
+  `scenario_count`, and the artifact must mention Agent Simulation and synthetic
+  scenarios so a generic test harness cannot satisfy this Track 2 claim.
 
 ### agent_observability
 
-- Manifest: list concrete trace IDs captured from Agent Observability or the
-  runtime trace.
+- Manifest: list concrete trace IDs captured from Agent Observability.
 - File: `observability/trace.jsonl` must be valid non-empty JSONL and contain
-  every trace ID from the manifest.
+  every trace ID from the manifest and mention Agent Observability.
 - Gate invariant: trace evidence must show details such as tool calls,
-  reasoning, retries, decisions, or conflict resolution.
+  reasoning, retries, decisions, or conflict resolution so a generic runtime
+  log cannot satisfy this Track 2 claim.
 
 ### agent_optimizer
 
@@ -601,8 +601,10 @@ def _check_simulation(claim: dict[str, Any], base: Path) -> list[str]:
         elif isinstance(count, int) and artifact_count < count:
             failures.append(f"{evidence_files[0]} scenario_count is lower than manifest claim")
         artifact_text = "\n".join(_safe_text(base, rel) for rel in evidence_files).lower()
-        if artifact_text and not _contains_any(artifact_text, ("simulation", "synthetic")):
-            failures.append("simulation evidence must mention simulation or synthetic scenarios")
+        if artifact_text and "agent simulation" not in artifact_text:
+            failures.append("simulation evidence must mention Agent Simulation")
+        if artifact_text and "synthetic" not in artifact_text:
+            failures.append("simulation evidence must mention synthetic scenarios")
         if isinstance(edge_cases, list):
             for edge_case in edge_cases:
                 if _nonempty_string(edge_case) and edge_case.lower() not in artifact_text:
@@ -626,6 +628,8 @@ def _check_observability(claim: dict[str, Any], base: Path) -> list[str]:
             if _nonempty_string(trace_id) and trace_id not in trace_text:
                 failures.append(f"observability evidence does not contain trace id: {trace_id}")
     trace_text_lower = trace_text.lower()
+    if trace_text_lower and "agent observability" not in trace_text_lower:
+        failures.append("observability evidence must mention Agent Observability")
     if trace_text_lower and not _contains_any(
         trace_text_lower,
         ("tool", "reasoning", "decision", "conflict", "retry"),

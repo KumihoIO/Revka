@@ -119,7 +119,8 @@ def _write_complete_evidence(evidence_dir: Path) -> None:
             '"edge_cases": ["heat wave plus peak pricing"]}'
         ),
         "observability/trace.jsonl": (
-            '{"trace_id": "trace-heat-wave-001", "tool_calls": 4, '
+            '{"trace_id": "trace-heat-wave-001", "source": "Agent Observability", '
+            '"tool_calls": 4, '
             '"reasoning": "resolved comfort and cost conflict"}'
         ),
         "optimizer/result.json": (

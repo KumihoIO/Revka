@@ -163,8 +163,9 @@ The gate also rejects placeholder-only evidence files such as `TODO` or
 `evidence`, validates `.json` / `.jsonl` evidence as structured data, and
 cross-checks core artifact content against the manifest: exact scenario-story
 alignment, existing-agent baseline pass/fail evidence, before/after metrics,
-simulation scenario counts and synthetic-scenario wording, observability trace
-IDs and trace-detail wording, optimizer deltas and optimizer invocation/source,
+simulation scenario counts plus Agent Simulation / synthetic-scenario wording,
+observability trace IDs plus Agent Observability / trace-detail wording,
+optimizer deltas and optimizer invocation/source,
 deployment project/region/resource text, rollback wording, mandatory Google
 platform technologies plus the manifest platform values, and B2B narrative
 specificity across persona, workflow, inputs, actions, and measurable outcome.
