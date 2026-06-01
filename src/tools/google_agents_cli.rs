@@ -25,6 +25,7 @@ const SAFE_ENV_VARS: &[&str] = &[
     "GOOGLE_GENAI_USE_VERTEXAI",
     "GOOGLE_API_KEY",
     "GEMINI_API_KEY",
+    "GEMINI_ENTERPRISE_APP_ID",
 ];
 
 const ALLOWED_TOP_LEVEL_COMMANDS: &[&str] = &[
@@ -120,15 +121,16 @@ impl Tool for GoogleAgentsCliTool {
         }
 
         let prompt = args.get("prompt").and_then(|v| v.as_str());
-        let mut cli_args: Vec<String> = args
-            .get("command")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_str().map(str::to_owned))
-                    .collect()
-            })
-            .unwrap_or_default();
+        let mut cli_args = match normalize_command(&args) {
+            Ok(command) => command,
+            Err(error) => {
+                return Ok(ToolResult {
+                    success: false,
+                    output: String::new(),
+                    error: Some(error),
+                });
+            }
+        };
 
         if cli_args.is_empty() {
             if prompt.is_some() {
@@ -226,16 +228,17 @@ impl Tool for GoogleAgentsCliTool {
         match result {
             Ok(Ok(output)) => {
                 let mut stdout = String::from_utf8_lossy(&output.stdout).to_string();
-                let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-
-                if stdout.len() > self.config.max_output_bytes {
-                    let mut b = self.config.max_output_bytes.min(stdout.len());
-                    while b > 0 && !stdout.is_char_boundary(b) {
-                        b -= 1;
-                    }
-                    stdout.truncate(b);
-                    stdout.push_str("\n... [output truncated]");
-                }
+                let mut stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                truncate_to_bytes(
+                    &mut stdout,
+                    self.config.max_output_bytes,
+                    "\n... [output truncated]",
+                );
+                truncate_to_bytes(
+                    &mut stderr,
+                    self.config.max_output_bytes,
+                    "\n... [stderr truncated]",
+                );
 
                 Ok(ToolResult {
                     success: output.status.success(),
@@ -273,6 +276,36 @@ impl Tool for GoogleAgentsCliTool {
             }),
         }
     }
+}
+
+fn normalize_command(args: &serde_json::Value) -> Result<Vec<String>, String> {
+    match args.get("command") {
+        None | Some(serde_json::Value::Null) => Ok(Vec::new()),
+        Some(serde_json::Value::String(command)) => Ok(vec![command.to_owned()]),
+        Some(serde_json::Value::Array(command)) => {
+            let mut parts = Vec::with_capacity(command.len());
+            for part in command {
+                let Some(text) = part.as_str() else {
+                    return Err("agents-cli command tokens must be strings".into());
+                };
+                parts.push(text.to_owned());
+            }
+            Ok(parts)
+        }
+        Some(_) => Err("agents-cli command must be a string or array of strings".into()),
+    }
+}
+
+fn truncate_to_bytes(text: &mut String, max_bytes: usize, marker: &str) {
+    if text.len() <= max_bytes {
+        return;
+    }
+    let mut b = max_bytes.min(text.len());
+    while b > 0 && !text.is_char_boundary(b) {
+        b -= 1;
+    }
+    text.truncate(b);
+    text.push_str(marker);
 }
 
 fn validate_working_directory(
@@ -441,6 +474,18 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn google_agents_cli_rejects_non_string_command_tokens() {
+        let tool =
+            GoogleAgentsCliTool::new(test_security(AutonomyLevel::Supervised), test_config());
+        let result = tool
+            .execute(json!({ "command": ["run", 1] }))
+            .await
+            .unwrap();
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("tokens must be strings"));
+    }
+
+    #[tokio::test]
     async fn google_agents_cli_rejects_path_outside_workspace() {
         let tmp = tempfile::tempdir().unwrap();
         let outside = tempfile::tempdir().unwrap();
@@ -494,11 +539,35 @@ mod tests {
     }
 
     #[test]
+    fn google_agents_cli_safe_env_includes_enterprise_publish_id() {
+        assert!(SAFE_ENV_VARS.contains(&"GEMINI_ENTERPRISE_APP_ID"));
+    }
+
+    #[test]
     fn google_agents_cli_default_config_values() {
         let config = GoogleAgentsCliConfig::default();
         assert!(!config.enabled);
         assert_eq!(config.timeout_secs, 600);
         assert_eq!(config.max_output_bytes, 2_097_152);
+    }
+
+    #[test]
+    fn google_agents_cli_accepts_string_command_shape() {
+        let command = normalize_command(&json!({ "command": "info" })).unwrap();
+        assert_eq!(command, vec!["info"]);
+    }
+
+    #[test]
+    fn google_agents_cli_rejects_command_object_shape() {
+        let error = normalize_command(&json!({ "command": { "name": "info" } })).unwrap_err();
+        assert!(error.contains("string or array"));
+    }
+
+    #[test]
+    fn google_agents_cli_truncates_stderr_without_splitting_utf8() {
+        let mut stderr = "éééé".to_string();
+        truncate_to_bytes(&mut stderr, 5, "\n... [stderr truncated]");
+        assert_eq!(stderr, "éé\n... [stderr truncated]");
     }
 
     #[test]
