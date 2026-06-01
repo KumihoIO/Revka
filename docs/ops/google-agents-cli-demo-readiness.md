@@ -64,9 +64,17 @@ Run these checks after rebasing the demo branch onto current `origin/main`:
 cargo fmt --all -- --check
 cargo test --lib google_agents_cli -- --nocapture
 python3 -m compileall -q operator-mcp/operator_mcp/tool_handlers/google_agents_cli.py operator-mcp/operator_mcp/operator_mcp.py
-pytest operator-mcp/tests/test_google_agents_cli_tool.py -q
+pytest operator-mcp/tests/test_google_agents_cli_tool.py operator-mcp/tests/test_google_agents_cli_demo_probe.py -q
+python3 scripts/demo/google_agents_cli_demo_probe.py --output /tmp/google_agents_cli_demo_probe.json
 git diff --check
 ```
+
+The demo probe uses a temporary fake `agents-cli` binary. It does not touch
+Google Cloud, but it produces a JSON evidence bundle for local readiness
+outcomes: info, prompt-run redaction, eval failure diagnostics, malformed input,
+interactive login blocking, workspace escape blocking, timeout, truncation,
+Gemini Enterprise env passthrough, deploy command acceptance, and missing-binary
+handling.
 
 For PR-backed demos, also verify:
 
