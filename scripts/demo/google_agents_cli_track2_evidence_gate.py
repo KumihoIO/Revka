@@ -157,9 +157,10 @@ python3 scripts/demo/google_agents_cli_pre_recording_gate.py \\
 ```
 
 The final report must say `strict_final_recording_ready: true`.
-When `--pr-number` is set, the umbrella gate also verifies the local branch is
-clean, contains the configured base ref, and has no upstream divergence. Do not
-use `--skip-local-git-state` for final recording readiness.
+When `--pr-number` is set, the umbrella gate also verifies the PR is open
+against `main`, the local branch is clean, contains the configured base ref,
+and has no upstream divergence. Do not use `--skip-local-git-state` for final
+recording readiness.
 
 ## Scenario
 

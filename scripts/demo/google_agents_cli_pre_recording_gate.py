@@ -462,7 +462,7 @@ def _run_local_git_gate(base_ref: str) -> dict[str, Any]:
     )
 
 
-def _run_pr_gate(pr_number: int, repo: str) -> list[dict[str, Any]]:
+def _run_pr_gate(pr_number: int, repo: str, expected_base_ref: str) -> list[dict[str, Any]]:
     checks: list[dict[str, Any]] = []
     owner, repo_name = _repo_parts(repo)
 
@@ -510,12 +510,16 @@ def _run_pr_gate(pr_number: int, repo: str) -> list[dict[str, Any]]:
             "--repo",
             repo,
             "--json",
-            "url,headRefOid,reviewDecision,mergeStateStatus,isDraft,state",
+            "url,headRefOid,baseRefName,reviewDecision,mergeStateStatus,isDraft,state",
         ],
     )
     if isinstance(pr_view, dict):
         if pr_view.get("state") != "OPEN":
             failures.append(f"PR state is {pr_view.get('state')}, expected OPEN")
+        if pr_view.get("baseRefName") != expected_base_ref:
+            failures.append(
+                f"PR baseRefName is {pr_view.get('baseRefName')}, expected {expected_base_ref}"
+            )
         if pr_view.get("isDraft") is True:
             failures.append("PR is still draft")
         if pr_view.get("reviewDecision") == "CHANGES_REQUESTED":
@@ -660,7 +664,7 @@ def _build_report(args: argparse.Namespace, output_dir: Path) -> dict[str, Any]:
         else:
             checks.append(_run_local_git_gate(args.base_ref))
         try:
-            checks.extend(_run_pr_gate(args.pr_number, args.repo))
+            checks.extend(_run_pr_gate(args.pr_number, args.repo, args.pr_base_ref))
         except ValueError as exc:
             checks.append(_check("github_pr_state", "fail", [str(exc)]))
 
@@ -723,6 +727,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--pr-number", type=int, help="Optional PR number to verify with gh")
     parser.add_argument("--repo", default="KumihoIO/construct-os", help="GitHub repo for PR checks")
+    parser.add_argument(
+        "--pr-base-ref",
+        default="main",
+        help="Expected GitHub PR base branch when --pr-number is set",
+    )
     parser.add_argument(
         "--base-ref",
         default="origin/main",
