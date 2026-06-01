@@ -1,7 +1,26 @@
+import asyncio
+import importlib.util
 import json
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
+
+
+def _load_probe_module():
+    repo_root = Path(__file__).resolve().parents[2]
+    script = repo_root / "scripts" / "demo" / "google_agents_cli_demo_probe.py"
+    spec = importlib.util.spec_from_file_location(
+        "google_agents_cli_demo_probe_for_test",
+        script,
+    )
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def _plain_title(value: str) -> str:
@@ -57,6 +76,7 @@ def test_google_agents_cli_demo_probe_generates_passing_evidence_bundle(tmp_path
         "architecture_guardrails",
         "info",
         "lifecycle_command_surface",
+        "documented_outcome_matrix_alignment",
         "successful_lifecycle",
         "prompt_run",
         "eval_failure",
@@ -96,3 +116,26 @@ def test_google_agents_cli_demo_probe_generates_passing_evidence_bundle(tmp_path
         _plain_title(item["title"])
         for item in bundle["outcome_matrix"]["outcomes"]
     ] == _read_demo_outcome_doc_titles(repo_root)
+
+
+def test_google_agents_cli_demo_probe_rejects_documented_outcome_drift(monkeypatch, tmp_path):
+    module = _load_probe_module()
+    doc = tmp_path / "docs" / "ops" / "google-agents-cli-demo-readiness.md"
+    doc.parent.mkdir(parents=True)
+    doc.write_text(
+        "\n".join(
+            [
+                "# Google Agents CLI Demo Readiness",
+                "",
+                "| Outcome to show | Expected Construct behavior | Evidence to check before recording |",
+                "|---|---|---|",
+                "| Drifted outcome | behavior | evidence |",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(module, "DEMO_READINESS_DOC", doc)
+
+    with pytest.raises(AssertionError, match="documented demo outcomes differ"):
+        asyncio.run(module._expect_documented_outcome_matrix_alignment())

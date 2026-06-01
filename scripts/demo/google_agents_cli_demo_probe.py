@@ -51,6 +51,7 @@ PUBLIC_LIFECYCLE_COMMANDS: tuple[str, ...] = (
 )
 
 COMPATIBILITY_COMMANDS: tuple[str, ...] = ("cmd-info",)
+DEMO_READINESS_DOC = REPO_ROOT / "docs" / "ops" / "google-agents-cli-demo-readiness.md"
 
 
 @dataclass(frozen=True)
@@ -207,6 +208,30 @@ def _scrub(value: Any) -> Any:
     return value
 
 
+def _plain_title(value: str) -> str:
+    return value.replace("`", "")
+
+
+def _read_demo_outcome_doc_titles() -> list[str]:
+    lines = DEMO_READINESS_DOC.read_text(encoding="utf-8").splitlines()
+    titles: list[str] = []
+    in_table = False
+    for line in lines:
+        if line.startswith("| Outcome to show |"):
+            in_table = True
+            continue
+        if not in_table:
+            continue
+        if line.startswith("|---"):
+            continue
+        if not line.startswith("|"):
+            break
+        cells = [cell.strip() for cell in line.strip("|").split("|")]
+        if cells and cells[0]:
+            titles.append(_plain_title(cells[0]))
+    return titles
+
+
 def _assert(condition: bool, message: str) -> None:
     if not condition:
         raise AssertionError(message)
@@ -290,6 +315,22 @@ async def _expect_lifecycle_command_surface() -> dict[str, Any]:
         "python_allowed_commands": sorted(python_allowed),
         "rust_allowed_commands": sorted(rust_allowed),
         "checked_sources": {name: str(path) for name, path in checked_sources.items()},
+    }
+
+
+async def _expect_documented_outcome_matrix_alignment() -> dict[str, Any]:
+    documented_titles = _read_demo_outcome_doc_titles()
+    gated_titles = [_plain_title(str(item["title"])) for item in DEMO_OUTCOMES]
+    _assert(documented_titles, "demo readiness doc outcome matrix was not found")
+    _assert(
+        documented_titles == gated_titles,
+        "documented demo outcomes differ from gated outcomes: "
+        f"documented={documented_titles!r}; gated={gated_titles!r}",
+    )
+    return {
+        "demo_readiness_doc": str(DEMO_READINESS_DOC),
+        "documented_outcomes": documented_titles,
+        "gated_outcomes": gated_titles,
     }
 
 
@@ -502,6 +543,11 @@ async def _run_probes(workspace: Path, fake_path: str) -> list[dict[str, Any]]:
             "lifecycle_command_surface",
             "Rust, Operator MCP, and docs cover the current public agents-cli lifecycle surface",
             _expect_lifecycle_command_surface,
+        ),
+        Probe(
+            "documented_outcome_matrix_alignment",
+            "Documented demo outcomes match the gated outcome matrix",
+            _expect_documented_outcome_matrix_alignment,
         ),
         Probe(
             "successful_lifecycle",
