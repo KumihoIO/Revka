@@ -392,7 +392,10 @@ import sys
 
 args = sys.argv[1:]
 if args[:2] == ["pr", "checks"]:
-    print(json.dumps([{"name": "CI", "state": "SUCCESS", "workflow": "CI"}]))
+    print(json.dumps([
+        {"name": "CI Required Gate", "state": "SUCCESS", "workflow": "CI"},
+        {"name": "Security Required Gate", "state": "SUCCESS", "workflow": "CI"},
+    ]))
 elif args[:2] == ["pr", "view"]:
     print(json.dumps({
         "url": "https://github.com/KumihoIO/construct-os/pull/324",
@@ -465,7 +468,7 @@ else:
     assert Path(local_probe["artifact"]).is_file()
 
 
-def test_pre_recording_gate_rejects_pr_with_wrong_base_branch(tmp_path):
+def test_pre_recording_gate_rejects_pr_checks_missing_required_gates(tmp_path):
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     fake_gh = fake_bin / "gh"
@@ -478,6 +481,86 @@ import sys
 args = sys.argv[1:]
 if args[:2] == ["pr", "checks"]:
     print(json.dumps([{"name": "CI", "state": "SUCCESS", "workflow": "CI"}]))
+elif args[:2] == ["pr", "view"]:
+    print(json.dumps({
+        "url": "https://github.com/KumihoIO/construct-os/pull/324",
+        "headRefOid": os.environ["FAKE_HEAD"],
+        "baseRefName": "main",
+        "reviewDecision": "REVIEW_REQUIRED",
+        "mergeStateStatus": "BLOCKED",
+        "isDraft": False,
+        "state": "OPEN",
+    }))
+elif args[:2] == ["api", "graphql"]:
+    print(json.dumps({
+        "data": {
+            "repository": {
+                "pullRequest": {
+                    "reviewThreads": {"nodes": []}
+                }
+            }
+        }
+    }))
+else:
+    print("unexpected gh invocation: " + " ".join(args), file=sys.stderr)
+    sys.exit(2)
+""",
+        encoding="utf-8",
+    )
+    fake_gh.chmod(0o755)
+    head = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"],
+        cwd=_repo_root(),
+        text=True,
+    ).strip()
+    env = {
+        **os.environ,
+        "PATH": str(fake_bin) + os.pathsep + os.environ.get("PATH", ""),
+        "FAKE_HEAD": head,
+    }
+    output = tmp_path / "report.json"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(_script()),
+            "--skip-track2-evidence",
+            "--pr-number",
+            "324",
+            "--skip-local-git-state",
+            "--output",
+            str(output),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert result.returncode == 1
+    report = json.loads(output.read_text(encoding="utf-8"))
+    pr_checks = next(item for item in report["checks"] if item["name"] == "github_pr_checks")
+    assert pr_checks["status"] == "fail"
+    assert "required GitHub check is missing: CI Required Gate" in pr_checks["failures"]
+    assert "required GitHub check is missing: Security Required Gate" in pr_checks["failures"]
+
+
+def test_pre_recording_gate_rejects_pr_with_wrong_base_branch(tmp_path):
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_gh = fake_bin / "gh"
+    fake_gh.write_text(
+        """#!/usr/bin/env python3
+import json
+import os
+import sys
+
+args = sys.argv[1:]
+if args[:2] == ["pr", "checks"]:
+    print(json.dumps([
+        {"name": "CI Required Gate", "state": "SUCCESS", "workflow": "CI"},
+        {"name": "Security Required Gate", "state": "SUCCESS", "workflow": "CI"},
+    ]))
 elif args[:2] == ["pr", "view"]:
     print(json.dumps({
         "url": "https://github.com/KumihoIO/construct-os/pull/324",
@@ -553,7 +636,10 @@ import sys
 
 args = sys.argv[1:]
 if args[:2] == ["pr", "checks"]:
-    print(json.dumps([{"name": "CI", "state": "SUCCESS", "workflow": "CI"}]))
+    print(json.dumps([
+        {"name": "CI Required Gate", "state": "SUCCESS", "workflow": "CI"},
+        {"name": "Security Required Gate", "state": "SUCCESS", "workflow": "CI"},
+    ]))
 elif args[:2] == ["pr", "view"]:
     print(json.dumps({
         "url": "https://github.com/KumihoIO/construct-os/pull/324",

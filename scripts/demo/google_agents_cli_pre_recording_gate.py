@@ -18,6 +18,10 @@ from typing import Any
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+REQUIRED_PR_CHECKS = (
+    "CI Required Gate",
+    "Security Required Gate",
+)
 
 
 def _check(name: str, status: str, failures: list[str] | None = None, **details: Any) -> dict[str, Any]:
@@ -480,6 +484,8 @@ def _run_pr_gate(pr_number: int, repo: str, expected_base_ref: str) -> list[dict
         ],
     )
     if isinstance(pr_checks, list):
+        if not pr_checks:
+            failures.append("GitHub checks list is empty")
         non_success = [
             item
             for item in pr_checks
@@ -487,6 +493,28 @@ def _run_pr_gate(pr_number: int, repo: str, expected_base_ref: str) -> list[dict
         ]
         if non_success:
             failures.append(f"non-success GitHub checks: {len(non_success)}")
+        required_check_states: dict[str, list[str]] = {}
+        for required_check in REQUIRED_PR_CHECKS:
+            matches = [
+                item
+                for item in pr_checks
+                if item.get("name") == required_check
+            ]
+            states = sorted(
+                {
+                    str(item.get("state"))
+                    for item in matches
+                    if item.get("state") is not None
+                }
+            )
+            required_check_states[required_check] = states
+            if not matches:
+                failures.append(f"required GitHub check is missing: {required_check}")
+            elif "SUCCESS" not in states:
+                failures.append(
+                    f"required GitHub check is not successful: "
+                    f"{required_check} ({', '.join(states)})"
+                )
         checks.append(
             _check(
                 "github_pr_checks",
@@ -494,6 +522,8 @@ def _run_pr_gate(pr_number: int, repo: str, expected_base_ref: str) -> list[dict
                 failures,
                 total=len(pr_checks),
                 non_success=non_success,
+                required_checks=list(REQUIRED_PR_CHECKS),
+                required_check_states=required_check_states,
                 stderr=stderr,
             )
         )
