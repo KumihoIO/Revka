@@ -109,6 +109,13 @@ Expected PR state before recording:
 - There are no unresolved review threads.
 - The local branch is clean and not behind `origin/main`.
 
+The umbrella gate performs the local PR branch check automatically whenever
+`--pr-number` is set. It fails if the checkout is on `main` or detached, if the
+working tree is dirty, if `HEAD` does not contain the configured base ref
+(`origin/main` by default), or if the local branch has unpushed/unpulled
+upstream divergence. Use `--base-ref <ref>` only when the PR is intentionally
+based on a different local base ref.
+
 ## 6. Claims That Need Separate Demo Evidence
 
 Do not treat the integration tests above as proof for these higher-level claims. Capture separate evidence before including them in the video.
@@ -176,6 +183,10 @@ skipped, real `agents-cli` authentication is not required, or any child gate
 fails. When a child gate fails, use `strict_final_blockers` for the exact
 failure/remediation lines and `strict_final_blocker_details` for the bounded
 per-claim Track 2 evidence failures.
+
+Use `--skip-local-git-state` only for smoke checks while preparing a patch; do
+not use it for final video readiness because it bypasses the clean branch,
+base-ref, and upstream freshness proof.
 
 ## 7. Related Docs
 

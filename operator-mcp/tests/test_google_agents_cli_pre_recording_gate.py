@@ -1,3 +1,4 @@
+import importlib.util
 import json
 import os
 import subprocess
@@ -11,6 +12,18 @@ def _repo_root() -> Path:
 
 def _script() -> Path:
     return _repo_root() / "scripts" / "demo" / "google_agents_cli_pre_recording_gate.py"
+
+
+def _load_gate_module():
+    spec = importlib.util.spec_from_file_location(
+        "google_agents_cli_pre_recording_gate_for_test",
+        _script(),
+    )
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def _write(path: Path, text: str = "captured demo artifact") -> None:
@@ -112,6 +125,59 @@ def _write_complete_evidence(evidence_dir: Path) -> None:
         json.dumps(_complete_manifest()),
         encoding="utf-8",
     )
+
+
+def test_local_git_gate_reports_dirty_stale_branch(monkeypatch):
+    module = _load_gate_module()
+
+    def fake_run(cmd):
+        if cmd == ["git", "rev-parse", "--abbrev-ref", "HEAD"]:
+            return subprocess.CompletedProcess(cmd, 0, "feature/google-agents-demo\n", "")
+        if cmd == ["git", "status", "--porcelain"]:
+            return subprocess.CompletedProcess(
+                cmd,
+                0,
+                " M scripts/demo/google_agents_cli_pre_recording_gate.py\n?? scratch.json\n",
+                "",
+            )
+        if cmd == ["git", "rev-parse", "--verify", "origin/main"]:
+            return subprocess.CompletedProcess(cmd, 0, "abc123\n", "")
+        if cmd == ["git", "merge-base", "--is-ancestor", "origin/main", "HEAD"]:
+            return subprocess.CompletedProcess(cmd, 1, "", "")
+        if cmd == [
+            "git",
+            "rev-parse",
+            "--abbrev-ref",
+            "--symbolic-full-name",
+            "@{u}",
+        ]:
+            return subprocess.CompletedProcess(cmd, 0, "origin/feature/google-agents-demo\n", "")
+        if cmd == [
+            "git",
+            "rev-list",
+            "--left-right",
+            "--count",
+            "origin/feature/google-agents-demo...HEAD",
+        ]:
+            return subprocess.CompletedProcess(cmd, 0, "2\t1\n", "")
+        raise AssertionError(f"unexpected command: {cmd}")
+
+    monkeypatch.setattr(module, "_run", fake_run)
+
+    check = module._run_local_git_gate("origin/main")
+
+    assert check["status"] == "fail"
+    assert check["branch"] == "feature/google-agents-demo"
+    assert check["base_ref"] == "origin/main"
+    assert check["base_oid"] == "abc123"
+    assert check["upstream"] == "origin/feature/google-agents-demo"
+    assert check["upstream_behind"] == 2
+    assert check["upstream_ahead"] == 1
+    assert check["dirty_count"] == 2
+    assert any("uncommitted changes" in item for item in check["failures"])
+    assert any("HEAD does not contain base ref origin/main" in item for item in check["failures"])
+    assert any("behind upstream" in item for item in check["failures"])
+    assert any("ahead upstream" in item for item in check["failures"])
 
 
 def test_pre_recording_gate_passes_with_complete_track2_bundle(tmp_path):
@@ -279,6 +345,7 @@ else:
             "--skip-track2-evidence",
             "--pr-number",
             "324",
+            "--skip-local-git-state",
             "--output",
             str(output),
         ],
@@ -292,9 +359,11 @@ else:
     report = json.loads(output.read_text(encoding="utf-8"))
     assert report["strict_final_recording_ready"] is False
     assert "Track 2 evidence validation was skipped" in report["strict_final_blockers"]
+    assert "Local git state validation was skipped" in report["strict_final_blockers"]
     statuses = {item["name"]: item["status"] for item in report["checks"]}
     assert statuses["local_code_probe"] == "pass"
     assert statuses["track2_evidence_gate"] == "skip"
+    assert statuses["local_git_state"] == "skip"
     assert statuses["github_pr_checks"] == "pass"
     assert statuses["github_pr_state"] == "pass"
     assert statuses["github_review_threads"] == "pass"

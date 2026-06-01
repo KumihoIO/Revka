@@ -296,6 +296,118 @@ def _local_head() -> str | None:
     return result.stdout.strip()
 
 
+def _git_stdout(name: str, args: list[str]) -> tuple[str | None, list[str], str]:
+    result = _run(["git", *args])
+    stderr = result.stderr.strip()
+    if result.returncode != 0:
+        failure = f"{name} exited {result.returncode}"
+        if stderr:
+            failure = f"{failure}: {_snippet(stderr, 400)}"
+        return None, [failure], stderr
+    return result.stdout.strip(), [], stderr
+
+
+def _parse_ahead_behind(value: str) -> tuple[int | None, int | None]:
+    parts = value.replace("\t", " ").split()
+    if len(parts) != 2:
+        return None, None
+    try:
+        behind, ahead = int(parts[0]), int(parts[1])
+    except ValueError:
+        return None, None
+    return behind, ahead
+
+
+def _run_local_git_gate(base_ref: str) -> dict[str, Any]:
+    failures: list[str] = []
+    branch = None
+    base_oid = None
+    upstream = None
+    upstream_behind = None
+    upstream_ahead = None
+    dirty_entries: list[str] = []
+
+    branch, command_failures, _stderr = _git_stdout(
+        "git rev-parse --abbrev-ref HEAD",
+        ["rev-parse", "--abbrev-ref", "HEAD"],
+    )
+    failures.extend(command_failures)
+    if branch == "main":
+        failures.append("local branch is main; use a non-main PR branch")
+    elif branch == "HEAD":
+        failures.append("local checkout is detached; use the PR branch before recording")
+
+    status = _run(["git", "status", "--porcelain"])
+    if status.returncode != 0:
+        failure = f"git status --porcelain exited {status.returncode}"
+        if status.stderr.strip():
+            failure = f"{failure}: {_snippet(status.stderr, 400)}"
+        failures.append(failure)
+    else:
+        dirty_entries = status.stdout.splitlines()
+        if dirty_entries:
+            failures.append(f"working tree has uncommitted changes: {len(dirty_entries)}")
+
+    base_oid, command_failures, _stderr = _git_stdout(
+        f"git rev-parse --verify {base_ref}",
+        ["rev-parse", "--verify", base_ref],
+    )
+    if command_failures:
+        failures.append(f"base ref is not available locally: {base_ref}")
+        failures.extend(command_failures)
+    else:
+        base_contains = _run(["git", "merge-base", "--is-ancestor", base_ref, "HEAD"])
+        if base_contains.returncode == 1:
+            failures.append(f"HEAD does not contain base ref {base_ref}")
+        elif base_contains.returncode != 0:
+            failure = f"git merge-base --is-ancestor {base_ref} HEAD exited {base_contains.returncode}"
+            if base_contains.stderr.strip():
+                failure = f"{failure}: {_snippet(base_contains.stderr, 400)}"
+            failures.append(failure)
+
+    upstream, command_failures, _stderr = _git_stdout(
+        "git rev-parse --abbrev-ref --symbolic-full-name @{u}",
+        ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+    )
+    if command_failures:
+        failures.append("local branch has no upstream; push it and set upstream before recording")
+        failures.extend(command_failures)
+    else:
+        counts, command_failures, _stderr = _git_stdout(
+            f"git rev-list --left-right --count {upstream}...HEAD",
+            ["rev-list", "--left-right", "--count", f"{upstream}...HEAD"],
+        )
+        if command_failures:
+            failures.extend(command_failures)
+        elif counts is not None:
+            upstream_behind, upstream_ahead = _parse_ahead_behind(counts)
+            if upstream_behind is None or upstream_ahead is None:
+                failures.append(f"could not parse upstream divergence counts: {counts!r}")
+            else:
+                if upstream_behind:
+                    failures.append(
+                        f"local branch is behind upstream {upstream} by {upstream_behind} commit(s)"
+                    )
+                if upstream_ahead:
+                    failures.append(
+                        f"local branch is ahead upstream {upstream} by {upstream_ahead} commit(s); push before recording"
+                    )
+
+    return _check(
+        "local_git_state",
+        "fail" if failures else "pass",
+        failures,
+        branch=branch,
+        base_ref=base_ref,
+        base_oid=base_oid,
+        upstream=upstream,
+        upstream_behind=upstream_behind,
+        upstream_ahead=upstream_ahead,
+        dirty_count=len(dirty_entries),
+        dirty_entries=_limited(dirty_entries, 20),
+    )
+
+
 def _run_pr_gate(pr_number: int, repo: str) -> list[dict[str, Any]]:
     checks: list[dict[str, Any]] = []
     owner, repo_name = _repo_parts(repo)
@@ -449,6 +561,14 @@ def _strict_blocker_detail(item: dict[str, Any]) -> dict[str, Any]:
         "failed_claims",
         "failure_details",
         "remediation",
+        "branch",
+        "base_ref",
+        "base_oid",
+        "upstream",
+        "upstream_behind",
+        "upstream_ahead",
+        "dirty_count",
+        "dirty_entries",
     ):
         value = item.get(key)
         if value not in (None, [], {}):
@@ -473,6 +593,18 @@ def _build_report(args: argparse.Namespace, output_dir: Path) -> dict[str, Any]:
         checks.append(_run_track2_gate(Path(args.evidence_dir).resolve(), output_dir))
 
     if args.pr_number is not None:
+        if args.skip_local_git_state:
+            checks.append(
+                _check(
+                    "local_git_state",
+                    "skip",
+                    [],
+                    reason="--skip-local-git-state was provided; do not use this for final recording readiness",
+                    base_ref=args.base_ref,
+                )
+            )
+        else:
+            checks.append(_run_local_git_gate(args.base_ref))
         try:
             checks.extend(_run_pr_gate(args.pr_number, args.repo))
         except ValueError as exc:
@@ -483,6 +615,8 @@ def _build_report(args: argparse.Namespace, output_dir: Path) -> dict[str, Any]:
     strict_blocker_details: list[dict[str, Any]] = []
     if args.skip_track2_evidence:
         strict_blockers.append("Track 2 evidence validation was skipped")
+    if args.skip_local_git_state and args.pr_number is not None:
+        strict_blockers.append("Local git state validation was skipped")
     if not args.require_real_agents_cli_auth:
         strict_blockers.append("real agents-cli authentication was not required")
     for item in checks:
@@ -535,6 +669,16 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--pr-number", type=int, help="Optional PR number to verify with gh")
     parser.add_argument("--repo", default="KumihoIO/construct-os", help="GitHub repo for PR checks")
+    parser.add_argument(
+        "--base-ref",
+        default="origin/main",
+        help="Local base ref that PR-backed demo branches must contain",
+    )
+    parser.add_argument(
+        "--skip-local-git-state",
+        action="store_true",
+        help="Skip local clean/base/upstream validation for PR-backed demos; only for smoke checks",
+    )
     args = parser.parse_args(argv)
 
     if args.output_dir:
