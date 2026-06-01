@@ -7,6 +7,18 @@ Version numbers follow CalVer (`YYYY.M.D`).
 
 - No unreleased changes yet.
 
+## [2026.5.20] - 2026-06-01
+
+### Highlights
+
+- Promoted the Operator chat responsiveness release with reduced render churn
+  in the shared assistant panel and smoother typing across Construct.
+
+### Packaging
+
+- Bumped the Rust package, web package, package lock, and Tauri desktop
+  metadata to `2026.5.20`.
+
 ## [2026.5.15] - 2026-05-23
 
 ### Workflow Editor
