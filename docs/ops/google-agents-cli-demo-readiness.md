@@ -177,6 +177,7 @@ report:
 python3 scripts/demo/google_agents_cli_pre_recording_gate.py \
   --evidence-dir .demo/google-agents-cli-track2 \
   --require-real-agents-cli-auth \
+  --require-strict-final-ready \
   --pr-number 324 \
   --output /tmp/google_agents_cli_pre_recording_gate.json
 ```
@@ -189,6 +190,11 @@ skipped, real `agents-cli` authentication is not required, or any child gate
 fails. When a child gate fails, use `strict_final_blockers` for the exact
 failure/remediation lines and `strict_final_blocker_details` for the bounded
 per-claim Track 2 evidence failures.
+
+Use `--require-strict-final-ready` for the final rehearsal command. Without
+that flag, smoke-check runs can exit `0` when child gates pass even if
+`strict_final_recording_ready` is false because final-only requirements were
+intentionally skipped.
 
 Use `--skip-local-git-state` only for smoke checks while preparing a patch; do
 not use it for final video readiness because it bypasses the clean branch,

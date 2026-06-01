@@ -140,6 +140,7 @@ agents-cli login -i
 python3 scripts/demo/google_agents_cli_pre_recording_gate.py \\
   --evidence-dir .demo/google-agents-cli-track2 \\
   --require-real-agents-cli-auth \\
+  --require-strict-final-ready \\
   --pr-number 324 \\
   --output /tmp/google_agents_cli_pre_recording_gate.json
 ```

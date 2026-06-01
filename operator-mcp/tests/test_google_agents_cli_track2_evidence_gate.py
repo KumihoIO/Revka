@@ -492,3 +492,4 @@ def test_track2_evidence_gate_writes_capture_plan(tmp_path):
     assert "mandatory_google_platform" in plan
     assert "platform/architecture.md" in plan
     assert "agents-cli login -i" in plan
+    assert "--require-strict-final-ready" in plan

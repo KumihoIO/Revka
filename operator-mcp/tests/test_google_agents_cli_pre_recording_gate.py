@@ -250,6 +250,33 @@ def test_pre_recording_gate_passes_with_complete_track2_bundle(tmp_path):
     }
 
 
+def test_pre_recording_gate_final_mode_fails_when_auth_is_not_required(tmp_path):
+    evidence_dir = tmp_path / "evidence"
+    output = tmp_path / "report.json"
+    _write_complete_evidence(evidence_dir)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(_script()),
+            "--evidence-dir",
+            str(evidence_dir),
+            "--require-strict-final-ready",
+            "--output",
+            str(output),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    report = json.loads(output.read_text(encoding="utf-8"))
+    assert report["passed"] is True
+    assert report["strict_final_recording_ready"] is False
+    assert "real agents-cli authentication was not required" in report["strict_final_blockers"]
+
+
 def test_pre_recording_gate_fails_when_track2_evidence_is_missing(tmp_path):
     output = tmp_path / "report.json"
 
@@ -405,6 +432,83 @@ else:
     assert Path(local_probe["artifact"]).is_file()
 
 
+def test_pre_recording_gate_final_mode_fails_when_smoke_checks_are_skipped(tmp_path):
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_gh = fake_bin / "gh"
+    fake_gh.write_text(
+        """#!/usr/bin/env python3
+import json
+import os
+import sys
+
+args = sys.argv[1:]
+if args[:2] == ["pr", "checks"]:
+    print(json.dumps([{"name": "CI", "state": "SUCCESS", "workflow": "CI"}]))
+elif args[:2] == ["pr", "view"]:
+    print(json.dumps({
+        "url": "https://github.com/KumihoIO/construct-os/pull/324",
+        "headRefOid": os.environ["FAKE_HEAD"],
+        "reviewDecision": "REVIEW_REQUIRED",
+        "mergeStateStatus": "BLOCKED",
+        "isDraft": False,
+        "state": "OPEN",
+    }))
+elif args[:2] == ["api", "graphql"]:
+    print(json.dumps({
+        "data": {
+            "repository": {
+                "pullRequest": {
+                    "reviewThreads": {"nodes": []}
+                }
+            }
+        }
+    }))
+else:
+    print("unexpected gh invocation: " + " ".join(args), file=sys.stderr)
+    sys.exit(2)
+""",
+        encoding="utf-8",
+    )
+    fake_gh.chmod(0o755)
+    head = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"],
+        cwd=_repo_root(),
+        text=True,
+    ).strip()
+    env = {
+        **os.environ,
+        "PATH": str(fake_bin) + os.pathsep + os.environ.get("PATH", ""),
+        "FAKE_HEAD": head,
+    }
+    output = tmp_path / "report.json"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(_script()),
+            "--skip-track2-evidence",
+            "--pr-number",
+            "324",
+            "--skip-local-git-state",
+            "--require-strict-final-ready",
+            "--output",
+            str(output),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert result.returncode == 1
+    report = json.loads(output.read_text(encoding="utf-8"))
+    assert report["passed"] is True
+    assert report["strict_final_recording_ready"] is False
+    assert "Track 2 evidence validation was skipped" in report["strict_final_blockers"]
+    assert "Local git state validation was skipped" in report["strict_final_blockers"]
+
+
 def _write_fake_agents_cli(bin_dir: Path, authenticated: bool = False) -> None:
     fake_agents_cli = bin_dir / "agents-cli"
     login_status = "Authenticated as demo@example.com" if authenticated else "Not authenticated"
@@ -538,6 +642,7 @@ def test_pre_recording_gate_reports_strict_final_ready_with_auth_and_evidence(tm
             "--evidence-dir",
             str(evidence_dir),
             "--require-real-agents-cli-auth",
+            "--require-strict-final-ready",
             "--output",
             str(output),
         ],

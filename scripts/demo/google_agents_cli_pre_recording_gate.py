@@ -696,6 +696,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Skip local clean/base/upstream validation for PR-backed demos; only for smoke checks",
     )
+    parser.add_argument(
+        "--require-strict-final-ready",
+        action="store_true",
+        help="Exit nonzero unless strict_final_recording_ready is true; use for final rehearsals",
+    )
     args = parser.parse_args(argv)
 
     if args.output_dir:
@@ -718,6 +723,8 @@ def main(argv: list[str] | None = None) -> int:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(text + "\n", encoding="utf-8")
     print(text)
+    if args.require_strict_final_ready and not report["strict_final_recording_ready"]:
+        return 1
     return 0 if report["passed"] else 1
 
 
