@@ -438,6 +438,35 @@ def test_track2_evidence_gate_rejects_paths_outside_evidence_dir(tmp_path):
     )
 
 
+def test_track2_evidence_gate_rejects_symlink_outside_evidence_dir(tmp_path):
+    evidence_dir = tmp_path / "evidence"
+    manifest = _complete_manifest()
+    _write_complete_evidence(evidence_dir)
+    outside = tmp_path / "outside-optimized.json"
+    outside.write_text('{"eval_success_rate": 0.86}', encoding="utf-8")
+    (evidence_dir / "eval" / "optimized.json").unlink()
+    (evidence_dir / "eval" / "optimized.json").symlink_to(outside)
+    (evidence_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    result = subprocess.run(
+        [sys.executable, str(_script()), "--evidence-dir", str(evidence_dir)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    report = json.loads(result.stdout)
+    optimization = next(
+        item for item in report["checks"] if item["claim"] == "optimization_improvement"
+    )
+    assert optimization["status"] == "fail"
+    assert (
+        "evidence file must stay inside evidence dir: eval/optimized.json"
+        in optimization["failures"]
+    )
+
+
 def test_track2_evidence_gate_writes_template(tmp_path):
     evidence_dir = tmp_path / "evidence"
 

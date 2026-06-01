@@ -387,11 +387,10 @@ def _file_failures(base: Path, files: list[Any]) -> list[str]:
         if not _nonempty_string(rel):
             failures.append("evidence file path is empty or TODO")
             continue
-        path = Path(rel)
-        if path.is_absolute() or ".." in path.parts:
+        full = _safe_evidence_path(base, rel)
+        if full is None:
             failures.append(f"evidence file must stay inside evidence dir: {rel}")
             continue
-        full = base / path
         if not full.is_file():
             failures.append(f"missing evidence file: {rel}")
             continue
@@ -408,13 +407,24 @@ def _file_failures(base: Path, files: list[Any]) -> list[str]:
     return failures
 
 
+def _path_stays_under_base(base: Path, path: Path) -> bool:
+    try:
+        path.resolve(strict=False).relative_to(base.resolve(strict=False))
+    except (OSError, RuntimeError, ValueError):
+        return False
+    return True
+
+
 def _safe_evidence_path(base: Path, rel: Any) -> Path | None:
     if not _nonempty_string(rel):
         return None
     path = Path(rel)
     if path.is_absolute() or ".." in path.parts:
         return None
-    return base / path
+    full = base / path
+    if not _path_stays_under_base(base, full):
+        return None
+    return full
 
 
 def _manifest_evidence_files(claims: dict[str, Any]) -> list[str]:
