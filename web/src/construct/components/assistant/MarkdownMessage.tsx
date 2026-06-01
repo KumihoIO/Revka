@@ -1,4 +1,4 @@
-import { useCallback, useState, type ReactNode } from 'react';
+import { memo, useCallback, useState, type ReactNode } from 'react';
 import { Check, Copy } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -44,7 +44,7 @@ function CopyableCodeBlock({ code, language }: { code: string; language?: string
   );
 }
 
-export default function MarkdownMessage({
+function MarkdownMessage({
   content,
   color,
   textShadow,
@@ -89,3 +89,5 @@ export default function MarkdownMessage({
     </div>
   );
 }
+
+export default memo(MarkdownMessage);

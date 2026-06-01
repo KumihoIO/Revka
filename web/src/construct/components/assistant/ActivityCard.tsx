@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { memo, useState } from 'react';
 import { ChevronRight, Copy, Check } from 'lucide-react';
 import type { ActivityEvent } from '@/components/chat/types';
 import { copyToClipboard } from '@/construct/lib/clipboard';
@@ -102,7 +102,7 @@ function DiffDetail({ detail, fontSize }: { detail: string; fontSize: string }) 
  * Empty-detail activities (e.g., a `thinking` start with no payload yet)
  * collapse into a header-only line that doesn't accept clicks.
  */
-export default function ActivityCard({ event, accent, fontSize }: ActivityCardProps) {
+function ActivityCard({ event, accent, fontSize }: ActivityCardProps) {
   const [expanded, setExpanded] = useState(event.kind === 'thinking');
   const [copied, setCopied] = useState(false);
 
@@ -206,3 +206,5 @@ export default function ActivityCard({ event, accent, fontSize }: ActivityCardPr
     </div>
   );
 }
+
+export default memo(ActivityCard);
