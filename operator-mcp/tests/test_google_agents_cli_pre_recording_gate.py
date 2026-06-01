@@ -214,8 +214,8 @@ def test_pre_recording_gate_passes_with_complete_track2_bundle(tmp_path):
     local_probe = next(item for item in report["checks"] if item["name"] == "local_code_probe")
     assert local_probe["outcome_matrix_summary"] == {
         "failed": 0,
-        "passed": 15,
-        "total": 15,
+        "passed": 16,
+        "total": 16,
     }
 
 
@@ -381,7 +381,8 @@ import sys
 args = sys.argv[1:]
 if args == ["--help"]:
     print("Agents CLI - Agent Development Lifecycle toolchain")
-    print("Commands: run eval deploy publish info login")
+    print("Commands: setup create scaffold install lint run eval deploy publish infra")
+    print("Commands: data-ingestion playground update info login")
 elif args == ["eval", "--help"]:
     print("Subcommands: run compare optimize")
 elif args == ["eval", "optimize", "--help"]:

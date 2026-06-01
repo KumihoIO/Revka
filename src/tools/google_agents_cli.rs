@@ -72,7 +72,7 @@ impl Tool for GoogleAgentsCliTool {
     }
 
     fn description(&self) -> &str {
-        "Run Google Agents CLI (agents-cli) lifecycle commands for ADK/A2A agents: run, scaffold, install, lint, eval, deploy, publish, infra, login --status, and info. Use for Google Agent Platform workflows, not as a generic shell."
+        "Run Google Agents CLI (agents-cli) lifecycle commands for ADK/A2A agents: setup, create, scaffold, install, lint, run, eval, deploy, publish, infra, data-ingestion, playground, update, login --status, and info. Use for Google Agent Platform workflows, not as a generic shell."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -573,5 +573,36 @@ mod tests {
     #[test]
     fn google_agents_cli_accepts_current_info_command() {
         assert!(validate_command(&["info".to_string()], false).is_ok());
+    }
+
+    #[test]
+    fn google_agents_cli_accepts_public_lifecycle_commands() {
+        for command in [
+            "setup",
+            "create",
+            "scaffold",
+            "install",
+            "lint",
+            "run",
+            "eval",
+            "deploy",
+            "publish",
+            "infra",
+            "data-ingestion",
+            "playground",
+            "update",
+            "login",
+            "info",
+        ] {
+            let args = if command == "login" {
+                vec![command.to_string(), "--status".to_string()]
+            } else {
+                vec![command.to_string()]
+            };
+            assert!(
+                validate_command(&args, false).is_ok(),
+                "{command} should be allowed"
+            );
+        }
     }
 }

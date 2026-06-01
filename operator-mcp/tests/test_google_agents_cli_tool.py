@@ -24,6 +24,28 @@ def _prepend_path(monkeypatch, bin_dir):
     monkeypatch.setenv("PATH", old_path)
 
 
+def test_google_agents_cli_accepts_public_lifecycle_commands():
+    for command in [
+        "setup",
+        "create",
+        "scaffold",
+        "install",
+        "lint",
+        "run",
+        "eval",
+        "deploy",
+        "publish",
+        "infra",
+        "data-ingestion",
+        "playground",
+        "update",
+        "login",
+        "info",
+    ]:
+        args = [command, "--status"] if command == "login" else [command]
+        assert google_agents_cli._validate_command(args, allow_interactive=False) is None
+
+
 @pytest.mark.asyncio
 async def test_google_agents_cli_requires_command_or_prompt():
     result = await google_agents_cli.tool_google_agents_cli({})

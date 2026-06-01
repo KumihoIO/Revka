@@ -995,9 +995,11 @@ Notes:
   `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION`, and
   `GOOGLE_GENAI_USE_VERTEXAI` are passed by default when present.
 - Use a `claude` or `codex` agent when delegation is useful, and have that
-  agent call `google_agents_cli` for `agents-cli run`, `eval`, `deploy`, or
-  publish commands. Use `agents-cli info` to inspect project/tooling state.
-  The ADK project generally owns model selection.
+  agent call `google_agents_cli` for public lifecycle commands such as
+  `agents-cli setup`, `create`, `scaffold`, `install`, `lint`, `run`, `eval`,
+  `deploy`, `publish`, `infra`, `data-ingestion`, `playground`, or `update`.
+  Use `agents-cli login --status` and `agents-cli info` for non-mutating
+  environment checks. The ADK project generally owns model selection.
 
 ## `[operator]`
 

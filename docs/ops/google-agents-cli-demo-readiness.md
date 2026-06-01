@@ -14,7 +14,7 @@
 For demo narration, use this model:
 
 1. Construct starts or coordinates an existing coding agent such as `claude` or `codex`.
-2. That agent calls the `google_agents_cli` tool when it needs `agents-cli run`, `eval`, `deploy`, `publish`, or `info`.
+2. That agent calls the `google_agents_cli` tool when it needs `agents-cli setup`, `create`, `scaffold`, `install`, `lint`, `run`, `eval`, `deploy`, `publish`, `infra`, `data-ingestion`, `playground`, `update`, `login --status`, or `info`.
 3. Construct executes the bounded tool call with argv tokens, workspace-bound cwd validation, timeout/output limits, and noninteractive defaults.
 
 Avoid this model:
@@ -43,6 +43,7 @@ enabled = true
 |---|---|---|
 | Existing agent uses Google lifecycle tooling | Operator guidance tells users to spawn `claude`/`codex` and call `google_agents_cli`; tool schemas keep `create_agent.agent_type` limited to `claude` or `codex` | `operator-mcp/operator_mcp/operator_mcp.py`; `src/agent/operator/core.rs`; `src/gateway/ws.rs` |
 | Current CLI project/tooling inspection | `agents-cli info` is accepted by both Rust and Operator MCP handlers | `google_agents_cli_accepts_current_info_command`; `test_google_agents_cli_accepts_info_command` |
+| Public lifecycle command surface | Rust, Operator MCP, docs, and the real CLI gate cover current public commands: `setup`, `create`, `scaffold`, `install`, `lint`, `run`, `eval`, `deploy`, `publish`, `infra`, `data-ingestion`, `playground`, `update`, `login`, and `info` | `lifecycle_command_surface`; `google_agents_cli_demo_probe.py`; `google_agents_cli_pre_recording_gate.py` |
 | Prompt-only run | A prompt without `command` defaults to `agents-cli run`, and command previews redact the prompt as `["run", "..."]` | `test_google_agents_cli_prompt_defaults_to_run_and_redacts_preview` |
 | Successful lifecycle command | Result reports success/completed status, exit code `0`, cwd, command preview, and stdout | `test_google_agents_cli_success_command` |
 | CLI failure | Result reports failure, preserves exit code, stdout, stderr, and a concise error string | `test_google_agents_cli_failed_command_preserves_stdout_and_stderr` |
@@ -72,9 +73,10 @@ git diff --check
 
 The demo probe uses a temporary fake `agents-cli` binary. It does not touch
 Google Cloud, but it produces a JSON evidence bundle for local readiness
-outcomes: source-level architecture guardrails, info, successful lifecycle
-command reporting, prompt-run redaction, eval failure diagnostics, malformed
-input, interactive login blocking, workspace escape blocking, timeout,
+outcomes: source-level architecture guardrails, info, public lifecycle command
+surface coverage, successful lifecycle command reporting, prompt-run redaction,
+eval failure diagnostics, malformed input, interactive login blocking,
+workspace escape blocking, timeout,
 truncation, Gemini Enterprise env passthrough, deploy command acceptance,
 missing-binary handling, spawn-failure handling, and Rust runtime safety policy
 coverage. The JSON report includes `outcome_matrix`; every listed outcome must

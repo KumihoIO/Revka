@@ -128,7 +128,8 @@ async def list_tools() -> list[Tool]:
             name="google_agents_cli",
             description=(
                 "Run Google Agents CLI (agents-cli) lifecycle commands for ADK/A2A agents: "
-                "run, scaffold, install, lint, eval, deploy, publish, infra, login --status, and info. "
+                "setup, create, scaffold, install, lint, run, eval, deploy, publish, infra, "
+                "data-ingestion, playground, update, login --status, and info. "
                 "Uses argv tokens, not a shell."
             ),
             inputSchema={

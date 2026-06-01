@@ -12,6 +12,7 @@ import ast
 import asyncio
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -31,6 +32,27 @@ from operator_mcp.tool_handlers import google_agents_cli as google_agents_cli_ha
 ProbeFn = Callable[[], Awaitable[dict[str, Any]]]
 
 
+PUBLIC_LIFECYCLE_COMMANDS: tuple[str, ...] = (
+    "create",
+    "data-ingestion",
+    "deploy",
+    "eval",
+    "info",
+    "infra",
+    "install",
+    "lint",
+    "login",
+    "playground",
+    "publish",
+    "run",
+    "scaffold",
+    "setup",
+    "update",
+)
+
+COMPATIBILITY_COMMANDS: tuple[str, ...] = ("cmd-info",)
+
+
 @dataclass(frozen=True)
 class Probe:
     name: str
@@ -48,6 +70,11 @@ DEMO_OUTCOMES: tuple[dict[str, Any], ...] = (
         "id": "cli_project_tooling_inspection",
         "title": "Current CLI project/tooling inspection",
         "required_probes": ["info"],
+    },
+    {
+        "id": "public_lifecycle_command_surface",
+        "title": "Public lifecycle command surface",
+        "required_probes": ["lifecycle_command_surface"],
     },
     {
         "id": "prompt_only_run",
@@ -221,6 +248,49 @@ def _operator_agent_type_enums() -> list[list[str]]:
         if enum is not None:
             enums.append(enum)
     return enums
+
+
+def _rust_allowed_commands() -> list[str]:
+    source = (REPO_ROOT / "src" / "tools" / "google_agents_cli.rs").read_text(encoding="utf-8")
+    match = re.search(
+        r"const\s+ALLOWED_TOP_LEVEL_COMMANDS\s*:\s*&\s*\[\s*&str\s*\]\s*=\s*&\[(.*?)\];",
+        source,
+        re.DOTALL,
+    )
+    _assert(match is not None, "Rust google_agents_cli allowed command list not found")
+    return re.findall(r'"([^"]+)"', match.group(1))
+
+
+async def _expect_lifecycle_command_surface() -> dict[str, Any]:
+    expected = set(PUBLIC_LIFECYCLE_COMMANDS) | set(COMPATIBILITY_COMMANDS)
+    python_allowed = set(google_agents_cli_handler.ALLOWED_TOP_LEVEL_COMMANDS)
+    rust_allowed = set(_rust_allowed_commands())
+
+    _assert(expected <= python_allowed, "Operator MCP missing allowed agents-cli commands")
+    _assert(expected <= rust_allowed, "Rust tool missing allowed agents-cli commands")
+    _assert(python_allowed == rust_allowed, "Rust and Operator MCP allowed command sets differ")
+
+    checked_sources = {
+        "operator_mcp": OPERATOR_MCP / "operator_mcp" / "operator_mcp.py",
+        "rust_tool": REPO_ROOT / "src" / "tools" / "google_agents_cli.rs",
+        "config_reference": REPO_ROOT / "docs" / "reference" / "api" / "config-reference.md",
+        "demo_readiness": REPO_ROOT / "docs" / "ops" / "google-agents-cli-demo-readiness.md",
+    }
+    missing: dict[str, list[str]] = {}
+    for name, path in checked_sources.items():
+        text = path.read_text(encoding="utf-8")
+        source_missing = [command for command in PUBLIC_LIFECYCLE_COMMANDS if command not in text]
+        if source_missing:
+            missing[name] = source_missing
+    _assert(not missing, f"documented/tool command surface is incomplete: {missing}")
+
+    return {
+        "public_lifecycle_commands": list(PUBLIC_LIFECYCLE_COMMANDS),
+        "compatibility_commands": list(COMPATIBILITY_COMMANDS),
+        "python_allowed_commands": sorted(python_allowed),
+        "rust_allowed_commands": sorted(rust_allowed),
+        "checked_sources": {name: str(path) for name, path in checked_sources.items()},
+    }
 
 
 async def _expect_architecture_guardrails() -> dict[str, Any]:
@@ -428,6 +498,11 @@ async def _run_probes(workspace: Path, fake_path: str) -> list[dict[str, Any]]:
             _expect_architecture_guardrails,
         ),
         Probe("info", "Current project/tooling inspection", _expect_success_info),
+        Probe(
+            "lifecycle_command_surface",
+            "Rust, Operator MCP, and docs cover the current public agents-cli lifecycle surface",
+            _expect_lifecycle_command_surface,
+        ),
         Probe(
             "successful_lifecycle",
             "Successful lifecycle command reports status, exit code, cwd, preview, and stdout",

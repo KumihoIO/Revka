@@ -47,8 +47,8 @@ def test_google_agents_cli_demo_probe_generates_passing_evidence_bundle(tmp_path
     assert bundle["summary"]["failed"] == 0
     assert bundle["outcome_matrix"]["summary"] == {
         "failed": 0,
-        "passed": 15,
-        "total": 15,
+        "passed": 16,
+        "total": 16,
     }
     assert {
         item["name"]
@@ -56,6 +56,7 @@ def test_google_agents_cli_demo_probe_generates_passing_evidence_bundle(tmp_path
     } >= {
         "architecture_guardrails",
         "info",
+        "lifecycle_command_surface",
         "successful_lifecycle",
         "prompt_run",
         "eval_failure",
@@ -76,6 +77,7 @@ def test_google_agents_cli_demo_probe_generates_passing_evidence_bundle(tmp_path
     } >= {
         "existing_agent_tool_capability",
         "cli_project_tooling_inspection",
+        "public_lifecycle_command_surface",
         "prompt_only_run",
         "successful_lifecycle_command",
         "cli_failure",
