@@ -4,6 +4,31 @@ import sys
 from pathlib import Path
 
 
+def _plain_title(value: str) -> str:
+    return value.replace("`", "")
+
+
+def _read_demo_outcome_doc_titles(repo_root: Path) -> list[str]:
+    doc = repo_root / "docs" / "ops" / "google-agents-cli-demo-readiness.md"
+    lines = doc.read_text(encoding="utf-8").splitlines()
+    titles: list[str] = []
+    in_table = False
+    for line in lines:
+        if line.startswith("| Outcome to show |"):
+            in_table = True
+            continue
+        if not in_table:
+            continue
+        if line.startswith("|---"):
+            continue
+        if not line.startswith("|"):
+            break
+        cells = [cell.strip() for cell in line.strip("|").split("|")]
+        if cells and cells[0]:
+            titles.append(_plain_title(cells[0]))
+    return titles
+
+
 def test_google_agents_cli_demo_probe_generates_passing_evidence_bundle(tmp_path):
     repo_root = Path(__file__).resolve().parents[2]
     script = repo_root / "scripts" / "demo" / "google_agents_cli_demo_probe.py"
@@ -65,3 +90,7 @@ def test_google_agents_cli_demo_probe_generates_passing_evidence_bundle(tmp_path
         "runtime_safety_policy",
         "deploy_command_acceptance",
     }
+    assert [
+        _plain_title(item["title"])
+        for item in bundle["outcome_matrix"]["outcomes"]
+    ] == _read_demo_outcome_doc_titles(repo_root)
