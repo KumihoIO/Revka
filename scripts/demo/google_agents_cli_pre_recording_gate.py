@@ -221,6 +221,41 @@ def _surface_command(
     }, failures
 
 
+def _login_status_authenticated(stdout: str, stderr: str) -> bool:
+    text = f"{stdout}\n{stderr}".lower()
+    normalized = " ".join(text.replace("_", " ").replace("-", " ").split())
+    negative_terms = (
+        "not authenticated",
+        "unauthenticated",
+        "authentication=false",
+        "authentication false",
+        "authenticated=false",
+        "authenticated false",
+        "logged in false",
+        "logged_in false",
+        "logged in=false",
+        "logged_in=false",
+    )
+    if any(term in text for term in negative_terms) or any(
+        term in normalized for term in negative_terms
+    ):
+        return False
+    positive_terms = (
+        "authenticated as",
+        "authentication=true",
+        "authentication true",
+        "authenticated=true",
+        "authenticated true",
+        "logged in true",
+        "logged_in true",
+        "logged in=true",
+        "logged_in=true",
+    )
+    return any(term in text for term in positive_terms) or any(
+        term in normalized for term in positive_terms
+    )
+
+
 def _run_real_agents_cli_gate(require_auth: bool) -> dict[str, Any]:
     binary = shutil.which("agents-cli")
     failures: list[str] = []
@@ -270,8 +305,10 @@ def _run_real_agents_cli_gate(require_auth: bool) -> dict[str, Any]:
         failures.extend(command_failures)
 
     login_report = next((item for item in command_reports if item["name"] == "login_status"), {})
-    login_text = f"{login_report.get('stdout', '')}\n{login_report.get('stderr', '')}".lower()
-    authenticated = "not authenticated" not in login_text and "authenticated" in login_text
+    authenticated = _login_status_authenticated(
+        str(login_report.get("stdout", "")),
+        str(login_report.get("stderr", "")),
+    )
     remediation: list[str] = []
     if require_auth and not authenticated:
         failures.append("agents-cli login --status did not report an authenticated session")

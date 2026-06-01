@@ -211,6 +211,38 @@ def test_local_git_gate_reports_dirty_stale_branch(monkeypatch):
     assert any("ahead upstream" in item for item in check["failures"])
 
 
+def test_login_status_auth_parser_rejects_negative_variants():
+    module = _load_gate_module()
+
+    negative_outputs = [
+        "Authentication\n  Not authenticated",
+        "Authentication\nUnauthenticated",
+        "Authentication\nauthenticated=false",
+        "Authentication\nauthentication=false",
+        "Authentication\nlogged_in=false",
+        "Authentication\nlogged in=false",
+        "Authentication\nunknown",
+    ]
+
+    for output in negative_outputs:
+        assert module._login_status_authenticated(output, "") is False, output
+
+
+def test_login_status_auth_parser_accepts_positive_variants():
+    module = _load_gate_module()
+
+    positive_outputs = [
+        "Authentication\nAuthenticated as demo@example.com",
+        "Authentication\nauthenticated=true",
+        "Authentication\nauthentication=true",
+        "Authentication\nlogged_in=true",
+        "Authentication\nlogged in=true",
+    ]
+
+    for output in positive_outputs:
+        assert module._login_status_authenticated(output, "") is True, output
+
+
 def test_pre_recording_gate_passes_with_complete_track2_bundle(tmp_path):
     evidence_dir = tmp_path / "evidence"
     output = tmp_path / "report.json"
