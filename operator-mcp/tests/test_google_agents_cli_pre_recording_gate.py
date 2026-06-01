@@ -169,6 +169,50 @@ def test_pre_recording_gate_fails_when_track2_evidence_is_missing(tmp_path):
     track2 = next(item for item in report["checks"] if item["name"] == "track2_evidence_gate")
     assert track2["status"] == "fail"
     assert any("Track 2 evidence gate exited 1" in item for item in track2["failures"])
+    assert any("manifest not found" in item for item in track2["global_failures"])
+    assert any("track2_evidence_gate global failures:" in item for item in report["strict_final_blockers"])
+
+
+def test_pre_recording_gate_reports_track2_failed_claim_details(tmp_path):
+    evidence_dir = tmp_path / "evidence"
+    evidence_dir.mkdir()
+    (evidence_dir / "manifest.json").write_text(
+        json.dumps(_complete_manifest()),
+        encoding="utf-8",
+    )
+    output = tmp_path / "report.json"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(_script()),
+            "--evidence-dir",
+            str(evidence_dir),
+            "--output",
+            str(output),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    report = json.loads(output.read_text(encoding="utf-8"))
+    track2 = next(item for item in report["checks"] if item["name"] == "track2_evidence_gate")
+    assert track2["status"] == "fail"
+    assert "optimization_improvement" in track2["failed_claims"]
+    assert any(item["claim"] == "agent_optimizer" for item in track2["failure_details"])
+    assert any(
+        "track2_evidence_gate failed claims: optimization_improvement" in item
+        for item in report["strict_final_blockers"]
+    )
+    detail = next(
+        item
+        for item in report["strict_final_blocker_details"]
+        if item["check"] == "track2_evidence_gate"
+    )
+    assert "failed_claims" in detail
+    assert "failure_details" in detail
 
 
 def test_pre_recording_gate_can_verify_pr_state_with_fake_gh(tmp_path):
@@ -350,7 +394,19 @@ def test_pre_recording_gate_can_require_real_agents_cli_auth(tmp_path):
     real_cli = next(item for item in report["checks"] if item["name"] == "real_agents_cli")
     assert real_cli["status"] == "fail"
     assert any("authenticated session" in item for item in real_cli["failures"])
-    assert "real_agents_cli failed" in report["strict_final_blockers"]
+    assert any(
+        "agents-cli login --status did not report an authenticated session" in item
+        for item in report["strict_final_blockers"]
+    )
+    assert any("agents-cli login -i" in item for item in report["strict_final_blockers"])
+    detail = next(
+        item
+        for item in report["strict_final_blocker_details"]
+        if item["check"] == "real_agents_cli"
+    )
+    assert detail["remediation"] == [
+        "run agents-cli login -i outside Construct, then rerun the strict gate"
+    ]
 
 
 def test_pre_recording_gate_reports_strict_final_ready_with_auth_and_evidence(tmp_path):

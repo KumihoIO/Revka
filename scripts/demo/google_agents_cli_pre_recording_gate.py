@@ -60,6 +60,16 @@ def _snippet(text: str, limit: int = 1200) -> str:
     return text[:limit] + "\n... [truncated]"
 
 
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, str)]
+
+
+def _limited(values: list[str], limit: int = 5) -> list[str]:
+    return values[:limit]
+
+
 def _load_json(path: Path) -> tuple[dict[str, Any] | None, str | None]:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -123,6 +133,26 @@ def _run_track2_gate(evidence_dir: Path, output_dir: Path) -> dict[str, Any]:
     if report is not None and report.get("passed") is not True:
         failures.append("Track 2 evidence report did not pass")
     summary = report.get("summary") if isinstance(report, dict) else None
+    global_failures = _string_list(report.get("global_failures")) if report else []
+    failed_claims: list[str] = []
+    failure_details: list[dict[str, Any]] = []
+    checks = report.get("checks") if isinstance(report, dict) else []
+    if isinstance(checks, list):
+        for item in checks:
+            if not isinstance(item, dict) or item.get("status") != "fail":
+                continue
+            claim = item.get("claim")
+            if not isinstance(claim, str):
+                continue
+            claim_failures = _string_list(item.get("failures"))
+            failed_claims.append(claim)
+            failure_details.append(
+                {
+                    "claim": claim,
+                    "failure_count": len(claim_failures),
+                    "failures": _limited(claim_failures),
+                }
+            )
     return _check(
         "track2_evidence_gate",
         "fail" if failures else "pass",
@@ -130,6 +160,15 @@ def _run_track2_gate(evidence_dir: Path, output_dir: Path) -> dict[str, Any]:
         artifact=str(artifact),
         evidence_dir=str(evidence_dir),
         summary=summary,
+        global_failures=global_failures,
+        failed_claims=failed_claims,
+        failure_details=failure_details,
+        remediation=[
+            "replace the Track 2 manifest placeholders and capture the required evidence artifacts",
+            "rerun scripts/demo/google_agents_cli_track2_evidence_gate.py before recording",
+        ]
+        if failures
+        else [],
         stderr=result.stderr.strip(),
     )
 
@@ -177,6 +216,7 @@ def _run_real_agents_cli_gate(require_auth: bool) -> dict[str, Any]:
             "fail",
             ["agents-cli was not found in PATH"],
             require_auth=require_auth,
+            remediation=["install agents-cli and ensure it is on PATH before recording"],
         )
 
     surfaces = [
@@ -200,8 +240,10 @@ def _run_real_agents_cli_gate(require_auth: bool) -> dict[str, Any]:
     login_report = next((item for item in command_reports if item["name"] == "login_status"), {})
     login_text = f"{login_report.get('stdout', '')}\n{login_report.get('stderr', '')}".lower()
     authenticated = "not authenticated" not in login_text and "authenticated" in login_text
+    remediation: list[str] = []
     if require_auth and not authenticated:
         failures.append("agents-cli login --status did not report an authenticated session")
+        remediation.append("run agents-cli login -i outside Construct, then rerun the strict gate")
 
     return _check(
         "real_agents_cli",
@@ -211,6 +253,7 @@ def _run_real_agents_cli_gate(require_auth: bool) -> dict[str, Any]:
         require_auth=require_auth,
         authenticated=authenticated,
         commands=command_reports,
+        remediation=remediation,
     )
 
 
@@ -362,6 +405,40 @@ def _run_pr_gate(pr_number: int, repo: str) -> list[dict[str, Any]]:
     return checks
 
 
+def _strict_blocker_lines(item: dict[str, Any]) -> list[str]:
+    name = item["name"]
+    failures = _string_list(item.get("failures"))
+    lines = [f"{name}: {failure}" for failure in failures] or [f"{name} failed"]
+    global_failures = _string_list(item.get("global_failures"))
+    if global_failures:
+        lines.append(f"{name} global failures: {'; '.join(_limited(global_failures))}")
+    failed_claims = _string_list(item.get("failed_claims"))
+    if failed_claims:
+        lines.append(f"{name} failed claims: {', '.join(failed_claims)}")
+    for remediation in _string_list(item.get("remediation")):
+        lines.append(f"{name} remediation: {remediation}")
+    return lines
+
+
+def _strict_blocker_detail(item: dict[str, Any]) -> dict[str, Any]:
+    detail: dict[str, Any] = {
+        "check": item["name"],
+        "failures": _string_list(item.get("failures")),
+    }
+    for key in (
+        "artifact",
+        "summary",
+        "global_failures",
+        "failed_claims",
+        "failure_details",
+        "remediation",
+    ):
+        value = item.get(key)
+        if value not in (None, [], {}):
+            detail[key] = value
+    return detail
+
+
 def _build_report(args: argparse.Namespace, output_dir: Path) -> dict[str, Any]:
     checks = [_run_local_probe(output_dir)]
     if args.require_real_agents_cli or args.require_real_agents_cli_auth:
@@ -385,19 +462,22 @@ def _build_report(args: argparse.Namespace, output_dir: Path) -> dict[str, Any]:
             checks.append(_check("github_pr_state", "fail", [str(exc)]))
 
     passed = all(item["status"] in {"pass", "skip"} for item in checks)
-    strict_blockers = []
+    strict_blockers: list[str] = []
+    strict_blocker_details: list[dict[str, Any]] = []
     if args.skip_track2_evidence:
         strict_blockers.append("Track 2 evidence validation was skipped")
     if not args.require_real_agents_cli_auth:
         strict_blockers.append("real agents-cli authentication was not required")
     for item in checks:
         if item["status"] == "fail":
-            strict_blockers.append(f"{item['name']} failed")
+            strict_blockers.extend(_strict_blocker_lines(item))
+            strict_blocker_details.append(_strict_blocker_detail(item))
     return {
         "gate": "google_agents_cli_pre_recording",
         "passed": passed,
         "strict_final_recording_ready": passed and not strict_blockers,
         "strict_final_blockers": strict_blockers,
+        "strict_final_blocker_details": strict_blocker_details,
         "repo": str(REPO_ROOT),
         "checks": checks,
         "summary": {

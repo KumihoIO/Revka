@@ -169,7 +169,9 @@ Platform evidence exists. Do not use that skip flag for final video readiness.
 The umbrella report includes `strict_final_recording_ready`; treat it as the
 final go/no-go field for recording. It remains `false` when Track 2 evidence is
 skipped, real `agents-cli` authentication is not required, or any child gate
-fails.
+fails. When a child gate fails, use `strict_final_blockers` for the exact
+failure/remediation lines and `strict_final_blocker_details` for the bounded
+per-claim Track 2 evidence failures.
 
 ## 7. Related Docs
 
