@@ -152,9 +152,12 @@ export function useAgentChatSession({
   const pendingThinkingRef = useRef('');
   const capturedThinkingRef = useRef('');
   const activitiesRef = useRef<ActivityEvent[]>([]);
+  const streamingFrameRef = useRef<number | null>(null);
+  const activitiesFrameRef = useRef<number | null>(null);
   const typingRef = useRef(false);
   const sendingQueuedRef = useRef(false);
   const inFlightTurnsRef = useRef<Map<string, QueuedTurn>>(new Map());
+  const hasSendingMessagesRef = useRef(false);
   const onUserMessageRef = useRef(onUserMessage);
   onUserMessageRef.current = onUserMessage;
   const onToolResultRef = useRef(onToolResult);
@@ -167,11 +170,71 @@ export function useAgentChatSession({
     typingRef.current = typing;
   }, [typing]);
 
+  const scheduleStreamingFlush = useCallback(() => {
+    if (streamingFrameRef.current !== null) return;
+    if (typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') {
+      setStreamingContent(pendingContentRef.current);
+      setStreamingThinking(pendingThinkingRef.current);
+      return;
+    }
+    streamingFrameRef.current = window.requestAnimationFrame(() => {
+      streamingFrameRef.current = null;
+      setStreamingContent(pendingContentRef.current);
+      setStreamingThinking(pendingThinkingRef.current);
+    });
+  }, []);
+
+  const flushStreamingNow = useCallback(() => {
+    if (streamingFrameRef.current !== null && typeof window !== 'undefined') {
+      window.cancelAnimationFrame(streamingFrameRef.current);
+      streamingFrameRef.current = null;
+    }
+    setStreamingContent(pendingContentRef.current);
+    setStreamingThinking(pendingThinkingRef.current);
+  }, []);
+
+  const scheduleActivitiesFlush = useCallback(() => {
+    if (activitiesFrameRef.current !== null) return;
+    if (typeof window === 'undefined' || typeof window.requestAnimationFrame !== 'function') {
+      setActivities(activitiesRef.current);
+      return;
+    }
+    activitiesFrameRef.current = window.requestAnimationFrame(() => {
+      activitiesFrameRef.current = null;
+      setActivities(activitiesRef.current);
+    });
+  }, []);
+
+  const flushActivitiesNow = useCallback(() => {
+    if (activitiesFrameRef.current !== null && typeof window !== 'undefined') {
+      window.cancelAnimationFrame(activitiesFrameRef.current);
+      activitiesFrameRef.current = null;
+    }
+    setActivities(activitiesRef.current);
+  }, []);
+
+  useEffect(() => () => {
+    if (streamingFrameRef.current !== null && typeof window !== 'undefined') {
+      window.cancelAnimationFrame(streamingFrameRef.current);
+    }
+    if (activitiesFrameRef.current !== null && typeof window !== 'undefined') {
+      window.cancelAnimationFrame(activitiesFrameRef.current);
+    }
+  }, []);
+
   const markSendingTurnsSent = useCallback(() => {
+    if (inFlightTurnsRef.current.size === 0 && !hasSendingMessagesRef.current) return;
     inFlightTurnsRef.current.clear();
-    setMessages((prev) => prev.map((message) =>
-      message.deliveryStatus === 'sending' ? { ...message, deliveryStatus: 'sent' } : message,
-    ));
+    hasSendingMessagesRef.current = false;
+    setMessages((prev) => {
+      let changed = false;
+      const next = prev.map((message) => {
+        if (message.deliveryStatus !== 'sending') return message;
+        changed = true;
+        return { ...message, deliveryStatus: 'sent' as const };
+      });
+      return changed ? next : prev;
+    });
   }, []);
 
   const requeueLatestSendingTurn = useCallback(() => {
@@ -207,8 +270,17 @@ export function useAgentChatSession({
     setQueuedTurns([]);
     sendingQueuedRef.current = false;
     inFlightTurnsRef.current.clear();
+    hasSendingMessagesRef.current = false;
     setStopping(false);
     activitiesRef.current = [];
+    if (activitiesFrameRef.current !== null && typeof window !== 'undefined') {
+      window.cancelAnimationFrame(activitiesFrameRef.current);
+      activitiesFrameRef.current = null;
+    }
+    if (streamingFrameRef.current !== null && typeof window !== 'undefined') {
+      window.cancelAnimationFrame(streamingFrameRef.current);
+      streamingFrameRef.current = null;
+    }
     setStreamingContent('');
     setStreamingThinking('');
     setTyping(false);
@@ -282,13 +354,13 @@ export function useAgentChatSession({
       const resetInFlightState = () => {
         setTyping(false);
         inFlightTurnsRef.current.clear();
+        hasSendingMessagesRef.current = false;
         pendingContentRef.current = '';
         pendingThinkingRef.current = '';
         capturedThinkingRef.current = '';
-        setStreamingContent('');
-        setStreamingThinking('');
+        flushStreamingNow();
         activitiesRef.current = [];
-        setActivities([]);
+        flushActivitiesNow();
         setStopping(false);
       };
 
@@ -322,7 +394,7 @@ export function useAgentChatSession({
             setTyping(true);
             const delta = msg.content ?? '';
             pendingThinkingRef.current += delta;
-            setStreamingThinking(pendingThinkingRef.current);
+            scheduleStreamingFlush();
             const previous = activitiesRef.current;
             const last = previous[previous.length - 1];
             const nextActivities = last?.kind === 'thinking'
@@ -341,7 +413,7 @@ export function useAgentChatSession({
                   },
                 ];
             activitiesRef.current = nextActivities;
-            setActivities(nextActivities);
+            scheduleActivitiesFlush();
             break;
           }
 
@@ -349,15 +421,14 @@ export function useAgentChatSession({
             markSendingTurnsSent();
             setTyping(true);
             pendingContentRef.current += msg.content ?? '';
-            setStreamingContent(pendingContentRef.current);
+            scheduleStreamingFlush();
             break;
 
           case 'chunk_reset':
             capturedThinkingRef.current = pendingThinkingRef.current;
             pendingContentRef.current = '';
             pendingThinkingRef.current = '';
-            setStreamingContent('');
-            setStreamingThinking('');
+            flushStreamingNow();
             break;
 
           case 'message':
@@ -369,7 +440,7 @@ export function useAgentChatSession({
             );
 
             activitiesRef.current = [];
-            setActivities([]);
+            flushActivitiesNow();
 
             if (content) {
               setMessages((prev) => [
@@ -401,8 +472,7 @@ export function useAgentChatSession({
             pendingContentRef.current = '';
             pendingThinkingRef.current = '';
             capturedThinkingRef.current = '';
-            setStreamingContent('');
-            setStreamingThinking('');
+            flushStreamingNow();
             markSendingTurnsSent();
             setTyping(false);
             setStopping(false);
@@ -491,12 +561,11 @@ export function useAgentChatSession({
           case 'stopped': {
             const persistedActivities = activitiesRef.current;
             activitiesRef.current = [];
-            setActivities([]);
+            flushActivitiesNow();
             pendingContentRef.current = '';
             pendingThinkingRef.current = '';
             capturedThinkingRef.current = '';
-            setStreamingContent('');
-            setStreamingThinking('');
+            flushStreamingNow();
             markSendingTurnsSent();
             setTyping(false);
             setStopping(false);
@@ -556,7 +625,6 @@ export function useAgentChatSession({
 
           case 'agent_event': {
             const ev = msg.event as AgentChannelEvent | undefined;
-            console.log('[construct] agent_event received:', ev?.type, ev?.agentTitle, ev);
             if (ev) {
               setAgentEvents((prev) => [...prev, ev]);
             }
@@ -582,10 +650,9 @@ export function useAgentChatSession({
             pendingContentRef.current = '';
             pendingThinkingRef.current = '';
             capturedThinkingRef.current = '';
-            setStreamingContent('');
-            setStreamingThinking('');
+            flushStreamingNow();
             activitiesRef.current = [];
-            setActivities([]);
+            flushActivitiesNow();
             markSendingTurnsSent();
             setStopping(false);
             break;
@@ -608,7 +675,16 @@ export function useAgentChatSession({
     // session changes. Re-connecting on every route change drops the in-flight
     // Operator request and clears the activity feed mid-tool-call.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [markSendingTurnsSent, requeueLatestSendingTurn, sessionId, sessionName]);
+  }, [
+    flushActivitiesNow,
+    flushStreamingNow,
+    markSendingTurnsSent,
+    requeueLatestSendingTurn,
+    scheduleActivitiesFlush,
+    scheduleStreamingFlush,
+    sessionId,
+    sessionName,
+  ]);
 
   const sendTurn = useCallback((turn: QueuedTurn, fromQueue: boolean): boolean => {
     if (!wsRef.current?.connected) return false;
@@ -617,6 +693,7 @@ export function useAgentChatSession({
       inFlightTurnsRef.current.set(turn.id, turn);
       onUserMessageRef.current?.(turn.content);
       if (fromQueue) {
+        hasSendingMessagesRef.current = true;
         setMessages((prev) => prev.map((message) =>
           message.id === turn.id ? { ...message, deliveryStatus: 'sending' } : message,
         ));
@@ -625,14 +702,15 @@ export function useAgentChatSession({
       pendingContentRef.current = '';
       pendingThinkingRef.current = '';
       capturedThinkingRef.current = '';
+      flushStreamingNow();
       activitiesRef.current = [];
-      setActivities([]);
+      flushActivitiesNow();
     } catch {
       setError(t('agent.send_error'));
       return false;
     }
     return true;
-  }, [pageContext]);
+  }, [flushActivitiesNow, flushStreamingNow, pageContext]);
 
   const handleSend = useCallback(() => {
     const trimmed = input.trim();
@@ -671,6 +749,7 @@ export function useAgentChatSession({
         },
       ]);
     } else {
+      hasSendingMessagesRef.current = true;
       setMessages((prev) => [
         ...prev,
         {
@@ -727,6 +806,7 @@ export function useAgentChatSession({
     if (attachments.length > 0 || uploadingCount > 0) return false;
     try {
       wsRef.current.sendSteer(trimmed, pageContext);
+      hasSendingMessagesRef.current = true;
       setMessages((prev) => [
         ...prev,
         {
@@ -777,6 +857,7 @@ export function useAgentChatSession({
         return true;
       }
 
+      hasSendingMessagesRef.current = true;
       setMessages((prev) => [
         ...prev,
         {
@@ -850,16 +931,16 @@ export function useAgentChatSession({
   const clearMessages = useCallback(() => {
     canPersistEmptyHistoryRef.current = true;
     setMessages([]);
-    setActivities([]);
     activitiesRef.current = [];
-    setStreamingContent('');
-    setStreamingThinking('');
     pendingContentRef.current = '';
     pendingThinkingRef.current = '';
     capturedThinkingRef.current = '';
+    flushActivitiesNow();
+    flushStreamingNow();
+    hasSendingMessagesRef.current = false;
     setTyping(false);
     setError(null);
-  }, []);
+  }, [flushActivitiesNow, flushStreamingNow]);
 
   /** Inject a synthetic operator-role message into the scrollback. Used
    *  by `/help` and other client-side commands that want to surface

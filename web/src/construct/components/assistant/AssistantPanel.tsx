@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   AlertCircle,
@@ -51,6 +51,7 @@ import {
   type SlashThemeName,
 } from './slashCommands';
 import { copyToClipboard } from '@/construct/lib/clipboard';
+import type { ActivityEvent, ChatMessage } from '@/components/chat/types';
 
 /* ── types ─────────────────────────────────────────── */
 
@@ -291,9 +292,176 @@ function ConfigPanel({
   );
 }
 
+function messageRoleColor(role: ChatMessage['role'], colors: SchemeColors) {
+  if (role === 'user') return colors.user;
+  if (role === 'operator') return colors.secondary;
+  return colors.primary;
+}
+
+function messageRoleGlow(role: ChatMessage['role'], colors: SchemeColors) {
+  if (role === 'agent') return colors.glow;
+  if (role === 'operator') return colors.glowSecondary;
+  return 'none';
+}
+
+const ChatScrollback = memo(function ChatScrollback({
+  messages,
+  typing,
+  activities,
+  streamingContent,
+  streamingThinking,
+  copiedId,
+  colors,
+  fontSize,
+  placeholder,
+  copyMessage,
+}: {
+  messages: ChatMessage[];
+  typing: boolean;
+  activities: ActivityEvent[];
+  streamingContent: string;
+  streamingThinking: string;
+  copiedId: string | null;
+  colors: SchemeColors;
+  fontSize: number;
+  placeholder: string;
+  copyMessage: (id: string, text: string) => void;
+}) {
+  if (messages.length === 0 && !typing) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center text-center">
+        <pre className="text-xs" style={{ color: 'var(--construct-text-faint)' }}>
+{`┌──────────────────────────────┐
+│  session ready · ask away    │
+└──────────────────────────────┘`}
+        </pre>
+        <p className="mt-3 max-w-xs text-xs leading-5" style={{ color: 'var(--construct-text-muted)' }}>
+          {placeholder}
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      {messages.map((msg) => {
+        const prefix = msg.role === 'user' ? 'you' : msg.role === 'operator' ? 'sys' : 'op';
+        const color = messageRoleColor(msg.role, colors);
+        const glow = messageRoleGlow(msg.role, colors);
+        const copied = copiedId === msg.id;
+        const contentColor = msg.role === 'user' ? 'var(--construct-text-secondary)' : color;
+        return (
+          <div key={msg.id} className="group">
+            {msg.activityLog && msg.activityLog.length > 0 && (
+              <div className="mb-1 space-y-0.5">
+                {msg.activityLog.map((evt) => (
+                  <ActivityCard
+                    key={evt.id}
+                    event={evt}
+                    accent={evt.kind === 'tool_result' ? 'var(--construct-status-success)' : colors.secondary}
+                    fontSize={fontSize}
+                  />
+                ))}
+              </div>
+            )}
+            <div className="flex min-w-0 items-start gap-1 break-words">
+              <span className="shrink-0" style={{ color, textShadow: glow, fontWeight: 600 }}>{prefix} {'>'} </span>
+              <div className="min-w-0 flex-1" style={{ color: contentColor, textShadow: glow }}>
+                {msg.markdown && msg.role !== 'user' ? (
+                  <MarkdownMessage content={msg.content} color={contentColor} textShadow={glow} />
+                ) : (
+                  <span className="whitespace-pre-wrap break-words">{msg.content}</span>
+                )}
+              </div>
+            </div>
+            <div className="mt-0.5 flex items-center justify-end gap-2 text-[10px]" style={{ color: 'var(--construct-text-faint)' }}>
+              {msg.deliveryStatus === 'queued' && (
+                <span
+                  className="mr-auto inline-flex items-center rounded border px-1.5 py-0.5 uppercase tracking-[0.12em]"
+                  style={{
+                    borderColor: 'var(--construct-border-soft)',
+                    color: 'var(--construct-text-faint)',
+                  }}
+                >
+                  queued
+                </span>
+              )}
+              {msg.deliveryStatus === 'sending' && (
+                <span
+                  className="mr-auto inline-flex items-center gap-1 rounded border px-1.5 py-0.5 uppercase tracking-[0.12em]"
+                  style={{
+                    borderColor: 'var(--construct-border-soft)',
+                    color: colors.primary,
+                    textShadow: colors.glow,
+                  }}
+                >
+                  <Loader2 className="h-2.5 w-2.5 animate-spin" />
+                  sending
+                </span>
+              )}
+              <button
+                type="button"
+                onClick={() => copyMessage(msg.id, msg.content)}
+                aria-label={copied ? 'Copied' : 'Copy message'}
+                title={copied ? 'Copied' : 'Copy'}
+                className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 opacity-50 transition-all hover:bg-white/5 hover:opacity-100 focus:opacity-100 focus:outline-none focus-visible:ring-1 focus-visible:ring-current group-hover:opacity-80"
+                style={{ color: 'var(--construct-text-muted)' }}
+              >
+                {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+                <span>{copied ? 'copied' : 'copy'}</span>
+              </button>
+            </div>
+          </div>
+        );
+      })}
+
+      {typing && activities.length > 0 && (
+        <div className="space-y-0.5">
+          {activities.map((evt) => (
+            <ActivityCard
+              key={evt.id}
+              event={evt}
+              accent={
+                evt.kind === 'tool_result'
+                  ? 'var(--construct-status-success)'
+                  : evt.kind === 'thinking'
+                    ? 'var(--construct-text-faint)'
+                    : colors.secondary
+              }
+              fontSize={fontSize}
+            />
+          ))}
+        </div>
+      )}
+
+      {typing && (streamingContent || streamingThinking) && (
+        <div className="flex min-w-0 items-start gap-1 break-words">
+          <span className="shrink-0" style={{ color: colors.primary, textShadow: colors.glow, fontWeight: 600 }}>
+            op {'>'}{' '}
+          </span>
+          <div className="min-w-0 flex-1">
+            {streamingContent ? (
+              <MarkdownMessage content={streamingContent} color={colors.primary} textShadow={colors.glow} />
+            ) : (
+              <span style={{ color: colors.primary, textShadow: colors.glow }}>…</span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {typing && !streamingContent && !streamingThinking && activities.length === 0 && (
+        <div className="animate-pulse" style={{ color: colors.primary, textShadow: colors.glow }}>
+          op {'>'} ▊
+        </div>
+      )}
+    </div>
+  );
+});
+
 /* ── ChatPane ─────────────────────────────────────── */
 
 function ChatPane({
+  tabId,
   sessionId,
   sessionName,
   pageContext,
@@ -304,7 +472,9 @@ function ChatPane({
   onAddTab,
   onCloseActiveTab,
   onOpenNewTabMenu,
+  onLiveStateChange,
 }: {
+  tabId: string;
   sessionId: string;
   sessionName: string;
   pageContext: string;
@@ -319,6 +489,7 @@ function ChatPane({
   onAddTab: (type: TabType) => void;
   onCloseActiveTab: () => void;
   onOpenNewTabMenu: () => void;
+  onLiveStateChange?: (tabId: string, live: boolean) => void;
 }) {
   const { open } = useV2Assistant();
   const { setTheme } = useTheme();
@@ -539,10 +710,10 @@ function ChatPane({
     if (!visible) return;
     if (!autoScrollRef.current) return;
     const frame = requestAnimationFrame(() => {
-      scrollToBottom(open ? 'smooth' : 'auto');
+      scrollToBottom('auto');
     });
     return () => cancelAnimationFrame(frame);
-  }, [activities, messages.length, open, scrollToBottom, streamingContent, streamingThinking, typing, visible]);
+  }, [activities, messages.length, scrollToBottom, streamingContent, streamingThinking, typing, visible]);
 
   useEffect(() => {
     if (!open || !visible) return;
@@ -563,30 +734,19 @@ function ChatPane({
     return () => clearTimeout(id);
   }, [open, visible, inputRef]);
 
-  const roleColor = useCallback(
-    (role: string) => {
-      if (role === 'user') return colors.user;
-      if (role === 'operator') return colors.secondary;
-      return colors.primary;
-    },
-    [colors],
-  );
-
-  const roleGlow = useCallback(
-    (role: string) => {
-      if (role === 'agent') return colors.glow;
-      if (role === 'operator') return colors.glowSecondary;
-      return 'none';
-    },
-    [colors],
-  );
-
   const submitComposer = useCallback(() => {
     if (typing && sendMode === 'steer' && attachments.length === 0) {
       if (steerCurrentTurn()) return;
     }
     handleSend();
   }, [attachments.length, handleSend, sendMode, steerCurrentTurn, typing]);
+
+  const hasLiveWork = typing || queuedTurns.length > 0 || stopping;
+
+  useEffect(() => {
+    onLiveStateChange?.(tabId, hasLiveWork);
+    return () => onLiveStateChange?.(tabId, false);
+  }, [hasLiveWork, onLiveStateChange, tabId]);
 
   return (
     <div
@@ -625,139 +785,18 @@ function ChatPane({
           className="h-full overflow-y-auto overflow-x-hidden p-4 font-mono leading-6"
           style={{ fontSize: `${config.fontSize}px` }}
         >
-          {messages.length === 0 && !typing ? (
-            <div className="flex h-full flex-col items-center justify-center text-center">
-              <pre className="text-xs" style={{ color: 'var(--construct-text-faint)' }}>
-{`┌──────────────────────────────┐
-│  session ready · ask away    │
-└──────────────────────────────┘`}
-              </pre>
-              <p className="mt-3 max-w-xs text-xs leading-5" style={{ color: 'var(--construct-text-muted)' }}>
-                {placeholder}
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {messages.map((msg) => {
-              const prefix = msg.role === 'user' ? 'you' : msg.role === 'operator' ? 'sys' : 'op';
-              const color = roleColor(msg.role);
-              const glow = roleGlow(msg.role);
-              const copied = copiedId === msg.id;
-              const contentColor = msg.role === 'user' ? 'var(--construct-text-secondary)' : color;
-              return (
-                <div key={msg.id} className="group">
-                  {/* Persisted activity log (collapsed by default) — shown ABOVE the
-                      finalized agent reply so the user sees "what was done" before
-                      "what was said". Empty for plain messages. */}
-                  {msg.activityLog && msg.activityLog.length > 0 && (
-                    <div className="mb-1 space-y-0.5">
-                      {msg.activityLog.map((evt) => (
-                        <ActivityCard
-                          key={evt.id}
-                          event={evt}
-                          accent={evt.kind === 'tool_result' ? 'var(--construct-status-success)' : colors.secondary}
-                          fontSize={config.fontSize}
-                        />
-                      ))}
-                    </div>
-                  )}
-                  <div className="flex min-w-0 items-start gap-1 break-words">
-                    <span className="shrink-0" style={{ color, textShadow: glow, fontWeight: 600 }}>{prefix} {'>'} </span>
-                    <div className="min-w-0 flex-1" style={{ color: contentColor, textShadow: glow }}>
-                      {msg.markdown && msg.role !== 'user' ? (
-                        <MarkdownMessage content={msg.content} color={contentColor} textShadow={glow} />
-                      ) : (
-                        <span className="whitespace-pre-wrap break-words">{msg.content}</span>
-                      )}
-                    </div>
-                  </div>
-                  {/* Footer row: timestamp on the left, copy-to-clipboard on the right.
-                      Lives BELOW the message text per design — easier to reach with
-                      thumb on mobile and doesn't overlap content on long messages. */}
-                  <div className="mt-0.5 flex items-center justify-end gap-2 text-[10px]" style={{ color: 'var(--construct-text-faint)' }}>
-                    {msg.deliveryStatus === 'queued' && (
-                      <span
-                        className="mr-auto inline-flex items-center rounded border px-1.5 py-0.5 uppercase tracking-[0.12em]"
-                        style={{
-                          borderColor: 'var(--construct-border-soft)',
-                          color: 'var(--construct-text-faint)',
-                        }}
-                      >
-                        queued
-                      </span>
-                    )}
-                    {msg.deliveryStatus === 'sending' && (
-                      <span
-                        className="mr-auto inline-flex items-center gap-1 rounded border px-1.5 py-0.5 uppercase tracking-[0.12em]"
-                        style={{
-                          borderColor: 'var(--construct-border-soft)',
-                          color: colors.primary,
-                          textShadow: colors.glow,
-                        }}
-                      >
-                        <Loader2 className="h-2.5 w-2.5 animate-spin" />
-                        sending
-                      </span>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => copyMessage(msg.id, msg.content)}
-                      aria-label={copied ? 'Copied' : 'Copy message'}
-                      title={copied ? 'Copied' : 'Copy'}
-                      className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 opacity-50 transition-all hover:bg-white/5 hover:opacity-100 focus:opacity-100 focus:outline-none focus-visible:ring-1 focus-visible:ring-current group-hover:opacity-80"
-                      style={{ color: 'var(--construct-text-muted)' }}
-                    >
-                      {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
-                      <span>{copied ? 'copied' : 'copy'}</span>
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-
-            {/* In-flight activities — render as collapsible cards so users can drill
-                into each tool call's input/output. Replaces the truncate-3 strip. */}
-            {typing && activities.length > 0 && (
-              <div className="space-y-0.5">
-                {activities.map((evt) => (
-                  <ActivityCard
-                    key={evt.id}
-                    event={evt}
-                    accent={
-                      evt.kind === 'tool_result'
-                        ? 'var(--construct-status-success)'
-                        : evt.kind === 'thinking'
-                          ? 'var(--construct-text-faint)'
-                          : colors.secondary
-                    }
-                    fontSize={config.fontSize}
-                  />
-                ))}
-              </div>
-            )}
-
-              {typing && (streamingContent || streamingThinking) && (
-                <div className="flex min-w-0 items-start gap-1 break-words">
-                  <span className="shrink-0" style={{ color: colors.primary, textShadow: colors.glow, fontWeight: 600 }}>
-                  op {'>'}{' '}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    {streamingContent ? (
-                      <MarkdownMessage content={streamingContent} color={colors.primary} textShadow={colors.glow} />
-                    ) : (
-                      <span style={{ color: colors.primary, textShadow: colors.glow }}>…</span>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {typing && !streamingContent && !streamingThinking && activities.length === 0 && (
-                <div className="animate-pulse" style={{ color: colors.primary, textShadow: colors.glow }}>
-                  op {'>'} ▊
-                </div>
-              )}
-            </div>
-          )}
+          <ChatScrollback
+            messages={messages}
+            typing={typing}
+            activities={activities}
+            streamingContent={streamingContent}
+            streamingThinking={streamingThinking}
+            copiedId={copiedId}
+            colors={colors}
+            fontSize={config.fontSize}
+            placeholder={placeholder}
+            copyMessage={copyMessage}
+          />
         </div>
         {!autoScroll && (
           <button
@@ -1202,6 +1241,7 @@ export default function AssistantPanel() {
   // split and render normally; switching to one auto-closes the split.
   const [splitTabId, setSplitTabId] = useState<string | null>(null);
   const [splitDirection, setSplitDirection] = useState<'horizontal' | 'vertical'>('vertical');
+  const [liveChatTabIds, setLiveChatTabIds] = useState<Set<string>>(() => new Set());
   // Inline tab rename: double-click a chat tab to edit, Enter/blur saves, Escape cancels.
   const [editingTabId, setEditingTabId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
@@ -1391,6 +1431,12 @@ export default function AssistantPanel() {
     });
     // Closing either side of an active split clears the split.
     setSplitTabId((prev) => (prev === tabId ? null : prev));
+    setLiveChatTabIds((prev) => {
+      if (!prev.has(tabId)) return prev;
+      const next = new Set(prev);
+      next.delete(tabId);
+      return next;
+    });
   }, [tabs]);
 
   // Split: spawn a fresh chat tab paired with the active tab. If a split
@@ -1417,6 +1463,16 @@ export default function AssistantPanel() {
 
   const closeSplit = useCallback(() => {
     setSplitTabId(null);
+  }, []);
+
+  const setChatTabLive = useCallback((tabId: string, live: boolean) => {
+    setLiveChatTabIds((prev) => {
+      if (prev.has(tabId) === live) return prev;
+      const next = new Set(prev);
+      if (live) next.add(tabId);
+      else next.delete(tabId);
+      return next;
+    });
   }, []);
 
   // Split is only meaningful when the active tab is a chat. Switching
@@ -1672,19 +1728,12 @@ export default function AssistantPanel() {
               />
             ))}
 
-            {/* Chat tabs — all rendered, visibility toggled so the
-                WebSocket stream and in-flight typing/streaming state
-                survive tab switches. Otherwise asking a question, swapping
-                to a terminal/code tab, and switching back would unmount
-                the pane mid-turn — losing every event between unmount
-                and remount, so the user sees a blank pane until the next
-                history fetch (i.e. the next tab swap).
-
-                When a split is active, the active and split chats are
-                wrapped in a flex container with the configured direction
-                (row = side-by-side, column = stacked). All other chat
-                tabs stay mounted underneath with display:none so their
-                state survives entering/leaving split mode. */}
+            {/* Chat tabs are mounted only when visible or doing live work.
+                That preserves in-flight streams across tab switches without
+                keeping every restored idle chat tab connected in the
+                background. When split is active, the active and split chats
+                are wrapped in a flex container with the configured direction
+                (row = side-by-side, column = stacked). */}
             {isSplitVisible ? (
               <div
                 className="flex min-h-0 flex-1"
@@ -1696,6 +1745,8 @@ export default function AssistantPanel() {
                   .filter((t) => t.type === 'chat')
                   .map((tab) => {
                     const isInSplit = tab.id === activeTabId || tab.id === splitTabId;
+                    const shouldMount = (open && isInSplit) || liveChatTabIds.has(tab.id);
+                    if (!shouldMount) return null;
                     return (
                       <div
                         key={tab.id}
@@ -1715,37 +1766,46 @@ export default function AssistantPanel() {
                         }}
                       >
                         <ChatPane
+                          tabId={tab.id}
                           sessionId={tab.sessionId}
                           sessionName={tab.title}
                           pageContext={tab.pageContextOverride ?? pageContext}
                           placeholder={placeholder}
                           config={config}
                           colors={colors}
-                          visible={isInSplit}
+                          visible={open && isInSplit}
                           onAddTab={addTab}
                           onCloseActiveTab={() => closeTab(tab.id)}
                           onOpenNewTabMenu={() => setShowNewTabMenu(true)}
+                          onLiveStateChange={setChatTabLive}
                         />
                       </div>
                     );
                   })}
               </div>
             ) : (
-              tabs.filter((t) => t.type === 'chat').map((tab) => (
-                <ChatPane
-                  key={tab.id}
-                  sessionId={tab.sessionId}
-                  sessionName={tab.title}
-                  pageContext={tab.pageContextOverride ?? pageContext}
-                  placeholder={placeholder}
-                  config={config}
-                  colors={colors}
-                  visible={activeTabId === tab.id}
-                  onAddTab={addTab}
-                  onCloseActiveTab={() => closeTab(tab.id)}
-                  onOpenNewTabMenu={() => setShowNewTabMenu(true)}
-                />
-              ))
+              tabs.filter((t) => t.type === 'chat').map((tab) => {
+                const isActiveChat = activeTabId === tab.id;
+                const shouldMount = (open && isActiveChat) || liveChatTabIds.has(tab.id);
+                if (!shouldMount) return null;
+                return (
+                  <ChatPane
+                    key={tab.id}
+                    tabId={tab.id}
+                    sessionId={tab.sessionId}
+                    sessionName={tab.title}
+                    pageContext={tab.pageContextOverride ?? pageContext}
+                    placeholder={placeholder}
+                    config={config}
+                    colors={colors}
+                    visible={open && isActiveChat}
+                    onAddTab={addTab}
+                    onCloseActiveTab={() => closeTab(tab.id)}
+                    onOpenNewTabMenu={() => setShowNewTabMenu(true)}
+                    onLiveStateChange={setChatTabLive}
+                  />
+                );
+              })
             )}
           </div>
         )}
