@@ -320,6 +320,20 @@ def validate(manifest: dict[str, Any], evidence_dir: Path) -> dict[str, Any]:
     }
 
 
+def _error_report(message: str) -> dict[str, Any]:
+    return {
+        "gate": "google_agents_cli_track2_evidence",
+        "passed": False,
+        "summary": {
+            "total": 0,
+            "passed": 0,
+            "failed": 1,
+        },
+        "global_failures": [message],
+        "checks": [],
+    }
+
+
 def _load_json(path: Path) -> dict[str, Any]:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -361,7 +375,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Wrote Track 2 evidence template: {manifest_path}")
         return 0
 
-    report = validate(_load_json(manifest_path), evidence_dir)
+    try:
+        report = validate(_load_json(manifest_path), evidence_dir)
+    except SystemExit as exc:
+        report = _error_report(str(exc))
     text = json.dumps(report, indent=2, sort_keys=True)
     if args.output:
         Path(args.output).write_text(text + "\n", encoding="utf-8")

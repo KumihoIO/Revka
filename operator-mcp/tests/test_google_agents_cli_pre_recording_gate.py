@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -9,7 +10,7 @@ def _repo_root() -> Path:
 
 
 def _script() -> Path:
-    return _repo_root() / "scripts" / "demo" / "google_agents_cli_track2_evidence_gate.py"
+    return _repo_root() / "scripts" / "demo" / "google_agents_cli_pre_recording_gate.py"
 
 
 def _write(path: Path, text: str = "evidence") -> None:
@@ -69,7 +70,7 @@ def _complete_manifest() -> dict:
 
 
 def _write_complete_evidence(evidence_dir: Path) -> None:
-    files = [
+    for rel in [
         "eval/baseline.json",
         "eval/optimized.json",
         "simulation/run-output.json",
@@ -78,104 +79,24 @@ def _write_complete_evidence(evidence_dir: Path) -> None:
         "deploy/deploy-output.txt",
         "deploy/rollback-plan.md",
         "business/use-case.md",
-    ]
-    for rel in files:
+    ]:
         _write(evidence_dir / rel)
     _write(evidence_dir / "optimizer/original-instructions.md", "Prioritize lowest cost.")
     _write(
         evidence_dir / "optimizer/optimized-instructions.md",
         "Prioritize comfort first, then cap peak-demand cost.",
     )
+    (evidence_dir / "manifest.json").write_text(
+        json.dumps(_complete_manifest()),
+        encoding="utf-8",
+    )
 
 
-def test_track2_evidence_gate_passes_complete_bundle(tmp_path):
+def test_pre_recording_gate_passes_with_complete_track2_bundle(tmp_path):
     evidence_dir = tmp_path / "evidence"
-    manifest = _complete_manifest()
+    output = tmp_path / "report.json"
+    output_dir = tmp_path / "artifacts"
     _write_complete_evidence(evidence_dir)
-    (evidence_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
-
-    result = subprocess.run(
-        [sys.executable, str(_script()), "--evidence-dir", str(evidence_dir)],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-
-    assert result.returncode == 0, result.stderr or result.stdout
-    report = json.loads(result.stdout)
-    assert report["passed"] is True
-    assert report["summary"] == {"failed": 0, "passed": 6, "total": 6}
-
-
-def test_track2_evidence_gate_fails_missing_required_artifact(tmp_path):
-    evidence_dir = tmp_path / "evidence"
-    manifest = _complete_manifest()
-    _write_complete_evidence(evidence_dir)
-    (evidence_dir / "eval" / "optimized.json").unlink()
-    (evidence_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
-
-    result = subprocess.run(
-        [sys.executable, str(_script()), "--evidence-dir", str(evidence_dir)],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-
-    assert result.returncode == 1
-    report = json.loads(result.stdout)
-    optimization = next(
-        item for item in report["checks"] if item["claim"] == "optimization_improvement"
-    )
-    assert optimization["status"] == "fail"
-    assert "missing evidence file: eval/optimized.json" in optimization["failures"]
-
-
-def test_track2_evidence_gate_emits_json_when_manifest_is_missing(tmp_path):
-    evidence_dir = tmp_path / "evidence"
-
-    result = subprocess.run(
-        [sys.executable, str(_script()), "--evidence-dir", str(evidence_dir)],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-
-    assert result.returncode == 1
-    report = json.loads(result.stdout)
-    assert report["passed"] is False
-    assert report["summary"]["failed"] == 1
-    assert any("manifest not found" in item for item in report["global_failures"])
-
-
-def test_track2_evidence_gate_rejects_paths_outside_evidence_dir(tmp_path):
-    evidence_dir = tmp_path / "evidence"
-    manifest = _complete_manifest()
-    _write_complete_evidence(evidence_dir)
-    manifest["claims"]["agent_optimizer"][
-        "original_instructions_file"
-    ] = "../outside-original.md"
-    (tmp_path / "outside-original.md").write_text("outside", encoding="utf-8")
-    (evidence_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
-
-    result = subprocess.run(
-        [sys.executable, str(_script()), "--evidence-dir", str(evidence_dir)],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-
-    assert result.returncode == 1
-    report = json.loads(result.stdout)
-    optimizer = next(item for item in report["checks"] if item["claim"] == "agent_optimizer")
-    assert optimizer["status"] == "fail"
-    assert (
-        "evidence file must stay inside evidence dir: ../outside-original.md"
-        in optimizer["failures"]
-    )
-
-
-def test_track2_evidence_gate_writes_template(tmp_path):
-    evidence_dir = tmp_path / "evidence"
 
     result = subprocess.run(
         [
@@ -183,7 +104,10 @@ def test_track2_evidence_gate_writes_template(tmp_path):
             str(_script()),
             "--evidence-dir",
             str(evidence_dir),
-            "--write-template",
+            "--output",
+            str(output),
+            "--output-dir",
+            str(output_dir),
         ],
         check=False,
         capture_output=True,
@@ -191,12 +115,112 @@ def test_track2_evidence_gate_writes_template(tmp_path):
     )
 
     assert result.returncode == 0, result.stderr or result.stdout
-    manifest = json.loads((evidence_dir / "manifest.json").read_text(encoding="utf-8"))
-    assert set(manifest["claims"]) >= {
-        "optimization_improvement",
-        "agent_simulation",
-        "agent_observability",
-        "agent_optimizer",
-        "live_google_cloud_deployment",
-        "b2b_value",
+    report = json.loads(output.read_text(encoding="utf-8"))
+    assert report["passed"] is True
+    assert report["summary"]["failed"] == 0
+    statuses = {item["name"]: item["status"] for item in report["checks"]}
+    assert statuses["local_code_probe"] == "pass"
+    assert statuses["track2_evidence_gate"] == "pass"
+
+
+def test_pre_recording_gate_fails_when_track2_evidence_is_missing(tmp_path):
+    output = tmp_path / "report.json"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(_script()),
+            "--evidence-dir",
+            str(tmp_path / "missing-evidence"),
+            "--output",
+            str(output),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    report = json.loads(output.read_text(encoding="utf-8"))
+    track2 = next(item for item in report["checks"] if item["name"] == "track2_evidence_gate")
+    assert track2["status"] == "fail"
+    assert any("Track 2 evidence gate exited 1" in item for item in track2["failures"])
+
+
+def test_pre_recording_gate_can_verify_pr_state_with_fake_gh(tmp_path):
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_gh = fake_bin / "gh"
+    fake_gh.write_text(
+        """#!/usr/bin/env python3
+import json
+import os
+import sys
+
+args = sys.argv[1:]
+if args[:2] == ["pr", "checks"]:
+    print(json.dumps([{"name": "CI", "state": "SUCCESS", "workflow": "CI"}]))
+elif args[:2] == ["pr", "view"]:
+    print(json.dumps({
+        "url": "https://github.com/KumihoIO/construct-os/pull/324",
+        "headRefOid": os.environ["FAKE_HEAD"],
+        "reviewDecision": "REVIEW_REQUIRED",
+        "mergeStateStatus": "BLOCKED",
+        "isDraft": False,
+        "state": "OPEN",
+    }))
+elif args[:2] == ["api", "graphql"]:
+    print(json.dumps({
+        "data": {
+            "repository": {
+                "pullRequest": {
+                    "reviewThreads": {"nodes": []}
+                }
+            }
+        }
+    }))
+else:
+    print("unexpected gh invocation: " + " ".join(args), file=sys.stderr)
+    sys.exit(2)
+""",
+        encoding="utf-8",
+    )
+    fake_gh.chmod(0o755)
+    head = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"],
+        cwd=_repo_root(),
+        text=True,
+    ).strip()
+    env = {
+        **os.environ,
+        "PATH": str(fake_bin) + os.pathsep + os.environ.get("PATH", ""),
+        "FAKE_HEAD": head,
     }
+    output = tmp_path / "report.json"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(_script()),
+            "--skip-track2-evidence",
+            "--pr-number",
+            "324",
+            "--output",
+            str(output),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    report = json.loads(output.read_text(encoding="utf-8"))
+    statuses = {item["name"]: item["status"] for item in report["checks"]}
+    assert statuses["local_code_probe"] == "pass"
+    assert statuses["track2_evidence_gate"] == "skip"
+    assert statuses["github_pr_checks"] == "pass"
+    assert statuses["github_pr_state"] == "pass"
+    assert statuses["github_review_threads"] == "pass"
+    local_probe = next(item for item in report["checks"] if item["name"] == "local_code_probe")
+    assert Path(local_probe["artifact"]).is_file()

@@ -64,7 +64,7 @@ Run these checks after rebasing the demo branch onto current `origin/main`:
 cargo fmt --all -- --check
 cargo test --lib google_agents_cli -- --nocapture
 python3 -m compileall -q operator-mcp/operator_mcp/tool_handlers/google_agents_cli.py operator-mcp/operator_mcp/operator_mcp.py
-pytest operator-mcp/tests/test_google_agents_cli_tool.py operator-mcp/tests/test_google_agents_cli_demo_probe.py operator-mcp/tests/test_google_agents_cli_track2_evidence_gate.py -q
+pytest operator-mcp/tests/test_google_agents_cli_tool.py operator-mcp/tests/test_google_agents_cli_demo_probe.py operator-mcp/tests/test_google_agents_cli_track2_evidence_gate.py operator-mcp/tests/test_google_agents_cli_pre_recording_gate.py -q
 python3 scripts/demo/google_agents_cli_demo_probe.py --output /tmp/google_agents_cli_demo_probe.json
 git diff --check
 ```
@@ -120,6 +120,20 @@ python3 scripts/demo/google_agents_cli_track2_evidence_gate.py \
   --evidence-dir .demo/google-agents-cli-track2 \
   --write-template
 ```
+
+For the final pre-recording rehearsal, run the umbrella gate so local code
+readiness, Track 2 evidence, and optional PR health are captured in one JSON
+report:
+
+```bash
+python3 scripts/demo/google_agents_cli_pre_recording_gate.py \
+  --evidence-dir .demo/google-agents-cli-track2 \
+  --pr-number 324 \
+  --output /tmp/google_agents_cli_pre_recording_gate.json
+```
+
+Use `--skip-track2-evidence` only for code-only smoke checks before live Agent
+Platform evidence exists. Do not use that skip flag for final video readiness.
 
 ## 7. Related Docs
 

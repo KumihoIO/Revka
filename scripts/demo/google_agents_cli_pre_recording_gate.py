@@ -1,0 +1,343 @@
+#!/usr/bin/env python3
+"""Run the Google Agents CLI pre-recording readiness gate.
+
+This is the umbrella gate for demo rehearsals. It composes the deterministic
+local code probe with the strict Track 2 evidence gate, and can optionally check
+PR health through GitHub CLI.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+from typing import Any
+
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _check(name: str, status: str, failures: list[str] | None = None, **details: Any) -> dict[str, Any]:
+    return {
+        "name": name,
+        "status": status,
+        "failures": failures or [],
+        **details,
+    }
+
+
+def _run(cmd: list[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        cmd,
+        cwd=REPO_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _load_json(path: Path) -> tuple[dict[str, Any] | None, str | None]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None, f"missing JSON artifact: {path}"
+    except json.JSONDecodeError as exc:
+        return None, f"invalid JSON artifact {path}: {exc}"
+    if not isinstance(data, dict):
+        return None, f"JSON artifact must be an object: {path}"
+    return data, None
+
+
+def _run_local_probe(output_dir: Path) -> dict[str, Any]:
+    artifact = output_dir / "google_agents_cli_demo_probe.json"
+    cmd = [
+        sys.executable,
+        str(REPO_ROOT / "scripts" / "demo" / "google_agents_cli_demo_probe.py"),
+        "--quiet",
+        "--output",
+        str(artifact),
+    ]
+    result = _run(cmd)
+    report, load_error = _load_json(artifact)
+    failures: list[str] = []
+    if result.returncode != 0:
+        failures.append(f"local probe exited {result.returncode}")
+    if load_error:
+        failures.append(load_error)
+    if report is not None and report.get("passed") is not True:
+        failures.append("local probe report did not pass")
+    summary = report.get("summary") if isinstance(report, dict) else None
+    if isinstance(summary, dict) and summary.get("failed") != 0:
+        failures.append(f"local probe failures: {summary.get('failed')}")
+    return _check(
+        "local_code_probe",
+        "fail" if failures else "pass",
+        failures,
+        artifact=str(artifact),
+        summary=summary,
+        stderr=result.stderr.strip(),
+    )
+
+
+def _run_track2_gate(evidence_dir: Path, output_dir: Path) -> dict[str, Any]:
+    artifact = output_dir / "google_agents_cli_track2_evidence_gate.json"
+    cmd = [
+        sys.executable,
+        str(REPO_ROOT / "scripts" / "demo" / "google_agents_cli_track2_evidence_gate.py"),
+        "--evidence-dir",
+        str(evidence_dir),
+        "--output",
+        str(artifact),
+    ]
+    result = _run(cmd)
+    report, load_error = _load_json(artifact)
+    failures: list[str] = []
+    if result.returncode != 0:
+        failures.append(f"Track 2 evidence gate exited {result.returncode}")
+    if load_error:
+        failures.append(load_error)
+    if report is not None and report.get("passed") is not True:
+        failures.append("Track 2 evidence report did not pass")
+    summary = report.get("summary") if isinstance(report, dict) else None
+    return _check(
+        "track2_evidence_gate",
+        "fail" if failures else "pass",
+        failures,
+        artifact=str(artifact),
+        evidence_dir=str(evidence_dir),
+        summary=summary,
+        stderr=result.stderr.strip(),
+    )
+
+
+def _repo_parts(repo: str) -> tuple[str, str]:
+    owner, sep, name = repo.partition("/")
+    if not sep or not owner or not name:
+        raise ValueError("repo must be in OWNER/NAME form")
+    return owner, name
+
+
+def _run_json_command(name: str, cmd: list[str]) -> tuple[Any | None, list[str], str]:
+    result = _run(cmd)
+    if result.returncode != 0:
+        return None, [f"{name} exited {result.returncode}", result.stderr.strip()], result.stderr.strip()
+    try:
+        return json.loads(result.stdout), [], result.stderr.strip()
+    except json.JSONDecodeError as exc:
+        return None, [f"{name} returned invalid JSON: {exc}"], result.stderr.strip()
+
+
+def _local_head() -> str | None:
+    result = _run(["git", "rev-parse", "HEAD"])
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip()
+
+
+def _run_pr_gate(pr_number: int, repo: str) -> list[dict[str, Any]]:
+    checks: list[dict[str, Any]] = []
+    owner, repo_name = _repo_parts(repo)
+
+    pr_checks, failures, stderr = _run_json_command(
+        "gh pr checks",
+        [
+            "gh",
+            "pr",
+            "checks",
+            str(pr_number),
+            "--repo",
+            repo,
+            "--json",
+            "name,state,workflow",
+        ],
+    )
+    if isinstance(pr_checks, list):
+        non_success = [
+            item
+            for item in pr_checks
+            if item.get("state") not in {"SUCCESS", "SKIPPED", "NEUTRAL"}
+        ]
+        if non_success:
+            failures.append(f"non-success GitHub checks: {len(non_success)}")
+        checks.append(
+            _check(
+                "github_pr_checks",
+                "fail" if failures else "pass",
+                failures,
+                total=len(pr_checks),
+                non_success=non_success,
+                stderr=stderr,
+            )
+        )
+    else:
+        checks.append(_check("github_pr_checks", "fail", failures or ["gh pr checks did not return a list"]))
+
+    pr_view, failures, stderr = _run_json_command(
+        "gh pr view",
+        [
+            "gh",
+            "pr",
+            "view",
+            str(pr_number),
+            "--repo",
+            repo,
+            "--json",
+            "url,headRefOid,reviewDecision,mergeStateStatus,isDraft,state",
+        ],
+    )
+    if isinstance(pr_view, dict):
+        if pr_view.get("state") != "OPEN":
+            failures.append(f"PR state is {pr_view.get('state')}, expected OPEN")
+        if pr_view.get("isDraft") is True:
+            failures.append("PR is still draft")
+        if pr_view.get("reviewDecision") == "CHANGES_REQUESTED":
+            failures.append("PR has requested changes")
+        head = _local_head()
+        if head and pr_view.get("headRefOid") != head:
+            failures.append("local HEAD does not match PR headRefOid")
+        checks.append(
+            _check(
+                "github_pr_state",
+                "fail" if failures else "pass",
+                failures,
+                pr=pr_view,
+                local_head=head,
+                stderr=stderr,
+            )
+        )
+    else:
+        checks.append(_check("github_pr_state", "fail", failures or ["gh pr view did not return an object"]))
+
+    query = (
+        "query($owner:String!, $repo:String!, $number:Int!){ "
+        "repository(owner:$owner,name:$repo){ pullRequest(number:$number){ "
+        "reviewThreads(first:100){ nodes{ isResolved } } } } }"
+    )
+    threads, failures, stderr = _run_json_command(
+        "gh api graphql",
+        [
+            "gh",
+            "api",
+            "graphql",
+            "-f",
+            f"owner={owner}",
+            "-f",
+            f"repo={repo_name}",
+            "-F",
+            f"number={pr_number}",
+            "-f",
+            f"query={query}",
+        ],
+    )
+    unresolved = None
+    if isinstance(threads, dict):
+        nodes = (
+            threads.get("data", {})
+            .get("repository", {})
+            .get("pullRequest", {})
+            .get("reviewThreads", {})
+            .get("nodes", [])
+        )
+        if isinstance(nodes, list):
+            unresolved = sum(1 for item in nodes if isinstance(item, dict) and not item.get("isResolved"))
+            if unresolved:
+                failures.append(f"unresolved review threads: {unresolved}")
+        else:
+            failures.append("reviewThreads.nodes did not return a list")
+    else:
+        failures.append("gh api graphql did not return an object")
+    checks.append(
+        _check(
+            "github_review_threads",
+            "fail" if failures else "pass",
+            failures,
+            unresolved=unresolved,
+            stderr=stderr,
+        )
+    )
+    return checks
+
+
+def _build_report(args: argparse.Namespace, output_dir: Path) -> dict[str, Any]:
+    checks = [_run_local_probe(output_dir)]
+    if args.skip_track2_evidence:
+        checks.append(
+            _check(
+                "track2_evidence_gate",
+                "skip",
+                [],
+                reason="--skip-track2-evidence was provided; do not use this for final recording readiness",
+            )
+        )
+    else:
+        checks.append(_run_track2_gate(Path(args.evidence_dir).resolve(), output_dir))
+
+    if args.pr_number is not None:
+        try:
+            checks.extend(_run_pr_gate(args.pr_number, args.repo))
+        except ValueError as exc:
+            checks.append(_check("github_pr_state", "fail", [str(exc)]))
+
+    passed = all(item["status"] in {"pass", "skip"} for item in checks)
+    return {
+        "gate": "google_agents_cli_pre_recording",
+        "passed": passed,
+        "repo": str(REPO_ROOT),
+        "checks": checks,
+        "summary": {
+            "total": len(checks),
+            "passed": sum(1 for item in checks if item["status"] == "pass"),
+            "failed": sum(1 for item in checks if item["status"] == "fail"),
+            "skipped": sum(1 for item in checks if item["status"] == "skip"),
+        },
+    }
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--evidence-dir",
+        default=".demo/google-agents-cli-track2",
+        help="Track 2 evidence directory containing manifest.json and artifacts",
+    )
+    parser.add_argument("--output", help="Write combined JSON report to this path")
+    parser.add_argument(
+        "--output-dir",
+        help="Directory for child gate JSON artifacts; defaults to <output-stem>-artifacts when --output is set",
+    )
+    parser.add_argument(
+        "--skip-track2-evidence",
+        action="store_true",
+        help="Skip live Track 2 evidence validation; only for code-only smoke checks",
+    )
+    parser.add_argument("--pr-number", type=int, help="Optional PR number to verify with gh")
+    parser.add_argument("--repo", default="KumihoIO/construct-os", help="GitHub repo for PR checks")
+    args = parser.parse_args(argv)
+
+    if args.output_dir:
+        output_dir = Path(args.output_dir).resolve()
+        output_dir.mkdir(parents=True, exist_ok=True)
+        report = _build_report(args, output_dir)
+    elif args.output:
+        output_path = Path(args.output).resolve()
+        output_dir = output_path.with_name(f"{output_path.stem}-artifacts")
+        output_dir.mkdir(parents=True, exist_ok=True)
+        report = _build_report(args, output_dir)
+    else:
+        with tempfile.TemporaryDirectory(prefix="google-agents-cli-demo-gate-") as temp:
+            output_dir = Path(temp)
+            report = _build_report(args, output_dir)
+
+    text = json.dumps(report, indent=2, sort_keys=True)
+    if args.output:
+        output_path = Path(args.output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(text + "\n", encoding="utf-8")
+    print(text)
+    return 0 if report["passed"] else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

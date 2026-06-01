@@ -63,3 +63,6 @@ rust_out
 operator-mcp/node_modules/
 operator-mcp/dist/
 *.log
+
+# Local demo evidence may include project IDs, trace IDs, or screenshots.
+.demo/
