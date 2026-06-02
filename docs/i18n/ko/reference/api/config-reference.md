@@ -827,6 +827,10 @@ lifecycle 도구이지 Construct `agent_type`이나 세션 provider가 아닙니
   `google_agents_cli`로 `agents-cli run`, `eval`, `deploy`, publish 명령을
   실행하게 하세요. 프로젝트/도구 상태 확인에는 `agents-cli info`를 사용하세요.
   모델 선택은 보통 ADK project 설정이 담당합니다.
+- 선언형 워크플로에서 child agent가 `google_agents_cli` 또는 outbound A2A
+  도구를 호출해야 하면 `agent.tools: all`을 사용하세요.
+  `required_tools: [google_agents_cli]`를 추가하면 Operator MCP 도구 표면이
+  주입되지 않은 경우 실행 전에 실패합니다.
 
 ## `[operator]`
 

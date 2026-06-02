@@ -167,6 +167,126 @@ async def test_agent_required_tool_visibility_failure_is_persisted(monkeypatch, 
 
 
 @pytest.mark.asyncio
+async def test_agent_google_agentops_tools_visible_with_operator_tools(monkeypatch, tmp_path):
+    from operator_mcp.agent_state import ManagedAgent
+    from operator_mcp.patterns import refinement
+
+    captured: dict[str, object] = {}
+
+    async def fake_check_cost_guard(_max_cost_usd=None):
+        return None
+
+    async def fake_persist_workflow_run(**_kwargs):
+        return "kref://Construct/WorkflowRuns/google-agentops-tools.workflow_run"
+
+    async def fake_spawn_and_wait(
+        agent_type,
+        title,
+        cwd,
+        prompt,
+        **kwargs,
+    ):
+        captured["include_memory"] = kwargs["include_memory"]
+        captured["include_operator"] = kwargs["include_operator"]
+        return (
+            ManagedAgent(
+                id="agent-1",
+                agent_type=agent_type,
+                title=title,
+                cwd=cwd,
+                status="completed",
+            ),
+            "used google agentops tools",
+        )
+
+    def fake_get_agent_output(_agent_id):
+        return "used google agentops tools", []
+
+    monkeypatch.setattr(executor, "_check_cost_guard", fake_check_cost_guard)
+    monkeypatch.setattr(memory, "persist_workflow_run", fake_persist_workflow_run)
+    monkeypatch.setattr(executor, "workspace_dir", lambda: str(tmp_path / "workspace"))
+    monkeypatch.setattr(refinement, "_spawn_and_wait", fake_spawn_and_wait)
+    monkeypatch.setattr(refinement, "_get_agent_output", fake_get_agent_output)
+
+    required_tools = [
+        "google_agents_cli",
+        "a2a_discover",
+        "a2a_send_task",
+        "a2a_get_remote_task",
+    ]
+    wf = WorkflowDef(
+        name="google-agentops-tools",
+        steps=[
+            StepDef(
+                id="agentops",
+                type=StepType.AGENT,
+                agent=AgentStepConfig(
+                    agent_type="codex",
+                    tools="all",
+                    required_tools=required_tools,
+                    prompt="Use google_agents_cli and A2A tools as needed.",
+                ),
+            )
+        ],
+        checkpoint=False,
+    )
+
+    state = await executor.execute_workflow(
+        wf,
+        inputs={},
+        cwd=str(tmp_path),
+        run_id="google-agentops-tools-run",
+    )
+
+    assert state.status == WorkflowStatus.COMPLETED
+    assert captured["include_memory"] is True
+    assert captured["include_operator"] is True
+    assert state.step_results["agentops"].input_data["required_tools"] == required_tools
+
+
+@pytest.mark.asyncio
+async def test_agent_google_agents_cli_requires_operator_tools(monkeypatch, tmp_path):
+    persisted: list[dict] = []
+
+    async def fake_persist_workflow_run(**kwargs):
+        persisted.append(kwargs)
+        return "kref://Construct/WorkflowRuns/missing-google-cli.workflow_run"
+
+    monkeypatch.setattr(memory, "persist_workflow_run", fake_persist_workflow_run)
+
+    wf = WorkflowDef(
+        name="missing-google-cli",
+        steps=[
+            StepDef(
+                id="agentops",
+                type=StepType.AGENT,
+                agent=AgentStepConfig(
+                    agent_type="codex",
+                    tools="memory",
+                    required_tools=["google_agents_cli"],
+                    prompt="Use google_agents_cli to inspect the ADK project.",
+                ),
+            )
+        ],
+        checkpoint=False,
+    )
+
+    state = await executor.execute_workflow(
+        wf,
+        inputs={},
+        cwd=str(tmp_path),
+        run_id="missing-google-cli-run",
+    )
+
+    assert state.status == WorkflowStatus.FAILED
+    assert state.error.startswith("Required tool visibility failed")
+    assert "google_agents_cli" in state.error
+    assert "agent.tools=memory" in state.error
+    assert len(persisted) == 1
+    assert persisted[0]["status"] == "failed"
+
+
+@pytest.mark.asyncio
 async def test_agent_step_uses_workspace_run_sandbox(monkeypatch, tmp_path):
     from operator_mcp.agent_state import ManagedAgent
     from operator_mcp.patterns import refinement

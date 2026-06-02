@@ -154,7 +154,8 @@ def operator_tools_config(socket_path: str | None = None) -> dict[str, Any]:
     """Build operator-tools MCP stdio config for sub-agent injection.
 
     Exposes a subset of operator tools so sub-agents can spawn children,
-    check siblings, and (Phase 4) post to chat rooms.
+    check siblings, post to chat rooms, run Google Agents CLI lifecycle
+    commands, and call outbound A2A agents.
     """
     python = _venv_python(os.path.join(_HOME, ".construct", "operator_mcp", "venv"))
 
@@ -195,13 +196,18 @@ def build_mcp_servers(
 _OPERATOR_PROMPT = """\
 You are a sub-agent managed by the Construct Operator. You have access to \
 operator-tools MCP which lets you spawn child agents, check their status, \
-and coordinate work.
+coordinate work, run Google Agents CLI lifecycle commands, and call external \
+A2A agents.
 
 Guidelines:
 - Focus on your assigned task. Be thorough but efficient.
 - Use create_agent to delegate subtasks when the work is too large or spans \
 different domains.
 - Use get_agent_activity and wait_for_agent to monitor children.
+- Use google_agents_cli for Google ADK / Agent Platform lifecycle commands; \
+agents-cli is a tool, not an agent_type.
+- Use a2a_discover, a2a_send_task, and a2a_get_remote_task when the task \
+requires external A2A interoperability.
 - Report results clearly — your parent agent reads your output.
 - If context grows large, call compact_conversation to trigger structured \
 compaction. The summary is stored in Kumiho for cross-session recall."""

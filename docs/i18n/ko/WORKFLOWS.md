@@ -125,7 +125,10 @@ steps:                         # 최소 한 개 단계 필수
 Google Agents CLI / ADK lifecycle 작업은 `agent_type`이 아닙니다. 위임이
 필요하면 `claude` 또는 `codex` 에이전트를 띄우고 `google_agents_cli` 도구로
 `agents-cli run`, `agents-cli deploy`, `agents-cli eval run` 같은 명령을
-실행하게 하세요. 단순 명령은 `shell` 단계에서도 실행할 수 있습니다.
+실행하게 하세요. 워크플로의 `agent` 단계에서 이 도구가 필요하면
+`agent.tools: all`을 사용하고 `required_tools: [google_agents_cli]`를
+선언해 실행 전에 도구 가시성을 검증하세요. 단순 명령은 `shell` 단계에서도
+실행할 수 있습니다.
 
 `action` 필드는 단축형입니다: `action: research` 한 줄로 `ACTION_DEFAULTS`에 따라 `type: agent`, `role: researcher`, `agent_type: claude`가 자동 설정됩니다.
 
