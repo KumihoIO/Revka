@@ -137,8 +137,10 @@ def _write_complete_evidence(evidence_dir: Path, service_url: str) -> None:
                                 {
                                     "type": "text",
                                     "text": (
-                                        "Gemini Vertex AI incident plan: coordinate via A2A, "
-                                        "capture incident evidence, require approval, then rollback."
+                                        "Gemini Vertex AI incident plan: business impact is high. "
+                                        "Coordinate specialized agents via A2A, inspect Google Cloud "
+                                        "evidence and Cloud Logging, enforce approval boundary, "
+                                        "then rollback. Final operator recommendation: pause rollout."
                                     ),
                                 }
                             ]
@@ -267,6 +269,51 @@ def test_track3_evidence_gate_rejects_a2a_without_completed_task(tmp_path):
     a2a = next(item for item in report["checks"] if item["claim"] == "a2a_interoperability")
     assert a2a["status"] == "fail"
     assert "A2A message/send response must be completed" in a2a["failures"]
+
+
+def test_track3_evidence_gate_rejects_incomplete_demo_story(tmp_path):
+    evidence_dir = tmp_path / "evidence"
+    service_url = "https://construct-agentops-a2a-abc-uc.a.run.app"
+    _write_complete_evidence(evidence_dir, service_url)
+    _write(
+        evidence_dir / "a2a/message-send-response.json",
+        json.dumps(
+            {
+                "result": {
+                    "status": {"state": "completed"},
+                    "artifacts": [
+                        {
+                            "parts": [
+                                {
+                                    "type": "text",
+                                    "text": "Task completed with a generic incident note.",
+                                }
+                            ]
+                        }
+                    ],
+                }
+            }
+        ),
+    )
+    (evidence_dir / "manifest.json").write_text(
+        json.dumps(_manifest(service_url)),
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [sys.executable, str(_script()), "--evidence-dir", str(evidence_dir)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    report = json.loads(result.stdout)
+    a2a = next(item for item in report["checks"] if item["claim"] == "a2a_interoperability")
+    assert a2a["status"] == "fail"
+    assert "A2A response artifact must mention business impact" in a2a["failures"]
+    assert "A2A response artifact must mention A2A handoff" in a2a["failures"]
+    assert "A2A response artifact must mention operator recommendation" in a2a["failures"]
 
 
 def test_track3_evidence_gate_rejects_non_registration_ready_agent_card(tmp_path):

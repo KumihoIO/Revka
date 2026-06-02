@@ -31,6 +31,18 @@ It exposes:
 - `GET /agent-card.json`
 - `POST /` and `POST /a2a` for A2A JSON-RPC methods
 
+## Demo Outcome Matrix
+
+| Outcome to show | Expected Construct behavior | Evidence to check before recording |
+|---|---|---|
+| Cloud Run runtime readiness | Cloud Run service exposes health/runtime metadata that names Track 3, Google ADK orchestration, and Gemini through Vertex AI | `GET /runtime`; `runtime/healthz.json`; `track3_demo_probe` runtime surface |
+| Registration-ready A2A discovery | The service exposes `/.well-known/agent-card.json`, `/agent-card.json`, and JSON-RPC `agent/card` with Gemini Enterprise registration-ready A2A fields | `a2a/agent-card.json`; `track3_demo_probe` agent-card registration surface |
+| Live A2A incident plan | JSON-RPC `message/send` returns a completed task with an executive incident plan covering business impact, specialized agents, A2A handoff, Google Cloud evidence, approval, rollback, and operator recommendation | `a2a/message-send-response.json`; Track 3 evidence gate A2A interoperability check |
+| A2A task lifecycle branches | The demo service can store tasks and expose `tasks/get`, `tasks/list`, and `tasks/cancel` branches for protocol completeness | Source probe for task lifecycle branches; optional rehearsal curl calls |
+| Demo-safe error branches | Missing text, unsupported methods, missing tasks, and ADK runtime errors return structured JSON-RPC/task errors instead of crashing the recording | Source probe for invalid request, unsupported operation, task-not-found, and failed-task branches |
+| B2B governance story | The ADK agent routes risk, calls governance tools, and returns identity, approval, observability, rollback, and recommendation details for enterprise buyers | `business/package.md`; `governance/controls.md`; `enterprise/gemini-enterprise-registration.md`; source probe for ADK instructions and tools |
+| Final rehearsal gate alignment | The umbrella pre-recording gate can validate local code readiness, Track 3 source outcome coverage, Track 3 live evidence, and PR state in one report | `google_agents_cli_pre_recording_gate.py --track track3`; `strict_final_recording_ready: true` |
+
 ## Deployment
 
 The recording deployment is public so judges can inspect the A2A card and invoke
@@ -84,6 +96,18 @@ runtime/source-manifest.json
 business/package.md
 governance/controls.md
 enterprise/gemini-enterprise-registration.md
+```
+
+The manifest must prove these Track 3 claims:
+
+```text
+google_cloud_deployment
+a2a_interoperability
+gemini_powered_intelligence
+adk_orchestration
+b2b_enterprise_package
+enterprise_governance
+gemini_enterprise_readiness
 ```
 
 Helpful capture commands:
@@ -143,6 +167,21 @@ The report must have:
   }
 }
 ```
+
+For the final Track 3 recording rehearsal, run the umbrella gate:
+
+```bash
+python3 scripts/demo/google_agents_cli_pre_recording_gate.py \
+  --track track3 \
+  --evidence-dir .demo/google-agents-cli-track3 \
+  --pr-number 324 \
+  --require-strict-final-ready \
+  --output /tmp/google_agents_cli_track3_pre_recording_gate.json
+```
+
+The report must have `strict_final_recording_ready: true`. If it does not, use
+`strict_final_blockers` and `strict_final_blocker_details` as the recording
+blocker list.
 
 ## Gemini Enterprise
 

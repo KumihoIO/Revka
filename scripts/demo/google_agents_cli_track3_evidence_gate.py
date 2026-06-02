@@ -214,9 +214,19 @@ def _check_a2a_interoperability(claim: dict[str, Any], files: list[Path]) -> lis
                 failures.append("A2A message/send response must be completed")
             artifacts = task.get("artifacts", []) if isinstance(task, dict) else []
             artifact_text = json.dumps(artifacts).lower()
-            for token in ("rollback", "approval", "a2a", "incident"):
-                if token not in artifact_text:
-                    failures.append(f"A2A response artifact must mention {token}")
+            required_response_terms = {
+                "incident": ("incident",),
+                "business impact": ("business impact",),
+                "specialized agents": ("specialized", "agents"),
+                "A2A handoff": ("a2a",),
+                "Google Cloud evidence": ("google cloud", "cloud logging", "cloud"),
+                "approval boundary": ("approval",),
+                "rollback path": ("rollback",),
+                "operator recommendation": ("operator", "recommendation"),
+            }
+            for label, alternatives in required_response_terms.items():
+                if not any(token in artifact_text for token in alternatives):
+                    failures.append(f"A2A response artifact must mention {label}")
     return failures
 
 

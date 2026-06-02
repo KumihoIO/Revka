@@ -2,8 +2,8 @@
 """Run the Google Agents CLI pre-recording readiness gate.
 
 This is the umbrella gate for demo rehearsals. It composes the deterministic
-local code probe with the strict Track 2 evidence gate, and can optionally check
-PR health through GitHub CLI.
+local code probe with strict track-specific evidence gates, and can optionally
+check PR health through GitHub CLI.
 """
 from __future__ import annotations
 
@@ -185,6 +185,112 @@ def _run_track2_gate(evidence_dir: Path, output_dir: Path) -> dict[str, Any]:
         remediation=[
             "replace the Track 2 manifest placeholders and capture the required evidence artifacts",
             "rerun scripts/demo/google_agents_cli_track2_evidence_gate.py before recording",
+        ]
+        if failures
+        else [],
+        stderr=result.stderr.strip(),
+    )
+
+
+def _run_track3_demo_probe(output_dir: Path) -> dict[str, Any]:
+    artifact = output_dir / "google_agents_cli_track3_demo_probe.json"
+    cmd = [
+        sys.executable,
+        str(REPO_ROOT / "scripts" / "demo" / "google_agents_cli_track3_demo_probe.py"),
+        "--quiet",
+        "--output",
+        str(artifact),
+    ]
+    result = _run(cmd)
+    report, load_error = _load_json(artifact)
+    failures: list[str] = []
+    if result.returncode != 0:
+        failures.append(f"Track 3 demo probe exited {result.returncode}")
+    if load_error:
+        failures.append(load_error)
+    if report is not None and report.get("passed") is not True:
+        failures.append("Track 3 demo probe report did not pass")
+    summary = report.get("summary") if isinstance(report, dict) else None
+    outcome_matrix = report.get("outcome_matrix") if isinstance(report, dict) else None
+    outcome_summary = outcome_matrix.get("summary") if isinstance(outcome_matrix, dict) else None
+    failed_outcomes = []
+    if isinstance(outcome_matrix, dict):
+        outcomes = outcome_matrix.get("outcomes")
+        if isinstance(outcomes, list):
+            failed_outcomes = [
+                item
+                for item in outcomes
+                if isinstance(item, dict) and item.get("status") != "pass"
+            ]
+    if isinstance(outcome_summary, dict) and outcome_summary.get("failed"):
+        failures.append(f"Track 3 outcome matrix failures: {outcome_summary.get('failed')}")
+    if isinstance(summary, dict) and summary.get("failed") != 0:
+        failures.append(f"Track 3 demo probe failures: {summary.get('failed')}")
+    return _check(
+        "track3_demo_probe",
+        "fail" if failures else "pass",
+        failures,
+        artifact=str(artifact),
+        summary=summary,
+        outcome_matrix_summary=outcome_summary,
+        failed_outcomes=failed_outcomes,
+        stderr=result.stderr.strip(),
+    )
+
+
+def _run_track3_gate(evidence_dir: Path, output_dir: Path) -> dict[str, Any]:
+    artifact = output_dir / "google_agents_cli_track3_evidence_gate.json"
+    cmd = [
+        sys.executable,
+        str(REPO_ROOT / "scripts" / "demo" / "google_agents_cli_track3_evidence_gate.py"),
+        "--evidence-dir",
+        str(evidence_dir),
+        "--output",
+        str(artifact),
+    ]
+    result = _run(cmd)
+    report, load_error = _load_json(artifact)
+    failures: list[str] = []
+    if result.returncode != 0:
+        failures.append(f"Track 3 evidence gate exited {result.returncode}")
+    if load_error:
+        failures.append(load_error)
+    if report is not None and report.get("passed") is not True:
+        failures.append("Track 3 evidence report did not pass")
+    summary = report.get("summary") if isinstance(report, dict) else None
+    global_failures = _string_list(report.get("global_failures")) if report else []
+    failed_claims: list[str] = []
+    failure_details: list[dict[str, Any]] = []
+    checks = report.get("checks") if isinstance(report, dict) else []
+    if isinstance(checks, list):
+        for item in checks:
+            if not isinstance(item, dict) or item.get("status") != "fail":
+                continue
+            claim = item.get("claim")
+            if not isinstance(claim, str):
+                continue
+            claim_failures = _string_list(item.get("failures"))
+            failed_claims.append(claim)
+            failure_details.append(
+                {
+                    "claim": claim,
+                    "failure_count": len(claim_failures),
+                    "failures": _limited(claim_failures),
+                }
+            )
+    return _check(
+        "track3_evidence_gate",
+        "fail" if failures else "pass",
+        failures,
+        artifact=str(artifact),
+        evidence_dir=str(evidence_dir),
+        summary=summary,
+        global_failures=global_failures,
+        failed_claims=failed_claims,
+        failure_details=failure_details,
+        remediation=[
+            "capture the required Track 3 Cloud Run, A2A, ADK/Gemini, B2B, and governance artifacts",
+            "rerun scripts/demo/google_agents_cli_track3_evidence_gate.py before recording",
         ]
         if failures
         else [],
@@ -666,19 +772,34 @@ def _strict_blocker_detail(item: dict[str, Any]) -> dict[str, Any]:
 
 def _build_report(args: argparse.Namespace, output_dir: Path) -> dict[str, Any]:
     checks = [_run_local_probe(output_dir)]
+    if args.track == "track3":
+        checks.append(_run_track3_demo_probe(output_dir))
     if args.require_real_agents_cli or args.require_real_agents_cli_auth:
         checks.append(_run_real_agents_cli_gate(args.require_real_agents_cli_auth))
-    if args.skip_track2_evidence:
-        checks.append(
-            _check(
-                "track2_evidence_gate",
-                "skip",
-                [],
-                reason="--skip-track2-evidence was provided; do not use this for final recording readiness",
+    if args.track == "track2":
+        if args.skip_track2_evidence:
+            checks.append(
+                _check(
+                    "track2_evidence_gate",
+                    "skip",
+                    [],
+                    reason="--skip-track2-evidence was provided; do not use this for final recording readiness",
+                )
             )
-        )
+        else:
+            checks.append(_run_track2_gate(Path(args.evidence_dir).resolve(), output_dir))
     else:
-        checks.append(_run_track2_gate(Path(args.evidence_dir).resolve(), output_dir))
+        if args.skip_track3_evidence:
+            checks.append(
+                _check(
+                    "track3_evidence_gate",
+                    "skip",
+                    [],
+                    reason="--skip-track3-evidence was provided; do not use this for final recording readiness",
+                )
+            )
+        else:
+            checks.append(_run_track3_gate(Path(args.evidence_dir).resolve(), output_dir))
 
     if args.pr_number is not None:
         if args.skip_local_git_state:
@@ -701,11 +822,13 @@ def _build_report(args: argparse.Namespace, output_dir: Path) -> dict[str, Any]:
     passed = all(item["status"] in {"pass", "skip"} for item in checks)
     strict_blockers: list[str] = []
     strict_blocker_details: list[dict[str, Any]] = []
-    if args.skip_track2_evidence:
+    if args.track == "track2" and args.skip_track2_evidence:
         strict_blockers.append("Track 2 evidence validation was skipped")
+    if args.track == "track3" and args.skip_track3_evidence:
+        strict_blockers.append("Track 3 evidence validation was skipped")
     if args.skip_local_git_state and args.pr_number is not None:
         strict_blockers.append("Local git state validation was skipped")
-    if not args.require_real_agents_cli_auth:
+    if args.track == "track2" and not args.require_real_agents_cli_auth:
         strict_blockers.append("real agents-cli authentication was not required")
     for item in checks:
         if item["status"] == "fail":
@@ -713,6 +836,7 @@ def _build_report(args: argparse.Namespace, output_dir: Path) -> dict[str, Any]:
             strict_blocker_details.append(_strict_blocker_detail(item))
     return {
         "gate": "google_agents_cli_pre_recording",
+        "track": args.track,
         "passed": passed,
         "strict_final_recording_ready": passed and not strict_blockers,
         "strict_final_blockers": strict_blockers,
@@ -731,9 +855,17 @@ def _build_report(args: argparse.Namespace, output_dir: Path) -> dict[str, Any]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
+        "--track",
+        choices=("track2", "track3"),
+        default="track2",
+        help="Challenge track readiness mode. Track 3 validates Cloud Run A2A evidence.",
+    )
+    parser.add_argument(
         "--evidence-dir",
-        default=".demo/google-agents-cli-track2",
-        help="Track 2 evidence directory containing manifest.json and artifacts",
+        help=(
+            "Evidence directory containing manifest.json and artifacts. Defaults to "
+            ".demo/google-agents-cli-track2 or .demo/google-agents-cli-track3 based on --track."
+        ),
     )
     parser.add_argument("--output", help="Write combined JSON report to this path")
     parser.add_argument(
@@ -744,6 +876,11 @@ def main(argv: list[str] | None = None) -> int:
         "--skip-track2-evidence",
         action="store_true",
         help="Skip live Track 2 evidence validation; only for code-only smoke checks",
+    )
+    parser.add_argument(
+        "--skip-track3-evidence",
+        action="store_true",
+        help="Skip live Track 3 evidence validation; only for code-only smoke checks",
     )
     parser.add_argument(
         "--require-real-agents-cli",
@@ -778,6 +915,12 @@ def main(argv: list[str] | None = None) -> int:
         help="Exit nonzero unless strict_final_recording_ready is true; use for final rehearsals",
     )
     args = parser.parse_args(argv)
+    if args.evidence_dir is None:
+        args.evidence_dir = (
+            ".demo/google-agents-cli-track3"
+            if args.track == "track3"
+            else ".demo/google-agents-cli-track2"
+        )
 
     if args.output_dir:
         output_dir = Path(args.output_dir).resolve()
