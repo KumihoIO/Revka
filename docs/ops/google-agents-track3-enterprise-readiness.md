@@ -33,6 +33,12 @@ It exposes:
 
 ## Deployment
 
+The recording deployment is public so judges can inspect the A2A card and invoke
+the demo without organization-specific IAM setup. Production enterprise
+deployment should remove `--allow-unauthenticated`, use a dedicated Cloud Run
+service account, and grant `roles/run.invoker` only to approved callers or the
+Gemini Enterprise integration identity.
+
 ```bash
 export PROJECT_ID=your-google-cloud-project
 export REGION=us-central1
@@ -46,6 +52,17 @@ gcloud run deploy construct-agentops-a2a \
   --region "$REGION" \
   --allow-unauthenticated \
   --set-env-vars GOOGLE_CLOUD_PROJECT="$PROJECT_ID",GOOGLE_CLOUD_LOCATION="$REGION",GOOGLE_GENAI_USE_VERTEXAI=true
+```
+
+For a production IAM-secured deployment, use the same command without
+`--allow-unauthenticated`, then grant invoker access explicitly:
+
+```bash
+gcloud run services add-iam-policy-binding construct-agentops-a2a \
+  --project "$PROJECT_ID" \
+  --region "$REGION" \
+  --member "$APPROVED_CALLER" \
+  --role roles/run.invoker
 ```
 
 ## Capture Evidence
@@ -134,6 +151,11 @@ card to register the Cloud Run service. If it is not available before
 recording, the evidence must still include the registration-ready plan in
 `enterprise/gemini-enterprise-registration.md` and the demo narration should
 state that app-admin registration is the only environment-specific step.
+
+The demo agent card includes the Gemini Enterprise registration fields used by
+the Google Cloud A2A registration flow, including `protocolVersion`, `name`,
+`description`, `url`, `iconUrl`, `version`, `capabilities`, `skills`,
+`defaultInputModes`, and `defaultOutputModes`.
 
 ## Rollback
 

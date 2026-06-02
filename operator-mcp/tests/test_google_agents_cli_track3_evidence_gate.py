@@ -109,9 +109,15 @@ def _write_complete_evidence(evidence_dir: Path, service_url: str) -> None:
         evidence_dir / "a2a/agent-card.json",
         json.dumps(
             {
+                "protocolVersion": "0.3",
                 "name": "Construct Enterprise AgentOps Control Plane",
                 "description": "B2B A2A agent",
                 "url": service_url,
+                "iconUrl": "data:image/svg+xml;base64,PHN2Zw==",
+                "version": "1.0.0",
+                "capabilities": {"streaming": False, "pushNotifications": False},
+                "defaultInputModes": ["text/plain", "application/json"],
+                "defaultOutputModes": ["text/plain", "application/json"],
                 "skills": [{"id": "enterprise-agentops-incident-plan"}],
             }
         ),
@@ -261,6 +267,42 @@ def test_track3_evidence_gate_rejects_a2a_without_completed_task(tmp_path):
     a2a = next(item for item in report["checks"] if item["claim"] == "a2a_interoperability")
     assert a2a["status"] == "fail"
     assert "A2A message/send response must be completed" in a2a["failures"]
+
+
+def test_track3_evidence_gate_rejects_non_registration_ready_agent_card(tmp_path):
+    evidence_dir = tmp_path / "evidence"
+    service_url = "https://construct-agentops-a2a-demo-uc.a.run.app"
+    _write_complete_evidence(evidence_dir, service_url)
+    _write(
+        evidence_dir / "a2a/agent-card.json",
+        json.dumps(
+            {
+                "name": "Construct Enterprise AgentOps Control Plane",
+                "description": "B2B A2A agent",
+                "url": service_url,
+                "skills": [{"id": "enterprise-agentops-incident-plan"}],
+            }
+        ),
+    )
+    (evidence_dir / "manifest.json").write_text(
+        json.dumps(_manifest(service_url)), encoding="utf-8"
+    )
+
+    result = subprocess.run(
+        [sys.executable, str(_script()), "--evidence-dir", str(evidence_dir)],
+        cwd=_repo_root(),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 1
+    report = json.loads(result.stdout)
+    a2a = next(
+        check for check in report["checks"] if check["claim"] == "a2a_interoperability"
+    )
+    assert "agent card missing protocolVersion" in a2a["failures"]
+    assert "agent card missing iconUrl" in a2a["failures"]
 
 
 def test_track3_evidence_gate_rejects_missing_enterprise_package(tmp_path):

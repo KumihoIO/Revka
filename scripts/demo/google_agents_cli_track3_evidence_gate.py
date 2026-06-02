@@ -184,9 +184,24 @@ def _check_a2a_interoperability(claim: dict[str, Any], files: list[Path]) -> lis
             skill_ids = [skill.get("id") for skill in skills if isinstance(skill, dict)]
             if claim.get("skill_id") not in skill_ids:
                 failures.append("agent card does not expose the manifest skill_id")
-            for key in ("name", "description", "url", "skills"):
+            for key in (
+                "protocolVersion",
+                "name",
+                "description",
+                "url",
+                "iconUrl",
+                "version",
+                "capabilities",
+                "skills",
+                "defaultInputModes",
+                "defaultOutputModes",
+            ):
                 if key not in card:
                     failures.append(f"agent card missing {key}")
+            if card.get("protocolVersion") != "0.3":
+                failures.append("agent card protocolVersion must be 0.3")
+            if not str(card.get("iconUrl", "")).startswith("data:image/"):
+                failures.append("agent card iconUrl must be an image data URL")
 
     if response_path:
         response, error = _load_json(response_path)

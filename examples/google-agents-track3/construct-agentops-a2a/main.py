@@ -13,6 +13,15 @@ from pydantic import BaseModel
 
 APP_NAME = "construct-agentops-a2a"
 SERVICE_VERSION = "1.0.0"
+ICON_URL = (
+    "data:image/svg+xml;base64,"
+    "PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdC"
+    "b3g9IjAgMCA2NCA2NCI+PHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiBy"
+    "eD0iMTIiIGZpbGw9IiMxMTE4MjciLz48cGF0aCBkPSJNMTYgMzZoMTBsNi0x"
+    "OCA2IDI4IDYtMTZoOCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjMzhiZGY4IiBz"
+    "dHJva2Utd2lkdGg9IjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tl"
+    "LWxpbmVqb2luPSJyb3VuZCIvPjwvc3ZnPg=="
+)
 TASKS: dict[str, dict[str, Any]] = {}
 
 app = FastAPI(title="Construct AgentOps A2A", version=SERVICE_VERSION)
@@ -41,12 +50,14 @@ def _base_url(request: Request) -> str:
 
 def _agent_card(base_url: str) -> dict[str, Any]:
     return {
+        "protocolVersion": "0.3",
         "name": "Construct Enterprise AgentOps Control Plane",
         "description": (
             "B2B A2A agent that coordinates incident triage, governance, "
             "deployment evidence, and rollback planning for enterprise software teams."
         ),
         "url": base_url,
+        "iconUrl": ICON_URL,
         "version": SERVICE_VERSION,
         "defaultInputModes": ["text/plain", "application/json"],
         "defaultOutputModes": ["text/plain", "application/json"],
