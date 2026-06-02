@@ -1178,19 +1178,19 @@ steps:
     name: Episode Context
     type: kumiho_context
     kumiho:
-      project: ManghanDev
+      project: StoryProject
       mode: graph_augmented_context
       seed:
         bundles:
-          - manghan-main-canon
-          - manghan-active-storylines
+          - series-main-canon
+          - series-active-storylines
         krefs:
           - "\${latest-production-episode.output_data.kref}"
         queries:
           - "\${inputs.episode_goal}"
         items:
           - kind: character-state
-            name_pattern: handoyoon
+            name_pattern: protagonist
             tag: current
       traversal:
         max_depth: 2
@@ -1226,33 +1226,33 @@ steps:
   const tasks1 = parseWorkflowYaml(yaml);
   const ctx1 = tasks1[1]!;
   assert.equal(ctx1.type, 'kumiho_context');
-  assert.equal(ctx1.kumiho_project, 'ManghanDev');
+  assert.equal(ctx1.kumiho_project, 'StoryProject');
   assert.equal(ctx1.kumiho_mode, 'graph_augmented_context');
-  assert.deepEqual(ctx1.kumiho_seed_bundles, ['manghan-main-canon', 'manghan-active-storylines']);
+  assert.deepEqual(ctx1.kumiho_seed_bundles, ['series-main-canon', 'series-active-storylines']);
   assert.deepEqual(ctx1.kumiho_traversal_edge_types, ['DEPENDS_ON', 'REFERENCES', 'BLOCKS']);
   assert.equal(ctx1.kumiho_output_format, 'episode_context_pack');
   assert.equal(ctx1.kumiho_seed_items?.length, 1);
 
   const { nodes, edges } = tasksToFlow(tasks1);
   const ctxNode = nodes.find((n) => n.id === 'episode-context')!;
-  assert.equal(ctxNode.data.kumihoProject, 'ManghanDev');
+  assert.equal(ctxNode.data.kumihoProject, 'StoryProject');
   assert.deepEqual(ctxNode.data.kumihoFiltersIncludeKinds, ['canon-rule', 'character-state', 'storyline']);
   assert.ok(edges.some((e) => e.source === 'latest-production-episode' && e.target === 'episode-context'));
 
   const tasks2 = flowToTasks(nodes, edges);
   const ctx2 = tasks2.find((t) => t.id === 'episode-context')!;
-  assert.equal(ctx2.kumiho_project, 'ManghanDev');
+  assert.equal(ctx2.kumiho_project, 'StoryProject');
   assert.equal(ctx2.kumiho_output_format, 'episode_context_pack');
   assert.equal((ctx2.kumiho_config?.seed as any).items.length, 1);
 
   const yaml2 = tasksToYaml(tasks2);
   assert.match(yaml2, /type:\s+kumiho_context/);
-  assert.match(yaml2, /project:\s+ManghanDev/);
+  assert.match(yaml2, /project:\s+StoryProject/);
   assert.match(yaml2, /format:\s+episode_context_pack/);
 
   const tasks3 = parseWorkflowYaml(yaml2);
   const ctx3 = tasks3.find((t) => t.id === 'episode-context')!;
-  assert.equal(ctx3.kumiho_project, 'ManghanDev');
+  assert.equal(ctx3.kumiho_project, 'StoryProject');
   assert.deepEqual(ctx3.kumiho_lock_tag_preference, ['current', 'active', 'production-ready', 'ready', 'published', 'latest']);
   assert.equal(ctx3.kumiho_output_include_conflict_warnings, true);
 });
@@ -1267,12 +1267,12 @@ steps:
   - id: update-output-bundles
     type: kumiho_bundle_update
     kumiho:
-      project: ManghanDev
+      project: StoryProject
       mode: add_members
       create_if_missing: true
       idempotent: true
       updates:
-        - bundle: manghan-production-episodes
+        - bundle: series-production-episodes
           add:
             - item_kref: "\${emit-final-episode.output_data.item_kref}"
               reason: Production-ready episode
@@ -1289,7 +1289,7 @@ steps:
   - id: apply-canon-patch
     type: kumiho_patch_apply
     kumiho:
-      project: ManghanDev
+      project: StoryProject
       patch_kref: "\${patch-loader.output_data.kref}"
       dry_run: false
       approval:
@@ -1310,9 +1310,9 @@ steps:
           remove: [candidate]
           add: [applied]
       bundle_policy:
-        pending_patch_bundle: manghan-pending-canon-patches
-        applied_patch_bundle: manghan-applied-canon-patches
-        current_state_bundle: manghan-current-character-states
+        pending_patch_bundle: series-pending-canon-patches
+        applied_patch_bundle: series-applied-canon-patches
+        current_state_bundle: series-current-character-states
       evidence:
         require_evidence_locator: true
         source_episode_kref: "\${emit-final-episode.output_data.revision_kref}"
@@ -1322,16 +1322,16 @@ steps:
   const bundle = tasks1.find((t) => t.id === 'update-output-bundles')!;
   const patch = tasks1.find((t) => t.id === 'apply-canon-patch')!;
   assert.equal(bundle.type, 'kumiho_bundle_update');
-  assert.equal(bundle.kumiho_project, 'ManghanDev');
+  assert.equal(bundle.kumiho_project, 'StoryProject');
   assert.equal(bundle.kumiho_mode, 'add_members');
   assert.equal(bundle.kumiho_create_if_missing, true);
-  assert.equal((bundle.kumiho_updates?.[0] as any).bundle, 'manghan-production-episodes');
+  assert.equal((bundle.kumiho_updates?.[0] as any).bundle, 'series-production-episodes');
   assert.equal(patch.type, 'kumiho_patch_apply');
   assert.equal(patch.kumiho_patch_kref, '${patch-loader.output_data.kref}');
   assert.equal(patch.kumiho_dry_run, false);
   assert.equal(patch.kumiho_approval_approved, '${approval.output_data.approved}');
   assert.deepEqual(patch.kumiho_new_revision_tags, ['current', 'approved']);
-  assert.equal(patch.kumiho_pending_patch_bundle, 'manghan-pending-canon-patches');
+  assert.equal(patch.kumiho_pending_patch_bundle, 'series-pending-canon-patches');
 
   const { nodes, edges } = tasksToFlow(tasks1);
   const bundleNode = nodes.find((n) => n.id === 'update-output-bundles')!;
@@ -1348,7 +1348,7 @@ steps:
   assert.match(yaml2, /type:\s+kumiho_patch_apply/);
   assert.match(yaml2, /create_if_missing:\s+true/);
   assert.match(yaml2, /patch_kref:\s+\$\{patch-loader\.output_data\.kref\}/);
-  assert.match(yaml2, /pending_patch_bundle:\s+manghan-pending-canon-patches/);
+  assert.match(yaml2, /pending_patch_bundle:\s+series-pending-canon-patches/);
 
   const reparsed = parseWorkflowYaml(yaml2);
   assert.equal(reparsed.find((t) => t.id === 'update-output-bundles')!.kumiho_mode, 'add_members');
