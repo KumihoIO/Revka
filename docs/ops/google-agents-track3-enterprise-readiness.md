@@ -27,6 +27,7 @@ examples/google-agents-track3/construct-agentops-a2a
 It exposes:
 
 - `GET /runtime`
+- `GET /readyz`
 - `GET /.well-known/agent-card.json`
 - `GET /agent-card.json`
 - `POST /` and `POST /a2a` for A2A JSON-RPC methods
@@ -40,6 +41,7 @@ It exposes:
 | Live A2A incident plan | JSON-RPC `message/send` returns a completed task with an executive incident plan covering business impact, specialized agents, A2A handoff, Google Cloud evidence, approval, rollback, and operator recommendation | `a2a/message-send-response.json`; Track 3 evidence gate A2A interoperability check |
 | A2A task lifecycle branches | The demo service can store tasks and expose `tasks/get`, `tasks/list`, and `tasks/cancel` branches for protocol completeness | Source probe for task lifecycle branches; optional rehearsal curl calls |
 | Demo-safe error branches | Missing text, unsupported methods, missing tasks, and ADK runtime errors return structured JSON-RPC/task errors instead of crashing the recording | Source probe for invalid request, unsupported operation, task-not-found, and failed-task branches |
+| Production operating controls | The Cloud Run package declares IAM/service-account deployment posture, A2A bearer-token invocation auth, request limits, ADK timeout, bounded task retention, readiness, and Cloud Logging | `runtime/readyz.json`; `operations/production-controls.md`; `deploy/cloudrun-production.yaml`; source probe for production controls |
 | B2B governance story | The ADK agent routes risk, calls governance tools, and returns identity, approval, observability, rollback, and recommendation details for enterprise buyers | `business/package.md`; `governance/controls.md`; `enterprise/gemini-enterprise-registration.md`; source probe for ADK instructions and tools |
 | Final rehearsal gate alignment | The umbrella pre-recording gate can validate local code readiness, Track 3 source outcome coverage, Track 3 live evidence, and PR state in one report | `google_agents_cli_pre_recording_gate.py --track track3`; `strict_final_recording_ready: true` |
 
@@ -77,6 +79,20 @@ gcloud run services add-iam-policy-binding construct-agentops-a2a \
   --role roles/run.invoker
 ```
 
+The production manifest lives at:
+
+```text
+examples/google-agents-track3/construct-agentops-a2a/cloudrun.production.yaml
+```
+
+It declares a dedicated Cloud Run service account, secret-backed
+`A2A_BEARER_TOKEN`, `containerConcurrency`, `timeoutSeconds`,
+`MAX_MESSAGE_CHARS`, `MAX_TASKS`, `ADK_RESPONSE_TIMEOUT_SECONDS`, and
+`ENABLE_CLOUD_LOGGING=true`. These controls make the recording artifact
+explainable as a production package: discovery can remain public, while
+JSON-RPC invocation is protected by IAM and bearer-token auth for approved A2A
+clients.
+
 ## Capture Evidence
 
 Use `.demo/google-agents-cli-track3` for local evidence. It is ignored by git
@@ -89,12 +105,15 @@ manifest.json
 deploy/cloud-run-service.json
 deploy/deploy-output.txt
 deploy/rollback-plan.md
+deploy/cloudrun-production.yaml
 a2a/agent-card.json
 a2a/message-send-response.json
 runtime/healthz.json
+runtime/readyz.json
 runtime/source-manifest.json
 business/package.md
 governance/controls.md
+operations/production-controls.md
 enterprise/gemini-enterprise-registration.md
 ```
 
@@ -107,6 +126,7 @@ gemini_powered_intelligence
 adk_orchestration
 b2b_enterprise_package
 enterprise_governance
+production_operating_controls
 gemini_enterprise_readiness
 ```
 
@@ -125,6 +145,9 @@ gcloud run services describe construct-agentops-a2a \
 
 curl -fsS "$SERVICE_URL/runtime" \
   > .demo/google-agents-cli-track3/runtime/healthz.json
+
+curl -fsS "$SERVICE_URL/readyz" \
+  > .demo/google-agents-cli-track3/runtime/readyz.json
 
 curl -fsS "$SERVICE_URL/.well-known/agent-card.json" \
   > .demo/google-agents-cli-track3/a2a/agent-card.json
@@ -145,6 +168,22 @@ curl -fsS -X POST "$SERVICE_URL/" \
       }
     }
   }' > .demo/google-agents-cli-track3/a2a/message-send-response.json
+
+cp examples/google-agents-track3/construct-agentops-a2a/cloudrun.production.yaml \
+  .demo/google-agents-cli-track3/deploy/cloudrun-production.yaml
+```
+
+Create `operations/production-controls.md` with the production posture you
+actually used or intend to use:
+
+```text
+IAM: Cloud Run invocation is restricted with roles/run.invoker for approved callers.
+Service account: construct-agentops-a2a uses a dedicated least-privilege service account.
+A2A_BEARER_TOKEN: JSON-RPC invocation requires bearer-token auth when the secret is set.
+Request limit: MAX_MESSAGE_CHARS bounds prompt size and containerConcurrency bounds concurrent requests.
+Timeout: ADK_RESPONSE_TIMEOUT_SECONDS and Cloud Run timeoutSeconds bound execution time.
+Retention: MAX_TASKS bounds in-memory task retention.
+Observability: ENABLE_CLOUD_LOGGING sends runtime logs to Cloud Logging.
 ```
 
 ## Gate
@@ -162,8 +201,8 @@ The report must have:
   "passed": true,
   "summary": {
     "failed": 0,
-    "passed": 7,
-    "total": 7
+    "passed": 8,
+    "total": 8
   }
 }
 ```

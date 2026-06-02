@@ -19,6 +19,7 @@ from typing import Any, Callable
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TRACK3_APP_DIR = REPO_ROOT / "examples" / "google-agents-track3" / "construct-agentops-a2a"
+TRACK3_PRODUCTION_MANIFEST = TRACK3_APP_DIR / "cloudrun.production.yaml"
 TRACK3_READINESS_DOC = REPO_ROOT / "docs" / "ops" / "google-agents-track3-enterprise-readiness.md"
 TRACK3_EVIDENCE_GATE = REPO_ROOT / "scripts" / "demo" / "google_agents_cli_track3_evidence_gate.py"
 
@@ -57,6 +58,11 @@ TRACK3_DEMO_OUTCOMES: tuple[dict[str, Any], ...] = (
         "id": "demo_safe_error_branches",
         "title": "Demo-safe error branches",
         "required_probes": ["error_surface"],
+    },
+    {
+        "id": "production_operating_controls",
+        "title": "Production operating controls",
+        "required_probes": ["production_controls_surface"],
     },
     {
         "id": "b2b_governance_story",
@@ -129,6 +135,7 @@ def _expect_runtime_surface() -> dict[str, Any]:
         '@app.get("/healthz")',
         '@app.get("/statusz")',
         '@app.get("/runtime")',
+        '@app.get("/readyz")',
         '"track": "google-startups-ai-agents-track-3"',
         '"orchestration": "Google ADK"',
         '"intelligence": "Gemini via Vertex AI"',
@@ -159,7 +166,8 @@ def _expect_message_send_success_surface() -> dict[str, Any]:
     main = _read(TRACK3_APP_DIR / "main.py")
     required = [
         'payload.method != "message/send"',
-        "response = await _adk_response",
+        "asyncio.wait_for(",
+        "_adk_response(message, user_id=user_id, session_id=context_id)",
         'state="completed"',
         '"enterprise-agentops-plan"',
         '"platform": "Google Cloud Run"',
@@ -178,7 +186,7 @@ def _expect_task_lifecycle_surface() -> dict[str, Any]:
         'payload.method == "tasks/get"',
         'payload.method == "tasks/list"',
         'payload.method == "tasks/cancel"',
-        "TASKS[task_id] = task",
+        "_store_task(task_id, task)",
         '"state": "canceled"',
         '"code": "TaskNotFoundError"',
     ]
@@ -191,7 +199,7 @@ def _expect_error_surface() -> dict[str, Any]:
     main = _read(TRACK3_APP_DIR / "main.py")
     required = [
         '"code": "UnsupportedOperationError"',
-        '"code": "InvalidRequest"',
+        'code="InvalidRequest"',
         '"No text content in message"',
         "except Exception as exc",
         'state="failed"',
@@ -222,6 +230,53 @@ def _expect_enterprise_reasoning_surface() -> dict[str, Any]:
     return {"checked_source": str(TRACK3_APP_DIR / "agent.py"), "required_fragments": required}
 
 
+def _expect_production_controls_surface() -> dict[str, Any]:
+    main = _read(TRACK3_APP_DIR / "main.py")
+    manifest = _read(TRACK3_PRODUCTION_MANIFEST)
+    docs = "\n".join(
+        [
+            _read(TRACK3_APP_DIR / "README.md"),
+            _read(TRACK3_READINESS_DOC),
+        ]
+    )
+    required_main = [
+        "A2A_BEARER_TOKEN = os.getenv",
+        '"auth_mode": AUTH_MODE',
+        "hmac.compare_digest",
+        "MAX_MESSAGE_CHARS",
+        "MAX_TASKS",
+        "ADK_RESPONSE_TIMEOUT_SECONDS",
+        "_store_task",
+        "asyncio.wait_for(",
+        '@app.get("/readyz")',
+        "google.cloud.logging.Client().setup_logging()",
+        'code="Unauthorized"',
+    ]
+    required_manifest = [
+        "serviceAccountName:",
+        "secretKeyRef:",
+        "containerConcurrency:",
+        "timeoutSeconds:",
+        "MAX_MESSAGE_CHARS",
+        "MAX_TASKS",
+        "ADK_RESPONSE_TIMEOUT_SECONDS",
+        "A2A_BEARER_TOKEN",
+        "ENABLE_CLOUD_LOGGING",
+    ]
+    for fragment in required_main:
+        _assert(fragment in main, f"production control source missing: {fragment}")
+    for fragment in required_manifest:
+        _assert(fragment in manifest, f"production Cloud Run manifest missing: {fragment}")
+    for fragment in ("IAM", "service account", "A2A_BEARER_TOKEN", "/readyz", "Cloud Logging"):
+        _assert(fragment in docs, f"production docs missing: {fragment}")
+    return {
+        "checked_source": str(TRACK3_APP_DIR / "main.py"),
+        "production_manifest": str(TRACK3_PRODUCTION_MANIFEST),
+        "required_main_fragments": required_main,
+        "required_manifest_fragments": required_manifest,
+    }
+
+
 def _expect_deployment_dependencies() -> dict[str, Any]:
     requirements = _read(TRACK3_APP_DIR / "requirements.txt")
     runtime = _read(TRACK3_APP_DIR / "runtime.txt")
@@ -242,7 +297,7 @@ def _expect_track3_evidence_gate_alignment() -> dict[str, Any]:
     match = re.search(r"REQUIRED_CLAIMS\s*=\s*\((.*?)\)", gate, re.DOTALL)
     _assert(match is not None, "Track 3 evidence gate REQUIRED_CLAIMS not found")
     claims = re.findall(r'"([^"]+)"', match.group(1))
-    _assert(len(claims) == 7, f"expected 7 Track 3 required claims, found {len(claims)}")
+    _assert(len(claims) == 8, f"expected 8 Track 3 required claims, found {len(claims)}")
     for claim in claims:
         _assert(claim in doc, f"Track 3 readiness doc does not mention claim: {claim}")
     for fragment in (
@@ -289,6 +344,11 @@ def _run_probes() -> list[dict[str, Any]]:
             "enterprise_reasoning_surface",
             "ADK agent has B2B governance, risk routing, approval, and rollback instructions",
             _expect_enterprise_reasoning_surface,
+        ),
+        Probe(
+            "production_controls_surface",
+            "Production request, auth, readiness, retention, and Cloud Run controls are declared",
+            _expect_production_controls_surface,
         ),
         Probe("deployment_dependencies", "Cloud Run deployment dependencies are declared", _expect_deployment_dependencies),
         Probe(

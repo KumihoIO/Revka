@@ -16,6 +16,7 @@ REQUIRED_CLAIMS = (
     "adk_orchestration",
     "b2b_enterprise_package",
     "enterprise_governance",
+    "production_operating_controls",
     "gemini_enterprise_readiness",
 )
 
@@ -79,6 +80,18 @@ def _template() -> dict[str, Any]:
                 "rollback": "Cloud Run revision rollback",
                 "observability": "Cloud Logging",
                 "evidence_files": ["governance/controls.md", "deploy/rollback-plan.md"],
+            },
+            "production_operating_controls": {
+                "auth": "Cloud Run IAM plus A2A bearer token",
+                "service_account": "Dedicated least-privilege Cloud Run service account",
+                "request_limits": "MAX_MESSAGE_CHARS and Cloud Run containerConcurrency",
+                "timeout": "ADK_RESPONSE_TIMEOUT_SECONDS and Cloud Run timeoutSeconds",
+                "retention": "MAX_TASKS bounded task retention",
+                "evidence_files": [
+                    "operations/production-controls.md",
+                    "deploy/cloudrun-production.yaml",
+                    "runtime/readyz.json",
+                ],
             },
             "gemini_enterprise_readiness": {
                 "status": "registration-ready",
@@ -269,6 +282,64 @@ def _check_text_claim(claim_name: str, files: list[Path]) -> list[str]:
     return failures
 
 
+def _check_production_operating_controls(files: list[Path]) -> list[str]:
+    failures: list[str] = []
+    corpus = _corpus(files).lower()
+    for token in (
+        "iam",
+        "service account",
+        "a2a_bearer_token",
+        "request",
+        "timeout",
+        "retention",
+        "cloud logging",
+    ):
+        if token not in corpus:
+            failures.append(f"production controls evidence must mention {token}")
+
+    manifest_path = next((path for path in files if path.name == "cloudrun-production.yaml"), None)
+    if manifest_path:
+        manifest = _read_text(manifest_path)
+        for token in (
+            "serviceAccountName:",
+            "secretKeyRef:",
+            "containerConcurrency:",
+            "timeoutSeconds:",
+            "MAX_MESSAGE_CHARS",
+            "MAX_TASKS",
+            "ADK_RESPONSE_TIMEOUT_SECONDS",
+            "A2A_BEARER_TOKEN",
+            "ENABLE_CLOUD_LOGGING",
+        ):
+            if token not in manifest:
+                failures.append(f"production Cloud Run manifest must include {token}")
+
+    readyz_path = next((path for path in files if path.name == "readyz.json"), None)
+    if readyz_path:
+        readyz, error = _load_json(readyz_path)
+        if error:
+            failures.append(f"readyz.json is not valid JSON: {error}")
+        elif isinstance(readyz, dict):
+            if readyz.get("ready") is not True:
+                failures.append("readyz.json must report ready: true")
+            for key in (
+                "auth_mode",
+                "max_message_chars",
+                "max_tasks",
+                "adk_response_timeout_seconds",
+                "platform",
+                "orchestration",
+                "intelligence",
+            ):
+                if key not in readyz:
+                    failures.append(f"readyz.json missing {key}")
+            if readyz.get("auth_mode") not in {"bearer-token", "iam-secured", "public-demo"}:
+                failures.append("readyz.json auth_mode must describe the invocation auth posture")
+        else:
+            failures.append("readyz.json must be a JSON object")
+    return failures
+
+
 def _check_claim(
     *,
     claim_name: str,
@@ -294,6 +365,8 @@ def _check_claim(
             failures.extend(_check_gemini_powered_intelligence(claim, files))
         elif claim_name == "adk_orchestration":
             failures.extend(_check_adk_orchestration(claim, files, repo_root))
+        elif claim_name == "production_operating_controls":
+            failures.extend(_check_production_operating_controls(files))
         elif claim_name in {
             "b2b_enterprise_package",
             "enterprise_governance",

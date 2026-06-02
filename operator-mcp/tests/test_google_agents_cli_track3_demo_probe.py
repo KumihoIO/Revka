@@ -25,11 +25,11 @@ def test_track3_demo_probe_passes_all_source_outcomes(tmp_path):
     assert result.returncode == 0, result.stderr or result.stdout
     report = json.loads(output.read_text(encoding="utf-8"))
     assert report["passed"] is True
-    assert report["summary"] == {"failed": 0, "passed": 9, "total": 9}
+    assert report["summary"] == {"failed": 0, "passed": 10, "total": 10}
     assert report["outcome_matrix"]["summary"] == {
         "failed": 0,
-        "passed": 7,
-        "total": 7,
+        "passed": 8,
+        "total": 8,
     }
     titles = [item["title"] for item in report["outcome_matrix"]["outcomes"]]
     assert titles == [
@@ -38,6 +38,7 @@ def test_track3_demo_probe_passes_all_source_outcomes(tmp_path):
         "Live A2A incident plan",
         "A2A task lifecycle branches",
         "Demo-safe error branches",
+        "Production operating controls",
         "B2B governance story",
         "Final rehearsal gate alignment",
     ]

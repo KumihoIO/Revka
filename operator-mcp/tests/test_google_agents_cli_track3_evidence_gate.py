@@ -74,6 +74,18 @@ def _manifest(service_url: str = "https://construct-agentops-a2a-abc-uc.a.run.ap
                 "observability": "Cloud Logging",
                 "evidence_files": ["governance/controls.md", "deploy/rollback-plan.md"],
             },
+            "production_operating_controls": {
+                "auth": "Cloud Run IAM plus A2A bearer token",
+                "service_account": "Dedicated least-privilege Cloud Run service account",
+                "request_limits": "MAX_MESSAGE_CHARS and Cloud Run containerConcurrency",
+                "timeout": "ADK_RESPONSE_TIMEOUT_SECONDS and Cloud Run timeoutSeconds",
+                "retention": "MAX_TASKS bounded task retention",
+                "evidence_files": [
+                    "operations/production-controls.md",
+                    "deploy/cloudrun-production.yaml",
+                    "runtime/readyz.json",
+                ],
+            },
             "gemini_enterprise_readiness": {
                 "status": "registration-ready",
                 "requires_admin_access": True,
@@ -161,6 +173,21 @@ def _write_complete_evidence(evidence_dir: Path, service_url: str) -> None:
         ),
     )
     _write(
+        evidence_dir / "runtime/readyz.json",
+        json.dumps(
+            {
+                "ready": True,
+                "auth_mode": "bearer-token",
+                "max_message_chars": 12000,
+                "max_tasks": 200,
+                "adk_response_timeout_seconds": 45,
+                "platform": "Google Cloud Run",
+                "orchestration": "Google ADK",
+                "intelligence": "Gemini via Vertex AI",
+            }
+        ),
+    )
+    _write(
         evidence_dir / "runtime/source-manifest.json",
         json.dumps(
             {
@@ -187,6 +214,37 @@ def _write_complete_evidence(evidence_dir: Path, service_url: str) -> None:
     _write(
         evidence_dir / "deploy/rollback-plan.md",
         "Rollback by redeploying the previous Cloud Run revision and recording approval.",
+    )
+    _write(
+        evidence_dir / "deploy/cloudrun-production.yaml",
+        (
+            "serviceAccountName: construct-agentops-a2a@demo-track3-project.iam.gserviceaccount.com\n"
+            "containerConcurrency: 40\n"
+            "timeoutSeconds: 60\n"
+            "env:\n"
+            "- name: MAX_MESSAGE_CHARS\n"
+            "  value: '12000'\n"
+            "- name: MAX_TASKS\n"
+            "  value: '200'\n"
+            "- name: ADK_RESPONSE_TIMEOUT_SECONDS\n"
+            "  value: '45'\n"
+            "- name: ENABLE_CLOUD_LOGGING\n"
+            "  value: 'true'\n"
+            "- name: A2A_BEARER_TOKEN\n"
+            "  valueFrom:\n"
+            "    secretKeyRef:\n"
+            "      name: construct-a2a-bearer-token\n"
+        ),
+    )
+    _write(
+        evidence_dir / "operations/production-controls.md",
+        (
+            "IAM restricts Cloud Run invocation to approved callers. The service account "
+            "is dedicated and least privilege. A2A_BEARER_TOKEN bearer-token auth protects "
+            "JSON-RPC requests. Request limits use MAX_MESSAGE_CHARS and containerConcurrency. "
+            "Timeout controls use ADK_RESPONSE_TIMEOUT_SECONDS and timeoutSeconds. Retention "
+            "uses MAX_TASKS bounded task retention. Observability sends logs to Cloud Logging."
+        ),
     )
     _write(
         evidence_dir / "enterprise/gemini-enterprise-registration.md",
@@ -216,7 +274,7 @@ def test_track3_evidence_gate_passes_complete_bundle(tmp_path):
     assert result.returncode == 0, result.stderr or result.stdout
     report = json.loads(result.stdout)
     assert report["passed"] is True
-    assert report["summary"] == {"failed": 0, "passed": 7, "total": 7}
+    assert report["summary"] == {"failed": 0, "passed": 8, "total": 8}
 
 
 def test_track3_evidence_gate_rejects_non_cloud_run_url(tmp_path):

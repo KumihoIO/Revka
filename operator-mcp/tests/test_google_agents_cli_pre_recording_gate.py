@@ -207,6 +207,18 @@ def _complete_track3_manifest(service_url: str) -> dict:
                 "observability": "Cloud Logging",
                 "evidence_files": ["governance/controls.md", "deploy/rollback-plan.md"],
             },
+            "production_operating_controls": {
+                "auth": "Cloud Run IAM plus A2A bearer token",
+                "service_account": "Dedicated least-privilege Cloud Run service account",
+                "request_limits": "MAX_MESSAGE_CHARS and Cloud Run containerConcurrency",
+                "timeout": "ADK_RESPONSE_TIMEOUT_SECONDS and Cloud Run timeoutSeconds",
+                "retention": "MAX_TASKS bounded task retention",
+                "evidence_files": [
+                    "operations/production-controls.md",
+                    "deploy/cloudrun-production.yaml",
+                    "runtime/readyz.json",
+                ],
+            },
             "gemini_enterprise_readiness": {
                 "status": "registration-ready",
                 "requires_admin_access": True,
@@ -235,6 +247,24 @@ def _write_complete_track3_evidence(evidence_dir: Path) -> None:
         ),
         "deploy/rollback-plan.md": (
             "Rollback by redeploying the previous Cloud Run revision and recording approval."
+        ),
+        "deploy/cloudrun-production.yaml": (
+            "serviceAccountName: construct-agentops-a2a@demo-track3-project.iam.gserviceaccount.com\n"
+            "containerConcurrency: 40\n"
+            "timeoutSeconds: 60\n"
+            "env:\n"
+            "- name: MAX_MESSAGE_CHARS\n"
+            "  value: '12000'\n"
+            "- name: MAX_TASKS\n"
+            "  value: '200'\n"
+            "- name: ADK_RESPONSE_TIMEOUT_SECONDS\n"
+            "  value: '45'\n"
+            "- name: ENABLE_CLOUD_LOGGING\n"
+            "  value: 'true'\n"
+            "- name: A2A_BEARER_TOKEN\n"
+            "  valueFrom:\n"
+            "    secretKeyRef:\n"
+            "      name: construct-a2a-bearer-token\n"
         ),
         "a2a/agent-card.json": json.dumps(
             {
@@ -280,6 +310,18 @@ def _write_complete_track3_evidence(evidence_dir: Path) -> None:
                 "intelligence": "Gemini via Vertex AI",
             }
         ),
+        "runtime/readyz.json": json.dumps(
+            {
+                "ready": True,
+                "auth_mode": "bearer-token",
+                "max_message_chars": 12000,
+                "max_tasks": 200,
+                "adk_response_timeout_seconds": 45,
+                "platform": "Google Cloud Run",
+                "orchestration": "Google ADK",
+                "intelligence": "Gemini via Vertex AI",
+            }
+        ),
         "runtime/source-manifest.json": json.dumps(
             {
                 "framework": "Google ADK",
@@ -294,6 +336,13 @@ def _write_complete_track3_evidence(evidence_dir: Path) -> None:
         "governance/controls.md": (
             "Enterprise governance uses per-agent service identity, approval gates, "
             "rollback controls, and observability through Cloud Logging."
+        ),
+        "operations/production-controls.md": (
+            "IAM restricts Cloud Run invocation to approved callers. The service account "
+            "is dedicated and least privilege. A2A_BEARER_TOKEN bearer-token auth protects "
+            "JSON-RPC requests. Request limits use MAX_MESSAGE_CHARS and containerConcurrency. "
+            "Timeout controls use ADK_RESPONSE_TIMEOUT_SECONDS and timeoutSeconds. Retention "
+            "uses MAX_TASKS bounded task retention. Observability sends logs to Cloud Logging."
         ),
         "enterprise/gemini-enterprise-registration.md": (
             "Gemini Enterprise registration-ready path: register the A2A agent card, "
@@ -399,8 +448,8 @@ def test_pre_recording_gate_track3_reports_strict_final_ready_without_agents_cli
     track3_probe = next(item for item in report["checks"] if item["name"] == "track3_demo_probe")
     assert track3_probe["outcome_matrix_summary"] == {
         "failed": 0,
-        "passed": 7,
-        "total": 7,
+        "passed": 8,
+        "total": 8,
     }
     assert "real agents-cli authentication was not required" not in report["strict_final_blockers"]
 
