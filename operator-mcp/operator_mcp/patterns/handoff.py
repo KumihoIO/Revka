@@ -15,7 +15,7 @@ import uuid
 from typing import Any
 
 from .._log import _log
-from ..agent_state import AGENTS, ManagedAgent, POOL
+from ..agent_state import AGENTS, POOL
 from ..agent_subprocess import compose_agent_prompt, spawn_agent
 from ..failure_classification import (
     agent_not_found,
