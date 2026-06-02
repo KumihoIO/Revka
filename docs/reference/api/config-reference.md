@@ -1000,10 +1000,13 @@ Notes:
   `deploy`, `publish`, `infra`, `data-ingestion`, `playground`, or `update`.
   Use `agents-cli login --status` and `agents-cli info` for non-mutating
   environment checks. The ADK project generally owns model selection.
-- In declarative workflows, use an `agent` step with `agent.tools: all` when
-  the child agent must call `google_agents_cli` or outbound A2A tools. Add
-  `required_tools: [google_agents_cli]` to make workflow preflight fail before
-  execution if the Operator MCP tool surface is not injected.
+- In declarative workflows, prefer an `agent` step with
+  `agent.tools: google_agentops` when the child agent only needs
+  `google_agents_cli` and outbound A2A tools. Add
+  `required_tools: [google_agents_cli]`; the workflow UI expands that to the
+  companion A2A tools and preflight verifies the reduced Google AgentOps MCP
+  surface before execution. Use `agent.tools: all` only when the child also
+  needs the broader Operator MCP surface.
 
 ## `[operator]`
 

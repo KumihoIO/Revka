@@ -560,10 +560,12 @@ Lưu ý:
   `google_agents_cli` cho `agents-cli run`, `eval`, `deploy`, hoặc publish.
   Dùng `agents-cli info` để kiểm tra trạng thái project/tooling. Model thường
   được cấu hình trong project ADK.
-- Trong workflow khai báo, dùng `agent.tools: all` khi child agent cần gọi
-  `google_agents_cli` hoặc tool outbound A2A. Thêm
-  `required_tools: [google_agents_cli]` để preflight thất bại trước khi chạy
-  nếu bề mặt tool Operator MCP chưa được inject.
+- Trong workflow khai báo, ưu tiên `agent.tools: google_agentops` khi child
+  agent chỉ cần `google_agents_cli` và tool outbound A2A. Thêm
+  `required_tools: [google_agents_cli]`; UI workflow tự mở rộng sang các tool
+  A2A đi kèm và preflight xác minh bề mặt Google AgentOps MCP thu gọn trước
+  khi chạy. Chỉ dùng `agent.tools: all` khi child cũng cần bề mặt Operator MCP
+  rộng hơn.
 
 ## Giá trị mặc định liên quan bảo mật
 

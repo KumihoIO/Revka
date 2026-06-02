@@ -17,11 +17,13 @@ For demo narration, use this model:
 2. That agent calls the `google_agents_cli` tool when it needs `agents-cli setup`, `create`, `scaffold`, `install`, `lint`, `run`, `eval`, `deploy`, `publish`, `infra`, `data-ingestion`, `playground`, `update`, `login --status`, or `info`.
 3. Construct executes the bounded tool call with argv tokens, workspace-bound cwd validation, timeout/output limits, and noninteractive defaults.
 
-For declarative workflows, this means an `agent` step uses `agent.tools: all`
-and can declare `required_tools: [google_agents_cli]` so preflight verifies the
-tool is visible before the child agent starts. Outbound A2A client tools
-(`a2a_discover`, `a2a_send_task`, `a2a_get_remote_task`) follow the same
-`operator-tools` injection path.
+For declarative workflows, this means an `agent` step normally uses
+`agent.tools: google_agentops` and declares
+`required_tools: [google_agents_cli]`. The workflow UI expands that requirement
+to the companion outbound A2A tools (`a2a_discover`, `a2a_send_task`,
+`a2a_get_remote_task`), and preflight verifies the reduced
+`google-agentops-tools` MCP surface before the child agent starts. Use
+`agent.tools: all` only when the child also needs broader Operator MCP tools.
 
 Avoid this model:
 
@@ -47,7 +49,7 @@ enabled = true
 
 | Outcome to show | Expected Construct behavior | Evidence to check before recording |
 |---|---|---|
-| Existing agent uses Google lifecycle tooling | Operator guidance tells users to spawn `claude`/`codex` and call `google_agents_cli`; workflow `agent` steps use `agent.tools: all` plus `required_tools` to expose the same tool; tool schemas keep `create_agent.agent_type` limited to `claude` or `codex` | `operator-mcp/operator_mcp/operator_mcp.py`; `operator-mcp/operator_mcp/subagent_mcp.py`; `operator-mcp/operator_mcp/workflow/executor.py`; `src/agent/operator/core.rs`; `src/gateway/ws.rs` |
+| Existing agent uses Google lifecycle tooling | Operator guidance tells users to spawn `claude`/`codex` and call `google_agents_cli`; workflow `agent` steps use `agent.tools: google_agentops` plus `required_tools` for the reduced Google/A2A tool surface, or `all` when broader Operator MCP tools are needed; tool schemas keep `create_agent.agent_type` limited to `claude` or `codex` | `operator-mcp/operator_mcp/google_agentops_mcp.py`; `operator-mcp/operator_mcp/workflow/executor.py`; `operator-mcp/operator_mcp/operator_mcp.py`; `operator-mcp/operator_mcp/subagent_mcp.py`; `src/agent/operator/core.rs`; `src/gateway/ws.rs` |
 | Current CLI project/tooling inspection | `agents-cli info` is accepted by both Rust and Operator MCP handlers | `google_agents_cli_accepts_current_info_command`; `test_google_agents_cli_accepts_info_command` |
 | Public lifecycle command surface | Rust, Operator MCP, docs, and the real CLI gate cover current public commands: `setup`, `create`, `scaffold`, `install`, `lint`, `run`, `eval`, `deploy`, `publish`, `infra`, `data-ingestion`, `playground`, `update`, `login`, and `info` | `lifecycle_command_surface`; `google_agents_cli_demo_probe.py`; `google_agents_cli_pre_recording_gate.py` |
 | Prompt-only run | A prompt without `command` defaults to `agents-cli run`, and command previews redact the prompt as `["run", "..."]` | `test_google_agents_cli_prompt_defaults_to_run_and_redacts_preview` |

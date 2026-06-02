@@ -20,6 +20,13 @@ import ExpressionTextarea from './ExpressionTextarea';
 import { emitOpenAgentPicker } from './stepEvents';
 import { useAuthProfiles } from './useAuthProfiles';
 import { slugify as slugifyShared, uniqueSlug } from './slugify';
+import {
+  GOOGLE_AGENTOPS_REQUIRED_TOOLS,
+  type AgentToolsMode,
+  expandGoogleAgentOpsRequiredTools,
+  hasGoogleAgentOpsBundle,
+  requiresGoogleAgentOpsToolMode,
+} from './agentToolPresets';
 
 /** Step types that surface the encrypted auth-profile dropdown. */
 const AUTH_ELIGIBLE_STEP_TYPES = new Set(['agent', 'shell', 'python', 'email', 'a2a']);
@@ -316,15 +323,48 @@ export default function StepConfigPanel({
 
   const handleAgentRequiredToolsChange = useCallback(
     (nextDraft: string) => {
-      agentRequiredToolsDraftState.setDraft(nextDraft);
-      onUpdate(node.id, { agentRequiredTools: parseListInput(nextDraft) });
+      const parsed = parseListInput(nextDraft);
+      const expanded = expandGoogleAgentOpsRequiredTools(parsed);
+      const unchanged = expanded.length === parsed.length
+        && expanded.every((tool, index) => tool === parsed[index]);
+      agentRequiredToolsDraftState.setDraft(
+        unchanged ? nextDraft : expanded.join(', '),
+      );
+      onUpdate(node.id, {
+        agentRequiredTools: expanded,
+        ...(requiresGoogleAgentOpsToolMode(expanded) && !['all', 'google_agentops'].includes(data.agentTools || 'none')
+          ? { agentTools: 'google_agentops' as AgentToolsMode }
+          : {}),
+      });
     },
-    [agentRequiredToolsDraftState, node.id, onUpdate],
+    [agentRequiredToolsDraftState, data.agentTools, node.id, onUpdate],
   );
 
   const commitAgentRequiredToolsDraft = useCallback(() => {
-    onUpdate(node.id, { agentRequiredTools: agentRequiredToolsDraftState.commit() });
-  }, [agentRequiredToolsDraftState, node.id, onUpdate]);
+    const committed = agentRequiredToolsDraftState.commit();
+    const expanded = expandGoogleAgentOpsRequiredTools(committed);
+    if (expanded.join(', ') !== committed.join(', ')) {
+      agentRequiredToolsDraftState.setDraft(expanded.join(', '));
+    }
+    onUpdate(node.id, {
+      agentRequiredTools: expanded,
+      ...(requiresGoogleAgentOpsToolMode(expanded) && !['all', 'google_agentops'].includes(data.agentTools || 'none')
+        ? { agentTools: 'google_agentops' as AgentToolsMode }
+        : {}),
+    });
+  }, [agentRequiredToolsDraftState, data.agentTools, node.id, onUpdate]);
+
+  const addGoogleAgentOpsToolBundle = useCallback(() => {
+    const expanded = expandGoogleAgentOpsRequiredTools([
+      ...(data.agentRequiredTools || []),
+      'google_agents_cli',
+    ]);
+    agentRequiredToolsDraftState.setDraft(expanded.join(', '));
+    onUpdate(node.id, {
+      agentRequiredTools: expanded,
+      agentTools: 'google_agentops',
+    });
+  }, [agentRequiredToolsDraftState, data.agentRequiredTools, node.id, onUpdate]);
 
   // Local draft so typing intermediate states (uppercase, spaces) doesn't
   // aggressively reformat under the cursor. Commits to the canvas on blur.
@@ -666,6 +706,7 @@ export default function StepConfigPanel({
     ) : null;
 
   const TypeIcon = typeDef?.icon;
+  const googleAgentOpsBundleActive = hasGoogleAgentOpsBundle(data.agentRequiredTools || []);
 
   return (
     <Panel variant="primary" className="overflow-hidden">
@@ -1245,18 +1286,71 @@ export default function StepConfigPanel({
                   <label style={labelStyle}>Tools</label>
                   <select
                     value={data.agentTools || 'none'}
-                    onChange={(e) => onUpdate(node.id, { agentTools: e.target.value as 'all' | 'memory' | 'none' })}
+                    onChange={(e) => onUpdate(node.id, { agentTools: e.target.value as AgentToolsMode })}
                     style={inputStyle}
                   >
                     <option value="none">none</option>
                     <option value="memory">memory</option>
+                    <option value="google_agentops">google_agentops</option>
                     <option value="all">all</option>
                   </select>
                 </div>
               </div>
 
               <div>
-                <label style={labelStyle}>Required Tools</label>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                  <label style={labelStyle}>Required Tools</label>
+                  <button
+                    type="button"
+                    onClick={addGoogleAgentOpsToolBundle}
+                    title="Add Google Agents CLI and A2A companion tools"
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 4,
+                      padding: '3px 8px',
+                      borderRadius: 8,
+                      border: googleAgentOpsBundleActive
+                        ? '1px solid var(--construct-signal-selected)'
+                        : '1px solid var(--pc-accent-dim)',
+                      background: googleAgentOpsBundleActive
+                        ? 'color-mix(in srgb, var(--construct-signal-selected) 18%, transparent)'
+                        : 'transparent',
+                      color: googleAgentOpsBundleActive
+                        ? 'var(--construct-signal-selected)'
+                        : 'var(--pc-accent-light)',
+                      fontSize: 10,
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    <Sparkles size={11} />
+                    Google AgentOps
+                  </button>
+                </div>
+                {googleAgentOpsBundleActive && (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 6 }}>
+                    {GOOGLE_AGENTOPS_REQUIRED_TOOLS.map((tool) => (
+                      <span
+                        key={tool}
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          padding: '2px 6px',
+                          borderRadius: 6,
+                          border: '1px solid var(--construct-border-soft)',
+                          background: 'var(--pc-bg-input)',
+                          color: 'var(--pc-text-faint)',
+                          fontSize: 9.5,
+                          fontFamily: 'var(--pc-font-mono, ui-monospace, monospace)',
+                        }}
+                      >
+                        {tool}
+                      </span>
+                    ))}
+                  </div>
+                )}
                 <input
                   type="text"
                   value={agentRequiredToolsDraftState.draft}

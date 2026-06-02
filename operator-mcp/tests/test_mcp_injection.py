@@ -10,6 +10,7 @@ from operator_mcp.mcp_injection import (
     _kumiho_forward_env,
     build_mcp_servers,
     build_system_prompt,
+    google_agentops_tools_config,
     operator_tools_config,
     kumiho_memory_config,
     workflow_memory_alias_config,
@@ -151,6 +152,16 @@ class TestOperatorToolsConfig:
             assert config["env"] == {}
 
 
+class TestGoogleAgentOpsToolsConfig:
+    def test_basic_config(self):
+        with patch("os.path.exists", return_value=False):
+            config = google_agentops_tools_config()
+            assert config["type"] == "stdio"
+            assert config["command"] in {"python", "python3"}
+            assert "google_agentops_mcp" in config["args"][0]
+            assert config["env"] == {}
+
+
 class TestWorkflowMemoryAliasConfig:
     def test_basic_config(self):
         with patch("os.path.exists", return_value=False):
@@ -193,6 +204,23 @@ class TestBuildMcpServers:
         servers = build_mcp_servers(include_memory=False, include_operator=False)
         assert servers == {}
 
+    def test_google_agentops_only(self):
+        servers = build_mcp_servers(
+            include_memory=False,
+            include_operator=False,
+            include_google_agentops=True,
+        )
+        assert set(servers) == {"google-agentops-tools"}
+
+    def test_full_operator_subsumes_google_agentops(self):
+        servers = build_mcp_servers(
+            include_memory=False,
+            include_operator=True,
+            include_google_agentops=True,
+        )
+        assert "operator-tools" in servers
+        assert "google-agentops-tools" not in servers
+
 
 class TestBuildSystemPrompt:
     def test_top_level_with_operator(self):
@@ -234,3 +262,14 @@ class TestBuildSystemPrompt:
             prompt = build_system_prompt(is_top_level=True, include_operator=False, include_memory=False)
             # sub-agent preamble not present, operator prompt not present
             assert "sub-agent managed by" not in prompt
+
+    def test_google_agentops_prompt(self):
+        with patch("operator_mcp.skill_loader.load_skills_for_pattern", return_value=""):
+            prompt = build_system_prompt(
+                include_memory=False,
+                include_operator=False,
+                include_google_agentops=True,
+            )
+            assert "google-agentops-tools MCP" in prompt
+            assert "google_agents_cli" in prompt
+            assert "create_agent" not in prompt

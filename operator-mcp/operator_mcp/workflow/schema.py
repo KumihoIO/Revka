@@ -103,7 +103,7 @@ class AgentStepConfig(BaseModel):
     timeout: float = 300.0       # 5 min default — synthesis-style Claude steps blow past 120s under real load
     template: str | None = None  # Pool template name
     max_turns: int = 3           # Max LLM turns (low default = no tool loops, saves tokens)
-    tools: Literal["all", "memory", "none"] = "none"  # MCP tool injection level
+    tools: Literal["all", "memory", "google_agentops", "none"] = "none"  # MCP tool injection level
     required_tools: list[str] = Field(default_factory=list)  # Preflight visibility guard
     output_fields: list[str] = Field(default_factory=list)  # Required structured output_data fields
     quality_check: QualityCheckConfig | None = None

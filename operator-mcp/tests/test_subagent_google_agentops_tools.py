@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from operator_mcp import subagent_mcp
+from operator_mcp import google_agentops_mcp, subagent_mcp
 
 
 @pytest.mark.asyncio
@@ -16,6 +16,19 @@ async def test_operator_tools_exposes_google_agentops_surface():
         "a2a_send_task",
         "a2a_get_remote_task",
     }.issubset(tools)
+
+
+@pytest.mark.asyncio
+async def test_reduced_google_agentops_tools_exposes_only_google_surface():
+    tools = {tool.name for tool in await google_agentops_mcp.list_tools()}
+
+    assert tools == {
+        "google_agents_cli",
+        "a2a_discover",
+        "a2a_send_task",
+        "a2a_get_remote_task",
+        "get_auth_token",
+    }
 
 
 @pytest.mark.asyncio
@@ -33,6 +46,20 @@ async def test_google_agents_cli_dispatch_does_not_require_sidecar(monkeypatch):
     )
 
     result = await subagent_mcp._dispatch("google_agents_cli", {"command": ["info"]})
+
+    assert result == {"success": True, "command": ["info"]}
+
+
+@pytest.mark.asyncio
+async def test_reduced_google_agents_cli_dispatch(monkeypatch):
+    from operator_mcp.tool_handlers import google_agents_cli
+
+    async def fake_tool(args):
+        return {"success": True, "command": args["command"]}
+
+    monkeypatch.setattr(google_agents_cli, "tool_google_agents_cli", fake_tool)
+
+    result = await google_agentops_mcp._dispatch("google_agents_cli", {"command": ["info"]})
 
     assert result == {"success": True, "command": ["info"]}
 
