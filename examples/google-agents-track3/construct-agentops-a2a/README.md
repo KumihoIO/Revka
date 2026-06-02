@@ -107,6 +107,23 @@ gcloud run services add-iam-policy-binding construct-agentops-a2a \
   --role roles/run.invoker
 ```
 
+For IAM-secured invocation, send the Google identity token in
+`X-Serverless-Authorization` so the application-level `Authorization` header can
+carry `A2A_BEARER_TOKEN`:
+
+```bash
+ID_TOKEN="$(gcloud auth print-identity-token)"
+
+curl -fsS "$SERVICE_URL/readyz" \
+  -H "X-Serverless-Authorization: Bearer $ID_TOKEN"
+
+curl -fsS -X POST "$SERVICE_URL/" \
+  -H "X-Serverless-Authorization: Bearer $ID_TOKEN" \
+  -H "Authorization: Bearer $A2A_BEARER_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":"prod-smoke","method":"agent/card","params":{}}'
+```
+
 Production controls surfaced by the runtime:
 
 - `/readyz` reports readiness without making a model call, including

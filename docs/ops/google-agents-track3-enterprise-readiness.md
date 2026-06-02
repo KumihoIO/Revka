@@ -93,6 +93,36 @@ explainable as a production package: discovery can remain public, while
 JSON-RPC invocation is protected by IAM and bearer-token auth for approved A2A
 clients.
 
+For IAM-secured production smoke tests, send the Google identity token in
+`X-Serverless-Authorization` and reserve the regular `Authorization` header for
+the application-level A2A bearer token:
+
+```bash
+ID_TOKEN="$(gcloud auth print-identity-token)"
+
+curl -fsS "$SERVICE_URL/readyz" \
+  -H "X-Serverless-Authorization: Bearer $ID_TOKEN"
+
+curl -fsS -X POST "$SERVICE_URL/" \
+  -H "X-Serverless-Authorization: Bearer $ID_TOKEN" \
+  -H "Authorization: Bearer $A2A_BEARER_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": "track3-prod-smoke",
+    "method": "message/send",
+    "params": {
+      "message": {
+        "role": "user",
+        "parts": [{
+          "type": "text",
+          "text": "A production deploy is failing. Build a governed incident plan with rollback, approval, evidence, and A2A handoff."
+        }]
+      }
+    }
+  }'
+```
+
 ## Capture Evidence
 
 Use `.demo/google-agents-cli-track3` for local evidence. It is ignored by git
