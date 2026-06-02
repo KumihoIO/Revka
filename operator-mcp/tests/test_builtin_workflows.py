@@ -237,7 +237,8 @@ def test_canonworks_state_sync_preserves_generalized_example_contract() -> None:
 
 @pytest.mark.parametrize("yaml_path", [_CANONWORKS_EPISODE_PATH, _CANONWORKS_SYNC_PATH])
 def test_canonworks_builtins_have_no_legacy_project_literals(yaml_path: str) -> None:
-    text = open(yaml_path, encoding="utf-8").read()
+    with open(yaml_path, encoding="utf-8") as f:
+        text = f.read()
     forbidden = [
         "ManghanDev",
         "manghan",
@@ -254,7 +255,8 @@ def test_canonworks_builtins_have_no_legacy_project_literals(yaml_path: str) -> 
 
 @pytest.mark.parametrize("yaml_path", [_CANONWORKS_EPISODE_PATH, _CANONWORKS_SYNC_PATH])
 def test_canonworks_project_config_fallbacks_match_init_defaults(yaml_path: str) -> None:
-    text = open(yaml_path, encoding="utf-8").read()
+    with open(yaml_path, encoding="utf-8") as f:
+        text = f.read()
 
     assert "episode_name_prefix = first(naming.get('episode_name_prefix'), 'ep')" in text
     assert "RELATIONSHIP_MAP.md" in text
