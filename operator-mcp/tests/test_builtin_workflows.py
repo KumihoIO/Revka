@@ -151,6 +151,59 @@ class TestSmokeTestAllSteps:
 
 _ALL_BUILTIN_YAMLS = sorted(glob.glob(os.path.join(_BUILTINS_DIR, "*.yaml")))
 
+_CANONWORKS_EPISODE_PATH = os.path.join(_BUILTINS_DIR, "canonworks-serial-episode-factory.yaml")
+_CANONWORKS_SYNC_PATH = os.path.join(_BUILTINS_DIR, "canonworks-serial-canon-state-sync.yaml")
+
+_CANONWORKS_EPISODE_STEPS = [
+    "project-config",
+    "latest-production-episode",
+    "next-episode-info",
+    "episode-context",
+    "volume-canon-alignment",
+    "relationship-pressure-plan",
+    "opencrab-reference-builder",
+    "episode-intent-planner",
+    "episode-beat-planner",
+    "episode-draft-writer",
+    "episode-prose-reviser",
+    "draft-canon-auditor",
+    "episode-finalizer",
+    "final-canon-auditor",
+    "final-gate-router",
+    "production-route-gate",
+    "canon-patch-builder",
+    "emit-final-episode",
+    "production-emit-gate",
+    "emit-canon-patch-candidate",
+    "emit-context-pack",
+    "production-output-gate",
+    "update-output-bundles",
+    "emit-blocked-episode",
+    "blocked-output-gate",
+    "update-blocked-bundle",
+    "run-summary",
+]
+
+_CANONWORKS_SYNC_STEPS = [
+    "project-config",
+    "latest-production-episode",
+    "sync-info",
+    "canon-patch-candidate",
+    "state-sync-context",
+    "state-delta-context-lite",
+    "state-delta-extractor",
+    "state-delta-review",
+    "current-snapshot-builder",
+    "emit-character-state-snapshot",
+    "emit-relationship-state-snapshot",
+    "emit-timeline-progress-snapshot",
+    "emit-storyline-progress-snapshot",
+    "emit-foreshadow-progress-snapshot",
+    "emit-post-episode-sync-report",
+    "update-state-sync-bundles",
+    "run-summary",
+]
+
 
 @pytest.mark.parametrize(
     "yaml_path",
@@ -164,3 +217,49 @@ def test_builtin_workflow_validates(yaml_path: str) -> None:
         f"{os.path.basename(yaml_path)} failed validation: "
         f"errors={result.errors} warnings={result.warnings}"
     )
+
+
+def test_canonworks_episode_factory_preserves_generalized_example_contract() -> None:
+    wf = load_workflow_from_yaml(_CANONWORKS_EPISODE_PATH)
+
+    assert [step.id for step in wf.steps] == _CANONWORKS_EPISODE_STEPS
+    assert wf.inputs[0].name == "project_config_yaml"
+    assert wf.inputs[0].required is True
+
+
+def test_canonworks_state_sync_preserves_generalized_example_contract() -> None:
+    wf = load_workflow_from_yaml(_CANONWORKS_SYNC_PATH)
+
+    assert [step.id for step in wf.steps] == _CANONWORKS_SYNC_STEPS
+    assert wf.inputs[0].name == "project_config_yaml"
+    assert wf.inputs[0].required is True
+
+
+@pytest.mark.parametrize("yaml_path", [_CANONWORKS_EPISODE_PATH, _CANONWORKS_SYNC_PATH])
+def test_canonworks_builtins_have_no_legacy_project_literals(yaml_path: str) -> None:
+    with open(yaml_path, encoding="utf-8") as f:
+        text = f.read()
+    forbidden = [
+        "ManghanDev",
+        "manghan",
+        "mg-ep",
+        "StoryRoom",
+        "storyroom",
+        "cross-chronicle",
+        "\ub9dd\ud55c \uac1c\ubc1c\uc790\ub294",
+    ]
+
+    for token in forbidden:
+        assert token not in text
+
+
+@pytest.mark.parametrize("yaml_path", [_CANONWORKS_EPISODE_PATH, _CANONWORKS_SYNC_PATH])
+def test_canonworks_project_config_fallbacks_match_init_defaults(yaml_path: str) -> None:
+    with open(yaml_path, encoding="utf-8") as f:
+        text = f.read()
+
+    assert "episode_name_prefix = first(naming.get('episode_name_prefix'), 'ep')" in text
+    assert "RELATIONSHIP_MAP.md" in text
+    assert "Roadmaps/long-arc.series-roadmap" in text
+    assert "main.relationship-map.md" not in text
+    assert "series-roadmap.series-roadmap" not in text

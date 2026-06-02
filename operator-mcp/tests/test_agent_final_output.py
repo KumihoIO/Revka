@@ -44,7 +44,7 @@ async def _run_agent_step(
         agent=cfg,
     )
     state = WorkflowState(
-        workflow_name="manghan-developer-episode-factory",
+        workflow_name="series-developer-episode-factory",
         run_id="6094f99f-c1be-4896-bd50-b9374e243e69",
     )
 
@@ -255,7 +255,7 @@ tokens used
 
 
 def test_eval_names_recovers_final_output_fields_from_step_output():
-    state = WorkflowState(workflow_name="manghan", run_id="r")
+    state = WorkflowState(workflow_name="sample-serial", run_id="r")
     state.step_results["final-canon-auditor"] = StepResult(
         step_id="final-canon-auditor",
         status="completed",

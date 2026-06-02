@@ -32,16 +32,16 @@ async def test_create_bundle_ensures_parent_space(monkeypatch):
     monkeypatch.setattr(kumiho_clients, "tool_create_bundle", create_bundle)
 
     bundle = await KumihoSDKClient().create_bundle(
-        "/ManghanDev/Bundles",
-        "manghan-production-episodes",
+        "/StoryProject/Bundles",
+        "series-production-episodes",
         metadata={"source": "workflow"},
     )
 
-    assert bundle["kref"] == "kref://ManghanDev/Bundles/manghan-production-episodes.bundle"
+    assert bundle["kref"] == "kref://StoryProject/Bundles/series-production-episodes.bundle"
     assert calls == [
-        ("create_project", "ManghanDev"),
-        ("create_space", "ManghanDev", "Bundles", None),
-        ("create_bundle", "ManghanDev/Bundles", "manghan-production-episodes", {"source": "workflow"}),
+        ("create_project", "StoryProject"),
+        ("create_space", "StoryProject", "Bundles", None),
+        ("create_bundle", "StoryProject/Bundles", "series-production-episodes", {"source": "workflow"}),
     ]
 
 
@@ -60,10 +60,10 @@ async def test_ensure_space_path_creates_nested_segments(monkeypatch):
     monkeypatch.setattr(kumiho_clients, "tool_create_project", create_project)
     monkeypatch.setattr(kumiho_clients, "tool_create_space", create_space)
 
-    await KumihoSDKClient().ensure_space_path("ManghanDev/Bundles/Canon")
+    await KumihoSDKClient().ensure_space_path("StoryProject/Bundles/Canon")
 
     assert calls == [
-        ("create_project", "ManghanDev"),
-        ("create_space", "ManghanDev", "Bundles", None),
-        ("create_space", "ManghanDev", "Canon", "/ManghanDev/Bundles"),
+        ("create_project", "StoryProject"),
+        ("create_space", "StoryProject", "Bundles", None),
+        ("create_space", "StoryProject", "Canon", "/StoryProject/Bundles"),
     ]

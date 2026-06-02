@@ -336,7 +336,7 @@ class TestResolve:
         state = _state(inputs={
             "kind": "episode",
             "tag": "published",
-            "series": "manghan",
+            "series": "sample-serial",
             "episode": 7,
         })
         with patch("operator_mcp.workflow.memory.resolve_entity", fake_resolve):
@@ -345,16 +345,16 @@ class TestResolve:
         assert result.status == "completed"
         assert calls["kind"] == "episode"
         assert calls["tag"] == "published"
-        assert calls["name_pattern"] == "manghan-ep-7"
+        assert calls["name_pattern"] == "sample-serial-ep-7"
         assert result.input_data["kind"] == "episode"
         assert result.input_data["tag"] == "published"
-        assert result.input_data["name_pattern"] == "manghan-ep-7"
+        assert result.input_data["name_pattern"] == "sample-serial-ep-7"
         assert result.input_data["kind_expression"] == "${inputs.kind}"
         assert result.input_data["tag_expression"] == "${inputs.tag}"
         assert result.input_data["name_pattern_expression"] == "${inputs.series}-ep-${inputs.episode}"
         assert "kind='episode'" in result.output
         assert "tag='published'" in result.output
-        assert "name_pattern='manghan-ep-7'" in result.output
+        assert "name_pattern='sample-serial-ep-7'" in result.output
         assert "${inputs.kind}" not in result.output
 
 

@@ -21,7 +21,7 @@ from operator_mcp.workflow.schema import (
 
 def _state(inputs: dict[str, Any] | None = None, results: dict[str, Any] | None = None) -> WorkflowState:
     return WorkflowState(
-        workflow_name="manghan-episode-factory",
+        workflow_name="series-episode-factory",
         run_id="run-1",
         inputs=dict(inputs or {}),
         step_results=dict(results or {}),
@@ -33,43 +33,43 @@ class FakeKumihoSDK:
 
     def __init__(self) -> None:
         self.items = {
-            "kref://ManghanDev/CharacterStates/handoyoon.character-state": {
-                "kref": "kref://ManghanDev/CharacterStates/handoyoon.character-state",
-                "name": "handoyoon.character-state",
-                "item_name": "handoyoon.character-state",
+            "kref://StoryProject/CharacterStates/protagonist.character-state": {
+                "kref": "kref://StoryProject/CharacterStates/protagonist.character-state",
+                "name": "protagonist.character-state",
+                "item_name": "protagonist.character-state",
                 "kind": "character-state",
                 "metadata": {},
                 "deprecated": False,
             },
-            "kref://ManghanDev/CanonRules/handoyoon-money.canon-rule": {
-                "kref": "kref://ManghanDev/CanonRules/handoyoon-money.canon-rule",
-                "name": "handoyoon-money.canon-rule",
-                "item_name": "handoyoon-money.canon-rule",
+            "kref://StoryProject/CanonRules/protagonist-money.canon-rule": {
+                "kref": "kref://StoryProject/CanonRules/protagonist-money.canon-rule",
+                "name": "protagonist-money.canon-rule",
+                "item_name": "protagonist-money.canon-rule",
                 "kind": "canon-rule",
                 "metadata": {},
                 "deprecated": False,
             },
-            "kref://ManghanDev/Episodes/ep-001.webnovel-episode": {
-                "kref": "kref://ManghanDev/Episodes/ep-001.webnovel-episode",
+            "kref://StoryProject/Episodes/ep-001.webnovel-episode": {
+                "kref": "kref://StoryProject/Episodes/ep-001.webnovel-episode",
                 "name": "ep-001.webnovel-episode",
                 "item_name": "ep-001.webnovel-episode",
                 "kind": "webnovel-episode",
                 "metadata": {},
                 "deprecated": False,
             },
-            "kref://ManghanDev/Bundles/manghan-main-canon.bundle": {
-                "kref": "kref://ManghanDev/Bundles/manghan-main-canon.bundle",
-                "name": "manghan-main-canon",
-                "item_name": "manghan-main-canon",
+            "kref://StoryProject/Bundles/series-main-canon.bundle": {
+                "kref": "kref://StoryProject/Bundles/series-main-canon.bundle",
+                "name": "series-main-canon",
+                "item_name": "series-main-canon",
                 "kind": "bundle",
                 "metadata": {},
                 "deprecated": False,
             },
         }
         self.revisions = {
-            "kref://ManghanDev/CharacterStates/handoyoon.character-state?r=12": {
-                "kref": "kref://ManghanDev/CharacterStates/handoyoon.character-state?r=12",
-                "item_kref": "kref://ManghanDev/CharacterStates/handoyoon.character-state",
+            "kref://StoryProject/CharacterStates/protagonist.character-state?r=12": {
+                "kref": "kref://StoryProject/CharacterStates/protagonist.character-state?r=12",
+                "item_kref": "kref://StoryProject/CharacterStates/protagonist.character-state",
                 "number": 12,
                 "tags": ["current"],
                 "metadata": {"summary": "Han Doyoon conditionally trusts Operator."},
@@ -77,9 +77,9 @@ class FakeKumihoSDK:
                 "deprecated": False,
                 "default_artifact": "state.md",
             },
-            "kref://ManghanDev/CanonRules/handoyoon-money.canon-rule?r=1": {
-                "kref": "kref://ManghanDev/CanonRules/handoyoon-money.canon-rule?r=1",
-                "item_kref": "kref://ManghanDev/CanonRules/handoyoon-money.canon-rule",
+            "kref://StoryProject/CanonRules/protagonist-money.canon-rule?r=1": {
+                "kref": "kref://StoryProject/CanonRules/protagonist-money.canon-rule?r=1",
+                "item_kref": "kref://StoryProject/CanonRules/protagonist-money.canon-rule",
                 "number": 1,
                 "tags": ["published"],
                 "metadata": {"summary": "No immediate large profit confirmation."},
@@ -87,9 +87,9 @@ class FakeKumihoSDK:
                 "deprecated": False,
                 "default_artifact": "rule.md",
             },
-            "kref://ManghanDev/Episodes/ep-001.webnovel-episode?r=1": {
-                "kref": "kref://ManghanDev/Episodes/ep-001.webnovel-episode?r=1",
-                "item_kref": "kref://ManghanDev/Episodes/ep-001.webnovel-episode",
+            "kref://StoryProject/Episodes/ep-001.webnovel-episode?r=1": {
+                "kref": "kref://StoryProject/Episodes/ep-001.webnovel-episode?r=1",
+                "item_kref": "kref://StoryProject/Episodes/ep-001.webnovel-episode",
                 "number": 1,
                 "tags": ["production-ready"],
                 "metadata": {"episode_number": "1"},
@@ -99,38 +99,38 @@ class FakeKumihoSDK:
             },
         }
         self.revisions_by_item_tag = {
-            ("kref://ManghanDev/CharacterStates/handoyoon.character-state", "current"):
-                self.revisions["kref://ManghanDev/CharacterStates/handoyoon.character-state?r=12"],
-            ("kref://ManghanDev/CanonRules/handoyoon-money.canon-rule", "published"):
-                self.revisions["kref://ManghanDev/CanonRules/handoyoon-money.canon-rule?r=1"],
-            ("kref://ManghanDev/Episodes/ep-001.webnovel-episode", "production-ready"):
-                self.revisions["kref://ManghanDev/Episodes/ep-001.webnovel-episode?r=1"],
+            ("kref://StoryProject/CharacterStates/protagonist.character-state", "current"):
+                self.revisions["kref://StoryProject/CharacterStates/protagonist.character-state?r=12"],
+            ("kref://StoryProject/CanonRules/protagonist-money.canon-rule", "published"):
+                self.revisions["kref://StoryProject/CanonRules/protagonist-money.canon-rule?r=1"],
+            ("kref://StoryProject/Episodes/ep-001.webnovel-episode", "production-ready"):
+                self.revisions["kref://StoryProject/Episodes/ep-001.webnovel-episode?r=1"],
         }
         self.bundle_members = {
-            "kref://ManghanDev/Bundles/manghan-main-canon.bundle": [
-                {"item_kref": "kref://ManghanDev/CharacterStates/handoyoon.character-state"},
+            "kref://StoryProject/Bundles/series-main-canon.bundle": [
+                {"item_kref": "kref://StoryProject/CharacterStates/protagonist.character-state"},
             ]
         }
         self.edges = {
-            "kref://ManghanDev/CharacterStates/handoyoon.character-state?r=12": [
+            "kref://StoryProject/CharacterStates/protagonist.character-state?r=12": [
                 {
-                    "source_kref": "kref://ManghanDev/CharacterStates/handoyoon.character-state?r=12",
-                    "target_kref": "kref://ManghanDev/CanonRules/handoyoon-money.canon-rule?r=1",
+                    "source_kref": "kref://StoryProject/CharacterStates/protagonist.character-state?r=12",
+                    "target_kref": "kref://StoryProject/CanonRules/protagonist-money.canon-rule?r=1",
                     "edge_type": "BLOCKS",
                     "metadata": {},
                 }
             ],
-            "kref://ManghanDev/CanonRules/handoyoon-money.canon-rule?r=1": [
+            "kref://StoryProject/CanonRules/protagonist-money.canon-rule?r=1": [
                 {
-                    "source_kref": "kref://ManghanDev/CharacterStates/handoyoon.character-state?r=12",
-                    "target_kref": "kref://ManghanDev/CanonRules/handoyoon-money.canon-rule?r=1",
+                    "source_kref": "kref://StoryProject/CharacterStates/protagonist.character-state?r=12",
+                    "target_kref": "kref://StoryProject/CanonRules/protagonist-money.canon-rule?r=1",
                     "edge_type": "BLOCKS",
                     "metadata": {},
                 }
             ],
         }
         self.artifacts = {
-            "kref://ManghanDev/CharacterStates/handoyoon.character-state?r=12": [
+            "kref://StoryProject/CharacterStates/protagonist.character-state?r=12": [
                 {
                     "name": "state.md",
                     "kref": "artifact://state",
@@ -138,7 +138,7 @@ class FakeKumihoSDK:
                     "metadata": {"summary": "Han Doyoon has conditional trust in Operator."},
                 }
             ],
-            "kref://ManghanDev/CanonRules/handoyoon-money.canon-rule?r=1": [
+            "kref://StoryProject/CanonRules/protagonist-money.canon-rule?r=1": [
                 {
                     "name": "rule.md",
                     "kref": "artifact://rule",
@@ -197,9 +197,9 @@ def fake_sdk(monkeypatch):
 @pytest.mark.asyncio
 async def test_kumiho_context_compiles_locked_pack_from_bundle_and_edges(fake_sdk):
     cfg = KumihoContextConfig(
-        project="ManghanDev",
+        project="StoryProject",
         mode="graph_augmented_context",
-        seed=KumihoSeedConfig(bundles=["manghan-main-canon"]),
+        seed=KumihoSeedConfig(bundles=["series-main-canon"]),
         traversal=KumihoTraversalConfig(max_depth=1, direction="out", edge_types=["BLOCKS"]),
         filters=KumihoFiltersConfig(
             include_kinds=["character-state", "canon-rule"],
@@ -216,8 +216,8 @@ async def test_kumiho_context_compiles_locked_pack_from_bundle_and_edges(fake_sd
     assert result.output_data["found"] is True
     assert result.output_data["locked_manifest"] == result.output_data["context_pack"]["locked_manifest"]
     source_krefs = result.output_data["source_krefs"]
-    assert "kref://ManghanDev/CharacterStates/handoyoon.character-state?r=12" in source_krefs
-    assert "kref://ManghanDev/CanonRules/handoyoon-money.canon-rule?r=1" in source_krefs
+    assert "kref://StoryProject/CharacterStates/protagonist.character-state?r=12" in source_krefs
+    assert "kref://StoryProject/CanonRules/protagonist-money.canon-rule?r=1" in source_krefs
     assert result.output_data["edge_map"][0]["edge_type"] == "BLOCKS"
     assert result.output_data["conflict_warnings"][0]["type"] == "blocks_edge"
     assert "## Locked Manifest" in result.output_data["artifact_content"]
@@ -233,13 +233,13 @@ async def test_kumiho_context_interpolates_seed_krefs_and_queries(fake_sdk):
                 step_id="latest",
                 status="completed",
                 output_data={
-                    "kref": "kref://ManghanDev/Episodes/ep-001.webnovel-episode?r=1",
+                    "kref": "kref://StoryProject/Episodes/ep-001.webnovel-episode?r=1",
                 },
             )
         },
     )
     cfg = KumihoContextConfig(
-        project="ManghanDev",
+        project="StoryProject",
         mode="graph_augmented_context",
         seed=KumihoSeedConfig(
             krefs=["${latest.output_data.kref}"],
@@ -257,14 +257,14 @@ async def test_kumiho_context_interpolates_seed_krefs_and_queries(fake_sdk):
     assert result.input_data["seed_kref_count"] == 1
     assert result.input_data["seed_query_count"] == 1
     assert result.output_data["source_krefs"] == [
-        "kref://ManghanDev/Episodes/ep-001.webnovel-episode?r=1"
+        "kref://StoryProject/Episodes/ep-001.webnovel-episode?r=1"
     ]
 
 
 @pytest.mark.asyncio
 async def test_kumiho_context_reports_missing_required_bundle(fake_sdk):
     cfg = KumihoContextConfig(
-        project="ManghanDev",
+        project="StoryProject",
         mode="bundle_context",
         seed=KumihoSeedConfig(bundles=["missing-bundle"]),
     )
@@ -282,7 +282,7 @@ async def test_kumiho_context_reports_missing_required_bundle(fake_sdk):
 async def test_kumiho_context_reads_file_uri_artifact_summary(fake_sdk, tmp_path):
     content_path = tmp_path / "state.md"
     content_path.write_text("File URI state summary for current character state.", encoding="utf-8")
-    rev_kref = "kref://ManghanDev/CharacterStates/handoyoon.character-state?r=12"
+    rev_kref = "kref://StoryProject/CharacterStates/protagonist.character-state?r=12"
     fake_sdk.revisions[rev_kref]["metadata"] = {}
     fake_sdk.artifacts[rev_kref] = [
         {
@@ -293,9 +293,9 @@ async def test_kumiho_context_reads_file_uri_artifact_summary(fake_sdk, tmp_path
         }
     ]
     cfg = KumihoContextConfig(
-        project="ManghanDev",
+        project="StoryProject",
         mode="bundle_context",
-        seed=KumihoSeedConfig(bundles=["manghan-main-canon"]),
+        seed=KumihoSeedConfig(bundles=["series-main-canon"]),
         traversal=KumihoTraversalConfig(max_depth=0),
         filters=KumihoFiltersConfig(include_kinds=["character-state"]),
     )

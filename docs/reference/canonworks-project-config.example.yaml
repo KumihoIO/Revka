@@ -1,0 +1,79 @@
+canon_project:
+  id: sample-serial
+  project: StoryProject
+  title: Sample Serial
+  language: en-US
+  cadence: web_serial
+  default_episode_length_chars: 6000
+  genre_modules:
+  - serialized-drama
+  - mystery
+  - relationship-drama
+  - long-arc-payoff
+  spaces:
+    config: StoryProject/Config
+    series: StoryProject/Series
+    canon_rules: StoryProject/CanonRules
+    characters: StoryProject/Characters
+    relationships: StoryProject/Relationships
+    timeline: StoryProject/Timeline
+    roadmaps: StoryProject/Roadmaps
+    style_guides: StoryProject/StyleGuides
+    volumes: StoryProject/Volumes
+    episodes: StoryProject/Episodes
+    patches: StoryProject/Patches
+    context_packs: StoryProject/ContextPacks
+    state: StoryProject/State
+    progress: StoryProject/Progress
+    reports: StoryProject/Reports
+    personas: StoryProject/Personas
+  bundles:
+    main_canon: series-main-canon
+    production_style: series-production-style
+    production_episodes: series-production-episodes
+    canon_patch_candidates: series-canon-patch-candidates
+    current_character_states: series-current-character-states
+    current_relationship_states: series-current-relationship-states
+    current_timeline_progress: series-current-timeline-progress
+    current_storyline_progress: series-current-storyline-progress
+    current_foreshadow_progress: series-current-foreshadow-progress
+    state_sync_snapshots: series-state-sync-snapshots
+    canon_state_sync_reports: series-canon-state-sync-reports
+    active_storylines: series-active-storylines
+    active_foreshadow: series-active-foreshadow
+    context_packs: series-context-packs
+    blocked_episodes: series-blocked-episodes
+  naming:
+    episode_name_prefix: ep
+    episode_id_prefix: ep
+    volume_bundle_prefix: series-vol
+    context_pack_suffix: context
+    patch_name_suffix: canon-patch
+    blocked_name_suffix: blocked
+  krefs:
+    series_bible: kref://StoryProject/Series/main.series-bible
+    series_synopsis: kref://StoryProject/Series/canon-synopsis.series-synopsis
+    character_index: kref://StoryProject/Characters/index.character-index
+    relationship_map: kref://StoryProject/Relationships/main.relationship-map
+    relationship_map_artifact: kref://StoryProject/Relationships/main.relationship-map?r=1&a=RELATIONSHIP_MAP.md
+    timeline: kref://StoryProject/Timeline/main.timeline
+    roadmap: kref://StoryProject/Roadmaps/long-arc.series-roadmap
+  agent_personas:
+    showrunner: commercial-serial-showrunner.v1
+    intent_planner: serial-arc-architect.v1
+    beat_planner: scene-pressure-engineer.v1
+    draft_writer: genre-prose-writer.v1
+    prose_reviser: human-serial-editor.v1
+    continuity_auditor: hard-continuity-lorekeeper.v1
+    retention_auditor: platform-reader-retention-editor.v1
+    state_sync_reviewer: canon-accountant.v1
+  priority_rules:
+  - canon_integrity_over_hook
+  - reveal_locks_over_dramatic_convenience
+  - relationship_stage_over_romance_payoff
+  - project_style_guide_over_persona_flourish
+  audit_rules:
+  - main canon and current snapshots are highest authority
+  - canon patch candidates are propose-only unless explicitly approved
+  - relationship and major timeline moves require human approval by default
+  external_reference_seed: serialized fiction continuity references for this project

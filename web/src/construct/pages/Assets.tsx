@@ -157,12 +157,12 @@ const DEFAULT_KIND: KindMeta = {
   border: 'rgba(161, 161, 170, 0.25)',
 };
 
-const PROTECTED_BUNDLES = new Set([
-  'manghan-main-canon',
-  'manghan-current-character-states',
-  'manghan-active-storylines',
-  'manghan-active-foreshadow',
-]);
+const PROTECTED_BUNDLE_SUFFIXES = [
+  'main-canon',
+  'current-character-states',
+  'active-storylines',
+  'active-foreshadow',
+];
 
 const EDGE_TYPES = [
   'DEPENDS_ON',
@@ -381,6 +381,14 @@ function bundleNameFromKref(kref?: string | null): string {
   const base = kref.split('?')[0] ?? kref;
   const leaf = base.split('/').pop() ?? base;
   return leaf.split('.')[0] || leaf;
+}
+
+function bundleNameMatchesSuffix(name: string, suffix: string): boolean {
+  return name === suffix || name.endsWith(`-${suffix}`);
+}
+
+function isProtectedBundleName(name: string): boolean {
+  return PROTECTED_BUNDLE_SUFFIXES.some((suffix) => bundleNameMatchesSuffix(name, suffix));
 }
 
 function graphNodeLabel(node: Pick<KumihoAssetGraphNode, 'item_name' | 'kref'>): string {
@@ -716,7 +724,7 @@ function BundleBrowser({
           <div className="p-4"><StateMessage compact title="No bundles" description="No Kumiho bundle items were found in this space." /></div>
         ) : bundles.map((bundle) => {
           const active = bundle.kref === selectedBundleKref;
-          const protectedBundle = PROTECTED_BUNDLES.has(bundleNameFromKref(bundle.kref));
+          const protectedBundle = isProtectedBundleName(bundleNameFromKref(bundle.kref));
           return (
             <button
               key={bundle.kref}
@@ -872,7 +880,7 @@ function CreateActionModal({
   }[action];
 
   const resolvedSpacePath = spacePath ?? (project ? `/${project}` : '');
-  const protectedBundle = selectedBundle ? PROTECTED_BUNDLES.has(bundleNameFromKref(selectedBundle.kref)) : false;
+  const protectedBundle = selectedBundle ? isProtectedBundleName(bundleNameFromKref(selectedBundle.kref)) : false;
 
   const submit = async () => {
     setBusy(true);
@@ -2276,7 +2284,7 @@ export default function Assets() {
   const safePage = Math.min(Math.max(1, itemPage), pageCount);
   const visibleItems = sortedItems.slice((safePage - 1) * pageSize, safePage * pageSize);
   const selectedBundle = bundles.find((bundle) => bundle.kref === selectedBundleKref) ?? null;
-  const selectedBundleProtected = selectedBundle ? PROTECTED_BUNDLES.has(bundleNameFromKref(selectedBundle.kref)) : false;
+  const selectedBundleProtected = selectedBundle ? isProtectedBundleName(bundleNameFromKref(selectedBundle.kref)) : false;
   const metadataEntries = Object.entries(
     selectedArtifact?.metadata ?? selectedRevision?.metadata ?? selectedItem?.metadata ?? {},
   );

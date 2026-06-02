@@ -24,7 +24,7 @@ from operator_mcp.workflow.schema import (
 
 def _state() -> WorkflowState:
     return WorkflowState(
-        workflow_name="manghan-canon-patch-apply",
+        workflow_name="series-canon-patch-apply",
         run_id="run-1",
         inputs={},
         step_results={},
@@ -36,78 +36,78 @@ class FakeKumihoMutationSDK:
 
     def __init__(self) -> None:
         self.items: dict[str, dict[str, Any]] = {
-            "kref://ManghanDev/Episodes/mg-ep-027.webnovel-episode": {
-                "kref": "kref://ManghanDev/Episodes/mg-ep-027.webnovel-episode",
-                "name": "mg-ep-027.webnovel-episode",
-                "item_name": "mg-ep-027.webnovel-episode",
+            "kref://StoryProject/Episodes/ep-027.webnovel-episode": {
+                "kref": "kref://StoryProject/Episodes/ep-027.webnovel-episode",
+                "name": "ep-027.webnovel-episode",
+                "item_name": "ep-027.webnovel-episode",
                 "kind": "webnovel-episode",
             },
-            "kref://ManghanDev/CharacterStates/handoyoon.character-state": {
-                "kref": "kref://ManghanDev/CharacterStates/handoyoon.character-state",
-                "name": "handoyoon.character-state",
-                "item_name": "handoyoon.character-state",
+            "kref://StoryProject/CharacterStates/protagonist.character-state": {
+                "kref": "kref://StoryProject/CharacterStates/protagonist.character-state",
+                "name": "protagonist.character-state",
+                "item_name": "protagonist.character-state",
                 "kind": "character-state",
             },
-            "kref://ManghanDev/Patches/mg-ep-027-canon-patch.canon-patch": {
-                "kref": "kref://ManghanDev/Patches/mg-ep-027-canon-patch.canon-patch",
-                "name": "mg-ep-027-canon-patch.canon-patch",
-                "item_name": "mg-ep-027-canon-patch.canon-patch",
+            "kref://StoryProject/Patches/ep-027-canon-patch.canon-patch": {
+                "kref": "kref://StoryProject/Patches/ep-027-canon-patch.canon-patch",
+                "name": "ep-027-canon-patch.canon-patch",
+                "item_name": "ep-027-canon-patch.canon-patch",
                 "kind": "canon-patch",
             },
-            "kref://ManghanDev/Bundles/manghan-production-episodes.bundle": {
-                "kref": "kref://ManghanDev/Bundles/manghan-production-episodes.bundle",
-                "name": "manghan-production-episodes",
-                "item_name": "manghan-production-episodes",
+            "kref://StoryProject/Bundles/series-production-episodes.bundle": {
+                "kref": "kref://StoryProject/Bundles/series-production-episodes.bundle",
+                "name": "series-production-episodes",
+                "item_name": "series-production-episodes",
                 "kind": "bundle",
             },
-            "kref://ManghanDev/Bundles/manghan-pending-canon-patches.bundle": {
-                "kref": "kref://ManghanDev/Bundles/manghan-pending-canon-patches.bundle",
-                "name": "manghan-pending-canon-patches",
-                "item_name": "manghan-pending-canon-patches",
+            "kref://StoryProject/Bundles/series-pending-canon-patches.bundle": {
+                "kref": "kref://StoryProject/Bundles/series-pending-canon-patches.bundle",
+                "name": "series-pending-canon-patches",
+                "item_name": "series-pending-canon-patches",
                 "kind": "bundle",
             },
-            "kref://ManghanDev/Bundles/manghan-applied-canon-patches.bundle": {
-                "kref": "kref://ManghanDev/Bundles/manghan-applied-canon-patches.bundle",
-                "name": "manghan-applied-canon-patches",
-                "item_name": "manghan-applied-canon-patches",
+            "kref://StoryProject/Bundles/series-applied-canon-patches.bundle": {
+                "kref": "kref://StoryProject/Bundles/series-applied-canon-patches.bundle",
+                "name": "series-applied-canon-patches",
+                "item_name": "series-applied-canon-patches",
                 "kind": "bundle",
             },
-            "kref://ManghanDev/Bundles/manghan-current-character-states.bundle": {
-                "kref": "kref://ManghanDev/Bundles/manghan-current-character-states.bundle",
-                "name": "manghan-current-character-states",
-                "item_name": "manghan-current-character-states",
+            "kref://StoryProject/Bundles/series-current-character-states.bundle": {
+                "kref": "kref://StoryProject/Bundles/series-current-character-states.bundle",
+                "name": "series-current-character-states",
+                "item_name": "series-current-character-states",
                 "kind": "bundle",
             },
         }
         self.revisions: dict[str, dict[str, Any]] = {
-            "kref://ManghanDev/Episodes/mg-ep-027.webnovel-episode?r=1": {
-                "kref": "kref://ManghanDev/Episodes/mg-ep-027.webnovel-episode?r=1",
-                "item_kref": "kref://ManghanDev/Episodes/mg-ep-027.webnovel-episode",
+            "kref://StoryProject/Episodes/ep-027.webnovel-episode?r=1": {
+                "kref": "kref://StoryProject/Episodes/ep-027.webnovel-episode?r=1",
+                "item_kref": "kref://StoryProject/Episodes/ep-027.webnovel-episode",
                 "tags": ["production-ready"],
                 "metadata": {},
             },
-            "kref://ManghanDev/CharacterStates/handoyoon.character-state?r=1": {
-                "kref": "kref://ManghanDev/CharacterStates/handoyoon.character-state?r=1",
-                "item_kref": "kref://ManghanDev/CharacterStates/handoyoon.character-state",
+            "kref://StoryProject/CharacterStates/protagonist.character-state?r=1": {
+                "kref": "kref://StoryProject/CharacterStates/protagonist.character-state?r=1",
+                "item_kref": "kref://StoryProject/CharacterStates/protagonist.character-state",
                 "tags": ["current"],
                 "metadata": {"summary": "old state"},
             },
-            "kref://ManghanDev/Patches/mg-ep-027-canon-patch.canon-patch?r=1": {
-                "kref": "kref://ManghanDev/Patches/mg-ep-027-canon-patch.canon-patch?r=1",
-                "item_kref": "kref://ManghanDev/Patches/mg-ep-027-canon-patch.canon-patch",
+            "kref://StoryProject/Patches/ep-027-canon-patch.canon-patch?r=1": {
+                "kref": "kref://StoryProject/Patches/ep-027-canon-patch.canon-patch?r=1",
+                "item_kref": "kref://StoryProject/Patches/ep-027-canon-patch.canon-patch",
                 "tags": ["candidate"],
                 "metadata": {
                     "canon_patch": {
-                        "patch_id": "mg-ep-027-canon-patch",
+                        "patch_id": "ep-027-canon-patch",
                         "patch_status": "candidate",
                         "proposed_revision_updates": {
                             "character_states": [
                                 {
-                                    "item_name": "handoyoon",
+                                    "item_name": "protagonist",
                                     "item_kind": "character-state",
                                     "previous_revision_kref": (
-                                        "kref://ManghanDev/CharacterStates/"
-                                        "handoyoon.character-state?r=1"
+                                        "kref://StoryProject/CharacterStates/"
+                                        "protagonist.character-state?r=1"
                                     ),
                                     "proposed_change_summary": "Trust advanced slightly.",
                                     "proposed_artifact_patch": "## Current State\n- Trust advanced.",
@@ -117,11 +117,11 @@ class FakeKumihoMutationSDK:
                         },
                         "proposed_edges": [
                             {
-                                "from": "kref://ManghanDev/Episodes/mg-ep-027.webnovel-episode?r=1",
+                                "from": "kref://StoryProject/Episodes/ep-027.webnovel-episode?r=1",
                                 "edge_type": "UPDATES",
                                 "to": (
-                                    "kref://ManghanDev/CharacterStates/"
-                                    "handoyoon.character-state?r=1"
+                                    "kref://StoryProject/CharacterStates/"
+                                    "protagonist.character-state?r=1"
                                 ),
                                 "reason": "Episode changes the current state.",
                                 "evidence_locator": "Ep.027 final scene",
@@ -132,12 +132,12 @@ class FakeKumihoMutationSDK:
             },
         }
         self.bundle_members: dict[str, list[dict[str, str]]] = {
-            "kref://ManghanDev/Bundles/manghan-production-episodes.bundle": [],
-            "kref://ManghanDev/Bundles/manghan-pending-canon-patches.bundle": [
-                {"item_kref": "kref://ManghanDev/Patches/mg-ep-027-canon-patch.canon-patch"}
+            "kref://StoryProject/Bundles/series-production-episodes.bundle": [],
+            "kref://StoryProject/Bundles/series-pending-canon-patches.bundle": [
+                {"item_kref": "kref://StoryProject/Patches/ep-027-canon-patch.canon-patch"}
             ],
-            "kref://ManghanDev/Bundles/manghan-applied-canon-patches.bundle": [],
-            "kref://ManghanDev/Bundles/manghan-current-character-states.bundle": [],
+            "kref://StoryProject/Bundles/series-applied-canon-patches.bundle": [],
+            "kref://StoryProject/Bundles/series-current-character-states.bundle": [],
         }
         self.artifacts_by_revision: dict[str, list[dict[str, Any]]] = {}
         self.created_revisions: list[dict[str, Any]] = []
@@ -244,14 +244,14 @@ def fake_sdk(monkeypatch):
 @pytest.mark.asyncio
 async def test_kumiho_bundle_update_adds_member_idempotently(fake_sdk):
     cfg = KumihoBundleUpdateConfig(
-        project="ManghanDev",
+        project="StoryProject",
         mode="add_members",
         updates=[
             KumihoBundleUpdateEntryConfig(
-                bundle="manghan-production-episodes",
+                bundle="series-production-episodes",
                 add=[
                     KumihoBundleMemberConfig(
-                        item_kref="kref://ManghanDev/Episodes/mg-ep-027.webnovel-episode",
+                        item_kref="kref://StoryProject/Episodes/ep-027.webnovel-episode",
                         reason="Production-ready episode",
                     )
                 ],
@@ -266,24 +266,24 @@ async def test_kumiho_bundle_update_adds_member_idempotently(fake_sdk):
     assert first.status == "completed"
     assert first.output_data["changed"] is True
     assert first.output_data["bundles"][0]["added"] == [
-        "kref://ManghanDev/Episodes/mg-ep-027.webnovel-episode"
+        "kref://StoryProject/Episodes/ep-027.webnovel-episode"
     ]
     assert second.status == "completed"
     assert second.output_data["changed"] is False
     assert second.output_data["bundles"][0]["skipped_existing"] == [
-        "kref://ManghanDev/Episodes/mg-ep-027.webnovel-episode"
+        "kref://StoryProject/Episodes/ep-027.webnovel-episode"
     ]
 
 
 @pytest.mark.asyncio
 async def test_kumiho_bundle_update_rejects_protected_bundle(fake_sdk):
     cfg = KumihoBundleUpdateConfig(
-        project="ManghanDev",
+        project="StoryProject",
         mode="add_members",
         updates=[
             KumihoBundleUpdateEntryConfig(
-                bundle="manghan-main-canon",
-                add=[KumihoBundleMemberConfig(item_kref="kref://ManghanDev/Episodes/mg-ep-027.webnovel-episode")],
+                bundle="series-main-canon",
+                add=[KumihoBundleMemberConfig(item_kref="kref://StoryProject/Episodes/ep-027.webnovel-episode")],
             )
         ],
     )
@@ -298,15 +298,15 @@ async def test_kumiho_bundle_update_rejects_protected_bundle(fake_sdk):
 @pytest.mark.asyncio
 async def test_kumiho_bundle_update_allows_protected_bundle_with_override(fake_sdk):
     cfg = KumihoBundleUpdateConfig(
-        project="ManghanDev",
+        project="StoryProject",
         mode="add_members",
         allow_protected=True,
         updates=[
             KumihoBundleUpdateEntryConfig(
-                bundle="manghan-current-character-states",
+                bundle="series-current-character-states",
                 add=[
                     KumihoBundleMemberConfig(
-                        item_kref="kref://ManghanDev/CharacterStates/handoyoon.character-state"
+                        item_kref="kref://StoryProject/CharacterStates/protagonist.character-state"
                     )
                 ],
             )
@@ -318,15 +318,63 @@ async def test_kumiho_bundle_update_allows_protected_bundle_with_override(fake_s
 
     assert result.status == "completed"
     assert result.output_data["bundles"][0]["added"] == [
-        "kref://ManghanDev/CharacterStates/handoyoon.character-state"
+        "kref://StoryProject/CharacterStates/protagonist.character-state"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_kumiho_bundle_update_supports_explicit_protected_bundle_names(fake_sdk):
+    cfg = KumihoBundleUpdateConfig(
+        project="StoryProject",
+        mode="add_members",
+        protected_bundles=["series-production-episodes"],
+        updates=[
+            KumihoBundleUpdateEntryConfig(
+                bundle="series-production-episodes",
+                add=[KumihoBundleMemberConfig(item_kref="kref://StoryProject/Episodes/ep-027.webnovel-episode")],
+            )
+        ],
+    )
+    step = StepDef(id="bundle-update", type=StepType.KUMIHO_BUNDLE_UPDATE, kumiho=cfg)
+
+    result = await _exec_kumiho_bundle_update(step, _state())
+
+    assert result.status == "failed"
+    assert result.output_data["errors"][0]["type"] == "protected_bundle"
+
+
+@pytest.mark.asyncio
+async def test_kumiho_bundle_update_can_disable_default_protected_suffixes(fake_sdk):
+    cfg = KumihoBundleUpdateConfig(
+        project="StoryProject",
+        mode="add_members",
+        protected_bundle_suffixes=[],
+        updates=[
+            KumihoBundleUpdateEntryConfig(
+                bundle="series-current-character-states",
+                add=[
+                    KumihoBundleMemberConfig(
+                        item_kref="kref://StoryProject/CharacterStates/protagonist.character-state"
+                    )
+                ],
+            )
+        ],
+    )
+    step = StepDef(id="bundle-update", type=StepType.KUMIHO_BUNDLE_UPDATE, kumiho=cfg)
+
+    result = await _exec_kumiho_bundle_update(step, _state())
+
+    assert result.status == "completed"
+    assert result.output_data["bundles"][0]["added"] == [
+        "kref://StoryProject/CharacterStates/protagonist.character-state"
     ]
 
 
 @pytest.mark.asyncio
 async def test_kumiho_patch_apply_dry_run_plans_without_mutation(fake_sdk):
     cfg = KumihoPatchApplyConfig(
-        project="ManghanDev",
-        patch_kref="kref://ManghanDev/Patches/mg-ep-027-canon-patch.canon-patch?r=1",
+        project="StoryProject",
+        patch_kref="kref://StoryProject/Patches/ep-027-canon-patch.canon-patch?r=1",
         dry_run=True,
         approval=KumihoPatchApprovalConfig(required=False),
     )
@@ -348,8 +396,8 @@ async def test_kumiho_patch_apply_dry_run_plans_without_mutation(fake_sdk):
 @pytest.mark.asyncio
 async def test_kumiho_patch_apply_creates_revision_tags_edge_and_bundle_moves(fake_sdk):
     cfg = KumihoPatchApplyConfig(
-        project="ManghanDev",
-        patch_kref="kref://ManghanDev/Patches/mg-ep-027-canon-patch.canon-patch?r=1",
+        project="StoryProject",
+        patch_kref="kref://StoryProject/Patches/ep-027-canon-patch.canon-patch?r=1",
         dry_run=False,
         approval=KumihoPatchApprovalConfig(
             required=True,
@@ -358,9 +406,9 @@ async def test_kumiho_patch_apply_creates_revision_tags_edge_and_bundle_moves(fa
         ),
         apply=KumihoPatchApplyFlagsConfig(save_apply_report=False),
         bundle_policy=KumihoPatchBundlePolicyConfig(
-            pending_patch_bundle="manghan-pending-canon-patches",
-            applied_patch_bundle="manghan-applied-canon-patches",
-            current_state_bundle="manghan-current-character-states",
+            pending_patch_bundle="series-pending-canon-patches",
+            applied_patch_bundle="series-applied-canon-patches",
+            current_state_bundle="series-current-character-states",
         ),
     )
     step = StepDef(id="apply-patch", type=StepType.KUMIHO_PATCH_APPLY, kumiho=cfg)
@@ -370,26 +418,26 @@ async def test_kumiho_patch_apply_creates_revision_tags_edge_and_bundle_moves(fa
     assert result.status == "completed"
     assert result.output_data["applied"] is True
     created = result.output_data["created_revisions"][0]
-    assert created["old_revision_kref"] == "kref://ManghanDev/CharacterStates/handoyoon.character-state?r=1"
-    assert created["new_revision_kref"] == "kref://ManghanDev/CharacterStates/handoyoon.character-state?r=2"
-    assert ("kref://ManghanDev/CharacterStates/handoyoon.character-state?r=2", "current") in fake_sdk.tags_added
-    assert ("kref://ManghanDev/CharacterStates/handoyoon.character-state?r=1", "current") in fake_sdk.tags_removed
+    assert created["old_revision_kref"] == "kref://StoryProject/CharacterStates/protagonist.character-state?r=1"
+    assert created["new_revision_kref"] == "kref://StoryProject/CharacterStates/protagonist.character-state?r=2"
+    assert ("kref://StoryProject/CharacterStates/protagonist.character-state?r=2", "current") in fake_sdk.tags_added
+    assert ("kref://StoryProject/CharacterStates/protagonist.character-state?r=1", "current") in fake_sdk.tags_removed
     assert fake_sdk.created_edges[0]["edge_type"] == "UPDATES"
-    assert fake_sdk.created_edges[0]["target_kref"] == "kref://ManghanDev/CharacterStates/handoyoon.character-state?r=2"
-    assert {"item_kref": "kref://ManghanDev/Patches/mg-ep-027-canon-patch.canon-patch"} not in fake_sdk.bundle_members[
-        "kref://ManghanDev/Bundles/manghan-pending-canon-patches.bundle"
+    assert fake_sdk.created_edges[0]["target_kref"] == "kref://StoryProject/CharacterStates/protagonist.character-state?r=2"
+    assert {"item_kref": "kref://StoryProject/Patches/ep-027-canon-patch.canon-patch"} not in fake_sdk.bundle_members[
+        "kref://StoryProject/Bundles/series-pending-canon-patches.bundle"
     ]
-    assert {"item_kref": "kref://ManghanDev/Patches/mg-ep-027-canon-patch.canon-patch"} in fake_sdk.bundle_members[
-        "kref://ManghanDev/Bundles/manghan-applied-canon-patches.bundle"
+    assert {"item_kref": "kref://StoryProject/Patches/ep-027-canon-patch.canon-patch"} in fake_sdk.bundle_members[
+        "kref://StoryProject/Bundles/series-applied-canon-patches.bundle"
     ]
-    assert {"item_kref": "kref://ManghanDev/CharacterStates/handoyoon.character-state"} in fake_sdk.bundle_members[
-        "kref://ManghanDev/Bundles/manghan-current-character-states.bundle"
+    assert {"item_kref": "kref://StoryProject/CharacterStates/protagonist.character-state"} in fake_sdk.bundle_members[
+        "kref://StoryProject/Bundles/series-current-character-states.bundle"
     ]
 
 
 @pytest.mark.asyncio
 async def test_kumiho_patch_apply_loads_file_uri_patch_artifact(fake_sdk, tmp_path):
-    patch_kref = "kref://ManghanDev/Patches/mg-ep-027-canon-patch.canon-patch?r=1"
+    patch_kref = "kref://StoryProject/Patches/ep-027-canon-patch.canon-patch?r=1"
     fake_sdk.revisions[patch_kref]["metadata"] = {}
     patch_path = tmp_path / "canon-patch.yaml"
     patch_path.write_text(
@@ -399,9 +447,9 @@ canon_patch:
   patch_status: candidate
   proposed_revision_updates:
     character_states:
-      - item_name: handoyoon
+      - item_name: protagonist
         item_kind: character-state
-        previous_revision_kref: kref://ManghanDev/CharacterStates/handoyoon.character-state?r=1
+        previous_revision_kref: kref://StoryProject/CharacterStates/protagonist.character-state?r=1
         proposed_change_summary: Loaded from file URI artifact.
         proposed_artifact_patch: "## Current State\\n- Loaded from file URI artifact."
         evidence_locator: Ep.027 artifact fixture
@@ -416,7 +464,7 @@ canon_patch:
         }
     ]
     cfg = KumihoPatchApplyConfig(
-        project="ManghanDev",
+        project="StoryProject",
         patch_kref=patch_kref,
         dry_run=True,
         approval=KumihoPatchApprovalConfig(required=False),

@@ -539,6 +539,14 @@ class KumihoBundleUpdateEntryConfig(BaseModel):
     replace: KumihoBundleReplaceConfig | None = None
 
 
+DEFAULT_PROTECTED_BUNDLE_SUFFIXES = [
+    "main-canon",
+    "current-character-states",
+    "active-storylines",
+    "active-foreshadow",
+]
+
+
 class KumihoBundleUpdateConfig(BaseModel):
     """Config for 'kumiho_bundle_update' membership mutations."""
     project: str = ""
@@ -548,6 +556,10 @@ class KumihoBundleUpdateConfig(BaseModel):
     fail_if_missing_bundle: bool | None = None
     fail_if_missing_item: bool = True
     allow_protected: bool = False
+    protected_bundles: list[str] = Field(default_factory=list)
+    protected_bundle_suffixes: list[str] = Field(
+        default_factory=lambda: list(DEFAULT_PROTECTED_BUNDLE_SUFFIXES)
+    )
     updates: list[KumihoBundleUpdateEntryConfig] = Field(default_factory=list)
 
     @model_validator(mode="after")
