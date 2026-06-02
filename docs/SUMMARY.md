@@ -61,6 +61,7 @@ Last refreshed: **April 27, 2026**.
 - [ops/proxy-agent-playbook.md](ops/proxy-agent-playbook.md)
 - [ops/resource-limits.md](ops/resource-limits.md)
 - [ops/google-agents-cli-demo-readiness.md](ops/google-agents-cli-demo-readiness.md)
+- [ops/google-agents-track3-enterprise-readiness.md](ops/google-agents-track3-enterprise-readiness.md)
 - [contributing/release-process.md](contributing/release-process.md)
 
 ## 6) Security
