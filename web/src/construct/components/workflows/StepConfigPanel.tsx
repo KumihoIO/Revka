@@ -3311,7 +3311,7 @@ export default function StepConfigPanel({
                 <ExpressionTextarea
                   value={data.kumihoProject || ''}
                   onChange={(next) => onUpdate(node.id, { kumihoProject: next })}
-                  placeholder="ManghanDev"
+                  placeholder="StoryProject"
                   rows={1}
                   style={monoInputStyle}
                   stepIds={dagStepIds}
@@ -3338,7 +3338,7 @@ export default function StepConfigPanel({
                   onFocus={kumihoSeedBundlesDraftState.startEditing}
                   onChange={(e) => kumihoSeedBundlesDraftState.setDraft(e.target.value)}
                   onBlur={() => onUpdate(node.id, { kumihoSeedBundles: kumihoSeedBundlesDraftState.commit() })}
-                  placeholder="manghan-main-canon, manghan-active-storylines"
+                  placeholder="series-main-canon, series-active-storylines"
                   rows={2}
                   style={monoInputStyle}
                 />
@@ -3532,7 +3532,7 @@ export default function StepConfigPanel({
                 <ExpressionTextarea
                   value={data.kumihoProject || ''}
                   onChange={(next) => onUpdate(node.id, { kumihoProject: next })}
-                  placeholder="ManghanDev"
+                  placeholder="StoryProject"
                   rows={1}
                   style={monoInputStyle}
                   stepIds={dagStepIds}
@@ -3608,7 +3608,7 @@ export default function StepConfigPanel({
                 <ExpressionTextarea
                   value={data.kumihoProject || ''}
                   onChange={(next) => onUpdate(node.id, { kumihoProject: next })}
-                  placeholder="ManghanDev"
+                  placeholder="StoryProject"
                   rows={1}
                   style={monoInputStyle}
                   stepIds={dagStepIds}
@@ -3745,12 +3745,12 @@ export default function StepConfigPanel({
                 />
               </div>
               {([
-                ['Pending Patch Bundle', 'kumihoPendingPatchBundle', 'manghan-pending-canon-patches'],
-                ['Applied Patch Bundle', 'kumihoAppliedPatchBundle', 'manghan-applied-canon-patches'],
-                ['Current State Bundle', 'kumihoCurrentStateBundle', 'manghan-current-character-states'],
-                ['Active Storyline Bundle', 'kumihoActiveStorylineBundle', 'manghan-active-storylines'],
-                ['Active Foreshadow Bundle', 'kumihoActiveForeshadowBundle', 'manghan-active-foreshadow'],
-                ['Timeline Bundle', 'kumihoTimelineBundle', 'manghan-timeline-events'],
+                ['Pending Patch Bundle', 'kumihoPendingPatchBundle', 'pending-canon-patches'],
+                ['Applied Patch Bundle', 'kumihoAppliedPatchBundle', 'applied-canon-patches'],
+                ['Current State Bundle', 'kumihoCurrentStateBundle', 'current-character-states'],
+                ['Active Storyline Bundle', 'kumihoActiveStorylineBundle', 'active-storylines'],
+                ['Active Foreshadow Bundle', 'kumihoActiveForeshadowBundle', 'active-foreshadow'],
+                ['Timeline Bundle', 'kumihoTimelineBundle', 'timeline-events'],
               ] as Array<[string, keyof TaskNodeData, string]>).map(([label, key, placeholder]) => (
                 <div key={String(key)}>
                   <label style={labelStyle}>{label}</label>

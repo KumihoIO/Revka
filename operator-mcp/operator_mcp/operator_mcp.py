@@ -1807,6 +1807,153 @@ async def list_tools() -> list[Tool]:
                 "required": ["raw_output"],
             },
         ),
+        Tool(
+            name="canonworks_init",
+            description=(
+                "Initialize a CanonWorks serial-story canon project in Kumiho. "
+                "Creates project spaces, core canon bundles, initial series/character/"
+                "relationship/timeline items, artifacts, and graph edges, then returns "
+                "the generated project_config_yaml for the CanonWorks workflows."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "Series title."},
+                    "project": {"type": "string", "description": "Kumiho project id/name. Defaults to a slug of title."},
+                    "story_slug": {"type": "string", "description": "Stable story slug. Defaults to a slug of title."},
+                    "premise": {"type": "string", "description": "Canonical premise or logline."},
+                    "synopsis": {"type": "string", "description": "Initial canon synopsis."},
+                    "language": {"type": "string", "default": "ko-KR"},
+                    "cadence": {"type": "string", "default": "web_serial"},
+                    "target_length": {"type": "string", "description": "Default episode length target, e.g. 6000."},
+                    "genre_modules": {"type": "array", "items": {"type": "string"}},
+                    "themes": {"type": "array", "items": {"type": "string"}},
+                    "canon_guardrails": {"type": "array", "items": {"type": "string"}},
+                    "characters": {
+                        "type": "array",
+                        "items": {"type": "object", "additionalProperties": True},
+                        "description": "Initial character canon objects: id/name/display_name/role/summary/traits.",
+                    },
+                    "relationships": {
+                        "type": "array",
+                        "items": {"type": "object", "additionalProperties": True},
+                        "description": "Relationship edges: from/to/type|edge_type/label/summary.",
+                    },
+                    "timeline_events": {"type": "array", "items": {"type": "object", "additionalProperties": True}},
+                    "storylines": {"type": "array", "items": {"type": "object", "additionalProperties": True}},
+                    "foreshadow_threads": {"type": "array", "items": {"type": "object", "additionalProperties": True}},
+                    "style_guide": {"type": "string", "description": "Initial prose/platform style guide."},
+                    "external_reference_seed": {"type": "string"},
+                    "artifact_root": {"type": "string", "description": "Optional local directory for generated artifacts."},
+                    "spaces": {"type": "object", "additionalProperties": {"type": "string"}},
+                    "bundles": {"type": "object", "additionalProperties": {"type": "string"}},
+                },
+                "required": ["title"],
+            },
+        ),
+        Tool(
+            name="canonworks_start",
+            description=(
+                "Start or continue an interactive CanonWorks setup interview. "
+                "When a project/title is known, creates the Kumiho project scaffold "
+                "and canonical spaces first. "
+                "Collects story seed answers, reports readiness, asks the next "
+                "questions, and previews the Kumiho canon graph before committing canon items."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "session_id": {"type": "string", "description": "Existing CanonWorks setup session id."},
+                    "seed": {"type": "object", "additionalProperties": True, "description": "Story seed fields to merge into the draft."},
+                    "answers": {"type": "object", "additionalProperties": True, "description": "Answers from the operator interview."},
+                    "project_name": {"type": "string", "description": "Kumiho project name to create/use."},
+                    "defer_kumiho_scaffold": {"type": "boolean", "default": False, "description": "Skip Kumiho project/space creation for dry-run setup."},
+                    "state_root": {"type": "string", "description": "Optional CanonWorks state root for tests/custom installs."},
+                },
+                "additionalProperties": True,
+            },
+        ),
+        Tool(
+            name="canonworks_preview",
+            description="Preview spaces, bundles, items, artifacts, and relationship edges for a CanonWorks draft without mutating Kumiho.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "session_id": {"type": "string"},
+                    "seed": {"type": "object", "additionalProperties": True},
+                    "answers": {"type": "object", "additionalProperties": True},
+                    "state_root": {"type": "string"},
+                },
+                "additionalProperties": True,
+            },
+        ),
+        Tool(
+            name="canonworks_commit",
+            description=(
+                "Commit a CanonWorks interview draft to Kumiho by calling canonworks_init. "
+                "Stores the generated project_config_artifact_path so later run tools do "
+                "not need the operator to pass internal config paths."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "session_id": {"type": "string"},
+                    "seed": {"type": "object", "additionalProperties": True},
+                    "answers": {"type": "object", "additionalProperties": True},
+                    "allow_incomplete": {"type": "boolean", "default": False},
+                    "state_root": {"type": "string"},
+                },
+                "additionalProperties": True,
+            },
+        ),
+        Tool(
+            name="canonworks_run_episode",
+            description="Run canonworks-serial-episode-factory using a committed CanonWorks project/session, hiding project_config_yaml plumbing.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "session_id": {"type": "string"},
+                    "project": {"type": "string"},
+                    "story_slug": {"type": "string"},
+                    "project_config_artifact_path": {"type": "string"},
+                    "cwd": {"type": "string"},
+                    "target_length": {"type": "string"},
+                    "episode_goal": {"type": "string"},
+                    "must_include": {"type": "string"},
+                    "avoid": {"type": "string"},
+                    "continuity_context": {"type": "string"},
+                    "pacing_mode": {"type": "string"},
+                    "opencrab_query": {"type": "string"},
+                    "initial_episode_number": {"type": "integer"},
+                    "initial_volume": {"type": "integer"},
+                    "state_root": {"type": "string"},
+                },
+                "additionalProperties": True,
+            },
+        ),
+        Tool(
+            name="canonworks_sync_state",
+            description="Run canonworks-serial-canon-state-sync using a committed CanonWorks project/session, hiding project_config_yaml plumbing.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "session_id": {"type": "string"},
+                    "project": {"type": "string"},
+                    "story_slug": {"type": "string"},
+                    "project_config_artifact_path": {"type": "string"},
+                    "cwd": {"type": "string"},
+                    "apply_mode": {"type": "string"},
+                    "continuity_context": {"type": "string"},
+                    "review_focus": {"type": "string"},
+                    "target_episode_number": {"type": "string"},
+                    "target_episode_kref": {"type": "string"},
+                    "target_patch_kref": {"type": "string"},
+                    "bootstrap_mode": {"type": "string"},
+                    "state_root": {"type": "string"},
+                },
+                "additionalProperties": True,
+            },
+        ),
         # -- Declarative Workflow Engine --
         Tool(
             name="run_workflow",
@@ -2861,6 +3008,24 @@ async def _dispatch(name: str, args: dict[str, Any]) -> dict[str, Any]:
     if name == "map_reduce":
         from .patterns.map_reduce import tool_map_reduce
         return await tool_map_reduce(args)
+    if name == "canonworks_init":
+        from .tool_handlers.canonworks import tool_canonworks_init
+        return await tool_canonworks_init(args, KUMIHO_SDK)
+    if name == "canonworks_start":
+        from .tool_handlers.canonworks import tool_canonworks_start
+        return await tool_canonworks_start(args, KUMIHO_SDK)
+    if name == "canonworks_preview":
+        from .tool_handlers.canonworks import tool_canonworks_preview
+        return await tool_canonworks_preview(args)
+    if name == "canonworks_commit":
+        from .tool_handlers.canonworks import tool_canonworks_commit
+        return await tool_canonworks_commit(args, KUMIHO_SDK)
+    if name == "canonworks_run_episode":
+        from .tool_handlers.canonworks import tool_canonworks_run_episode
+        return await tool_canonworks_run_episode(args)
+    if name == "canonworks_sync_state":
+        from .tool_handlers.canonworks import tool_canonworks_sync_state
+        return await tool_canonworks_sync_state(args)
     # -- Declarative Workflow Engine --
     if name == "run_workflow":
         from .tool_handlers.workflows import tool_run_workflow

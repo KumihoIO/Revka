@@ -30,11 +30,11 @@ const MAX_EDIT_BYTES: usize = 1024 * 1024;
 const MAX_GRAPH_DEPTH: u8 = 3;
 const DEFAULT_GRAPH_NODE_LIMIT: usize = 100;
 const MAX_GRAPH_NODE_LIMIT: usize = 200;
-const PROTECTED_BUNDLES: &[&str] = &[
-    "manghan-main-canon",
-    "manghan-current-character-states",
-    "manghan-active-storylines",
-    "manghan-active-foreshadow",
+const PROTECTED_BUNDLE_SUFFIXES: &[&str] = &[
+    "main-canon",
+    "current-character-states",
+    "active-storylines",
+    "active-foreshadow",
 ];
 
 #[derive(Deserialize)]
@@ -258,9 +258,21 @@ fn kref_leaf_name(kref: &str) -> &str {
         .map_or_else(|| kref_without_selector(kref), |(name, _)| name)
 }
 
+fn bundle_name_matches_suffix(name: &str, suffix: &str) -> bool {
+    if name == suffix {
+        return true;
+    }
+    match name.strip_suffix(suffix) {
+        Some(prefix) => prefix.ends_with('-'),
+        None => false,
+    }
+}
+
 fn is_protected_bundle(kref: &str) -> bool {
     let name = kref_leaf_name(kref);
-    PROTECTED_BUNDLES.iter().any(|protected| protected == &name)
+    PROTECTED_BUNDLE_SUFFIXES
+        .iter()
+        .any(|suffix| bundle_name_matches_suffix(name, suffix))
 }
 
 fn normalize_graph_direction(input: Option<&str>) -> String {
@@ -1443,10 +1455,13 @@ mod tests {
     #[test]
     fn protected_bundle_detection_uses_bundle_item_name() {
         assert!(is_protected_bundle(
-            "kref://ManghanDev/Bundles/manghan-main-canon.bundle"
+            "kref://StoryProject/Bundles/series-main-canon.bundle"
+        ));
+        assert!(is_protected_bundle(
+            "kref://StoryProject/Bundles/main-canon.bundle"
         ));
         assert!(!is_protected_bundle(
-            "kref://ManghanDev/Bundles/manghan-context-packs.bundle"
+            "kref://StoryProject/Bundles/series-context-packs.bundle"
         ));
     }
 
@@ -1463,7 +1478,7 @@ mod tests {
         let workspace = Path::new("C:/Users/example/.construct/workspace");
         let path = default_artifact_path(
             workspace,
-            "kref://ManghanDev/Characters/handoyoon.character-state?r=12",
+            "kref://StoryProject/Characters/protagonist.character-state?r=12",
             "STATE.md",
         )
         .expect("default artifact path");
@@ -1472,9 +1487,9 @@ mod tests {
             workspace
                 .join("artifacts")
                 .join("kumiho")
-                .join("manghandev")
+                .join("storyproject")
                 .join("characters")
-                .join("handoyoon-character-state")
+                .join("protagonist-character-state")
                 .join("r12")
                 .join("STATE.md")
         );
@@ -1485,7 +1500,7 @@ mod tests {
         let workspace = Path::new("C:/Users/example/.construct/workspace");
         let err = default_artifact_path(
             workspace,
-            "kref://ManghanDev/Characters/handoyoon.character-state?t=current",
+            "kref://StoryProject/Characters/protagonist.character-state?t=current",
             "STATE.md",
         )
         .expect_err("tag selector should not be enough for file storage");

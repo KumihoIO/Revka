@@ -22,12 +22,12 @@ except Exception:  # pragma: no cover
     yaml = None  # type: ignore[assignment]
 
 
-PROTECTED_BUNDLES = {
-    "manghan-main-canon",
-    "manghan-current-character-states",
-    "manghan-active-storylines",
-    "manghan-active-foreshadow",
-}
+DEFAULT_PROTECTED_BUNDLE_SUFFIXES = (
+    "main-canon",
+    "current-character-states",
+    "active-storylines",
+    "active-foreshadow",
+)
 ALLOWED_PATCH_STATUSES = {"candidate", "validated", "approved"}
 PATCH_UPDATE_SECTIONS = (
     "character_states",
@@ -122,6 +122,19 @@ def _bundle_name_from_ref(ref: str) -> str:
     return base.removesuffix(".bundle")
 
 
+def _bundle_names_from_config(value: Any) -> list[str]:
+    names: list[str] = []
+    for raw in _as_list(value):
+        name = _bundle_name_from_ref(str(raw))
+        if name:
+            names.append(name)
+    return names
+
+
+def _bundle_name_matches_suffix(name: str, suffix: str) -> bool:
+    return bool(name and suffix and (name == suffix or name.endswith(f"-{suffix}")))
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -185,6 +198,13 @@ class KumihoBundleUpdater:
         )
         self.fail_if_missing_item = _as_bool(self.cfg.get("fail_if_missing_item", True))
         self.allow_protected = _as_bool(self.cfg.get("allow_protected", False))
+        self.protected_bundles = set(_bundle_names_from_config(self.cfg.get("protected_bundles")))
+        suffixes_config = (
+            self.cfg["protected_bundle_suffixes"]
+            if "protected_bundle_suffixes" in self.cfg
+            else DEFAULT_PROTECTED_BUNDLE_SUFFIXES
+        )
+        self.protected_bundle_suffixes = tuple(_bundle_names_from_config(suffixes_config))
         self.errors: list[dict[str, Any]] = []
 
     async def run(self) -> dict[str, Any]:
@@ -296,7 +316,11 @@ class KumihoBundleUpdater:
     def _is_protected(self, bundle_ref: str) -> bool:
         if self.allow_protected:
             return False
-        return _bundle_name_from_ref(bundle_ref) in PROTECTED_BUNDLES
+        name = _bundle_name_from_ref(bundle_ref)
+        return name in self.protected_bundles or any(
+            _bundle_name_matches_suffix(name, suffix)
+            for suffix in self.protected_bundle_suffixes
+        )
 
     def _mode_allows(self, update: dict[str, Any]) -> bool:
         has_add = bool(update.get("add"))

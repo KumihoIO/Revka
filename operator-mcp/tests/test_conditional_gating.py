@@ -262,7 +262,7 @@ class TestBranchGating:
     def test_non_matched_branch_with_shared_pregate_deps_stays_gated(self):
         """Shared pre-gate data deps must not rescue loser-branch work.
 
-        This mirrors the manghan episode workflow: the production branch steps
+        This mirrors the serial episode workflow: the production branch steps
         referenced context/final-auditor data produced before the gate, so the
         old outside-route rescue let them run even when the final gate matched
         the blocked branch.
