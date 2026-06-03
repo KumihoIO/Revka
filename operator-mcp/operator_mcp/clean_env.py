@@ -33,6 +33,12 @@ _AUTH_KEYS = frozenset({
     "AWS_REGION",
     "AWS_DEFAULT_REGION",
     "GOOGLE_APPLICATION_CREDENTIALS",
+    "GOOGLE_API_KEY",
+    "GEMINI_API_KEY",
+    "GOOGLE_CLOUD_PROJECT",
+    "GOOGLE_CLOUD_LOCATION",
+    "GOOGLE_GENAI_USE_VERTEXAI",
+    "GEMINI_ENTERPRISE_APP_ID",
 })
 
 # Variables needed for network access

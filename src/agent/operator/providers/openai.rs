@@ -37,6 +37,16 @@ create_agent — Spawn a child agent.
   })
   ```
 
+  Example — delegate Google ADK lifecycle work to a coding agent:
+  ```
+  create_agent({
+    "cwd": "/path/to/adk-project",
+    "title": "Deploy ADK agent",
+    "agent_type": "codex",
+    "initial_prompt": "Use google_agents_cli to deploy this ADK project and report the result."
+  })
+  ```
+
 wait_for_agent — Wait for a child agent to finish.
   Required: agent_id (string)
 
@@ -144,6 +154,10 @@ get_agent_trust — Required: template_name.
 --- Budget ---
 
 get_budget_status — No parameters. Returns session/daily/monthly spend.
+
+--- Google Agents CLI ---
+
+google_agents_cli — Run agents-cli lifecycle commands. Params: command (array), prompt (for run), working_directory, timeout.
 
 --- ClawHub ---
 

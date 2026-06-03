@@ -38,6 +38,12 @@ Quick reference with examples:
   # Send follow-up work to an idle agent
   send_agent_prompt(agent_id="<id>", prompt="Now add integration tests.")
 
+  # Run Google Agents CLI lifecycle commands
+  google_agents_cli(
+    command=["deploy", "--no-wait"],
+    working_directory="/path/to/adk-project"
+  )
+
   # Deploy a pre-built team
   spawn_team(
     team_kref="kref://Construct/Teams/security-audit",

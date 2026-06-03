@@ -46,6 +46,7 @@ pub mod file_write;
 pub mod gemini_cli;
 pub mod git_operations;
 pub mod glob_search;
+pub mod google_agents_cli;
 pub mod google_workspace;
 #[cfg(feature = "hardware")]
 pub mod hardware_board_info;
@@ -142,6 +143,7 @@ pub use file_write::FileWriteTool;
 pub use gemini_cli::GeminiCliTool;
 pub use git_operations::GitOperationsTool;
 pub use glob_search::GlobSearchTool;
+pub use google_agents_cli::GoogleAgentsCliTool;
 pub use google_workspace::GoogleWorkspaceTool;
 #[cfg(feature = "hardware")]
 pub use hardware_board_info::HardwareBoardInfoTool;
@@ -709,6 +711,14 @@ pub fn all_tools_with_runtime(
         tool_arcs.push(Arc::new(GeminiCliTool::new(
             security.clone(),
             root_config.gemini_cli.clone(),
+        )));
+    }
+
+    // Google Agents CLI lifecycle tool
+    if root_config.google_agents_cli.enabled {
+        tool_arcs.push(Arc::new(GoogleAgentsCliTool::new(
+            security.clone(),
+            root_config.google_agents_cli.clone(),
         )));
     }
 

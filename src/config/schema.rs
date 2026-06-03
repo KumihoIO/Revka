@@ -450,6 +450,10 @@ pub struct Config {
     #[serde(default)]
     pub gemini_cli: GeminiCliConfig,
 
+    /// Google Agents CLI tool configuration (`[google_agents_cli]`).
+    #[serde(default)]
+    pub google_agents_cli: GoogleAgentsCliConfig,
+
     /// OpenCode CLI tool configuration (`[opencode_cli]`).
     #[serde(default)]
     pub opencode_cli: OpenCodeCliConfig,
@@ -3929,6 +3933,51 @@ impl Default for GeminiCliConfig {
             enabled: false,
             timeout_secs: default_gemini_cli_timeout_secs(),
             max_output_bytes: default_gemini_cli_max_output_bytes(),
+            env_passthrough: Vec::new(),
+        }
+    }
+}
+
+// ── Google Agents CLI ───────────────────────────────────────────
+
+/// Google Agents CLI tool configuration (`[google_agents_cli]` section).
+///
+/// Runs the `agents-cli` lifecycle tool for Google ADK / Agent Platform
+/// projects. `agents-cli run` is used for non-interactive ADK project prompts;
+/// other subcommands such as `deploy`, `eval run`, and `publish
+/// gemini-enterprise` are exposed through the tool's argv-style command
+/// parameter. Authentication uses the binary's own Google Cloud / AI Studio
+/// credentials by default unless `env_passthrough` includes extra variables.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct GoogleAgentsCliConfig {
+    /// Enable the `google_agents_cli` tool
+    #[serde(default)]
+    pub enabled: bool,
+    /// Maximum execution time in seconds (Google deployment/eval commands can be long)
+    #[serde(default = "default_google_agents_cli_timeout_secs")]
+    pub timeout_secs: u64,
+    /// Maximum output size in bytes (2MB default)
+    #[serde(default = "default_google_agents_cli_max_output_bytes")]
+    pub max_output_bytes: usize,
+    /// Extra env vars passed to the agents-cli subprocess
+    #[serde(default)]
+    pub env_passthrough: Vec<String>,
+}
+
+fn default_google_agents_cli_timeout_secs() -> u64 {
+    600
+}
+
+fn default_google_agents_cli_max_output_bytes() -> usize {
+    2_097_152
+}
+
+impl Default for GoogleAgentsCliConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            timeout_secs: default_google_agents_cli_timeout_secs(),
+            max_output_bytes: default_google_agents_cli_max_output_bytes(),
             env_passthrough: Vec::new(),
         }
     }
@@ -8445,6 +8494,7 @@ impl Default for Config {
             claude_code_runner: ClaudeCodeRunnerConfig::default(),
             codex_cli: CodexCliConfig::default(),
             gemini_cli: GeminiCliConfig::default(),
+            google_agents_cli: GoogleAgentsCliConfig::default(),
             opencode_cli: OpenCodeCliConfig::default(),
             sop: SopConfig::default(),
             shell_tool: ShellToolConfig::default(),
@@ -11584,6 +11634,7 @@ default_temperature = 0.7
             claude_code_runner: ClaudeCodeRunnerConfig::default(),
             codex_cli: CodexCliConfig::default(),
             gemini_cli: GeminiCliConfig::default(),
+            google_agents_cli: GoogleAgentsCliConfig::default(),
             opencode_cli: OpenCodeCliConfig::default(),
             sop: SopConfig::default(),
             shell_tool: ShellToolConfig::default(),
@@ -12128,6 +12179,7 @@ default_temperature = 0.7
             claude_code_runner: ClaudeCodeRunnerConfig::default(),
             codex_cli: CodexCliConfig::default(),
             gemini_cli: GeminiCliConfig::default(),
+            google_agents_cli: GoogleAgentsCliConfig::default(),
             opencode_cli: OpenCodeCliConfig::default(),
             sop: SopConfig::default(),
             shell_tool: ShellToolConfig::default(),

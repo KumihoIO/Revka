@@ -85,6 +85,7 @@ Other:
   - record_agent_outcome: Track performance. Required: agent_id, template_name, outcome, task_summary
   - get_agent_trust: View scores. Required: template_name
   - get_budget_status: Check spend (no params)
+  - google_agents_cli: Run agents-cli lifecycle commands. Params: command, prompt, working_directory
   - search_clawhub: Search skills. Required: query
   - install_from_clawhub: Install skill. Required: slug
   - list_nodes: Discover nodes (no params)

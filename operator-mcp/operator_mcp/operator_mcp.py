@@ -66,7 +66,7 @@ async def list_tools() -> list[Tool]:
     return [
         Tool(
             name="create_agent",
-            description="Spawn a new agent subprocess (claude or codex CLI). Optionally use a template from the agent pool.",
+            description="Spawn a new coding-agent subprocess (claude or codex). Optionally use a template from the agent pool. For Google ADK lifecycle work, spawn claude/codex and let it call google_agents_cli.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -94,7 +94,7 @@ async def list_tools() -> list[Tool]:
                     },
                     "model": {
                         "type": "string",
-                        "description": "Claude model to use (e.g. 'claude-opus-4-6', 'claude-sonnet-4-6', 'claude-haiku-4-5'). Overrides template model if provided.",
+                        "description": "Model hint for CLIs that support model selection.",
                     },
                     "allowed_tools": {
                         "type": "array",
@@ -122,6 +122,51 @@ async def list_tools() -> list[Tool]:
                     },
                 },
                 "required": ["title", "cwd"],
+            },
+        ),
+        Tool(
+            name="google_agents_cli",
+            description=(
+                "Run Google Agents CLI (agents-cli) lifecycle commands for ADK/A2A agents: "
+                "setup, create, scaffold, install, lint, run, eval, deploy, publish, infra, "
+                "data-ingestion, playground, update, login --status, and info. "
+                "Uses argv tokens, not a shell."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "command": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Arguments after agents-cli, e.g. ['deploy', '--no-wait'], ['eval', 'run'], ['publish', 'gemini-enterprise', '--list'], or ['run'].",
+                    },
+                    "prompt": {
+                        "type": "string",
+                        "description": "Prompt appended to `agents-cli run`. If command is omitted, defaults to ['run'].",
+                    },
+                    "working_directory": {
+                        "type": "string",
+                        "description": "ADK project directory. Defaults to Construct workspace.",
+                    },
+                    "timeout": {
+                        "type": "number",
+                        "description": "Maximum runtime in seconds. Default 600.",
+                    },
+                    "max_output_bytes": {
+                        "type": "integer",
+                        "description": "Maximum stdout bytes before truncation. Default 2097152.",
+                    },
+                    "allow_interactive": {
+                        "type": "boolean",
+                        "description": "Allow interactive flags. Defaults to false.",
+                        "default": False,
+                    },
+                    "env_passthrough": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Additional environment variable names to pass through.",
+                    },
+                },
             },
         ),
         Tool(
@@ -415,7 +460,7 @@ async def list_tools() -> list[Tool]:
                     },
                     "model": {
                         "type": "string",
-                        "description": "Preferred Claude model, e.g. 'claude-opus-4-6', 'claude-sonnet-4-6', 'claude-haiku-4-5'. Stored in Kumiho and used when spawning.",
+                        "description": "Preferred model hint.",
                     },
                 },
                 "required": ["name", "agent_type", "role", "capabilities", "description"],
@@ -2760,6 +2805,7 @@ _EXPECTED_KEYS: dict[str, frozenset[str]] = {
     "search_agent_pool": frozenset({"matches", "count"}),
     "get_team": frozenset({"team", "kref"}),
     "get_agent_activity": frozenset({"agent_id"}),
+    "google_agents_cli": frozenset({"success", "output", "exit_code", "status"}),
     "get_session_history": frozenset({"session_id", "events"}),
     "get_workflow_context": frozenset({"session_id", "agent_count", "findings"}),
     "memory_graph": frozenset({"nodes", "edges", "spaces", "stats"}),
@@ -2843,6 +2889,9 @@ async def _dispatch(name: str, args: dict[str, Any]) -> dict[str, Any]:
     # -- Agent lifecycle --
     if name == "create_agent":
         return await agents.tool_create_agent(args, JOURNAL, KUMIHO_POOL)
+    if name == "google_agents_cli":
+        from .tool_handlers.google_agents_cli import tool_google_agents_cli
+        return await tool_google_agents_cli(args)
     if name == "wait_for_agent":
         return await agents.tool_wait_for_agent(args)
     if name == "send_agent_prompt":

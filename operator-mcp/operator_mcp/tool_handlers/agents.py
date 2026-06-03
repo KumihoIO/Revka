@@ -105,6 +105,7 @@ async def _try_sidecar_create(
     max_turns: int = 200,
     include_memory: bool = True,
     include_operator: bool = True,
+    include_google_agentops: bool = False,
     clean_build: bool = False,
     node_env: str = "development",
     env_extra: dict[str, str] | None = None,
@@ -119,9 +120,9 @@ async def _try_sidecar_create(
     servers are reused directly instead of being rebuilt — this makes
     child agent creation cache-friendly and avoids per-spawn rebuilds.
 
-    ``include_memory`` / ``include_operator``: control MCP injection.
-    Set both to False for single-turn workflow agents that just need to
-    read a prompt and write output — avoids tool-loop token waste.
+    ``include_memory`` / ``include_operator`` / ``include_google_agentops``:
+    control MCP injection. Set all three to False for single-turn workflow
+    agents that just need to read a prompt and write output.
     """
     if not skip_budget_check:
         from ..operator_mcp import CONSTRUCT_GW
@@ -144,6 +145,7 @@ async def _try_sidecar_create(
         mcp_servers = build_mcp_servers(
             include_memory=include_memory,
             include_operator=include_operator,
+            include_google_agentops=include_google_agentops,
             socket_path=_sidecar_client.socket_path if _sidecar_client else None,
         )
 
@@ -154,6 +156,7 @@ async def _try_sidecar_create(
             template_hint=template_hint,
             include_memory=include_memory,
             include_operator=include_operator,
+            include_google_agentops=include_google_agentops,
         )
 
     config: dict[str, Any] = {
@@ -337,13 +340,12 @@ async def tool_create_agent(args: dict[str, Any], journal: SessionJournal, pool_
     clean_build = args.get("clean_build", False)
     node_env = args.get("node_env", "development")
 
-    # MCP injection level. `include_memory` and `include_operator` were
-    # previously referenced inside the sidecar branch without being
-    # defined in this function (latent NameError on the top-level path
-    # where `cached_params` is None). Derive from args with sensible
-    # defaults — both on by default, matching `_try_sidecar_create`.
+    # MCP injection level. These internal flags let workflow steps and
+    # spawned children choose between full operator tools, memory tools,
+    # reduced Google AgentOps tools, or no MCP surface.
     include_memory = args.get("include_memory", True)
     include_operator = args.get("include_operator", True)
+    include_google_agentops = args.get("include_google_agentops", False)
 
     # Try sidecar first, fallback to subprocess
     sidecar_info = None
@@ -356,6 +358,9 @@ async def tool_create_agent(args: dict[str, Any], journal: SessionJournal, pool_
             cached_params=cached_params,
             allowed_tools=allowed_tools,
             max_turns=max_turns,
+            include_memory=include_memory,
+            include_operator=include_operator,
+            include_google_agentops=include_google_agentops,
             clean_build=clean_build,
             node_env=node_env,
             skip_budget_check=True,
@@ -370,6 +375,7 @@ async def tool_create_agent(args: dict[str, Any], journal: SessionJournal, pool_
                 mcp_servers = build_mcp_servers(
                     include_memory=include_memory,
                     include_operator=include_operator,
+                    include_google_agentops=include_google_agentops,
                     socket_path=_sidecar_client.socket_path if _sidecar_client else None,
                 )
                 sys_prompt = build_system_prompt(
@@ -378,6 +384,7 @@ async def tool_create_agent(args: dict[str, Any], journal: SessionJournal, pool_
                     template_hint=template_hint,
                     include_memory=include_memory,
                     include_operator=include_operator,
+                    include_google_agentops=include_google_agentops,
                 )
                 agent._cached_params = CacheSafeParams(
                     system_prompt=sys_prompt,
@@ -406,6 +413,7 @@ async def tool_create_agent(args: dict[str, Any], journal: SessionJournal, pool_
             sub_mcp_servers = build_mcp_servers(
                 include_memory=include_memory,
                 include_operator=include_operator,
+                include_google_agentops=include_google_agentops,
                 socket_path=_sidecar_client.socket_path if _sidecar_client else None,
             )
             agent._subprocess_mcp_servers = sub_mcp_servers

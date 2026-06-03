@@ -158,7 +158,7 @@ Canonical types from `StepType` in `operator-mcp/operator_mcp/workflow/schema.py
 
 | Step Type | Description |
 |-----------|-------------|
-| `agent` | Spawn a Construct agent (claude/codex) with prompt, role, model, tools, timeout |
+| `agent` | Spawn a Construct coding agent (claude/codex) with prompt, role, model, tools, timeout |
 | `shell` | Execute shell commands with timeout and failure handling |
 | `python` | Run a Python script or inline Python with JSON I/O |
 | `email` | Send outbound email via SMTP with optional click tracking and dry-run |
@@ -269,7 +269,7 @@ Reusable agent definitions stored in `~/.construct/operator_mcp/agent_pool.json`
 | `identity` | Rich identity statement |
 | `soul` | Personality and values |
 | `tone` | Communication style |
-| `model` | Model override (e.g., `claude-opus-4-6`) |
+| `model` | Model override for CLIs that accept one |
 | `system_hint` | Extra prompt context |
 | `allowed_tools` | Tool allowlist (None = all) |
 | `max_turns` | Conversation turn limit (default 200) |

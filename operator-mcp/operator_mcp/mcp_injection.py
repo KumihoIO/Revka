@@ -33,6 +33,7 @@ _KUMIHO_SIDECAR_ROOT = os.path.join(_HOME, ".construct/kumiho")
 _KUMIHO_MCP_SCRIPT = os.path.join(_KUMIHO_SIDECAR_ROOT, "run_kumiho_mcp.py")
 _OPERATOR_DIR = os.path.dirname(os.path.abspath(__file__))
 _OPERATOR_SUBAGENT_MCP = os.path.join(_OPERATOR_DIR, "subagent_mcp.py")
+_GOOGLE_AGENTOPS_MCP = os.path.join(_OPERATOR_DIR, "google_agentops_mcp.py")
 _WORKFLOW_MEMORY_ALIAS_MCP = os.path.join(_OPERATOR_DIR, "workflow_memory_alias_mcp.py")
 
 
@@ -154,7 +155,8 @@ def operator_tools_config(socket_path: str | None = None) -> dict[str, Any]:
     """Build operator-tools MCP stdio config for sub-agent injection.
 
     Exposes a subset of operator tools so sub-agents can spawn children,
-    check siblings, and (Phase 4) post to chat rooms.
+    check siblings, post to chat rooms, run Google Agents CLI lifecycle
+    commands, and call outbound A2A agents.
     """
     python = _venv_python(os.path.join(_HOME, ".construct", "operator_mcp", "venv"))
 
@@ -170,9 +172,21 @@ def operator_tools_config(socket_path: str | None = None) -> dict[str, Any]:
     }
 
 
+def google_agentops_tools_config() -> dict[str, Any]:
+    """Build the reduced Google AgentOps MCP config for workflow agents."""
+    python = _venv_python(os.path.join(_HOME, ".construct", "operator_mcp", "venv"))
+    return {
+        "type": "stdio",
+        "command": python,
+        "args": [_GOOGLE_AGENTOPS_MCP],
+        "env": {},
+    }
+
+
 def build_mcp_servers(
     include_memory: bool = True,
     include_operator: bool = True,
+    include_google_agentops: bool = False,
     socket_path: str | None = None,
 ) -> dict[str, Any]:
     """Build the full MCP servers dict for agent session injection."""
@@ -186,6 +200,8 @@ def build_mcp_servers(
 
     if include_operator:
         servers["operator-tools"] = operator_tools_config(socket_path)
+    elif include_google_agentops:
+        servers["google-agentops-tools"] = google_agentops_tools_config()
 
     return servers
 
@@ -195,13 +211,18 @@ def build_mcp_servers(
 _OPERATOR_PROMPT = """\
 You are a sub-agent managed by the Construct Operator. You have access to \
 operator-tools MCP which lets you spawn child agents, check their status, \
-and coordinate work.
+coordinate work, run Google Agents CLI lifecycle commands, and call external \
+A2A agents.
 
 Guidelines:
 - Focus on your assigned task. Be thorough but efficient.
 - Use create_agent to delegate subtasks when the work is too large or spans \
 different domains.
 - Use get_agent_activity and wait_for_agent to monitor children.
+- Use google_agents_cli for Google ADK / Agent Platform lifecycle commands; \
+agents-cli is a tool, not an agent_type.
+- Use a2a_discover, a2a_send_task, and a2a_get_remote_task when the task \
+requires external A2A interoperability.
 - Report results clearly — your parent agent reads your output.
 - If context grows large, call compact_conversation to trigger structured \
 compaction. The summary is stored in Kumiho for cross-session recall."""
@@ -215,6 +236,17 @@ aliases: capture_skill stores reusable procedures and returns revision_kref; \
 tag_revision applies a tag to a Kumiho revision or item. When capture_skill \
 stores a long artifact, choose a cheap summary_model or ask which model to use; \
 the summary is stored on artifact metadata."""
+
+_GOOGLE_AGENTOPS_PROMPT = """\
+You have access to google-agentops-tools MCP for Google Agent Platform work.
+
+Guidelines:
+- Use google_agents_cli for Google ADK / Agent Platform lifecycle commands; \
+agents-cli is a tool, not an agent_type.
+- Use a2a_discover, a2a_send_task, and a2a_get_remote_task when the task \
+requires external A2A interoperability.
+- Use get_auth_token only when this workflow step has a bound auth profile \
+and an external API call needs that credential."""
 
 _SUB_AGENT_PREAMBLE = """\
 You are a worker agent spawned by a parent operator agent. Focus entirely \
@@ -241,6 +273,7 @@ def build_system_prompt(
     template_hint: str = "",
     include_memory: bool = True,
     include_operator: bool = True,
+    include_google_agentops: bool = False,
     skill_pattern: str = "",
 ) -> str:
     """Build a layered system prompt for an agent session.
@@ -256,11 +289,13 @@ def build_system_prompt(
     parts: list[str] = []
 
     # Lean mode: no MCP tools → minimal preamble, no tool instructions
-    no_tools = not include_memory and not include_operator
+    no_tools = not include_memory and not include_operator and not include_google_agentops
 
     if is_top_level:
         if include_operator:
             parts.append(_OPERATOR_PROMPT)
+        elif include_google_agentops:
+            parts.append(_GOOGLE_AGENTOPS_PROMPT)
         if include_memory:
             parts.append(_MEMORY_BOOTSTRAP)
     elif no_tools:
@@ -272,6 +307,8 @@ def build_system_prompt(
         )
     else:
         parts.append(_SUB_AGENT_PREAMBLE)
+        if include_google_agentops and not include_operator:
+            parts.append(_GOOGLE_AGENTOPS_PROMPT)
         if include_memory:
             parts.append(_MEMORY_BOOTSTRAP)
 

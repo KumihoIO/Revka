@@ -588,6 +588,7 @@ async def _spawn_and_wait(
     max_turns: int = 200,
     include_memory: bool = True,
     include_operator: bool = True,
+    include_google_agentops: bool = False,
     env_extra: dict[str, str] | None = None,
     cancel_check: Callable[[], bool] | None = None,
 ) -> tuple[ManagedAgent, str]:
@@ -615,7 +616,7 @@ async def _spawn_and_wait(
     # Single-turn workers (no MCP tools) go straight to CLI subprocess.
     # The sidecar's Agent SDK has separate rate limits from the CLI —
     # using `claude --print --bare` shares the user's CLI quota instead.
-    use_cli = not include_memory and not include_operator
+    use_cli = not include_memory and not include_operator and not include_google_agentops
     subprocess_mcp_servers: dict[str, Any] | None = None
     subprocess_prompt = prompt
 
@@ -624,12 +625,14 @@ async def _spawn_and_wait(
         subprocess_mcp_servers = build_mcp_servers(
             include_memory=include_memory,
             include_operator=include_operator,
+            include_google_agentops=include_google_agentops,
             socket_path=socket_path,
         )
         system_prompt = build_system_prompt(
             is_top_level=False,
             include_memory=include_memory,
             include_operator=include_operator,
+            include_google_agentops=include_google_agentops,
         )
         if system_prompt:
             subprocess_prompt = f"{system_prompt}\n\n{prompt}"
@@ -650,6 +653,7 @@ async def _spawn_and_wait(
                 max_turns=max_turns,
                 include_memory=include_memory,
                 include_operator=include_operator,
+                include_google_agentops=include_google_agentops,
                 env_extra=env_extra,
             )
         except BudgetGateError as exc:

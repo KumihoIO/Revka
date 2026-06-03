@@ -537,6 +537,36 @@ Lưu ý:
 - Đặt file `.md`/`.txt` datasheet đặt tên theo bo mạch (ví dụ `nucleo-f401re.md`, `rpi-gpio.md`) trong `datasheet_dir` cho RAG.
 - Xem [hardware-peripherals-design.md](hardware-peripherals-design.md) để biết giao thức bo mạch và ghi chú firmware.
 
+## `[google_agents_cli]`
+
+Tích hợp Google Agents CLI cho các lệnh vòng đời ADK / Agent Platform. Mục này bật tool
+`google_agents_cli`. `agents-cli` là công cụ vòng đời cho coding agent, không phải
+Construct `agent_type` hoặc session provider.
+
+| Khóa | Mặc định | Mục đích |
+|---|---|---|
+| `enabled` | `false` | Bật tool `google_agents_cli` |
+| `timeout_secs` | `600` | Thời gian tối đa cho subprocess `agents-cli` |
+| `max_output_bytes` | `2097152` | Số byte stdout tối đa trước khi cắt bớt |
+| `env_passthrough` | `[]` | Biến môi trường bổ sung truyền vào subprocess |
+
+Lưu ý:
+
+- Cài đặt và xác thực `agents-cli` bên ngoài Construct. Tool chạy binary có sẵn trong `PATH`.
+- Các biến Google như `GOOGLE_API_KEY`, `GEMINI_API_KEY`,
+  `GOOGLE_APPLICATION_CREDENTIALS`, `GOOGLE_CLOUD_PROJECT`,
+  `GOOGLE_CLOUD_LOCATION` và `GOOGLE_GENAI_USE_VERTEXAI` được truyền mặc định khi có.
+- Khi cần ủy quyền, dùng agent `claude` hoặc `codex` và yêu cầu agent đó gọi
+  `google_agents_cli` cho `agents-cli run`, `eval`, `deploy`, hoặc publish.
+  Dùng `agents-cli info` để kiểm tra trạng thái project/tooling. Model thường
+  được cấu hình trong project ADK.
+- Trong workflow khai báo, ưu tiên `agent.tools: google_agentops` khi child
+  agent chỉ cần `google_agents_cli` và tool outbound A2A. Thêm
+  `required_tools: [google_agents_cli]`; UI workflow tự mở rộng sang các tool
+  A2A đi kèm và preflight xác minh bề mặt Google AgentOps MCP thu gọn trước
+  khi chạy. Chỉ dùng `agent.tools: all` khi child cũng cần bề mặt Operator MCP
+  rộng hơn.
+
 ## Giá trị mặc định liên quan bảo mật
 
 - Allowlist kênh mặc định từ chối tất cả (`[]` nghĩa là từ chối tất cả)

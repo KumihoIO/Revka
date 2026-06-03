@@ -36,6 +36,8 @@ Localized hubs: [한국어](i18n/ko/README.md) · [Tiếng Việt](i18n/vi/READM
 | Run the embedded React dashboard locally | [dashboard-dev.md](setup-guides/dashboard-dev.md) |
 | Operate runtime (day-2 runbook) | [operations-runbook.md](ops/operations-runbook.md) |
 | Troubleshoot install/runtime/channel issues | [troubleshooting.md](ops/troubleshooting.md) |
+| Validate Google Agents CLI demo outcomes | [google-agents-cli-demo-readiness.md](ops/google-agents-cli-demo-readiness.md) |
+| Package the Google Track 3 Cloud Run A2A demo | [google-agents-track3-enterprise-readiness.md](ops/google-agents-track3-enterprise-readiness.md) |
 | Run Matrix encrypted-room setup and diagnostics | [matrix-e2ee-guide.md](security/matrix-e2ee-guide.md) |
 
 ## What makes Construct, Construct
@@ -90,6 +92,8 @@ Localized hubs: [한국어](i18n/ko/README.md) · [Tiếng Việt](i18n/vi/READM
 - [ops/network-deployment.md](ops/network-deployment.md) — Raspberry Pi / LAN deployment
 - [ops/proxy-agent-playbook.md](ops/proxy-agent-playbook.md) — proxy modes and tool-call routing
 - [ops/resource-limits.md](ops/resource-limits.md) — runtime resource controls
+- [ops/google-agents-cli-demo-readiness.md](ops/google-agents-cli-demo-readiness.md) — Google Agents CLI demo outcome checklist
+- [ops/google-agents-track3-enterprise-readiness.md](ops/google-agents-track3-enterprise-readiness.md) — Track 3 Cloud Run A2A enterprise packaging checklist
 
 ## Security
 

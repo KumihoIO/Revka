@@ -8,6 +8,8 @@ For operators running Construct in persistent or production-like environments.
 - Release runbook: [../contributing/release-process.md](../contributing/release-process.md)
 - Troubleshooting matrix: [./troubleshooting.md](./troubleshooting.md)
 - Safe network/gateway deployment: [./network-deployment.md](./network-deployment.md)
+- Google Agents CLI demo readiness: [./google-agents-cli-demo-readiness.md](./google-agents-cli-demo-readiness.md)
+- Google Track 3 enterprise readiness: [./google-agents-track3-enterprise-readiness.md](./google-agents-track3-enterprise-readiness.md)
 - Mattermost setup (channel-specific): [../setup-guides/mattermost-setup.md](../setup-guides/mattermost-setup.md)
 
 ## Common Flow

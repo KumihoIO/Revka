@@ -83,6 +83,13 @@ _WORKFLOW_MEMORY_ALIAS_TOOLS = {
     "kumiho_tag_revision",
 }
 _CAPTURE_TOOL_NAMES = {"capture_skill", "kumiho_capture_skill"}
+_GOOGLE_AGENTOPS_TOOLS = {
+    "google_agents_cli",
+    "a2a_discover",
+    "a2a_send_task",
+    "a2a_get_remote_task",
+    "get_auth_token",
+}
 _OPERATOR_SUBAGENT_TOOLS = {
     "create_agent",
     "wait_for_agent",
@@ -95,7 +102,7 @@ _OPERATOR_SUBAGENT_TOOLS = {
     "run_workflow",
     "get_workflow_status",
     "list_workflows",
-    "get_auth_token",
+    *_GOOGLE_AGENTOPS_TOOLS,
 }
 
 
@@ -1146,6 +1153,8 @@ def _agent_required_tool_visible(
         return False
     if base in _WORKFLOW_MEMORY_ALIAS_TOOLS:
         return "workflow-memory" in mcp_servers
+    if base in _GOOGLE_AGENTOPS_TOOLS:
+        return "operator-tools" in mcp_servers or "google-agentops-tools" in mcp_servers
     if base in _OPERATOR_SUBAGENT_TOOLS:
         return "operator-tools" in mcp_servers
     if base.startswith("kumiho_") or base.startswith("kumiho_memory_"):
@@ -1168,9 +1177,11 @@ def _preflight_required_tool_visibility(wf: WorkflowDef) -> str | None:
 
         include_memory = cfg.tools in ("all", "memory")
         include_operator = cfg.tools == "all"
+        include_google_agentops = cfg.tools == "google_agentops"
         mcp_servers = build_mcp_servers(
             include_memory=include_memory,
             include_operator=include_operator,
+            include_google_agentops=include_google_agentops,
         )
         missing = [
             tool for tool in required
@@ -1335,6 +1346,7 @@ async def _exec_agent(step: StepDef, state: WorkflowState, cwd: str) -> StepResu
     # Determine MCP injection level from step config
     include_memory = cfg.tools in ("all", "memory")
     include_operator = cfg.tools == "all"
+    include_google_agentops = cfg.tools == "google_agentops"
 
     # Auth profile binding: surfaced to the agent via the get_auth_token MCP
     # tool, NOT pre-injected into the system prompt or any agent context.
@@ -1361,6 +1373,7 @@ async def _exec_agent(step: StepDef, state: WorkflowState, cwd: str) -> StepResu
         max_turns=cfg.max_turns,
         include_memory=include_memory,
         include_operator=include_operator,
+        include_google_agentops=include_google_agentops,
         env_extra=agent_env_extra or None,
         cancel_check=lambda: state.cancel_requested,
     )

@@ -855,8 +855,8 @@ fn uninstall_linux(config: &Config, init_system: InitSystem) -> Result<()> {
 /// (launchd on macOS, systemd user units on Linux, OpenRC on Alpine)
 /// starts services with a minimal default PATH that does NOT include
 /// the user-bin dirs where most language-toolchain CLIs live. The
-/// daemon spawns external CLIs by name (`codex`, `claude`, `node`,
-/// `python3`) via subprocess, so without an explicit PATH override the
+/// daemon spawns external CLIs by name (`codex`, `claude`, `agents-cli`,
+/// `node`, `python3`) via subprocess, so without an explicit PATH override the
 /// spawn fails with `[Errno 2] No such file or directory: 'codex'`
 /// even though the user's interactive shell finds the binary fine.
 ///
@@ -1156,7 +1156,7 @@ fn format_systemd_unit(exe: &Path) -> String {
          # PATH override — systemd user services start with a minimal\n\
          # default PATH (typically /usr/local/bin:/usr/bin:/bin:...) that\n\
          # excludes ~/.cargo/bin, ~/.local/bin, and ~/.npm-global/bin.\n\
-         # Without this the daemon's subprocess spawns of codex/claude/etc\n\
+         # Without this the daemon's subprocess spawns of codex/claude/agents-cli/etc\n\
          # fail with [Errno 2] No such file or directory.\n\
          Environment=\"PATH={path_env}\"\n\
          # Allow inheriting DISPLAY and XDG_RUNTIME_DIR from the user session\n\
@@ -1597,7 +1597,7 @@ rc_ulimit="-n {nofile_soft}"
 
 # PATH override — the OpenRC system `construct` user starts with the
 # default supervised-process PATH which can be even narrower than the
-# user's interactive shell. Daemon subprocess spawns of codex/claude/etc
+# user's interactive shell. Daemon subprocess spawns of codex/claude/agents-cli/etc
 # need /usr/local/bin and friends explicitly listed.
 export PATH="{path_env}"
 
@@ -1765,7 +1765,7 @@ fn install_windows(config: &Config) -> Result<()> {
     // fixes: scheduled-task wrappers can drift away from the user's
     // current interactive PATH between install time and trigger time.
     // Snapshot install-time PATH and prepend the npm-global / cargo
-    // dirs so codex/claude spawns work even if PATH later changes.
+    // dirs so codex/claude/agents-cli spawns work even if PATH later changes.
     let path_env = build_windows_daemon_path();
 
     let wrapper_content = format!(
@@ -2086,7 +2086,7 @@ mod tests {
     fn build_unix_daemon_path_with_user_dirs_contains_curated_defaults() {
         // include_user_dirs=true → must carry the user-bin shortcuts
         // (~/.cargo/bin, ~/.local/bin) plus the system-wide locations.
-        // Without these, daemon subprocess spawns of codex/claude fail
+        // Without these, daemon subprocess spawns of codex/claude/agents-cli fail
         // with [Errno 2] No such file or directory even though the
         // user's interactive shell finds them.
         let path = build_unix_daemon_path(true);
@@ -2220,7 +2220,7 @@ mod tests {
 
         assert!(
             script.contains("export PATH=\""),
-            "OpenRC script must export PATH so daemon-spawned codex/claude can be found"
+            "OpenRC script must export PATH so daemon-spawned codex/claude/agents-cli can be found"
         );
         assert!(
             script.contains("/usr/local/bin"),

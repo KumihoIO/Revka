@@ -802,6 +802,38 @@ Kumiho는 Construct의 정식 영속 그래프 메모리 백엔드입니다. 런
   계정의 로컬 discovery cache 항목을 재사용하지 않습니다.
 - `space_prefix` 아래 Construct가 사용하는 네임스페이스: `AgentPool`, `Plans`, `Sessions`, `Goals`, `AgentTrust`, `ClawHub`, `Teams`, `CognitiveMemory/Skills`.
 
+## `[google_agents_cli]`
+
+Google Agents CLI용 ADK / Agent Platform lifecycle 명령 통합입니다. 이 섹션은
+`google_agents_cli` 도구를 켭니다. `agents-cli`는 코딩 에이전트를 돕는
+lifecycle 도구이지 Construct `agent_type`이나 세션 provider가 아닙니다.
+
+| 키 | 기본값 | 용도 |
+|---|---|---|
+| `enabled` | `false` | `google_agents_cli` 도구 활성화 |
+| `timeout_secs` | `600` | `agents-cli` subprocess 최대 실행 시간 |
+| `max_output_bytes` | `2097152` | truncate 전 최대 stdout 캡처 바이트 |
+| `env_passthrough` | `[]` | subprocess로 추가 전달할 환경 변수 |
+
+메모:
+
+- `agents-cli` 설치와 인증은 Construct 밖에서 수행하세요. 도구는 `PATH`의
+  기존 binary를 실행합니다.
+- `GOOGLE_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_APPLICATION_CREDENTIALS`,
+  `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION`,
+  `GOOGLE_GENAI_USE_VERTEXAI` 같은 Google 인증/프로젝트 변수는 존재하면
+  기본 전달됩니다.
+- 위임이 필요하면 `claude` 또는 `codex` 에이전트를 사용하고, 그 에이전트가
+  `google_agents_cli`로 `agents-cli run`, `eval`, `deploy`, publish 명령을
+  실행하게 하세요. 프로젝트/도구 상태 확인에는 `agents-cli info`를 사용하세요.
+  모델 선택은 보통 ADK project 설정이 담당합니다.
+- 선언형 워크플로에서 child agent가 `google_agents_cli`와 outbound A2A
+  도구만 필요로 하면 `agent.tools: google_agentops`를 우선 사용하세요.
+  `required_tools: [google_agents_cli]`를 추가하면 workflow UI가 companion
+  A2A 도구까지 자동 확장하고, 실행 전에 축소된 Google AgentOps MCP 표면이
+  주입되었는지 검증합니다. 더 넓은 Operator MCP 도구가 필요할 때만
+  `agent.tools: all`을 사용하세요.
+
 ## `[operator]`
 
 Operator는 타입 있는 단계와 고급 오케스트레이션 패턴으로 선언적 YAML 워크플로를 굴리는 Python MCP 서버입니다. 모든 비내부 에이전트에 자동 주입됩니다.

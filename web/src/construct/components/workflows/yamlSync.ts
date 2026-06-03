@@ -92,7 +92,7 @@ export interface TaskDefinition {
   /** Agent step: max LLM turns */
   agent_max_turns?: number;
   /** Agent step: MCP tool injection level */
-  agent_tools?: 'all' | 'memory' | 'none';
+  agent_tools?: 'all' | 'memory' | 'google_agentops' | 'none';
   /** Agent step: required MCP tools that must be visible before launch */
   agent_required_tools?: string[];
   /** Agent step: expected JSON output fields */
@@ -456,7 +456,7 @@ export interface TaskNodeData {
   prompt: string;
   timeout: number;
   agentMaxTurns: number;
-  agentTools: 'all' | 'memory' | 'none';
+  agentTools: 'all' | 'memory' | 'google_agentops' | 'none';
   agentRequiredTools: string[];
   agentOutputFields: string[];
   agentQualityEnabled: boolean;
@@ -1059,7 +1059,7 @@ function parseStep(s: YAMLObj): TaskDefinition | null {
     t.model = asStr(agent.model);
     t.agent_max_turns = asNum(agent.max_turns);
     const tools = asStr(agent.tools);
-    if (tools === 'all' || tools === 'memory' || tools === 'none') t.agent_tools = tools;
+    if (tools === 'all' || tools === 'memory' || tools === 'google_agentops' || tools === 'none') t.agent_tools = tools;
     t.agent_required_tools = asStrArr(agent.required_tools);
     t.agent_output_fields = asStrArr(agent.output_fields);
     const quality = isObj(agent.quality_check) ? agent.quality_check : undefined;

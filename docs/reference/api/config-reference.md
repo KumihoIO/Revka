@@ -973,6 +973,41 @@ Notes:
   `Plans`, `Sessions`, `Goals`, `AgentTrust`, `ClawHub`, `Teams`, and
   `CognitiveMemory/Skills`.
 
+## `[google_agents_cli]`
+
+Google Agents CLI integration for ADK / Agent Platform lifecycle commands.
+This enables the `google_agents_cli` tool. `agents-cli` is a lifecycle tool
+for coding agents, not a Construct `agent_type` or session provider.
+
+| Key | Default | Purpose |
+|---|---|---|
+| `enabled` | `false` | Enable the `google_agents_cli` tool |
+| `timeout_secs` | `600` | Maximum subprocess runtime for `agents-cli` commands |
+| `max_output_bytes` | `2097152` | Maximum captured stdout bytes before truncation |
+| `env_passthrough` | `[]` | Extra environment variables to pass to the subprocess |
+
+Notes:
+
+- Install/authenticate `agents-cli` outside Construct. The tool runs the
+  existing binary from `PATH`.
+- Safe Google auth/project variables such as `GOOGLE_API_KEY`,
+  `GEMINI_API_KEY`, `GOOGLE_APPLICATION_CREDENTIALS`,
+  `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION`, and
+  `GOOGLE_GENAI_USE_VERTEXAI` are passed by default when present.
+- Use a `claude` or `codex` agent when delegation is useful, and have that
+  agent call `google_agents_cli` for public lifecycle commands such as
+  `agents-cli setup`, `create`, `scaffold`, `install`, `lint`, `run`, `eval`,
+  `deploy`, `publish`, `infra`, `data-ingestion`, `playground`, or `update`.
+  Use `agents-cli login --status` and `agents-cli info` for non-mutating
+  environment checks. The ADK project generally owns model selection.
+- In declarative workflows, prefer an `agent` step with
+  `agent.tools: google_agentops` when the child agent only needs
+  `google_agents_cli` and outbound A2A tools. Add
+  `required_tools: [google_agents_cli]`; the workflow UI expands that to the
+  companion A2A tools and preflight verifies the reduced Google AgentOps MCP
+  surface before execution. Use `agent.tools: all` only when the child also
+  needs the broader Operator MCP surface.
+
 ## `[operator]`
 
 The Operator is a Python MCP server driving declarative YAML workflows with

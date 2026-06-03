@@ -153,7 +153,7 @@ Dashboard는 세 개의 사이드바 섹션(Orchestration, Operations, Inspectio
 
 | 스텝 타입 | 설명 |
 |-----------|-------------|
-| `agent` | prompt, role, model, tools, timeout을 지정하여 Construct 에이전트(claude/codex)를 스폰 |
+| `agent` | prompt, role, model, tools, timeout을 지정하여 Construct 코딩 에이전트(claude/codex)를 스폰 |
 | `shell` | 타임아웃 및 실패 처리와 함께 셸 명령 실행 |
 | `output` | 템플릿 보간을 지원하는 구조화된 출력(text/json/markdown) 생성 |
 | `a2a` | JSON-RPC 2.0을 통해 외부 A2A 에이전트로 태스크 전송 |
@@ -246,7 +246,7 @@ ${run_id}                — 워크플로우 실행 ID
 | `identity` | 풍부한 정체성 진술 |
 | `soul` | 성격 및 가치관 |
 | `tone` | 커뮤니케이션 스타일 |
-| `model` | 모델 오버라이드 (예: `claude-opus-4-6`) |
+| `model` | 지원되는 CLI의 모델 오버라이드 |
 | `system_hint` | 추가 프롬프트 컨텍스트 |
 | `allowed_tools` | 툴 화이트리스트 (None = 전체) |
 | `max_turns` | 대화 턴 제한 (기본 200) |

@@ -55,7 +55,7 @@ Goal tools: create_goal, get_goals, update_goal.
 Other tools: get_budget_status, record_agent_outcome, get_agent_trust, \
 capture_skill, list_skills, load_skill, search_clawhub, browse_clawhub, \
 install_from_clawhub, list_nodes, invoke_node, get_session_history, \
-archive_session, compact_conversation, store_compaction.
+archive_session, compact_conversation, store_compaction, google_agents_cli.
 
 Kumiho SDK skill: for Kumiho SDK/REST/MCP work involving krefs, projects, \
 spaces, items, revisions, artifacts, edges, bundles, graph traversal, or \
@@ -64,7 +64,9 @@ Skills lookup misses, call load_skill with allow_legacy_disk_fallback=true. \
 Do not inline the full skill unless the task needs exact API details.
 
 Roles: CODER (codex) — implementation/debugging. REVIEWER (codex) — \
-code review/quality. RESEARCHER (claude) — exploration/analysis.
+code review/quality. RESEARCHER (claude) — exploration/analysis. \
+For Google ADK / Agent Platform lifecycle work, use a claude/codex agent \
+with the google_agents_cli tool; agents-cli is not a peer coding agent.
 
 Model tiering: opus — deep reasoning/review. sonnet — balanced coding. \
 haiku — fast/cheap triage. Set model based on role complexity.

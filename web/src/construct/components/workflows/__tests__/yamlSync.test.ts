@@ -754,6 +754,19 @@ steps:
   assert.deepEqual(agent.agent_quality_criteria, ['accurate', 'concise']);
   assert.equal(agent.agent_quality_model, 'judge-model');
 
+  const agentopsYaml = `
+steps:
+  - id: agentops
+    type: agent
+    agent:
+      tools: google_agentops
+      required_tools: [google_agents_cli, a2a_discover]
+      prompt: "Deploy ADK"
+`;
+  const agentops = parseWorkflowYaml(tasksToYaml(parseWorkflowYaml(agentopsYaml)))[0]!;
+  assert.equal(agentops.agent_tools, 'google_agentops');
+  assert.deepEqual(agentops.agent_required_tools, ['google_agents_cli', 'a2a_discover']);
+
   const approval = tasks2.find((t) => t.id === 'approval')!;
   assert.equal(approval.human_approval_channel, 'discord');
   assert.equal(approval.human_approval_channel_id, 'ops-room');
