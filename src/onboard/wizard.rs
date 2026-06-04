@@ -46,20 +46,25 @@ pub struct ProjectContext {
 
 // ── Banner ───────────────────────────────────────────────────────
 
-const BANNER: &str = r"
-    01001000 01000101 01001100 01001100 01001111 00100000 01001110 01000101 01001111
-
-     ██████╗ ██████╗ ███╗   ██╗███████╗████████╗██████╗ ██╗   ██╗ ██████╗████████╗
-    ██╔════╝██╔═══██╗████╗  ██║██╔════╝╚══██╔══╝██╔══██╗██║   ██║██╔════╝╚══██╔══╝
-    ██║     ██║   ██║██╔██╗ ██║███████╗   ██║   ██████╔╝██║   ██║██║        ██║
-    ██║     ██║   ██║██║╚██╗██║╚════██║   ██║   ██╔══██╗██║   ██║██║        ██║
-    ╚██████╗╚██████╔╝██║ ╚████║███████║   ██║   ██║  ██║╚██████╔╝╚██████╗   ██║
-     ╚═════╝ ╚═════╝ ╚═╝  ╚═══╝╚══════╝   ╚═╝   ╚═╝  ╚═╝ ╚═════╝  ╚═════╝   ╚═╝
-
-    Are you the one...?
-
-    01001000 01000101 01001100 01001100 01001111 00100000 01001110 01000101 01001111
+const BANNER_WORDMARK: &str = r"
+    ██████╗ ███████╗██╗   ██╗██╗  ██╗ █████╗
+    ██╔══██╗██╔════╝██║   ██║██║ ██╔╝██╔══██╗
+    ██████╔╝█████╗  ██║   ██║█████╔╝ ███████║
+    ██╔══██╗██╔══╝  ╚██╗ ██╔╝██╔═██╗ ██╔══██║
+    ██║  ██║███████╗ ╚████╔╝ ██║  ██╗██║  ██║
+    ╚═╝  ╚═╝╚══════╝  ╚═══╝  ╚═╝  ╚═╝╚═╝  ╚═╝
 ";
+
+fn print_banner() {
+    println!();
+    println!("{}", style(BANNER_WORDMARK).white().bold());
+    println!("  {}", style("Autonomous agent runtime").cyan().bold());
+    println!(
+        "  {}",
+        style("Trust-governed tools | memory graph | local operations").dim()
+    );
+    println!();
+}
 
 const LIVE_MODEL_MAX_OPTIONS: usize = 120;
 const MODEL_PREVIEW_LIMIT: usize = 20;
@@ -111,9 +116,9 @@ pub async fn run_wizard(force: bool) -> Result<Config> {
     // render in the selected language.
     setup_language()?;
 
-    println!("{}", style(BANNER).green().bold());
+    print_banner();
 
-    println!("  {}", style(t!("welcome-title")).green().bold());
+    println!("  {}", style(t!("welcome-title")).white().bold());
     println!("  {}", style(t!("welcome-subtitle")).dim());
     println!();
 
@@ -403,7 +408,7 @@ pub async fn run_wizard(force: bool) -> Result<Config> {
 
 /// Interactive repair flow: rerun channel setup only without redoing full onboarding.
 pub async fn run_channels_repair_wizard() -> Result<Config> {
-    println!("{}", style(BANNER).cyan().bold());
+    print_banner();
     println!(
         "  {}",
         style("Channels Repair — update channel tokens and allowlists only")
@@ -665,7 +670,7 @@ async fn run_quick_setup_with_home(
     force: bool,
     home: &Path,
 ) -> Result<Config> {
-    println!("{}", style(BANNER).cyan().bold());
+    print_banner();
     println!(
         "  {}",
         style("Quick Setup — generating config with sensible defaults...")
