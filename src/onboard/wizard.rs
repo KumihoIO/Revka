@@ -357,17 +357,7 @@ pub async fn run_wizard(force: bool) -> Result<Config> {
 
     // If user provided a Kumiho service token, write it to .env for convenience.
     if let Some(ref token) = memory_result.kumiho_service_token {
-        let env_path = workspace_dir.join(".env");
-        let env_line = format!("KUMIHO_SERVICE_TOKEN={}\n", token);
-        // Append if exists, create if not.
-        if env_path.exists() {
-            let existing = fs::read_to_string(&env_path).await.unwrap_or_default();
-            if !existing.contains("KUMIHO_SERVICE_TOKEN") {
-                fs::write(&env_path, format!("{}{}", existing, env_line)).await?;
-            }
-        } else {
-            fs::write(&env_path, env_line).await?;
-        }
+        let env_path = save_kumiho_service_token_env(&workspace_dir, token).await?;
         println!(
             "  {} Kumiho token saved to {}",
             style("✓").green().bold(),
@@ -3945,6 +3935,16 @@ fn prompt_existing_kumiho_token() -> Result<Option<String>> {
             .green()
         );
 
+        if kumiho_token_looks_like_concatenated_jwts(&token) {
+            println!(
+                "  {} {}",
+                style("!").yellow().bold(),
+                style(t!("memory-kumiho-token-concatenated-warning")).yellow()
+            );
+            println!("  {}", style(t!("memory-kumiho-token-retry")).dim());
+            continue;
+        }
+
         if kumiho_token_looks_like_auth_jwt(&token) {
             println!(
                 "  {} {}",
@@ -4003,6 +4003,67 @@ fn normalize_pasted_kumiho_service_token(raw: &str) -> Option<String> {
         .trim_matches(|ch| matches!(ch, '"' | '\'' | '`'))
         .trim();
     (!token.is_empty()).then(|| token.to_string())
+}
+
+async fn save_kumiho_service_token_env(workspace_dir: &Path, token: &str) -> Result<PathBuf> {
+    let env_path = workspace_dir.join(".env");
+    let existing = match fs::read_to_string(&env_path).await {
+        Ok(contents) => contents,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(err) => {
+            return Err(err).with_context(|| {
+                format!("failed to read workspace env at {}", env_path.display())
+            });
+        }
+    };
+    let updated = upsert_env_assignment(&existing, "KUMIHO_SERVICE_TOKEN", token.trim());
+    fs::write(&env_path, updated)
+        .await
+        .with_context(|| format!("failed to write workspace env at {}", env_path.display()))?;
+    Ok(env_path)
+}
+
+fn upsert_env_assignment(existing: &str, key: &str, value: &str) -> String {
+    let mut replaced = false;
+    let mut lines = Vec::new();
+
+    for line in existing.lines() {
+        if env_assignment_key(line).is_some_and(|found| found.eq_ignore_ascii_case(key)) {
+            if !replaced {
+                lines.push(format!("{key}={value}"));
+                replaced = true;
+            }
+            continue;
+        }
+        lines.push(line.to_string());
+    }
+
+    if !replaced {
+        lines.push(format!("{key}={value}"));
+    }
+
+    let mut output = lines.join("\n");
+    output.push('\n');
+    output
+}
+
+fn env_assignment_key(line: &str) -> Option<&str> {
+    let trimmed = line.trim_start();
+    if trimmed.is_empty() || trimmed.starts_with('#') {
+        return None;
+    }
+    let trimmed = trimmed
+        .strip_prefix("export ")
+        .unwrap_or(trimmed)
+        .trim_start();
+    let (key, _) = trimmed.split_once('=')?;
+    let key = key.trim();
+    (!key.is_empty()).then_some(key)
+}
+
+fn kumiho_token_looks_like_concatenated_jwts(token: &str) -> bool {
+    let token = token.trim();
+    token.starts_with("eyJ") && token.matches('.').count() > 2
 }
 
 fn kumiho_token_looks_like_auth_jwt(token: &str) -> bool {
@@ -8457,6 +8518,55 @@ mod tests {
             Some("service-token-123")
         );
         assert!(normalize_pasted_kumiho_service_token("   ").is_none());
+    }
+
+    #[test]
+    fn kumiho_token_detection_rejects_concatenated_service_jwts() {
+        let token = test_jwt(
+            r#"{"alg":"ES256","kid":"kumiho-cp-key-1"}"#,
+            r#"{"iss":"https://control.kumiho.cloud","aud":"kumiho-server","type":"service_token","tenant_id":"tenant-1","token_id":"token-1"}"#,
+        );
+        let repeated = format!("{token}{token}");
+
+        assert!(!kumiho_token_looks_like_concatenated_jwts(&token));
+        assert!(kumiho_token_looks_like_concatenated_jwts(&repeated));
+        assert!(!kumiho_token_looks_like_concatenated_jwts(
+            "opaque.token.with.dots"
+        ));
+    }
+
+    #[test]
+    fn upsert_env_assignment_replaces_existing_token_and_deduplicates() {
+        let updated = upsert_env_assignment(
+            "OTHER=value\nKUMIHO_SERVICE_TOKEN=old\nexport KUMIHO_SERVICE_TOKEN=older\n",
+            "KUMIHO_SERVICE_TOKEN",
+            "new-token",
+        );
+
+        assert_eq!(updated, "OTHER=value\nKUMIHO_SERVICE_TOKEN=new-token\n");
+    }
+
+    #[tokio::test]
+    async fn save_kumiho_service_token_env_overwrites_existing_token() {
+        let tmp = TempDir::new().unwrap();
+        let env_path = tmp.path().join(".env");
+        fs::write(
+            &env_path,
+            "OTHER=value\nKUMIHO_SERVICE_TOKEN=bad-token\nTRAILING=yes\n",
+        )
+        .await
+        .unwrap();
+
+        let saved_path = save_kumiho_service_token_env(tmp.path(), "good-token")
+            .await
+            .unwrap();
+        let saved = fs::read_to_string(&saved_path).await.unwrap();
+
+        assert_eq!(saved_path, env_path);
+        assert_eq!(
+            saved,
+            "OTHER=value\nKUMIHO_SERVICE_TOKEN=good-token\nTRAILING=yes\n"
+        );
     }
 
     #[test]
