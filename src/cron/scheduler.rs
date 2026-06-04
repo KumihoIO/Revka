@@ -628,7 +628,7 @@ pub(crate) async fn deliver_announcement(
                     .as_ref()
                     .ok_or_else(|| anyhow::anyhow!("matrix channel not configured"))?;
                 let room_id = resolve_matrix_delivery_room(&mx.room_id, target);
-                let channel = MatrixChannel::new_with_session_hint_and_construct_dir(
+                let channel = MatrixChannel::new_with_session_hint_and_revka_dir(
                     mx.homeserver.clone(),
                     mx.access_token.clone(),
                     room_id,
@@ -788,7 +788,7 @@ async fn run_job_command_with_timeout(
 
 /// Build a shell `Command` for cron job execution.
 ///
-/// Uses `sh -c <command>` (non-login shell). On Windows, Construct users
+/// Uses `sh -c <command>` (non-login shell). On Windows, Revka users
 /// typically have Git Bash installed which provides `sh` in PATH, and
 /// cron commands are written with Unix shell syntax. The previous `-lc`
 /// (login shell) flag was dropped: login shells load the full user
@@ -823,7 +823,7 @@ async fn sync_workflow_cron_triggers_at_startup(config: &Config) -> Result<usize
     let home = directories::UserDirs::new()
         .map(|u| u.home_dir().to_path_buf())
         .unwrap_or_default();
-    let builtins_dir = home.join(".construct/operator_mcp/workflow/builtins");
+    let builtins_dir = home.join(".revka/operator_mcp/workflow/builtins");
 
     if let Ok(entries) = std::fs::read_dir(&builtins_dir) {
         for entry in entries.flatten() {

@@ -1,7 +1,7 @@
 {
-  "name": "@construct/session-manager",
+  "name": "@revka/session-manager",
   "version": "0.1.0",
-  "description": "Construct Session Manager — TypeScript sidecar for agent SDK sessions",
+  "description": "Revka Session Manager — TypeScript sidecar for agent SDK sessions",
   "private": true,
   "type": "module",
   "main": "dist/index.js",

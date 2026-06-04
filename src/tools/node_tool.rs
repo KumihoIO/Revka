@@ -1,4 +1,4 @@
-//! Wraps a node capability as a construct [`Tool`] so it can be dispatched
+//! Wraps a node capability as a revka [`Tool`] so it can be dispatched
 //! through the existing tool registry and agent loop.
 //!
 //! Tool names are prefixed with the node ID: `node:<node_id>:<capability_name>`.
@@ -15,7 +15,7 @@ use crate::tools::traits::{Tool, ToolResult};
 /// Default timeout for node invocations (30 seconds).
 const NODE_INVOKE_TIMEOUT_SECS: u64 = 30;
 
-/// A construct [`Tool`] backed by a node capability.
+/// A revka [`Tool`] backed by a node capability.
 ///
 /// The `prefixed_name` (e.g. `node:phone-1:camera.snap`) is what the agent
 /// loop sees. Invocations are routed to the connected node via WebSocket.

@@ -785,7 +785,7 @@ impl BrowserTool {
             },
             "metadata": {
                 "session_name": self.session_name,
-                "source": "construct.browser",
+                "source": "revka.browser",
                 "version": env!("CARGO_PKG_VERSION"),
             }
         });

@@ -40,7 +40,7 @@ pub enum TurnEvent {
 }
 
 /// Substring the Architect frontend embeds in `page_context` on every chat
-/// turn (see `web/src/construct/components/workflows/ArchitectPanel.tsx`).
+/// turn (see `web/src/revka/components/workflows/ArchitectPanel.tsx`).
 /// The gateway forwards `page_context` containing this marker into the user
 /// message before the agent turn starts.  Regular Operator chats never carry
 /// the marker, so its presence is a reliable per-turn Architect signal.
@@ -51,7 +51,7 @@ pub(crate) const ARCHITECT_EDITOR_STATE_MARKER: &str = "<editor-state>";
 /// mode the only legitimate proposal channel is `propose_workflow_yaml`, so
 /// we strip these from the tool list advertised to the LLM — the LLM cannot
 /// call what it cannot see.  Names match the bare operator-mcp tool name;
-/// the `construct-operator__` prefix is stripped before comparison.
+/// the `revka-operator__` prefix is stripped before comparison.
 ///
 /// `validate_workflow` and `dry_run_workflow` are also denied: they give the
 /// LLM a "I sanity-checked, my job is done, I'll just print the YAML in chat"
@@ -91,7 +91,7 @@ pub(crate) fn filter_tool_specs_for_architect(tool_specs: &mut Vec<ToolSpec>, us
         return;
     }
     tool_specs.retain(|spec| {
-        // MCP tools come prefixed with `construct-operator__`; bare tools
+        // MCP tools come prefixed with `revka-operator__`; bare tools
         // (built into the gateway) appear with their plain name.  Match
         // against the suffix after the last `__` so both forms are caught.
         let bare = spec.name.rsplit("__").next().unwrap_or(spec.name.as_str());
@@ -2142,7 +2142,7 @@ impl Agent {
 
             // Notify about each tool call (with operator status for orchestration tools)
             for call in &calls {
-                // Emit operator status for construct-operator tools
+                // Emit operator status for revka-operator tools
                 if let Some(status) = operator_status_for_tool_call(&call.name, &call.arguments) {
                     let _ = event_tx
                         .send(TurnEvent::OperatorStatus {
@@ -2205,7 +2205,7 @@ impl Agent {
     }
 
     pub async fn run_interactive(&mut self) -> Result<()> {
-        println!("🦀 Construct Interactive Mode");
+        println!("🦀 Revka Interactive Mode");
         println!("Type /quit to exit.\n");
 
         let (tx, mut rx) = tokio::sync::mpsc::channel(32);
@@ -2233,12 +2233,12 @@ impl Agent {
 
 /// Map a operator MCP tool call to a human-friendly status message.
 ///
-/// Returns `Some((phase, detail))` for `construct-operator__*` tools, `None` otherwise.
+/// Returns `Some((phase, detail))` for `revka-operator__*` tools, `None` otherwise.
 fn operator_status_for_tool_call(
     tool_name: &str,
     args: &serde_json::Value,
 ) -> Option<(String, String)> {
-    let suffix = tool_name.strip_prefix("construct-operator__")?;
+    let suffix = tool_name.strip_prefix("revka-operator__")?;
     match suffix {
         "create_agent" => {
             let title = args
@@ -2394,9 +2394,9 @@ fn operator_parse_agent_result(output: &str) -> (String, String) {
 
 /// Map a operator MCP tool result to a human-friendly status message.
 ///
-/// Returns `Some((phase, detail))` for `construct-operator__*` tools, `None` otherwise.
+/// Returns `Some((phase, detail))` for `revka-operator__*` tools, `None` otherwise.
 fn operator_status_for_tool_result(tool_name: &str, output: &str) -> Option<(String, String)> {
-    let suffix = tool_name.strip_prefix("construct-operator__")?;
+    let suffix = tool_name.strip_prefix("revka-operator__")?;
     match suffix {
         "create_agent" => Some(("spawned".into(), "Agent created successfully".into())),
         "wait_for_agent" => Some(operator_parse_agent_result(output)),
@@ -2809,13 +2809,12 @@ mod tests {
         config.default_model = Some("test-model".to_string());
         config.memory.backend = "none".to_string();
         config.memory.auto_save = false;
-        config.extra_headers.insert(
-            "User-Agent".to_string(),
-            "construct-web-test/1.0".to_string(),
-        );
         config
             .extra_headers
-            .insert("X-Title".to_string(), "construct-web".to_string());
+            .insert("User-Agent".to_string(), "revka-web-test/1.0".to_string());
+        config
+            .extra_headers
+            .insert("X-Title".to_string(), "revka-web".to_string());
 
         let mut agent = Agent::from_config(&config)
             .await
@@ -2831,11 +2830,11 @@ mod tests {
             .expect("captured headers");
         assert_eq!(
             headers.get("user-agent").map(String::as_str),
-            Some("construct-web-test/1.0")
+            Some("revka-web-test/1.0")
         );
         assert_eq!(
             headers.get("x-title").map(String::as_str),
-            Some("construct-web")
+            Some("revka-web")
         );
 
         server_handle.abort();
@@ -2951,7 +2950,7 @@ mod tests {
         assert_eq!(history.len(), 3);
     }
 
-    /// Construct a minimal agent suitable for testing `trim_history` in isolation.
+    /// Revka a minimal agent suitable for testing `trim_history` in isolation.
     fn make_trim_test_agent(max: usize) -> Agent {
         let provider = Box::new(MockProvider {
             responses: Mutex::new(vec![]),

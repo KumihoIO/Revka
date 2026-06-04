@@ -14,8 +14,8 @@ resolver = "2"
 cargo-dist-version = "0.22.1"
 ci = "github"
 installers = ["shell", "powershell"]
-tap = "KumihoIO/homebrew-construct"
-formula = "construct"
+tap = "KumihoIO/homebrew-revka"
+formula = "revka"
 targets = [
     "x86_64-unknown-linux-gnu",
     "aarch64-unknown-linux-gnu",
@@ -34,13 +34,13 @@ glib = { path = "vendor/security-patches/glib-0.18.5" }
 phf_generator = { path = "vendor/security-patches/phf_generator-0.8.0" }
 
 [package]
-name = "kumiho-construct"
+name = "kumiho-revka"
 version = "2026.5.20"
 edition = "2024"
 authors = ["Kumiho Inc."]
 license = "MIT OR Apache-2.0"
-description = "Construct — memory-native AI agent runtime powered by Kumiho"
-repository = "https://github.com/KumihoIO/construct-os"
+description = "Revka — memory-native AI agent runtime powered by Kumiho"
+repository = "https://github.com/KumihoIO/Revka"
 readme = "README.md"
 keywords = ["ai", "agent", "memory", "orchestration", "kumiho"]
 categories = ["command-line-utilities", "development-tools"]
@@ -66,11 +66,11 @@ include = [
 ]
 
 [[bin]]
-name = "construct"
+name = "revka"
 path = "src/main.rs"
 
 [lib]
-name = "construct"
+name = "revka"
 path = "src/lib.rs"
 
 [dependencies]
@@ -192,7 +192,7 @@ dialoguer = { version = "0.12", features = ["fuzzy-select"] }
 console = "0.16"
 
 # Internationalization (Fluent — Mozilla's localization framework)
-# Bundles for `construct onboard` are embedded at compile time from `i18n/<lang>/*.ftl`.
+# Bundles for `revka onboard` are embedded at compile time from `i18n/<lang>/*.ftl`.
 fluent = "0.17"
 fluent-bundle = "0.16"
 unic-langid = { version = "0.9", features = ["macros"] }
@@ -235,7 +235,7 @@ mime_guess = "2"
 
 # OpenTelemetry — OTLP trace + metrics export.
 # Use the blocking HTTP exporter client to avoid Tokio-reactor panics in
-# OpenTelemetry background batch threads when Construct emits spans/metrics from
+# OpenTelemetry background batch threads when Revka emits spans/metrics from
 # non-Tokio contexts.
 opentelemetry = { version = "0.31", default-features = false, features = ["trace", "metrics"], optional = true }
 opentelemetry_sdk = { version = "0.31", default-features = false, features = ["trace", "metrics"], optional = true }

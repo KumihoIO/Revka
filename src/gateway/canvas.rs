@@ -216,9 +216,9 @@ pub async fn handle_ws_canvas(
         .get("sec-websocket-protocol")
         .and_then(|v| v.to_str().ok())
         .map_or(false, |protos| {
-            protos.split(',').any(|p| p.trim() == "construct.v1")
+            protos.split(',').any(|p| p.trim() == "revka.v1")
         }) {
-        ws.protocols(["construct.v1"])
+        ws.protocols(["revka.v1"])
     } else {
         ws
     };

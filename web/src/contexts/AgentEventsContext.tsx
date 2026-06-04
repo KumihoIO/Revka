@@ -11,7 +11,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, ty
 import type { AgentChannelEvent } from '@/types/api';
 import { SSEClient } from '@/lib/sse';
 
-const SESSION_KEY = 'construct-agent-events-v1';
+const SESSION_KEY = 'revka-agent-events-v1';
 const MAX_EVENTS = 500; // Cap to avoid unbounded growth
 
 interface AgentEventsContextValue {

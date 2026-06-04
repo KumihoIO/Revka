@@ -94,7 +94,7 @@ pub fn run(config: &Config) -> Result<()> {
     let results = diagnose(config);
 
     // Print report
-    println!("🩺 Construct Doctor (enhanced)");
+    println!("🩺 Revka Doctor (enhanced)");
     println!();
 
     let mut current_cat = "";
@@ -128,7 +128,7 @@ pub fn run(config: &Config) -> Result<()> {
     println!("  Summary: {oks} ok, {warns} warnings, {errors} errors");
 
     if errors > 0 {
-        println!("  💡 Fix the errors above, then run `construct doctor` again.");
+        println!("  💡 Fix the errors above, then run `revka doctor` again.");
     }
 
     Ok(())
@@ -202,7 +202,7 @@ pub async fn run_models(
         anyhow::bail!("No providers available for model probing");
     }
 
-    println!("🩺 Construct Doctor — Model Catalog Probe");
+    println!("🩺 Revka Doctor — Model Catalog Probe");
     println!("  Providers to probe: {}", targets.len());
     println!(
         "  Mode: {}",
@@ -411,7 +411,7 @@ pub fn run_traces(
     }
 
     println!();
-    println!("Use `construct doctor traces --id <trace-id>` to inspect a full event payload.");
+    println!("Use `revka doctor traces --id <trace-id>` to inspect a full event payload.");
     Ok(())
 }
 
@@ -565,7 +565,7 @@ fn check_config_semantics(config: &Config, items: &mut Vec<DiagItem>) {
         }
     }
 
-    // embedding_model hint check removed (embeddings removed in Construct)
+    // embedding_model hint check removed (embeddings removed in Revka)
 
     // Channel: at least one configured
     let cc = &config.channels_config;
@@ -576,7 +576,7 @@ fn check_config_semantics(config: &Config, items: &mut Vec<DiagItem>) {
     } else {
         items.push(DiagItem::warn(
             cat,
-            "no channels configured — run `construct onboard` to set one up",
+            "no channels configured — run `revka onboard` to set one up",
         ));
     }
 
@@ -742,7 +742,7 @@ fn workspace_probe_path(workspace_dir: &Path) -> std::path::PathBuf {
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |duration| duration.as_nanos());
     workspace_dir.join(format!(
-        ".construct_doctor_probe_{}_{}",
+        ".revka_doctor_probe_{}_{}",
         std::process::id(),
         nanos
     ))
@@ -1352,7 +1352,7 @@ mod tests {
             first
                 .file_name()
                 .and_then(|name| name.to_str())
-                .is_some_and(|name| name.starts_with(".construct_doctor_probe_"))
+                .is_some_and(|name| name.starts_with(".revka_doctor_probe_"))
         );
     }
 

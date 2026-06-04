@@ -7,7 +7,7 @@ This page documents the **runtime command-risk classifier** that drives the
 this doc is generated/maintained against that file. If the table here ever
 disagrees with the code, **the code wins** — file an issue.
 
-[src]: https://github.com/KumihoIO/construct-os/blob/main/src/security/policy.rs
+[src]: https://github.com/KumihoIO/Revka/blob/main/src/security/policy.rs
 
 The classifier evaluates each shell-execution candidate after argv parsing.
 A single command is classified by:
@@ -93,7 +93,7 @@ even Low-risk commands.
 ## Updating this page
 
 The lists here are checked into the docs because the risk classifier is
-**part of the security posture** Construct ships with — it is meaningful
+**part of the security posture** Revka ships with — it is meaningful
 for operators to be able to read what gets gated without spelunking the
 Rust source. When `src/security/policy.rs` changes the High or Medium
 sets, this doc must be updated in the same PR; the audit-row-17 cleanup

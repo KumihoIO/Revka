@@ -1,20 +1,20 @@
 # macOS Update and Uninstall Guide
 
-This page documents supported update and uninstall procedures for Construct on macOS (OS X).
+This page documents supported update and uninstall procedures for Revka on macOS (OS X).
 
 Last verified: **February 22, 2026**.
 
 ## 1) Check current install method
 
 ```bash
-which construct
-construct --version
+which revka
+revka --version
 ```
 
 Typical locations:
 
-- Homebrew: `/opt/homebrew/bin/construct` (Apple Silicon) or `/usr/local/bin/construct` (Intel)
-- Cargo/bootstrap/manual: `~/.cargo/bin/construct`
+- Homebrew: `/opt/homebrew/bin/revka` (Apple Silicon) or `/usr/local/bin/revka` (Intel)
+- Cargo/bootstrap/manual: `~/.cargo/bin/revka`
 
 If both exist, your shell `PATH` order decides which one runs.
 
@@ -24,8 +24,8 @@ If both exist, your shell `PATH` order decides which one runs.
 
 ```bash
 brew update
-brew upgrade construct
-construct --version
+brew upgrade revka
+revka --version
 ```
 
 ### B) Clone + bootstrap install
@@ -35,7 +35,7 @@ From your local repository checkout:
 ```bash
 git pull --ff-only
 ./install.sh --prefer-prebuilt
-construct --version
+revka --version
 ```
 
 If you want source-only update:
@@ -43,7 +43,7 @@ If you want source-only update:
 ```bash
 git pull --ff-only
 cargo install --path . --force --locked
-construct --version
+revka --version
 ```
 
 ### C) Manual prebuilt binary install
@@ -51,7 +51,7 @@ construct --version
 Re-run your download/install flow with the latest release asset, then verify:
 
 ```bash
-construct --version
+revka --version
 ```
 
 ## 3) Uninstall on macOS
@@ -61,27 +61,27 @@ construct --version
 This prevents the daemon from continuing to run after binary removal.
 
 ```bash
-construct service stop || true
-construct service uninstall || true
+revka service stop || true
+revka service uninstall || true
 ```
 
 Service artifacts removed by `service uninstall`:
 
-- `~/Library/LaunchAgents/com.construct.daemon.plist`
+- `~/Library/LaunchAgents/com.revka.daemon.plist`
 
 ### B) Remove the binary by install method
 
 Homebrew:
 
 ```bash
-brew uninstall construct
+brew uninstall revka
 ```
 
-Cargo/bootstrap/manual (`~/.cargo/bin/construct`):
+Cargo/bootstrap/manual (`~/.cargo/bin/revka`):
 
 ```bash
-cargo uninstall construct || true
-rm -f ~/.cargo/bin/construct
+cargo uninstall revka || true
+rm -f ~/.cargo/bin/revka
 ```
 
 ### C) Optional: remove local runtime data
@@ -89,20 +89,20 @@ rm -f ~/.cargo/bin/construct
 Only run this if you want a full cleanup of config, auth profiles, logs, and workspace state.
 
 ```bash
-rm -rf ~/.construct
+rm -rf ~/.revka
 ```
 
 ## 4) Verify uninstall completed
 
 ```bash
-command -v construct || echo "construct binary not found"
-pgrep -fl construct || echo "No running construct process"
+command -v revka || echo "revka binary not found"
+pgrep -fl revka || echo "No running revka process"
 ```
 
 If `pgrep` still finds a process, stop it manually and re-check:
 
 ```bash
-pkill -f construct
+pkill -f revka
 ```
 
 ## Related docs

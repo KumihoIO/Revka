@@ -1,6 +1,6 @@
 # CanonWorks
 
-CanonWorks is the Construct-native story automation tool for long-form serial
+CanonWorks is the Revka-native story automation tool for long-form serial
 fiction. It lives inside the Operator MCP surface and uses Kumiho as the canon
 store: Project, Space, Item.kind, Revision, Artifact, Bundle, and revision
 edges.
@@ -229,7 +229,7 @@ Operator MCP payload:
 ```json
 {
   "workflow": "canonworks-serial-episode-factory",
-  "cwd": "G:\\git\\KumihoIO\\construct-os",
+  "cwd": "G:\\git\\KumihoIO\\Revka",
   "inputs": {
     "project_config_yaml": "<project_config_artifact_path from canonworks_init>",
     "target_length": "6000자",
@@ -278,7 +278,7 @@ Operator MCP payload:
 ```json
 {
   "workflow": "canonworks-serial-canon-state-sync",
-  "cwd": "G:\\git\\KumihoIO\\construct-os",
+  "cwd": "G:\\git\\KumihoIO\\Revka",
   "inputs": {
     "project_config_yaml": "<project_config_artifact_path from canonworks_init>",
     "apply_mode": "propose_only",
@@ -379,7 +379,7 @@ show whether each item or bundle was newly created or reused.
 
 ## Validation Commands
 
-From `G:\git\KumihoIO\construct-os`:
+From `G:\git\KumihoIO\Revka`:
 
 ```powershell
 python -m pytest operator-mcp\tests\test_canonworks_tool.py operator-mcp\tests\test_builtin_workflows.py -q
@@ -391,22 +391,22 @@ Validate installed workflows through the Operator MCP `validate_workflow` tool:
 ```json
 {
   "workflow": "canonworks-serial-episode-factory",
-  "cwd": "G:\\git\\KumihoIO\\construct-os"
+  "cwd": "G:\\git\\KumihoIO\\Revka"
 }
 ```
 
 ```json
 {
   "workflow": "canonworks-serial-canon-state-sync",
-  "cwd": "G:\\git\\KumihoIO\\construct-os"
+  "cwd": "G:\\git\\KumihoIO\\Revka"
 }
 ```
 
 Check the installed Operator tool catalog:
 
 ```powershell
-$py = "$env:USERPROFILE\.construct\operator_mcp\venv\Scripts\python.exe"
-$env:PYTHONPATH = "$env:USERPROFILE\.construct"
+$py = "$env:USERPROFILE\.revka\operator_mcp\venv\Scripts\python.exe"
+$env:PYTHONPATH = "$env:USERPROFILE\.revka"
 @'
 import asyncio
 from operator_mcp.operator_mcp import list_tools
@@ -419,11 +419,11 @@ asyncio.run(main())
 '@ | & $py -
 ```
 
-Check the Construct service:
+Check the Revka service:
 
 ```powershell
-$construct = "$env:USERPROFILE\.construct\bin\construct.exe"
-& $construct service status
+$revka = "$env:USERPROFILE\.revka\bin\revka.exe"
+& $revka service status
 Invoke-WebRequest -UseBasicParsing http://127.0.0.1:42617/health
 ```
 

@@ -18,7 +18,7 @@ from typing import Any, Callable
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-TRACK3_APP_DIR = REPO_ROOT / "examples" / "google-agents-track3" / "construct-agentops-a2a"
+TRACK3_APP_DIR = REPO_ROOT / "examples" / "google-agents-track3" / "revka-agentops-a2a"
 TRACK3_PRODUCTION_MANIFEST = TRACK3_APP_DIR / "cloudrun.production.yaml"
 TRACK3_READINESS_DOC = REPO_ROOT / "docs" / "ops" / "google-agents-track3-enterprise-readiness.md"
 TRACK3_EVIDENCE_GATE = REPO_ROOT / "scripts" / "demo" / "google_agents_cli_track3_evidence_gate.py"
@@ -173,7 +173,7 @@ def _expect_message_send_success_surface() -> dict[str, Any]:
         '"platform": "Google Cloud Run"',
         '"orchestration": "Google ADK"',
         '"intelligence": "Gemini via Vertex AI"',
-        '"b2bPackage": "Construct Enterprise AgentOps Control Plane"',
+        '"b2bPackage": "Revka Enterprise AgentOps Control Plane"',
     ]
     for fragment in required:
         _assert(fragment in main, f"message/send success surface missing: {fragment}")

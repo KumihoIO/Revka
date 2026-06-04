@@ -124,23 +124,23 @@ impl SandboxConfig {
 ### 3. First Run: Silent Logging
 
 ```bash
-$ construct agent -m "hello"
+$ revka agent -m "hello"
 
 # First time: silent detection
 [INFO] Detecting security features...
 [INFO] ✓ Landlock sandbox enabled (kernel 6.2+)
 [INFO] ✓ Memory monitoring active (512MB limit)
-[INFO] ✓ Audit logging enabled (~/.config/construct/audit.log)
+[INFO] ✓ Audit logging enabled (~/.config/revka/audit.log)
 
 # Subsequent runs: quiet
-$ construct agent -m "hello"
+$ revka agent -m "hello"
 [agent] Thinking...
 ```
 
 ### 4. Config File: All Defaults Hidden
 
 ```toml
-# ~/.config/construct/config.toml
+# ~/.config/revka/config.toml
 
 # These sections are NOT written unless user customizes
 # [security.sandbox]
@@ -167,21 +167,21 @@ max_memory_mb = 1024  # User increased limit
 
 ```bash
 # Check what's active
-$ construct security --status
+$ revka security --status
 Security Status:
   ✓ Sandbox: Landlock (Linux kernel 6.2)
   ✓ Memory monitoring: 512MB limit
-  ✓ Audit logging: ~/.config/construct/audit.log
+  ✓ Audit logging: ~/.config/revka/audit.log
   → 47 events logged today
 
 # Disable sandbox explicitly (writes to config)
-$ construct config set security.sandbox.enabled false
+$ revka config set security.sandbox.enabled false
 
 # Enable specific backend
-$ construct config set security.sandbox.backend firejail
+$ revka config set security.sandbox.backend firejail
 
 # Adjust limits
-$ construct config set security.resources.max_memory_mb 2048
+$ revka config set security.resources.max_memory_mb 2048
 ```
 
 ### 6. Graceful Degradation
@@ -266,7 +266,7 @@ impl Default for SandboxBackend {
 
 ### Before (Current)
 ```bash
-$ construct onboard
+$ revka onboard
 [1/9] Workspace Setup...
 [2/9] AI Provider...
 ...
@@ -276,7 +276,7 @@ $ construct onboard
 
 ### After (With Frictionless Security)
 ```bash
-$ construct onboard
+$ revka onboard
 [1/9] Workspace Setup...
 [2/9] AI Provider...
 ...
@@ -304,6 +304,6 @@ $ construct onboard
 ✅ **Zero new prompts** — silent auto-detection
 ✅ **Zero breaking changes** — backward compatible
 ✅ **Opt-out available** — explicit config flags
-✅ **Status visibility** — `construct security --status`
+✅ **Status visibility** — `revka security --status`
 
 The wizard remains "quick setup universal applications" — security is just **quietly better**.

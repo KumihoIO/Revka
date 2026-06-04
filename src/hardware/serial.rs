@@ -5,7 +5,7 @@
 //! received. This means multiple tools can use the same device path without
 //! one holding the port exclusively.
 //!
-//! Wire protocol (Construct serial JSON):
+//! Wire protocol (Revka serial JSON):
 //! ```text
 //! Host → Device:  {"cmd":"gpio_write","params":{"pin":25,"value":1}}\n
 //! Device → Host:  {"ok":true,"data":{"pin":25,"value":1,"state":"HIGH"}}\n
@@ -24,7 +24,7 @@ use tokio_serial::SerialPortBuilderExt;
 /// Default timeout for a single send→receive round-trip (seconds).
 const SEND_TIMEOUT_SECS: u64 = 5;
 
-/// Default baud rate for Construct serial devices.
+/// Default baud rate for Revka serial devices.
 pub const DEFAULT_BAUD: u32 = 115_200;
 
 /// Timeout for the ping handshake during device discovery (milliseconds).
@@ -33,7 +33,7 @@ const PING_TIMEOUT_MS: u64 = 300;
 /// Allowed serial device path prefixes — reject arbitrary paths for security.
 use crate::util::is_serial_path_allowed as is_path_allowed;
 
-/// Serial transport for Construct hardware devices.
+/// Serial transport for Revka hardware devices.
 ///
 /// The port is **opened lazily** on each `send()` call and released immediately
 /// after the response is read. This avoids exclusive-hold conflicts between
@@ -64,12 +64,12 @@ impl HardwareSerialTransport {
         &self.port_path
     }
 
-    /// Attempt a ping handshake to verify Construct firmware is running.
+    /// Attempt a ping handshake to verify Revka firmware is running.
     ///
     /// Opens the port, sends `{"cmd":"ping","params":{}}`, waits up to
-    /// `PING_TIMEOUT_MS` for a response with `data.firmware == "construct"`.
+    /// `PING_TIMEOUT_MS` for a response with `data.firmware == "revka"`.
     ///
-    /// Returns `true` if a Construct device responds, `false` otherwise.
+    /// Returns `true` if a Revka device responds, `false` otherwise.
     /// This method never returns an error — discovery must not hang on failure.
     pub async fn ping_handshake(&self) -> bool {
         let ping = ZcCommand::simple("ping");
@@ -85,13 +85,13 @@ impl HardwareSerialTransport {
 
         match result {
             Ok(Ok(resp)) => {
-                // Accept if firmware field is "construct" (in data or top-level)
+                // Accept if firmware field is "revka" (in data or top-level)
                 resp.ok
                     && resp
                         .data
                         .get("firmware")
                         .and_then(|v| v.as_str())
-                        .map(|s| s == "construct")
+                        .map(|s| s == "revka")
                         .unwrap_or(false)
             }
             _ => false,

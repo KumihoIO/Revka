@@ -14,7 +14,7 @@
       "type": "lldb",
       "request": "launch",
       "name": "Debug: Agent",
-      "program": "${workspaceFolder}/target/debug/construct",
+      "program": "${workspaceFolder}/target/debug/revka",
       "args": ["agent"],
       "cwd": "${workspaceFolder}",
       "preLaunchTask": "Build: Debug"
@@ -23,7 +23,7 @@
       "type": "lldb",
       "request": "launch",
       "name": "Debug: Gateway",
-      "program": "${workspaceFolder}/target/debug/construct",
+      "program": "${workspaceFolder}/target/debug/revka",
       "args": ["gateway"],
       "cwd": "${workspaceFolder}",
       "preLaunchTask": "Build: Debug"
@@ -32,7 +32,7 @@
       "type": "lldb",
       "request": "launch",
       "name": "Debug: Daemon",
-      "program": "${workspaceFolder}/target/debug/construct",
+      "program": "${workspaceFolder}/target/debug/revka",
       "args": ["daemon"],
       "cwd": "${workspaceFolder}",
       "preLaunchTask": "Build: Debug"
@@ -41,7 +41,7 @@
       "type": "lldb",
       "request": "launch",
       "name": "Debug: Status",
-      "program": "${workspaceFolder}/target/debug/construct",
+      "program": "${workspaceFolder}/target/debug/revka",
       "args": ["status"],
       "cwd": "${workspaceFolder}",
       "preLaunchTask": "Build: Debug"
@@ -50,7 +50,7 @@
       "type": "lldb",
       "request": "launch",
       "name": "Debug: Onboard",
-      "program": "${workspaceFolder}/target/debug/construct",
+      "program": "${workspaceFolder}/target/debug/revka",
       "args": ["onboard"],
       "cwd": "${workspaceFolder}",
       "preLaunchTask": "Build: Debug"

@@ -41,9 +41,9 @@ if [[ -z "$VERSION" ]]; then
 fi
 
 TAG="v${VERSION}"
-ASSET_NAME="construct-${TARGET}.tar.gz"
-ASSET_URL="https://github.com/KumihoIO/construct-os/releases/download/${TAG}/${ASSET_NAME}"
-TEMP_DIR="$(mktemp -d -t construct-termux-test-XXXXXX)"
+ASSET_NAME="revka-${TARGET}.tar.gz"
+ASSET_URL="https://github.com/KumihoIO/Revka/releases/download/${TAG}/${ASSET_NAME}"
+TEMP_DIR="$(mktemp -d -t revka-termux-test-XXXXXX)"
 
 cleanup() { rm -rf "$TEMP_DIR"; }
 trap cleanup EXIT
@@ -94,13 +94,13 @@ else
   exit 1
 fi
 
-# --- Test 5: Contains construct binary ---
+# --- Test 5: Contains revka binary ---
 info "Checking archive contents"
 CONTENTS=$(tar -tzf "$TEMP_DIR/$ASSET_NAME")
-if echo "$CONTENTS" | grep -q "^construct$"; then
-  pass "Archive contains 'construct' binary"
+if echo "$CONTENTS" | grep -q "^revka$"; then
+  pass "Archive contains 'revka' binary"
 else
-  fail "Archive does not contain 'construct' binary"
+  fail "Archive does not contain 'revka' binary"
   echo "Contents:"
   echo "$CONTENTS" | sed 's/^/  /'
 fi
@@ -108,7 +108,7 @@ fi
 # --- Test 6: Extract and inspect binary ---
 info "Extracting and inspecting binary"
 tar -xzf "$TEMP_DIR/$ASSET_NAME" -C "$TEMP_DIR"
-BINARY="$TEMP_DIR/construct"
+BINARY="$TEMP_DIR/revka"
 
 if [[ -f "$BINARY" ]]; then
   pass "Binary extracted"
@@ -179,7 +179,7 @@ fi
 
 # --- Test 10: SHA256 checksum verification ---
 info "Verifying SHA256 checksum"
-CHECKSUMS_URL="https://github.com/KumihoIO/construct-os/releases/download/${TAG}/SHA256SUMS"
+CHECKSUMS_URL="https://github.com/KumihoIO/Revka/releases/download/${TAG}/SHA256SUMS"
 if curl -fsSL "$CHECKSUMS_URL" -o "$TEMP_DIR/SHA256SUMS" 2>/dev/null; then
   EXPECTED=$(grep "$ASSET_NAME" "$TEMP_DIR/SHA256SUMS" | awk '{print $1}')
   if [[ -n "$EXPECTED" ]]; then

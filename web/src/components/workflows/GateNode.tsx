@@ -5,10 +5,10 @@ import {
   gateBranchStyle,
   type ConditionalBranchDefinition,
   type TaskNodeData,
-} from '@/construct/components/workflows/yamlSync';
+} from '@/revka/components/workflows/yamlSync';
 
-const GATE_COLOR = 'var(--construct-status-warning)';
-const GATE_SOFT = 'color-mix(in srgb, var(--construct-status-warning) 16%, transparent)';
+const GATE_COLOR = 'var(--revka-status-warning)';
+const GATE_SOFT = 'color-mix(in srgb, var(--revka-status-warning) 16%, transparent)';
 
 function getBranches(data: TaskNodeData): ConditionalBranchDefinition[] {
   if (data.conditionalBranches?.length > 0) return data.conditionalBranches;
@@ -35,14 +35,14 @@ function GateNode({ data, selected }: { data: TaskNodeData; selected?: boolean }
       style={{
         position: 'relative',
         background: selected
-          ? `linear-gradient(135deg, ${GATE_SOFT} 0%, ${GATE_SOFT} 40%, var(--construct-bg-panel-strong) 100%)`
-          : `linear-gradient(135deg, ${GATE_SOFT} 0%, var(--construct-bg-elevated) 50%, var(--construct-bg-surface) 100%)`,
-        border: `2px solid ${selected ? GATE_COLOR : 'var(--construct-border-strong)'}`,
+          ? `linear-gradient(135deg, ${GATE_SOFT} 0%, ${GATE_SOFT} 40%, var(--revka-bg-panel-strong) 100%)`
+          : `linear-gradient(135deg, ${GATE_SOFT} 0%, var(--revka-bg-elevated) 50%, var(--revka-bg-surface) 100%)`,
+        border: `2px solid ${selected ? GATE_COLOR : 'var(--revka-border-strong)'}`,
         minWidth: 200,
         maxWidth: 260,
         boxShadow: selected
           ? `0 0 20px ${GATE_SOFT}, inset 0 1px 0 ${GATE_SOFT}`
-          : `0 4px 12px rgba(0, 0, 0, 0.3), inset 0 1px 0 var(--construct-border-soft)`,
+          : `0 4px 12px rgba(0, 0, 0, 0.3), inset 0 1px 0 var(--revka-border-soft)`,
       }}
     >
       {/* Input handle */}
@@ -64,7 +64,7 @@ function GateNode({ data, selected }: { data: TaskNodeData; selected?: boolean }
         </div>
         <div
           className="text-sm font-bold truncate"
-          style={{ color: selected ? 'var(--construct-signal-selected)' : 'var(--pc-text-primary)' }}
+          style={{ color: selected ? 'var(--revka-signal-selected)' : 'var(--pc-text-primary)' }}
         >
           {data.name || data.taskId}
         </div>
@@ -121,7 +121,7 @@ function GateNode({ data, selected }: { data: TaskNodeData; selected?: boolean }
                 <span
                   className="text-[9px] font-mono px-1 rounded truncate max-w-[120px]"
                   style={{
-                    background: 'color-mix(in srgb, var(--construct-status-warning) 14%, transparent)',
+                    background: 'color-mix(in srgb, var(--revka-status-warning) 14%, transparent)',
                     color: style.stroke,
                   }}
                   title={`emits: ${branch.value}`}

@@ -1,6 +1,6 @@
 # Matrix E2EE Guide
 
-This guide explains how to run Construct reliably in Matrix rooms, including end-to-end encrypted (E2EE) rooms.
+This guide explains how to run Revka reliably in Matrix rooms, including end-to-end encrypted (E2EE) rooms.
 
 It focuses on the common failure mode reported by users:
 
@@ -29,7 +29,7 @@ Before testing message flow, make sure all of the following are true:
 2. The access token belongs to the same bot account.
 3. `room_id` is correct:
    - preferred: canonical room ID (`!room:server`)
-   - supported: room alias (`#alias:server`) and Construct will resolve it
+   - supported: room alias (`#alias:server`) and Revka will resolve it
 4. `allowed_users` allows the sender (`["*"]` for open testing).
 5. For E2EE rooms, the bot device has received encryption keys for the room.
 
@@ -37,7 +37,7 @@ Before testing message flow, make sure all of the following are true:
 
 ## 2. Configuration
 
-Use `~/.construct/config.toml`:
+Use `~/.revka/config.toml`:
 
 ```toml
 [channels_config.matrix]
@@ -45,7 +45,7 @@ homeserver = "https://matrix.example.com"
 access_token = "syt_your_token"
 
 # Optional but recommended for E2EE stability:
-user_id = "@construct:matrix.example.com"
+user_id = "@revka:matrix.example.com"
 device_id = "DEVICEID123"
 
 # Room ID or alias
@@ -58,34 +58,34 @@ allowed_users = ["*"]
 
 ### About `user_id` and `device_id`
 
-- Construct attempts to read identity from Matrix `/_matrix/client/v3/account/whoami`.
+- Revka attempts to read identity from Matrix `/_matrix/client/v3/account/whoami`.
 - If `whoami` does not return `device_id`, set `device_id` manually.
 - These hints are especially important for E2EE session restore.
 
 ---
 
-<!-- TODO screenshot: Matrix room showing the Construct bot responding to a message inside an encrypted room -->
-![Matrix room showing the Construct bot responding to a message inside an encrypted room](../assets/security/matrix-e2ee-02-bot-response-encrypted.png)
+<!-- TODO screenshot: Matrix room showing the Revka bot responding to a message inside an encrypted room -->
+![Matrix room showing the Revka bot responding to a message inside an encrypted room](../assets/security/matrix-e2ee-02-bot-response-encrypted.png)
 
 ## 3. Quick Validation Flow
 
 1. Run channel setup and daemon:
 
 ```bash
-construct onboard --channels-only
-construct daemon
+revka onboard --channels-only
+revka daemon
 ```
 
 2. Send a plain text message in the configured Matrix room.
 
-3. Confirm Construct logs contain Matrix listener startup and no repeated sync/auth errors.
+3. Confirm Revka logs contain Matrix listener startup and no repeated sync/auth errors.
 
 4. In an encrypted room, verify the bot can read and reply to encrypted messages from allowed users.
 
 ---
 
-<!-- TODO screenshot: Matrix room info panel showing device ID and encryption status for the Construct bot -->
-![Matrix room info panel showing device ID and encryption status for the Construct bot](../assets/security/matrix-e2ee-03-room-device-info.png)
+<!-- TODO screenshot: Matrix room info panel showing device ID and encryption status for the Revka bot -->
+![Matrix room info panel showing device ID and encryption status for the Revka bot](../assets/security/matrix-e2ee-03-room-device-info.png)
 
 ## 4. Troubleshooting “No Response”
 
@@ -123,9 +123,9 @@ curl -sS -H "Authorization: Bearer $MATRIX_TOKEN" \
 
 ### E. Message formatting (Markdown)
 
-- Construct sends Matrix text replies as markdown-capable `m.room.message` text content.
+- Revka sends Matrix text replies as markdown-capable `m.room.message` text content.
 - Matrix clients that support `formatted_body` should render emphasis, lists, and code blocks.
-- If formatting appears as plain text, check client capability first, then confirm Construct is running a build that includes markdown-enabled Matrix output.
+- If formatting appears as plain text, check client capability first, then confirm Revka is running a build that includes markdown-enabled Matrix output.
 
 ### F. Fresh start test
 
@@ -133,7 +133,7 @@ After updating config, restart daemon and send a new message (not just old timel
 
 ### G. Finding your `device_id`
 
-Construct needs a stable `device_id` for E2EE session restore. Without it, a new device is registered on every restart, breaking key sharing and device verification.
+Revka needs a stable `device_id` for E2EE session restore. Without it, a new device is registered on every restart, breaking key sharing and device verification.
 
 #### Option 1: From `whoami` (easiest)
 
@@ -155,7 +155,7 @@ If `device_id` is missing, the token was created without a device login (e.g., v
 ```bash
 curl -sS -X POST "https://your.homeserver/_matrix/client/v3/login" \
   -H "Content-Type: application/json" \
-  -d '{"type": "m.login.password", "user": "@bot:example.com", "password": "...", "initial_device_display_name": "Construct"}'
+  -d '{"type": "m.login.password", "user": "@bot:example.com", "password": "...", "initial_device_display_name": "Revka"}'
 ```
 
 Response:
@@ -184,13 +184,13 @@ Keep `device_id` stable — changing it forces a new device registration, which 
 
 ### H. One-time key (OTK) upload conflict
 
-**Symptom:** Construct logs `Matrix one-time key upload conflict detected; stopping sync to avoid infinite retry loop.` and the Matrix channel becomes unavailable.
+**Symptom:** Revka logs `Matrix one-time key upload conflict detected; stopping sync to avoid infinite retry loop.` and the Matrix channel becomes unavailable.
 
 **Cause:** The bot's local crypto store was reset (e.g., deleted data directory, reinstalled) without deregistering the old device on the homeserver. The homeserver still has old one-time keys for this device, and the SDK fails to upload new ones.
 
 #### Fix
 
-1. Stop Construct.
+1. Stop Revka.
 
 2. Deregister the stale device. From a session with admin access to the bot account:
 
@@ -209,7 +209,7 @@ curl -sS -X DELETE -H "Authorization: Bearer $MATRIX_TOKEN" \
 3. Delete the local crypto store. The log message includes the store path, typically:
 
 ```
-~/.construct/state/matrix/
+~/.revka/state/matrix/
 ```
 
 Delete this directory.
@@ -218,13 +218,13 @@ Delete this directory.
 
 5. Update `config.toml` with the new `access_token` and `device_id`.
 
-6. Restart Construct.
+6. Restart Revka.
 
 **Prevention:** Do not delete the local state directory without also deregistering the device. If you need a fresh start, always deregister first.
 
 ### I. Recovery key (recommended for E2EE)
 
-A recovery key lets Construct automatically restore room keys and cross-signing secrets from server-side backup. This means device resets, crypto store deletions, and fresh installs recover automatically — no emoji verification, no manual key sharing.
+A recovery key lets Revka automatically restore room keys and cross-signing secrets from server-side backup. This means device resets, crypto store deletions, and fresh installs recover automatically — no emoji verification, no manual key sharing.
 
 #### Step 1: Get your recovery key from Element
 
@@ -234,14 +234,14 @@ A recovery key lets Construct automatically restore room keys and cross-signing 
 4. If backup is not set up, click "Set up Secure Backup" and choose "Generate a Security Key". Save the key — it looks like `EsTj 3yST y93F SLpB ...`
 5. Log out of Element when done
 
-#### Step 2: Add the recovery key to Construct
+#### Step 2: Add the recovery key to Revka
 
 Option A — during onboarding:
 
 ```bash
-construct onboard
+revka onboard
 # or
-construct onboard --channels-only
+revka onboard --channels-only
 ```
 
 When configuring the Matrix channel, the wizard prompts:
@@ -261,7 +261,7 @@ recovery_key = "EsTj 3yST y93F SLpB jJsz ..."
 
 If `secrets.encrypt = true` (the default), the value will be encrypted on next config save.
 
-#### Step 3: Restart Construct
+#### Step 3: Restart Revka
 
 On startup you should see:
 
@@ -269,16 +269,16 @@ On startup you should see:
 Matrix E2EE recovery successful — room keys and cross-signing secrets restored from server backup.
 ```
 
-From now on, even if the local crypto store is deleted, Construct will recover automatically on next startup.
+From now on, even if the local crypto store is deleted, Revka will recover automatically on next startup.
 
 ---
 
 ## 5. Debug Logging
 
-For detailed E2EE diagnostics, run Construct with debug-level logging for the Matrix channel:
+For detailed E2EE diagnostics, run Revka with debug-level logging for the Matrix channel:
 
 ```bash
-RUST_LOG=construct::channels::matrix=debug construct daemon
+RUST_LOG=revka::channels::matrix=debug revka daemon
 ```
 
 This surfaces:
@@ -291,7 +291,7 @@ This surfaces:
 For even more detail from the Matrix SDK itself:
 
 ```bash
-RUST_LOG=construct::channels::matrix=debug,matrix_sdk_crypto=debug construct daemon
+RUST_LOG=revka::channels::matrix=debug,matrix_sdk_crypto=debug revka daemon
 ```
 
 ---

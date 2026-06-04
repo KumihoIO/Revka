@@ -1,19 +1,19 @@
-# Hardware Peripherals Design — Construct
+# Hardware Peripherals Design — Revka
 
-> **Status: Proposal / aspirational design.** This document describes a target architecture (dynamic code synthesis, Wasm execution, edge-native Mode 1) that is **not** fully implemented today. What ships is documented in the root [README — Hardware & Peripherals](../../README.md#hardware--peripherals): host-mediated control of STM32, Arduino, ESP32, RPi Pico boards over serial/USB from a Construct host. Running the full Construct daemon on bare MCUs remains an explicit non-goal. Treat the sections below as the design we're working toward, not a description of current behavior.
+> **Status: Proposal / aspirational design.** This document describes a target architecture (dynamic code synthesis, Wasm execution, edge-native Mode 1) that is **not** fully implemented today. What ships is documented in the root [README — Hardware & Peripherals](../../README.md#hardware--peripherals): host-mediated control of STM32, Arduino, ESP32, RPi Pico boards over serial/USB from a Revka host. Running the full Revka daemon on bare MCUs remains an explicit non-goal. Treat the sections below as the design we're working toward, not a description of current behavior.
 
-Construct enables microcontrollers (MCUs) and Single Board Computers (SBCs) to **dynamically interpret natural language commands**, generate hardware-specific code, and execute peripheral interactions in real-time.
+Revka enables microcontrollers (MCUs) and Single Board Computers (SBCs) to **dynamically interpret natural language commands**, generate hardware-specific code, and execute peripheral interactions in real-time.
 
 ## 1. Vision
 
-**Goal:** Construct acts as a hardware-aware AI agent that:
+**Goal:** Revka acts as a hardware-aware AI agent that:
 - Receives natural language triggers (e.g. "Move X arm", "Turn on LED") via channels (WhatsApp, Telegram)
 - Fetches accurate hardware documentation (datasheets, register maps)
 - Synthesizes Rust code/logic using an LLM (Gemini, local open-source models)
 - Executes the logic to manipulate peripherals (GPIO, I2C, SPI)
 - Persists optimized code for future reuse
 
-**Mental model:** Construct = brain that understands hardware. Peripherals = arms and legs it controls.
+**Mental model:** Revka = brain that understands hardware. Peripherals = arms and legs it controls.
 
 ## 2. Two Modes of Operation
 
@@ -21,11 +21,11 @@ Construct enables microcontrollers (MCUs) and Single Board Computers (SBCs) to *
 
 **Target:** Wi-Fi-enabled boards (ESP32, Raspberry Pi).
 
-Construct runs **directly on the device**. The board spins up a gRPC/nanoRPC server and communicates with peripherals locally.
+Revka runs **directly on the device**. The board spins up a gRPC/nanoRPC server and communicates with peripherals locally.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│  Construct on ESP32 / Raspberry Pi (Edge-Native)                             │
+│  Revka on ESP32 / Raspberry Pi (Edge-Native)                             │
 │                                                                             │
 │  ┌─────────────┐    ┌──────────────┐    ┌─────────────────────────────────┐ │
 │  │ Channels    │───►│ Agent Loop   │───►│ RAG: datasheets, register maps  │ │
@@ -43,7 +43,7 @@ Construct runs **directly on the device**. The board spins up a gRPC/nanoRPC ser
 
 **Workflow:**
 1. User sends WhatsApp: *"Turn on LED on pin 13"*
-2. Construct fetches board-specific docs (e.g. ESP32 GPIO mapping)
+2. Revka fetches board-specific docs (e.g. ESP32 GPIO mapping)
 3. LLM synthesizes Rust code
 4. Code runs in a sandbox (Wasm or dynamic linking)
 5. GPIO is toggled; result returned to user
@@ -55,11 +55,11 @@ Construct runs **directly on the device**. The board spins up a gRPC/nanoRPC ser
 
 **Target:** Hardware connected via USB / J-Link / Aardvark to a host (macOS, Linux).
 
-Construct runs on the **host** and maintains a hardware-aware link to the target. Used for development, introspection, and flashing.
+Revka runs on the **host** and maintains a hardware-aware link to the target. Used for development, introspection, and flashing.
 
 ```
 ┌─────────────────────┐                    ┌──────────────────────────────────┐
-│  Construct on Mac    │   USB / J-Link /   │  STM32 Nucleo-F401RE              │
+│  Revka on Mac    │   USB / J-Link /   │  STM32 Nucleo-F401RE              │
 │                     │   Aardvark         │  (or other MCU)                    │
 │  - Channels         │ ◄────────────────► │  - Memory map                     │
 │  - LLM              │                    │  - Peripherals (GPIO, ADC, I2C)    │
@@ -70,17 +70,17 @@ Construct runs on the **host** and maintains a hardware-aware link to the target
 
 **Workflow:**
 1. User sends Telegram: *"What are the readable memory addresses on this USB device?"*
-2. Construct identifies connected hardware (VID/PID, architecture)
+2. Revka identifies connected hardware (VID/PID, architecture)
 3. Performs memory mapping; suggests available address spaces
 4. Returns result to user
 
 **Or:**
 1. User: *"Flash this firmware to the Nucleo"*
-2. Construct writes/flashes via OpenOCD or probe-rs
+2. Revka writes/flashes via OpenOCD or probe-rs
 3. Confirms success
 
 **Or:**
-1. Construct auto-discovers: *"STM32 Nucleo on /dev/ttyACM0, ARM Cortex-M4"*
+1. Revka auto-discovers: *"STM32 Nucleo on /dev/ttyACM0, ARM Cortex-M4"*
 2. Suggests: *"I can read/write GPIO, ADC, flash. What would you like to do?"*
 
 ---
@@ -89,7 +89,7 @@ Construct runs on the **host** and maintains a hardware-aware link to the target
 
 | Aspect           | Edge-Native                    | Host-Mediated                    |
 |------------------|--------------------------------|----------------------------------|
-| Construct runs on | Device (ESP32, RPi)           | Host (Mac, Linux)                |
+| Revka runs on | Device (ESP32, RPi)           | Host (Mac, Linux)                |
 | Hardware link    | Local (GPIO, I2C, SPI)        | USB, J-Link, Aardvark            |
 | LLM              | On-device or cloud (Gemini)   | Host (cloud or local)            |
 | Use case         | Production, standalone         | Dev, debug, introspection       |
@@ -101,11 +101,11 @@ For boards without WiFi or before full Edge-Native is ready:
 
 ### Mode A: Host + Remote Peripheral (STM32 via serial)
 
-Host runs Construct; peripheral runs minimal firmware. Simple JSON over serial.
+Host runs Revka; peripheral runs minimal firmware. Simple JSON over serial.
 
 ### Mode B: RPi as Host (Native GPIO)
 
-Construct on Pi; GPIO via rppal or sysfs. No separate firmware.
+Revka on Pi; GPIO via rppal or sysfs. No separate firmware.
 
 ## 4. Technical Requirements
 
@@ -141,15 +141,15 @@ Construct on Pi; GPIO via rppal or sysfs. No separate firmware.
 
 ```bash
 # Edge-Native: run on device (ESP32, RPi)
-construct agent --mode edge
+revka agent --mode edge
 
 # Host-Mediated: connect to USB/J-Link target
-construct agent --peripheral nucleo-f401re:/dev/ttyACM0
-construct agent --probe jlink
+revka agent --peripheral nucleo-f401re:/dev/ttyACM0
+revka agent --probe jlink
 
 # Hardware introspection
-construct hardware discover
-construct hardware introspect /dev/ttyACM0
+revka hardware discover
+revka hardware introspect /dev/ttyACM0
 ```
 
 ### Config (config.toml)
@@ -173,7 +173,7 @@ transport = "native"
 [[peripherals.boards]]
 board = "esp32"
 transport = "wifi"
-# Edge-Native: Construct runs on ESP32
+# Edge-Native: Revka runs on ESP32
 ```
 
 ## 6. Architecture: Peripheral as Extension Point
@@ -196,7 +196,7 @@ pub trait Peripheral: Send + Sync {
 
 ### Flow
 
-1. **Startup:** Construct loads config, sees `peripherals.boards`.
+1. **Startup:** Revka loads config, sees `peripherals.boards`.
 2. **Connect:** For each board, create a `Peripheral` impl, call `connect()`.
 3. **Tools:** Collect tools from all connected peripherals; merge with default tools.
 4. **Agent loop:** Agent can call `gpio_write`, `sensor_read`, etc. — these delegate to the peripheral.
@@ -214,7 +214,7 @@ pub trait Peripheral: Send + Sync {
 
 ### gRPC / nanoRPC (Edge-Native, Host-Mediated)
 
-For low-latency, typed RPC between Construct and peripherals:
+For low-latency, typed RPC between Revka and peripherals:
 
 - **nanoRPC** or **tonic** (gRPC): Protobuf-defined services.
 - Methods: `GpioWrite`, `GpioRead`, `I2cTransfer`, `SpiTransfer`, `MemoryRead`, `FlashWrite`, etc.
@@ -236,25 +236,25 @@ Simple JSON over serial for boards without gRPC support:
 
 ## 8. Firmware (Separate Repo or Crate)
 
-- **construct-firmware** or **construct-peripheral** — a separate crate/workspace.
+- **revka-firmware** or **revka-peripheral** — a separate crate/workspace.
 - Targets: `thumbv7em-none-eabihf` (STM32), `armv7-unknown-linux-gnueabihf` (RPi), etc.
 - Uses `embassy` or Zephyr for STM32.
 - Implements the protocol above.
-- User flashes this to the board; Construct connects and discovers capabilities.
+- User flashes this to the board; Revka connects and discovers capabilities.
 
 ## 9. Implementation Phases
 
 ### Phase 1: Skeleton ✅ (Done)
 
-- [x] Add `Peripheral` trait, config schema, CLI (`construct peripheral list/add`)
+- [x] Add `Peripheral` trait, config schema, CLI (`revka peripheral list/add`)
 - [x] Add `--peripheral` flag to agent
 - [x] Document in AGENTS.md
 
 ### Phase 2: Host-Mediated — Hardware Discovery ✅ (Done)
 
-- [x] `construct hardware discover`: enumerate USB devices (VID/PID)
+- [x] `revka hardware discover`: enumerate USB devices (VID/PID)
 - [x] Board registry: map VID/PID → architecture, name (e.g. Nucleo-F401RE)
-- [x] `construct hardware introspect <path>`: memory map, peripheral list
+- [x] `revka hardware introspect <path>`: memory map, peripheral list
 
 ### Phase 3: Host-Mediated — Serial / J-Link
 
@@ -272,7 +272,7 @@ Simple JSON over serial for boards without gRPC support:
 
 ### Phase 5: Edge-Native — RPi ✅ (Done)
 
-- [x] Construct on Raspberry Pi (native GPIO via rppal)
+- [x] Revka on Raspberry Pi (native GPIO via rppal)
 - [ ] gRPC/nanoRPC server for local peripheral access
 - [ ] Code persistence (store synthesized snippets)
 
@@ -281,7 +281,7 @@ Simple JSON over serial for boards without gRPC support:
 - [x] Host-mediated ESP32 (serial transport) — same JSON protocol as STM32
 - [x] `esp32` firmware crate (`firmware/esp32`) — GPIO over UART
 - [x] ESP32 in hardware registry (CH340 VID/PID)
-- [ ] Construct *on* ESP32 (WiFi + LLM, edge-native) — future
+- [ ] Revka *on* ESP32 (WiFi + LLM, edge-native) — future
 - [ ] Wasm or template-based execution for LLM-generated logic
 
 **Usage:** Flash `firmware/esp32` to ESP32, add `board = "esp32"`, `transport = "serial"`, `path = "/dev/ttyUSB0"` to config.
@@ -300,7 +300,7 @@ Simple JSON over serial for boards without gRPC support:
 
 ## 11. Non-Goals (For Now)
 
-- Running full Construct *on* bare STM32 (no WiFi, limited RAM) — use Host-Mediated instead
+- Running full Revka *on* bare STM32 (no WiFi, limited RAM) — use Host-Mediated instead
 - Real-time guarantees — peripherals are best-effort
 - Arbitrary native code execution from LLM — prefer Wasm or templates
 
@@ -321,6 +321,6 @@ Simple JSON over serial for boards without gRPC support:
 
 ## 14. Raw Prompt Summary
 
-> *"Boards like ESP, Raspberry Pi, or boards with WiFi can connect to an LLM (Gemini or open-source). Construct runs on the device, creates its own gRPC, spins it up, and communicates with peripherals. User asks via WhatsApp: 'move X arm' or 'turn on LED'. Construct gets accurate documentation, writes code, executes it, stores it optimally, runs it, and turns on the LED — all on the development board.*
+> *"Boards like ESP, Raspberry Pi, or boards with WiFi can connect to an LLM (Gemini or open-source). Revka runs on the device, creates its own gRPC, spins it up, and communicates with peripherals. User asks via WhatsApp: 'move X arm' or 'turn on LED'. Revka gets accurate documentation, writes code, executes it, stores it optimally, runs it, and turns on the LED — all on the development board.*
 >
-> *For STM Nucleo connected via USB/J-Link/Aardvark to my Mac: Construct from my Mac accesses the hardware, installs or writes what it wants on the device, and returns the result. Example: 'Hey Construct, what are the available/readable addresses on this USB device?' It can figure out what's connected where and suggest."*
+> *For STM Nucleo connected via USB/J-Link/Aardvark to my Mac: Revka from my Mac accesses the hardware, installs or writes what it wants on the device, and returns the result. Example: 'Hey Revka, what are the available/readable addresses on this USB device?' It can figure out what's connected where and suggest."*

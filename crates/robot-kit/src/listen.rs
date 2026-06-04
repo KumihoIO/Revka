@@ -18,8 +18,8 @@ pub struct ListenTool {
 impl ListenTool {
     pub fn new(config: RobotConfig) -> Self {
         let recordings_dir = directories::UserDirs::new()
-            .map(|d| d.home_dir().join(".construct/recordings"))
-            .unwrap_or_else(|| PathBuf::from("/tmp/construct_recordings"));
+            .map(|d| d.home_dir().join(".revka/recordings"))
+            .unwrap_or_else(|| PathBuf::from("/tmp/revka_recordings"));
 
         let _ = std::fs::create_dir_all(&recordings_dir);
 
@@ -71,11 +71,11 @@ impl ListenTool {
         let whisper_path = &self.config.audio.whisper_path;
         let model = &self.config.audio.whisper_model;
 
-        // whisper.cpp model path (typically in ~/.construct/models/)
+        // whisper.cpp model path (typically in ~/.revka/models/)
         let model_path = directories::UserDirs::new()
             .map(|d| {
                 d.home_dir()
-                    .join(format!(".construct/models/ggml-{}.bin", model))
+                    .join(format!(".revka/models/ggml-{}.bin", model))
             })
             .unwrap_or_else(|| {
                 PathBuf::from(format!("/usr/local/share/whisper/ggml-{}.bin", model))

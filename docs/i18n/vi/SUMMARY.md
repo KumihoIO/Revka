@@ -1,8 +1,8 @@
-# Tóm tắt tài liệu Construct (Tiếng Việt — Mục lục thống nhất)
+# Tóm tắt tài liệu Revka (Tiếng Việt — Mục lục thống nhất)
 
 > 📖 [English version](../../SUMMARY.md)
 >
-> Runtime Rust lõi của Construct là fork của [ZeroClaw](https://github.com/zeroclaw-labs/zeroclaw); xem [`NOTICE`](../../../NOTICE) và [`docs/upstream/zeroclaw-attribution.md`](../../upstream/zeroclaw-attribution.md).
+> Runtime Rust lõi của Revka là fork của [ZeroClaw](https://github.com/zeroclaw-labs/zeroclaw); xem [`NOTICE`](../../../NOTICE) và [`docs/upstream/zeroclaw-attribution.md`](../../upstream/zeroclaw-attribution.md).
 
 Đồng bộ lần cuối: **April 27, 2026**.
 

@@ -1,12 +1,12 @@
-# Construct trên Nucleo-F401RE — Hướng dẫn từng bước
+# Revka trên Nucleo-F401RE — Hướng dẫn từng bước
 
-Chạy Construct trên Mac hoặc Linux. Kết nối Nucleo-F401RE qua USB. Điều khiển GPIO (LED, các pin) qua Telegram hoặc CLI.
+Chạy Revka trên Mac hoặc Linux. Kết nối Nucleo-F401RE qua USB. Điều khiển GPIO (LED, các pin) qua Telegram hoặc CLI.
 
 ---
 
 ## Lấy thông tin board qua Telegram (Không cần nạp firmware)
 
-Construct có thể đọc thông tin chip từ Nucleo qua USB **mà không cần nạp firmware nào**. Nhắn tin cho Telegram bot của bạn:
+Revka có thể đọc thông tin chip từ Nucleo qua USB **mà không cần nạp firmware nào**. Nhắn tin cho Telegram bot của bạn:
 
 - *"What board info do I have?"*
 - *"Board info"*
@@ -29,21 +29,21 @@ baud = 115200
 
 ```bash
 cargo build --features hardware,probe
-construct hardware info
-construct hardware discover
+revka hardware info
+revka hardware discover
 ```
 
 ---
 
 ## Những gì đã có sẵn (Không cần thay đổi code)
 
-Construct bao gồm mọi thứ cần thiết cho Nucleo-F401RE:
+Revka bao gồm mọi thứ cần thiết cho Nucleo-F401RE:
 
 | Thành phần | Vị trí | Mục đích |
 |------------|--------|---------|
 | Firmware | `firmware/nucleo/` | Embassy Rust — USART2 (115200), gpio_read, gpio_write |
 | Serial peripheral | `src/peripherals/serial.rs` | Giao thức JSON-over-serial (giống Arduino/ESP32) |
-| Flash command | `construct peripheral flash-nucleo` | Build firmware, nạp qua probe-rs |
+| Flash command | `revka peripheral flash-nucleo` | Build firmware, nạp qua probe-rs |
 
 Giao thức: JSON phân tách bằng dòng mới. Request: `{"id":"1","cmd":"gpio_write","args":{"pin":13,"value":1}}`. Response: `{"id":"1","ok":true,"result":"done"}`.
 
@@ -64,12 +64,12 @@ Giao thức: JSON phân tách bằng dòng mới. Request: `{"id":"1","cmd":"gpi
 1. Kết nối Nucleo với Mac/Linux qua USB.
 2. Board xuất hiện như thiết bị USB (ST-Link). Không cần driver riêng trên các hệ thống hiện đại.
 
-### 1.2 Nạp qua Construct
+### 1.2 Nạp qua Revka
 
-Từ thư mục gốc của repo construct:
+Từ thư mục gốc của repo revka:
 
 ```bash
-construct peripheral flash-nucleo
+revka peripheral flash-nucleo
 ```
 
 Lệnh này build `firmware/nucleo` và chạy `probe-rs run --chip STM32F401RETx`. Firmware chạy ngay sau khi nạp xong.
@@ -93,9 +93,9 @@ USART2 (PA2/PA3) được bridge sang cổng COM ảo của ST-Link, vì vậy m
 
 ---
 
-## Phase 3: Cấu hình Construct
+## Phase 3: Cấu hình Revka
 
-Thêm vào `~/.construct/config.toml`:
+Thêm vào `~/.revka/config.toml`:
 
 ```toml
 [peripherals]
@@ -113,13 +113,13 @@ baud = 115200
 ## Phase 4: Chạy và Kiểm thử
 
 ```bash
-construct daemon --host 127.0.0.1 --port 3000
+revka daemon --host 127.0.0.1 --port 3000
 ```
 
 Hoặc dùng agent trực tiếp:
 
 ```bash
-construct agent --message "Turn on the LED on pin 13"
+revka agent --message "Turn on the LED on pin 13"
 ```
 
 Pin 13 = PA5 = User LED (LD2) trên Nucleo-F401RE.
@@ -132,9 +132,9 @@ Pin 13 = PA5 = User LED (LD2) trên Nucleo-F401RE.
 |------|------|
 | 1 | Kết nối Nucleo qua USB |
 | 2 | `cargo install probe-rs-tools --locked` |
-| 3 | `construct peripheral flash-nucleo` |
+| 3 | `revka peripheral flash-nucleo` |
 | 4 | Thêm Nucleo vào config.toml (path = serial port của bạn) |
-| 5 | `construct daemon` hoặc `construct agent -m "Turn on LED"` |
+| 5 | `revka daemon` hoặc `revka agent -m "Turn on LED"` |
 
 ---
 
@@ -144,4 +144,4 @@ Pin 13 = PA5 = User LED (LD2) trên Nucleo-F401RE.
 - **Không tìm thấy probe-rs** — `cargo install probe-rs-tools --locked` (crate `probe-rs` là thư viện; CLI nằm trong `probe-rs-tools`)
 - **Không phát hiện được probe** — Đảm bảo Nucleo đã kết nối. Thử cáp/cổng USB khác.
 - **Không tìm thấy serial port** — Trên Linux, thêm user vào nhóm `dialout`: `sudo usermod -a -G dialout $USER`, rồi đăng xuất/đăng nhập lại.
-- **Lệnh GPIO bị bỏ qua** — Kiểm tra `path` trong config có khớp với serial port của bạn. Chạy `construct peripheral list` để xác nhận.
+- **Lệnh GPIO bị bỏ qua** — Kiểm tra `path` trong config có khớp với serial port của bạn. Chạy `revka peripheral list` để xác nhận.

@@ -46,7 +46,7 @@ def _google_agents_cli_tool() -> Tool:
                 },
                 "working_directory": {
                     "type": "string",
-                    "description": "ADK project directory. Defaults to Construct workspace.",
+                    "description": "ADK project directory. Defaults to Revka workspace.",
                 },
                 "timeout": {
                     "type": "number",
@@ -167,7 +167,7 @@ async def _dispatch(name: str, args: dict[str, Any]) -> dict[str, Any]:
         return await tool_a2a_get_task(args)
 
     if name == "get_auth_token":
-        profile_id = os.environ.get("CONSTRUCT_AUTH_PROFILE_ID", "").strip()
+        profile_id = os.environ.get("REVKA_AUTH_PROFILE_ID", "").strip()
         if not profile_id:
             return {"error": "no auth profile bound to this step", "code": "auth_profile_not_bound"}
         try:

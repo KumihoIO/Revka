@@ -1,4 +1,4 @@
-//! Markdown chunker — stub (removed in Construct).
+//! Markdown chunker — stub (removed in Revka).
 //!
 //! The chunker was used by the Qdrant embedding flow and RAG ingestion.
 //! Persistent memory is now handled via Kumiho MCP.

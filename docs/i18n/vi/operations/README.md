@@ -1,6 +1,6 @@
 # Tài liệu vận hành và triển khai
 
-Dành cho operator vận hành Construct liên tục hoặc trên production.
+Dành cho operator vận hành Revka liên tục hoặc trên production.
 
 ## Vận hành cốt lõi
 

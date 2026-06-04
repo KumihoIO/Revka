@@ -1,18 +1,18 @@
-# Construct trên Arduino Uno Q — Hướng dẫn từng bước
+# Revka trên Arduino Uno Q — Hướng dẫn từng bước
 
-Chạy Construct trên phía Linux của Arduino Uno Q. Telegram hoạt động qua WiFi; điều khiển GPIO dùng Bridge (yêu cầu một ứng dụng App Lab tối giản).
+Chạy Revka trên phía Linux của Arduino Uno Q. Telegram hoạt động qua WiFi; điều khiển GPIO dùng Bridge (yêu cầu một ứng dụng App Lab tối giản).
 
 ---
 
 ## Những gì đã có sẵn (Không cần thay đổi code)
 
-Construct bao gồm mọi thứ cần thiết cho Arduino Uno Q. **Clone repo và làm theo hướng dẫn này — không cần patch hay code tùy chỉnh nào.**
+Revka bao gồm mọi thứ cần thiết cho Arduino Uno Q. **Clone repo và làm theo hướng dẫn này — không cần patch hay code tùy chỉnh nào.**
 
 | Thành phần | Vị trí | Mục đích |
 |------------|--------|---------|
 | Bridge app | `firmware/uno-q-bridge/` | MCU sketch + Python socket server (port 9999) cho GPIO |
 | Bridge tools | `src/peripherals/uno_q_bridge.rs` | Tool `gpio_read` / `gpio_write` giao tiếp với Bridge qua TCP |
-| Setup command | `src/peripherals/uno_q_setup.rs` | `construct peripheral setup-uno-q` triển khai Bridge qua scp + arduino-app-cli |
+| Setup command | `src/peripherals/uno_q_setup.rs` | `revka peripheral setup-uno-q` triển khai Bridge qua scp + arduino-app-cli |
 | Config schema | `board = "arduino-uno-q"`, `transport = "bridge"` | Được hỗ trợ trong `config.toml` |
 
 Build với `--features hardware` (hoặc features mặc định) để bao gồm hỗ trợ Uno Q.
@@ -49,7 +49,7 @@ ssh arduino@<UNO_Q_IP>
 
 ---
 
-## Phase 2: Cài đặt Construct trên Uno Q
+## Phase 2: Cài đặt Revka trên Uno Q
 
 ### Phương án A: Build trực tiếp trên thiết bị (Đơn giản hơn, ~20–40 phút)
 
@@ -65,15 +65,15 @@ source ~/.cargo/env
 sudo apt-get update
 sudo apt-get install -y pkg-config libssl-dev
 
-# Clone construct (hoặc scp project của bạn)
-git clone https://github.com/KumihoIO/construct-os.git
-cd construct
+# Clone revka (hoặc scp project của bạn)
+git clone https://github.com/KumihoIO/Revka.git
+cd revka
 
 # Build (~15–30 phút trên Uno Q)
 cargo build --release
 
 # Cài đặt
-sudo cp target/release/construct /usr/local/bin/
+sudo cp target/release/revka /usr/local/bin/
 ```
 
 ### Phương án B: Cross-Compile trên Mac (Nhanh hơn)
@@ -90,15 +90,15 @@ brew install aarch64-unknown-linux-gnu
 CC_aarch64_unknown_linux_gnu=aarch64-unknown-linux-gnu-gcc cargo build --release --target aarch64-unknown-linux-gnu
 
 # Copy sang Uno Q
-scp target/aarch64-unknown-linux-gnu/release/construct arduino@<UNO_Q_IP>:~/
-ssh arduino@<UNO_Q_IP> "sudo mv ~/construct /usr/local/bin/"
+scp target/aarch64-unknown-linux-gnu/release/revka arduino@<UNO_Q_IP>:~/
+ssh arduino@<UNO_Q_IP> "sudo mv ~/revka /usr/local/bin/"
 ```
 
 Nếu cross-compile thất bại, dùng Phương án A và build trực tiếp trên thiết bị.
 
 ---
 
-## Phase 3: Cấu hình Construct
+## Phase 3: Cấu hình Revka
 
 ### 3.1 Chạy Onboard (hoặc tạo Config thủ công)
 
@@ -106,11 +106,11 @@ Nếu cross-compile thất bại, dùng Phương án A và build trực tiếp t
 ssh arduino@<UNO_Q_IP>
 
 # Cấu hình nhanh
-construct onboard --api-key YOUR_OPENROUTER_KEY --provider openrouter
+revka onboard --api-key YOUR_OPENROUTER_KEY --provider openrouter
 
 # Hoặc tạo config thủ công
-mkdir -p ~/.construct/workspace
-nano ~/.construct/config.toml
+mkdir -p ~/.revka/workspace
+nano ~/.revka/config.toml
 ```
 
 ### 3.2 config.toml tối giản
@@ -139,33 +139,33 @@ compact_context = true
 
 ---
 
-## Phase 4: Chạy Construct Daemon
+## Phase 4: Chạy Revka Daemon
 
 ```bash
 ssh arduino@<UNO_Q_IP>
 
 # Chạy daemon (Telegram polling hoạt động qua WiFi)
-construct daemon --host 127.0.0.1 --port 3000
+revka daemon --host 127.0.0.1 --port 3000
 ```
 
-**Tại bước này:** Telegram chat hoạt động. Gửi tin nhắn tới bot — Construct phản hồi. Chưa có GPIO.
+**Tại bước này:** Telegram chat hoạt động. Gửi tin nhắn tới bot — Revka phản hồi. Chưa có GPIO.
 
 ---
 
-## Phase 5: GPIO qua Bridge (Construct xử lý tự động)
+## Phase 5: GPIO qua Bridge (Revka xử lý tự động)
 
-Construct bao gồm Bridge app và setup command.
+Revka bao gồm Bridge app và setup command.
 
 ### 5.1 Triển khai Bridge App
 
-**Từ Mac** (với repo construct):
+**Từ Mac** (với repo revka):
 ```bash
-construct peripheral setup-uno-q --host 192.168.0.48
+revka peripheral setup-uno-q --host 192.168.0.48
 ```
 
 **Từ Uno Q** (đã SSH vào):
 ```bash
-construct peripheral setup-uno-q
+revka peripheral setup-uno-q
 ```
 
 Lệnh này copy Bridge app vào `~/ArduinoApps/uno-q-bridge` và khởi động nó.
@@ -181,13 +181,13 @@ board = "arduino-uno-q"
 transport = "bridge"
 ```
 
-### 5.3 Chạy Construct
+### 5.3 Chạy Revka
 
 ```bash
-construct daemon --host 127.0.0.1 --port 3000
+revka daemon --host 127.0.0.1 --port 3000
 ```
 
-Giờ khi bạn nhắn tin cho Telegram bot *"Turn on the LED"* hoặc *"Set pin 13 high"*, Construct dùng `gpio_write` qua Bridge.
+Giờ khi bạn nhắn tin cho Telegram bot *"Turn on the LED"* hoặc *"Set pin 13 high"*, Revka dùng `gpio_write` qua Bridge.
 
 ---
 
@@ -199,19 +199,19 @@ Giờ khi bạn nhắn tin cho Telegram bot *"Turn on the LED"* hoặc *"Set pin
 | 2 | `ssh arduino@<IP>` |
 | 3 | `curl -sSf https://sh.rustup.rs \| sh -s -- -y && source ~/.cargo/env` |
 | 4 | `sudo apt-get install -y pkg-config libssl-dev` |
-| 5 | `git clone https://github.com/KumihoIO/construct-os.git && cd construct` |
+| 5 | `git clone https://github.com/KumihoIO/Revka.git && cd revka` |
 | 6 | `cargo build --release --no-default-features` |
-| 7 | `construct onboard --api-key KEY --provider openrouter` |
-| 8 | Chỉnh sửa `~/.construct/config.toml` (thêm Telegram bot_token) |
-| 9 | `construct daemon --host 127.0.0.1 --port 3000` |
+| 7 | `revka onboard --api-key KEY --provider openrouter` |
+| 8 | Chỉnh sửa `~/.revka/config.toml` (thêm Telegram bot_token) |
+| 9 | `revka daemon --host 127.0.0.1 --port 3000` |
 | 10 | Nhắn tin cho Telegram bot — nó phản hồi |
 
 ---
 
 ## Xử lý sự cố
 
-- **"command not found: construct"** — Dùng đường dẫn đầy đủ: `/usr/local/bin/construct` hoặc đảm bảo `~/.cargo/bin` nằm trong PATH.
+- **"command not found: revka"** — Dùng đường dẫn đầy đủ: `/usr/local/bin/revka` hoặc đảm bảo `~/.cargo/bin` nằm trong PATH.
 - **Telegram không phản hồi** — Kiểm tra bot_token, allowed_users, và Uno Q có kết nối internet (WiFi).
 - **Hết bộ nhớ** — Dùng `--no-default-features` để giảm kích thước binary; cân nhắc `compact_context = true`.
-- **Lệnh GPIO bị bỏ qua** — Đảm bảo Bridge app đang chạy (`construct peripheral setup-uno-q` triển khai và khởi động nó). Config phải có `board = "arduino-uno-q"` và `transport = "bridge"`.
-- **LLM provider (GLM/Zhipu)** — Dùng `default_provider = "glm"` hoặc `"zhipu"` với `GLM_API_KEY` trong env hoặc config. Construct dùng endpoint v4 chính xác.
+- **Lệnh GPIO bị bỏ qua** — Đảm bảo Bridge app đang chạy (`revka peripheral setup-uno-q` triển khai và khởi động nó). Config phải có `board = "arduino-uno-q"` và `transport = "bridge"`.
+- **LLM provider (GLM/Zhipu)** — Dùng `default_provider = "glm"` hoặc `"zhipu"` với `GLM_API_KEY` trong env hoặc config. Revka dùng endpoint v4 chính xác.

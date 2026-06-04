@@ -12,8 +12,8 @@ use std::path::Path;
 const DOCKER_IMAGE_REF_FILES: &[&str] = &[
     "docker-compose.yml",
     "install.sh",
-    "marketplace/coolify/construct.yaml",
-    "marketplace/dokploy/blueprints/construct/docker-compose.yml",
+    "marketplace/coolify/revka.yaml",
+    "marketplace/dokploy/blueprints/revka/docker-compose.yml",
     "marketplace/easypanel/meta.yaml",
     "marketplace/sync-marketplace-templates.yml",
     "docs/setup-guides/one-click-bootstrap.md",
@@ -54,8 +54,8 @@ fn docker_image_references_use_lowercase_ghcr_path() {
             .unwrap_or_else(|err| panic!("failed to read {}: {}", rel_path, err));
 
         assert!(
-            !content.contains("ghcr.io/KumihoIO/construct-os"),
-            "{} must use lowercase ghcr.io/kumihoio/construct-os; Docker image references are lowercase-only",
+            !content.contains("ghcr.io/KumihoIO/Revka"),
+            "{} must use lowercase ghcr.io/kumihoio/revka; Docker image references are lowercase-only",
             rel_path
         );
     }
@@ -67,7 +67,7 @@ fn root_compose_uses_published_lowercase_image_path() {
     let content = std::fs::read_to_string(&path).expect("failed to read root docker-compose.yml");
 
     assert!(
-        content.contains("image: ghcr.io/kumihoio/construct-os:latest"),
+        content.contains("image: ghcr.io/kumihoio/revka:latest"),
         "root docker-compose.yml must point at the lowercase published GHCR image"
     );
 }
@@ -218,11 +218,11 @@ async fn dockerignore_excludes_target_directory() {
 
     assert!(is_excluded(&patterns, "target"), "target must be excluded");
     assert!(
-        is_excluded(&patterns, "target/debug/construct"),
+        is_excluded(&patterns, "target/debug/revka"),
         "target/debug must be excluded"
     );
     assert!(
-        is_excluded(&patterns, "target/release/construct"),
+        is_excluded(&patterns, "target/release/revka"),
         "target/release must be excluded"
     );
 }
@@ -280,7 +280,7 @@ async fn dockerignore_excludes_image_files() {
     let patterns = parse_dockerignore(&content);
 
     assert!(
-        is_excluded(&patterns, "construct.png"),
+        is_excluded(&patterns, "revka.png"),
         "*.png files must be excluded"
     );
     assert!(

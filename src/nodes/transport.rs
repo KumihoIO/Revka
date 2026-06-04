@@ -62,9 +62,9 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 /// Sends authenticated HTTPS requests to peer nodes.
 ///
 /// Every outgoing request carries three custom headers:
-/// - `X-Construct-Timestamp` — unix epoch seconds
-/// - `X-Construct-Nonce` — random UUID v4
-/// - `X-Construct-Signature` — HMAC-SHA256 hex digest
+/// - `X-Revka-Timestamp` — unix epoch seconds
+/// - `X-Revka-Nonce` — random UUID v4
+/// - `X-Revka-Signature` — HMAC-SHA256 hex digest
 ///
 /// Incoming requests are verified with the same scheme via [`Self::verify_incoming`].
 pub struct NodeTransport {
@@ -101,9 +101,9 @@ impl NodeTransport {
         let resp = self
             .http
             .post(&url)
-            .header("X-Construct-Timestamp", timestamp.to_string())
-            .header("X-Construct-Nonce", &nonce)
-            .header("X-Construct-Signature", &signature)
+            .header("X-Revka-Timestamp", timestamp.to_string())
+            .header("X-Revka-Nonce", &nonce)
+            .header("X-Revka-Signature", &signature)
             .header("Content-Type", "application/json")
             .body(body)
             .send()

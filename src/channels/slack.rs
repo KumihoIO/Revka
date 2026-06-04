@@ -100,7 +100,7 @@ enum SlackPermalinkLookup {
     NotFound,
 }
 
-/// Extract the Slack message timestamp from a Construct message ID.
+/// Extract the Slack message timestamp from a Revka message ID.
 ///
 /// Message IDs follow the format `slack_{channel_id}_{ts}` where `ts`
 /// contains a dot (e.g. `"1234567890.123456"`). If the format is
@@ -2580,8 +2580,8 @@ impl SlackChannel {
             .and_then(|v| v.as_str())?;
 
         let command = match action_id {
-            "construct_config_provider" => format!("/models {selected_value}"),
-            "construct_config_model" => format!("/model {selected_value}"),
+            "revka_config_provider" => format!("/models {selected_value}"),
+            "revka_config_model" => format!("/model {selected_value}"),
             _ => return None,
         };
 
@@ -5128,7 +5128,7 @@ mod tests {
         let msg = SendMessage::new("**bold** and _italic_", "C123");
         let ch = SlackChannel::new("xoxb-fake".into(), None, None, vec![], vec![]);
 
-        // Build the same JSON body that send() would construct.
+        // Build the same JSON body that send() would revka.
         let mut body = serde_json::json!({
             "channel": msg.recipient,
             "text": msg.content

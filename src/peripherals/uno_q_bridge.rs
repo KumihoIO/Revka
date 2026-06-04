@@ -1,6 +1,6 @@
 //! Arduino Uno Q Bridge — GPIO via socket to Bridge app.
 //!
-//! When Construct runs on Uno Q, the Bridge app (Python + MCU) exposes
+//! When Revka runs on Uno Q, the Bridge app (Python + MCU) exposes
 //! digitalWrite/digitalRead over a local socket. These tools connect to it.
 
 use crate::tools::traits::{Tool, ToolResult};

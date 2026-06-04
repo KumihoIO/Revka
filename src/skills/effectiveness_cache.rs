@@ -103,7 +103,7 @@ pub struct SkillRegressionCandidate {
 //
 // The daemon installs one [`EffectivenessCache`] at startup; everything that
 // builds an agent prompt downstream reads it via [`global_provider`].  Tests
-// construct local caches and bypass this entirely.
+// revka local caches and bypass this entirely.
 
 static GLOBAL_CACHE: OnceLock<Arc<EffectivenessCache>> = OnceLock::new();
 
@@ -151,7 +151,7 @@ struct RevisionState {
 
 /// Process-wide cache of recency-weighted skill effectiveness scores.
 ///
-/// Construct this once at daemon startup, share via `Arc`, and call
+/// Revka this once at daemon startup, share via `Arc`, and call
 /// [`Self::refresh_for_skills`] periodically (or use
 /// [`Self::spawn_refresh_task`] for the standard background loop).
 pub struct EffectivenessCache {

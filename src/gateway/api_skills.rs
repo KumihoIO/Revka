@@ -12,7 +12,7 @@
 //!   `tags`, `created_by`.  No full content here to keep `list_items` under
 //!   Kumiho's 4 MB gRPC limit.
 //! - **Artifact** (`SKILL.md`) — a `file://` reference to the local markdown
-//!   file at `~/.construct/workspace/skills/<slug>.md`.  Content is read from
+//!   file at `~/.revka/workspace/skills/<slug>.md`.  Content is read from
 //!   disk on demand for detail views / edits.
 //! - **Backward compat** — older artifacts that have `content` in their metadata
 //!   are handled transparently; the detail endpoint reads from file first, then
@@ -103,7 +103,7 @@ const SKILL_ARTIFACT_NAME: &str = "SKILL.md";
 /// and `register_skill_with_kumiho` write the same value.
 const SKILL_KIND: &str = crate::skills::registration::SKILL_ITEM_KIND;
 /// Local directory where skill markdown files are stored.
-const SKILLS_DIR: &str = ".construct/workspace/skills";
+const SKILLS_DIR: &str = ".revka/workspace/skills";
 
 /// Memory project name from config (skills are behavioral knowledge).
 fn skill_project(state: &AppState) -> String {
@@ -175,7 +175,7 @@ fn skill_revision_metadata(body: &CreateSkillBody) -> HashMap<String, String> {
     let mut meta = HashMap::new();
     meta.insert("description".to_string(), body.description.clone());
     meta.insert("domain".to_string(), body.domain.clone());
-    meta.insert("created_by".to_string(), "construct-dashboard".to_string());
+    meta.insert("created_by".to_string(), "revka-dashboard".to_string());
     if let Some(ref tags) = body.tags {
         if !tags.is_empty() {
             meta.insert("tags".to_string(), tags.join(","));
@@ -370,7 +370,7 @@ async fn fetch_skill_content(
 }
 
 /// Store skill content as a local file and create a `SKILL.md` artifact
-/// pointing to it.  The file is written to `~/.construct/workspace/skills/<slug>.md`.
+/// pointing to it.  The file is written to `~/.revka/workspace/skills/<slug>.md`.
 async fn store_skill_artifact(
     client: &super::kumiho_client::KumihoClient,
     revision_kref: &str,

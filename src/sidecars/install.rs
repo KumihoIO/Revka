@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use super::python::{detect_npm, detect_python};
-use super::{construct_root, kumiho_launcher_path, operator_launcher_path};
+use super::{kumiho_launcher_path, operator_launcher_path, revka_root};
 
 const KUMIHO_LAUNCHER_SRC: &str = include_str!("../../resources/sidecars/run_kumiho_mcp.py");
 const KUMIHO_SDK_BRIDGE_SRC: &str = include_str!("../../resources/sidecars/kumiho_sdk_bridge.py");
@@ -54,7 +54,7 @@ pub struct SidecarInstallOptions {
     pub dry_run: bool,
     pub python: Option<String>,
     /// Dev-mode: install `operator-mcp` from a local source tree instead of
-    /// the embedded copy. Path should point at a construct-os repo root —
+    /// the embedded copy. Path should point at a Revka repo root —
     /// we'll use `<path>/operator-mcp/` as the pip install source. Lets
     /// developers iterate on the Python side without rebuilding the Rust
     /// binary (whose `include_dir!` snapshot is fixed at compile time).
@@ -63,10 +63,10 @@ pub struct SidecarInstallOptions {
 
 pub async fn install_sidecars(opts: &SidecarInstallOptions) -> Result<()> {
     let python = detect_python(opts.python.as_deref())?;
-    eprintln!("==> construct install --sidecars-only");
+    eprintln!("==> revka install --sidecars-only");
     eprintln!("    python: {}", python.display());
 
-    let root = construct_root()?;
+    let root = revka_root()?;
     std::fs::create_dir_all(&root).with_context(|| format!("creating {}", root.display()))?;
 
     if !opts.skip_operator {
@@ -115,7 +115,7 @@ pub async fn install_sidecars(opts: &SidecarInstallOptions) -> Result<()> {
 }
 
 fn install_kumiho(python: &Path, dry_run: bool) -> Result<()> {
-    let dir = construct_root()?.join("kumiho");
+    let dir = revka_root()?.join("kumiho");
     let venv = dir.join("venv");
     let launcher = dir.join("run_kumiho_mcp.py");
     let bridge = dir.join("kumiho_sdk_bridge.py");
@@ -148,7 +148,7 @@ fn install_kumiho(python: &Path, dry_run: bool) -> Result<()> {
 }
 
 fn install_operator(python: &Path, dry_run: bool, from_source: Option<&Path>) -> Result<()> {
-    let dir = construct_root()?.join("operator_mcp");
+    let dir = revka_root()?.join("operator_mcp");
     let venv = dir.join("venv");
     let launcher = dir.join("run_operator_mcp.py");
 
@@ -164,7 +164,7 @@ fn install_operator(python: &Path, dry_run: bool, from_source: Option<&Path>) ->
         eprintln!("    + create {}", venv.display());
         eprintln!("    + pip install operator-mcp");
         eprintln!("    + sync flat operator package into {}", dir.display());
-        eprintln!("    + sync operator skills into ~/.construct/skills");
+        eprintln!("    + sync operator skills into ~/.revka/skills");
         eprintln!("    + write {}", launcher.display());
         return Ok(());
     }
@@ -181,7 +181,7 @@ fn install_operator(python: &Path, dry_run: bool, from_source: Option<&Path>) ->
             let pyproject = local_src.join("pyproject.toml");
             if !pyproject.exists() {
                 return Err(anyhow!(
-                    "--from-source {} doesn't look like a construct-os repo: \
+                    "--from-source {} doesn't look like a Revka repo: \
                      missing operator-mcp/pyproject.toml",
                     repo_root.display()
                 ));
@@ -260,7 +260,7 @@ fn extract_operator_source(dest: &Path) -> Result<()> {
 /// Install the Node.js session-manager sidecar.
 ///
 /// Lays down the prebuilt `dist/` + `package.json` into
-/// `~/.construct/operator_mcp/session-manager/`, then runs
+/// `~/.revka/operator_mcp/session-manager/`, then runs
 /// `npm install --omit=dev` to fetch its node_modules. The Operator MCP
 /// (Python) discovers and spawns this sidecar at runtime to drive the
 /// Claude Agent SDK and codex CLI with structured streaming events.
@@ -270,9 +270,7 @@ fn extract_operator_source(dest: &Path) -> Result<()> {
 /// timeline + cross-turn session preservation. So fresh installs without
 /// this step end up in degraded mode by default.
 fn install_session_manager(dry_run: bool, from_source: Option<&Path>) -> Result<()> {
-    let dir = construct_root()?
-        .join("operator_mcp")
-        .join("session-manager");
+    let dir = revka_root()?.join("operator_mcp").join("session-manager");
 
     eprintln!("==> Installing Session Manager → {}", dir.display());
     if dry_run {
@@ -479,7 +477,7 @@ fn sync_operator_skills(skills_src: &Path) -> Result<usize> {
         return Ok(0);
     }
 
-    let skills_dest = construct_root()?.join("skills");
+    let skills_dest = revka_root()?.join("skills");
     std::fs::create_dir_all(&skills_dest)
         .with_context(|| format!("creating {}", skills_dest.display()))?;
 

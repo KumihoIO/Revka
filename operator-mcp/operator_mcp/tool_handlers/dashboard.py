@@ -1,4 +1,4 @@
-"""System health dashboard — unified view of Construct operator state.
+"""System health dashboard — unified view of Revka operator state.
 
 Combines: active workflows, recent runs, agent pool, cost, and system health
 into a single tool response for situational awareness.
@@ -123,8 +123,8 @@ async def tool_system_dashboard(args: dict[str, Any]) -> dict[str, Any]:
     # -- Cost summary --
     if include_costs:
         try:
-            from ..operator_mcp import CONSTRUCT_GW
-            summary = await CONSTRUCT_GW.get_cost_summary()
+            from ..operator_mcp import REVKA_GW
+            summary = await REVKA_GW.get_cost_summary()
             if summary is None:
                 raise RuntimeError("gateway budget authority unavailable")
             result["costs"] = {
@@ -164,8 +164,8 @@ async def tool_system_dashboard(args: dict[str, Any]) -> dict[str, Any]:
 
         # Gateway connectivity
         try:
-            from ..operator_mcp import CONSTRUCT_GW
-            gw_status = await CONSTRUCT_GW.get_status()
+            from ..operator_mcp import REVKA_GW
+            gw_status = await REVKA_GW.get_status()
             health["gateway"] = "connected" if gw_status else "unavailable"
             if gw_status:
                 health["gateway_provider"] = gw_status.get("provider", "")

@@ -22,7 +22,7 @@
 //! publish a `ProgressEvent` onto the session's shared broadcast channel
 //! (see `session::SessionState::events`). That second fanout is what feeds
 //! the V2 Code tab's inline status-card strip: the external CLI drives the
-//! request, but the Construct UI reads the same events via the session-wide
+//! request, but the Revka UI reads the same events via the session-wide
 //! stream regardless of who is talking to the daemon.
 //!
 //! Broadcast send errors (no live receivers) are intentionally ignored —
@@ -43,7 +43,7 @@ use tokio::sync::mpsc::UnboundedSender;
 ///
 /// `session_events` is the session-wide broadcast sender (see [`super::session`]).
 /// `tool_name` is stamped onto each `ProgressEvent` so session subscribers can
-/// show which Construct tool is doing work (e.g. `notion`, `jira`, …).
+/// show which Revka tool is doing work (e.g. `notion`, `jira`, …).
 pub struct McpProgressSink {
     tx: UnboundedSender<Value>,
     requested_token: Option<u64>,

@@ -52,7 +52,7 @@ const ALLOWED_TOP_LEVEL_COMMANDS: &[&str] = &[
 /// `agents-cli` is not a coding-agent replacement for Claude Code or Codex.
 /// It is Google's ADK / Agent Platform lifecycle CLI for scaffolding,
 /// evaluating, running, deploying, publishing, and observing ADK/A2A agents.
-/// This tool keeps Construct's execution surface explicit by spawning only the
+/// This tool keeps Revka's execution surface explicit by spawning only the
 /// `agents-cli` binary with argv tokens, never a shell.
 pub struct GoogleAgentsCliTool {
     security: Arc<SecurityPolicy>,
@@ -94,7 +94,7 @@ impl Tool for GoogleAgentsCliTool {
                 },
                 "allow_interactive": {
                     "type": "boolean",
-                    "description": "Allow interactive flags such as --interactive/-i. Defaults to false because Construct tools run non-interactively."
+                    "description": "Allow interactive flags such as --interactive/-i. Defaults to false because Revka tools run non-interactively."
                 }
             }
         })
@@ -383,8 +383,7 @@ fn validate_command(args: &[String], allow_interactive: bool) -> Result<(), Stri
         && !allow_interactive
     {
         return Err(
-            "Use `agents-cli login --status`; interactive login must be done outside Construct"
-                .into(),
+            "Use `agents-cli login --status`; interactive login must be done outside Revka".into(),
         );
     }
 

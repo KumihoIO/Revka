@@ -1,6 +1,6 @@
-# Construct Project Triage Snapshot (2026-02-18)
+# Revka Project Triage Snapshot (2026-02-18)
 
-> **Status: Archived.** This snapshot is retained as a historical record only. It was captured before the February→April 2026 refresh and does not reflect current repository state. Do not treat these numbers or priorities as current. For the live state, use `gh pr list` / `gh issue list` against `KumihoIO/construct-os`.
+> **Status: Archived.** This snapshot is retained as a historical record only. It was captured before the February→April 2026 refresh and does not reflect current repository state. Do not treat these numbers or priorities as current. For the live state, use `gh pr list` / `gh issue list` against `KumihoIO/Revka`.
 
 As-of date: **February 18, 2026**.
 
@@ -8,7 +8,7 @@ This snapshot captured open PR/issue signals to guide docs and information-archi
 
 ## Data Source
 
-Collected via GitHub CLI against `KumihoIO/construct-os`:
+Collected via GitHub CLI against `KumihoIO/Revka`:
 
 - `gh repo view ...`
 - `gh pr list --state open --limit 500 ...`
@@ -56,19 +56,19 @@ Implication for docs:
 
 ## Docs-Relevant Open PRs
 
-- [#716](https://github.com/KumihoIO/construct-os/pull/716) — OpenRC support (service behavior/docs impact)
-- [#725](https://github.com/KumihoIO/construct-os/pull/725) — shell completion commands (CLI docs impact)
-- [#732](https://github.com/KumihoIO/construct-os/pull/732) — CI action replacement (contributor workflow docs impact)
-- [#759](https://github.com/KumihoIO/construct-os/pull/759) — daemon/channel response handling fix (channel troubleshooting impact)
-- [#679](https://github.com/KumihoIO/construct-os/pull/679) — pairing lockout accounting change (security behavior docs impact)
+- [#716](https://github.com/KumihoIO/Revka/pull/716) — OpenRC support (service behavior/docs impact)
+- [#725](https://github.com/KumihoIO/Revka/pull/725) — shell completion commands (CLI docs impact)
+- [#732](https://github.com/KumihoIO/Revka/pull/732) — CI action replacement (contributor workflow docs impact)
+- [#759](https://github.com/KumihoIO/Revka/pull/759) — daemon/channel response handling fix (channel troubleshooting impact)
+- [#679](https://github.com/KumihoIO/Revka/pull/679) — pairing lockout accounting change (security behavior docs impact)
 
 ## Docs-Relevant Open Issues
 
-- [#426](https://github.com/KumihoIO/construct-os/issues/426) — explicit request for clearer capabilities documentation
-- [#666](https://github.com/KumihoIO/construct-os/issues/666) — operational runbook and alert/logging guidance request
-- [#745](https://github.com/KumihoIO/construct-os/issues/745) — Docker pull failure (`ghcr.io`) suggests deployment troubleshooting demand
-- [#761](https://github.com/KumihoIO/construct-os/issues/761) — Armbian compile error highlights platform troubleshooting needs
-- [#758](https://github.com/KumihoIO/construct-os/issues/758) — storage backend flexibility request impacts config/reference docs
+- [#426](https://github.com/KumihoIO/Revka/issues/426) — explicit request for clearer capabilities documentation
+- [#666](https://github.com/KumihoIO/Revka/issues/666) — operational runbook and alert/logging guidance request
+- [#745](https://github.com/KumihoIO/Revka/issues/745) — Docker pull failure (`ghcr.io`) suggests deployment troubleshooting demand
+- [#761](https://github.com/KumihoIO/Revka/issues/761) — Armbian compile error highlights platform troubleshooting needs
+- [#758](https://github.com/KumihoIO/Revka/issues/758) — storage backend flexibility request impacts config/reference docs
 
 ## Recommended Docs Backlog (Priority Order)
 

@@ -1,8 +1,8 @@
-# Construct Docs Summary (Unified TOC)
+# Revka Docs Summary (Unified TOC)
 
-The canonical table of contents for the Construct documentation system.
+The canonical table of contents for the Revka documentation system.
 
-> Construct's core Rust runtime is a fork of [ZeroClaw](https://github.com/zeroclaw-labs/zeroclaw); see [`NOTICE`](../NOTICE) for full attribution and [`upstream/zeroclaw-attribution.md`](upstream/zeroclaw-attribution.md) for the relationship in plain language.
+> Revka's core Rust runtime is a fork of [ZeroClaw](https://github.com/zeroclaw-labs/zeroclaw); see [`NOTICE`](../NOTICE) for full attribution and [`upstream/zeroclaw-attribution.md`](upstream/zeroclaw-attribution.md) for the relationship in plain language.
 
 Last refreshed: **April 27, 2026**.
 

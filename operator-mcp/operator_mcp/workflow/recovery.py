@@ -11,7 +11,7 @@ import os
 from typing import Any
 
 
-_RUN_LOCK_DIR = os.path.expanduser("~/.construct/workflow_locks")
+_RUN_LOCK_DIR = os.path.expanduser("~/.revka/workflow_locks")
 
 
 def _acquire_run_lock(run_id: str) -> Any:

@@ -17,7 +17,7 @@
 //! ```
 //!
 //! The signing key is the gateway's `service_token` — already shared with
-//! operator-mcp (read from `~/.construct/service-token`), so tools can
+//! operator-mcp (read from `~/.revka/service-token`), so tools can
 //! mint URLs without round-tripping through the gateway.
 //!
 //! Paths are resolved under `workspace_dir` with traversal rejection
@@ -197,16 +197,16 @@ mod tests {
 
     #[test]
     fn sign_then_verify_round_trips() {
-        let url = sign_url("Construct/Images/foo.png", 3600, SECRET);
+        let url = sign_url("Revka/Images/foo.png", 3600, SECRET);
         let parsed = parse_query(&url);
-        assert!(verify_signature("Construct/Images/foo.png", &parsed, SECRET).is_ok());
+        assert!(verify_signature("Revka/Images/foo.png", &parsed, SECRET).is_ok());
     }
 
     #[test]
     fn verify_rejects_tampered_path() {
-        let url = sign_url("Construct/Images/foo.png", 3600, SECRET);
+        let url = sign_url("Revka/Images/foo.png", 3600, SECRET);
         let parsed = parse_query(&url);
-        assert!(verify_signature("Construct/Images/EVIL.png", &parsed, SECRET).is_err());
+        assert!(verify_signature("Revka/Images/EVIL.png", &parsed, SECRET).is_err());
     }
 
     #[test]
@@ -245,11 +245,11 @@ mod tests {
     #[test]
     fn safe_resolve_accepts_legitimate_paths() {
         let root = tempdir().unwrap();
-        let nested = root.path().join("Construct").join("Images");
+        let nested = root.path().join("Revka").join("Images");
         fs::create_dir_all(&nested).unwrap();
         fs::write(nested.join("foo.png"), b"\x89PNG").unwrap();
 
-        let resolved = safe_resolve(root.path(), "Construct/Images/foo.png").unwrap();
+        let resolved = safe_resolve(root.path(), "Revka/Images/foo.png").unwrap();
         assert!(resolved.exists());
         assert_eq!(fs::read(&resolved).unwrap(), b"\x89PNG");
     }

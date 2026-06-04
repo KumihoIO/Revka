@@ -1,9 +1,9 @@
 """Workflow loader — discover and parse YAML workflow definitions.
 
 Loads from:
-  1. Built-in workflows shipped with Construct (operator/workflow/builtins/)
-  2. User workflows in ~/.construct/workflows/
-  3. Project-local workflows in <cwd>/.construct/workflows/
+  1. Built-in workflows shipped with Revka (operator/workflow/builtins/)
+  2. User workflows in ~/.revka/workflows/
+  3. Project-local workflows in <cwd>/.revka/workflows/
 
 Later sources override earlier ones (project > user > builtin).
 """
@@ -25,7 +25,7 @@ except ImportError:
 from pydantic import ValidationError as PydanticValidationError
 
 from .._log import _log
-from ..construct_config import harness_project
+from ..revka_config import harness_project
 from .schema import StepDef, StepType, WorkflowDef
 from .validator import validate_workflow, ValidationResult
 from operator_mcp.workflow.event_listener import get_trigger_registry
@@ -36,7 +36,7 @@ from operator_mcp.workflow.event_listener import get_trigger_registry
 # ---------------------------------------------------------------------------
 #
 # Mirror of the frontend edge inference in
-# web/src/construct/components/workflows/yamlSync.ts (search "Inferred
+# web/src/revka/components/workflows/yamlSync.ts (search "Inferred
 # dependency edges from `${step_id.<field>}`"). The DAG visualizer already
 # infers edges from interpolation references; the runtime wave scheduler
 # (executor.py wave loop) reads only step.depends_on, so without this pass
@@ -295,7 +295,7 @@ def _infer_depends_on(wf: WorkflowDef) -> None:
 # ---------------------------------------------------------------------------
 
 _BUILTIN_DIR = os.path.join(os.path.dirname(__file__), "builtins")
-_USER_DIR = os.path.expanduser("~/.construct/workflows")
+_USER_DIR = os.path.expanduser("~/.revka/workflows")
 
 
 # ---------------------------------------------------------------------------
@@ -414,7 +414,7 @@ def discover_workflows(project_dir: str | None = None) -> dict[str, str]:
 
     # 3. Project-local
     if project_dir:
-        local_dir = os.path.join(project_dir, ".construct", "workflows")
+        local_dir = os.path.join(project_dir, ".revka", "workflows")
         workflows.update(_scan_directory(local_dir))
 
     return workflows
@@ -566,7 +566,7 @@ async def resolve_workflow(
     Resolution order:
       1. Kumiho latest revision — canonical source.
       2. Built-in disk fallback (operator/workflow/builtins/) — for testing
-         ship-with-Construct workflows when Kumiho entry is absent.
+         ship-with-Revka workflows when Kumiho entry is absent.
 
     Fails hard if Kumiho is unavailable (no silent disk substitution for
     user/project workflows). Returns None only when the workflow does not
@@ -581,7 +581,7 @@ async def resolve_workflow(
     # pinned to a Kumiho revision; the caller renders runs by name match.
     for source_name, directory in (
         ("user", _USER_DIR),
-        ("project", os.path.join(project_dir, ".construct", "workflows") if project_dir else None),
+        ("project", os.path.join(project_dir, ".revka", "workflows") if project_dir else None),
         ("builtin", _BUILTIN_DIR),
     ):
         if not directory:
@@ -621,7 +621,7 @@ async def _get_workflow_from_kumiho(name: str) -> tuple[WorkflowDef, str, str] |
             break
 
     if not item_kref:
-        _log(f"workflow_loader: '{name}' not found in Kumiho Construct/Workflows")
+        _log(f"workflow_loader: '{name}' not found in Kumiho Revka/Workflows")
         return None
 
     return await _load_workflow_item_from_kumiho(workflow_item, expected_name=name)
@@ -767,7 +767,7 @@ async def resolve_all_workflows(project_dir: str | None = None) -> dict[str, dic
 def save_workflow_yaml(wf: WorkflowDef, directory: str | None = None) -> str:
     """Save a WorkflowDef as YAML. Returns the file path.
 
-    Defaults to user workflow directory (~/.construct/workflows/).
+    Defaults to user workflow directory (~/.revka/workflows/).
     """
     target_dir = directory or _USER_DIR
     os.makedirs(target_dir, exist_ok=True)

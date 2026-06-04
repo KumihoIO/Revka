@@ -9,7 +9,7 @@ Options:
     --mode brief|full   Output mode (default: full)
                         brief: billable minutes/hours table only
                         full:  detailed breakdown with per-run list
-    --repo OWNER/NAME   Repository (default: KumihoIO/construct-os)
+    --repo OWNER/NAME   Repository (default: KumihoIO/Revka)
     -h, --help          Show this help message
 """
 
@@ -38,8 +38,8 @@ def parse_args():
     )
     parser.add_argument(
         "--repo",
-        default="KumihoIO/construct-os",
-        help="Repository in OWNER/NAME format (default: KumihoIO/construct-os)",
+        default="KumihoIO/Revka",
+        help="Repository in OWNER/NAME format (default: KumihoIO/Revka)",
     )
     return parser.parse_args()
 

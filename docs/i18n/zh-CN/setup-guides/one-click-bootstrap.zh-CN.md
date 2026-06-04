@@ -2,21 +2,21 @@
 
 _Source English version updated 2026-04-21; localized version may be stale until retranslated._
 
-本页面介绍安装和初始化 Construct 的最快支持路径。
+本页面介绍安装和初始化 Revka 的最快支持路径。
 
 最后验证时间：**2026年2月20日**。
 
 ## 选项 0：Homebrew（macOS/Linuxbrew）
 
 ```bash
-brew install construct
+brew install revka
 ```
 
 ## 选项 A（推荐）：克隆 + 本地脚本
 
 ```bash
-git clone https://github.com/KumihoIO/construct-os.git
-cd construct
+git clone https://github.com/KumihoIO/Revka.git
+cd revka
 ./install.sh
 ```
 
@@ -52,7 +52,7 @@ cd construct
 
 ## 双模式引导
 
-默认行为是**仅应用程序**（编译/安装 Construct），需要已存在 Rust 工具链。
+默认行为是**仅应用程序**（编译/安装 Revka），需要已存在 Rust 工具链。
 
 对于全新机器，可以显式启用环境引导：
 
@@ -71,7 +71,7 @@ cd construct
 ## 选项 B：远程单行命令
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/KumihoIO/construct-os/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/KumihoIO/Revka/main/install.sh | bash
 ```
 
 对于高安全环境，推荐使用选项 A，这样你可以在执行前审查脚本内容。
@@ -86,13 +86,13 @@ curl -fsSL https://raw.githubusercontent.com/KumihoIO/construct-os/main/install.
 ./install.sh --docker
 ```
 
-这会构建本地 Construct 镜像并在容器内启动引导流程，同时将配置/工作区持久化到 `./.construct-docker`。
+这会构建本地 Revka 镜像并在容器内启动引导流程，同时将配置/工作区持久化到 `./.revka-docker`。
 
-容器 CLI 默认为 `docker`。如果 Docker CLI 不可用且存在 `podman`，安装程序会自动回退到 `podman`。你也可以显式设置 `CONSTRUCT_CONTAINER_CLI`（例如：`CONSTRUCT_CONTAINER_CLI=podman ./install.sh --docker`）。
+容器 CLI 默认为 `docker`。如果 Docker CLI 不可用且存在 `podman`，安装程序会自动回退到 `podman`。你也可以显式设置 `REVKA_CONTAINER_CLI`（例如：`REVKA_CONTAINER_CLI=podman ./install.sh --docker`）。
 
 对于 Podman，安装程序会使用 `--userns keep-id` 和 `:Z` 卷标签，确保工作区/配置挂载在容器内保持可写。
 
-如果你添加 `--skip-build` 参数，安装程序会跳过本地镜像构建。它会首先尝试本地 Docker 标签（`CONSTRUCT_DOCKER_IMAGE`，默认：`construct-bootstrap:local`）；如果不存在，会拉取 `ghcr.io/kumihoio/construct-os:latest` 并在运行前打本地标签。
+如果你添加 `--skip-build` 参数，安装程序会跳过本地镜像构建。它会首先尝试本地 Docker 标签（`REVKA_DOCKER_IMAGE`，默认：`revka-bootstrap:local`）；如果不存在，会拉取 `ghcr.io/kumihoio/revka:latest` 并在运行前打本地标签。
 
 ### 快速引导（非交互式）
 
@@ -103,14 +103,14 @@ curl -fsSL https://raw.githubusercontent.com/KumihoIO/construct-os/main/install.
 或者使用环境变量：
 
 ```bash
-CONSTRUCT_API_KEY=\"sk-...\" CONSTRUCT_PROVIDER=\"openrouter\" ./install.sh
+REVKA_API_KEY=\"sk-...\" REVKA_PROVIDER=\"openrouter\" ./install.sh
 ```
 
 ## 有用的参数
 
 - `--install-system-deps`
 - `--install-rust`
-- `--skip-build`（在 `--docker` 模式下：如果存在使用本地镜像，否则拉取 `ghcr.io/kumihoio/construct-os:latest`）
+- `--skip-build`（在 `--docker` 模式下：如果存在使用本地镜像，否则拉取 `ghcr.io/kumihoio/revka:latest`）
 - `--skip-install`
 - `--provider <id>`
 

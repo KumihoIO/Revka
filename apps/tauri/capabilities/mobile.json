@@ -1,6 +1,6 @@
 {
   "identifier": "mobile",
-  "description": "Mobile-specific permissions for Construct",
+  "description": "Mobile-specific permissions for Revka",
   "windows": ["main"],
   "permissions": [
     "core:default"

@@ -1,4 +1,4 @@
-"""A2A Task Store — maps Construct agent lifecycle to A2A task states.
+"""A2A Task Store — maps Revka agent lifecycle to A2A task states.
 
 A2A TaskState mapping:
     SUBMITTED      ← agent created, not yet started
@@ -31,7 +31,7 @@ INPUT_REQUIRED = "input-required"
 
 _TERMINAL_STATES = {COMPLETED, FAILED, CANCELED}
 
-# Construct → A2A state mapping
+# Revka → A2A state mapping
 _STATUS_MAP = {
     "idle": SUBMITTED,
     "running": WORKING,
@@ -48,7 +48,7 @@ _STATUS_MAP = {
 # ---------------------------------------------------------------------------
 
 class A2ATask:
-    """Represents an A2A task backed by a Construct agent."""
+    """Represents an A2A task backed by a Revka agent."""
 
     def __init__(
         self,
@@ -68,7 +68,7 @@ class A2ATask:
 
     @property
     def state(self) -> str:
-        """Get current A2A state from underlying Construct agent."""
+        """Get current A2A state from underlying Revka agent."""
         agent = AGENTS.get(self.agent_id)
         if not agent:
             return FAILED
@@ -120,7 +120,7 @@ class A2ATask:
 # ---------------------------------------------------------------------------
 
 class A2ATaskStore:
-    """In-memory task store mapping A2A tasks to Construct agents."""
+    """In-memory task store mapping A2A tasks to Revka agents."""
 
     def __init__(self):
         self._tasks: dict[str, A2ATask] = {}
@@ -134,7 +134,7 @@ class A2ATaskStore:
         context_id: str | None = None,
         message: dict[str, Any] | None = None,
     ) -> A2ATask:
-        """Create a new A2A task backed by a Construct agent."""
+        """Create a new A2A task backed by a Revka agent."""
         task_id = f"task-{uuid.uuid4()}"
         ctx_id = context_id or f"ctx-{uuid.uuid4()}"
         task = A2ATask(task_id, ctx_id, agent_id, message=message)
@@ -148,7 +148,7 @@ class A2ATaskStore:
         return self._tasks.get(task_id)
 
     def get_task_for_agent(self, agent_id: str) -> A2ATask | None:
-        """Get A2A task associated with a Construct agent."""
+        """Get A2A task associated with a Revka agent."""
         task_id = self._agent_to_task.get(agent_id)
         if task_id:
             return self._tasks.get(task_id)

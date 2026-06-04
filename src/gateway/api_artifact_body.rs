@@ -412,7 +412,7 @@ fn bytes_response(body: ArtifactBodyBytes) -> Response {
 fn metadata_fallback_response(body: ArtifactBodyBytes) -> Response {
     let mut resp = bytes_response(body);
     resp.headers_mut().insert(
-        HeaderName::from_static("x-construct-artifact-source"),
+        HeaderName::from_static("x-revka-artifact-source"),
         HeaderValue::from_static("revision-metadata"),
     );
     resp
@@ -424,11 +424,11 @@ mod tests {
 
     fn artifact(name: &str, location: &str) -> ArtifactResponse {
         ArtifactResponse {
-            kref: "kref://Construct/Workflows/demo.workflow?r=2&a=workflow.yaml".to_string(),
+            kref: "kref://Revka/Workflows/demo.workflow?r=2&a=workflow.yaml".to_string(),
             name: name.to_string(),
             location: location.to_string(),
-            revision_kref: "kref://Construct/Workflows/demo.workflow?r=2".to_string(),
-            item_kref: Some("kref://Construct/Workflows/demo.workflow".to_string()),
+            revision_kref: "kref://Revka/Workflows/demo.workflow?r=2".to_string(),
+            item_kref: Some("kref://Revka/Workflows/demo.workflow".to_string()),
             deprecated: false,
             created_at: None,
             author: None,
@@ -458,14 +458,14 @@ mod tests {
     fn metadata_fallback_does_not_serve_workflow_definition() {
         let artifact = artifact(
             "workflow.yaml",
-            "file:///Users/neo/.construct/workflows/demo.r2.yaml",
+            "file:///Users/neo/.revka/workflows/demo.r2.yaml",
         );
         let mut metadata = HashMap::new();
         metadata.insert(
             "definition".to_string(),
             "name: demo\nsteps: []\n".to_string(),
         );
-        let revision = revision("kref://Construct/Workflows/demo.workflow", metadata);
+        let revision = revision("kref://Revka/Workflows/demo.workflow", metadata);
 
         assert!(body_from_revision_metadata(&artifact, &revision).is_none());
     }
@@ -474,11 +474,11 @@ mod tests {
     fn metadata_fallback_does_not_treat_image_prompt_as_body() {
         let artifact = artifact(
             "image.png",
-            "C:\\Users\\isake\\.construct\\workspace\\Construct\\Images\\demo\\r1\\image.png",
+            "C:\\Users\\isake\\.revka\\workspace\\Revka\\Images\\demo\\r1\\image.png",
         );
         let mut metadata = HashMap::new();
         metadata.insert("prompt".to_string(), "a red apple".to_string());
-        let revision = revision("kref://Construct/Images/demo.image", metadata);
+        let revision = revision("kref://Revka/Images/demo.image", metadata);
 
         assert!(body_from_revision_metadata(&artifact, &revision).is_none());
     }
@@ -489,7 +489,7 @@ mod tests {
         artifact
             .metadata
             .insert("content_base64".to_string(), "iVBORw0KGgo=".to_string());
-        let revision = revision("kref://Construct/Images/demo.image", HashMap::new());
+        let revision = revision("kref://Revka/Images/demo.image", HashMap::new());
 
         let body = body_from_revision_metadata(&artifact, &revision).unwrap();
 

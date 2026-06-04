@@ -1,6 +1,6 @@
 //! Kumiho memory MCP server injection.
 //!
-//! Every non-internal agent in Construct gets the Kumiho graph-memory MCP server
+//! Every non-internal agent in Revka gets the Kumiho graph-memory MCP server
 //! wired in automatically.  This module defines:
 //!
 //! - The canonical `McpServerConfig` for the Kumiho stdio server.
@@ -12,7 +12,7 @@
 //!
 //! # Design
 //!
-//! Kumiho is Construct's *only* persistent memory store.  Rather than requiring
+//! Kumiho is Revka's *only* persistent memory store.  Rather than requiring
 //! every caller to remember to add the server, injection is centralised here and
 //! called unconditionally for all non-internal agents.
 //!
@@ -30,16 +30,16 @@ use std::collections::HashMap;
 pub const KUMIHO_SERVER_NAME: &str = "kumiho-memory";
 
 /// Default path to the Kumiho MCP runner script (relative to `$HOME`).
-pub const DEFAULT_MCP_PATH_SUFFIX: &str = ".construct/kumiho/run_kumiho_mcp.py";
+pub const DEFAULT_MCP_PATH_SUFFIX: &str = ".revka/kumiho/run_kumiho_mcp.py";
 
 // ── Bootstrap prompt ──────────────────────────────────────────────
 
 /// Session-bootstrap instructions injected into the system prompt for every
-/// non-internal agent.  Construct-specific bootstrap; teaches the agent how
+/// non-internal agent.  Revka-specific bootstrap; teaches the agent how
 /// to use the `kumiho_memory_engage` / `kumiho_memory_reflect` reflexes that
 /// the Kumiho MCP server registers at startup.
 pub const KUMIHO_BOOTSTRAP_PROMPT: &str = "\
-SESSION-START INSTRUCTION (kumiho-memory — Construct daemon)
+SESSION-START INSTRUCTION (kumiho-memory — Revka daemon)
 
 === EVERY TURN ===
 Follow these rules on every turn:
@@ -57,7 +57,7 @@ for reflect.  Use limit={{KUMIHO_MEMORY_RETRIEVAL_LIMIT}} unless \
 the user explicitly asks for broader recall.  IMPORTANT: User \
 memories and conversation history live in the CognitiveMemory \
 project — use space_paths=['CognitiveMemory'] for memory recall.  \
-Do NOT search Construct/ for user memories — that space holds agent \
+Do NOT search Revka/ for user memories — that space holds agent \
 operational data (AgentPool, Teams, Plans).
   - NEVER SAY 'I DON'T KNOW' WITHOUT CHECKING MEMORY — If the \
 answer is not in the current conversation and you would otherwise \
@@ -107,15 +107,15 @@ kumiho_memory_reflect with type='summary', tags=['compact','session-context'].
 SKILL DISCOVERY — Search CognitiveMemory/Skills via engage when \
 you need specialised guidance. Cache discovered skills for the session.
 
-=== CONSTRUCT NAMESPACES ===
-Construct/ is the operational root. CognitiveMemory/ is the user's \
+=== REVKA NAMESPACES ===
+Revka/ is the operational root. CognitiveMemory/ is the user's \
 personal memory — never write agent data there.
-  - Construct/AgentPool/ — agent templates (keyed by name)
-  - Construct/Plans/ — task plans with DEPENDS_ON edges
-  - Construct/Sessions/ — session summaries and handoffs
-  - Construct/Sessions/<session_id>/Outcomes/ — APPEND-ONLY findings \
+  - Revka/AgentPool/ — agent templates (keyed by name)
+  - Revka/Plans/ — task plans with DEPENDS_ON edges
+  - Revka/Sessions/ — session summaries and handoffs
+  - Revka/Sessions/<session_id>/Outcomes/ — APPEND-ONLY findings \
 agents share with each other (multi-agent learning, see below).
-  - Construct/Teams/ — agent team DAGs (REPORTS_TO, SUPPORTS)
+  - Revka/Teams/ — agent team DAGs (REPORTS_TO, SUPPORTS)
   - CognitiveMemory/Skills/ — shared skill library (only shared space)
 Use space_hint in reflect to route captures to the correct subspace.
 
@@ -123,7 +123,7 @@ Use space_hint in reflect to route captures to the correct subspace.
 When you run as part of a workflow / handoff chain / group chat, \
 your peers can benefit from what you learn — and you can benefit \
 from what they already learned. Coordinate via the per-session \
-Outcomes namespace: Construct/Sessions/<session_id>/Outcomes/.
+Outcomes namespace: Revka/Sessions/<session_id>/Outcomes/.
 
 session_id resolution — your task context will mention it (look in \
 the initial prompt, system_hint, or env). If you are in a workflow \
@@ -135,7 +135,7 @@ known): pull what siblings have already discovered so you do not \
 re-do their work.
   kumiho_memory_engage(
     query=<your task summary>,
-    space_paths=['Construct/Sessions/<session_id>/Outcomes']
+    space_paths=['Revka/Sessions/<session_id>/Outcomes']
   )
 
 CONTRIBUTE (during work): when you find something DURABLE that \
@@ -149,7 +149,7 @@ to your own setup, or trivia.
 | 'warning' | 'fact',
       title: '<short title with absolute date>',
       content: '<the actual finding>',
-      space_hint: 'Construct/Sessions/<session_id>/Outcomes',
+      space_hint: 'Revka/Sessions/<session_id>/Outcomes',
       tags: ['outcome', '<kind>', 'session:<session_id>']
     }]
   )
@@ -165,7 +165,7 @@ outcome, record a refining one and let the graph show the chain.";
 /// mentioned, even in negative phrasing — naming them primes the model to
 /// call them anyway. Use generic phrasing for the unavailability hint.
 pub const KUMIHO_BOOTSTRAP_PROMPT_LITE: &str = "\
-SESSION-START INSTRUCTION (kumiho-memory — Construct daemon, lite mode)
+SESSION-START INSTRUCTION (kumiho-memory — Revka daemon, lite mode)
 
 Advanced memory reflexes are unavailable in this session. Use the bare \
 memory tools listed below for any persistence work; do not assume \
@@ -180,7 +180,7 @@ Rules:
 absolute date in the title (e.g. 'on Mar 27', not 'today').
   - For recall, use kumiho_memory_retrieve. Do not say 'I don't know' or \
 'I don't have context' before searching memory.
-  - User memories live under the CognitiveMemory project. Construct/ holds \
+  - User memories live under the CognitiveMemory project. Revka/ holds \
 agent operational data (AgentPool, Teams, Plans).
   - Skip memory operations for greetings, acknowledgements, yes/no answers, \
 and other trivial exchanges.
@@ -188,12 +188,12 @@ and other trivial exchanges.
 
 /// Lightweight memory bootstrap for channel agents (Discord, Slack, etc.).
 ///
-/// Channels don't orchestrate sub-agents, manage teams, or use Construct
+/// Channels don't orchestrate sub-agents, manage teams, or use Revka
 /// namespace conventions.  This stripped version covers only what a chat
 /// responder needs: engage for recall, reflect for remember requests.
 /// ~400 tokens vs ~1,500 for the full prompt.
 pub const KUMIHO_CHANNEL_BOOTSTRAP_PROMPT: &str = "\
-SESSION-START INSTRUCTION (kumiho-memory — Construct channel)
+SESSION-START INSTRUCTION (kumiho-memory — Revka channel)
 
 You have access to kumiho-memory MCP for persistent memory.
 
@@ -221,7 +221,7 @@ Rules:
 /// the runtime registry probe shows the high-level memory tools are not
 /// registered. Names ONLY the always-available pair.
 pub const KUMIHO_CHANNEL_BOOTSTRAP_PROMPT_LITE: &str = "\
-SESSION-START INSTRUCTION (kumiho-memory — Construct channel, lite mode)
+SESSION-START INSTRUCTION (kumiho-memory — Revka channel, lite mode)
 
 Advanced memory reflexes are unavailable in this session.
 
@@ -236,7 +236,7 @@ memory operations.";
 ///
 /// Priority:
 /// 1. `kumiho.mcp_path` from config if non-empty.
-/// 2. `~/.construct/kumiho/run_kumiho_mcp.py` (the default install location).
+/// 2. `~/.revka/kumiho/run_kumiho_mcp.py` (the default install location).
 pub fn resolve_mcp_path(kumiho_cfg: &KumihoConfig) -> String {
     let configured = kumiho_cfg.mcp_path.trim();
     if !configured.is_empty() {
@@ -292,9 +292,9 @@ pub fn warn_if_kumiho_advanced_missing(config: &Config, advanced_available: bool
     }
     tracing::warn!(
         "Kumiho high-level memory tools were not registered after MCP startup. \
-        Bootstrap prompt is using the lite variant. Check ~/.construct/logs/ \
+        Bootstrap prompt is using the lite variant. Check ~/.revka/logs/ \
         for MCP startup errors. To re-install: \
-        `~/.construct/kumiho/venv/bin/pip install 'kumiho_memory>=0.5.0'` \
+        `~/.revka/kumiho/venv/bin/pip install 'kumiho_memory>=0.5.0'` \
         (or re-run scripts/install-sidecars.sh)."
     );
 }
@@ -303,10 +303,7 @@ pub fn warn_if_kumiho_advanced_missing(config: &Config, advanced_available: bool
 pub fn kumiho_mcp_server_config(kumiho_cfg: &KumihoConfig) -> McpServerConfig {
     let script_path = resolve_mcp_path(kumiho_cfg);
     let mut env: HashMap<String, String> = HashMap::new();
-    env.insert(
-        "CONSTRUCT_AGENT_ROOT".to_string(),
-        expand_tilde("~/.construct"),
-    );
+    env.insert("REVKA_AGENT_ROOT".to_string(), expand_tilde("~/.revka"));
     // Pass the space prefix so the server scopes memories under the right project.
     if !kumiho_cfg.space_prefix.trim().is_empty() {
         env.insert(
@@ -328,13 +325,13 @@ pub fn kumiho_mcp_server_config(kumiho_cfg: &KumihoConfig) -> McpServerConfig {
         kumiho_cfg.memory_retrieval_limit.max(1).to_string(),
     );
     // Forward the bearer token to the spawned Python MCP. KUMIHO_AUTH_TOKEN
-    // (what the SDK reads) and KUMIHO_SERVICE_TOKEN (what Construct's own
+    // (what the SDK reads) and KUMIHO_SERVICE_TOKEN (what Revka's own
     // gateway code reads) carry the same dashboard-issued service_token —
     // the discovery endpoint at control.kumiho.cloud accepts service_tokens
     // via verifyControlPlaneToken and returns the tenant gRPC routing.
     //
     // Priority: KUMIHO_SERVICE_TOKEN > KUMIHO_AUTH_TOKEN. The service token is
-    // the value written by Construct onboarding and should not be shadowed by a
+    // the value written by Revka onboarding and should not be shadowed by a
     // stale shell-level KUMIHO_AUTH_TOKEN from another account.
     //
     // When neither is set, leave KUMIHO_AUTH_TOKEN unset and let the Python
@@ -480,7 +477,7 @@ pub fn inject_kumiho(mut config: Config, is_internal: bool) -> Config {
 /// Apply project-name substitution to a prompt template.
 ///
 /// Replaces the hardcoded default project names (`CognitiveMemory` and
-/// `Construct`) with the values from `KumihoConfig::memory_project` and
+/// `Revka`) with the values from `KumihoConfig::memory_project` and
 /// `KumihoConfig::harness_project`.  When the defaults are unchanged the
 /// string is returned without modification.
 ///
@@ -496,11 +493,11 @@ pub fn substitute_project_names(template: &str, config: &Config) -> String {
     if mem != "CognitiveMemory" {
         out = out.replace("CognitiveMemory", mem);
     }
-    if har != "Construct" {
-        // Be precise: only replace Construct when it appears as a namespace/project
+    if har != "Revka" {
+        // Be precise: only replace Revka when it appears as a namespace/project
         // reference (followed by `/` or at word boundary), NOT in prose like
-        // "Construct daemon" or "Construct channel".  We use targeted replacements.
-        out = out.replace("Construct/", &format!("{har}/"));
+        // "Revka daemon" or "Revka channel".  We use targeted replacements.
+        out = out.replace("Revka/", &format!("{har}/"));
     }
     out = out.replace(
         "{{KUMIHO_MEMORY_RETRIEVAL_LIMIT}}",
@@ -626,7 +623,7 @@ mod tests {
     #[test]
     fn append_kumiho_bootstrap_adds_prompt() {
         let cfg = Config::default();
-        let mut prompt = "## Identity\n\nYou are Construct.".to_string();
+        let mut prompt = "## Identity\n\nYou are Revka.".to_string();
         append_kumiho_bootstrap(&mut prompt, &cfg, false, true);
         assert!(prompt.contains("SESSION-START INSTRUCTION (kumiho-memory"));
         // Full variant mandates engage/reflect.
@@ -695,7 +692,7 @@ mod tests {
 
     #[test]
     fn bootstrap_prompt_has_no_phantom_paseo_refs() {
-        // Audit row 5: the prompt is for Construct, not Paseo. Construct does
+        // Audit row 5: the prompt is for Revka, not Paseo. Revka does
         // not have a `kumiho-memory:kumiho-memory` skill or a
         // `kumiho_get_revision_by_tag` identity-bootstrap step, so the prompt
         // must not direct the model to invoke or avoid them.
@@ -783,7 +780,7 @@ mod tests {
             space_prefix: "MyProject".to_string(),
             api_url: "http://localhost:8000".to_string(),
             memory_project: "CognitiveMemory".to_string(),
-            harness_project: "Construct".to_string(),
+            harness_project: "Revka".to_string(),
             memory_retrieval_limit: 7,
         };
         let server = kumiho_mcp_server_config(&kc);
@@ -840,7 +837,7 @@ mod tests {
         let cfg = Config::default();
         let result = substitute_project_names(KUMIHO_BOOTSTRAP_PROMPT, &cfg);
         assert!(result.contains("CognitiveMemory"));
-        assert!(result.contains("Construct/"));
+        assert!(result.contains("Revka/"));
         assert!(result.contains("limit=3"));
         assert!(!result.contains("{{KUMIHO_MEMORY_RETRIEVAL_LIMIT}}"));
     }
@@ -852,8 +849,8 @@ mod tests {
         let result = substitute_project_names(KUMIHO_BOOTSTRAP_PROMPT, &cfg);
         assert!(result.contains("MyMemory"));
         assert!(!result.contains("CognitiveMemory"));
-        // Construct/ namespaces should still be present (harness unchanged).
-        assert!(result.contains("Construct/"));
+        // Revka/ namespaces should still be present (harness unchanged).
+        assert!(result.contains("Revka/"));
     }
 
     #[test]
@@ -862,7 +859,7 @@ mod tests {
         cfg.kumiho.harness_project = "MyHarness".to_string();
         let result = substitute_project_names(KUMIHO_BOOTSTRAP_PROMPT, &cfg);
         assert!(result.contains("MyHarness/"));
-        assert!(!result.contains("Construct/"));
+        assert!(!result.contains("Revka/"));
         // CognitiveMemory should still be present (memory project unchanged).
         assert!(result.contains("CognitiveMemory"));
     }
@@ -876,7 +873,7 @@ mod tests {
         assert!(result.contains("ProdMemory"));
         assert!(result.contains("ProdHarness/"));
         assert!(!result.contains("CognitiveMemory"));
-        assert!(!result.contains("Construct/"));
+        assert!(!result.contains("Revka/"));
     }
 
     #[test]
@@ -898,7 +895,7 @@ mod tests {
         assert!(prompt.contains("CustomMem"));
         assert!(prompt.contains("CustomHarness/"));
         assert!(!prompt.contains("CognitiveMemory"));
-        assert!(!prompt.contains("Construct/"));
+        assert!(!prompt.contains("Revka/"));
     }
 
     #[test]

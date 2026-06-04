@@ -1,4 +1,4 @@
-# Construct Operations Runbook
+# Revka Operations Runbook
 
 This runbook is for operators who maintain availability, security posture, and incident response.
 
@@ -19,15 +19,15 @@ For first-time installation, start from [one-click-bootstrap.md](../setup-guides
 
 | Mode | Command | When to use |
 |---|---|---|
-| Foreground runtime | `construct daemon` | local debugging, short-lived sessions |
-| Foreground gateway only | `construct gateway` | webhook endpoint testing |
-| User service | `construct service install && construct service start` | persistent operator-managed runtime |
+| Foreground runtime | `revka daemon` | local debugging, short-lived sessions |
+| Foreground gateway only | `revka gateway` | webhook endpoint testing |
+| User service | `revka service install && revka service start` | persistent operator-managed runtime |
 | Docker / Podman | `docker compose up -d` | containerized deployment |
 
 ## Docker / Podman Runtime
 
 If you installed via `./install.sh --docker`, the container exits after onboarding. To run
-Construct as a long-lived container, use the repository `docker-compose.yml` or start a
+Revka as a long-lived container, use the repository `docker-compose.yml` or start a
 container manually against the persisted data directory.
 
 ### Recommended: docker-compose
@@ -49,27 +49,27 @@ Replace `docker` with `podman` if using Podman.
 
 ```bash
 # Start a new container from the bootstrap image
-docker run -d --name construct \
+docker run -d --name revka \
   --restart unless-stopped \
-  -v "$PWD/.construct-docker/.construct:/construct-data/.construct" \
-  -v "$PWD/.construct-docker/workspace:/construct-data/workspace" \
-  -e HOME=/construct-data \
-  -e CONSTRUCT_WORKSPACE=/construct-data/workspace \
+  -v "$PWD/.revka-docker/.revka:/revka-data/.revka" \
+  -v "$PWD/.revka-docker/workspace:/revka-data/workspace" \
+  -e HOME=/revka-data \
+  -e REVKA_WORKSPACE=/revka-data/workspace \
   -p 42617:42617 \
-  construct-bootstrap:local \
+  revka-bootstrap:local \
   gateway
 
 # Stop (preserves config and workspace)
-docker stop construct
+docker stop revka
 
 # Restart a stopped container
-docker start construct
+docker start revka
 
 # View logs
-docker logs -f construct
+docker logs -f revka
 
 # Health check
-docker exec construct construct status
+docker exec revka revka status
 ```
 
 For Podman, add `--userns keep-id --user "$(id -u):$(id -g)"` and append `:Z` to volume mounts.
@@ -86,64 +86,64 @@ For full setup instructions, see [one-click-bootstrap.md](../setup-guides/one-cl
 1. Validate configuration:
 
 ```bash
-construct status
+revka status
 ```
 
 2. Verify diagnostics:
 
 ```bash
-construct doctor
-construct channel doctor
+revka doctor
+revka channel doctor
 ```
 
 3. Start runtime:
 
 ```bash
-construct daemon
+revka daemon
 ```
 
 4. For persistent user session service:
 
 ```bash
-construct service install
-construct service start
-construct service status
+revka service install
+revka service start
+revka service status
 ```
 
-<!-- TODO screenshot: Construct dashboard Audit view displaying the signed audit chain -->
-![Construct dashboard Audit view displaying the signed audit chain](../assets/ops/operations-runbook-01-dashboard-audit.png)
+<!-- TODO screenshot: Revka dashboard Audit view displaying the signed audit chain -->
+![Revka dashboard Audit view displaying the signed audit chain](../assets/ops/operations-runbook-01-dashboard-audit.png)
 
-<!-- TODO screenshot: dashboard showing Construct health status indicators for runtime subsystems -->
-![Dashboard showing Construct health status indicators for runtime subsystems](../assets/ops/operations-runbook-03-dashboard-health.png)
+<!-- TODO screenshot: dashboard showing Revka health status indicators for runtime subsystems -->
+![Dashboard showing Revka health status indicators for runtime subsystems](../assets/ops/operations-runbook-03-dashboard-health.png)
 
 ## Health and State Signals
 
 | Signal | Command / File | Expected |
 |---|---|---|
-| Config validity | `construct doctor` | no critical errors |
-| Channel connectivity | `construct channel doctor` | configured channels healthy |
-| Runtime summary | `construct status` | expected provider/model/channels |
-| Daemon heartbeat/state | `~/.construct/daemon_state.json` | file updates periodically |
+| Config validity | `revka doctor` | no critical errors |
+| Channel connectivity | `revka channel doctor` | configured channels healthy |
+| Runtime summary | `revka status` | expected provider/model/channels |
+| Daemon heartbeat/state | `~/.revka/daemon_state.json` | file updates periodically |
 | Gateway/dashboard | `GET http://127.0.0.1:42617/health` | `200 OK` |
 | Audit chain | `GET /api/audit/verify` (or `Audit` view on dashboard) | chain verifies clean |
 | Kumiho proxy | `GET /api/kumiho/health` (via gateway) | upstream Kumiho reachable |
-| Operator checkpoints | `~/.construct/workflow_checkpoints/` | recent workflow runs present |
-| Operator RunLogs | `~/.construct/operator_mcp/runlogs/` | per-agent JSONL trails present |
+| Operator checkpoints | `~/.revka/workflow_checkpoints/` | recent workflow runs present |
+| Operator RunLogs | `~/.revka/operator_mcp/runlogs/` | per-agent JSONL trails present |
 
-<!-- TODO screenshot: terminal showing the tail of ~/.construct/logs/daemon.log -->
-![Terminal showing the tail of ~/.construct/logs/daemon.log](../assets/ops/operations-runbook-02-daemon-logs.png)
+<!-- TODO screenshot: terminal showing the tail of ~/.revka/logs/daemon.log -->
+![Terminal showing the tail of ~/.revka/logs/daemon.log](../assets/ops/operations-runbook-02-daemon-logs.png)
 
 ## Logs and Diagnostics
 
 ### macOS / Windows (service wrapper logs)
 
-- `~/.construct/logs/daemon.stdout.log`
-- `~/.construct/logs/daemon.stderr.log`
+- `~/.revka/logs/daemon.stdout.log`
+- `~/.revka/logs/daemon.stderr.log`
 
 ### Linux (systemd user service)
 
 ```bash
-journalctl --user -u construct.service -f
+journalctl --user -u revka.service -f
 ```
 
 ## Incident Triage Flow (Fast Path)
@@ -151,25 +151,25 @@ journalctl --user -u construct.service -f
 1. Snapshot system state:
 
 ```bash
-construct status
-construct doctor
-construct channel doctor
+revka status
+revka doctor
+revka channel doctor
 ```
 
 2. Check service state:
 
 ```bash
-construct service status
+revka service status
 ```
 
 3. If service is unhealthy, restart cleanly:
 
 ```bash
-construct service stop
-construct service start
+revka service stop
+revka service start
 ```
 
-4. If channels still fail, verify allowlists and credentials in `~/.construct/config.toml`.
+4. If channels still fail, verify allowlists and credentials in `~/.revka/config.toml`.
 
 5. If gateway is involved, verify bind/auth settings (`[gateway]`) and local reachability.
 
@@ -177,9 +177,9 @@ construct service start
 
 Before applying config changes:
 
-1. backup `~/.construct/config.toml`
+1. backup `~/.revka/config.toml`
 2. apply one logical change at a time
-3. run `construct doctor`
+3. run `revka doctor`
 4. restart daemon/service
 5. verify with `status` + `channel doctor`
 

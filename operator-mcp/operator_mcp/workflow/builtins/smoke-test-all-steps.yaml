@@ -25,7 +25,7 @@ description: |
     - `resolve`                        (uses fail_if_missing: false)
 
   Run with:
-    construct-mcp tools call run_workflow --workflow_name smoke-test-all-steps
+    revka-mcp tools call run_workflow --workflow_name smoke-test-all-steps
 tags: [smoke-test, internal, qa]
 
 inputs:
@@ -267,7 +267,7 @@ steps:
     name: "Kumiho context — fail-soft probe"
     type: kumiho_context
     kumiho:
-      project: Construct
+      project: Revka
       mode: semantic_context
       seed:
         queries: ["smoke-test no-op context"]
@@ -285,7 +285,7 @@ steps:
     name: "Kumiho bundle update — fail-soft probe"
     type: kumiho_bundle_update
     kumiho:
-      project: Construct
+      project: Revka
       mode: add_members
       create_if_missing: false
       idempotent: true
@@ -299,7 +299,7 @@ steps:
     name: "Kumiho patch apply — dry-run fail-soft probe"
     type: kumiho_patch_apply
     kumiho:
-      project: Construct
+      project: Revka
       patch_kref: "kref://smoke-test/patch-not-real.canon-patch?r=1"
       dry_run: true
       approval:
@@ -424,7 +424,7 @@ steps:
         entity_name: "smoke-test-manus-probe"
         entity_kind: "smoke-test-report"
         entity_tag: "smoke"
-        entity_space: "Construct/WorkflowOutputs/SmokeTests"
+        entity_space: "Revka/WorkflowOutputs/SmokeTests"
         content_source: "message"
 
   - id: cluster_f_a2a

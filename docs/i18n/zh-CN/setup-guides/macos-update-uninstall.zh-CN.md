@@ -1,20 +1,20 @@
 # macOS 更新与卸载指南
 
-本页面记录了 macOS（OS X）上 Construct 支持的更新和卸载流程。
+本页面记录了 macOS（OS X）上 Revka 支持的更新和卸载流程。
 
 最后验证时间：**2026年2月22日**。
 
 ## 1) 检查当前安装方式
 
 ```bash
-which construct
-construct --version
+which revka
+revka --version
 ```
 
 典型安装位置：
 
-- Homebrew：`/opt/homebrew/bin/construct`（Apple Silicon）或 `/usr/local/bin/construct`（Intel）
-- Cargo/引导安装/手动安装：`~/.cargo/bin/construct`
+- Homebrew：`/opt/homebrew/bin/revka`（Apple Silicon）或 `/usr/local/bin/revka`（Intel）
+- Cargo/引导安装/手动安装：`~/.cargo/bin/revka`
 
 如果两者都存在，由你的 shell `PATH` 顺序决定运行哪一个。
 
@@ -24,8 +24,8 @@ construct --version
 
 ```bash
 brew update
-brew upgrade construct
-construct --version
+brew upgrade revka
+revka --version
 ```
 
 ### B) 克隆 + 引导安装
@@ -35,7 +35,7 @@ construct --version
 ```bash
 git pull --ff-only
 ./install.sh --prefer-prebuilt
-construct --version
+revka --version
 ```
 
 如果你想要仅源码更新：
@@ -43,7 +43,7 @@ construct --version
 ```bash
 git pull --ff-only
 cargo install --path . --force --locked
-construct --version
+revka --version
 ```
 
 ### C) 手动预编译二进制安装
@@ -51,7 +51,7 @@ construct --version
 使用最新的发布资产重新运行你的下载/安装流程，然后验证：
 
 ```bash
-construct --version
+revka --version
 ```
 
 ## 3) 在 macOS 上卸载
@@ -61,27 +61,27 @@ construct --version
 这可以防止守护进程在二进制文件被移除后继续运行。
 
 ```bash
-construct service stop || true
-construct service uninstall || true
+revka service stop || true
+revka service uninstall || true
 ```
 
 `service uninstall` 会移除的服务文件：
 
-- `~/Library/LaunchAgents/com.construct.daemon.plist`
+- `~/Library/LaunchAgents/com.revka.daemon.plist`
 
 ### B) 根据安装方式移除二进制文件
 
 Homebrew：
 
 ```bash
-brew uninstall construct
+brew uninstall revka
 ```
 
-Cargo/引导安装/手动安装（`~/.cargo/bin/construct`）：
+Cargo/引导安装/手动安装（`~/.cargo/bin/revka`）：
 
 ```bash
-cargo uninstall construct || true
-rm -f ~/.cargo/bin/construct
+cargo uninstall revka || true
+rm -f ~/.cargo/bin/revka
 ```
 
 ### C) 可选：移除本地运行时数据
@@ -89,20 +89,20 @@ rm -f ~/.cargo/bin/construct
 仅当你想要完全清理配置、认证配置文件、日志和工作区状态时运行此命令。
 
 ```bash
-rm -rf ~/.construct
+rm -rf ~/.revka
 ```
 
 ## 4) 验证卸载完成
 
 ```bash
-command -v construct || echo \"construct 二进制文件未找到\"
-pgrep -fl construct || echo \"没有运行中的 construct 进程\"
+command -v revka || echo \"revka 二进制文件未找到\"
+pgrep -fl revka || echo \"没有运行中的 revka 进程\"
 ```
 
 如果 `pgrep` 仍然找到进程，手动停止它并重新检查：
 
 ```bash
-pkill -f construct
+pkill -f revka
 ```
 
 ## 相关文档

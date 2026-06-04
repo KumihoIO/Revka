@@ -1,7 +1,7 @@
 //! Arduino upload tool — agent generates code, uploads via arduino-cli.
 //!
 //! When user says "make a heart on the LED grid", the agent generates Arduino
-//! sketch code and calls this tool. Construct compiles and uploads it — no
+//! sketch code and calls this tool. Revka compiles and uploads it — no
 //! manual IDE or file editing.
 
 use crate::tools::traits::{Tool, ToolResult};
@@ -78,8 +78,8 @@ impl Tool for ArduinoUploadTool {
             });
         }
 
-        let sketch_name = "construct_sketch";
-        let temp_dir = std::env::temp_dir().join(format!("construct_{}", uuid::Uuid::new_v4()));
+        let sketch_name = "revka_sketch";
+        let temp_dir = std::env::temp_dir().join(format!("revka_{}", uuid::Uuid::new_v4()));
         let sketch_dir = temp_dir.join(sketch_name);
         let ino_path = sketch_dir.join(format!("{}.ino", sketch_name));
 

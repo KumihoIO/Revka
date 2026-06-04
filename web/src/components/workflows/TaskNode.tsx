@@ -1,10 +1,10 @@
 import { Handle, Position, type NodeTypes } from '@xyflow/react';
 import { Bot, Lock } from 'lucide-react';
-import type { TaskNodeData } from '@/construct/components/workflows/yamlSync';
-import { emitOpenAgentPicker } from '@/construct/components/workflows/stepEvents';
-import AgentAvatar from '@/construct/components/ui/AgentAvatar';
+import type { TaskNodeData } from '@/revka/components/workflows/yamlSync';
+import { emitOpenAgentPicker } from '@/revka/components/workflows/stepEvents';
+import AgentAvatar from '@/revka/components/ui/AgentAvatar';
 
-// Action → token mapping. Maps semantic intent to Construct CSS vars.
+// Action → token mapping. Maps semantic intent to Revka CSS vars.
 // Categories:
 //   - "live"     → green/success/active work (research, deploy ops, build, completion)
 //   - "network"  → blue/info/communication (notify, group_chat, agents, messaging)
@@ -55,24 +55,24 @@ function getActionTone(action: string): ActionTone {
 /** CSS var for the solid line/fill color associated with a tone. */
 function toneColorVar(tone: ActionTone): string {
   switch (tone) {
-    case 'live': return 'var(--construct-signal-live)';
-    case 'network': return 'var(--construct-signal-network)';
-    case 'warning': return 'var(--construct-status-warning)';
-    case 'danger': return 'var(--construct-status-danger)';
+    case 'live': return 'var(--revka-signal-live)';
+    case 'network': return 'var(--revka-signal-network)';
+    case 'warning': return 'var(--revka-status-warning)';
+    case 'danger': return 'var(--revka-status-danger)';
     case 'accent': return 'var(--pc-accent)';
-    case 'muted': return 'var(--construct-status-idle)';
+    case 'muted': return 'var(--revka-status-idle)';
   }
 }
 
 /** CSS var (or color-mix expression) for the soft tint matching the tone. */
 function toneSoftVar(tone: ActionTone): string {
   switch (tone) {
-    case 'live': return 'var(--construct-signal-live-soft)';
-    case 'network': return 'var(--construct-signal-network-soft)';
-    case 'warning': return 'color-mix(in srgb, var(--construct-status-warning) 16%, transparent)';
-    case 'danger': return 'color-mix(in srgb, var(--construct-status-danger) 16%, transparent)';
+    case 'live': return 'var(--revka-signal-live-soft)';
+    case 'network': return 'var(--revka-signal-network-soft)';
+    case 'warning': return 'color-mix(in srgb, var(--revka-status-warning) 16%, transparent)';
+    case 'danger': return 'color-mix(in srgb, var(--revka-status-danger) 16%, transparent)';
     case 'accent': return 'var(--pc-accent-glow)';
-    case 'muted': return 'color-mix(in srgb, var(--construct-status-idle) 16%, transparent)';
+    case 'muted': return 'color-mix(in srgb, var(--revka-status-idle) 16%, transparent)';
   }
 }
 
@@ -109,11 +109,11 @@ function TaskNode({ id, data, selected }: { id: string; data: TaskNodeData; sele
   const isAgentStep = (data.type || 'agent') === 'agent';
   const baseLayer = selected
     ? `linear-gradient(135deg, ${soft} 0%, ${soft} 40%, transparent 100%)`
-    : `linear-gradient(135deg, ${soft} 0%, color-mix(in srgb, var(--construct-bg-elevated) 72%, transparent) 50%, transparent 100%)`;
+    : `linear-gradient(135deg, ${soft} 0%, color-mix(in srgb, var(--revka-bg-elevated) 72%, transparent) 50%, transparent 100%)`;
   const hasAvatarBackground = Boolean(data.agentAvatarUrl);
   const nodeBackgroundImage = hasAvatarBackground
     ? [
-        'linear-gradient(90deg, var(--construct-bg-panel-strong) 0%, color-mix(in srgb, var(--construct-bg-panel-strong) 86%, transparent) 54%, color-mix(in srgb, var(--construct-bg-panel-strong) 32%, transparent) 100%)',
+        'linear-gradient(90deg, var(--revka-bg-panel-strong) 0%, color-mix(in srgb, var(--revka-bg-panel-strong) 86%, transparent) 54%, color-mix(in srgb, var(--revka-bg-panel-strong) 32%, transparent) 100%)',
         baseLayer,
         cssUrl(data.agentAvatarUrl!),
       ].join(', ')
@@ -130,18 +130,18 @@ function TaskNode({ id, data, selected }: { id: string; data: TaskNodeData; sele
       className={`px-4 py-3 rounded-xl shadow-lg transition-all${data.justUpdated ? ' step-updated-pulse' : ''}`}
       style={{
         position: 'relative',
-        backgroundColor: selected ? 'var(--construct-bg-panel-strong)' : 'var(--construct-bg-surface)',
+        backgroundColor: selected ? 'var(--revka-bg-panel-strong)' : 'var(--revka-bg-surface)',
         backgroundImage: nodeBackgroundImage,
         backgroundRepeat: 'no-repeat',
         backgroundPosition: hasAvatarBackground ? '0 0, 0 0, right -18px center' : undefined,
         backgroundSize: hasAvatarBackground ? '100% 100%, 100% 100%, 56% auto' : undefined,
-        border: `2px solid ${selected ? color : 'var(--construct-border-strong)'}`,
+        border: `2px solid ${selected ? color : 'var(--revka-border-strong)'}`,
         minWidth: 220,
         maxWidth: 280,
         minHeight: 142,
         boxShadow: selected
           ? `0 0 20px ${soft}, inset 0 1px 0 ${soft}`
-          : `0 4px 12px rgba(0, 0, 0, 0.3), inset 0 1px 0 var(--construct-border-soft)`,
+          : `0 4px 12px rgba(0, 0, 0, 0.3), inset 0 1px 0 var(--revka-border-soft)`,
       }}
     >
       <Handle type="target" position={Position.Top} style={{ background: color, width: 10, height: 10 }} />
@@ -149,7 +149,7 @@ function TaskNode({ id, data, selected }: { id: string; data: TaskNodeData; sele
       {/* Task name */}
       <div
         className="text-sm font-bold truncate"
-        style={{ color: selected ? 'var(--construct-signal-selected)' : 'var(--pc-text-primary)' }}
+        style={{ color: selected ? 'var(--revka-signal-selected)' : 'var(--pc-text-primary)' }}
       >
         {data.name || data.taskId}
       </div>
@@ -190,9 +190,9 @@ function TaskNode({ id, data, selected }: { id: string; data: TaskNodeData; sele
           onMouseDown={(e) => e.stopPropagation()}
           className="mt-1.5 px-2 py-0.5 rounded-md text-[10px] font-semibold truncate inline-flex items-center gap-1"
           style={{
-            background: 'var(--construct-signal-network-soft)',
-            color: 'var(--construct-signal-network)',
-            border: '1px solid var(--construct-border-strong)',
+            background: 'var(--revka-signal-network-soft)',
+            color: 'var(--revka-signal-network)',
+            border: '1px solid var(--revka-border-strong)',
             maxWidth: '100%',
             cursor: isAgentStep ? 'pointer' : 'default',
             font: 'inherit',
@@ -221,8 +221,8 @@ function TaskNode({ id, data, selected }: { id: string; data: TaskNodeData; sele
           className="mt-1.5 px-2 py-0.5 rounded-md text-[10px] font-semibold truncate inline-flex items-center gap-1"
           style={{
             background: 'transparent',
-            color: 'var(--construct-text-secondary)',
-            border: '1px solid var(--construct-border-strong)',
+            color: 'var(--revka-text-secondary)',
+            border: '1px solid var(--revka-border-strong)',
             maxWidth: '100%',
             cursor: 'pointer',
             font: 'inherit',
@@ -258,13 +258,13 @@ function TaskNode({ id, data, selected }: { id: string; data: TaskNodeData; sele
             style={{
               background: isDefault
                 ? 'transparent'
-                : 'color-mix(in srgb, var(--construct-status-warning) 16%, transparent)',
+                : 'color-mix(in srgb, var(--revka-status-warning) 16%, transparent)',
               color: isDefault
-                ? 'var(--construct-text-muted)'
-                : 'var(--construct-status-warning)',
+                ? 'var(--revka-text-muted)'
+                : 'var(--revka-status-warning)',
               border: isDefault
-                ? '1px solid var(--construct-border-soft)'
-                : '1px solid var(--construct-status-warning)',
+                ? '1px solid var(--revka-border-soft)'
+                : '1px solid var(--revka-status-warning)',
               maxWidth: '100%',
               cursor: 'pointer',
               font: 'inherit',
@@ -307,7 +307,7 @@ function TaskNode({ id, data, selected }: { id: string; data: TaskNodeData; sele
         <div
           className="flex items-center gap-1 mt-1"
           title={`Auth: ${data.auth}`}
-          style={{ color: 'var(--construct-text-faint)' }}
+          style={{ color: 'var(--revka-text-faint)' }}
         >
           <Lock size={12} />
         </div>
@@ -343,7 +343,7 @@ function TaskNode({ id, data, selected }: { id: string; data: TaskNodeData; sele
 
       {/* Run info overlay — shown when viewing a workflow run */}
       {data.runInfo && (
-        <div className="mt-2 pt-2" style={{ borderTop: '1px solid var(--construct-border-soft)' }}>
+        <div className="mt-2 pt-2" style={{ borderTop: '1px solid var(--revka-border-soft)' }}>
           <div className="flex items-center gap-1.5 flex-wrap">
             {/* Status badge */}
             {(() => {
@@ -396,9 +396,9 @@ function TaskNode({ id, data, selected }: { id: string; data: TaskNodeData; sele
             <div
               className="mt-1.5 px-2 py-0.5 rounded-md text-[10px] font-semibold truncate inline-flex items-center gap-1"
               style={{
-                background: 'var(--construct-signal-network-soft)',
-                color: 'var(--construct-signal-network)',
-                border: '1px solid var(--construct-border-strong)',
+                background: 'var(--revka-signal-network-soft)',
+                color: 'var(--revka-signal-network)',
+                border: '1px solid var(--revka-border-strong)',
                 maxWidth: '100%',
               }}
               title={`Pool Agent: ${data.runInfo.template_name}`}
@@ -432,14 +432,14 @@ function TaskNode({ id, data, selected }: { id: string; data: TaskNodeData; sele
                   className="px-1.5 py-0.5 rounded text-[8px] font-medium inline-flex items-center gap-0.5"
                   style={{
                     background: data.runInfo!.status === 'running'
-                      ? 'var(--construct-signal-network-soft)'
+                      ? 'var(--revka-signal-network-soft)'
                       : data.runInfo!.status === 'completed'
-                        ? 'var(--construct-signal-selected-soft)'
+                        ? 'var(--revka-signal-selected-soft)'
                         : 'var(--pc-accent-glow)',
                     color: data.runInfo!.status === 'running'
-                      ? 'var(--construct-signal-network)'
+                      ? 'var(--revka-signal-network)'
                       : data.runInfo!.status === 'completed'
-                        ? 'var(--construct-signal-selected)'
+                        ? 'var(--revka-signal-selected)'
                         : 'var(--pc-accent-light)',
                   }}
                 >
@@ -447,7 +447,7 @@ function TaskNode({ id, data, selected }: { id: string; data: TaskNodeData; sele
                     <span
                       className="inline-block h-1 w-1 rounded-full"
                       style={{
-                        background: 'var(--construct-signal-network)',
+                        background: 'var(--revka-signal-network)',
                         animation: 'pulse-dot 1.5s ease-in-out infinite',
                       }}
                     />
@@ -481,9 +481,9 @@ function TaskNode({ id, data, selected }: { id: string; data: TaskNodeData; sele
               <span
                 className="text-[9px] font-medium"
                 style={{
-                  color: data.runInfo.trust_score >= 0.8 ? 'var(--construct-status-success)'
-                    : data.runInfo.trust_score >= 0.5 ? 'var(--construct-status-warning)'
-                    : 'var(--construct-status-danger)',
+                  color: data.runInfo.trust_score >= 0.8 ? 'var(--revka-status-success)'
+                    : data.runInfo.trust_score >= 0.5 ? 'var(--revka-status-warning)'
+                    : 'var(--revka-status-danger)',
                 }}
               >
                 trust {(data.runInfo.trust_score * 100).toFixed(0)}%

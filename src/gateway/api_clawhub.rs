@@ -1,4 +1,4 @@
-//! ClawHub marketplace integration — proxy endpoints for the Construct gateway.
+//! ClawHub marketplace integration — proxy endpoints for the Revka gateway.
 //!
 //! Routes:
 //!   GET  /api/clawhub/search?q=...&limit=...     — search skills on ClawHub
@@ -303,7 +303,7 @@ pub async fn handle_clawhub_install(
     // Write content to local file and create artifact BEFORE publishing
     {
         let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-        let skills_dir = std::path::PathBuf::from(home).join(".construct/workspace/skills");
+        let skills_dir = std::path::PathBuf::from(home).join(".revka/workspace/skills");
         let _ = tokio::fs::create_dir_all(&skills_dir).await;
         let file_path = skills_dir.join(format!("{slug}.md"));
         let location = super::api_skills::file_uri_for_path(&file_path);

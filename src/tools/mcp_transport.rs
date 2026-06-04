@@ -1241,7 +1241,7 @@ mod tests {
         let config = McpServerConfig {
             name: "test-stdio".into(),
             transport: McpTransport::Stdio,
-            command: "/usr/bin/construct_nonexistent_binary_abc123".into(),
+            command: "/usr/bin/revka_nonexistent_binary_abc123".into(),
             ..Default::default()
         };
         let result = create_transport(&config);

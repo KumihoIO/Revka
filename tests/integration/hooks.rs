@@ -3,8 +3,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use construct::hooks::{HookHandler, HookResult, HookRunner};
-use construct::tools::ToolResult;
+use revka::hooks::{HookHandler, HookResult, HookRunner};
+use revka::tools::ToolResult;
 
 struct CounterHook {
     gateway_starts: Arc<AtomicUsize>,

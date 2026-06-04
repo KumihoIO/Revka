@@ -1,4 +1,4 @@
-# Construct 故障排除
+# Revka 故障排除
 
 本指南侧重于常见的安装/运行时故障和快速解决路径。
 
@@ -78,10 +78,10 @@ cargo build --release --locked --features hardware
 
 症状：
 
-- `cargo check` / `cargo build` 似乎长时间卡在 `Checking construct`
+- `cargo check` / `cargo build` 似乎长时间卡在 `Checking revka`
 - 重复出现 `Blocking waiting for file lock on package cache` 或 `build directory`
 
-Construct 中出现此问题的原因：
+Revka 中出现此问题的原因：
 
 - Matrix E2EE 栈（`matrix-sdk`、`ruma`、`vodozemac`）很大，类型检查开销高。
 - TLS + 加密原生构建脚本（`aws-lc-sys`、`ring`）增加了明显的编译时间。
@@ -125,17 +125,17 @@ pgrep -af \"cargo (check|build|test)|cargo check|cargo build|cargo test\"
 
 在运行自己的构建前停止不相关的 cargo 任务。
 
-### 安装后找不到 `construct` 命令
+### 安装后找不到 `revka` 命令
 
 症状：
 
-- 安装成功，但 shell 找不到 `construct`
+- 安装成功，但 shell 找不到 `revka`
 
 修复：
 
 ```bash
 export PATH=\"$HOME/.cargo/bin:$PATH\"
-which construct
+which revka
 ```
 
 如有需要，持久化到你的 shell 配置文件中。
@@ -147,11 +147,11 @@ which construct
 检查：
 
 ```bash
-construct status
-construct doctor
+revka status
+revka doctor
 ```
 
-验证 `~/.construct/config.toml`：
+验证 `~/.revka/config.toml`：
 
 - `[gateway].host`（默认 `127.0.0.1`）
 - `[gateway].port`（默认 `42617`）
@@ -166,7 +166,7 @@ construct doctor
 3. 重新运行诊断：
 
 ```bash
-construct doctor
+revka doctor
 ```
 
 ## 渠道问题
@@ -180,14 +180,14 @@ construct doctor
 修复：
 
 - 为该令牌仅保留一个活动运行时
-- 停止额外的 `construct daemon` / `construct channel start` 进程
+- 停止额外的 `revka daemon` / `revka channel start` 进程
 
 ### `channel doctor` 中渠道不健康
 
 检查：
 
 ```bash
-construct channel doctor
+revka channel doctor
 ```
 
 然后验证配置中特定渠道的凭证 + 白名单字段。
@@ -199,26 +199,26 @@ construct channel doctor
 检查：
 
 ```bash
-construct service status
+revka service status
 ```
 
 恢复：
 
 ```bash
-construct service stop
-construct service start
+revka service stop
+revka service start
 ```
 
 Linux 日志：
 
 ```bash
-journalctl --user -u construct.service -f
+journalctl --user -u revka.service -f
 ```
 
 ## 安装程序 URL
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/KumihoIO/construct-os/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/KumihoIO/Revka/main/install.sh | bash
 ```
 
 ## 仍然卡住？
@@ -226,10 +226,10 @@ curl -fsSL https://raw.githubusercontent.com/KumihoIO/construct-os/main/install.
 提交 issue 时收集并包含这些输出：
 
 ```bash
-construct --version
-construct status
-construct doctor
-construct channel doctor
+revka --version
+revka status
+revka doctor
+revka channel doctor
 ```
 
 同时包含操作系统、安装方法和脱敏的配置片段（无密钥）。

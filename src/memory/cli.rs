@@ -1,6 +1,6 @@
-//! `construct memory` CLI commands, backed by Kumiho MCP.
+//! `revka memory` CLI commands, backed by Kumiho MCP.
 //!
-//! Persistent memory in Construct is stored in Kumiho as item → revision pairs,
+//! Persistent memory in Revka is stored in Kumiho as item → revision pairs,
 //! with small content stashed in the revision's metadata (`content` key). The
 //! CLI targets a dedicated `Memory` space under the configured memory project
 //! so CLI-managed entries stay separate from memories captured via
@@ -20,7 +20,7 @@ pub const CLI_SPACE_NAME: &str = "Memory";
 const MEMORY_ITEM_KIND: &str = "memory";
 const CONTENT_PREVIEW_LEN: usize = 120;
 
-/// Handle `construct memory <subcommand>` CLI commands.
+/// Handle `revka memory <subcommand>` CLI commands.
 pub async fn handle_command(command: crate::MemoryCommands, config: &Config) -> Result<()> {
     let ctx = CliContext::from_config(config);
 
@@ -369,9 +369,9 @@ fn kumiho_err(e: KumihoError, action: &'static str) -> anyhow::Error {
     }
 }
 
-/// Construct a revision metadata map for a CLI-stored memory entry.
+/// Revka a revision metadata map for a CLI-stored memory entry.
 ///
-/// Kept as a free helper so other callers (e.g. future `construct memory store`
+/// Kept as a free helper so other callers (e.g. future `revka memory store`
 /// subcommand) can build revisions with the same schema the list/get commands
 /// expect.
 #[allow(dead_code)]

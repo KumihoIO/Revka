@@ -1,4 +1,4 @@
-# Tham khảo cấu hình Construct
+# Tham khảo cấu hình Revka
 
 _Source English version updated 2026-04-21; localized version may be stale until retranslated._
 
@@ -8,17 +8,17 @@ Xác minh lần cuối: **2026-02-19**.
 
 Thứ tự tìm config khi khởi động:
 
-1. Biến `CONSTRUCT_WORKSPACE` (nếu được đặt)
-2. Marker `~/.construct/active_workspace.toml` (nếu có)
-3. Mặc định `~/.construct/config.toml`
+1. Biến `REVKA_WORKSPACE` (nếu được đặt)
+2. Marker `~/.revka/active_workspace.toml` (nếu có)
+3. Mặc định `~/.revka/config.toml`
 
-Construct ghi log đường dẫn config đã giải quyết khi khởi động ở mức `INFO`:
+Revka ghi log đường dẫn config đã giải quyết khi khởi động ở mức `INFO`:
 
 - `Config loaded` với các trường: `path`, `workspace`, `source`, `initialized`
 
 Lệnh xuất schema:
 
-- `construct config schema` (xuất JSON Schema draft 2020-12 ra stdout)
+- `revka config schema` (xuất JSON Schema draft 2020-12 ra stdout)
 
 ## Khóa chính
 
@@ -34,7 +34,7 @@ Lệnh xuất schema:
 |---|---|---|
 | `backend` | `none` | Backend quan sát: `none`, `noop`, `log`, `prometheus`, `otel`, `opentelemetry` hoặc `otlp` |
 | `otel_endpoint` | `http://localhost:4318` | Endpoint OTLP HTTP khi backend là `otel` |
-| `otel_service_name` | `construct` | Tên dịch vụ gửi đến OTLP collector |
+| `otel_service_name` | `revka` | Tên dịch vụ gửi đến OTLP collector |
 
 Lưu ý:
 
@@ -47,21 +47,21 @@ Ví dụ:
 [observability]
 backend = "otel"
 otel_endpoint = "http://localhost:4318"
-otel_service_name = "construct"
+otel_service_name = "revka"
 ```
 
 ## Ghi đè provider qua biến môi trường
 
 Provider cũng có thể chọn qua biến môi trường. Thứ tự ưu tiên:
 
-1. `CONSTRUCT_PROVIDER` (ghi đè tường minh, luôn thắng khi có giá trị)
+1. `REVKA_PROVIDER` (ghi đè tường minh, luôn thắng khi có giá trị)
 2. `PROVIDER` (dự phòng kiểu cũ, chỉ áp dụng khi provider trong config chưa đặt hoặc vẫn là `openrouter`)
 3. `default_provider` trong `config.toml`
 
 Lưu ý cho người dùng container:
 
 - Nếu `config.toml` đặt provider tùy chỉnh như `custom:https://.../v1`, biến `PROVIDER=openrouter` mặc định từ Docker/container sẽ không thay thế nó.
-- Dùng `CONSTRUCT_PROVIDER` khi cố ý muốn biến môi trường ghi đè provider đã cấu hình.
+- Dùng `REVKA_PROVIDER` khi cố ý muốn biến môi trường ghi đè provider đã cấu hình.
 
 ## `[agent]`
 
@@ -141,11 +141,11 @@ Lưu ý:
 
 Lưu ý:
 
-- Mặc định an toàn: Construct **không** clone hay đồng bộ `open-skills` trừ khi `open_skills_enabled = true`.
+- Mặc định an toàn: Revka **không** clone hay đồng bộ `open-skills` trừ khi `open_skills_enabled = true`.
 - Ghi đè qua biến môi trường:
-  - `CONSTRUCT_OPEN_SKILLS_ENABLED` chấp nhận `1/0`, `true/false`, `yes/no`, `on/off`.
-  - `CONSTRUCT_OPEN_SKILLS_DIR` ghi đè đường dẫn kho khi có giá trị.
-- Thứ tự ưu tiên: `CONSTRUCT_OPEN_SKILLS_ENABLED` → `skills.open_skills_enabled` trong `config.toml` → mặc định `false`.
+  - `REVKA_OPEN_SKILLS_ENABLED` chấp nhận `1/0`, `true/false`, `yes/no`, `on/off`.
+  - `REVKA_OPEN_SKILLS_DIR` ghi đè đường dẫn kho khi có giá trị.
+- Thứ tự ưu tiên: `REVKA_OPEN_SKILLS_ENABLED` → `skills.open_skills_enabled` trong `config.toml` → mặc định `false`.
 
 ## `[composio]`
 
@@ -159,7 +159,7 @@ Lưu ý:
 
 - Tương thích ngược: `enable = true` kiểu cũ được chấp nhận như bí danh cho `enabled = true`.
 - Nếu `enabled = false` hoặc thiếu `api_key`, tool `composio` không được đăng ký.
-- Construct yêu cầu Composio v3 tools với `toolkit_versions=latest` và thực thi với `version="latest"` để tránh bản tool mặc định cũ.
+- Revka yêu cầu Composio v3 tools với `toolkit_versions=latest` và thực thi với `version="latest"` để tránh bản tool mặc định cũ.
 - Luồng thông thường: gọi `connect`, hoàn tất OAuth trên trình duyệt, rồi chạy `execute` cho hành động mong muốn.
 - Nếu Composio trả lỗi thiếu connected-account, gọi `list_accounts` (tùy chọn với `app`) và truyền `connected_account_id` trả về cho `execute`.
 
@@ -382,7 +382,7 @@ Chiến lược nâng cấp:
 
 1. Giữ hint ổn định (`hint:reasoning`, `hint:semantic`).
 2. Chỉ cập nhật `model = "...phiên-bản-mới..."` trong mục route.
-3. Kiểm tra bằng `construct doctor` trước khi khởi động lại/triển khai.
+3. Kiểm tra bằng `revka doctor` trước khi khởi động lại/triển khai.
 
 ## `[query_classification]`
 
@@ -446,7 +446,7 @@ Lưu ý:
 - Khi timeout xảy ra, người dùng nhận: `⚠️ Request timed out while waiting for the model. Please try again.`
 - Hành vi ngắt chỉ Telegram được điều khiển bằng `channels_config.telegram.interrupt_on_new_message` (mặc định `false`).
   Khi bật, tin nhắn mới từ cùng người gửi trong cùng chat sẽ hủy yêu cầu đang xử lý và giữ ngữ cảnh người dùng bị ngắt.
-- Khi `construct channel start` đang chạy, thay đổi `default_provider`, `default_model`, `default_temperature`, `api_key`, `api_url` và `reliability.*` được áp dụng nóng từ `config.toml` ở tin nhắn tiếp theo.
+- Khi `revka channel start` đang chạy, thay đổi `default_provider`, `default_model`, `default_temperature`, `api_key`, `api_url` và `reliability.*` được áp dụng nóng từ `config.toml` ở tin nhắn tiếp theo.
 
 Xem ma trận kênh và hành vi allowlist chi tiết tại [channels-reference.md](channels-reference.md).
 
@@ -541,7 +541,7 @@ Lưu ý:
 
 Tích hợp Google Agents CLI cho các lệnh vòng đời ADK / Agent Platform. Mục này bật tool
 `google_agents_cli`. `agents-cli` là công cụ vòng đời cho coding agent, không phải
-Construct `agent_type` hoặc session provider.
+Revka `agent_type` hoặc session provider.
 
 | Khóa | Mặc định | Mục đích |
 |---|---|---|
@@ -552,7 +552,7 @@ Construct `agent_type` hoặc session provider.
 
 Lưu ý:
 
-- Cài đặt và xác thực `agents-cli` bên ngoài Construct. Tool chạy binary có sẵn trong `PATH`.
+- Cài đặt và xác thực `agents-cli` bên ngoài Revka. Tool chạy binary có sẵn trong `PATH`.
 - Các biến Google như `GOOGLE_API_KEY`, `GEMINI_API_KEY`,
   `GOOGLE_APPLICATION_CREDENTIALS`, `GOOGLE_CLOUD_PROJECT`,
   `GOOGLE_CLOUD_LOCATION` và `GOOGLE_GENAI_USE_VERTEXAI` được truyền mặc định khi có.
@@ -578,10 +578,10 @@ Lưu ý:
 Sau khi chỉnh config:
 
 ```bash
-construct status
-construct doctor
-construct channel doctor
-construct service restart
+revka status
+revka doctor
+revka channel doctor
+revka service restart
 ```
 
 ## Tài liệu liên quan

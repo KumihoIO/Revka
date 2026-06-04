@@ -78,10 +78,10 @@ The remaining failure is inventory completeness as measured by the exact mandato
 Commands run:
 
 ```text
-$ ~/.construct/kumiho/venv/bin/python -c "from kumiho.mcp_server import TOOL_HANDLERS; print('store?', 'kumiho_memory_store' in TOOL_HANDLERS, 'retrieve?', 'kumiho_memory_retrieve' in TOOL_HANDLERS)"
+$ ~/.revka/kumiho/venv/bin/python -c "from kumiho.mcp_server import TOOL_HANDLERS; print('store?', 'kumiho_memory_store' in TOOL_HANDLERS, 'retrieve?', 'kumiho_memory_retrieve' in TOOL_HANDLERS)"
 store? True retrieve? True
 
-$ grep -n 'kumiho_memory_store\|kumiho_memory_retrieve' ~/.construct/kumiho/venv/lib/python3.11/site-packages/kumiho/mcp_server.py
+$ grep -n 'kumiho_memory_store\|kumiho_memory_retrieve' ~/.revka/kumiho/venv/lib/python3.11/site-packages/kumiho/mcp_server.py
 2006:        "name": "kumiho_memory_store",
 2073:        "name": "kumiho_memory_retrieve",
 2896:    "kumiho_memory_store": lambda args: tool_memory_store(
@@ -180,7 +180,7 @@ The new allowlist guard is useful, but it is file-level, not line-level. A futur
 
 The scrub removes the most visible bare `memory_recall` / `memory_forget` advertisements from prompts, defaults, onboarding, and tool descriptions, and the targeted Rust tests pass. However, the inventory is not complete enough to be used as the audit ledger: the mandatory grep returned 120 surviving matches outside the excluded audit docs, and at least 18 of those are either absent from the inventory or only indirectly mentioned in the prose reality-check instead of being classified as untouched Category A entries.
 
-The biggest correctness problem is that several replacement paths now advertise `kumiho_memory_store` and `kumiho_memory_retrieve` as canonical or always available, but the required runtime source check against `~/.construct/kumiho/venv/lib/python3.11/site-packages/kumiho_memory/mcp_tools.py` does not show either tool registered. That preserves the same runtime-trust gap in a new shape: the agent is still told to call tool names that the checked MCP registry source does not expose.
+The biggest correctness problem is that several replacement paths now advertise `kumiho_memory_store` and `kumiho_memory_retrieve` as canonical or always available, but the required runtime source check against `~/.revka/kumiho/venv/lib/python3.11/site-packages/kumiho_memory/mcp_tools.py` does not show either tool registered. That preserves the same runtime-trust gap in a new shape: the agent is still told to call tool names that the checked MCP registry source does not expose.
 
 This is coder-revisable. The A/B/C framework can still work, but the inventory needs to cover every remaining grep hit explicitly, the Kumiho replacement names must be verified against actual registered tool names, and the guard tests need to move beyond prompt-only substring checks.
 
@@ -259,7 +259,7 @@ Available tools:
   - kumiho_memory_store    — store a memory item to the graph.
   - kumiho_memory_retrieve — retrieve a memory item by id or filter.
 
-/Users/neo/.construct/kumiho/venv/lib/python3.11/site-packages/kumiho_memory/mcp_tools.py:1042
+/Users/neo/.revka/kumiho/venv/lib/python3.11/site-packages/kumiho_memory/mcp_tools.py:1042
 "kumiho_chat_clear": tool_chat_clear,
 "kumiho_memory_ingest": tool_memory_ingest,
 "kumiho_memory_add_response": tool_memory_add_response,
@@ -304,8 +304,8 @@ pub fn warn_on_legacy_memory_tool_names(config: &Config) {
     const LEGACY: &[(&str, &str)] = &[
         ("memory_recall", "use `kumiho_memory_engage` (Kumiho MCP) for recall"),
         ("memory_forget", "no direct replacement; use `kumiho_deprecate_item` via the Kumiho MCP if you need to retract a memory"),
-        ("memory_store", "use `kumiho_memory_store` (Kumiho MCP) or `construct-operator__memory_store` (Operator MCP)"),
-        ("memory_search", "use `kumiho_memory_engage` (Kumiho MCP) or `construct-operator__memory_search` (Operator MCP)"),
+        ("memory_store", "use `kumiho_memory_store` (Kumiho MCP) or `revka-operator__memory_store` (Operator MCP)"),
+        ("memory_search", "use `kumiho_memory_engage` (Kumiho MCP) or `revka-operator__memory_search` (Operator MCP)"),
     ];
 }
 
@@ -323,10 +323,10 @@ English `docs/maintainers/repo-map.md` and zh-CN mirror were synced to Kumiho/Op
 Actual content:
 ```text
 docs/maintainers/repo-map.md:104
-- **Memory**: provided by the Kumiho-memory MCP — `kumiho_memory_engage`, `kumiho_memory_reflect`, `kumiho_memory_store`, `kumiho_memory_retrieve`, `kumiho_memory_consolidate`, `kumiho_memory_dream_state`. The Operator MCP also exposes `memory_store` / `memory_search` under the `construct-operator__` prefix for legacy callers.
+- **Memory**: provided by the Kumiho-memory MCP — `kumiho_memory_engage`, `kumiho_memory_reflect`, `kumiho_memory_store`, `kumiho_memory_retrieve`, `kumiho_memory_consolidate`, `kumiho_memory_dream_state`. The Operator MCP also exposes `memory_store` / `memory_search` under the `revka-operator__` prefix for legacy callers.
 
 docs/i18n/zh-CN/maintainers/repo-map.zh-CN.md:104
-- **内存**: 由 Kumiho-memory MCP 提供 — `kumiho_memory_engage`、`kumiho_memory_reflect`、`kumiho_memory_store`、`kumiho_memory_retrieve`、`kumiho_memory_consolidate`、`kumiho_memory_dream_state`。Operator MCP 也通过 `construct-operator__` 前缀提供 `memory_store` / `memory_search` 以兼容旧调用。
+- **内存**: 由 Kumiho-memory MCP 提供 — `kumiho_memory_engage`、`kumiho_memory_reflect`、`kumiho_memory_store`、`kumiho_memory_retrieve`、`kumiho_memory_consolidate`、`kumiho_memory_dream_state`。Operator MCP 也通过 `revka-operator__` 前缀提供 `memory_store` / `memory_search` 以兼容旧调用。
 ```
 
 Assessment: Partial. zh-CN mirrors the English scrub, but the shared content lists `kumiho_memory_store` / `kumiho_memory_retrieve`, which the checked Kumiho MCP tool list does not expose. I did not find a ko mirror for this maintainer doc in the tree.

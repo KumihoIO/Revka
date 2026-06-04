@@ -4,11 +4,11 @@
 
 **Date:** 2026-03-22
 
-**Issue:** [#4057](https://github.com/construct/construct/issues/4057)
+**Issue:** [#4057](https://github.com/revka/revka/issues/4057)
 
 ## Context
 
-Construct tools execute in a multi-client environment where a single daemon
+Revka tools execute in a multi-client environment where a single daemon
 process serves requests from multiple connected clients simultaneously. Several
 tools already maintain long-lived shared state:
 
@@ -64,7 +64,7 @@ interior mutability) for per-request or per-client data.
 
 ### 2. Identity assignment: Who constructs identity keys?
 
-**The daemon SHOULD provide identity.** Tools MUST NOT construct their own
+**The daemon SHOULD provide identity.** Tools MUST NOT revka their own
 client identity keys.
 
 A new `ClientId` type should be introduced (opaque, `Clone + Eq + Hash + Send + Sync`)

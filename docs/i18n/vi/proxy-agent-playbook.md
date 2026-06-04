@@ -7,9 +7,9 @@ Dùng tài liệu này khi bạn muốn agent chuyển đổi phạm vi proxy nh
 ## 0. Tóm Tắt
 
 - **Mục đích:** cung cấp tool call sẵn sàng sử dụng để quản lý phạm vi proxy và rollback.
-- **Đối tượng:** operator và maintainer đang chạy Construct trong mạng có proxy.
+- **Đối tượng:** operator và maintainer đang chạy Revka trong mạng có proxy.
 - **Phạm vi:** các hành động `proxy_config`, lựa chọn mode, quy trình xác minh và xử lý sự cố.
-- **Ngoài phạm vi:** gỡ lỗi mạng chung không liên quan đến hành vi runtime của Construct.
+- **Ngoài phạm vi:** gỡ lỗi mạng chung không liên quan đến hành vi runtime của Revka.
 
 ---
 
@@ -17,15 +17,15 @@ Dùng tài liệu này khi bạn muốn agent chuyển đổi phạm vi proxy nh
 
 Dùng mục này để định tuyến vận hành nhanh.
 
-### 1.1 Chỉ proxy traffic nội bộ Construct
+### 1.1 Chỉ proxy traffic nội bộ Revka
 
-1. Dùng scope `construct`.
+1. Dùng scope `revka`.
 2. Đặt `http_proxy`/`https_proxy` hoặc `all_proxy`.
 3. Xác minh bằng `{"action":"get"}`.
 
 Xem:
 
-- [Mục 4](#4-mode-a--chỉ-proxy-cho-nội-bộ-construct)
+- [Mục 4](#4-mode-a--chỉ-proxy-cho-nội-bộ-revka)
 
 ### 1.2 Chỉ proxy các dịch vụ được chọn
 
@@ -63,7 +63,7 @@ Xem:
 
 | Phạm vi | Ảnh hưởng | Xuất biến env | Trường hợp dùng điển hình |
 |---|---|---|---|
-| `construct` | Các HTTP client nội bộ Construct | Không | Proxying runtime thông thường không có tác dụng phụ cấp process |
+| `revka` | Các HTTP client nội bộ Revka | Không | Proxying runtime thông thường không có tác dụng phụ cấp process |
 | `services` | Chỉ các service key/selector được chọn | Không | Định tuyến chi tiết cho provider/tool/channel cụ thể |
 | `environment` | Runtime + biến môi trường proxy của process | Có | Các tích hợp yêu cầu `HTTP_PROXY`/`HTTPS_PROXY`/`ALL_PROXY` |
 
@@ -88,20 +88,20 @@ Tool call:
 
 ---
 
-## 4. Mode A — Chỉ Proxy Cho Nội Bộ Construct
+## 4. Mode A — Chỉ Proxy Cho Nội Bộ Revka
 
-Dùng khi traffic HTTP của provider/channel/tool Construct cần đi qua proxy mà không xuất biến env proxy cấp process.
+Dùng khi traffic HTTP của provider/channel/tool Revka cần đi qua proxy mà không xuất biến env proxy cấp process.
 
 Tool call:
 
 ```json
-{"action":"set","enabled":true,"scope":"construct","http_proxy":"http://127.0.0.1:7890","https_proxy":"http://127.0.0.1:7890","no_proxy":["localhost","127.0.0.1"]}
+{"action":"set","enabled":true,"scope":"revka","http_proxy":"http://127.0.0.1:7890","https_proxy":"http://127.0.0.1:7890","no_proxy":["localhost","127.0.0.1"]}
 {"action":"get"}
 ```
 
 Hành vi kỳ vọng:
 
-- Runtime proxy hoạt động cho các HTTP client của Construct.
+- Runtime proxy hoạt động cho các HTTP client của Revka.
 - Không cần xuất `HTTP_PROXY` / `HTTPS_PROXY` vào env của process.
 
 ---

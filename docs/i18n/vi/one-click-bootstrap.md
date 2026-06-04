@@ -2,21 +2,21 @@
 
 _Source English version updated 2026-04-21; localized version may be stale until retranslated._
 
-Cách cài đặt và khởi tạo Construct nhanh nhất.
+Cách cài đặt và khởi tạo Revka nhanh nhất.
 
 Xác minh lần cuối: **2026-02-20**.
 
 ## Cách 0: Homebrew (macOS/Linuxbrew)
 
 ```bash
-brew install construct
+brew install revka
 ```
 
 ## Cách A (Khuyến nghị): Clone + chạy script cục bộ
 
 ```bash
-git clone https://github.com/KumihoIO/construct-os.git
-cd construct
+git clone https://github.com/KumihoIO/Revka.git
+cd revka
 ./install.sh
 ```
 
@@ -52,7 +52,7 @@ Bỏ qua binary dựng sẵn, buộc build từ mã nguồn:
 
 ## Bootstrap kép
 
-Mặc định là **chỉ ứng dụng** (build/cài Construct), yêu cầu Rust toolchain sẵn có.
+Mặc định là **chỉ ứng dụng** (build/cài Revka), yêu cầu Rust toolchain sẵn có.
 
 Với máy mới, bật bootstrap môi trường:
 
@@ -71,7 +71,7 @@ Lưu ý:
 ## Cách B: Lệnh từ xa một dòng
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/KumihoIO/construct-os/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/KumihoIO/Revka/main/install.sh | bash
 ```
 
 Với môi trường yêu cầu bảo mật cao, nên dùng Cách A để kiểm tra script trước khi chạy.
@@ -86,7 +86,7 @@ Nếu chạy Cách B ngoài thư mục repo, bootstrap script sẽ tự clone wo
 ./install.sh --docker
 ```
 
-Lệnh này build image Construct cục bộ và chạy thiết lập trong container, lưu config/workspace vào `./.construct-docker`.
+Lệnh này build image Revka cục bộ và chạy thiết lập trong container, lưu config/workspace vào `./.revka-docker`.
 
 ### Thiết lập nhanh (không tương tác)
 
@@ -97,7 +97,7 @@ Lệnh này build image Construct cục bộ và chạy thiết lập trong cont
 Hoặc dùng biến môi trường:
 
 ```bash
-CONSTRUCT_API_KEY="sk-..." CONSTRUCT_PROVIDER="openrouter" ./install.sh
+REVKA_API_KEY="sk-..." REVKA_PROVIDER="openrouter" ./install.sh
 ```
 
 ## Các cờ hữu ích

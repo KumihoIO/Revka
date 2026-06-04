@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Launcher for the Operator MCP sidecar.
 
-Materialized into ~/.construct/operator_mcp/run_operator_mcp.py by
-`construct install`. Re-execs into the per-sidecar venv interpreter so
-Construct itself does not depend on any particular Python on PATH at runtime.
+Materialized into ~/.revka/operator_mcp/run_operator_mcp.py by
+`revka install`. Re-execs into the per-sidecar venv interpreter so
+Revka itself does not depend on any particular Python on PATH at runtime.
 """
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from pathlib import Path
 
 
 def main() -> int:
-    venv = Path.home() / ".construct" / "operator_mcp" / "venv"
+    venv = Path.home() / ".revka" / "operator_mcp" / "venv"
     if os.name == "nt":
         interp = venv / "Scripts" / "python.exe"
     else:
@@ -24,11 +24,11 @@ def main() -> int:
     if not interp.exists():
         sys.stderr.write(
             f"operator sidecar venv interpreter not found at {interp}.\n"
-            "Run `construct install --sidecars-only` to (re)provision the sidecars.\n"
+            "Run `revka install --sidecars-only` to (re)provision the sidecars.\n"
         )
         return 127
 
-    # Older Construct binaries may still inject KUMIHO_AUTO_CONFIGURE at
+    # Older Revka binaries may still inject KUMIHO_AUTO_CONFIGURE at
     # sidecar launch. Keep endpoint discovery out of the pre-initialize path.
     os.environ.pop("KUMIHO_AUTO_CONFIGURE", None)
     # Keep gRPC C-core INFO fork diagnostics out of the user-facing log stream.

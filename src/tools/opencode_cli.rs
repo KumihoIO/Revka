@@ -15,7 +15,7 @@ const SAFE_ENV_VARS: &[&str] = &[
 
 /// Delegates coding tasks to the OpenCode CLI (`opencode run`).
 ///
-/// This creates a two-tier agent architecture: Construct orchestrates high-level
+/// This creates a two-tier agent architecture: Revka orchestrates high-level
 /// tasks and delegates complex coding work to OpenCode, which has its own
 /// agent loop with file editing and shell tools.
 ///

@@ -1,4 +1,4 @@
-# Construct 审计日志
+# Revka 审计日志
 
 > ⚠️ **状态：提案 / 路线图**
 >
@@ -7,7 +7,7 @@
 
 ## 问题
 
-Construct 会记录操作，但缺乏防篡改审计追踪，用于记录：
+Revka 会记录操作，但缺乏防篡改审计追踪，用于记录：
 - 谁执行了什么命令
 - 何时以及从哪个渠道
 - 访问了哪些资源
@@ -116,13 +116,13 @@ impl AuditLogger {
 ```toml
 [security.audit]
 enabled = true
-log_path = \"~/.config/construct/audit.log\"
+log_path = \"~/.config/revka/audit.log\"
 max_size_mb = 100
 rotate = \"daily\"  # daily | weekly | size
 
 # 防篡改
 sign_events = true
-signing_key_path = \"~/.config/construct/audit.key\"
+signing_key_path = \"~/.config/revka/audit.key\"
 
 # 记录内容
 log_commands = true
@@ -137,19 +137,19 @@ log_policy_violations = true
 
 ```bash
 # 显示 @alice 执行的所有命令
-construct audit --user @alice
+revka audit --user @alice
 
 # 显示所有高风险命令
-construct audit --risk high
+revka audit --risk high
 
 # 显示过去 24 小时的违规行为
-construct audit --since 24h --violations-only
+revka audit --since 24h --violations-only
 
 # 导出为 JSON 用于分析
-construct audit --format json --output audit.json
+revka audit --format json --output audit.json
 
 # 验证日志完整性
-construct audit --verify-signatures
+revka audit --verify-signatures
 ```
 
 ---

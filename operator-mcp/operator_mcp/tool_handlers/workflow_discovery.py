@@ -102,7 +102,7 @@ _STEP_LABELS: dict[StepType, str] = {
 }
 
 _STEP_DESCRIPTIONS: dict[StepType, str] = {
-    StepType.AGENT: "Spawn a Construct agent (claude/codex) with a prompt.",
+    StepType.AGENT: "Spawn a Revka agent (claude/codex) with a prompt.",
     StepType.SHELL: "Run a shell command.",
     StepType.PYTHON: "Invoke a Python script with JSON I/O.",
     StepType.COMPUTE: "Evaluate sandboxed expressions into typed output_data fields.",
@@ -449,9 +449,9 @@ def _get_step_types() -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 def _gateway() -> Any:
-    """Return the shared ConstructGatewayClient instance (operator_mcp module)."""
-    from ..operator_mcp import CONSTRUCT_GW
-    return CONSTRUCT_GW
+    """Return the shared RevkaGatewayClient instance (operator_mcp module)."""
+    from ..operator_mcp import REVKA_GW
+    return REVKA_GW
 
 
 def _slim_agent(a: dict[str, Any]) -> dict[str, Any]:

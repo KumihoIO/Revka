@@ -26,10 +26,10 @@ Object.defineProperty(globalThis, 'localStorage', {
 });
 
 // `tauri.ts` checks `'__TAURI__' in window` and `basePath.ts` reads
-// `window.__CONSTRUCT_BASE__`, so the object must exist.
+// `window.__REVKA_BASE__`, so the object must exist.
 if (!(globalThis as any).window) {
   (globalThis as any).window = {
-    __CONSTRUCT_BASE__: '',
+    __REVKA_BASE__: '',
     addEventListener: () => {},
     removeEventListener: () => {},
     dispatchEvent: () => true,

@@ -1,1 +1,1 @@
-export const CONSTRUCT_VERSION = __CONSTRUCT_VERSION__;
+export const REVKA_VERSION = __REVKA_VERSION__;

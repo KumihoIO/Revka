@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Bootstrap launcher for the Construct Operator MCP Server.
+"""Bootstrap launcher for the Revka Operator MCP Server.
 
 Locates the per-component venv that scripts/install-sidecars.{sh,bat}
-provisions at ~/.construct/operator_mcp/venv and re-execs the package
+provisions at ~/.revka/operator_mcp/venv and re-execs the package
 under it. If the venv is missing or its python interpreter is missing,
 exit with a clear instruction to run install-sidecars.
 
@@ -24,9 +24,9 @@ SCRIPT_DIR = pathlib.Path(__file__).resolve().parent
 
 # Allow override via env var so embedded / non-standard installs can point
 # at a different venv. Default matches install-sidecars layout.
-_DEFAULT_OPERATOR_DIR = pathlib.Path.home() / ".construct" / "operator_mcp"
+_DEFAULT_OPERATOR_DIR = pathlib.Path.home() / ".revka" / "operator_mcp"
 OPERATOR_DIR = pathlib.Path(
-    os.environ.get("CONSTRUCT_OPERATOR_DIR") or str(_DEFAULT_OPERATOR_DIR)
+    os.environ.get("REVKA_OPERATOR_DIR") or str(_DEFAULT_OPERATOR_DIR)
 )
 VENV_DIR = OPERATOR_DIR / "venv"
 
@@ -44,7 +44,7 @@ def _bail(msg: str) -> "None":
         "\n[operator] Operator MCP not installed. Run:\n"
         "    scripts\\install-sidecars.bat   (Windows)\n"
         "    scripts/install-sidecars.sh     (macOS / Linux)\n"
-        "from the Construct repo root, then retry.\n"
+        "from the Revka repo root, then retry.\n"
     )
     sys.exit(1)
 
@@ -64,7 +64,7 @@ def main() -> "None":
     parent_dir = str(SCRIPT_DIR.parent)
     env = os.environ.copy()
     env["PYTHONPATH"] = parent_dir + (os.pathsep + env.get("PYTHONPATH", ""))
-    # Older Construct binaries may still inject KUMIHO_AUTO_CONFIGURE at
+    # Older Revka binaries may still inject KUMIHO_AUTO_CONFIGURE at
     # sidecar launch. Keep endpoint discovery out of the pre-initialize path.
     env.pop("KUMIHO_AUTO_CONFIGURE", None)
     # Keep gRPC C-core INFO fork diagnostics out of the user-facing log stream.

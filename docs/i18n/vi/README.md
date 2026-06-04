@@ -1,8 +1,8 @@
-# Tài liệu Construct (Tiếng Việt)
+# Tài liệu Revka (Tiếng Việt)
 
-Đây là trang chủ tiếng Việt của hệ thống tài liệu Construct.
+Đây là trang chủ tiếng Việt của hệ thống tài liệu Revka.
 
-> Runtime Rust lõi của Construct là fork của [ZeroClaw](https://github.com/zeroclaw-labs/zeroclaw); xem [`NOTICE`](../../../NOTICE) để biết attribution đầy đủ và [`docs/upstream/zeroclaw-attribution.md`](../../upstream/zeroclaw-attribution.md) để hiểu mối quan hệ với upstream.
+> Runtime Rust lõi của Revka là fork của [ZeroClaw](https://github.com/zeroclaw-labs/zeroclaw); xem [`NOTICE`](../../../NOTICE) để biết attribution đầy đủ và [`docs/upstream/zeroclaw-attribution.md`](../../upstream/zeroclaw-attribution.md) để hiểu mối quan hệ với upstream.
 
 Đồng bộ lần cuối: **April 27, 2026**.
 
@@ -14,7 +14,7 @@ Ngôn ngữ khác: [English](../../README.md) · [한국어](../ko/README.md) ·
 
 ## Bắt đầu theo vai trò
 
-- **Mới tiếp xúc Construct?** → [one-click-bootstrap.md](one-click-bootstrap.md)
+- **Mới tiếp xúc Revka?** → [one-click-bootstrap.md](one-click-bootstrap.md)
 - **Phần cứng / nhúng?** → [../../hardware/README.md](../../hardware/README.md) *(tiếng Anh)*
 - **Vận hành sản phẩm?** → [../../ops/README.md](../../ops/README.md) *(tiếng Anh)* / [operations-runbook.md](operations-runbook.md)
 - **Tích hợp qua API / MCP?** → [../../reference/README.md](../../reference/README.md) *(tiếng Anh)* + [../../contributing/README.md](../../contributing/README.md) *(tiếng Anh)*
@@ -38,7 +38,7 @@ Ngôn ngữ khác: [English](../../README.md) · [한국어](../ko/README.md) ·
 | Cấu hình Matrix phòng mã hóa (E2EE) | [matrix-e2ee-guide.md](matrix-e2ee-guide.md) |
 | Xem theo danh mục | [SUMMARY.md](SUMMARY.md) |
 
-## Construct tạo nên Construct
+## Revka tạo nên Revka
 
 - **Runtime Rust hướng-bộ-nhớ** — mọi session, kế hoạch, skill và điểm tin cậy đều được lưu trong đồ thị Kumiho.
 - **Một binary duy nhất** — gateway, daemon, dashboard React nhúng, sidecar MCP và CLI cùng đóng gói tĩnh.
@@ -119,8 +119,8 @@ Ngôn ngữ khác: [English](../../README.md) · [한국어](../ko/README.md) ·
 
 - [`../../../NOTICE`](../../../NOTICE) — NOTICE gốc với attribution ZeroClaw được giữ nguyên theo Apache 2.0 §4(c)
 - [`../../../LICENSE-MIT`](../../../LICENSE-MIT), [`../../../LICENSE-APACHE`](../../../LICENSE-APACHE) — văn bản giấy phép kép
-- [docs/upstream/zeroclaw-attribution.md](../../upstream/zeroclaw-attribution.md) — Construct kế thừa gì từ ZeroClaw và checklist tuân thủ fork *(tiếng Anh)*
-- [docs/maintainers/trademark.md](../../maintainers/trademark.md) — quy ước tên Construct và xác nhận thương hiệu ZeroClaw *(tiếng Anh)*
+- [docs/upstream/zeroclaw-attribution.md](../../upstream/zeroclaw-attribution.md) — Revka kế thừa gì từ ZeroClaw và checklist tuân thủ fork *(tiếng Anh)*
+- [docs/maintainers/trademark.md](../../maintainers/trademark.md) — quy ước tên Revka và xác nhận thương hiệu ZeroClaw *(tiếng Anh)*
 
 ## Ngôn ngữ khác
 

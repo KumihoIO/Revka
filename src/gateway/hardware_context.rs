@@ -13,8 +13,8 @@
 //!
 //! ## Live update semantics
 //!
-//! Construct's agent loop calls [`crate::hardware::boot`] on **every** request,
-//! which re-reads `~/.construct/hardware/` from disk.  Writing to those files
+//! Revka's agent loop calls [`crate::hardware::boot`] on **every** request,
+//! which re-reads `~/.revka/hardware/` from disk.  Writing to those files
 //! therefore takes effect on the very next `/api/chat` call — no daemon restart
 //! needed.  The `/api/hardware/reload` endpoint verifies what is on disk and
 //! reports what will be injected into the system prompt next time.
@@ -70,10 +70,10 @@ fn require_auth(
 
 // ── Path helpers ──────────────────────────────────────────────────────────────
 
-/// Return `~/.construct/hardware/` or an error string.
+/// Return `~/.revka/hardware/` or an error string.
 fn hardware_dir() -> Result<PathBuf, String> {
     directories::BaseDirs::new()
-        .map(|b| b.home_dir().join(".construct").join("hardware"))
+        .map(|b| b.home_dir().join(".revka").join("hardware"))
         .ok_or_else(|| "Cannot determine home directory".to_string())
 }
 
@@ -117,7 +117,7 @@ fn default_device() -> String {
 
 /// `POST /api/hardware/pin` — register a single GPIO pin assignment.
 ///
-/// Appends one line to `~/.construct/hardware/devices/<device>.md`:
+/// Appends one line to `~/.revka/hardware/devices/<device>.md`:
 /// ```text
 /// - GPIO <pin>: <component> — <notes>
 /// ```

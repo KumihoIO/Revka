@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .._log import _log
-from ..construct_config import harness_project
+from ..revka_config import harness_project
 from ..agent_state import AGENTS, ManagedAgent
 from ..agent_subprocess import compose_agent_prompt, spawn_with_retry, _TEAM_SPAWN_STAGGER_SECS
 from ..budget_authority import BudgetGateError
@@ -454,7 +454,7 @@ def _relativize(path: str, cwd: str) -> str:
 # can resume from a failed wave instead of re-running everything.
 # ---------------------------------------------------------------------------
 
-_CHECKPOINT_DIR = os.path.expanduser("~/.construct/operator_mcp/checkpoints")
+_CHECKPOINT_DIR = os.path.expanduser("~/.revka/operator_mcp/checkpoints")
 
 
 @dataclass
@@ -611,7 +611,7 @@ async def _record_wave_outcomes(
 
     For each completed agent:
       1. Extracts structured metadata from RunLog (files, errors, tool calls)
-      2. Creates a Kumiho item under Construct/Outcomes
+      2. Creates a Kumiho item under Revka/Outcomes
       3. Creates a revision with rich metadata (role, status, summary, counts)
       4. Attaches each file touched as a named artifact (relative path = name)
       5. Creates DERIVED_FROM edges to upstream outcome revisions (provenance chain)
@@ -634,7 +634,7 @@ async def _record_wave_outcomes(
         return {}
 
     # Ensure diff output directory exists
-    diff_dir = os.path.expanduser("~/.construct/operator_mcp/diffs")
+    diff_dir = os.path.expanduser("~/.revka/operator_mcp/diffs")
     os.makedirs(diff_dir, exist_ok=True)
 
     for aid in wave_agent_ids:

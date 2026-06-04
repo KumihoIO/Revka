@@ -1,7 +1,7 @@
 //! REST API handlers for workflow management (`/api/workflows`).
 //!
 //! Each workflow definition is a Kumiho item of kind `"workflow"` in the
-//! `Construct/Workflows` space.  The YAML definition is stored as a
+//! `Revka/Workflows` space.  The YAML definition is stored as a
 //! `workflow.yaml` revision artifact; descriptive fields and indexes live in
 //! revision metadata.
 //!
@@ -475,7 +475,7 @@ pub struct WorkflowResponse {
     pub tags: Vec<String>,
     pub steps: usize,
     pub revision_number: i32,
-    /// `"builtin"` — shipped with Construct, not yet customized.
+    /// `"builtin"` — shipped with Revka, not yet customized.
     /// `"builtin-modified"` — builtin overridden by a Kumiho copy.
     /// `"custom"` — user-created workflow.
     #[serde(default = "default_source")]
@@ -602,7 +602,7 @@ fn workflow_metadata(body: &CreateWorkflowBody) -> HashMap<String, String> {
     let mut meta = HashMap::new();
     meta.insert("display_name".to_string(), body.name.clone());
     meta.insert("description".to_string(), body.description.clone());
-    meta.insert("created_by".to_string(), "construct-dashboard".to_string());
+    meta.insert("created_by".to_string(), "revka-dashboard".to_string());
     // Count steps in the YAML
     let steps = count_yaml_steps(&body.definition);
     meta.insert("steps".to_string(), steps.to_string());
@@ -936,7 +936,7 @@ fn workflow_checkpoint_path(run_id: &str) -> Option<std::path::PathBuf> {
     }
     directories::UserDirs::new().map(|dirs| {
         dirs.home_dir()
-            .join(".construct")
+            .join(".revka")
             .join("workflow_checkpoints")
             .join(format!("{run_id}.json"))
     })
@@ -1406,7 +1406,7 @@ fn live_status_to_run_detail(live: &serde_json::Value, fallback_run_id: &str) ->
 // ── Builtin workflow discovery ──────────────────────────────────────────
 
 /// Default directory containing builtin workflow YAML files.
-const BUILTIN_WORKFLOWS_DIR: &str = ".construct/operator_mcp/workflow/builtins";
+const BUILTIN_WORKFLOWS_DIR: &str = ".revka/operator_mcp/workflow/builtins";
 
 /// Discover builtin workflow YAML files from `~/BUILTIN_WORKFLOWS_DIR`.
 ///
@@ -1654,7 +1654,7 @@ fn extract_cron_triggers(content: &str) -> Vec<(String, Option<String>)> {
 ///
 /// Removes any existing cron jobs for this workflow and re-creates them from
 /// the triggers found in the current YAML definition.
-/// Write the workflow YAML to ~/.construct/workflows/ and register a Kumiho artifact.
+/// Write the workflow YAML to ~/.revka/workflows/ and register a Kumiho artifact.
 async fn persist_workflow_artifact(
     client: &KumihoClient,
     revision_kref: &str,
@@ -1665,7 +1665,7 @@ async fn persist_workflow_artifact(
     let home = directories::UserDirs::new()
         .map(|u| u.home_dir().to_path_buf())
         .unwrap_or_default();
-    let dir = home.join(".construct/workflows");
+    let dir = home.join(".revka/workflows");
     let _ = tokio::fs::create_dir_all(&dir).await;
 
     let slug = slugify(workflow_name);
@@ -1916,7 +1916,7 @@ fn validation_error_response(
 
 /// Broadcast a `workflow.revision.published` event to all SSE subscribers.
 ///
-/// Echoes the optional `X-Construct-Session` request header back as
+/// Echoes the optional `X-Revka-Session` request header back as
 /// `originating_session` so the editor can suppress events it itself caused.
 /// Failures on the broadcast channel are non-fatal (subscriber lag).
 fn broadcast_revision_published(
@@ -1927,7 +1927,7 @@ fn broadcast_revision_published(
     name: &str,
 ) {
     let originating_session = headers
-        .get("x-construct-session")
+        .get("x-revka-session")
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
 
@@ -2468,7 +2468,7 @@ pub async fn handle_run_workflow(
 /// GET /api/workflows/revisions/{*kref}
 ///
 /// Fetches a workflow definition pinned to a specific Kumiho revision kref
-/// (e.g. `kref://Construct/Workflows/my-wf.workflow?r=3`). Used by the dashboard
+/// (e.g. `kref://Revka/Workflows/my-wf.workflow?r=3`). Used by the dashboard
 /// DAG viewer to render the exact YAML a run executed, independent of whatever
 /// is currently tagged `published` on the workflow item.
 pub async fn handle_get_workflow_by_revision(
@@ -2783,8 +2783,8 @@ pub async fn handle_delete_workflow_run(
 }
 
 /// Best-effort cleanup of on-disk run state after a successful Kumiho hard delete.
-/// Removes the checkpoint at `~/.construct/workflow_checkpoints/{run_id}.json` and
-/// any artifacts directory at `~/.construct/artifacts/<workflow>/{run_id}/`. Since
+/// Removes the checkpoint at `~/.revka/workflow_checkpoints/{run_id}.json` and
+/// any artifacts directory at `~/.revka/artifacts/<workflow>/{run_id}/`. Since
 /// the workflow name isn't carried into this handler, we scan the artifacts root
 /// for any subdirectory containing a matching run_id directory. Failures are logged
 /// but do not affect the API response — the authoritative delete already succeeded.
@@ -2794,14 +2794,14 @@ async fn cleanup_local_run_files(run_id: &str) {
     };
     let home = user_dirs.home_dir().to_path_buf();
 
-    let checkpoint = home.join(format!(".construct/workflow_checkpoints/{run_id}.json"));
+    let checkpoint = home.join(format!(".revka/workflow_checkpoints/{run_id}.json"));
     if let Err(e) = tokio::fs::remove_file(&checkpoint).await {
         if e.kind() != std::io::ErrorKind::NotFound {
             tracing::warn!("Failed to remove checkpoint {}: {e}", checkpoint.display());
         }
     }
 
-    let artifacts_root = home.join(".construct/artifacts");
+    let artifacts_root = home.join(".revka/artifacts");
     let mut entries = match tokio::fs::read_dir(&artifacts_root).await {
         Ok(e) => e,
         Err(_) => return,
@@ -3145,7 +3145,7 @@ pub async fn handle_agent_activity(
 
     let runlogs_dir =
         std::path::PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/tmp".into()))
-            .join(".construct/operator_mcp/runlogs");
+            .join(".revka/operator_mcp/runlogs");
     let path = runlogs_dir.join(format!("{agent_id}.jsonl"));
 
     if !path.exists() {
@@ -3369,7 +3369,7 @@ mod workflow_save_tests {
     #[test]
     fn workflow_item_name_prefers_kref_slug() {
         assert_eq!(
-            workflow_item_name_from_kref("kref://Construct/Workflows/my-flow.workflow", "My Flow"),
+            workflow_item_name_from_kref("kref://Revka/Workflows/my-flow.workflow", "My Flow"),
             "my-flow"
         );
     }
@@ -3500,7 +3500,7 @@ mod workflow_run_status_tests {
 
     fn summary(run_id: &str, status: &str) -> WorkflowRunSummary {
         WorkflowRunSummary {
-            kref: "kref://Construct/WorkflowRuns/test.workflow_run".to_string(),
+            kref: "kref://Revka/WorkflowRuns/test.workflow_run".to_string(),
             run_id: run_id.to_string(),
             workflow_name: "test".to_string(),
             status: status.to_string(),
@@ -3556,7 +3556,7 @@ mod workflow_run_status_tests {
     #[test]
     fn run_summary_uses_total_steps_not_observed_step_count() {
         let item = ItemResponse {
-            kref: "kref://Construct/WorkflowRuns/test.workflow_run".to_string(),
+            kref: "kref://Revka/WorkflowRuns/test.workflow_run".to_string(),
             name: "test".to_string(),
             item_name: "test".to_string(),
             kind: "workflow_run".to_string(),
@@ -3568,7 +3568,7 @@ mod workflow_run_status_tests {
             metadata: HashMap::new(),
         };
         let rev = RevisionResponse {
-            kref: "kref://Construct/WorkflowRuns/test.workflow_run?rev=1".to_string(),
+            kref: "kref://Revka/WorkflowRuns/test.workflow_run?rev=1".to_string(),
             item_kref: item.kref.clone(),
             number: 1,
             latest: true,

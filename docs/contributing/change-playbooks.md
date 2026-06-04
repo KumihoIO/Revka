@@ -1,6 +1,6 @@
 # Change Playbooks
 
-Step-by-step guides for common extension and modification patterns in Construct.
+Step-by-step guides for common extension and modification patterns in Revka.
 
 For complete code examples of each extension trait, see [extension-examples.md](./extension-examples.md).
 
@@ -49,7 +49,7 @@ For complete code examples of each extension trait, see [extension-examples.md](
 
 - Follow the `Arc<RwLock<T>>` handle pattern for any tool that owns long-lived shared state.
 - Accept handles at construction; do not create global/static mutable state.
-- Use `ClientId` (provided by the daemon) to namespace per-client state — never construct identity keys inside the tool.
+- Use `ClientId` (provided by the daemon) to namespace per-client state — never revka identity keys inside the tool.
 - Isolate security-sensitive state (credentials, quotas) per client; broadcast/display state may be shared with optional namespace prefixing.
 - Cached validation is invalidated on config change — tools must re-validate before the next execution when signaled.
 - See [ADR-004: Tool Shared State Ownership](../architecture/adr-004-tool-shared-state-ownership.md) for the full contract.

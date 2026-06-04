@@ -1,11 +1,11 @@
-name: construct-local-ci
+name: revka-local-ci
 
 services:
     local-ci:
         build:
             context: ..
             dockerfile: dev/ci/Dockerfile
-        container_name: construct-local-ci
+        container_name: revka-local-ci
         working_dir: /workspace
         environment:
             - CARGO_TERM_COLOR=always

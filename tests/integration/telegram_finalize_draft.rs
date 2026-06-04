@@ -1,5 +1,5 @@
-use construct::channels::telegram::TelegramChannel;
-use construct::channels::traits::Channel;
+use revka::channels::telegram::TelegramChannel;
+use revka::channels::traits::Channel;
 use serde_json::json;
 use wiremock::matchers::{body_partial_json, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};

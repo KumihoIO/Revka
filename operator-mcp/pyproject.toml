@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "construct-operator"
+name = "revka-operator"
 version = "0.3.2"
-description = "Construct Operator MCP Server — agent orchestration control plane"
+description = "Revka Operator MCP Server — agent orchestration control plane"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT OR Apache-2.0"
@@ -20,12 +20,12 @@ dependencies = [
 
 [project.optional-dependencies]
 sdk = ["claude-agent-sdk>=0.1.50"]
-all = ["construct-operator[sdk]"]
+all = ["revka-operator[sdk]"]
 test = ["pytest>=8.0", "pytest-asyncio>=0.24"]
 
 [project.scripts]
-construct-operator = "operator_mcp.operator_mcp:main"
-construct-subagent-mcp = "operator_mcp.subagent_mcp:main"
+revka-operator = "operator_mcp.operator_mcp:main"
+revka-subagent-mcp = "operator_mcp.subagent_mcp:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

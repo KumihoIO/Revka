@@ -130,7 +130,7 @@ impl Channel for DingTalkChannel {
             )
         })?;
 
-        let title = message.subject.as_deref().unwrap_or("Construct");
+        let title = message.subject.as_deref().unwrap_or("Revka");
         let body = serde_json::json!({
             "msgtype": "markdown",
             "markdown": {

@@ -1,4 +1,4 @@
-"""A2A Agent Card builder — maps Construct agent templates to A2A AgentCard format.
+"""A2A Agent Card builder — maps Revka agent templates to A2A AgentCard format.
 
 Follows the Google A2A protocol specification (a2a-protocol.org).
 Agent cards are JSON metadata documents that describe identity, capabilities,
@@ -48,14 +48,14 @@ def _build_skill(
 # ---------------------------------------------------------------------------
 
 class AgentCardBuilder:
-    """Builds A2A-compliant agent cards from Construct agent templates."""
+    """Builds A2A-compliant agent cards from Revka agent templates."""
 
     def __init__(self, *, base_url: str = "http://localhost:8000", version: str = "1.0.0"):
         self.base_url = base_url.rstrip("/")
         self.version = version
 
     def from_template(self, template: dict[str, Any]) -> dict[str, Any]:
-        """Convert a Construct AgentTemplate dict to an A2A AgentCard.
+        """Convert a Revka AgentTemplate dict to an A2A AgentCard.
 
         Args:
             template: Dict with keys: name, agent_type, role, capabilities,
@@ -64,7 +64,7 @@ class AgentCardBuilder:
         Returns:
             A2A AgentCard dict.
         """
-        name = template.get("name", "construct-agent")
+        name = template.get("name", "revka-agent")
         description = template.get("description", "")
         role = template.get("role", "coder")
         capabilities = template.get("capabilities", [])
@@ -77,9 +77,9 @@ class AgentCardBuilder:
             skill_tags.extend(str(c) for c in capabilities[:10])
 
         skill = _build_skill(
-            skill_id=f"construct-{name}",
+            skill_id=f"revka-{name}",
             name=name,
-            description=description or f"Construct {role} agent",
+            description=description or f"Revka {role} agent",
             tags=skill_tags,
             examples=[f"Use this agent for {role} tasks"],
             input_modes=["text/plain"],
@@ -88,7 +88,7 @@ class AgentCardBuilder:
 
         card: dict[str, Any] = {
             "name": name,
-            "description": description or f"Construct {role} agent: {name}",
+            "description": description or f"Revka {role} agent: {name}",
             "url": f"{self.base_url}/a2a",
             "version": self.version,
             "defaultInputModes": ["text/plain"],
@@ -99,7 +99,7 @@ class AgentCardBuilder:
             },
             "skills": [skill],
             "provider": {
-                "organization": "Construct",
+                "organization": "Revka",
                 "url": self.base_url,
             },
         }
@@ -114,14 +114,14 @@ class AgentCardBuilder:
     def composite_card(self, templates: list[dict[str, Any]]) -> dict[str, Any]:
         """Build a composite A2A card with skills from all templates.
 
-        This represents the Construct instance as a single A2A agent
+        This represents the Revka instance as a single A2A agent
         with multiple skills, one per template.
         """
         skills = []
         for tmpl in templates:
             name = tmpl.get("name", "unknown")
             role = tmpl.get("role", "coder")
-            desc = tmpl.get("description", f"Construct {role}")
+            desc = tmpl.get("description", f"Revka {role}")
             caps = tmpl.get("capabilities", [])
             if isinstance(caps, str):
                 caps = [c.strip() for c in caps.split(",") if c.strip()]
@@ -131,7 +131,7 @@ class AgentCardBuilder:
                 tags.extend(str(c) for c in caps[:5])
 
             skills.append(_build_skill(
-                skill_id=f"construct-{name}",
+                skill_id=f"revka-{name}",
                 name=name,
                 description=desc,
                 tags=tags,
@@ -140,7 +140,7 @@ class AgentCardBuilder:
             ))
 
         return {
-            "name": "Construct Operator",
+            "name": "Revka Operator",
             "description": "Multi-agent orchestration platform with graph-native memory. "
                            "Supports code generation, review, research, testing, and architecture tasks.",
             "url": f"{self.base_url}/a2a",
@@ -153,7 +153,7 @@ class AgentCardBuilder:
             },
             "skills": skills,
             "provider": {
-                "organization": "Construct / KumihoIO",
+                "organization": "Revka / KumihoIO",
                 "url": self.base_url,
             },
         }

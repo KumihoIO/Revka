@@ -1,4 +1,4 @@
-# Construct Troubleshooting
+# Revka Troubleshooting
 
 This guide focuses on common setup/runtime failures and fast resolution paths.
 
@@ -78,10 +78,10 @@ cargo build --release --locked --features hardware
 
 Symptoms:
 
-- `cargo check` / `cargo build` appears stuck at `Checking construct` for a long time
+- `cargo check` / `cargo build` appears stuck at `Checking revka` for a long time
 - repeated `Blocking waiting for file lock on package cache` or `build directory`
 
-Why this happens in Construct:
+Why this happens in Revka:
 
 - Matrix E2EE stack (`matrix-sdk`, `ruma`, `vodozemac`) is large and expensive to type-check.
 - TLS + crypto native build scripts (`aws-lc-sys`, `ring`) add noticeable compile time.
@@ -125,17 +125,17 @@ pgrep -af "cargo (check|build|test)|cargo check|cargo build|cargo test"
 
 Stop unrelated cargo jobs before running your own build.
 
-### `construct` command not found after install
+### `revka` command not found after install
 
 Symptom:
 
-- install succeeds but shell cannot find `construct`
+- install succeeds but shell cannot find `revka`
 
 Fix:
 
 ```bash
 export PATH="$HOME/.cargo/bin:$PATH"
-which construct
+which revka
 ```
 
 Persist in your shell profile if needed.
@@ -147,11 +147,11 @@ Persist in your shell profile if needed.
 Checks:
 
 ```bash
-construct status
-construct doctor
+revka status
+revka doctor
 ```
 
-Verify `~/.construct/config.toml`:
+Verify `~/.revka/config.toml`:
 
 - `[gateway].host` (default `127.0.0.1`)
 - `[gateway].port` (default `42617`)
@@ -166,7 +166,7 @@ Checks:
 3. Re-run diagnostics:
 
 ```bash
-construct doctor
+revka doctor
 ```
 
 ## Channel Issues
@@ -180,14 +180,14 @@ Cause:
 Fix:
 
 - keep only one active runtime for that token
-- stop extra `construct daemon` / `construct channel start` processes
+- stop extra `revka daemon` / `revka channel start` processes
 
 ### Channel unhealthy in `channel doctor`
 
 Checks:
 
 ```bash
-construct channel doctor
+revka channel doctor
 ```
 
 Then verify channel-specific credentials + allowlist fields in config.
@@ -199,26 +199,26 @@ Then verify channel-specific credentials + allowlist fields in config.
 Checks:
 
 ```bash
-construct service status
+revka service status
 ```
 
 Recovery:
 
 ```bash
-construct service stop
-construct service start
+revka service stop
+revka service start
 ```
 
 Linux logs:
 
 ```bash
-journalctl --user -u construct.service -f
+journalctl --user -u revka.service -f
 ```
 
 ## Installer URL
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/KumihoIO/construct-os/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/KumihoIO/Revka/main/install.sh | bash
 ```
 
 ## Still Stuck?
@@ -226,10 +226,10 @@ curl -fsSL https://raw.githubusercontent.com/KumihoIO/construct-os/main/install.
 Collect and include these outputs when filing an issue:
 
 ```bash
-construct --version
-construct status
-construct doctor
-construct channel doctor
+revka --version
+revka status
+revka doctor
+revka channel doctor
 ```
 
 Also include OS, install method, and sanitized config snippets (no secrets).

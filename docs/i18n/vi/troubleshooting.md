@@ -1,4 +1,4 @@
-# Khắc phục sự cố Construct
+# Khắc phục sự cố Revka
 
 Các lỗi thường gặp khi cài đặt và chạy, kèm cách khắc phục.
 
@@ -78,7 +78,7 @@ cargo build --release --locked --no-default-features --features hardware
 
 Triệu chứng:
 
-- `cargo check` / `cargo build` dừng lâu ở `Checking construct`
+- `cargo check` / `cargo build` dừng lâu ở `Checking revka`
 - Lặp lại thông báo `Blocking waiting for file lock on package cache` hoặc `build directory`
 
 Nguyên nhân:
@@ -119,17 +119,17 @@ pgrep -af "cargo (check|build|test)|cargo check|cargo build|cargo test"
 
 Dừng các cargo job không liên quan trước khi build.
 
-### Không tìm thấy lệnh `construct` sau cài đặt
+### Không tìm thấy lệnh `revka` sau cài đặt
 
 Triệu chứng:
 
-- Cài đặt thành công nhưng shell không tìm thấy `construct`
+- Cài đặt thành công nhưng shell không tìm thấy `revka`
 
 Khắc phục:
 
 ```bash
 export PATH="$HOME/.cargo/bin:$PATH"
-which construct
+which revka
 ```
 
 Thêm vào shell profile nếu cần giữ lâu dài.
@@ -141,11 +141,11 @@ Thêm vào shell profile nếu cần giữ lâu dài.
 Kiểm tra:
 
 ```bash
-construct status
-construct doctor
+revka status
+revka doctor
 ```
 
-Xác minh `~/.construct/config.toml`:
+Xác minh `~/.revka/config.toml`:
 
 - `[gateway].host` (mặc định `127.0.0.1`)
 - `[gateway].port` (mặc định `3000`)
@@ -160,7 +160,7 @@ Kiểm tra:
 3. Chạy lại chẩn đoán:
 
 ```bash
-construct doctor
+revka doctor
 ```
 
 ## Sự cố kênh
@@ -174,14 +174,14 @@ Nguyên nhân:
 Khắc phục:
 
 - Chỉ giữ một runtime đang chạy cho token đó
-- Dừng các tiến trình `construct daemon` / `construct channel start` thừa
+- Dừng các tiến trình `revka daemon` / `revka channel start` thừa
 
 ### Kênh không khỏe trong `channel doctor`
 
 Kiểm tra:
 
 ```bash
-construct channel doctor
+revka channel doctor
 ```
 
 Sau đó xác minh thông tin xác thực và trường allowlist cho từng kênh trong config.
@@ -193,26 +193,26 @@ Sau đó xác minh thông tin xác thực và trường allowlist cho từng kê
 Kiểm tra:
 
 ```bash
-construct service status
+revka service status
 ```
 
 Khôi phục:
 
 ```bash
-construct service stop
-construct service start
+revka service stop
+revka service start
 ```
 
 Xem log trên Linux:
 
 ```bash
-journalctl --user -u construct.service -f
+journalctl --user -u revka.service -f
 ```
 
 ## URL cài đặt
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/KumihoIO/construct-os/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/KumihoIO/Revka/main/install.sh | bash
 ```
 
 ## Vẫn chưa giải quyết được?
@@ -220,10 +220,10 @@ curl -fsSL https://raw.githubusercontent.com/KumihoIO/construct-os/main/install.
 Thu thập và đính kèm các thông tin sau khi tạo issue:
 
 ```bash
-construct --version
-construct status
-construct doctor
-construct channel doctor
+revka --version
+revka status
+revka doctor
+revka channel doctor
 ```
 
 Kèm thêm: hệ điều hành, cách cài đặt, và đoạn config đã ẩn bí mật.

@@ -1,10 +1,10 @@
 # Browser Automation Setup Guide
 
-This guide covers setting up browser automation capabilities in Construct, including both headless automation and GUI access via VNC.
+This guide covers setting up browser automation capabilities in Revka, including both headless automation and GUI access via VNC.
 
 ## Overview
 
-Construct supports multiple browser access methods:
+Revka supports multiple browser access methods:
 
 | Method | Use Case | Requirements |
 |--------|----------|--------------|
@@ -25,10 +25,10 @@ agent-browser install --with-deps  # Linux (includes system deps)
 agent-browser install              # macOS/Windows
 ```
 
-### 2. Verify Construct Config
+### 2. Verify Revka Config
 
 The browser tool is enabled by default. To verify or customize, edit
-`~/.construct/config.toml`:
+`~/.revka/config.toml`:
 
 ```toml
 [browser]
@@ -50,7 +50,7 @@ allowed_domains = ["example.com", "docs.example.com"]
 ### 3. Test
 
 ```bash
-echo "Open https://example.com and tell me what it says" | construct agent
+echo "Open https://example.com and tell me what it says" | revka agent
 ```
 
 ## VNC Setup (GUI Access)
@@ -161,20 +161,20 @@ agent-browser screenshot /tmp/test.png
 agent-browser close
 ```
 
-<!-- TODO screenshot: Construct agent extracting content from a rendered web UI via the browser driver -->
-![Construct agent extracting content from a rendered web UI via the browser driver](assets/browser/browser-setup-03-agent-browser-snapshot.png)
+<!-- TODO screenshot: Revka agent extracting content from a rendered web UI via the browser driver -->
+![Revka agent extracting content from a rendered web UI via the browser driver](assets/browser/browser-setup-03-agent-browser-snapshot.png)
 
-### Construct Integration Tests
+### Revka Integration Tests
 
 ```bash
 # Content extraction
-echo "Open https://example.com and summarize it" | construct agent
+echo "Open https://example.com and summarize it" | revka agent
 
 # Navigation
-echo "Go to https://github.com/trending and list the top 3 repos" | construct agent
+echo "Go to https://github.com/trending and list the top 3 repos" | revka agent
 
 # Form interaction
-echo "Go to Wikipedia, search for 'Rust programming language', and summarize" | construct agent
+echo "Go to Wikipedia, search for 'Rust programming language', and summarize" | revka agent
 ```
 
 ## Troubleshooting
@@ -220,4 +220,4 @@ agent-browser get text body
 ## Related
 
 - [agent-browser Documentation](https://github.com/vercel-labs/agent-browser)
-- [Construct Configuration Reference](./reference/api/config-reference.md)
+- [Revka Configuration Reference](./reference/api/config-reference.md)

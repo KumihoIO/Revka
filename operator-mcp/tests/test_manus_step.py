@@ -1,7 +1,7 @@
 """Tests for the workflow `manus:` step type.
 
 The Manus step delegates web-research tasks to a hosted Manus AI agent
-via its public REST API. These tests cover the surface area Construct
+via its public REST API. These tests cover the surface area Revka
 needs to demo reliably:
 
   1. Schema acceptance — prompt is required, defaults applied.
@@ -196,8 +196,8 @@ class TestAuth:
     async def test_missing_api_key_fails_fast(self, monkeypatch):
         monkeypatch.delenv("MANUS_API_KEY", raising=False)
         # Force the manus_config cache to re-read with the default env.
-        from operator_mcp import construct_config
-        monkeypatch.setattr(construct_config, "_cached_manus", None)
+        from operator_mcp import revka_config
+        monkeypatch.setattr(revka_config, "_cached_manus", None)
         cfg = ManusStepConfig(prompt="Find blue widgets")
         # If httpx is touched at all, the test should fail.
         with patch("httpx.AsyncClient",
@@ -215,8 +215,8 @@ class TestAuth:
 @pytest.mark.asyncio
 class TestHappyPath:
     async def test_create_poll_complete(self, monkeypatch):
-        from operator_mcp import construct_config
-        monkeypatch.setattr(construct_config, "_cached_manus", None)
+        from operator_mcp import revka_config
+        monkeypatch.setattr(revka_config, "_cached_manus", None)
         fc = _FakeClient(
             create_response=_FakeResp(200, {
                 "ok": True,
@@ -282,8 +282,8 @@ class TestHappyPath:
 @pytest.mark.asyncio
 class TestTerminalStopped:
     async def test_first_poll_already_terminal(self, monkeypatch):
-        from operator_mcp import construct_config
-        monkeypatch.setattr(construct_config, "_cached_manus", None)
+        from operator_mcp import revka_config
+        monkeypatch.setattr(revka_config, "_cached_manus", None)
         fc = _FakeClient(
             create_response=_FakeResp(200, {
                 "ok": True, "task_id": "task-1",
@@ -319,8 +319,8 @@ class TestTerminalStopped:
 @pytest.mark.asyncio
 class TestTerminalError:
     async def test_error_status_fails_step(self, monkeypatch):
-        from operator_mcp import construct_config
-        monkeypatch.setattr(construct_config, "_cached_manus", None)
+        from operator_mcp import revka_config
+        monkeypatch.setattr(revka_config, "_cached_manus", None)
         fc = _FakeClient(
             create_response=_FakeResp(200, {
                 "ok": True, "task_id": "task-err",
@@ -345,8 +345,8 @@ class TestTerminalError:
         assert result.output_data["final_state"] == "error"
 
     async def test_allow_failure_converts_to_completed(self, monkeypatch):
-        from operator_mcp import construct_config
-        monkeypatch.setattr(construct_config, "_cached_manus", None)
+        from operator_mcp import revka_config
+        monkeypatch.setattr(revka_config, "_cached_manus", None)
         fc = _FakeClient(
             create_response=_FakeResp(200, {
                 "ok": True, "task_id": "task-err",
@@ -384,8 +384,8 @@ class TestTerminalError:
 @pytest.mark.asyncio
 class TestCancel:
     async def test_cancel_request_stops_loop(self, monkeypatch):
-        from operator_mcp import construct_config
-        monkeypatch.setattr(construct_config, "_cached_manus", None)
+        from operator_mcp import revka_config
+        monkeypatch.setattr(revka_config, "_cached_manus", None)
         # Build a client that returns `running` forever — only cancel
         # can break the loop.
         running_msg = _FakeResp(200, {"ok": True, "data": [
@@ -439,8 +439,8 @@ class TestCancel:
 @pytest.mark.asyncio
 class TestTimeout:
     async def test_timeout_stops_task(self, monkeypatch):
-        from operator_mcp import construct_config
-        monkeypatch.setattr(construct_config, "_cached_manus", None)
+        from operator_mcp import revka_config
+        monkeypatch.setattr(revka_config, "_cached_manus", None)
         # Always-running responses; timeout_seconds=0 should fire on the
         # first elapsed check after the create call.
         running_msg = _FakeResp(200, {"ok": True, "data": [
@@ -487,8 +487,8 @@ class TestTimeout:
 @pytest.mark.asyncio
 class TestStructuredOutput:
     async def test_schema_forwarded_and_value_returned(self, monkeypatch):
-        from operator_mcp import construct_config
-        monkeypatch.setattr(construct_config, "_cached_manus", None)
+        from operator_mcp import revka_config
+        monkeypatch.setattr(revka_config, "_cached_manus", None)
         schema = {
             "type": "object",
             "properties": {"companies": {"type": "array"}},
@@ -543,8 +543,8 @@ class TestStructuredOutput:
 @pytest.mark.asyncio
 class TestKeyHandling:
     async def test_key_never_appears_in_outputs_or_logs(self, monkeypatch, caplog):
-        from operator_mcp import construct_config
-        monkeypatch.setattr(construct_config, "_cached_manus", None)
+        from operator_mcp import revka_config
+        monkeypatch.setattr(revka_config, "_cached_manus", None)
         # Use a distinctive key the test can grep for.
         secret = "sk-MANUS-SECRET-DO-NOT-LEAK-1234567890"
         fc = _FakeClient(
@@ -590,8 +590,8 @@ class TestCredentialsRef:
         """When ``credentials_ref`` is set, the resolved token is sent as
         the Manus auth header EVEN IF a different value sits in the env
         var. Proves the credentials_ref path is authoritative."""
-        from operator_mcp import construct_config
-        monkeypatch.setattr(construct_config, "_cached_manus", None)
+        from operator_mcp import revka_config
+        monkeypatch.setattr(revka_config, "_cached_manus", None)
         # The env var holds a value that MUST NOT win.
         env_value = "env-var-value-should-be-ignored-aaaaaaaa"
         resolved_token = "resolved-from-profile-bbbbbbbb"
@@ -642,8 +642,8 @@ class TestCredentialsRef:
     async def test_falls_back_to_env_when_credentials_ref_absent(self, monkeypatch):
         """No credentials_ref → env var fallback path is used and the
         resolver is never called."""
-        from operator_mcp import construct_config
-        monkeypatch.setattr(construct_config, "_cached_manus", None)
+        from operator_mcp import revka_config
+        monkeypatch.setattr(revka_config, "_cached_manus", None)
         env_key = "env-fallback-key-cccccccc"
 
         fc = _FakeClient(
@@ -686,8 +686,8 @@ class TestCredentialsRef:
     async def test_failed_resolve_fails_step(self, monkeypatch):
         """When the gateway returns 404 the step fails fast with a
         sanitized error and no Manus task is created."""
-        from operator_mcp import construct_config
-        monkeypatch.setattr(construct_config, "_cached_manus", None)
+        from operator_mcp import revka_config
+        monkeypatch.setattr(revka_config, "_cached_manus", None)
         from operator_mcp.workflow.auth_resolver import AuthResolveError
 
         async def fake_resolver(_profile_id):
@@ -716,8 +716,8 @@ class TestCredentialsRef:
         """Even with extensive logging captured, the resolved token must
         not appear in caplog, the error message, input_data, or
         output_data."""
-        from operator_mcp import construct_config
-        monkeypatch.setattr(construct_config, "_cached_manus", None)
+        from operator_mcp import revka_config
+        monkeypatch.setattr(revka_config, "_cached_manus", None)
         secret = "RESOLVED-TOKEN-MUST-NOT-LEAK-zzzzzzzz12345"
 
         async def fake_resolver(_profile_id):
@@ -776,8 +776,8 @@ class TestCredentialsRef:
 @pytest.mark.asyncio
 class TestRealApiShape:
     async def test_real_api_shape_terminates_correctly(self, monkeypatch):
-        from operator_mcp import construct_config
-        monkeypatch.setattr(construct_config, "_cached_manus", None)
+        from operator_mcp import revka_config
+        monkeypatch.setattr(revka_config, "_cached_manus", None)
         fc = _FakeClient(
             create_response=_FakeResp(200, {
                 "ok": True, "request_id": "req_xxx",
@@ -866,8 +866,8 @@ class TestRealApiShape:
 @pytest.mark.asyncio
 class TestErrorMessageEvent:
     async def test_error_message_event_fails_step(self, monkeypatch):
-        from operator_mcp import construct_config
-        monkeypatch.setattr(construct_config, "_cached_manus", None)
+        from operator_mcp import revka_config
+        monkeypatch.setattr(revka_config, "_cached_manus", None)
         fc = _FakeClient(
             create_response=_FakeResp(200, {
                 "ok": True, "task_id": "task-rl",

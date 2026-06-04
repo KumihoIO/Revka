@@ -1,3 +1,3 @@
 /// <reference types="vite/client" />
 
-declare const __CONSTRUCT_VERSION__: string;
+declare const __REVKA_VERSION__: string;

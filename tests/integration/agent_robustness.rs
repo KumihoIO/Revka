@@ -9,8 +9,8 @@
 
 use crate::support::helpers::{build_agent, build_agent_with_config, text_response, tool_response};
 use crate::support::{CountingTool, EchoTool, FailingTool, MockProvider};
-use construct::config::AgentConfig;
-use construct::providers::{ChatResponse, ToolCall};
+use revka::config::AgentConfig;
+use revka::providers::{ChatResponse, ToolCall};
 
 // ═════════════════════════════════════════════════════════════════════════════
 // TG4.1: Malformed tool call recovery

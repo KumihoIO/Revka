@@ -1079,8 +1079,8 @@ impl Channel for QQChannel {
                     "intents": intents,
                     "properties": {
                         "os": "linux",
-                        "browser": "construct",
-                        "device": "construct",
+                        "browser": "revka",
+                        "device": "revka",
                     }
                 }
             });

@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { Eye, Power, Pencil, Trash2 } from 'lucide-react';
 import type { TeamDefinition } from '@/types/api';
 import { EDGE_TYPES, getEdgeLabel, getEdgeBadgeColors, getRoleColor } from './graphHelpers';
-import AgentAvatar from '@/construct/components/ui/AgentAvatar';
+import AgentAvatar from '@/revka/components/ui/AgentAvatar';
 
 export default function TeamCard({
   team,

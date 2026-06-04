@@ -284,5 +284,5 @@ def validate_template(t: AgentTemplate) -> TemplateValidation:
 # Global pool instance
 # ---------------------------------------------------------------------------
 
-_POOL_PATH = os.path.expanduser("~/.construct/operator_mcp/agent_pool.json")
+_POOL_PATH = os.path.expanduser("~/.revka/operator_mcp/agent_pool.json")
 POOL = AgentPool(_POOL_PATH)

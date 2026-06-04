@@ -38,8 +38,8 @@ def _get_sidecar():
     if _sidecar is None:
         from operator_mcp.session_manager_client import SessionManagerClient
         socket_path = os.environ.get(
-            "CONSTRUCT_SIDECAR_SOCKET",
-            os.path.expanduser("~/.construct/operator_mcp/session-manager.sock"),
+            "REVKA_SIDECAR_SOCKET",
+            os.path.expanduser("~/.revka/operator_mcp/session-manager.sock"),
         )
         _sidecar = SessionManagerClient(socket_path)
     return _sidecar
@@ -173,7 +173,7 @@ async def list_tools() -> list[Tool]:
                     },
                     "working_directory": {
                         "type": "string",
-                        "description": "ADK project directory. Defaults to Construct workspace.",
+                        "description": "ADK project directory. Defaults to Revka workspace.",
                     },
                     "timeout": {
                         "type": "number",
@@ -571,7 +571,7 @@ async def _dispatch(name: str, args: dict[str, Any]) -> dict[str, Any]:
     if name == "get_auth_token":
         # Resolves the auth profile id propagated via env. Token never lives
         # in this process for longer than the resolve call.
-        profile_id = os.environ.get("CONSTRUCT_AUTH_PROFILE_ID", "").strip()
+        profile_id = os.environ.get("REVKA_AUTH_PROFILE_ID", "").strip()
         if not profile_id:
             return {
                 "error": "no auth profile bound to this step",

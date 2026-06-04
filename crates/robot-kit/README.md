@@ -1,6 +1,6 @@
-# Construct Robot Kit
+# Revka Robot Kit
 
-A complete toolkit for building AI-powered robots with Construct. Designed for Raspberry Pi deployment with offline Ollama inference.
+A complete toolkit for building AI-powered robots with Revka. Designed for Raspberry Pi deployment with offline Ollama inference.
 
 ## Features
 
@@ -17,7 +17,7 @@ A complete toolkit for building AI-powered robots with Construct. Designed for R
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                 Construct + Ollama                       │
+│                 Revka + Ollama                       │
 │              (High-Level AI Brain)                      │
 └─────────────────────┬───────────────────────────────────┘
                       │
@@ -84,25 +84,25 @@ pip install piper-tts
 
 ## Quick Start
 
-### 1. Build Construct with robot tools
+### 1. Build Revka with robot tools
 
 ```bash
 # Clone and build
-git clone https://github.com/KumihoIO/construct-os
-cd construct
-cargo build -p construct-robot-kit --release
+git clone https://github.com/KumihoIO/Revka
+cd revka
+cargo build -p revka-robot-kit --release
 ```
 
 ### 2. Configure
 
 ```bash
 # Copy config
-mkdir -p ~/.construct
-cp crates/robot-kit/robot.toml ~/.construct/
-cp crates/robot-kit/SOUL.md ~/.construct/workspace/
+mkdir -p ~/.revka
+cp crates/robot-kit/robot.toml ~/.revka/
+cp crates/robot-kit/SOUL.md ~/.revka/workspace/
 
 # Edit for your hardware
-nano ~/.construct/robot.toml
+nano ~/.revka/robot.toml
 ```
 
 ### 3. Test
@@ -112,11 +112,11 @@ nano ~/.construct/robot.toml
 ollama serve &
 
 # Test in mock mode
-./target/release/construct agent -m "Say hello and show a happy face"
+./target/release/revka agent -m "Say hello and show a happy face"
 
 # Test with real hardware
 # (after configuring robot.toml)
-./target/release/construct agent -m "Move forward 1 meter"
+./target/release/revka agent -m "Move forward 1 meter"
 ```
 
 ## Integration
@@ -127,7 +127,7 @@ It is not auto-registered in the core runtime by default.
 Use it directly from Rust:
 
 ```rust
-use construct_robot_kit::{create_tools, RobotConfig};
+use revka_robot_kit::{create_tools, RobotConfig};
 
 fn build_robot_tools() {
     let config = RobotConfig::default();
@@ -136,7 +136,7 @@ fn build_robot_tools() {
 }
 ```
 
-If you want runtime registration in `construct`, add a thin adapter that maps this
+If you want runtime registration in `revka`, add a thin adapter that maps this
 crate's tools to the project's `src/tools::Tool` and register it in the factory.
 
 ## Usage Examples
@@ -183,21 +183,21 @@ Robot:
 
 ```bash
 # Package everything needed
-mkdir construct-robot-kit
-cp -r target/release/construct construct-robot-kit/
-cp -r examples/robot_kit construct-robot-kit/
-cp -r ~/.construct construct-robot-kit/dot-construct
+mkdir revka-robot-kit
+cp -r target/release/revka revka-robot-kit/
+cp -r examples/robot_kit revka-robot-kit/
+cp -r ~/.revka revka-robot-kit/dot-revka
 
 # Include models
-mkdir -p construct-robot-kit/models
-cp ~/.construct/models/ggml-base.bin construct-robot-kit/models/
+mkdir -p revka-robot-kit/models
+cp ~/.revka/models/ggml-base.bin revka-robot-kit/models/
 # Note: Ollama models are large, may want to download on target
 
 # Create tarball
-tar -czvf construct-robot-kit.tar.gz construct-robot-kit/
+tar -czvf revka-robot-kit.tar.gz revka-robot-kit/
 
 # Copy to USB
-cp construct-robot-kit.tar.gz /media/usb/TarBalls/
+cp revka-robot-kit.tar.gz /media/usb/TarBalls/
 ```
 
 ## Safety Notes
@@ -210,4 +210,4 @@ cp construct-robot-kit.tar.gz /media/usb/TarBalls/
 
 ## License
 
-MIT - Same as Construct
+MIT - Same as Revka

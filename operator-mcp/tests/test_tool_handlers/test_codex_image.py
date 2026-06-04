@@ -499,9 +499,9 @@ async def test_happy_path_single_image_with_canvas_and_artifact(fake_gw, tmp_pat
     async def _fake_canvas(paths, canvas_id, gw, workspace_dir):
         return {"canvas_id": canvas_id, "frame_id": "frame-1", "image_count": len(paths)}
 
-    fake_artifact_kref = "kref://Construct/Images/fox.image?r=1#a1"
-    fake_rev_kref = "kref://Construct/Images/fox.image?r=1"
-    fake_item_kref = "kref://Construct/Images/fox.image"
+    fake_artifact_kref = "kref://Revka/Images/fox.image?r=1#a1"
+    fake_rev_kref = "kref://Revka/Images/fox.image?r=1"
+    fake_item_kref = "kref://Revka/Images/fox.image"
 
     sdk_mock = MagicMock()
     sdk_mock.ensure_space = AsyncMock(return_value=None)
@@ -514,7 +514,7 @@ async def test_happy_path_single_image_with_canvas_and_artifact(fake_gw, tmp_pat
     ), patch.object(ci, "_spawn_codex_image", side_effect=_fake_spawn), patch.object(
         ci, "_push_to_canvas", side_effect=_fake_canvas
     ), patch("operator_mcp.operator_mcp.KUMIHO_SDK", sdk_mock), patch.object(
-        ci, "harness_project", lambda: "Construct"
+        ci, "harness_project", lambda: "Revka"
     ), patch.object(ci, "_WORKSPACE_ROOT", tmp_path):
         out = await ci.tool_generate_image_codex(
             {
@@ -527,7 +527,7 @@ async def test_happy_path_single_image_with_canvas_and_artifact(fake_gw, tmp_pat
             fake_gw,
         )
 
-    expected_path = tmp_path / "Construct" / "Images" / "fox.image" / "r1" / "fox.png"
+    expected_path = tmp_path / "Revka" / "Images" / "fox.image" / "r1" / "fox.png"
     assert out["generated"] == 1
     assert out["files"] == [str(expected_path)]
     assert out["canvas"]["frame_id"] == "frame-1"
@@ -535,7 +535,7 @@ async def test_happy_path_single_image_with_canvas_and_artifact(fake_gw, tmp_pat
     assert out["artifact"]["revision_kref"] == fake_rev_kref
     assert out["artifact"]["revision_number"] == 1
     assert fake_artifact_kref in out["artifact"]["artifact_krefs"]
-    assert out["artifact"]["space_path"] == "Construct/Images"
+    assert out["artifact"]["space_path"] == "Revka/Images"
     assert out["artifact"]["directory"] == str(expected_path.parent)
 
     sdk_mock.create_item.assert_awaited_once()
@@ -553,9 +553,9 @@ async def test_batch_mode_lays_files_under_revision_dir(fake_gw, tmp_path):
 
     sdk_mock = MagicMock()
     sdk_mock.ensure_space = AsyncMock(return_value=None)
-    sdk_mock.create_item = AsyncMock(return_value={"kref": "kref://Construct/Images/logo.image"})
+    sdk_mock.create_item = AsyncMock(return_value={"kref": "kref://Revka/Images/logo.image"})
     sdk_mock.create_revision = AsyncMock(
-        return_value={"kref": "kref://Construct/Images/logo.image?r=2"}
+        return_value={"kref": "kref://Revka/Images/logo.image?r=2"}
     )
     sdk_mock.create_artifact = AsyncMock(return_value={"kref": "art"})
 
@@ -563,12 +563,12 @@ async def test_batch_mode_lays_files_under_revision_dir(fake_gw, tmp_path):
         ci, "_check_codex_available", AsyncMock(return_value={"ok": True, "executable": "/usr/local/bin/codex"})
     ), patch.object(ci, "_spawn_codex_image", side_effect=_fake_spawn), patch(
         "operator_mcp.operator_mcp.KUMIHO_SDK", sdk_mock
-    ), patch.object(ci, "harness_project", lambda: "Construct"), patch.object(
+    ), patch.object(ci, "harness_project", lambda: "Revka"), patch.object(
         ci, "_WORKSPACE_ROOT", tmp_path
     ):
         out = await ci.tool_generate_image_codex(
             {
-                "prompt": "construct logo",
+                "prompt": "revka logo",
                 "output_path": "logo.png",
                 "count": 3,
                 "canvas": False,
@@ -577,7 +577,7 @@ async def test_batch_mode_lays_files_under_revision_dir(fake_gw, tmp_path):
             fake_gw,
         )
 
-    rev_dir = tmp_path / "Construct" / "Images" / "logo.image" / "r2"
+    rev_dir = tmp_path / "Revka" / "Images" / "logo.image" / "r2"
     assert out["generated"] == 3
     assert out["files"] == [
         str(rev_dir / "logo-1.png"),
@@ -589,7 +589,7 @@ async def test_batch_mode_lays_files_under_revision_dir(fake_gw, tmp_path):
     # The item name passed to create_item should be the bare stem, not "logo-1".
     create_item_kwargs = sdk_mock.create_item.await_args.kwargs
     assert create_item_kwargs["name"] == "logo"
-    assert create_item_kwargs["space_path"] == "Construct/Images"
+    assert create_item_kwargs["space_path"] == "Revka/Images"
     # All 3 PNGs are attached as artifacts to the same revision.
     assert sdk_mock.create_artifact.await_count == 3
 
@@ -637,7 +637,7 @@ async def test_custom_space_and_item_name_drive_kref_path(fake_gw, tmp_path):
     sdk_mock.ensure_space = AsyncMock(return_value=None)
     sdk_mock.create_item = AsyncMock(return_value={"kref": "i"})
     sdk_mock.create_revision = AsyncMock(
-        return_value={"kref": "kref://Construct/Marketing/Logos/q2-rebrand.image?r=1"}
+        return_value={"kref": "kref://Revka/Marketing/Logos/q2-rebrand.image?r=1"}
     )
     sdk_mock.create_artifact = AsyncMock(return_value={"kref": "a"})
 
@@ -645,12 +645,12 @@ async def test_custom_space_and_item_name_drive_kref_path(fake_gw, tmp_path):
         ci, "_check_codex_available", AsyncMock(return_value={"ok": True, "executable": "/usr/local/bin/codex"})
     ), patch.object(ci, "_spawn_codex_image", side_effect=_fake_spawn), patch(
         "operator_mcp.operator_mcp.KUMIHO_SDK", sdk_mock
-    ), patch.object(ci, "harness_project", lambda: "Construct"), patch.object(
+    ), patch.object(ci, "harness_project", lambda: "Revka"), patch.object(
         ci, "_WORKSPACE_ROOT", tmp_path
     ):
         out = await ci.tool_generate_image_codex(
             {
-                "prompt": "construct quarterly logo",
+                "prompt": "revka quarterly logo",
                 "output_path": "logo.png",
                 "register_artifact": True,
                 "space": "Marketing/Logos",
@@ -660,16 +660,16 @@ async def test_custom_space_and_item_name_drive_kref_path(fake_gw, tmp_path):
         )
 
     expected_path = (
-        tmp_path / "Construct" / "Marketing" / "Logos" / "q2-rebrand.image" / "r1" / "logo.png"
+        tmp_path / "Revka" / "Marketing" / "Logos" / "q2-rebrand.image" / "r1" / "logo.png"
     )
     assert out["files"] == [str(expected_path)]
-    assert out["artifact"]["space_path"] == "Construct/Marketing/Logos"
+    assert out["artifact"]["space_path"] == "Revka/Marketing/Logos"
     assert out["artifact"]["directory"] == str(expected_path.parent)
     create_item_kwargs = sdk_mock.create_item.await_args.kwargs
     assert create_item_kwargs["name"] == "q2-rebrand"
-    assert create_item_kwargs["space_path"] == "Construct/Marketing/Logos"
+    assert create_item_kwargs["space_path"] == "Revka/Marketing/Logos"
     # ensure_space is called with the top segment of a multi-segment space.
-    sdk_mock.ensure_space.assert_awaited_once_with("Construct", "Marketing")
+    sdk_mock.ensure_space.assert_awaited_once_with("Revka", "Marketing")
 
 
 async def test_space_default_is_images(fake_gw, tmp_path):
@@ -690,7 +690,7 @@ async def test_space_default_is_images(fake_gw, tmp_path):
         ci, "_check_codex_available", AsyncMock(return_value={"ok": True, "executable": "/usr/local/bin/codex"})
     ), patch.object(ci, "_spawn_codex_image", side_effect=_fake_spawn), patch(
         "operator_mcp.operator_mcp.KUMIHO_SDK", sdk_mock
-    ), patch.object(ci, "harness_project", lambda: "Construct"), patch.object(
+    ), patch.object(ci, "harness_project", lambda: "Revka"), patch.object(
         ci, "_WORKSPACE_ROOT", tmp_path
     ):
         out = await ci.tool_generate_image_codex(
@@ -702,8 +702,8 @@ async def test_space_default_is_images(fake_gw, tmp_path):
             fake_gw,
         )
 
-    assert out["artifact"]["space_path"] == "Construct/Images"
-    sdk_mock.ensure_space.assert_awaited_once_with("Construct", "Images")
+    assert out["artifact"]["space_path"] == "Revka/Images"
+    sdk_mock.ensure_space.assert_awaited_once_with("Revka", "Images")
 
 
 async def test_create_item_failure_falls_back_to_legacy_layout(fake_gw, tmp_path):
@@ -724,7 +724,7 @@ async def test_create_item_failure_falls_back_to_legacy_layout(fake_gw, tmp_path
         ci, "_check_codex_available", AsyncMock(return_value={"ok": True, "executable": "/usr/local/bin/codex"})
     ), patch.object(ci, "_spawn_codex_image", side_effect=_fake_spawn), patch(
         "operator_mcp.operator_mcp.KUMIHO_SDK", sdk_mock
-    ), patch.object(ci, "harness_project", lambda: "Construct"):
+    ), patch.object(ci, "harness_project", lambda: "Revka"):
         out = await ci.tool_generate_image_codex(
             {
                 "prompt": "a fox",
@@ -827,7 +827,7 @@ async def test_partial_failure_reports_failures_and_keeps_successes(fake_gw, tmp
         ci, "_check_codex_available", AsyncMock(return_value={"ok": True, "executable": "/usr/local/bin/codex"})
     ), patch.object(ci, "_spawn_codex_image", side_effect=_flaky_spawn), patch(
         "operator_mcp.operator_mcp.KUMIHO_SDK", sdk_mock
-    ), patch.object(ci, "harness_project", lambda: "Construct"):
+    ), patch.object(ci, "harness_project", lambda: "Revka"):
         out = await ci.tool_generate_image_codex(
             {
                 "prompt": "a fox",

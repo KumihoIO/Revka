@@ -76,7 +76,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
   // Keep state in sync if localStorage is changed in another tab
   useEffect(() => {
     const handler = (e: StorageEvent) => {
-      if (e.key === 'construct_token') {
+      if (e.key === 'revka_token') {
         const t = readToken();
         setTokenState(t);
         setAuthenticated(t !== null && t.length > 0);

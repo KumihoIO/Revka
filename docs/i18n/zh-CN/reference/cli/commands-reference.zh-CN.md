@@ -1,8 +1,8 @@
-# Construct 命令参考文档
+# Revka 命令参考文档
 
 _Source English version updated 2026-04-21; localized version may be stale until retranslated._
 
-本参考文档派生自当前 CLI 界面（`construct --help`）。
+本参考文档派生自当前 CLI 界面（`revka --help`）。
 
 最后验证时间：**2026年3月26日**。
 
@@ -35,13 +35,13 @@ _Source English version updated 2026-04-21; localized version may be stale until
 
 ### `onboard`
 
-- `construct onboard`
-- `construct onboard --channels-only`
-- `construct onboard --force`
-- `construct onboard --reinit`
-- `construct onboard --api-key <KEY> --provider <ID> --memory <sqlite|lucid|markdown|none>`
-- `construct onboard --api-key <KEY> --provider <ID> --model <MODEL_ID> --memory <sqlite|lucid|markdown|none>`
-- `construct onboard --api-key <KEY> --provider <ID> --model <MODEL_ID> --memory <sqlite|lucid|markdown|none> --force`
+- `revka onboard`
+- `revka onboard --channels-only`
+- `revka onboard --force`
+- `revka onboard --reinit`
+- `revka onboard --api-key <KEY> --provider <ID> --memory <sqlite|lucid|markdown|none>`
+- `revka onboard --api-key <KEY> --provider <ID> --model <MODEL_ID> --memory <sqlite|lucid|markdown|none>`
+- `revka onboard --api-key <KEY> --provider <ID> --model <MODEL_ID> --memory <sqlite|lucid|markdown|none> --force`
 
 `onboard` 安全行为：
 
@@ -49,15 +49,15 @@ _Source English version updated 2026-04-21; localized version may be stale until
   - 完整引导（覆盖 `config.toml`）
   - 仅更新提供商（更新提供商/模型/API 密钥，同时保留现有渠道、隧道、内存、钩子和其他设置）
 - 在非交互式环境中，现有 `config.toml` 会导致安全拒绝，除非传递 `--force`。
-- 当你只需要轮换渠道令牌/白名单时，使用 `construct onboard --channels-only`。
-- 使用 `construct onboard --reinit` 重新开始。这会备份现有配置目录并添加时间戳后缀，然后从头创建新配置。
+- 当你只需要轮换渠道令牌/白名单时，使用 `revka onboard --channels-only`。
+- 使用 `revka onboard --reinit` 重新开始。这会备份现有配置目录并添加时间戳后缀，然后从头创建新配置。
 
 ### `agent`
 
-- `construct agent`
-- `construct agent -m \"Hello\"`
-- `construct agent --provider <ID> --model <MODEL> --temperature <0.0-2.0>`
-- `construct agent --peripheral <board:path>`
+- `revka agent`
+- `revka agent -m \"Hello\"`
+- `revka agent --provider <ID> --model <MODEL> --temperature <0.0-2.0>`
+- `revka agent --peripheral <board:path>`
 
 提示：
 
@@ -65,9 +65,9 @@ _Source English version updated 2026-04-21; localized version may be stale until
 
 ### `acp`
 
-- `construct acp`
-- `construct acp --max-sessions <N>`
-- `construct acp --session-timeout <SECONDS>`
+- `revka acp`
+- `revka acp --max-sessions <N>`
+- `revka acp --session-timeout <SECONDS>`
 
 启动 ACP（Agent Control Protocol）服务器，用于 IDE 和工具集成。
 
@@ -79,8 +79,8 @@ _Source English version updated 2026-04-21; localized version may be stale until
 
 ### `gateway` / `daemon`
 
-- `construct gateway [--host <HOST>] [--port <PORT>]`
-- `construct daemon [--host <HOST>] [--port <PORT>]`
+- `revka gateway [--host <HOST>] [--port <PORT>]`
+- `revka daemon [--host <HOST>] [--port <PORT>]`
 
 提示：
 
@@ -92,16 +92,16 @@ _Source English version updated 2026-04-21; localized version may be stale until
 
 ### `estop`
 
-- `construct estop`（启动 `kill-all`）
-- `construct estop --level network-kill`
-- `construct estop --level domain-block --domain \"*.chase.com\" [--domain \"*.paypal.com\"]`
-- `construct estop --level tool-freeze --tool shell [--tool browser]`
-- `construct estop status`
-- `construct estop resume`
-- `construct estop resume --network`
-- `construct estop resume --domain \"*.chase.com\"`
-- `construct estop resume --tool shell`
-- `construct estop resume --otp <123456>`
+- `revka estop`（启动 `kill-all`）
+- `revka estop --level network-kill`
+- `revka estop --level domain-block --domain \"*.chase.com\" [--domain \"*.paypal.com\"]`
+- `revka estop --level tool-freeze --tool shell [--tool browser]`
+- `revka estop status`
+- `revka estop resume`
+- `revka estop resume --network`
+- `revka estop resume --domain \"*.chase.com\"`
+- `revka estop resume --tool shell`
+- `revka estop resume --otp <123456>`
 
 注意事项：
 
@@ -111,23 +111,23 @@ _Source English version updated 2026-04-21; localized version may be stale until
 
 ### `service`
 
-- `construct service install`
-- `construct service start`
-- `construct service stop`
-- `construct service restart`
-- `construct service status`
-- `construct service uninstall`
+- `revka service install`
+- `revka service start`
+- `revka service stop`
+- `revka service restart`
+- `revka service status`
+- `revka service uninstall`
 
 ### `cron`
 
-- `construct cron list`
-- `construct cron add <expr> [--tz <IANA_TZ>] <command>`
-- `construct cron add-at <rfc3339_timestamp> <command>`
-- `construct cron add-every <every_ms> <command>`
-- `construct cron once <delay> <command>`
-- `construct cron remove <id>`
-- `construct cron pause <id>`
-- `construct cron resume <id>`
+- `revka cron list`
+- `revka cron add <expr> [--tz <IANA_TZ>] <command>`
+- `revka cron add-at <rfc3339_timestamp> <command>`
+- `revka cron add-every <every_ms> <command>`
+- `revka cron once <delay> <command>`
+- `revka cron remove <id>`
+- `revka cron pause <id>`
+- `revka cron resume <id>`
 
 注意事项：
 
@@ -136,29 +136,29 @@ _Source English version updated 2026-04-21; localized version may be stale until
 
 ### `models`
 
-- `construct models refresh`
-- `construct models refresh --provider <ID>`
-- `construct models refresh --force`
+- `revka models refresh`
+- `revka models refresh --provider <ID>`
+- `revka models refresh --force`
 
 `models refresh` 当前支持以下提供商 ID 的实时目录刷新：`openrouter`、`openai`、`anthropic`、`groq`、`mistral`、`deepseek`、`xai`、`together-ai`、`gemini`、`ollama`、`llamacpp`、`sglang`、`vllm`、`astrai`、`venice`、`fireworks`、`cohere`、`moonshot`、`glm`、`zai`、`qwen` 和 `nvidia`。
 
 ### `doctor`
 
-- `construct doctor`
-- `construct doctor models [--provider <ID>] [--use-cache]`
-- `construct doctor traces [--limit <N>] [--event <TYPE>] [--contains <TEXT>]`
-- `construct doctor traces --id <TRACE_ID>`
+- `revka doctor`
+- `revka doctor models [--provider <ID>] [--use-cache]`
+- `revka doctor traces [--limit <N>] [--event <TYPE>] [--contains <TEXT>]`
+- `revka doctor traces --id <TRACE_ID>`
 
 `doctor traces` 从 `observability.runtime_trace_path` 读取运行时工具/模型诊断信息。
 
 ### `channel`
 
-- `construct channel list`
-- `construct channel start`
-- `construct channel doctor`
-- `construct channel bind-telegram <IDENTITY>`
-- `construct channel add <type> <json>`
-- `construct channel remove <name>`
+- `revka channel list`
+- `revka channel start`
+- `revka channel doctor`
+- `revka channel bind-telegram <IDENTITY>`
+- `revka channel add <type> <json>`
+- `revka channel remove <name>`
 
 运行时聊天内命令（渠道服务器运行时的 Telegram/Discord）：
 
@@ -179,14 +179,14 @@ _Source English version updated 2026-04-21; localized version may be stale until
 
 ### `integrations`
 
-- `construct integrations info <name>`
+- `revka integrations info <name>`
 
 ### `skills`
 
-- `construct skills list`
-- `construct skills audit <source_or_name>`
-- `construct skills install <source>`
-- `construct skills remove <name>`
+- `revka skills list`
+- `revka skills audit <source_or_name>`
+- `revka skills install <source>`
+- `revka skills remove <name>`
 
 `<source>` 接受 git 远程地址（`https://...`、`http://...`、`ssh://...` 和 `git@host:owner/repo.git`）或本地文件系统路径。
 
@@ -202,43 +202,43 @@ _Source English version updated 2026-04-21; localized version may be stale until
 
 ### `migrate`
 
-- `construct migrate openclaw [--source <path>] [--dry-run]`
+- `revka migrate openclaw [--source <path>] [--dry-run]`
 
 ### `config`
 
-- `construct config schema`
+- `revka config schema`
 
 `config schema` 将完整 `config.toml` 契约的 JSON Schema（草案 2020-12）打印到 stdout。
 
 ### `completions`
 
-- `construct completions bash`
-- `construct completions fish`
-- `construct completions zsh`
-- `construct completions powershell`
-- `construct completions elvish`
+- `revka completions bash`
+- `revka completions fish`
+- `revka completions zsh`
+- `revka completions powershell`
+- `revka completions elvish`
 
 `completions` 设计为仅输出到 stdout，因此脚本可以直接被 source 而不会被日志/警告污染。
 
 ### `hardware`
 
-- `construct hardware discover`
-- `construct hardware introspect <path>`
-- `construct hardware info [--chip <chip_name>]`
+- `revka hardware discover`
+- `revka hardware introspect <path>`
+- `revka hardware info [--chip <chip_name>]`
 
 ### `peripheral`
 
-- `construct peripheral list`
-- `construct peripheral add <board> <path>`
-- `construct peripheral flash [--port <serial_port>]`
-- `construct peripheral setup-uno-q [--host <ip_or_host>]`
-- `construct peripheral flash-nucleo`
+- `revka peripheral list`
+- `revka peripheral add <board> <path>`
+- `revka peripheral flash [--port <serial_port>]`
+- `revka peripheral setup-uno-q [--host <ip_or_host>]`
+- `revka peripheral flash-nucleo`
 
 ## 验证提示
 
 要快速针对当前二进制文件验证文档：
 
 ```bash
-construct --help
-construct <command> --help
+revka --help
+revka <command> --help
 ```

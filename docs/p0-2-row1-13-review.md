@@ -22,7 +22,7 @@ I accept the three coder-flagged deviations. Moving the warning out of `inject_k
 3. Test coverage: ✓ — prompt-builder tests cover disabled / lite / full; lite assertions are plain substring rejections for all high-level memory reflex tool names; `kumiho.rs` includes registry probe tests for empty, unprefixed, bare-only, and prefixed-sentinel registries.
 4. Scope discipline: ✓ — `git diff origin/dev --stat` no longer shows the prior unrelated frontend/gateway committed changes. The current source diff is limited to Row 1/13 implementation, wiring, tests, and the accepted gateway warning site.
 5. Wizard correction: N/A — `src/onboard/wizard.rs` was not modified in Round 2.
-6. Loud-failure warning: ✓ — `warn_if_kumiho_advanced_missing` is actionable and mentions `~/.construct/kumiho/venv/bin/pip install 'kumiho_memory>=0.5.0'` plus `scripts/install-sidecars.sh`.
+6. Loud-failure warning: ✓ — `warn_if_kumiho_advanced_missing` is actionable and mentions `~/.revka/kumiho/venv/bin/pip install 'kumiho_memory>=0.5.0'` plus `scripts/install-sidecars.sh`.
 7. Net-deletes ≥ net-adds: ✓ with caveat — this is still a net-add patch, but the new prose is materially smaller and stripped, and the main fix is now a structured runtime registry check. I would not block on net line count here.
 
 ### Spot-checks
@@ -156,8 +156,8 @@ There are also coder-fixable issues: the lite prompt still names the high-level 
 2. Prompt builder conditional: ✗ — `PromptContext.kumiho_memory_advanced_available` exists and `KumihoBootstrapSection::build` selects full vs lite, but the flag is driven by package-directory probing, not actual registry contents. The lite constant also still mentions `kumiho_memory_engage` / `reflect` and additional low-level tools.
 3. Test coverage: ✗ — prompt-builder tests cover disabled / lite / full states, and installer grep tests exist. However the lite tests only reject narrow substrings such as `"Call kumiho_memory_engage"` while the lite prompt still contains `kumiho_memory_engage`. `cargo check --lib` passed. `cargo test --test component install_sidecars_kumiho_memory` was started twice but did not complete after extended compilation time, so I did not confirm the installer grep test result.
 4. Scope discipline: ✗ — `git diff origin/dev..HEAD --stat` shows unrelated committed `src/gateway/*` and `web/src/*` changes. The working tree also modifies `src/agent/agent.rs`, `src/agent/loop_.rs`, `src/channels/mod.rs`, `src/tools/delegate.rs`, and `tests/component/mod.rs`, which are outside the brief's allowed file list, even if some are mechanically related to wiring the new flag.
-5. Wizard correction: N/A — `src/onboard/wizard.rs` was not modified. I could not spot-check `kumiho_memory/mcp_tools.py` locally because `~/.construct/kumiho/venv` does not currently have the `kumiho_memory` package installed.
-6. Loud-failure warning: ✓ — `src/agent/kumiho.rs:476-484` logs an actionable warning including `~/.construct/kumiho/venv/bin/pip install 'kumiho_memory>=0.5.0'` and the installer rerun path. Caveat: it is based on the same package-directory heuristic.
+5. Wizard correction: N/A — `src/onboard/wizard.rs` was not modified. I could not spot-check `kumiho_memory/mcp_tools.py` locally because `~/.revka/kumiho/venv` does not currently have the `kumiho_memory` package installed.
+6. Loud-failure warning: ✓ — `src/agent/kumiho.rs:476-484` logs an actionable warning including `~/.revka/kumiho/venv/bin/pip install 'kumiho_memory>=0.5.0'` and the installer rerun path. Caveat: it is based on the same package-directory heuristic.
 7. Net-deletes ≥ net-adds: ✗ — the runtime probe is the right kind of artifact, but the prompt changes add duplicated prose and the lite prompt is not truly stripped. The working tree is net +363 lines by `git diff --stat`, and the lite variants duplicate warning/instruction text instead of parameterizing the common parts.
 
 ## Spot-checks

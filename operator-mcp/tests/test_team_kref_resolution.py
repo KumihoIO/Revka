@@ -20,13 +20,13 @@ def team_client():
 
 MOCK_TEAMS = [
     {
-        "kref": "kref://Construct/Teams/Assessment.bundle",
+        "kref": "kref://Revka/Teams/Assessment.bundle",
         "item_name": "Assessment.bundle",
         "deprecated": False,
         "metadata": {"description": "Assessment team"},
     },
     {
-        "kref": "kref://Construct/Teams/CodeReview.bundle",
+        "kref": "kref://Revka/Teams/CodeReview.bundle",
         "item_name": "CodeReview.bundle",
         "deprecated": False,
         "metadata": {"description": "Code review team"},
@@ -38,39 +38,39 @@ class TestResolveTeamKref:
     @pytest.mark.asyncio
     async def test_exact_kref_match(self, team_client):
         team_client.list_teams = AsyncMock(return_value=MOCK_TEAMS)
-        result = await team_client.resolve_team_kref("kref://Construct/Teams/Assessment.bundle")
-        assert result == "kref://Construct/Teams/Assessment.bundle"
+        result = await team_client.resolve_team_kref("kref://Revka/Teams/Assessment.bundle")
+        assert result == "kref://Revka/Teams/Assessment.bundle"
 
     @pytest.mark.asyncio
     async def test_case_insensitive_kref(self, team_client):
         team_client.list_teams = AsyncMock(return_value=MOCK_TEAMS)
-        result = await team_client.resolve_team_kref("kref://construct/teams/assessment.bundle")
-        assert result == "kref://Construct/Teams/Assessment.bundle"
+        result = await team_client.resolve_team_kref("kref://revka/teams/assessment.bundle")
+        assert result == "kref://Revka/Teams/Assessment.bundle"
 
     @pytest.mark.asyncio
     async def test_bare_name_with_kind_suffix(self, team_client):
         team_client.list_teams = AsyncMock(return_value=MOCK_TEAMS)
         result = await team_client.resolve_team_kref("Assessment.bundle")
-        assert result == "kref://Construct/Teams/Assessment.bundle"
+        assert result == "kref://Revka/Teams/Assessment.bundle"
 
     @pytest.mark.asyncio
     async def test_bare_name_without_suffix(self, team_client):
         team_client.list_teams = AsyncMock(return_value=MOCK_TEAMS)
         result = await team_client.resolve_team_kref("Assessment")
-        assert result == "kref://Construct/Teams/Assessment.bundle"
+        assert result == "kref://Revka/Teams/Assessment.bundle"
 
     @pytest.mark.asyncio
     async def test_case_insensitive_name(self, team_client):
         team_client.list_teams = AsyncMock(return_value=MOCK_TEAMS)
         result = await team_client.resolve_team_kref("assessment")
-        assert result == "kref://Construct/Teams/Assessment.bundle"
+        assert result == "kref://Revka/Teams/Assessment.bundle"
 
     @pytest.mark.asyncio
     async def test_kref_uri_with_wrong_suffix(self, team_client):
-        """LLM might emit kref://Construct/Teams/assessment — no .bundle suffix."""
+        """LLM might emit kref://Revka/Teams/assessment — no .bundle suffix."""
         team_client.list_teams = AsyncMock(return_value=MOCK_TEAMS)
-        result = await team_client.resolve_team_kref("kref://Construct/Teams/assessment")
-        assert result == "kref://Construct/Teams/Assessment.bundle"
+        result = await team_client.resolve_team_kref("kref://Revka/Teams/assessment")
+        assert result == "kref://Revka/Teams/Assessment.bundle"
 
     @pytest.mark.asyncio
     async def test_not_found_returns_none(self, team_client):
@@ -88,4 +88,4 @@ class TestResolveTeamKref:
     async def test_code_review_by_name(self, team_client):
         team_client.list_teams = AsyncMock(return_value=MOCK_TEAMS)
         result = await team_client.resolve_team_kref("CodeReview")
-        assert result == "kref://Construct/Teams/CodeReview.bundle"
+        assert result == "kref://Revka/Teams/CodeReview.bundle"

@@ -62,11 +62,11 @@ CO_AUTHORS=$(git log "$RANGE" --pretty=format:"%b" --no-merges \
 CONTRIBUTORS=$(printf "%s\n%s" "$GIT_AUTHORS" "$CO_AUTHORS" \
   | sort -uf \
   | grep -v '^$' \
-  | grep -viE '\[bot\]$|^dependabot|^github-actions|^copilot|^Construct Bot|^Construct Runner|^Construct Agent|^blacksmith' \
+  | grep -viE '\[bot\]$|^dependabot|^github-actions|^copilot|^Revka Bot|^Revka Runner|^Revka Agent|^blacksmith' \
   | while IFS= read -r name; do echo "- ${name}"; done || true)
 
 if [ -z "$CONTRIBUTORS" ]; then
-  CONTRIBUTORS="- The Construct team"
+  CONTRIBUTORS="- The Revka team"
 fi
 
 BODY=$(cat <<NOTES_EOF

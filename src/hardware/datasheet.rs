@@ -5,7 +5,7 @@
 //!
 //! 1. **search** — query the web for the device datasheet PDF URL.
 //! 2. **download** — fetch the PDF and save it to
-//!    `~/.construct/hardware/datasheets/<device>.pdf`.
+//!    `~/.revka/hardware/datasheets/<device>.pdf`.
 //! 3. **list** — enumerate all locally cached datasheets.
 //! 4. **read** — return the local path of a cached datasheet so the LLM can
 //!    reference it with the `read_file` tool or a future RAG pipeline.
@@ -22,18 +22,18 @@ use std::path::PathBuf;
 
 // ── DatasheetManager ─────────────────────────────────────────────────────────
 
-/// Manages device datasheet files in `~/.construct/hardware/datasheets/`.
+/// Manages device datasheet files in `~/.revka/hardware/datasheets/`.
 pub struct DatasheetManager {
     /// Root datasheet storage directory.
     datasheet_dir: PathBuf,
 }
 
 impl DatasheetManager {
-    /// Create a manager rooted at the default Construct datasheets directory.
+    /// Create a manager rooted at the default Revka datasheets directory.
     pub fn new() -> Option<Self> {
         let home = directories::BaseDirs::new()?.home_dir().to_path_buf();
         Some(Self {
-            datasheet_dir: home.join(".construct").join("hardware").join("datasheets"),
+            datasheet_dir: home.join(".revka").join("hardware").join("datasheets"),
         })
     }
 
@@ -62,7 +62,7 @@ impl DatasheetManager {
 
     /// Download a datasheet PDF from `url` and save it locally.
     ///
-    /// The file is saved as `~/.construct/hardware/datasheets/<device_name>.pdf`.
+    /// The file is saved as `~/.revka/hardware/datasheets/<device_name>.pdf`.
     /// Returns the path to the saved file.
     pub async fn download_datasheet(
         &self,
@@ -75,7 +75,7 @@ impl DatasheetManager {
         let dest = self.datasheet_dir.join(&filename);
 
         let client = reqwest::Client::builder()
-            .user_agent("Construct/0.1 (datasheet downloader)")
+            .user_agent("Revka/0.1 (datasheet downloader)")
             .timeout(std::time::Duration::from_secs(30))
             .build()?;
 
@@ -121,7 +121,7 @@ impl DatasheetManager {
 impl Default for DatasheetManager {
     fn default() -> Self {
         Self::new().unwrap_or_else(|| Self {
-            datasheet_dir: PathBuf::from(".construct/hardware/datasheets"),
+            datasheet_dir: PathBuf::from(".revka/hardware/datasheets"),
         })
     }
 }
@@ -273,7 +273,7 @@ impl Tool for DatasheetTool {
                             "Datasheet for '{device}' downloaded successfully.\n\
                              Saved to: {}\n\n\
                              Next step: create a device profile at \
-                             ~/.construct/hardware/devices/aardvark0.md with the key \
+                             ~/.revka/hardware/devices/aardvark0.md with the key \
                              registers, I2C address, and protocol notes from this datasheet.",
                             path.display()
                         ),
@@ -295,7 +295,7 @@ impl Tool for DatasheetTool {
                         .to_string()
                 } else {
                     format!(
-                        "{} cached datasheet(s) in ~/.construct/hardware/datasheets/:\n{}",
+                        "{} cached datasheet(s) in ~/.revka/hardware/datasheets/:\n{}",
                         datasheets.len(),
                         datasheets
                             .iter()

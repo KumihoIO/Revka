@@ -1,12 +1,12 @@
-# Construct Operator MCP — build and install targets
+# Revka Operator MCP — build and install targets
 #
 # Build:   make build
 # Install: make install
 # Dev:     make dev-install (editable Python + linked TS)
 
 SHELL := /bin/bash
-INSTALL_DIR := $(HOME)/.construct/operator_mcp
-SKILLS_DIR := $(HOME)/.construct/skills
+INSTALL_DIR := $(HOME)/.revka/operator_mcp
+SKILLS_DIR := $(HOME)/.revka/skills
 VENV_DIR := $(INSTALL_DIR)/venv
 PYTHON := python3
 
@@ -35,7 +35,7 @@ typecheck:
 
 install: install-python install-ts install-skills install-bootstrap
 	@echo ""
-	@echo "==> Construct Operator installed to $(INSTALL_DIR)"
+	@echo "==> Revka Operator installed to $(INSTALL_DIR)"
 	@echo "    Python:  $(VENV_DIR)/bin/python3 -m operator_mcp"
 	@echo "    Sidecar: node $(INSTALL_DIR)/session-manager/dist/index.js"
 	@echo "    Skills:  $(SKILLS_DIR)/"

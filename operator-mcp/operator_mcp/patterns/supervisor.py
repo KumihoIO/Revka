@@ -18,7 +18,7 @@ from typing import Any
 
 from .._log import _log
 from ..agent_state import POOL
-from ..construct_config import harness_project
+from ..revka_config import harness_project
 from ..failure_classification import (
     bad_directory,
     classified_error,

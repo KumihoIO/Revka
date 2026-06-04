@@ -9,7 +9,7 @@ import pytest
 
 
 # ---------------------------------------------------------------------------
-# Test isolation: prevent user's ~/.construct/config.toml from leaking into
+# Test isolation: prevent user's ~/.revka/config.toml from leaking into
 # tests that hardcode the default project names. The harness/memory project
 # helpers cache their first read, so a developer machine with a non-default
 # `[kumiho].harness_project` (e.g. legacy "FoxClaw") would otherwise make
@@ -17,21 +17,21 @@ import pytest
 # ---------------------------------------------------------------------------
 
 @pytest.fixture(autouse=True)
-def _isolate_construct_config(monkeypatch):
-    from operator_mcp import construct_config, policy
+def _isolate_revka_config(monkeypatch):
+    from operator_mcp import revka_config, policy
 
-    monkeypatch.setattr(construct_config, "_CONFIG_PATH", "/nonexistent/config.toml")
-    monkeypatch.setattr(construct_config, "_cached_harness", None)
-    monkeypatch.setattr(construct_config, "_cached_memory", None)
-    monkeypatch.setattr(construct_config, "_cached_memory_retrieval_limit", None)
-    monkeypatch.setattr(construct_config, "_cached_memory_min_relevance_score", None)
+    monkeypatch.setattr(revka_config, "_CONFIG_PATH", "/nonexistent/config.toml")
+    monkeypatch.setattr(revka_config, "_cached_harness", None)
+    monkeypatch.setattr(revka_config, "_cached_memory", None)
+    monkeypatch.setattr(revka_config, "_cached_memory_retrieval_limit", None)
+    monkeypatch.setattr(revka_config, "_cached_memory_min_relevance_score", None)
     monkeypatch.delenv("KUMIHO_MEMORY_PROJECT", raising=False)
     monkeypatch.delenv("KUMIHO_MEMORY_RETRIEVAL_LIMIT", raising=False)
-    monkeypatch.delenv("CONSTRUCT_MEMORY_MIN_RELEVANCE_SCORE", raising=False)
+    monkeypatch.delenv("REVKA_MEMORY_MIN_RELEVANCE_SCORE", raising=False)
 
     # Same isolation for the autonomy policy. The user's local
-    # ~/.construct/config.toml typically contains workspace_only roots
-    # like ~/construct-os and forbidden_paths like /private/var — the
+    # ~/.revka/config.toml typically contains workspace_only roots
+    # like ~/Revka and forbidden_paths like /private/var — the
     # latter blocks pytest's macOS tmp_path. Pointing at a nonexistent
     # config file makes load_policy() return a default Policy() with
     # empty lists, which allows every cwd.
@@ -145,7 +145,7 @@ def mock_sidecar():
 
 @pytest.fixture
 def mock_gateway():
-    """Mock ConstructGatewayClient."""
+    """Mock RevkaGatewayClient."""
     gw = AsyncMock()
     gw._available = True
     gw.push_channel_event = AsyncMock(return_value=True)

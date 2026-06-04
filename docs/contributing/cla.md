@@ -1,4 +1,4 @@
-# Construct Contributor License Agreement (CLA)
+# Revka Contributor License Agreement (CLA)
 
 **Version 1.0 — February 2026**  
 **Kumiho Inc.**
@@ -9,10 +9,10 @@
 
 This Contributor License Agreement ("CLA") clarifies the intellectual
 property rights granted by contributors to Kumiho Inc.. This agreement
-protects both contributors and users of the Construct project.
+protects both contributors and users of the Revka project.
 
 By submitting a contribution (pull request, patch, issue with code, or any
-other form of code submission) to the Construct repository, you agree to the
+other form of code submission) to the Revka repository, you agree to the
 terms of this CLA.
 
 ---
@@ -21,18 +21,18 @@ terms of this CLA.
 
 - **"Contribution"** means any original work of authorship, including any
   modifications or additions to existing work, submitted to Kumiho Inc.
-  for inclusion in the Construct project.
+  for inclusion in the Revka project.
 
 - **"You"** means the individual or legal entity submitting a Contribution.
 
 - **"Kumiho Inc."** means the maintainers and organization responsible
-  for the Construct project at https://github.com/KumihoIO/construct-os.
+  for the Revka project at https://github.com/KumihoIO/Revka.
 
 ---
 
 ## 2. Grant of Copyright License
 
-You grant Kumiho Inc. and recipients of software distributed by Construct
+You grant Kumiho Inc. and recipients of software distributed by Revka
 Labs a perpetual, worldwide, non-exclusive, no-charge, royalty-free,
 irrevocable copyright license to:
 
@@ -44,24 +44,24 @@ irrevocable copyright license to:
 
 ## 3. Grant of Patent License
 
-You grant Kumiho Inc. and recipients of software distributed by Construct
+You grant Kumiho Inc. and recipients of software distributed by Revka
 Labs a perpetual, worldwide, non-exclusive, no-charge, royalty-free,
 irrevocable patent license to make, have made, use, offer to sell, sell,
 import, and otherwise transfer your Contributions.
 
 This patent license applies only to patent claims licensable by you that
 are necessarily infringed by your Contribution alone or in combination with
-the Construct project.
+the Revka project.
 
 **This protects you:** if a third party files a patent claim against
-Construct that covers your Contribution, your patent license to the project
+Revka that covers your Contribution, your patent license to the project
 is not revoked.
 
 ---
 
 ## 4. You Retain Your Rights
 
-This CLA does **not** transfer ownership of your Contribution to Construct
+This CLA does **not** transfer ownership of your Contribution to Revka
 Labs. You retain full copyright ownership of your Contribution. You are
 free to use your Contribution in any other project under any license.
 
@@ -83,7 +83,7 @@ You represent that:
 
 ## 6. No Trademark Rights
 
-This CLA does not grant you any rights to use the Construct name,
+This CLA does not grant you any rights to use the Revka name,
 trademarks, service marks, or logos. See [trademark.md](../maintainers/trademark.md) for trademark policy.
 
 ---
@@ -98,7 +98,7 @@ publicly recorded.
 
 ## 8. Dual-License Commitment
 
-All Contributions accepted into the Construct project are licensed under
+All Contributions accepted into the Revka project are licensed under
 both:
 
 - **MIT License** — permissive open-source use
@@ -111,7 +111,7 @@ the entire contributor community.
 
 ## 9. How to Agree
 
-By opening a pull request or submitting a patch to the Construct repository,
+By opening a pull request or submitting a patch to the Revka repository,
 you indicate your agreement to this CLA. No separate signature is required
 for individual contributors.
 
@@ -124,9 +124,9 @@ and a maintainer will follow up.
 ## 10. Questions
 
 If you have questions about this CLA, open an issue at:
-https://github.com/KumihoIO/construct-os/issues
+https://github.com/KumihoIO/Revka/issues
 
 ---
 
 *This CLA is based on the Apache Individual Contributor License Agreement
-v2.0, adapted for the Construct dual-license model.*
+v2.0, adapted for the Revka dual-license model.*

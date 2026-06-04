@@ -15,7 +15,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][string]$BinaryPath,
-    [string]$Description = "Construct — memory-native AI agent runtime"
+    [string]$Description = "Revka — memory-native AI agent runtime"
 )
 
 $ErrorActionPreference = "Stop"
@@ -48,7 +48,7 @@ if (-not $signtool) {
 }
 Write-Host "Using signtool: $($signtool.FullName)"
 
-$pfxPath = Join-Path $env:RUNNER_TEMP "construct-codesign.pfx"
+$pfxPath = Join-Path $env:RUNNER_TEMP "revka-codesign.pfx"
 try {
     [System.IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($pfxBase64))
 

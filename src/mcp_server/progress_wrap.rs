@@ -7,7 +7,7 @@
 //! delegates name/description/schema unchanged so the MCP surface sees the
 //! same tool spec as before; only the in-flight progress stream is richer.
 //!
-//! The wrapper uses a 2-event model (start → complete) because Construct's
+//! The wrapper uses a 2-event model (start → complete) because Revka's
 //! integration tools run as a single HTTP request under the hood — we don't
 //! have paginated internals to tick against. That's still more useful than
 //! silence: CLIs can show a spinner/toast the moment the call kicks off.

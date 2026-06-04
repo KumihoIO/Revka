@@ -1,7 +1,7 @@
-//! `construct install` — unified post-build install flow.
+//! `revka install` — unified post-build install flow.
 //!
 //! Today only the `--sidecars-only` path is implemented: it provisions the
-//! Kumiho + Operator Python MCP sidecars under `~/.construct/`. The full
+//! Kumiho + Operator Python MCP sidecars under `~/.revka/`. The full
 //! install flow (prerequisite checks, onboard, dashboard launch) will migrate
 //! into this module over time; until then, `install.sh` / `setup.bat` remain
 //! canonical for a full install.
@@ -12,7 +12,7 @@ use anyhow::{Result, anyhow};
 
 use crate::sidecars::{self, SidecarInstallOptions};
 
-/// Options for `construct install`.
+/// Options for `revka install`.
 #[derive(Debug, Default, Clone)]
 pub struct InstallOptions {
     /// Install only the Python MCP sidecars (Kumiho + Operator).
@@ -34,7 +34,7 @@ pub struct InstallOptions {
     pub dry_run: bool,
     /// Optional explicit Python interpreter.
     pub python: Option<String>,
-    /// Dev-mode: install operator-mcp from a local construct-os repo
+    /// Dev-mode: install operator-mcp from a local Revka repo
     /// rather than the binary's embedded snapshot. Avoids the Rust
     /// rebuild cycle when iterating on the Python side.
     pub from_source: Option<PathBuf>,
@@ -46,7 +46,7 @@ pub async fn run(opts: InstallOptions) -> Result<()> {
         return Err(anyhow!(
             "Full install is not yet implemented as a Rust subcommand.\n\
              Use one of:\n  \
-               construct install --sidecars-only    # install Kumiho + Operator Python MCP sidecars\n  \
+               revka install --sidecars-only    # install Kumiho + Operator Python MCP sidecars\n  \
                ./install.sh                         # full POSIX install (source build + sidecars + onboard)\n  \
                setup.bat                            # full Windows install"
         ));

@@ -1,8 +1,8 @@
-# Construct 文档（简体中文）
+# Revka 文档（简体中文）
 
-这是 Construct 文档系统的中文入口页。
+这是 Revka 文档系统的中文入口页。
 
-> Construct 的 Rust 核心运行时是 [ZeroClaw](https://github.com/zeroclaw-labs/zeroclaw) 的 fork；完整署名见根目录 [`NOTICE`](../../../NOTICE) 与 [`docs/upstream/zeroclaw-attribution.md`](../../upstream/zeroclaw-attribution.md)。
+> Revka 的 Rust 核心运行时是 [ZeroClaw](https://github.com/zeroclaw-labs/zeroclaw) 的 fork；完整署名见根目录 [`NOTICE`](../../../NOTICE) 与 [`docs/upstream/zeroclaw-attribution.md`](../../upstream/zeroclaw-attribution.md)。
 
 最后对齐：**April 27, 2026**。
 
@@ -14,7 +14,7 @@
 
 ## 按角色入门
 
-- **第一次接触 Construct？** → [setup-guides/one-click-bootstrap.zh-CN.md](setup-guides/one-click-bootstrap.zh-CN.md)
+- **第一次接触 Revka？** → [setup-guides/one-click-bootstrap.zh-CN.md](setup-guides/one-click-bootstrap.zh-CN.md)
 - **硬件 / 嵌入式？** → [hardware/README.zh-CN.md](hardware/README.zh-CN.md)
 - **生产环境运维？** → [ops/README.zh-CN.md](ops/README.zh-CN.md)
 - **通过 API / MCP 集成？** → [reference/README.zh-CN.md](reference/README.zh-CN.md) + [contributing/README.zh-CN.md](contributing/README.zh-CN.md)
@@ -38,7 +38,7 @@
 | 快速排查安装/运行/通道问题 | [ops/troubleshooting.zh-CN.md](ops/troubleshooting.zh-CN.md) |
 | Matrix 加密房间配置与诊断 | [security/matrix-e2ee-guide.zh-CN.md](security/matrix-e2ee-guide.zh-CN.md) |
 
-## Construct 的关键特征
+## Revka 的关键特征
 
 - **以记忆为本的 Rust 代理运行时** — 每个会话、计划、技能与信任分都常驻在 Kumiho 图谱中。
 - **单一二进制** — 网关、daemon、内嵌 React 仪表盘、MCP sidecar 与 CLI 同打包于一个静态二进制。
@@ -133,8 +133,8 @@
 
 - [`../../../NOTICE`](../../../NOTICE) — 根目录 NOTICE，按 Apache 2.0 §4(c) 保留 ZeroClaw 上游署名
 - [`../../../LICENSE-MIT`](../../../LICENSE-MIT)、[`../../../LICENSE-APACHE`](../../../LICENSE-APACHE) — 双重许可证文本
-- [docs/upstream/zeroclaw-attribution.md](../../upstream/zeroclaw-attribution.md) — Construct 从 ZeroClaw 继承的内容与 fork 合规清单 *(英文)*
-- [maintainers/trademark.zh-CN.md](maintainers/trademark.zh-CN.md) — Construct 命名规范与 ZeroClaw 商标致谢
+- [docs/upstream/zeroclaw-attribution.md](../../upstream/zeroclaw-attribution.md) — Revka 从 ZeroClaw 继承的内容与 fork 合规清单 *(英文)*
+- [maintainers/trademark.zh-CN.md](maintainers/trademark.zh-CN.md) — Revka 命名规范与 ZeroClaw 商标致谢
 
 ## 其他语言
 

@@ -104,7 +104,7 @@ jobs:
           OUTPUT=$(cargo publish --locked --allow-dirty --no-verify 2>&1) && exit 0
           echo "$OUTPUT"
           if echo "$OUTPUT" | grep -q 'already exists'; then
-            echo "::notice::kumiho-construct@${VERSION} already on crates.io — skipping"
+            echo "::notice::kumiho-revka@${VERSION} already on crates.io — skipping"
             exit 0
           fi
           exit 1

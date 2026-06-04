@@ -1,6 +1,6 @@
-# 网络部署 — 树莓派和本地网络上的 Construct
+# 网络部署 — 树莓派和本地网络上的 Revka
 
-本文档介绍如何在树莓派或本地网络上的其他主机上部署 Construct，支持 Telegram 和可选的 webhook 渠道。
+本文档介绍如何在树莓派或本地网络上的其他主机上部署 Revka，支持 Telegram 和可选的 webhook 渠道。
 
 ---
 
@@ -8,19 +8,19 @@
 
 | 模式 | 需要入站端口？ | 使用场景 |
 |------|----------------------|----------|
-| **Telegram 轮询** | 否 | Construct 轮询 Telegram API；可在任何地方工作 |
-| **Matrix 同步（包括 E2EE）** | 否 | Construct 通过 Matrix 客户端 API 同步；不需要入站 webhook |
+| **Telegram 轮询** | 否 | Revka 轮询 Telegram API；可在任何地方工作 |
+| **Matrix 同步（包括 E2EE）** | 否 | Revka 通过 Matrix 客户端 API 同步；不需要入站 webhook |
 | **Discord/Slack** | 否 | 相同 — 仅出站连接 |
 | **Nostr** | 否 | 通过 WebSocket 连接到中继；仅出站连接 |
 | **网关 webhook** | 是 | POST /webhook、/whatsapp、/linq、/nextcloud-talk 需要公共 URL |
 | **网关配对** | 是 | 如果你通过网关配对客户端 |
 | **Alpine/OpenRC 服务** | 否 | Alpine Linux 上的系统级后台服务 |
 
-**关键点：** Telegram、Discord、Slack 和 Nostr 使用**出站连接** — Construct 连接到外部服务器/中继。不需要端口转发或公共 IP。
+**关键点：** Telegram、Discord、Slack 和 Nostr 使用**出站连接** — Revka 连接到外部服务器/中继。不需要端口转发或公共 IP。
 
 ---
 
-## 2. 树莓派上的 Construct
+## 2. 树莓派上的 Revka
 
 ### 2.1 前置条件
 
@@ -39,7 +39,7 @@ cargo build --release --features hardware
 
 ### 2.3 配置
 
-编辑 `~/.construct/config.toml`：
+编辑 `~/.revka/config.toml`：
 
 ```toml
 [peripherals]
@@ -69,11 +69,11 @@ allow_public_bind = false
 ### 2.4 运行守护进程（仅本地）
 
 ```bash
-construct daemon --host 127.0.0.1 --port 42617
+revka daemon --host 127.0.0.1 --port 42617
 ```
 
 - 网关绑定到 `127.0.0.1` — 其他机器无法访问
-- Telegram 渠道工作正常：Construct 轮询 Telegram API（出站）
+- Telegram 渠道工作正常：Revka 轮询 Telegram API（出站）
 - 不需要防火墙或端口转发
 
 ---
@@ -92,7 +92,7 @@ allow_public_bind = true
 ```
 
 ```bash
-construct daemon --host 0.0.0.0 --port 42617
+revka daemon --host 0.0.0.0 --port 42617
 ```
 
 **安全提示：** `allow_public_bind = true` 会将网关暴露给你的本地网络。仅在受信任的 LAN 上使用。
@@ -103,7 +103,7 @@ construct daemon --host 0.0.0.0 --port 42617
 
 1. 在本地主机上运行网关：
    ```bash
-   construct daemon --host 127.0.0.1 --port 42617
+   revka daemon --host 127.0.0.1 --port 42617
    ```
 
 2. 启动隧道：
@@ -111,9 +111,9 @@ construct daemon --host 0.0.0.0 --port 42617
    [tunnel]
    provider = \"tailscale\"   # 或 \"ngrok\"、\"cloudflare\"
    ```
-   或使用 `construct tunnel`（参见隧道文档）。
+   或使用 `revka tunnel`（参见隧道文档）。
 
-3. 除非 `allow_public_bind = true` 或隧道处于活动状态，否则 Construct 会拒绝绑定到 `0.0.0.0`。
+3. 除非 `allow_public_bind = true` 或隧道处于活动状态，否则 Revka 会拒绝绑定到 `0.0.0.0`。
 
 ---
 
@@ -121,7 +121,7 @@ construct daemon --host 0.0.0.0 --port 42617
 
 Telegram 默认使用**长轮询**：
 
-- Construct 调用 `https://api.telegram.org/bot{token}/getUpdates`
+- Revka 调用 `https://api.telegram.org/bot{token}/getUpdates`
 - 不需要入站端口或公共 IP
 - 可在 NAT 后、RPi 上、家庭实验室中工作
 
@@ -133,12 +133,12 @@ bot_token = \"YOUR_BOT_TOKEN\"
 allowed_users = []            # 默认拒绝，显式绑定身份
 ```
 
-运行 `construct daemon` — Telegram 渠道会自动启动。
+运行 `revka daemon` — Telegram 渠道会自动启动。
 
 要在运行时批准一个 Telegram 账户：
 
 ```bash
-construct channel bind-telegram <IDENTITY>
+revka channel bind-telegram <IDENTITY>
 ```
 
 `<IDENTITY>` 可以是数字 Telegram 用户 ID 或用户名（不带 `@`）。
@@ -147,7 +147,7 @@ construct channel bind-telegram <IDENTITY>
 
 Telegram Bot API `getUpdates` 每个机器人令牌仅支持一个活动轮询器。
 
-- 为同一个令牌仅保留一个运行时实例（推荐：`construct daemon` 服务）。
+- 为同一个令牌仅保留一个运行时实例（推荐：`revka daemon` 服务）。
 - 不要同时运行 `cargo run -- channel start` 或其他机器人进程。
 
 如果遇到此错误：
@@ -194,7 +194,7 @@ ngrok http 42617
 
 - [ ] 使用 `--features hardware` 构建（如果使用原生 GPIO 则添加 `peripheral-rpi`）
 - [ ] 配置 `[peripherals]` 和 `[channels_config.telegram]`
-- [ ] 运行 `construct daemon --host 127.0.0.1 --port 42617`（Telegram 不需要 0.0.0.0 即可工作）
+- [ ] 运行 `revka daemon --host 127.0.0.1 --port 42617`（Telegram 不需要 0.0.0.0 即可工作）
 - [ ] 用于 LAN 访问：`--host 0.0.0.0` + 配置中设置 `allow_public_bind = true`
 - [ ] 用于 webhook：使用 Tailscale、ngrok 或 Cloudflare 隧道
 
@@ -202,56 +202,56 @@ ngrok http 42617
 
 ## 7. OpenRC（Alpine Linux 服务）
 
-Construct 支持 Alpine Linux 和其他使用 OpenRC 初始化系统的发行版的 OpenRC。OpenRC 服务**系统级**运行，需要 root/sudo。
+Revka 支持 Alpine Linux 和其他使用 OpenRC 初始化系统的发行版的 OpenRC。OpenRC 服务**系统级**运行，需要 root/sudo。
 
 ### 7.1 前置条件
 
 - Alpine Linux（或其他基于 OpenRC 的发行版）
 - Root 或 sudo 访问权限
-- 专用的 `construct` 系统用户（安装期间创建）
+- 专用的 `revka` 系统用户（安装期间创建）
 
 ### 7.2 安装服务
 
 ```bash
 # 安装服务（Alpine 上会自动检测 OpenRC）
-sudo construct service install
+sudo revka service install
 ```
 
 这会创建：
-- 初始化脚本：`/etc/init.d/construct`
-- 配置目录：`/etc/construct/`
-- 日志目录：`/var/log/construct/`
+- 初始化脚本：`/etc/init.d/revka`
+- 配置目录：`/etc/revka/`
+- 日志目录：`/var/log/revka/`
 
 ### 7.3 配置
 
 通常不需要手动复制配置。
 
-`sudo construct service install` 会自动准备 `/etc/construct`，如果有可用的用户设置，会迁移现有运行时状态，并为 `construct` 服务用户设置所有权/权限。
+`sudo revka service install` 会自动准备 `/etc/revka`，如果有可用的用户设置，会迁移现有运行时状态，并为 `revka` 服务用户设置所有权/权限。
 
-如果没有可迁移的现有运行时状态，请在启动服务前创建 `/etc/construct/config.toml`。
+如果没有可迁移的现有运行时状态，请在启动服务前创建 `/etc/revka/config.toml`。
 
 ### 7.4 启用和启动
 
 ```bash
 # 添加到默认运行级别
-sudo rc-update add construct default
+sudo rc-update add revka default
 
 # 启动服务
-sudo rc-service construct start
+sudo rc-service revka start
 
 # 检查状态
-sudo rc-service construct status
+sudo rc-service revka status
 ```
 
 ### 7.5 管理服务
 
 | 命令 | 描述 |
 |---------|-------------|
-| `sudo rc-service construct start` | 启动守护进程 |
-| `sudo rc-service construct stop` | 停止守护进程 |
-| `sudo rc-service construct status` | 检查服务状态 |
-| `sudo rc-service construct restart` | 重启守护进程 |
-| `sudo construct service status` | Construct 状态包装器（使用 `/etc/construct` 配置） |
+| `sudo rc-service revka start` | 启动守护进程 |
+| `sudo rc-service revka stop` | 停止守护进程 |
+| `sudo rc-service revka status` | 检查服务状态 |
+| `sudo rc-service revka restart` | 重启守护进程 |
+| `sudo revka service status` | Revka 状态包装器（使用 `/etc/revka` 配置） |
 
 ### 7.6 日志
 
@@ -259,41 +259,41 @@ OpenRC 将日志路由到：
 
 | 日志 | 路径 |
 |-----|------|
-| 访问/stdout | `/var/log/construct/access.log` |
-| 错误/stderr | `/var/log/construct/error.log` |
+| 访问/stdout | `/var/log/revka/access.log` |
+| 错误/stderr | `/var/log/revka/error.log` |
 
 查看日志：
 
 ```bash
-sudo tail -f /var/log/construct/error.log
+sudo tail -f /var/log/revka/error.log
 ```
 
 ### 7.7 卸载
 
 ```bash
 # 停止并从运行级别移除
-sudo rc-service construct stop
-sudo rc-update del construct default
+sudo rc-service revka stop
+sudo rc-update del revka default
 
 # 移除初始化脚本
-sudo construct service uninstall
+sudo revka service uninstall
 ```
 
 ### 7.8 注意事项
 
 - OpenRC **仅系统级**（无用户级服务）
 - 所有服务操作都需要 `sudo` 或 root
-- 服务以 `construct:construct` 用户运行（最小权限原则）
-- 配置必须位于 `/etc/construct/config.toml`（初始化脚本中的显式路径）
-- 如果 `construct` 用户不存在，安装会失败并提供创建说明
+- 服务以 `revka:revka` 用户运行（最小权限原则）
+- 配置必须位于 `/etc/revka/config.toml`（初始化脚本中的显式路径）
+- 如果 `revka` 用户不存在，安装会失败并提供创建说明
 
 ### 7.9 检查清单：Alpine/OpenRC 部署
 
-- [ ] 安装：`sudo construct service install`
-- [ ] 启用：`sudo rc-update add construct default`
-- [ ] 启动：`sudo rc-service construct start`
-- [ ] 验证：`sudo rc-service construct status`
-- [ ] 检查日志：`/var/log/construct/error.log`
+- [ ] 安装：`sudo revka service install`
+- [ ] 启用：`sudo rc-update add revka default`
+- [ ] 启动：`sudo rc-service revka start`
+- [ ] 验证：`sudo rc-service revka status`
+- [ ] 检查日志：`/var/log/revka/error.log`
 
 ---
 

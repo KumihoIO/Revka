@@ -9,12 +9,12 @@ except ImportError:
     httpx = None  # type: ignore
 
 from .._log import _log
-from ..gateway_client import ConstructGatewayClient
+from ..gateway_client import RevkaGatewayClient
 
 
-async def tool_search_clawhub(args: dict[str, Any], gw: ConstructGatewayClient) -> dict[str, Any]:
+async def tool_search_clawhub(args: dict[str, Any], gw: RevkaGatewayClient) -> dict[str, Any]:
     if not gw._available:
-        return {"error": "Construct gateway not available.", "items": []}
+        return {"error": "Revka gateway not available.", "items": []}
 
     query = args["query"]
     limit = args.get("limit", 20)
@@ -37,9 +37,9 @@ async def tool_search_clawhub(args: dict[str, Any], gw: ConstructGatewayClient) 
         return {"error": f"Search failed: {e}", "items": []}
 
 
-async def tool_install_from_clawhub(args: dict[str, Any], gw: ConstructGatewayClient) -> dict[str, Any]:
+async def tool_install_from_clawhub(args: dict[str, Any], gw: RevkaGatewayClient) -> dict[str, Any]:
     if not gw._available:
-        return {"error": "Construct gateway not available."}
+        return {"error": "Revka gateway not available."}
 
     slug = args["slug"]
 
@@ -60,9 +60,9 @@ async def tool_install_from_clawhub(args: dict[str, Any], gw: ConstructGatewayCl
         return {"error": f"Failed to install: {e}"}
 
 
-async def tool_browse_clawhub(args: dict[str, Any], gw: ConstructGatewayClient) -> dict[str, Any]:
+async def tool_browse_clawhub(args: dict[str, Any], gw: RevkaGatewayClient) -> dict[str, Any]:
     if not gw._available:
-        return {"error": "Construct gateway not available.", "items": []}
+        return {"error": "Revka gateway not available.", "items": []}
 
     limit = args.get("limit", 20)
 

@@ -2,7 +2,7 @@
 //! session-wide progress SSE stream (`GET /session/<id>/events`).
 //!
 //! The MCP server runs as a tokio task inside the same daemon process as the
-//! gateway — this proxy still loopbacks through `~/.construct/mcp.json` so it
+//! gateway — this proxy still loopbacks through `~/.revka/mcp.json` so it
 //! works without knowing the ephemeral port ahead of time.
 //!
 //! The V2 Code tab opens this WS while a CLI coding agent is running in the
@@ -24,7 +24,7 @@
 //!   (`?mcp_token=<…>`) is used only to talk to the in-process MCP server.
 
 use super::AppState;
-use super::mcp_discovery::read_construct_mcp;
+use super::mcp_discovery::read_revka_mcp;
 use axum::{
     extract::{
         Query, State, WebSocketUpgrade,
@@ -37,7 +37,7 @@ use futures_util::{SinkExt, StreamExt, stream::BoxStream};
 use serde::Deserialize;
 use std::time::Duration;
 
-const WS_PROTOCOL: &str = "construct.v1";
+const WS_PROTOCOL: &str = "revka.v1";
 const BEARER_SUBPROTO_PREFIX: &str = "bearer.";
 
 fn extract_ws_token<'a>(headers: &'a HeaderMap, query_token: Option<&'a str>) -> Option<&'a str> {
@@ -244,7 +244,7 @@ pub async fn handle_ws_mcp_events(
         return (StatusCode::BAD_REQUEST, "missing mcp_token").into_response();
     };
 
-    let discovery = match read_construct_mcp() {
+    let discovery = match read_revka_mcp() {
         Ok(d) => d,
         Err(_) => {
             return (StatusCode::SERVICE_UNAVAILABLE, "mcp daemon not discovered").into_response();

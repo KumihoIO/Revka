@@ -36,7 +36,7 @@ pub struct BridgeResponse {
 
 fn bridge_enabled() -> bool {
     !matches!(
-        std::env::var("CONSTRUCT_KUMIHO_SDK_BRIDGE")
+        std::env::var("REVKA_KUMIHO_SDK_BRIDGE")
             .unwrap_or_else(|_| "1".to_string())
             .trim()
             .to_ascii_lowercase()
@@ -46,7 +46,7 @@ fn bridge_enabled() -> bool {
 }
 
 fn kumiho_dir() -> Result<PathBuf> {
-    Ok(crate::sidecars::construct_root()?.join("kumiho"))
+    Ok(crate::sidecars::revka_root()?.join("kumiho"))
 }
 
 fn bridge_script_path() -> Result<PathBuf> {
@@ -90,7 +90,7 @@ fn reserve_loopback_port() -> Result<u16> {
 }
 
 fn log_file(name: &str) -> Option<std::fs::File> {
-    let root = crate::sidecars::construct_root().ok()?;
+    let root = crate::sidecars::revka_root().ok()?;
     let dir = root.join("logs");
     std::fs::create_dir_all(&dir).ok()?;
     OpenOptions::new()
@@ -122,7 +122,7 @@ async fn start_bridge(client: &Client) -> Result<BridgeState> {
     let dir = kumiho_dir()?;
     let python = venv_python(&dir).ok_or_else(|| {
         anyhow::anyhow!(
-            "Kumiho sidecar venv not found under {}. Run `construct install --sidecars-only`.",
+            "Kumiho sidecar venv not found under {}. Run `revka install --sidecars-only`.",
             dir.display()
         )
     })?;

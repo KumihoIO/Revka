@@ -4,7 +4,7 @@
 //! injection and response capture for race-free testing.
 
 use async_trait::async_trait;
-use construct::channels::traits::{Channel, ChannelMessage, SendMessage};
+use revka::channels::traits::{Channel, ChannelMessage, SendMessage};
 use std::sync::{Arc, Mutex};
 
 /// A test channel that captures sent messages and supports message injection.

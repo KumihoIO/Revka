@@ -1,9 +1,9 @@
 //! `/api/mcp/*` — discovery + health proxy for the in-process MCP server.
 //!
-//! The MCP server now runs as a tokio task inside the main construct daemon
-//! (see `gateway::run_gateway`), not as a separate `construct-mcp` process. It
+//! The MCP server now runs as a tokio task inside the main revka daemon
+//! (see `gateway::run_gateway`), not as a separate `revka-mcp` process. It
 //! binds an *ephemeral* port and writes the real URL to
-//! `~/.construct/mcp.json`; the frontend reads that instead of hardcoding a
+//! `~/.revka/mcp.json`; the frontend reads that instead of hardcoding a
 //! port.
 //!
 //! This module exposes `GET /api/mcp/discovery` which:
@@ -12,7 +12,7 @@
 //! 3. Returns a uniform JSON shape the UI can use to drive the status badge.
 
 use super::AppState;
-use super::mcp_discovery::{McpDiscovery, read_construct_mcp};
+use super::mcp_discovery::{McpDiscovery, read_revka_mcp};
 use crate::config::schema::{McpServerConfig, McpTransport};
 use crate::tools::mcp_client::McpServer;
 use axum::{
@@ -97,7 +97,7 @@ pub async fn handle_api_mcp_discovery(
         return e.into_response();
     }
 
-    let discovery = read_construct_mcp().ok();
+    let discovery = read_revka_mcp().ok();
     let payload = build_discovery_payload(discovery, &ReqwestHealthProbe).await;
     (StatusCode::OK, Json(payload)).into_response()
 }
@@ -110,7 +110,7 @@ pub async fn handle_api_mcp_discovery(
 // `/session` directly (ERR_CONNECTION_REFUSED / CORS). Funneling those
 // requests through `/api/mcp/*` keeps the browser same-origin and reuses the
 // gateway's existing bearer-auth middleware. External MCP clients (e.g.
-// Claude Desktop) still read `~/.construct/mcp.json` and talk to the MCP port
+// Claude Desktop) still read `~/.revka/mcp.json` and talk to the MCP port
 // directly — nothing changes for them.
 // ───────────────────────────────────────────────────────────────────────────
 
@@ -276,14 +276,11 @@ pub async fn handle_api_mcp_call(
         // through so callers that already hold one can reuse it.
         req = req.header(header::AUTHORIZATION, auth);
     }
-    if let Some(session) = headers
-        .get("X-Construct-Session")
-        .and_then(|v| v.to_str().ok())
-    {
+    if let Some(session) = headers.get("X-Revka-Session").and_then(|v| v.to_str().ok()) {
         // The MCP server validates the bearer token against its session id.
         // Without this header the proxy path returns 401 even though session
         // creation succeeded.
-        req = req.header("X-Construct-Session", session);
+        req = req.header("X-Revka-Session", session);
     }
     match req.send().await {
         Ok(resp) => {
@@ -339,11 +336,8 @@ pub async fn handle_api_mcp_session_events(
     {
         req = req.header(header::AUTHORIZATION, auth);
     }
-    if let Some(session) = headers
-        .get("X-Construct-Session")
-        .and_then(|v| v.to_str().ok())
-    {
-        req = req.header("X-Construct-Session", session);
+    if let Some(session) = headers.get("X-Revka-Session").and_then(|v| v.to_str().ok()) {
+        req = req.header("X-Revka-Session", session);
     }
     let upstream = match req.send().await {
         Ok(r) => r,

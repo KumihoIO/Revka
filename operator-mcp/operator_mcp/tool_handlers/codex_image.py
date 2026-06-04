@@ -8,7 +8,7 @@ in batches.
 Optional integrations:
 
   * **Live Canvas** — when ``canvas`` is truthy, the generated images are
-    pushed to the Construct Live Canvas as a single HTML frame so the user
+    pushed to the Revka Live Canvas as a single HTML frame so the user
     sees them appear in the dashboard.
   * **Kumiho artifact registration** — when ``register_artifact`` is true
     (default), each generated PNG is attached as an artifact under the
@@ -34,8 +34,8 @@ from pathlib import Path
 from typing import Any
 
 from .._log import _log
-from ..construct_config import harness_project
-from ..gateway_client import ConstructGatewayClient
+from ..revka_config import harness_project
+from ..gateway_client import RevkaGatewayClient
 
 # `KUMIHO_SDK` lives on `..operator_mcp` and importing it eagerly creates a
 # circular dependency. The handler imports it inside `_register_artifacts`
@@ -419,7 +419,7 @@ async def _spawn_codex_image(
 async def _push_to_canvas(
     paths: list[Path],
     canvas_id: str,
-    gw: ConstructGatewayClient,
+    gw: RevkaGatewayClient,
     workspace_dir: Path,
 ) -> dict[str, Any]:
     """Build an HTML gallery of the generated images and push to Live Canvas.
@@ -434,7 +434,7 @@ async def _push_to_canvas(
     workspace-relative URL (i.e. the file lives outside ``workspace_dir``).
     """
     if not gw._available:
-        return {"error": "Construct gateway not available — canvas push skipped"}
+        return {"error": "Revka gateway not available — canvas push skipped"}
 
     try:
         import httpx
@@ -501,12 +501,12 @@ async def _push_to_canvas(
         return {"error": f"canvas push failed: {exc}"}
 
 
-# Default workspace root for kref-mirroring artifact storage. Match Construct's
-# `~/.construct/workspace` convention so the on-disk layout is predictable.
-_WORKSPACE_ROOT = Path(os.path.expanduser("~/.construct/workspace"))
+# Default workspace root for kref-mirroring artifact storage. Match Revka's
+# `~/.revka/workspace` convention so the on-disk layout is predictable.
+_WORKSPACE_ROOT = Path(os.path.expanduser("~/.revka/workspace"))
 
 # Parses the revision number from a kref like
-# `kref://Construct/Images/foo.image?r=3` → `3`.
+# `kref://Revka/Images/foo.image?r=3` → `3`.
 _KREF_REVISION_RE = re.compile(r"\?r=(\d+)")
 
 
@@ -672,7 +672,7 @@ async def _attach_artifacts(
 
 async def tool_generate_image_codex(
     args: dict[str, Any],
-    gw: ConstructGatewayClient,
+    gw: RevkaGatewayClient,
 ) -> dict[str, Any]:
     """Generate ``count`` PNGs by spawning ``codex exec`` subprocesses.
 
@@ -683,7 +683,7 @@ async def tool_generate_image_codex(
       the **filename** is honored (the directory is auto-derived from the
       kref hierarchy). When ``register_artifact`` is false, treated as a
       file path relative to ``cwd``.
-    * ``cwd`` — optional, defaults to ``~/.construct/workspace``. Only
+    * ``cwd`` — optional, defaults to ``~/.revka/workspace``. Only
       used when ``register_artifact`` is false.
     * ``count`` — optional 1..5, default 1
     * ``output_pattern`` — optional template with ``{n}`` placeholder when
@@ -709,7 +709,7 @@ async def tool_generate_image_codex(
     raw_prompt = (args.get("prompt") or "").strip()
     prompt, prompt_images = _split_prompt_image_markers(raw_prompt)
     output_path = (args.get("output_path") or "").strip()
-    cwd = args.get("cwd") or "~/.construct/workspace"
+    cwd = args.get("cwd") or "~/.revka/workspace"
     requested_input_images = _coerce_input_images(args.get("input_images"))
     try:
         count = int(args.get("count", 1))

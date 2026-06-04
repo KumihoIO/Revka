@@ -188,7 +188,7 @@ impl LinqChannel {
             tracing::warn!(
                 "Linq: ignoring message from unauthorized sender: {normalized_from}. \
                 Add to channels.linq.allowed_senders in config.toml, \
-                or run `construct onboard --channels-only` to configure interactively."
+                or run `revka onboard --channels-only` to configure interactively."
             );
             return messages;
         }
@@ -508,7 +508,7 @@ mod tests {
                     "id": "msg-abc",
                     "parts": [{
                         "type": "text",
-                        "value": "Hello Construct!"
+                        "value": "Hello Revka!"
                     }]
                 }
             }
@@ -517,7 +517,7 @@ mod tests {
         let msgs = ch.parse_webhook_payload(&payload);
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0].sender, "+1234567890");
-        assert_eq!(msgs[0].content, "Hello Construct!");
+        assert_eq!(msgs[0].content, "Hello Revka!");
         assert_eq!(msgs[0].channel, "linq");
         assert_eq!(msgs[0].reply_target, "chat-789");
     }

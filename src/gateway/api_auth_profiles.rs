@@ -24,7 +24,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 
-const SERVICE_TOKEN_HEADER: &str = "X-Construct-Service-Token";
+const SERVICE_TOKEN_HEADER: &str = "X-Revka-Service-Token";
 
 // ── Response shapes ─────────────────────────────────────────────────────
 
@@ -394,7 +394,7 @@ fn require_service_token(
         Err((
             StatusCode::UNAUTHORIZED,
             Json(serde_json::json!({
-                "error": "missing or invalid X-Construct-Service-Token header"
+                "error": "missing or invalid X-Revka-Service-Token header"
             })),
         ))
     }
@@ -469,7 +469,7 @@ pub async fn handle_resolve_auth_profile(
                 )
                     .into_response();
             }
-            // Avoid the X-Construct-Service-Token bouncing back into proxies'
+            // Avoid the X-Revka-Service-Token bouncing back into proxies'
             // shared cache layers.
             let mut resp = Json(ResolvedAuth {
                 token,

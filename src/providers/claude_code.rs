@@ -427,7 +427,7 @@ mod tests {
         static SCRIPT_ID: AtomicUsize = AtomicUsize::new(0);
         let script_id = SCRIPT_ID.fetch_add(1, Ordering::Relaxed);
         let dir = std::env::temp_dir().join(format!(
-            "construct_test_claude_code_{}_{}",
+            "revka_test_claude_code_{}_{}",
             std::process::id(),
             script_id
         ));

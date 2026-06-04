@@ -226,21 +226,21 @@ impl AuditLogger {
     /// If the log file already exists, the chain state is recovered from the last
     /// entry so that new writes continue the existing hash chain.
     ///
-    /// If `config.sign_events` is true, requires `CONSTRUCT_AUDIT_SIGNING_KEY` env var
+    /// If `config.sign_events` is true, requires `REVKA_AUDIT_SIGNING_KEY` env var
     /// to be set with a hex-encoded 32-byte key. Fails if key is missing or invalid.
-    pub fn new(config: AuditConfig, construct_dir: PathBuf) -> Result<Self> {
+    pub fn new(config: AuditConfig, revka_dir: PathBuf) -> Result<Self> {
         // Load and validate signing key if sign_events enabled
         let signing_key = if config.sign_events {
-            let key_hex = std::env::var("CONSTRUCT_AUDIT_SIGNING_KEY").map_err(|_| {
-                anyhow::anyhow!("sign_events enabled but CONSTRUCT_AUDIT_SIGNING_KEY not set")
+            let key_hex = std::env::var("REVKA_AUDIT_SIGNING_KEY").map_err(|_| {
+                anyhow::anyhow!("sign_events enabled but REVKA_AUDIT_SIGNING_KEY not set")
             })?;
 
             let key_bytes = hex::decode(&key_hex)
-                .map_err(|_| anyhow::anyhow!("CONSTRUCT_AUDIT_SIGNING_KEY must be hex-encoded"))?;
+                .map_err(|_| anyhow::anyhow!("REVKA_AUDIT_SIGNING_KEY must be hex-encoded"))?;
 
             if key_bytes.len() != 32 {
                 bail!(
-                    "CONSTRUCT_AUDIT_SIGNING_KEY must be 32 bytes (64 hex chars), got {}",
+                    "REVKA_AUDIT_SIGNING_KEY must be 32 bytes (64 hex chars), got {}",
                     key_bytes.len()
                 );
             }
@@ -250,7 +250,7 @@ impl AuditLogger {
             None
         };
 
-        let log_path = construct_dir.join(&config.log_path);
+        let log_path = revka_dir.join(&config.log_path);
 
         // Ensure parent directory exists and touch the log file so readers
         // never encounter a "not found" error on a fresh install. Skipped when
@@ -535,7 +535,7 @@ fn recover_chain_state(log_path: &Path) -> ChainState {
 /// - Each `entry_hash` matches the recomputed `SHA-256(prev_hash || content)`.
 /// - `prev_hash` links to the preceding entry (or the genesis seed for the first).
 /// - Sequence numbers are contiguous starting from 0.
-/// - If a record has a `signature` field and `CONSTRUCT_AUDIT_SIGNING_KEY` is available,
+/// - If a record has a `signature` field and `REVKA_AUDIT_SIGNING_KEY` is available,
 ///   verifies the HMAC-SHA256 signature over `entry_hash`.
 ///
 /// Returns `Ok(entry_count)` on success, or an error describing the first violation.
@@ -554,7 +554,7 @@ pub fn verify_chain(log_path: &Path) -> Result<u64> {
     let mut expected_sequence: u64 = 0;
 
     // Attempt to load signing key from environment (optional)
-    let signing_key = std::env::var("CONSTRUCT_AUDIT_SIGNING_KEY")
+    let signing_key = std::env::var("REVKA_AUDIT_SIGNING_KEY")
         .ok()
         .and_then(|key_hex| hex::decode(&key_hex).ok())
         .filter(|key_bytes| key_bytes.len() == 32);
@@ -635,7 +635,7 @@ mod tests {
     use std::sync::Mutex;
     use tempfile::TempDir;
 
-    /// Mutex to serialize tests that read/write CONSTRUCT_AUDIT_SIGNING_KEY env var.
+    /// Mutex to serialize tests that read/write REVKA_AUDIT_SIGNING_KEY env var.
     static ENV_MUTEX: Mutex<()> = Mutex::new(());
 
     #[test]
@@ -650,14 +650,14 @@ mod tests {
         let event = AuditEvent::new(AuditEventType::CommandExecution).with_actor(
             "telegram".to_string(),
             Some("123".to_string()),
-            Some("@construct_user".to_string()),
+            Some("@revka_user".to_string()),
         );
 
         assert!(event.actor.is_some());
         let actor = event.actor.as_ref().unwrap();
         assert_eq!(actor.channel, "telegram");
         assert_eq!(actor.user_id, Some("123".to_string()));
-        assert_eq!(actor.username, Some("@construct_user".to_string()));
+        assert_eq!(actor.username, Some("@revka_user".to_string()));
     }
 
     #[test]
@@ -1075,21 +1075,21 @@ mod tests {
     #[test]
     fn signature_present_when_sign_events_enabled() -> Result<()> {
         let _guard = ENV_MUTEX.lock().unwrap();
-        let old_key = std::env::var("CONSTRUCT_AUDIT_SIGNING_KEY").ok();
+        let old_key = std::env::var("REVKA_AUDIT_SIGNING_KEY").ok();
         defer! {
             if let Some(key) = old_key {
                 // SAFETY: test-only, single-threaded test runner.
-                unsafe { std::env::set_var("CONSTRUCT_AUDIT_SIGNING_KEY", key) };
+                unsafe { std::env::set_var("REVKA_AUDIT_SIGNING_KEY", key) };
             } else {
                 // SAFETY: test-only, single-threaded test runner.
-                unsafe { std::env::remove_var("CONSTRUCT_AUDIT_SIGNING_KEY") };
+                unsafe { std::env::remove_var("REVKA_AUDIT_SIGNING_KEY") };
             }
         }
 
         let tmp = TempDir::new()?;
         let test_key = "a".repeat(64); // 64 hex chars = 32 bytes
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::set_var("CONSTRUCT_AUDIT_SIGNING_KEY", &test_key) };
+        unsafe { std::env::set_var("REVKA_AUDIT_SIGNING_KEY", &test_key) };
 
         let config = AuditConfig {
             enabled: true,
@@ -1143,21 +1143,21 @@ mod tests {
     #[test]
     fn signature_computed_over_entry_hash() -> Result<()> {
         let _guard = ENV_MUTEX.lock().unwrap();
-        let old_key = std::env::var("CONSTRUCT_AUDIT_SIGNING_KEY").ok();
+        let old_key = std::env::var("REVKA_AUDIT_SIGNING_KEY").ok();
         defer! {
             if let Some(key) = old_key {
                 // SAFETY: test-only, single-threaded test runner.
-                unsafe { std::env::set_var("CONSTRUCT_AUDIT_SIGNING_KEY", key) };
+                unsafe { std::env::set_var("REVKA_AUDIT_SIGNING_KEY", key) };
             } else {
                 // SAFETY: test-only, single-threaded test runner.
-                unsafe { std::env::remove_var("CONSTRUCT_AUDIT_SIGNING_KEY") };
+                unsafe { std::env::remove_var("REVKA_AUDIT_SIGNING_KEY") };
             }
         }
 
         let tmp = TempDir::new()?;
         let test_key = "b".repeat(64);
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::set_var("CONSTRUCT_AUDIT_SIGNING_KEY", &test_key) };
+        unsafe { std::env::set_var("REVKA_AUDIT_SIGNING_KEY", &test_key) };
 
         let config = AuditConfig {
             enabled: true,
@@ -1189,20 +1189,20 @@ mod tests {
     #[test]
     fn constructor_fails_if_sign_events_but_no_key() -> Result<()> {
         let _guard = ENV_MUTEX.lock().unwrap();
-        let old_key = std::env::var("CONSTRUCT_AUDIT_SIGNING_KEY").ok();
+        let old_key = std::env::var("REVKA_AUDIT_SIGNING_KEY").ok();
         defer! {
             // Only restore if it was a valid 64-char key
             if let Some(key) = old_key.as_ref().filter(|k| k.len() == 64) {
                 // SAFETY: test-only, single-threaded test runner.
-                unsafe { std::env::set_var("CONSTRUCT_AUDIT_SIGNING_KEY", key) };
+                unsafe { std::env::set_var("REVKA_AUDIT_SIGNING_KEY", key) };
             } else {
                 // SAFETY: test-only, single-threaded test runner.
-                unsafe { std::env::remove_var("CONSTRUCT_AUDIT_SIGNING_KEY") };
+                unsafe { std::env::remove_var("REVKA_AUDIT_SIGNING_KEY") };
             }
         }
 
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::remove_var("CONSTRUCT_AUDIT_SIGNING_KEY") };
+        unsafe { std::env::remove_var("REVKA_AUDIT_SIGNING_KEY") };
 
         let tmp = TempDir::new()?;
         let config = AuditConfig {
@@ -1216,7 +1216,7 @@ mod tests {
         if let Err(e) = result {
             let err_msg = e.to_string();
             assert!(
-                err_msg.contains("CONSTRUCT_AUDIT_SIGNING_KEY not set"),
+                err_msg.contains("REVKA_AUDIT_SIGNING_KEY not set"),
                 "error: {}",
                 err_msg
             );
@@ -1228,20 +1228,20 @@ mod tests {
     #[test]
     fn constructor_fails_if_signing_key_invalid_hex() -> Result<()> {
         let _guard = ENV_MUTEX.lock().unwrap();
-        let old_key = std::env::var("CONSTRUCT_AUDIT_SIGNING_KEY").ok();
+        let old_key = std::env::var("REVKA_AUDIT_SIGNING_KEY").ok();
         defer! {
             // Only restore if it was a valid 64-char key
             if let Some(key) = old_key.as_ref().filter(|k| k.len() == 64) {
                 // SAFETY: test-only, single-threaded test runner.
-                unsafe { std::env::set_var("CONSTRUCT_AUDIT_SIGNING_KEY", key) };
+                unsafe { std::env::set_var("REVKA_AUDIT_SIGNING_KEY", key) };
             } else {
                 // SAFETY: test-only, single-threaded test runner.
-                unsafe { std::env::remove_var("CONSTRUCT_AUDIT_SIGNING_KEY") };
+                unsafe { std::env::remove_var("REVKA_AUDIT_SIGNING_KEY") };
             }
         }
 
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::set_var("CONSTRUCT_AUDIT_SIGNING_KEY", "not-valid-hex") };
+        unsafe { std::env::set_var("REVKA_AUDIT_SIGNING_KEY", "not-valid-hex") };
 
         let tmp = TempDir::new()?;
         let config = AuditConfig {
@@ -1267,22 +1267,22 @@ mod tests {
     #[test]
     fn constructor_fails_if_signing_key_wrong_length() -> Result<()> {
         let _guard = ENV_MUTEX.lock().unwrap();
-        let old_key = std::env::var("CONSTRUCT_AUDIT_SIGNING_KEY").ok();
+        let old_key = std::env::var("REVKA_AUDIT_SIGNING_KEY").ok();
         defer! {
             // Only restore if it was a valid 64-char key
             if let Some(key) = old_key.as_ref().filter(|k| k.len() == 64) {
                 // SAFETY: test-only, single-threaded test runner.
-                unsafe { std::env::set_var("CONSTRUCT_AUDIT_SIGNING_KEY", key) };
+                unsafe { std::env::set_var("REVKA_AUDIT_SIGNING_KEY", key) };
             } else {
                 // SAFETY: test-only, single-threaded test runner.
-                unsafe { std::env::remove_var("CONSTRUCT_AUDIT_SIGNING_KEY") };
+                unsafe { std::env::remove_var("REVKA_AUDIT_SIGNING_KEY") };
             }
         }
 
         // 30 bytes = 60 hex chars (not 32 bytes)
         let short_key = "c".repeat(60);
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::set_var("CONSTRUCT_AUDIT_SIGNING_KEY", &short_key) };
+        unsafe { std::env::set_var("REVKA_AUDIT_SIGNING_KEY", &short_key) };
         let tmp = TempDir::new()?;
         let config = AuditConfig {
             enabled: true,
@@ -1303,14 +1303,14 @@ mod tests {
     #[test]
     fn different_keys_produce_different_signatures() -> Result<()> {
         let _guard = ENV_MUTEX.lock().unwrap();
-        let old_key = std::env::var("CONSTRUCT_AUDIT_SIGNING_KEY").ok();
+        let old_key = std::env::var("REVKA_AUDIT_SIGNING_KEY").ok();
         defer! {
             if let Some(key) = old_key {
                 // SAFETY: test-only, single-threaded test runner.
-                unsafe { std::env::set_var("CONSTRUCT_AUDIT_SIGNING_KEY", key) };
+                unsafe { std::env::set_var("REVKA_AUDIT_SIGNING_KEY", key) };
             } else {
                 // SAFETY: test-only, single-threaded test runner.
-                unsafe { std::env::remove_var("CONSTRUCT_AUDIT_SIGNING_KEY") };
+                unsafe { std::env::remove_var("REVKA_AUDIT_SIGNING_KEY") };
             }
         }
 
@@ -1349,21 +1349,21 @@ mod tests {
     #[test]
     fn signature_deterministic_for_same_entry_hash() -> Result<()> {
         let _guard = ENV_MUTEX.lock().unwrap();
-        let old_key = std::env::var("CONSTRUCT_AUDIT_SIGNING_KEY").ok();
+        let old_key = std::env::var("REVKA_AUDIT_SIGNING_KEY").ok();
         defer! {
             if let Some(key) = old_key {
                 // SAFETY: test-only, single-threaded test runner.
-                unsafe { std::env::set_var("CONSTRUCT_AUDIT_SIGNING_KEY", key) };
+                unsafe { std::env::set_var("REVKA_AUDIT_SIGNING_KEY", key) };
             } else {
                 // SAFETY: test-only, single-threaded test runner.
-                unsafe { std::env::remove_var("CONSTRUCT_AUDIT_SIGNING_KEY") };
+                unsafe { std::env::remove_var("REVKA_AUDIT_SIGNING_KEY") };
             }
         }
 
         let tmp = TempDir::new()?;
         let test_key = "f".repeat(64);
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::set_var("CONSTRUCT_AUDIT_SIGNING_KEY", &test_key) };
+        unsafe { std::env::set_var("REVKA_AUDIT_SIGNING_KEY", &test_key) };
 
         let config = AuditConfig {
             enabled: true,
@@ -1408,14 +1408,14 @@ mod tests {
     #[test]
     fn verify_chain_accepts_mixed_signed_and_unsigned_records() -> Result<()> {
         let _guard = ENV_MUTEX.lock().unwrap();
-        let old_key = std::env::var("CONSTRUCT_AUDIT_SIGNING_KEY").ok();
+        let old_key = std::env::var("REVKA_AUDIT_SIGNING_KEY").ok();
         defer! {
             if let Some(key) = old_key.as_ref().filter(|k| k.len() == 64) {
                 // SAFETY: test-only, single-threaded test runner.
-                unsafe { std::env::set_var("CONSTRUCT_AUDIT_SIGNING_KEY", key) };
+                unsafe { std::env::set_var("REVKA_AUDIT_SIGNING_KEY", key) };
             } else {
                 // SAFETY: test-only, single-threaded test runner.
-                unsafe { std::env::remove_var("CONSTRUCT_AUDIT_SIGNING_KEY") };
+                unsafe { std::env::remove_var("REVKA_AUDIT_SIGNING_KEY") };
             }
         }
 
@@ -1426,7 +1426,7 @@ mod tests {
         // First logger with sign_events=false (unsigned records)
         {
             // SAFETY: test-only, single-threaded test runner.
-            unsafe { std::env::remove_var("CONSTRUCT_AUDIT_SIGNING_KEY") };
+            unsafe { std::env::remove_var("REVKA_AUDIT_SIGNING_KEY") };
             let config = AuditConfig {
                 enabled: true,
                 sign_events: false,
@@ -1447,7 +1447,7 @@ mod tests {
         // Second logger with sign_events=true (signed records)
         {
             // SAFETY: test-only, single-threaded test runner.
-            unsafe { std::env::set_var("CONSTRUCT_AUDIT_SIGNING_KEY", &test_key) };
+            unsafe { std::env::set_var("REVKA_AUDIT_SIGNING_KEY", &test_key) };
             let config = AuditConfig {
                 enabled: true,
                 sign_events: true,
@@ -1468,7 +1468,7 @@ mod tests {
         // Verify the full chain (4 records: 2 unsigned + 2 signed)
         // Set the key in env so verify_chain can check signatures
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::set_var("CONSTRUCT_AUDIT_SIGNING_KEY", &test_key) };
+        unsafe { std::env::set_var("REVKA_AUDIT_SIGNING_KEY", &test_key) };
         let count = verify_chain(&log_path)?;
         assert_eq!(count, 4, "should verify all 4 records");
 

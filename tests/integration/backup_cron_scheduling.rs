@@ -1,6 +1,6 @@
-use construct::config::Config;
-use construct::config::schema::{CronJobDecl, CronScheduleDecl};
-use construct::cron::{JobType, Schedule, get_job, list_jobs, sync_declarative_jobs};
+use revka::config::Config;
+use revka::config::schema::{CronJobDecl, CronScheduleDecl};
+use revka::cron::{JobType, Schedule, get_job, list_jobs, sync_declarative_jobs};
 use tempfile::TempDir;
 
 fn test_config(tmp: &TempDir, schedule_cron: Option<String>) -> Config {

@@ -442,7 +442,7 @@ mod tests {
     #[test]
     fn voice_wake_config_defaults() {
         let config = VoiceWakeConfig::default();
-        assert_eq!(config.wake_word, "hey construct");
+        assert_eq!(config.wake_word, "hey revka");
         assert_eq!(config.silence_timeout_ms, 2000);
         assert!((config.energy_threshold - 0.01).abs() < f32::EPSILON);
         assert_eq!(config.max_capture_secs, 30);

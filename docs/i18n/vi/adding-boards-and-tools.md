@@ -1,17 +1,17 @@
-# Thêm Board và Tool — Hướng dẫn phần cứng Construct
+# Thêm Board và Tool — Hướng dẫn phần cứng Revka
 
-Hướng dẫn này giải thích cách thêm board phần cứng mới và tool tùy chỉnh vào Construct.
+Hướng dẫn này giải thích cách thêm board phần cứng mới và tool tùy chỉnh vào Revka.
 
 ## Bắt đầu nhanh: Thêm board qua CLI
 
 ```bash
-# Thêm board (cập nhật ~/.construct/config.toml)
-construct peripheral add nucleo-f401re /dev/ttyACM0
-construct peripheral add arduino-uno /dev/cu.usbmodem12345
-construct peripheral add rpi-gpio native   # cho Raspberry Pi GPIO (Linux)
+# Thêm board (cập nhật ~/.revka/config.toml)
+revka peripheral add nucleo-f401re /dev/ttyACM0
+revka peripheral add arduino-uno /dev/cu.usbmodem12345
+revka peripheral add rpi-gpio native   # cho Raspberry Pi GPIO (Linux)
 
 # Khởi động lại daemon để áp dụng
-construct daemon --host 127.0.0.1 --port 3000
+revka daemon --host 127.0.0.1 --port 3000
 ```
 
 ## Các board được hỗ trợ
@@ -26,7 +26,7 @@ construct daemon --host 127.0.0.1 --port 3000
 
 ## Cấu hình thủ công
 
-Chỉnh sửa `~/.construct/config.toml`:
+Chỉnh sửa `~/.revka/config.toml`:
 
 ```toml
 [peripherals]
@@ -76,7 +76,7 @@ builtin_led: 13
 
 ### PDF Datasheets
 
-Với feature `rag-pdf`, Construct có thể lập chỉ mục file PDF:
+Với feature `rag-pdf`, Revka có thể lập chỉ mục file PDF:
 
 ```bash
 cargo build --features hardware,rag-pdf
@@ -87,7 +87,7 @@ cargo build --features hardware,rag-pdf
 ## Thêm loại board mới
 
 1. **Tạo datasheet** — `docs/datasheets/my-board.md` với pin aliases và thông tin GPIO.
-2. **Thêm vào config** — `construct peripheral add my-board /dev/ttyUSB0`
+2. **Thêm vào config** — `revka peripheral add my-board /dev/ttyUSB0`
 3. **Triển khai peripheral** (tùy chọn) — Với giao thức tùy chỉnh, hãy implement trait `Peripheral` trong `src/peripherals/` và đăng ký trong `create_peripheral_tools`.
 
 Xem `docs/hardware-peripherals-design.md` để hiểu toàn bộ thiết kế.
@@ -102,12 +102,12 @@ Xem `docs/hardware-peripherals-design.md` để hiểu toàn bộ thiết kế.
 
 | Lệnh | Mô tả |
 |------|-------|
-| `construct peripheral list` | Liệt kê các board đã cấu hình |
-| `construct peripheral add <board> <path>` | Thêm board (ghi vào config) |
-| `construct peripheral flash` | Nạp firmware Arduino |
-| `construct peripheral flash-nucleo` | Nạp firmware Nucleo |
-| `construct hardware discover` | Liệt kê thiết bị USB |
-| `construct hardware info` | Thông tin chip qua probe-rs |
+| `revka peripheral list` | Liệt kê các board đã cấu hình |
+| `revka peripheral add <board> <path>` | Thêm board (ghi vào config) |
+| `revka peripheral flash` | Nạp firmware Arduino |
+| `revka peripheral flash-nucleo` | Nạp firmware Nucleo |
+| `revka hardware discover` | Liệt kê thiết bị USB |
+| `revka hardware info` | Thông tin chip qua probe-rs |
 
 ## Xử lý sự cố
 

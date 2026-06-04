@@ -1,7 +1,7 @@
 /**
  * Session Persistence — saves/restores agent state to disk.
  *
- * Agent state files live in ~/.construct/operator_mcp/agents/{agent_id}.json.
+ * Agent state files live in ~/.revka/operator_mcp/agents/{agent_id}.json.
  * On sidecar startup, persisted sessions with status "running" or "idle"
  * are eligible for resume via the Claude SDK's `resume` option.
  */

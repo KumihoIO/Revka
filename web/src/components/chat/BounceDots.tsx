@@ -1,5 +1,5 @@
 import { Bot } from 'lucide-react';
-import { useTheme } from '@/construct/hooks/useTheme';
+import { useTheme } from '@/revka/hooks/useTheme';
 
 interface BounceDotsProps {
   /** Compact sizing for modal panels. */

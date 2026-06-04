@@ -1,4 +1,4 @@
-# Justfile - Convenient command runner for Construct development
+# Justfile - Convenient command runner for Revka development
 # https://github.com/casey/just
 
 # Default recipe to display help
@@ -41,7 +41,7 @@ build-debug:
 clean:
     cargo clean
 
-# Run construct with example config (for development)
+# Run revka with example config (for development)
 dev *ARGS:
     cargo run -- {{ARGS}}
 

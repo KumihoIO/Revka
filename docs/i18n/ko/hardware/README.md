@@ -2,7 +2,7 @@
 
 보드 연동, 펌웨어 플로우, 주변 장치 아키텍처를 다룹니다.
 
-Construct의 하드웨어 서브시스템은 `Peripheral` 트레이트를 통해 마이크로컨트롤러와 주변 장치를 직접 제어합니다. 각 보드는 GPIO·ADC·센서 작업용 도구를 노출하며, 에이전트가 STM32 Nucleo, Raspberry Pi, ESP32 같은 보드와 직접 상호작용할 수 있게 해 줍니다. 전체 아키텍처는 [hardware-peripherals-design.md](hardware-peripherals-design.md) *(영문)* 를 참고하세요.
+Revka의 하드웨어 서브시스템은 `Peripheral` 트레이트를 통해 마이크로컨트롤러와 주변 장치를 직접 제어합니다. 각 보드는 GPIO·ADC·센서 작업용 도구를 노출하며, 에이전트가 STM32 Nucleo, Raspberry Pi, ESP32 같은 보드와 직접 상호작용할 수 있게 해 줍니다. 전체 아키텍처는 [hardware-peripherals-design.md](hardware-peripherals-design.md) *(영문)* 를 참고하세요.
 
 ## 진입점
 

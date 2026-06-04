@@ -1,6 +1,6 @@
 //! Operator MCP server injection.
 //!
-//! Every non-internal agent in Construct gets the Operator orchestration MCP
+//! Every non-internal agent in Revka gets the Operator orchestration MCP
 //! server wired in automatically.  This module defines:
 //!
 //! - The canonical `McpServerConfig` for the Operator stdio server.
@@ -31,11 +31,11 @@ use std::collections::HashMap;
 
 // -- Constants ---------------------------------------------------------------
 
-/// Name used as the MCP server prefix (tools appear as `construct-operator__<tool>`).
-pub const OPERATOR_SERVER_NAME: &str = "construct-operator";
+/// Name used as the MCP server prefix (tools appear as `revka-operator__<tool>`).
+pub const OPERATOR_SERVER_NAME: &str = "revka-operator";
 
 /// Default path to the Operator MCP runner script (relative to `$HOME`).
-pub const DEFAULT_OPERATOR_MCP_PATH_SUFFIX: &str = ".construct/operator_mcp/run_operator_mcp.py";
+pub const DEFAULT_OPERATOR_MCP_PATH_SUFFIX: &str = ".revka/operator_mcp/run_operator_mcp.py";
 
 // -- Prompt builder ----------------------------------------------------------
 
@@ -62,7 +62,7 @@ pub const OPERATOR_PROMPT: &str = core::OPERATOR_CORE_PROMPT;
 ///
 /// Priority:
 /// 1. `operator.mcp_path` from config if non-empty.
-/// 2. `~/.construct/operator_mcp/run_operator_mcp.py` (the default install location).
+/// 2. `~/.revka/operator_mcp/run_operator_mcp.py` (the default install location).
 pub fn resolve_operator_mcp_path(cfg: &OperatorConfig) -> String {
     let configured = cfg.mcp_path.trim();
     if !configured.is_empty() {
@@ -79,10 +79,7 @@ pub fn resolve_operator_mcp_path(cfg: &OperatorConfig) -> String {
 pub fn operator_mcp_server_config(cfg: &OperatorConfig) -> McpServerConfig {
     let script_path = resolve_operator_mcp_path(cfg);
     let mut env: HashMap<String, String> = HashMap::new();
-    env.insert(
-        "CONSTRUCT_AGENT_ROOT".to_string(),
-        expand_tilde("~/.construct"),
-    );
+    env.insert("REVKA_AGENT_ROOT".to_string(), expand_tilde("~/.revka"));
     // Forward the Kumiho service token so the operator can query the Agent Pool.
     if let Ok(token) = std::env::var("KUMIHO_SERVICE_TOKEN") {
         if !token.trim().is_empty() {
@@ -94,11 +91,11 @@ pub fn operator_mcp_server_config(cfg: &OperatorConfig) -> McpServerConfig {
     // `initialize`; Operator keeps Kumiho setup lazy so workflow tools still
     // register when the control plane is temporarily unavailable.
     // Forward gateway URL so the operator can query cost/audit APIs. Auth
-    // uses the service token at ~/.construct/service-token (read directly by
+    // uses the service token at ~/.revka/service-token (read directly by
     // operator-mcp's gateway_client), so no token env-forwarding is needed.
-    if let Ok(url) = std::env::var("CONSTRUCT_GATEWAY_URL") {
+    if let Ok(url) = std::env::var("REVKA_GATEWAY_URL") {
         if !url.trim().is_empty() {
-            env.insert("CONSTRUCT_GATEWAY_URL".to_string(), url);
+            env.insert("REVKA_GATEWAY_URL".to_string(), url);
         }
     }
     // Tool timeout is user-configurable via `[operator] tool_timeout_secs`
@@ -181,7 +178,7 @@ pub fn inject_operator(mut config: Config, is_internal: bool) -> Config {
             config.kumiho.memory_retrieval_limit.max(1).to_string(),
         );
         server.env.insert(
-            "CONSTRUCT_MEMORY_MIN_RELEVANCE_SCORE".to_string(),
+            "REVKA_MEMORY_MIN_RELEVANCE_SCORE".to_string(),
             config
                 .memory
                 .min_relevance_score
@@ -199,10 +196,8 @@ pub fn inject_operator(mut config: Config, is_internal: bool) -> Config {
         };
         let gw_port = config.gateway.port;
         let gw_url = format!("http://{gw_host}:{gw_port}");
-        server
-            .env
-            .insert("CONSTRUCT_GATEWAY_URL".to_string(), gw_url);
-        // Auth uses the service token at ~/.construct/service-token (written
+        server.env.insert("REVKA_GATEWAY_URL".to_string(), gw_url);
+        // Auth uses the service token at ~/.revka/service-token (written
         // by the gateway at startup, read directly by operator-mcp's
         // gateway_client). No token env-forwarding required.
         // Prepend so Operator tools appear early in deferred tool listings.
@@ -218,7 +213,7 @@ pub fn inject_operator(mut config: Config, is_internal: bool) -> Config {
 /// instructions should be present from the first turn.
 ///
 /// Uses provider detection on `model_name` to select the appropriate tool
-/// layer.  Project names (`CognitiveMemory`, `Construct`) are substituted
+/// layer.  Project names (`CognitiveMemory`, `Revka`) are substituted
 /// from `config.kumiho.memory_project` / `config.kumiho.harness_project`.
 ///
 /// Call this right after `append_kumiho_bootstrap` in the agent run loop.
@@ -231,8 +226,7 @@ pub fn append_operator_prompt(
     if is_internal || !config.operator.enabled {
         return;
     }
-    if system_prompt.contains("OPERATOR MODE (Construct)")
-        || system_prompt.contains("OPERATOR (Construct)")
+    if system_prompt.contains("OPERATOR MODE (Revka)") || system_prompt.contains("OPERATOR (Revka)")
     {
         return; // already injected
     }
@@ -249,7 +243,7 @@ pub fn append_operator_prompt(
 /// via the `load_skill` tool on the first turn that needs orchestration,
 /// following OpenClaw's one-shot pattern.
 const OPERATOR_CHANNEL_PROMPT: &str = "\
-OPERATOR (Construct) — You have access to construct-operator MCP tools \
+OPERATOR (Revka) — You have access to revka-operator MCP tools \
 for multi-agent orchestration.
 
 Voice: detached Operator (Matrix). Status reports, not commentary. \
@@ -286,8 +280,7 @@ pub fn append_operator_channel_prompt(
     if is_internal || !config.operator.enabled {
         return;
     }
-    if system_prompt.contains("OPERATOR MODE (Construct)")
-        || system_prompt.contains("OPERATOR (Construct)")
+    if system_prompt.contains("OPERATOR MODE (Revka)") || system_prompt.contains("OPERATOR (Revka)")
     {
         return;
     }
@@ -384,9 +377,9 @@ mod tests {
     #[test]
     fn append_operator_prompt_adds_text() {
         let cfg = Config::default();
-        let mut prompt = "## Identity\n\nYou are Construct.".to_string();
+        let mut prompt = "## Identity\n\nYou are Revka.".to_string();
         append_operator_prompt(&mut prompt, &cfg, false, "claude-sonnet-4-6");
-        assert!(prompt.contains("OPERATOR MODE (Construct)"));
+        assert!(prompt.contains("OPERATOR MODE (Revka)"));
     }
 
     #[test]
@@ -453,11 +446,11 @@ mod tests {
     #[test]
     fn build_prompt_includes_core_and_tool_layer() {
         let claude_prompt = build_operator_prompt("claude-opus-4-6");
-        assert!(claude_prompt.contains("OPERATOR MODE (Construct)"));
+        assert!(claude_prompt.contains("OPERATOR MODE (Revka)"));
         assert!(claude_prompt.contains("=== TOOL USAGE ==="));
 
         let openai_prompt = build_operator_prompt("gpt-5.4");
-        assert!(openai_prompt.contains("OPERATOR MODE (Construct)"));
+        assert!(openai_prompt.contains("OPERATOR MODE (Revka)"));
         assert!(openai_prompt.contains("=== TOOL USAGE ==="));
     }
 

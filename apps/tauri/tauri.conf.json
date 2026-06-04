@@ -1,6 +1,6 @@
 {
   "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/dev/crates/tauri-cli/config.schema.json",
-  "productName": "Construct",
+  "productName": "Revka",
   "version": "2026.5.20",
   "identifier": "ai.kumihoio.desktop",
   "build": {
@@ -10,7 +10,7 @@
   "app": {
     "windows": [
       {
-        "title": "Construct",
+        "title": "Revka",
         "width": 1200,
         "height": 800,
         "resizable": true,

@@ -1,1 +1,1 @@
-"""Construct Declarative Workflow Engine — YAML-defined multi-agent orchestration."""
+"""Revka Declarative Workflow Engine — YAML-defined multi-agent orchestration."""

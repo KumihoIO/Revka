@@ -1,6 +1,6 @@
-//! # Construct Robot Kit
+//! # Revka Robot Kit
 //!
-//! A standalone robotics toolkit that integrates with Construct for AI-powered robots.
+//! A standalone robotics toolkit that integrates with Revka for AI-powered robots.
 //!
 //! ## Features
 //!
@@ -16,13 +16,13 @@
 //!
 //! ```text
 //! ┌─────────────────────────────────────────────────────────┐
-//! │  Construct AI Brain (or any controller)                  │
+//! │  Revka AI Brain (or any controller)                  │
 //! │  "Move forward, find the ball, tell me what you see"    │
 //! └─────────────────────┬───────────────────────────────────┘
 //!                       │ Tool calls
 //!                       ▼
 //! ┌─────────────────────────────────────────────────────────┐
-//! │  construct-robot-kit                                     │
+//! │  revka-robot-kit                                     │
 //! │  ┌─────────┐ ┌──────┐ ┌────────┐ ┌───────┐ ┌───────┐   │
 //! │  │ drive   │ │ look │ │ listen │ │ speak │ │ sense │   │
 //! │  └────┬────┘ └──┬───┘ └───┬────┘ └───┬───┘ └───┬───┘   │
@@ -46,7 +46,7 @@
 //! ## Quick Start
 //!
 //! ```rust,ignore
-//! use construct_robot_kit::{RobotConfig, DriveTool, SafetyMonitor, SafeDrive};
+//! use revka_robot_kit::{RobotConfig, DriveTool, SafetyMonitor, SafeDrive};
 //! use std::sync::Arc;
 //!
 //! #[tokio::main]
@@ -72,8 +72,8 @@
 //!
 //! ## Standalone Usage
 //!
-//! This crate can be used independently of Construct. It defines its own
-//! `Tool` trait that is compatible with Construct's but doesn't require it.
+//! This crate can be used independently of Revka. It defines its own
+//! `Tool` trait that is compatible with Revka's but doesn't require it.
 //!
 //! ## Safety
 //!

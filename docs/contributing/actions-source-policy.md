@@ -52,8 +52,8 @@ Record each policy change with:
 Use these commands to export the current effective policy:
 
 ```bash
-gh api repos/KumihoIO/construct-os/actions/permissions
-gh api repos/KumihoIO/construct-os/actions/permissions/selected-actions
+gh api repos/KumihoIO/Revka/actions/permissions
+gh api repos/KumihoIO/Revka/actions/permissions/selected-actions
 ```
 
 ## Guardrails

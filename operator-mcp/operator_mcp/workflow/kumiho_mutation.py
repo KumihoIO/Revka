@@ -832,7 +832,7 @@ class KumihoPatchApplier:
     async def _attach_patch_artifact(self, revision_kref: str, item_name: str, content: str) -> None:
         safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "-", item_name or "patch-update").strip("-") or "patch-update"
         artifact_dir = os.path.expanduser(
-            f"~/.construct/artifacts/{self.workflow}/{self.step_id}/{safe_name}"
+            f"~/.revka/artifacts/{self.workflow}/{self.step_id}/{safe_name}"
         )
         os.makedirs(artifact_dir, exist_ok=True)
         artifact_path = os.path.join(artifact_dir, "content.md")

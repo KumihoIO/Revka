@@ -1,6 +1,6 @@
 # 채널 참조
 
-이 문서는 Construct의 채널 설정에 대한 정식 참조입니다.
+이 문서는 Revka의 채널 설정에 대한 정식 참조입니다.
 
 암호화된 Matrix 방은 별도 런북도 함께 보세요.
 
@@ -23,13 +23,13 @@
 3. **토큰/계정 불일치**: 토큰은 유효하지만 다른 Matrix 계정 소속.
 4. **E2EE 디바이스 아이덴티티 누락**: `whoami`가 `device_id`를 반환하지 않고, 설정에도 없음.
 5. **키 공유/신뢰 누락**: 방 키가 봇 디바이스에 공유되지 않아 암호화 이벤트를 복호화할 수 없음.
-6. **런타임 상태 stale**: 설정은 바뀌었는데 `construct daemon`을 재시작하지 않음.
+6. **런타임 상태 stale**: 설정은 바뀌었는데 `revka daemon`을 재시작하지 않음.
 
 ---
 
 ## 1. 설정 네임스페이스
 
-모든 채널 설정은 `~/.construct/config.toml`의 `channels_config` 아래에 들어갑니다.
+모든 채널 설정은 `~/.revka/config.toml`의 `channels_config` 아래에 들어갑니다.
 
 ```toml
 [channels_config]
@@ -40,7 +40,7 @@ cli = true
 
 ## 인앱 런타임 모델 전환 (Telegram / Discord)
 
-`construct channel start` (또는 데몬 모드)로 실행 중일 때, Telegram과 Discord는 발신자 단위 런타임 전환을 지원합니다.
+`revka channel start` (또는 데몬 모드)로 실행 중일 때, Telegram과 Discord는 발신자 단위 런타임 전환을 지원합니다.
 
 - `/models` — 사용 가능한 프로바이더와 현재 선택 표시
 - `/models <provider>` — 현재 발신자 세션에 대해 프로바이더 전환
@@ -52,12 +52,12 @@ cli = true
 
 - 프로바이더나 모델 전환은 모델 간 컨텍스트 오염을 막기 위해 해당 발신자의 인메모리 대화 히스토리만 비웁니다.
 - `/new`는 프로바이더/모델은 그대로 두고 대화 히스토리만 비웁니다.
-- 모델 캐시 미리보기는 `construct models refresh --provider <ID>`에서 옵니다.
+- 모델 캐시 미리보기는 `revka models refresh --provider <ID>`에서 옵니다.
 - 위 명령은 런타임 채팅 명령이지 CLI 서브커맨드가 아닙니다.
 
 ## 인바운드 이미지 마커 프로토콜
 
-Construct는 인라인 메시지 마커로 멀티모달 입력을 받습니다.
+Revka는 인라인 메시지 마커로 멀티모달 입력을 받습니다.
 
 - 문법: `[IMAGE:<source>]`
 - `<source>`는 다음 중 하나:
@@ -96,7 +96,7 @@ cargo check --features hardware,channel-matrix
 cargo check --features hardware,channel-lark
 ```
 
-`[channels_config.matrix]`, `[channels_config.lark]`, `[channels_config.feishu]`가 있는데 해당 피처가 컴파일되지 않은 빌드에서는 `construct channel list`, `construct channel doctor`, `construct channel start`가 그 채널을 의도적으로 건너뛰었다고 보고합니다.
+`[channels_config.matrix]`, `[channels_config.lark]`, `[channels_config.feishu]`가 있는데 해당 피처가 컴파일되지 않은 빌드에서는 `revka channel list`, `revka channel doctor`, `revka channel start`가 그 채널을 의도적으로 건너뛰었다고 보고합니다.
 
 ---
 
@@ -219,7 +219,7 @@ allowed_users = ["*"]
 [channels_config.matrix]
 homeserver = "https://matrix.example.com"
 access_token = "syt_..."
-user_id = "@construct:matrix.example.com"   # 선택, E2EE에 권장
+user_id = "@revka:matrix.example.com"   # 선택, E2EE에 권장
 device_id = "DEVICEID123"                  # 선택, E2EE에 권장
 room_id = "!room:matrix.example.com"       # 또는 방 별칭 (#ops:matrix.example.com)
 allowed_users = ["*"]
@@ -253,7 +253,7 @@ ignore_stories = true
 
 ### 4.7 WhatsApp
 
-Construct는 두 가지 WhatsApp 백엔드를 지원합니다.
+Revka는 두 가지 WhatsApp 백엔드를 지원합니다.
 
 - **Cloud API 모드** (`phone_number_id` + `access_token` + `verify_token`)
 - **WhatsApp Web 모드** (`session_path`, 빌드 플래그 `--features whatsapp-web` 필요)
@@ -273,7 +273,7 @@ WhatsApp Web 모드:
 
 ```toml
 [channels_config.whatsapp]
-session_path = "~/.construct/state/whatsapp-web/session.db"
+session_path = "~/.revka/state/whatsapp-web/session.db"
 pair_phone = "15551234567"         # 선택; 비우면 QR 흐름 사용
 pair_code = ""                     # 선택, 사용자 지정 페어 코드
 allowed_numbers = ["*"]
@@ -320,9 +320,9 @@ allowed_senders = ["*"]
 [channels_config.irc]
 server = "irc.libera.chat"
 port = 6697
-nickname = "construct-bot"
-username = "construct"              # 선택
-channels = ["#construct"]
+nickname = "revka-bot"
+username = "revka"              # 선택
+channels = ["#revka"]
 allowed_users = ["*"]
 server_password = ""                # 선택
 nickserv_password = ""              # 선택
@@ -378,7 +378,7 @@ Nostr는 NIP-04(레거시 암호화 DM)와 NIP-17(기프트랩 사설 메시지)
 안내형 온보딩 지원:
 
 ```bash
-construct onboard
+revka onboard
 ```
 
 위저드는 **Lark**와 **Feishu** 전용 단계를 포함하며 다음을 수행합니다.
@@ -419,7 +419,7 @@ base_url = "https://cloud.example.com"
 app_token = "nextcloud-talk-app-token"
 webhook_secret = "optional-webhook-secret"  # 선택이지만 권장
 allowed_users = ["*"]
-# bot_name = "construct"  # 봇 표시 이름; 봇 자신의 메시지를 걸러 피드백 루프 방지
+# bot_name = "revka"  # 봇 표시 이름; 봇 자신의 메시지를 걸러 피드백 루프 방지
 ```
 
 메모:
@@ -427,7 +427,7 @@ allowed_users = ["*"]
 - 인바운드 웹훅 엔드포인트: `POST /nextcloud-talk`.
 - 서명 검증은 `X-Nextcloud-Talk-Random`과 `X-Nextcloud-Talk-Signature` 헤더를 사용합니다.
 - `webhook_secret`이 설정되면 잘못된 서명은 `401`로 거부됩니다.
-- `CONSTRUCT_NEXTCLOUD_TALK_WEBHOOK_SECRET`이 설정 시크릿을 오버라이드합니다.
+- `REVKA_NEXTCLOUD_TALK_WEBHOOK_SECRET`이 설정 시크릿을 오버라이드합니다.
 - 전체 런북은 [nextcloud-talk-setup.md](../../setup-guides/nextcloud-talk-setup.md) *(영문)* 를 참고하세요.
 
 ### 4.16 Linq
@@ -446,7 +446,7 @@ allowed_senders = ["*"]
 - 인바운드 웹훅 엔드포인트: `POST /linq`.
 - 서명 검증은 `X-Webhook-Signature` (HMAC-SHA256)와 `X-Webhook-Timestamp`를 사용합니다.
 - `signing_secret`이 설정되면 잘못되거나 오래된(>300s) 서명은 거부됩니다.
-- `CONSTRUCT_LINQ_SIGNING_SECRET`이 설정 시크릿을 오버라이드합니다.
+- `REVKA_LINQ_SIGNING_SECRET`이 설정 시크릿을 오버라이드합니다.
 - `allowed_senders`는 E.164 전화번호 형식을 사용합니다 (예: `+1234567890`).
 
 ### 4.17 iMessage
@@ -464,8 +464,8 @@ allowed_contacts = ["*"]
 2. 다음을 실행합니다.
 
 ```bash
-construct onboard --channels-only
-construct daemon
+revka onboard --channels-only
+revka daemon
 ```
 
 3. 예상되는 발신자에서 메시지를 보냅니다.
@@ -484,7 +484,7 @@ construct daemon
 4. 트랜스포트 모드 가정 확인:
    - 폴링/WebSocket 채널은 공용 인바운드 HTTP가 필요 없음.
    - 웹훅 채널은 도달 가능한 HTTPS 콜백이 필요함.
-5. 설정 변경 후 `construct daemon`을 재시작.
+5. 설정 변경 후 `revka daemon`을 재시작.
 
 Matrix 암호화 방에 대한 별도 도움은 [Matrix E2EE 가이드](../../security/matrix-e2ee-guide.md) *(영문)* 를 보세요.
 
@@ -497,13 +497,13 @@ Matrix 암호화 방에 대한 별도 도움은 [Matrix E2EE 가이드](../../se
 ### 7.1 권장 캡처 명령
 
 ```bash
-RUST_LOG=info construct daemon 2>&1 | tee /tmp/construct.log
+RUST_LOG=info revka daemon 2>&1 | tee /tmp/revka.log
 ```
 
 채널/게이트웨이 이벤트를 필터:
 
 ```bash
-rg -n "Matrix|Telegram|Discord|Slack|Mattermost|Signal|WhatsApp|Email|IRC|Lark|DingTalk|QQ|iMessage|Nostr|Webhook|Channel" /tmp/construct.log
+rg -n "Matrix|Telegram|Discord|Slack|Mattermost|Signal|WhatsApp|Email|IRC|Lark|DingTalk|QQ|iMessage|Nostr|Webhook|Channel" /tmp/revka.log
 ```
 
 ### 7.2 키워드 표

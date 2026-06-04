@@ -1,18 +1,18 @@
-# Construct on Arduino Uno Q — Step-by-Step Guide
+# Revka on Arduino Uno Q — Step-by-Step Guide
 
-Run Construct on the Arduino Uno Q's Linux side. Telegram works over WiFi; GPIO control uses the Bridge (requires a minimal App Lab app).
+Run Revka on the Arduino Uno Q's Linux side. Telegram works over WiFi; GPIO control uses the Bridge (requires a minimal App Lab app).
 
 ---
 
 ## What's Included (No Code Changes Needed)
 
-Construct includes everything needed for Arduino Uno Q. **Clone the repo and follow this guide — no patches or custom code required.**
+Revka includes everything needed for Arduino Uno Q. **Clone the repo and follow this guide — no patches or custom code required.**
 
 | Component | Location | Purpose |
 |-----------|----------|---------|
 | Bridge app | `firmware/uno-q-bridge/` | MCU sketch + Python socket server (port 9999) for GPIO |
 | Bridge tools | `src/peripherals/uno_q_bridge.rs` | `gpio_read` / `gpio_write` tools that talk to the Bridge over TCP |
-| Setup command | `src/peripherals/uno_q_setup.rs` | `construct peripheral setup-uno-q` deploys the Bridge via scp + arduino-app-cli |
+| Setup command | `src/peripherals/uno_q_setup.rs` | `revka peripheral setup-uno-q` deploys the Bridge via scp + arduino-app-cli |
 | Config schema | `board = "arduino-uno-q"`, `transport = "bridge"` | Supported in `config.toml` |
 
 Build with `--features hardware` to include Uno Q support.
@@ -55,7 +55,7 @@ ssh arduino@<UNO_Q_IP>
 
 ---
 
-## Phase 2: Install Construct on Uno Q
+## Phase 2: Install Revka on Uno Q
 
 ### Option A: Build on the Device (Simpler, ~20–40 min)
 
@@ -71,15 +71,15 @@ source ~/.cargo/env
 sudo apt-get update
 sudo apt-get install -y pkg-config libssl-dev
 
-# Clone construct (or scp your project)
-git clone https://github.com/KumihoIO/construct-os.git
-cd construct
+# Clone revka (or scp your project)
+git clone https://github.com/KumihoIO/Revka.git
+cd revka
 
 # Build (takes ~15–30 min on Uno Q)
 cargo build --release --features hardware
 
 # Install
-sudo cp target/release/construct /usr/local/bin/
+sudo cp target/release/revka /usr/local/bin/
 ```
 
 ### Option B: Cross-Compile on Mac (Faster)
@@ -96,15 +96,15 @@ brew install aarch64-unknown-linux-gnu
 CC_aarch64_unknown_linux_gnu=aarch64-unknown-linux-gnu-gcc cargo build --release --target aarch64-unknown-linux-gnu --features hardware
 
 # Copy to Uno Q
-scp target/aarch64-unknown-linux-gnu/release/construct arduino@<UNO_Q_IP>:~/
-ssh arduino@<UNO_Q_IP> "sudo mv ~/construct /usr/local/bin/"
+scp target/aarch64-unknown-linux-gnu/release/revka arduino@<UNO_Q_IP>:~/
+ssh arduino@<UNO_Q_IP> "sudo mv ~/revka /usr/local/bin/"
 ```
 
 If cross-compile fails, use Option A and build on the device.
 
 ---
 
-## Phase 3: Configure Construct
+## Phase 3: Configure Revka
 
 ### 3.1 Run Onboard (or Create Config Manually)
 
@@ -112,15 +112,15 @@ If cross-compile fails, use Option A and build on the device.
 ssh arduino@<UNO_Q_IP>
 
 # Quick config
-construct onboard --api-key YOUR_OPENROUTER_KEY --provider openrouter
+revka onboard --api-key YOUR_OPENROUTER_KEY --provider openrouter
 
 # Or create config manually
-mkdir -p ~/.construct/workspace
-nano ~/.construct/config.toml
+mkdir -p ~/.revka/workspace
+nano ~/.revka/config.toml
 ```
 
-<!-- TODO screenshot: editor showing the [peripherals] section of ~/.construct/config.toml for Arduino Uno Q -->
-![Editor showing the [peripherals] section of ~/.construct/config.toml for Arduino Uno Q](../assets/hardware/arduino-uno-q-03-config-toml-peripherals.png)
+<!-- TODO screenshot: editor showing the [peripherals] section of ~/.revka/config.toml for Arduino Uno Q -->
+![Editor showing the [peripherals] section of ~/.revka/config.toml for Arduino Uno Q](../assets/hardware/arduino-uno-q-03-config-toml-peripherals.png)
 
 ### 3.2 Minimal config.toml
 
@@ -148,36 +148,36 @@ compact_context = true
 
 ---
 
-## Phase 4: Run Construct Daemon
+## Phase 4: Run Revka Daemon
 
 ```bash
 ssh arduino@<UNO_Q_IP>
 
 # Run daemon (Telegram polling works over WiFi)
-construct daemon --host 127.0.0.1 --port 42617
+revka daemon --host 127.0.0.1 --port 42617
 ```
 
-**At this point:** Telegram chat works. Send messages to your bot — Construct responds. No GPIO yet.
+**At this point:** Telegram chat works. Send messages to your bot — Revka responds. No GPIO yet.
 
 ---
 
-## Phase 5: GPIO via Bridge (Construct Handles It)
+## Phase 5: GPIO via Bridge (Revka Handles It)
 
-Construct includes the Bridge app and setup command.
+Revka includes the Bridge app and setup command.
 
 <!-- TODO screenshot: Arduino Uno Q terminal output confirming the bridge app is running -->
 ![Arduino Uno Q terminal output confirming the bridge app is running](../assets/hardware/arduino-uno-q-04-bridge-running.png)
 
 ### 5.1 Deploy Bridge App
 
-**From your Mac** (with construct repo):
+**From your Mac** (with revka repo):
 ```bash
-construct peripheral setup-uno-q --host 192.168.0.48
+revka peripheral setup-uno-q --host 192.168.0.48
 ```
 
 **From the Uno Q** (SSH'd in):
 ```bash
-construct peripheral setup-uno-q
+revka peripheral setup-uno-q
 ```
 
 This copies the Bridge app to `~/ArduinoApps/uno-q-bridge` and starts it.
@@ -193,13 +193,13 @@ board = "arduino-uno-q"
 transport = "bridge"
 ```
 
-### 5.3 Run Construct
+### 5.3 Run Revka
 
 ```bash
-construct daemon --host 127.0.0.1 --port 42617
+revka daemon --host 127.0.0.1 --port 42617
 ```
 
-Now when you message your Telegram bot *"Turn on the LED"* or *"Set pin 13 high"*, Construct uses `gpio_write` via the Bridge.
+Now when you message your Telegram bot *"Turn on the LED"* or *"Set pin 13 high"*, Revka uses `gpio_write` via the Bridge.
 
 ---
 
@@ -211,19 +211,19 @@ Now when you message your Telegram bot *"Turn on the LED"* or *"Set pin 13 high"
 | 2 | `ssh arduino@<IP>` |
 | 3 | `curl -sSf https://sh.rustup.rs \| sh -s -- -y && source ~/.cargo/env` |
 | 4 | `sudo apt-get install -y pkg-config libssl-dev` |
-| 5 | `git clone https://github.com/KumihoIO/construct-os.git && cd construct` |
+| 5 | `git clone https://github.com/KumihoIO/Revka.git && cd revka` |
 | 6 | `cargo build --release --features hardware` |
-| 7 | `construct onboard --api-key KEY --provider openrouter` |
-| 8 | Edit `~/.construct/config.toml` (add Telegram bot_token) |
-| 9 | `construct daemon --host 127.0.0.1 --port 42617` |
+| 7 | `revka onboard --api-key KEY --provider openrouter` |
+| 8 | Edit `~/.revka/config.toml` (add Telegram bot_token) |
+| 9 | `revka daemon --host 127.0.0.1 --port 42617` |
 | 10 | Message your Telegram bot — it responds |
 
 ---
 
 ## Troubleshooting
 
-- **"command not found: construct"** — Use full path: `/usr/local/bin/construct` or ensure `~/.cargo/bin` is in PATH.
+- **"command not found: revka"** — Use full path: `/usr/local/bin/revka` or ensure `~/.cargo/bin` is in PATH.
 - **Telegram not responding** — Check bot_token, allowed_users, and that the Uno Q has internet (WiFi).
 - **Out of memory** — Keep features minimal (`--features hardware` for Uno Q); consider `compact_context = true`.
-- **GPIO commands ignored** — Ensure Bridge app is running (`construct peripheral setup-uno-q` deploys and starts it). Config must have `board = "arduino-uno-q"` and `transport = "bridge"`.
-- **LLM provider (GLM/Zhipu)** — Use `default_provider = "glm"` or `"zhipu"` with `GLM_API_KEY` in env or config. Construct uses the correct v4 endpoint.
+- **GPIO commands ignored** — Ensure Bridge app is running (`revka peripheral setup-uno-q` deploys and starts it). Config must have `board = "arduino-uno-q"` and `transport = "bridge"`.
+- **LLM provider (GLM/Zhipu)** — Use `default_provider = "glm"` or `"zhipu"` with `GLM_API_KEY` in env or config. Revka uses the correct v4 endpoint.

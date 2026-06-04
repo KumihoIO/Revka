@@ -114,8 +114,8 @@ fn missing_python_error(tried: Option<&str>) -> anyhow::Error {
     };
     anyhow!(
         "{prefix}.\n\n\
-         Construct requires Python {MIN_MAJOR}.{MIN_MINOR}+ to run its MCP sidecars.\n\
-         Install it from {DOWNLOAD_URL} and re-run `construct install --sidecars-only`.\n\n\
+         Revka requires Python {MIN_MAJOR}.{MIN_MINOR}+ to run its MCP sidecars.\n\
+         Install it from {DOWNLOAD_URL} and re-run `revka install --sidecars-only`.\n\n\
          On Windows, avoid the Microsoft Store Python stub — install from python.org directly."
     )
 }

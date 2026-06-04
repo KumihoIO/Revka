@@ -41,7 +41,7 @@ async def test_group_chat_turns_are_persisted_for_live_run_detail(monkeypatch, t
 
     async def fake_persist_workflow_run(**kwargs):
         persisted.append(kwargs)
-        return "kref://Construct/WorkflowRuns/coordination-test.workflow_run"
+        return "kref://Revka/WorkflowRuns/coordination-test.workflow_run"
 
     def fake_save_checkpoint(state: WorkflowState) -> str:
         checkpoints.append(state.step_results["chat"].output_data["transcript"])

@@ -748,7 +748,7 @@ mod tests {
         let content = LinkedInContentConfig {
             rss_feeds: vec!["https://medium.com/feed/tag/rust".into()],
             github_users: vec!["rareba".into()],
-            github_repos: vec!["KumihoIO/construct".into()],
+            github_repos: vec!["KumihoIO/revka".into()],
             topics: vec!["cybersecurity".into(), "Rust".into()],
             persona: "Security engineer and Rust developer".into(),
             instructions: "Write concise posts with hashtags".into(),
@@ -769,7 +769,7 @@ mod tests {
         assert!(result.output.contains("Security engineer"));
         assert!(result.output.contains("cybersecurity"));
         assert!(result.output.contains("medium.com"));
-        assert!(result.output.contains("KumihoIO/construct"));
+        assert!(result.output.contains("KumihoIO/revka"));
         assert!(result.output.contains("rareba"));
         assert!(result.output.contains("Write concise posts"));
     }

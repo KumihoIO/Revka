@@ -1,10 +1,10 @@
-//! Construct MCP server — exposes Construct's built-in tools over the MCP
+//! Revka MCP server — exposes Revka's built-in tools over the MCP
 //! Streamable HTTP transport (JSON-RPC 2.0 + SSE) so external CLIs
 //! (Claude Code, Codex, OpenCode, Gemini CLI) can share one local backend.
 //!
-//! The MCP server runs as an **in-process tokio task inside the main construct
+//! The MCP server runs as an **in-process tokio task inside the main revka
 //! daemon** (see `src/gateway/mod.rs::run_gateway`). External clients discover
-//! it through `~/.construct/mcp.json`, written by the gateway as soon as the
+//! it through `~/.revka/mcp.json`, written by the gateway as soon as the
 //! MCP task finishes binding to its ephemeral port.
 //!
 //! This module contains the router, session store, tool registry, and

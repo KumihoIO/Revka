@@ -1,8 +1,8 @@
-# Construct 문서 요약 — 한국어 통합 목차
+# Revka 문서 요약 — 한국어 통합 목차
 
 > 📖 [English version](../../SUMMARY.md)
 >
-> Construct의 Rust 코어 런타임은 [ZeroClaw](https://github.com/zeroclaw-labs/zeroclaw)의 포크입니다. 전체 attribution은 루트 [`NOTICE`](../../../NOTICE)와 [`docs/upstream/zeroclaw-attribution.md`](../../upstream/zeroclaw-attribution.md)를 참고하세요.
+> Revka의 Rust 코어 런타임은 [ZeroClaw](https://github.com/zeroclaw-labs/zeroclaw)의 포크입니다. 전체 attribution은 루트 [`NOTICE`](../../../NOTICE)와 [`docs/upstream/zeroclaw-attribution.md`](../../upstream/zeroclaw-attribution.md)를 참고하세요.
 
 마지막 업데이트: **April 27, 2026**.
 

@@ -1,6 +1,6 @@
-# Construct Repository Map
+# Revka Repository Map
 
-Construct is a Rust-first autonomous agent runtime. It receives messages from messaging platforms, routes them through an LLM, executes tool calls, persists memory, and returns responses. It can also control hardware peripherals and run as a long-lived daemon.
+Revka is a Rust-first autonomous agent runtime. It receives messages from messaging platforms, routes them through an LLM, executes tool calls, persists memory, and returns responses. It can also control hardware peripherals and run as a long-lived daemon.
 
 ## Runtime Flow
 
@@ -38,7 +38,7 @@ User message (Telegram/Discord/Slack/...)
 ## Top-Level Layout
 
 ```
-construct/
+revka/
 ├── src/                  # Rust source (the runtime)
 ├── crates/robot-kit/     # Separate crate for hardware robot kit
 ├── tests/                # Integration/E2E tests
@@ -65,7 +65,7 @@ construct/
 
 | File | Lines | Role |
 |---|---|---|
-| `main.rs` | 1,977 | CLI entrypoint. Clap parser, command dispatch. All `construct <subcommand>` routing lives here. |
+| `main.rs` | 1,977 | CLI entrypoint. Clap parser, command dispatch. All `revka <subcommand>` routing lives here. |
 | `lib.rs` | 436 | Module declarations, visibility (`pub` vs `pub(crate)`), CLI command enums (`ServiceCommands`, `ChannelCommands`, `SkillCommands`, etc.) shared between lib and binary. |
 
 ### Core Runtime
@@ -100,7 +100,7 @@ Channels: `telegram` (4.6k), `discord`, `slack`, `whatsapp`, `whatsapp_web`, `ma
 
 Tool categories:
 - **File/Shell**: `shell`, `file_read`, `file_write`, `file_edit`, `glob_search`, `content_search`
-- **Memory**: provided by the Kumiho-memory MCP — `kumiho_memory_engage`, `kumiho_memory_reflect`, `kumiho_memory_store`, `kumiho_memory_retrieve`, `kumiho_memory_consolidate`, `kumiho_memory_dream_state`. The Operator MCP also exposes `memory_store` / `memory_search` under the `construct-operator__` prefix for legacy callers.
+- **Memory**: provided by the Kumiho-memory MCP — `kumiho_memory_engage`, `kumiho_memory_reflect`, `kumiho_memory_store`, `kumiho_memory_retrieve`, `kumiho_memory_consolidate`, `kumiho_memory_dream_state`. The Operator MCP also exposes `memory_store` / `memory_search` under the `revka-operator__` prefix for legacy callers.
 - **Web**: `browser`, `browser_open`, `web_fetch`, `web_search_tool`, `http_request`
 - **Scheduling**: `cron_add`, `cron_list`, `cron_remove`, `cron_update`, `cron_run`, `cron_runs`, `schedule`
 - **Delegation**: `delegate` (sub-agent spawning), `composio` (OAuth integrations)
@@ -149,7 +149,7 @@ Sandboxing: `bubblewrap.rs`, `firejail.rs`, `landlock.rs`, `docker.rs`, `detect.
 
 | Module | Key Files | Role |
 |---|---|---|
-| `skills/` | `mod.rs` (1.5k), `audit.rs` | **User/community-authored capabilities.** Loaded from `~/.construct/workspace/skills/<name>/SKILL.md`. CLI: list, install, audit, remove. Optional community sync from open-skills repo. |
+| `skills/` | `mod.rs` (1.5k), `audit.rs` | **User/community-authored capabilities.** Loaded from `~/.revka/workspace/skills/<name>/SKILL.md`. CLI: list, install, audit, remove. Optional community sync from open-skills repo. |
 
 ### SOP (Standard Operating Procedures)
 
@@ -228,7 +228,7 @@ Traits never import concrete implementations.
 ## CLI Command Tree
 
 ```
-construct
+revka
 ├── onboard [--force] [--reinit] [--channels-only]     # First-run setup
 ├── agent [-m "msg"] [-p provider]        # Start agent loop
 ├── daemon [-p port]                      # Full runtime (gateway+channels+cron+heartbeat)

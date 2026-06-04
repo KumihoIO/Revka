@@ -64,7 +64,7 @@ use crate::skills::registration::publish_skill_revision;
 /// daemon constructs one of these once at startup and threads it into
 /// the background task that consumes [`SkillImprovementCandidate`]s.
 pub struct AutoImproveContext {
-    /// Construct workspace root — `SKILL.toml` lives at
+    /// Revka workspace root — `SKILL.toml` lives at
     /// `<workspace>/skills/<slug>/SKILL.toml`.
     pub workspace_dir: std::path::PathBuf,
     /// LLM provider to call for the rewrite proposal.

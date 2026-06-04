@@ -26,7 +26,7 @@ from typing import Any
 
 from .._log import _log
 from ..agent_subprocess import compose_agent_prompt
-from ..construct_config import workspace_dir
+from ..revka_config import workspace_dir
 from ..failure_classification import classified_error, VALIDATION_ERROR
 from .auth_resolver import AuthResolveError, resolve_auth_profile
 from .schema import (
@@ -265,7 +265,7 @@ def _compress_step_handoff(step: StepDef, result: StepResult) -> StepResult:
 # Checkpoint persistence
 # ---------------------------------------------------------------------------
 
-_CHECKPOINT_DIR = os.path.expanduser("~/.construct/workflow_checkpoints")
+_CHECKPOINT_DIR = os.path.expanduser("~/.revka/workflow_checkpoints")
 
 
 def _save_checkpoint(state: WorkflowState) -> str:
@@ -937,15 +937,15 @@ async def _resolve_skills_inline(skill_refs: list[str]) -> str:
 
     Fetches skill content from Kumiho or local files, then sends a compact
     manifest by default. This avoids multiplying workflow-step context by
-    every assigned skill. Set CONSTRUCT_WORKFLOW_SKILL_CONTEXT_MODE=pointer to
+    every assigned skill. Set REVKA_WORKFLOW_SKILL_CONTEXT_MODE=pointer to
     send only krefs/paths, or full to restore legacy full-inline behavior.
     """
     from ..token_compression import build_skill_pointer_manifest, compress_skill_content
 
     parts: list[str] = []
     stats: list[dict[str, Any]] = []
-    mode = os.environ.get("CONSTRUCT_WORKFLOW_SKILL_CONTEXT_MODE", "compact").strip().lower()
-    max_chars = int(os.environ.get("CONSTRUCT_WORKFLOW_SKILL_MAX_CHARS", "1600"))
+    mode = os.environ.get("REVKA_WORKFLOW_SKILL_CONTEXT_MODE", "compact").strip().lower()
+    max_chars = int(os.environ.get("REVKA_WORKFLOW_SKILL_MAX_CHARS", "1600"))
     for ref in skill_refs:
         content = None
         resolved_path = None
@@ -1006,7 +1006,7 @@ async def _resolve_skills_inline(skill_refs: list[str]) -> str:
         if stats:
             saved = sum(item.get("estimated_tokens_saved", 0) for item in stats)
             prefix += (
-                f"[Construct skill compression: {len(stats)} skill(s), "
+                f"[Revka skill compression: {len(stats)} skill(s), "
                 f"est_tokens_saved~{saved}]\n\n"
             )
         return prefix + "\n\n---\n\n".join(parts)
@@ -1355,14 +1355,14 @@ async def _exec_agent(step: StepDef, state: WorkflowState, cwd: str) -> StepResu
     # only when) the agent actually calls the tool.
     agent_env_extra: dict[str, str] = {}
     if cfg.auth:
-        agent_env_extra["CONSTRUCT_AUTH_PROFILE_ID"] = cfg.auth
+        agent_env_extra["REVKA_AUTH_PROFILE_ID"] = cfg.auth
         # Forward the local service token if the operator-mcp process has
         # access to one — keeps the agent subprocess isolated from the file.
         try:
             from .auth_resolver import _service_token  # type: ignore[attr-defined]
             tok = _service_token()
             if tok:
-                agent_env_extra["CONSTRUCT_SERVICE_TOKEN"] = tok
+                agent_env_extra["REVKA_SERVICE_TOKEN"] = tok
         except Exception:  # noqa: BLE001
             pass
 
@@ -1401,7 +1401,7 @@ async def _exec_agent(step: StepDef, state: WorkflowState, cwd: str) -> StepResu
     if effective.strip():
         try:
             art_dir = os.path.expanduser(
-                f"~/.construct/artifacts/{state.workflow_name}/{state.run_id}"
+                f"~/.revka/artifacts/{state.workflow_name}/{state.run_id}"
             )
             os.makedirs(art_dir, exist_ok=True)
             artifact_stem = _iteration_qualified_step_id(step.id, state)
@@ -1676,8 +1676,8 @@ async def _exec_shell(step: StepDef, state: WorkflowState, cwd: str) -> StepResu
     # sees it without us having to know everything that was already set.
     subproc_env = os.environ.copy()
     if auth_resolved:
-        subproc_env["CONSTRUCT_AUTH_TOKEN"] = auth_resolved["token"]
-        subproc_env["CONSTRUCT_AUTH_KIND"] = auth_resolved.get("kind", "token")
+        subproc_env["REVKA_AUTH_TOKEN"] = auth_resolved["token"]
+        subproc_env["REVKA_AUTH_KIND"] = auth_resolved.get("kind", "token")
 
     proc = None
     try:
@@ -1784,11 +1784,11 @@ def _operator_mcp_venv_python() -> str:
     """Default interpreter for python steps — operator-mcp's own venv.
 
     Falls back to the current interpreter if the venv hasn't been
-    materialized (e.g. running tests outside `construct install`).
+    materialized (e.g. running tests outside `revka install`).
     """
     from ..mcp_injection import _venv_python  # type: ignore[attr-defined]
     home = os.path.expanduser("~")
-    venv_root = os.path.join(home, ".construct", "operator_mcp", "venv")
+    venv_root = os.path.join(home, ".revka", "operator_mcp", "venv")
     return _venv_python(venv_root)
 
 
@@ -1881,7 +1881,7 @@ async def _exec_python(step: StepDef, state: WorkflowState, cwd: str) -> StepRes
         cmd = [python_exe, "-c", cfg.code or ""]
 
     # Auth profile binding: resolved at runtime; passed to the subprocess via
-    # env vars so the script can read os.environ["CONSTRUCT_AUTH_TOKEN"]
+    # env vars so the script can read os.environ["REVKA_AUTH_TOKEN"]
     # without the credential ever appearing in YAML, args, or stdin.
     auth_resolved, auth_err = await _resolve_step_auth(step, cfg.auth)
     if auth_err is not None:
@@ -1889,8 +1889,8 @@ async def _exec_python(step: StepDef, state: WorkflowState, cwd: str) -> StepRes
         return auth_err
     subproc_env = os.environ.copy()
     if auth_resolved:
-        subproc_env["CONSTRUCT_AUTH_TOKEN"] = auth_resolved["token"]
-        subproc_env["CONSTRUCT_AUTH_KIND"] = auth_resolved.get("kind", "token")
+        subproc_env["REVKA_AUTH_TOKEN"] = auth_resolved["token"]
+        subproc_env["REVKA_AUTH_KIND"] = auth_resolved.get("kind", "token")
 
     proc = None
     try:
@@ -2016,7 +2016,7 @@ async def _exec_python(step: StepDef, state: WorkflowState, cwd: str) -> StepRes
 
 
 def _load_email_config_from_toml() -> dict[str, Any]:
-    """Read [channels_config.email] from ~/.construct/config.toml.
+    """Read [channels_config.email] from ~/.revka/config.toml.
 
     Returns an empty dict on any read error so callers fall back to
     explicit per-step config or surface a clear "no SMTP host" error.
@@ -2028,7 +2028,7 @@ def _load_email_config_from_toml() -> dict[str, Any]:
             import tomli as tomllib  # type: ignore[no-redef]
         except ImportError:
             return {}
-    path = os.path.expanduser("~/.construct/config.toml")
+    path = os.path.expanduser("~/.revka/config.toml")
     try:
         with open(path, "rb") as f:
             data = tomllib.load(f)
@@ -2088,7 +2088,7 @@ def _build_mime(
 async def _exec_email(step: StepDef, state: WorkflowState) -> StepResult:
     """Execute an email send step.
 
-    Resolves SMTP creds from per-step overrides → ~/.construct/config.toml
+    Resolves SMTP creds from per-step overrides → ~/.revka/config.toml
     [channels_config.email] section. Optionally rewrites links for click
     tracking. Honors ``dry_run`` for preview workflows.
     """
@@ -2240,7 +2240,7 @@ async def _exec_email(step: StepDef, state: WorkflowState) -> StepResult:
             status="failed",
             error=(
                 "no SMTP host configured — set [channels_config.email].smtp_host "
-                "in ~/.construct/config.toml or pass smtp_host on the step"
+                "in ~/.revka/config.toml or pass smtp_host on the step"
             ),
             input_data=input_data,
         )
@@ -2377,7 +2377,7 @@ async def _exec_image(step: StepDef, state: WorkflowState, cwd: str) -> StepResu
         args["sandbox"] = cfg.sandbox
 
     try:
-        from ..gateway_client import ConstructGatewayClient
+        from ..gateway_client import RevkaGatewayClient
         from ..tool_handlers import codex_image
     except Exception as exc:  # noqa: BLE001
         return StepResult(
@@ -2386,7 +2386,7 @@ async def _exec_image(step: StepDef, state: WorkflowState, cwd: str) -> StepResu
             error=f"image step dependencies unavailable: {exc}",
         )
 
-    gw = ConstructGatewayClient()
+    gw = RevkaGatewayClient()
     try:
         response = await asyncio.wait_for(
             codex_image.tool_generate_image_codex(args, gw),
@@ -3595,8 +3595,8 @@ async def _manus_register_output(
     are logged + recorded in output_data but never raise.
 
     Disk layout (entity-anchored, NOT per-run):
-      ~/.construct/artifacts/<canonical_space>/<kind>/<name>/content.md
-      ~/.construct/artifacts/<canonical_space>/<kind>/<name>/attachments/...
+      ~/.revka/artifacts/<canonical_space>/<kind>/<name>/content.md
+      ~/.revka/artifacts/<canonical_space>/<kind>/<name>/attachments/...
     """
     from .memory import (
         _canonical_space,
@@ -3617,7 +3617,7 @@ async def _manus_register_output(
 
     # Sanitize entity_name/entity_kind — they become filesystem path segments
     # below. A malicious YAML with entity_name: "../../escape" would otherwise
-    # write outside ~/.construct/artifacts/. Fail-fast on empty post-sanitize
+    # write outside ~/.revka/artifacts/. Fail-fast on empty post-sanitize
     # rather than silently falling back to a default (hides config bugs).
     entity_name = _sanitize_path_segment(entity_name)
     entity_kind = _sanitize_path_segment(entity_kind)
@@ -3662,13 +3662,13 @@ async def _manus_register_output(
         default=lambda: f"{_project()}/WorkflowOutputs",
     )
     entity_dir = os.path.expanduser(
-        f"~/.construct/artifacts/{canonical}/{entity_kind}/{entity_name}"
+        f"~/.revka/artifacts/{canonical}/{entity_kind}/{entity_name}"
     )
 
     # Belt-and-braces containment check — entity_space is canonicalized, and
     # entity_name/entity_kind are sanitized, but symlinks or unexpected
     # canonical-space output could still produce a path outside artifacts/.
-    artifacts_root = os.path.expanduser("~/.construct/artifacts")
+    artifacts_root = os.path.expanduser("~/.revka/artifacts")
     try:
         os.makedirs(artifacts_root, exist_ok=True)
         real_root = os.path.realpath(artifacts_root)
@@ -3901,7 +3901,7 @@ async def manus_run_task(
         error (set on non-stopped terminal or transport failure),
         auth_resolve_failed, auth_resolve_code
     """
-    from ..construct_config import manus_config
+    from ..revka_config import manus_config
     mc = manus_config()
 
     api_key_env = mc.get("api_key_env", "MANUS_API_KEY")
@@ -3946,7 +3946,7 @@ async def manus_run_task(
                 "error": (
                     f"{api_key_env} env var not set — set it, bind a "
                     f"credentials_ref, or configure [manus].api_key_env "
-                    f"in ~/.construct/config.toml"
+                    f"in ~/.revka/config.toml"
                 ),
             }
 
@@ -4334,7 +4334,7 @@ async def _exec_manus(step: StepDef, state: WorkflowState) -> StepResult:
     title = interpolate(cfg.title, state) if cfg.title else None
     # Read the cached config once for the input_data echo (manus_run_task
     # re-reads it internally, which is fine — it's an in-process cache).
-    from ..construct_config import manus_config
+    from ..revka_config import manus_config
     mc = manus_config()
     api_key_env = mc.get("api_key_env", "MANUS_API_KEY")
     default_profile = mc.get("default_agent_profile") or "manus-1.6"
@@ -5199,8 +5199,8 @@ async def _check_cost_guard(
 ) -> str | None:
     """Check if budget allows workflow execution. Returns error string or None."""
     try:
-        from ..operator_mcp import CONSTRUCT_GW
-        summary = await CONSTRUCT_GW.get_cost_summary()
+        from ..operator_mcp import REVKA_GW
+        summary = await REVKA_GW.get_cost_summary()
         if summary is None:
             if max_cost_usd is None:
                 return None
@@ -6231,7 +6231,7 @@ async def execute_workflow(
                     try:
                         link_timeout = max(
                             0.0,
-                            float(os.getenv("CONSTRUCT_WORKFLOW_MEMORY_LINK_TIMEOUT_SECS", "15")),
+                            float(os.getenv("REVKA_WORKFLOW_MEMORY_LINK_TIMEOUT_SECS", "15")),
                         )
                     except ValueError:
                         link_timeout = 15.0
@@ -6650,8 +6650,8 @@ async def _exec_human_approval(step: StepDef, state: WorkflowState) -> StepResul
 
     # Push approval request to the configured channel via gateway
     try:
-        from ..gateway_client import ConstructGatewayClient
-        gw = ConstructGatewayClient()
+        from ..gateway_client import RevkaGatewayClient
+        gw = RevkaGatewayClient()
         if gw._available:
             channels = [cfg.channel] if cfg.channel else ["dashboard"]
             event: dict[str, Any] = {
@@ -6711,8 +6711,8 @@ async def _exec_notify(step: StepDef, state: WorkflowState) -> StepResult:
         input_data["channel_id"] = interpolate(cfg.channel_id, state)
 
     try:
-        from ..gateway_client import ConstructGatewayClient
-        gw = ConstructGatewayClient()
+        from ..gateway_client import RevkaGatewayClient
+        gw = RevkaGatewayClient()
         if gw._available:
             event: dict[str, Any] = {
                 "type": "workflow_notification",
@@ -6754,8 +6754,8 @@ async def _exec_human_input(step: StepDef, state: WorkflowState) -> StepResult:
 
     # Push prompt to the requested channel via gateway
     try:
-        from ..gateway_client import ConstructGatewayClient
-        gw = ConstructGatewayClient()
+        from ..gateway_client import RevkaGatewayClient
+        gw = RevkaGatewayClient()
         if gw._available:
             await gw.push_channel_event({
                 "type": "human_input_request",

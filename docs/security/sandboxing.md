@@ -1,4 +1,4 @@
-# Construct Sandboxing Strategies
+# Revka Sandboxing Strategies
 
 > ⚠️ **Status: Proposal / Roadmap**
 >
@@ -6,7 +6,7 @@
 > For current runtime behavior, see [config-reference.md](../reference/api/config-reference.md), [operations-runbook.md](../ops/operations-runbook.md), and [troubleshooting.md](../ops/troubleshooting.md).
 
 ## Problem
-Construct currently has application-layer security (allowlists, path blocking, command injection protection) but lacks OS-level containment. If an attacker is on the allowlist, they can run any allowed command with construct's user permissions.
+Revka currently has application-layer security (allowlists, path blocking, command injection protection) but lacks OS-level containment. If an attacker is on the allowlist, they can run any allowed command with revka's user permissions.
 
 ## Proposed Solutions
 
@@ -164,7 +164,7 @@ extra_args = ["--seccomp", "--caps.drop=all"]
 # Landlock-specific
 [security.sandbox.landlock]
 readonly_paths = ["/usr", "/bin", "/lib"]
-readwrite_paths = ["$HOME/workspace", "/tmp/construct"]
+readwrite_paths = ["$HOME/workspace", "/tmp/revka"]
 ```
 
 ## Testing Strategy

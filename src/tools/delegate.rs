@@ -107,7 +107,7 @@ impl DelegateTool {
     }
 
     /// Create a DelegateTool for a sub-agent (with incremented depth).
-    /// When sub-agents eventually get their own tool registry, construct
+    /// When sub-agents eventually get their own tool registry, revka
     /// their DelegateTool via this method with `depth: parent.depth + 1`.
     pub fn with_depth(
         agents: HashMap<String, DelegateAgentConfig>,
@@ -2007,7 +2007,7 @@ mod tests {
 
         let tools: Vec<Box<dyn Tool>> = vec![Box::new(EchoTool)];
         let workspace = std::env::temp_dir().join(format!(
-            "construct_delegate_enrich_test_{}",
+            "revka_delegate_enrich_test_{}",
             uuid::Uuid::new_v4()
         ));
         std::fs::create_dir_all(&workspace).unwrap();
@@ -2381,7 +2381,7 @@ mod tests {
     #[test]
     fn enriched_prompt_loads_skills_from_scoped_directory() {
         let workspace = std::env::temp_dir().join(format!(
-            "construct_delegate_skills_test_{}",
+            "revka_delegate_skills_test_{}",
             uuid::Uuid::new_v4()
         ));
         let scoped_skills_dir = workspace.join("skills/code-review");
@@ -2427,7 +2427,7 @@ mod tests {
     #[test]
     fn enriched_prompt_falls_back_to_default_skills_dir() {
         let workspace = std::env::temp_dir().join(format!(
-            "construct_delegate_fallback_test_{}",
+            "revka_delegate_fallback_test_{}",
             uuid::Uuid::new_v4()
         ));
         let default_skills_dir = workspace.join("skills");
@@ -2474,10 +2474,8 @@ mod tests {
 
     #[tokio::test]
     async fn background_delegation_returns_task_id() {
-        let workspace = std::env::temp_dir().join(format!(
-            "construct_delegate_bg_test_{}",
-            uuid::Uuid::new_v4()
-        ));
+        let workspace =
+            std::env::temp_dir().join(format!("revka_delegate_bg_test_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&workspace).unwrap();
 
         let tool = DelegateTool::new(fast_failing_background_agents(), None, test_security())
@@ -2515,7 +2513,7 @@ mod tests {
     #[tokio::test]
     async fn background_unknown_agent_rejected() {
         let workspace = std::env::temp_dir().join(format!(
-            "construct_delegate_bg_unknown_{}",
+            "revka_delegate_bg_unknown_{}",
             uuid::Uuid::new_v4()
         ));
         std::fs::create_dir_all(&workspace).unwrap();
@@ -2540,7 +2538,7 @@ mod tests {
     #[tokio::test]
     async fn check_result_missing_task_id() {
         let workspace = std::env::temp_dir().join(format!(
-            "construct_delegate_check_noid_{}",
+            "revka_delegate_check_noid_{}",
             uuid::Uuid::new_v4()
         ));
         std::fs::create_dir_all(&workspace).unwrap();
@@ -2557,7 +2555,7 @@ mod tests {
     #[tokio::test]
     async fn check_result_nonexistent_task() {
         let workspace = std::env::temp_dir().join(format!(
-            "construct_delegate_check_miss_{}",
+            "revka_delegate_check_miss_{}",
             uuid::Uuid::new_v4()
         ));
         std::fs::create_dir_all(&workspace).unwrap();
@@ -2583,7 +2581,7 @@ mod tests {
     #[tokio::test]
     async fn list_results_empty() {
         let workspace = std::env::temp_dir().join(format!(
-            "construct_delegate_list_empty_{}",
+            "revka_delegate_list_empty_{}",
             uuid::Uuid::new_v4()
         ));
         std::fs::create_dir_all(&workspace).unwrap();
@@ -2658,7 +2656,7 @@ mod tests {
     #[tokio::test]
     async fn cancel_task_nonexistent() {
         let workspace = std::env::temp_dir().join(format!(
-            "construct_delegate_cancel_miss_{}",
+            "revka_delegate_cancel_miss_{}",
             uuid::Uuid::new_v4()
         ));
         std::fs::create_dir_all(&workspace).unwrap();
@@ -2743,7 +2741,7 @@ mod tests {
     #[tokio::test]
     async fn background_task_result_persisted_to_disk() {
         let workspace = std::env::temp_dir().join(format!(
-            "construct_delegate_bg_persist_{}",
+            "revka_delegate_bg_persist_{}",
             uuid::Uuid::new_v4()
         ));
         std::fs::create_dir_all(&workspace).unwrap();
@@ -2801,7 +2799,7 @@ mod tests {
     #[tokio::test]
     async fn check_result_retrieves_persisted_background_result() {
         let workspace = std::env::temp_dir().join(format!(
-            "construct_delegate_check_retrieve_{}",
+            "revka_delegate_check_retrieve_{}",
             uuid::Uuid::new_v4()
         ));
         std::fs::create_dir_all(&workspace).unwrap();
@@ -2852,7 +2850,7 @@ mod tests {
     #[tokio::test]
     async fn list_results_includes_background_tasks() {
         let workspace = std::env::temp_dir().join(format!(
-            "construct_delegate_list_tasks_{}",
+            "revka_delegate_list_tasks_{}",
             uuid::Uuid::new_v4()
         ));
         std::fs::create_dir_all(&workspace).unwrap();
@@ -2916,7 +2914,7 @@ mod tests {
     #[tokio::test]
     async fn check_result_rejects_path_traversal() {
         let workspace = std::env::temp_dir().join(format!(
-            "construct_delegate_traversal_check_{}",
+            "revka_delegate_traversal_check_{}",
             uuid::Uuid::new_v4()
         ));
         std::fs::create_dir_all(&workspace).unwrap();
@@ -2940,7 +2938,7 @@ mod tests {
     #[tokio::test]
     async fn cancel_task_rejects_path_traversal() {
         let workspace = std::env::temp_dir().join(format!(
-            "construct_delegate_traversal_cancel_{}",
+            "revka_delegate_traversal_cancel_{}",
             uuid::Uuid::new_v4()
         ));
         std::fs::create_dir_all(&workspace).unwrap();

@@ -25,7 +25,7 @@ Covers:
 Each test uses ``shell`` steps that write a unique sentinel file so we can
 assert which steps did and did NOT execute. Hermetic fixtures monkeypatch
 the run-lock and checkpoint dirs into ``tmp_path`` so global state under
-``~/.construct`` never bleeds into a test run.
+``~/.revka`` never bleeds into a test run.
 """
 from __future__ import annotations
 
@@ -82,7 +82,7 @@ def _clear_active_workflows():
 def _isolate_workflow_state(monkeypatch, tmp_path):
     """Hermetic file-state fixtures for every test in this module.
 
-    The executor reaches into ``~/.construct`` for checkpoint files, and
+    The executor reaches into ``~/.revka`` for checkpoint files, and
     recovery owns per-run file locks. On a developer machine with a stale
     lock or pre-existing checkpoint, tests that share a run_id fail before
     reaching the feature assertions. Pin both dirs to a per-test ``tmp_path``

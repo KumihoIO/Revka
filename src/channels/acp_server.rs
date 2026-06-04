@@ -223,7 +223,7 @@ impl AcpServer {
         Ok(serde_json::json!({
             "protocolVersion": "1.0",
             "serverInfo": {
-                "name": "construct-acp",
+                "name": "revka-acp",
                 "version": env!("CARGO_PKG_VERSION"),
             },
             "capabilities": {

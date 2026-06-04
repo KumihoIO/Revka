@@ -6,7 +6,7 @@ Built-in presets for common multi-agent workflows:
   - bug-fix: researcher → coder → tester
   - refactor: researcher → architect → coder → reviewer
 
-Custom presets can be saved/loaded from ~/.construct/operator_mcp/workflow_presets.json.
+Custom presets can be saved/loaded from ~/.revka/operator_mcp/workflow_presets.json.
 
 Usage (via MCP tools):
     list_workflow_presets()               # see all available presets
@@ -121,7 +121,7 @@ _BUILTIN_PRESETS: dict[str, WorkflowPreset] = {
 # Custom preset storage
 # ---------------------------------------------------------------------------
 
-_PRESETS_PATH = os.path.expanduser("~/.construct/operator_mcp/workflow_presets.json")
+_PRESETS_PATH = os.path.expanduser("~/.revka/operator_mcp/workflow_presets.json")
 _custom_presets: dict[str, WorkflowPreset] | None = None
 
 

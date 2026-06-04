@@ -1,4 +1,4 @@
-# Construct 贡献者许可协议（CLA）
+# Revka 贡献者许可协议（CLA）
 
 **版本 1.0 — 2026 年 2 月**
 **Kumiho Inc.**
@@ -7,19 +7,19 @@
 
 ## 目的
 
-本贡献者许可协议（"CLA"）阐明了贡献者授予 Kumiho Inc. 的知识产权权利。本协议同时保护 Construct 项目的贡献者和用户。
+本贡献者许可协议（"CLA"）阐明了贡献者授予 Kumiho Inc. 的知识产权权利。本协议同时保护 Revka 项目的贡献者和用户。
 
-通过向 Construct 仓库提交贡献（拉取请求、补丁、包含代码的 Issue，或任何其他形式的代码提交），即表示你同意本 CLA 的条款。
+通过向 Revka 仓库提交贡献（拉取请求、补丁、包含代码的 Issue，或任何其他形式的代码提交），即表示你同意本 CLA 的条款。
 
 ---
 
 ## 1. 定义
 
-- **"贡献"** 指任何原创作品，包括对现有作品的任何修改或补充，提交给 Kumiho Inc. 以包含在 Construct 项目中。
+- **"贡献"** 指任何原创作品，包括对现有作品的任何修改或补充，提交给 Kumiho Inc. 以包含在 Revka 项目中。
 
 - **"你"** 指提交贡献的个人或法律实体。
 
-- **"Kumiho Inc."** 指负责 Construct 项目（位于 https://github.com/KumihoIO/construct-os）的维护者和组织。
+- **"Kumiho Inc."** 指负责 Revka 项目（位于 https://github.com/KumihoIO/Revka）的维护者和组织。
 
 ---
 
@@ -35,9 +35,9 @@
 
 你授予 Kumiho Inc. 和 Kumiho Inc. 分发软件的接收者永久的、全球性的、非排他的、免费的、免许可费的、不可撤销的专利许可，用于制造、委托制造、使用、许诺销售、销售、进口和以其他方式转让你的贡献。
 
-本专利许可仅适用于你可授权的专利权利要求，这些权利要求仅因你的贡献本身或与 Construct 项目组合而必然被侵权。
+本专利许可仅适用于你可授权的专利权利要求，这些权利要求仅因你的贡献本身或与 Revka 项目组合而必然被侵权。
 
-**这对你的保护：** 如果第三方针对包含你贡献的 Construct 提起专利诉讼，你对项目的专利许可不会被撤销。
+**这对你的保护：** 如果第三方针对包含你贡献的 Revka 提起专利诉讼，你对项目的专利许可不会被撤销。
 
 ---
 
@@ -59,7 +59,7 @@
 
 ## 6. 无商标权利
 
-本 CLA 不授予你使用 Construct 名称、商标、服务标记或徽标的任何权利。商标政策请参见 [trademark.md](../maintainers/trademark.zh-CN.md)。
+本 CLA 不授予你使用 Revka 名称、商标、服务标记或徽标的任何权利。商标政策请参见 [trademark.md](../maintainers/trademark.zh-CN.md)。
 
 ---
 
@@ -71,7 +71,7 @@ Kumiho Inc. 会在仓库提交历史和 NOTICE 文件中保留贡献者的署名
 
 ## 8. 双许可承诺
 
-所有被接受进入 Construct 项目的贡献均同时采用以下两种许可：
+所有被接受进入 Revka 项目的贡献均同时采用以下两种许可：
 
 - **MIT 许可证** — 宽松的开源使用
 - **Apache 许可证 2.0** — 专利保护和更强的知识产权保证
@@ -82,7 +82,7 @@ Kumiho Inc. 会在仓库提交历史和 NOTICE 文件中保留贡献者的署名
 
 ## 9. 如何同意
 
-通过向 Construct 仓库打开拉取请求或提交补丁，即表示你同意本 CLA。个人贡献者无需单独签名。
+通过向 Revka 仓库打开拉取请求或提交补丁，即表示你同意本 CLA。个人贡献者无需单独签名。
 
 对于 **企业贡献者**（代表公司或组织提交），请打开标题为"企业 CLA — [公司名称]"的 Issue，维护者会跟进处理。
 
@@ -91,8 +91,8 @@ Kumiho Inc. 会在仓库提交历史和 NOTICE 文件中保留贡献者的署名
 ## 10. 问题
 
 如果你对本 CLA 有疑问，请在以下地址打开 Issue：
-https://github.com/KumihoIO/construct-os/issues
+https://github.com/KumihoIO/Revka/issues
 
 ---
 
-*本 CLA 基于 Apache 个人贡献者许可协议 v2.0，针对 Construct 双许可模式进行了调整。*
+*本 CLA 基于 Apache 个人贡献者许可协议 v2.0，针对 Revka 双许可模式进行了调整。*

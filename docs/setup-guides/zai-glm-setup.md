@@ -1,11 +1,11 @@
 # Z.AI GLM Setup
 
-Construct supports Z.AI's GLM models through OpenAI-compatible endpoints.
-This guide covers practical setup options that match current Construct provider behavior.
+Revka supports Z.AI's GLM models through OpenAI-compatible endpoints.
+This guide covers practical setup options that match current Revka provider behavior.
 
 ## Overview
 
-Construct supports these Z.AI aliases and endpoints out of the box:
+Revka supports these Z.AI aliases and endpoints out of the box:
 
 | Alias | Endpoint | Notes |
 |-------|----------|-------|
@@ -19,14 +19,14 @@ If you need a custom base URL, see [`../contributing/custom-providers.md`](../co
 ### Quick Start
 
 ```bash
-construct onboard \
+revka onboard \
   --provider "zai" \
   --api-key "YOUR_ZAI_API_KEY"
 ```
 
 ### Manual Configuration
 
-Edit `~/.construct/config.toml`:
+Edit `~/.revka/config.toml`:
 
 ```toml
 api_key = "YOUR_ZAI_API_KEY"
@@ -73,14 +73,14 @@ Expected response:
 }
 ```
 
-### Test with Construct CLI
+### Test with Revka CLI
 
 ```bash
 # Test agent directly
-echo "Hello" | construct agent
+echo "Hello" | revka agent
 
 # Check status
-construct status
+revka status
 ```
 
 ## Environment Variables
@@ -137,6 +137,6 @@ curl -s "https://api.z.ai/api/coding/paas/v4/models" \
 
 ## Related Documentation
 
-- [Construct README](../README.md)
+- [Revka README](../README.md)
 - [Custom Provider Endpoints](../contributing/custom-providers.md)
 - [Contributing Guide](../../CONTRIBUTING.md)

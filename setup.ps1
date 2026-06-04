@@ -2,12 +2,12 @@
 
 <#
 .SYNOPSIS
-    Construct Windows Setup Script (PowerShell port of setup.bat).
+    Revka Windows Setup Script (PowerShell port of setup.bat).
 
 .DESCRIPTION
-    Builds and installs Construct on Windows. Native PowerShell port of
+    Builds and installs Revka on Windows. Native PowerShell port of
     setup.bat — picks up the same modes (Prebuilt/Minimal/Standard/Full)
-    and ends in the same place: a working `construct` on User PATH.
+    and ends in the same place: a working `revka` on User PATH.
 
     If the execution policy blocks running scripts, invoke as:
         powershell -ExecutionPolicy Bypass -File .\setup.ps1
@@ -47,8 +47,8 @@ $VersionMatch = if (Test-Path $CargoToml) {
 $ScriptVersion = if ($VersionMatch) { $VersionMatch.Matches.Groups[1].Value } else { 'unknown' }
 $RustMinVersion = '1.87'
 $Target = 'x86_64-pc-windows-msvc'
-$Repo = 'https://github.com/KumihoIO/construct-os'
-$InstallDir = Join-Path $env:USERPROFILE '.construct\bin'
+$Repo = 'https://github.com/KumihoIO/Revka'
+$InstallDir = Join-Path $env:USERPROFILE '.revka\bin'
 $RepoRoot = $PSScriptRoot
 
 # ----- Helpers -----------------------------------------------------------
@@ -100,7 +100,7 @@ function Add-ToUserPath([string]$Dir) {
     }
 
     # Update the current session too, so the verification step below can
-    # resolve `construct` without making the user restart their shell.
+    # resolve `revka` without making the user restart their shell.
     if (-not (($env:Path -split ';') -contains $Dir)) {
         $env:Path = "$env:Path;$Dir"
     }
@@ -152,10 +152,10 @@ function Install-Prebuilt {
     }
 
     if (-not $downloadUrl) {
-        $downloadUrl = "$Repo/releases/latest/download/construct-$Target.zip"
+        $downloadUrl = "$Repo/releases/latest/download/revka-$Target.zip"
     }
 
-    $zipPath = Join-Path $env:TEMP 'construct-windows.zip'
+    $zipPath = Join-Path $env:TEMP 'revka-windows.zip'
     try {
         Invoke-WebRequest -Uri $downloadUrl -OutFile $zipPath -UseBasicParsing
     }
@@ -170,7 +170,7 @@ function Install-Prebuilt {
     Expand-Archive -Path $zipPath -DestinationPath $InstallDir -Force
 
     Add-ToUserPath $InstallDir
-    Write-Ok "Binary installed to $InstallDir\construct.exe"
+    Write-Ok "Binary installed to $InstallDir\revka.exe"
 }
 
 function Build-FromSource {
@@ -194,15 +194,15 @@ function Build-FromSource {
         }
     }
 
-    Write-Step "[3/5] Building Construct ($desc)..."
+    Write-Step "[3/5] Building Revka ($desc)..."
     Write-Host "  Target: $Target"
 
     $cargoToml = Join-Path $RepoRoot 'Cargo.toml'
     if (-not (Test-Path $cargoToml)) {
-        Write-Err "Cargo.toml not found at $cargoToml. Run this script from the construct repository root."
+        Write-Err "Cargo.toml not found at $cargoToml. Run this script from the revka repository root."
         Write-Host '  Example:'
         Write-Host "    git clone $Repo"
-        Write-Host '    cd construct-os'
+        Write-Host '    cd Revka'
         Write-Host '    .\setup.ps1'
         throw 'missing Cargo.toml'
     }
@@ -233,9 +233,9 @@ function Build-FromSource {
 
     Write-Step '[4/5] Installing binary...'
     New-Item -Path $InstallDir -ItemType Directory -Force | Out-Null
-    Copy-Item -Path (Join-Path $RepoRoot "target\$Target\release\construct.exe") `
-              -Destination (Join-Path $InstallDir 'construct.exe') -Force
-    Write-Ok "Installed to $InstallDir\construct.exe"
+    Copy-Item -Path (Join-Path $RepoRoot "target\$Target\release\revka.exe") `
+              -Destination (Join-Path $InstallDir 'revka.exe') -Force
+    Write-Ok "Installed to $InstallDir\revka.exe"
 
     Add-ToUserPath $InstallDir
 }
@@ -251,7 +251,7 @@ function Install-Sidecars {
         return
     }
 
-    $marker = Join-Path $env:USERPROFILE '.construct\kumiho\run_kumiho_mcp.py'
+    $marker = Join-Path $env:USERPROFILE '.revka\kumiho\run_kumiho_mcp.py'
     if (Test-Path $marker) { return }
 
     Write-Step '[4.5/5] Installing Python MCP sidecars (Kumiho + Operator)...'
@@ -272,7 +272,7 @@ function Install-Sidecars {
 
 # ----- Main flow ---------------------------------------------------------
 
-Write-Section "Construct Windows Setup  v$ScriptVersion"
+Write-Section "Revka Windows Setup  v$ScriptVersion"
 
 # ----- [1/5] Prerequisites
 Write-Step '[1/5] Checking prerequisites...'
@@ -352,7 +352,7 @@ Install-Sidecars
 # ----- [5/5] Verify
 Write-Step '[5/5] Verifying installation...'
 
-$exe = Join-Path $InstallDir 'construct.exe'
+$exe = Join-Path $InstallDir 'revka.exe'
 if (-not (Test-Path $exe)) {
     Write-Err "Binary not found at $exe"
     exit 1
@@ -373,7 +373,7 @@ else {
 # — not just this session's in-memory copy).
 $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
 if (($userPath -split ';') -contains $InstallDir) {
-    Write-Ok "On User PATH (close + reopen your terminal to use 'construct')"
+    Write-Ok "On User PATH (close + reopen your terminal to use 'revka')"
 }
 else {
     Write-Warn 'Not on User PATH yet. Add manually:'
@@ -383,22 +383,22 @@ else {
 # ----- Done
 Write-Host ''
 Write-Host -NoNewline -ForegroundColor Green '========================================='; Write-Host ''
-Write-Host -NoNewline -ForegroundColor Green '  Construct setup complete!'; Write-Host ''
+Write-Host -NoNewline -ForegroundColor Green '  Revka setup complete!'; Write-Host ''
 Write-Host -NoNewline -ForegroundColor Green '========================================='; Write-Host ''
 Write-Host ''
 Write-Host '  Next steps:'
 Write-Host '    1. Restart your terminal (for PATH changes)'
-Write-Host '    2. Run: construct onboard           (guided provider + config setup)'
-Write-Host '    3. Run: construct gateway           (starts the web dashboard at http://127.0.0.1:42617)'
+Write-Host '    2. Run: revka onboard           (guided provider + config setup)'
+Write-Host '    3. Run: revka gateway           (starts the web dashboard at http://127.0.0.1:42617)'
 Write-Host ''
 Write-Host '  Useful commands:'
-Write-Host '    construct status                    (health check)'
-Write-Host '    construct agent -m "Hello"          (one-shot message)'
-Write-Host '    construct doctor                    (diagnose issues)'
+Write-Host '    revka status                    (health check)'
+Write-Host '    revka agent -m "Hello"          (one-shot message)'
+Write-Host '    revka doctor                    (diagnose issues)'
 Write-Host ''
 Write-Host '  Alternative install via Scoop:'
-Write-Host '    scoop bucket add construct https://github.com/KumihoIO/scoop-construct'
-Write-Host '    scoop install construct'
+Write-Host '    scoop bucket add revka https://github.com/KumihoIO/scoop-revka'
+Write-Host '    scoop install revka'
 Write-Host ''
 Write-Host '  Documentation: https://www.kumiho.io/docs'
 Write-Host ''

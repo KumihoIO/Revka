@@ -1,18 +1,18 @@
-# Arduino Uno Q 上的 Construct — 分步指南
+# Arduino Uno Q 上的 Revka — 分步指南
 
-在 Arduino Uno Q 的 Linux 端运行 Construct。Telegram 通过 Wi-Fi 工作；GPIO 控制使用桥接（需要最小化的 App Lab 应用）。
+在 Arduino Uno Q 的 Linux 端运行 Revka。Telegram 通过 Wi-Fi 工作；GPIO 控制使用桥接（需要最小化的 App Lab 应用）。
 
 ---
 
 ## 已包含的内容（无需修改代码）
 
-Construct 包含 Arduino Uno Q 所需的一切。**克隆仓库并按照本指南操作 —— 无需补丁或自定义代码。**
+Revka 包含 Arduino Uno Q 所需的一切。**克隆仓库并按照本指南操作 —— 无需补丁或自定义代码。**
 
 | 组件 | 位置 | 目的 |
 |-----------|----------|---------|
 | 桥接应用 | `firmware/uno-q-bridge/` | MCU 草图 + Python Socket 服务器（端口 9999）用于 GPIO |
 | 桥接工具 | `src/peripherals/uno_q_bridge.rs` | 通过 TCP 与桥接通信的 `gpio_read` / `gpio_write` 工具 |
-| 设置命令 | `src/peripherals/uno_q_setup.rs` | `construct peripheral setup-uno-q` 通过 scp + arduino-app-cli 部署桥接 |
+| 设置命令 | `src/peripherals/uno_q_setup.rs` | `revka peripheral setup-uno-q` 通过 scp + arduino-app-cli 部署桥接 |
 | 配置 schema | `board = "arduino-uno-q"`, `transport = "bridge"` | 在 `config.toml` 中支持 |
 
 使用 `--features hardware` 构建以包含 Uno Q 支持。
@@ -49,7 +49,7 @@ ssh arduino@<UNO_Q_IP>
 
 ---
 
-## 阶段 2：在 Uno Q 上安装 Construct
+## 阶段 2：在 Uno Q 上安装 Revka
 
 ### 选项 A：在设备上构建（更简单，约 20–40 分钟）
 
@@ -65,15 +65,15 @@ source ~/.cargo/env
 sudo apt-get update
 sudo apt-get install -y pkg-config libssl-dev
 
-# 克隆 construct（或 scp 你的项目）
-git clone https://github.com/KumihoIO/construct-os.git
-cd construct
+# 克隆 revka（或 scp 你的项目）
+git clone https://github.com/KumihoIO/Revka.git
+cd revka
 
 # 构建（在 Uno Q 上约 15–30 分钟）
 cargo build --release --features hardware
 
 # 安装
-sudo cp target/release/construct /usr/local/bin/
+sudo cp target/release/revka /usr/local/bin/
 ```
 
 ### 选项 B：在 Mac 上交叉编译（更快）
@@ -90,15 +90,15 @@ brew install aarch64-unknown-linux-gnu
 CC_aarch64_unknown_linux_gnu=aarch64-unknown-linux-gnu-gcc cargo build --release --target aarch64-unknown-linux-gnu --features hardware
 
 # 复制到 Uno Q
-scp target/aarch64-unknown-linux-gnu/release/construct arduino@<UNO_Q_IP>:~/
-ssh arduino@<UNO_Q_IP> "sudo mv ~/construct /usr/local/bin/"
+scp target/aarch64-unknown-linux-gnu/release/revka arduino@<UNO_Q_IP>:~/
+ssh arduino@<UNO_Q_IP> "sudo mv ~/revka /usr/local/bin/"
 ```
 
 如果交叉编译失败，使用选项 A 在设备上构建。
 
 ---
 
-## 阶段 3：配置 Construct
+## 阶段 3：配置 Revka
 
 ### 3.1 运行引导配置（或手动创建配置）
 
@@ -106,11 +106,11 @@ ssh arduino@<UNO_Q_IP> "sudo mv ~/construct /usr/local/bin/"
 ssh arduino@<UNO_Q_IP>
 
 # 快速配置
-construct onboard --api-key YOUR_OPENROUTER_KEY --provider openrouter
+revka onboard --api-key YOUR_OPENROUTER_KEY --provider openrouter
 
 # 或手动创建配置
-mkdir -p ~/.construct/workspace
-nano ~/.construct/config.toml
+mkdir -p ~/.revka/workspace
+nano ~/.revka/config.toml
 ```
 
 ### 3.2 最小化 config.toml
@@ -139,33 +139,33 @@ compact_context = true
 
 ---
 
-## 阶段 4：运行 Construct 守护进程
+## 阶段 4：运行 Revka 守护进程
 
 ```bash
 ssh arduino@<UNO_Q_IP>
 
 # 运行守护进程（Telegram 轮询通过 Wi-Fi 工作）
-construct daemon --host 127.0.0.1 --port 42617
+revka daemon --host 127.0.0.1 --port 42617
 ```
 
-**此时：** Telegram 聊天正常工作。向你的机器人发送消息 —— Construct 会响应。还没有 GPIO 功能。
+**此时：** Telegram 聊天正常工作。向你的机器人发送消息 —— Revka 会响应。还没有 GPIO 功能。
 
 ---
 
-## 阶段 5：通过桥接实现 GPIO（Construct 自动处理）
+## 阶段 5：通过桥接实现 GPIO（Revka 自动处理）
 
-Construct 包含桥接应用和设置命令。
+Revka 包含桥接应用和设置命令。
 
 ### 5.1 部署桥接应用
 
-**从你的 Mac**（在 construct 仓库中）：
+**从你的 Mac**（在 revka 仓库中）：
 ```bash
-construct peripheral setup-uno-q --host 192.168.0.48
+revka peripheral setup-uno-q --host 192.168.0.48
 ```
 
 **从 Uno Q**（已 SSH 连接）：
 ```bash
-construct peripheral setup-uno-q
+revka peripheral setup-uno-q
 ```
 
 这会将桥接应用复制到 `~/ArduinoApps/uno-q-bridge` 并启动。
@@ -181,13 +181,13 @@ board = "arduino-uno-q"
 transport = "bridge"
 ```
 
-### 5.3 运行 Construct
+### 5.3 运行 Revka
 
 ```bash
-construct daemon --host 127.0.0.1 --port 42617
+revka daemon --host 127.0.0.1 --port 42617
 ```
 
-现在当你向 Telegram 机器人发送 *"Turn on the LED"* 或 *"Set pin 13 high"* 时，Construct 会通过桥接使用 `gpio_write`。
+现在当你向 Telegram 机器人发送 *"Turn on the LED"* 或 *"Set pin 13 high"* 时，Revka 会通过桥接使用 `gpio_write`。
 
 ---
 
@@ -199,19 +199,19 @@ construct daemon --host 127.0.0.1 --port 42617
 | 2 | `ssh arduino@<IP>` |
 | 3 | `curl -sSf https://sh.rustup.rs \| sh -s -- -y && source ~/.cargo/env` |
 | 4 | `sudo apt-get install -y pkg-config libssl-dev` |
-| 5 | `git clone https://github.com/KumihoIO/construct-os.git && cd construct` |
+| 5 | `git clone https://github.com/KumihoIO/Revka.git && cd revka` |
 | 6 | `cargo build --release --features hardware` |
-| 7 | `construct onboard --api-key KEY --provider openrouter` |
-| 8 | 编辑 `~/.construct/config.toml`（添加 Telegram bot_token） |
-| 9 | `construct daemon --host 127.0.0.1 --port 42617` |
+| 7 | `revka onboard --api-key KEY --provider openrouter` |
+| 8 | 编辑 `~/.revka/config.toml`（添加 Telegram bot_token） |
+| 9 | `revka daemon --host 127.0.0.1 --port 42617` |
 | 10 | 向 Telegram 机器人发送消息 —— 它会响应 |
 
 ---
 
 ## 故障排除
 
-- **"command not found: construct"** — 使用完整路径：`/usr/local/bin/construct` 或确保 `~/.cargo/bin` 在 PATH 中。
+- **"command not found: revka"** — 使用完整路径：`/usr/local/bin/revka` 或确保 `~/.cargo/bin` 在 PATH 中。
 - **Telegram 不响应** — 检查 bot_token、allowed_users，以及 Uno Q 有互联网连接（Wi-Fi）。
 - **内存不足** — 保持特性最小化（Uno Q 使用 `--features hardware`）；考虑设置 `compact_context = true`。
-- **GPIO 命令被忽略** — 确保桥接应用正在运行（`construct peripheral setup-uno-q` 会部署并启动它）。配置必须包含 `board = "arduino-uno-q"` 和 `transport = "bridge"`。
-- **LLM 提供商（GLM/智谱）** — 使用 `default_provider = "glm"` 或 `"zhipu"`，并在环境或配置中设置 `GLM_API_KEY`。Construct 使用正确的 v4 端点。
+- **GPIO 命令被忽略** — 确保桥接应用正在运行（`revka peripheral setup-uno-q` 会部署并启动它）。配置必须包含 `board = "arduino-uno-q"` 和 `transport = "bridge"`。
+- **LLM 提供商（GLM/智谱）** — 使用 `default_provider = "glm"` 或 `"zhipu"`，并在环境或配置中设置 `GLM_API_KEY`。Revka 使用正确的 v4 端点。

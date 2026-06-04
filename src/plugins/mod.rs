@@ -1,6 +1,6 @@
-//! WASM plugin system for Construct.
+//! WASM plugin system for Revka.
 //!
-//! Plugins are WebAssembly modules that can extend Construct with custom tools
+//! Plugins are WebAssembly modules that can extend Revka with custom tools
 //! and channels. Enable manifest discovery with `--features plugins-wasm`.
 
 pub mod error;

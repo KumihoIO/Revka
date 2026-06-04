@@ -6,16 +6,16 @@ use std::time::SystemTime;
 fn main() {
     let dist_dir = Path::new("web/dist");
     let web_dir = Path::new("web");
-    let build_web = std::env::var("CONSTRUCT_BUILD_WEB")
+    let build_web = std::env::var("REVKA_BUILD_WEB")
         .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
         .unwrap_or(false);
 
     // Tell Cargo to re-run this script when web sources or bundled assets change.
-    println!("cargo:rerun-if-env-changed=CONSTRUCT_BUILD_WEB");
+    println!("cargo:rerun-if-env-changed=REVKA_BUILD_WEB");
     println!("cargo:rerun-if-changed=web/src");
     println!("cargo:rerun-if-changed=web/public");
     println!("cargo:rerun-if-changed=web/index.html");
-    println!("cargo:rerun-if-changed=docs/assets/construct-trans.png");
+    println!("cargo:rerun-if-changed=web/public/revka-trans.png");
     println!("cargo:rerun-if-changed=web/package.json");
     println!("cargo:rerun-if-changed=web/package-lock.json");
     println!("cargo:rerun-if-changed=web/tsconfig.json");
@@ -26,7 +26,7 @@ fn main() {
 
     // Rust builds are Node-free by default. Official releases should build
     // web/dist before compiling Rust; developers can opt into the legacy
-    // cargo-triggered web build with CONSTRUCT_BUILD_WEB=1.
+    // cargo-triggered web build with REVKA_BUILD_WEB=1.
     if build_web
         && web_build_required(web_dir, dist_dir)
         && web_dir.join("package.json").exists()
@@ -85,7 +85,7 @@ fn main() {
         }
     } else if !build_web {
         eprintln!(
-            "cargo:warning=Skipping web frontend build; set CONSTRUCT_BUILD_WEB=1 to build web/dist from build.rs"
+            "cargo:warning=Skipping web frontend build; set REVKA_BUILD_WEB=1 to build web/dist from build.rs"
         );
     }
 
@@ -148,17 +148,17 @@ fn ensure_dashboard_assets(dist_dir: &Path) {
     // The Rust gateway serves `web/dist/` via rust-embed under `/_app/*`.
     // Some builds may end up with missing/blank logo assets, so we ensure the
     // expected image is always present in `web/dist/` at compile time.
-    let src = Path::new("docs/assets/construct-trans.png");
+    let src = Path::new("web/public/revka-trans.png");
     if !src.exists() {
         eprintln!(
-            "cargo:warning=docs/assets/construct-trans.png not found; skipping dashboard asset copy"
+            "cargo:warning=web/public/revka-trans.png not found; skipping dashboard asset copy"
         );
         return;
     }
 
-    let dst = dist_dir.join("construct-trans.png");
+    let dst = dist_dir.join("revka-trans.png");
     if let Err(e) = fs::copy(src, &dst) {
-        eprintln!("cargo:warning=Failed to copy construct-trans.png into web/dist/: {e}");
+        eprintln!("cargo:warning=Failed to copy revka-trans.png into web/dist/: {e}");
     }
 }
 

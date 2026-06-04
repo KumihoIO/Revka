@@ -1,1 +1,1 @@
-"""Tool handler modules for Construct Operator MCP tools."""
+"""Tool handler modules for Revka Operator MCP tools."""

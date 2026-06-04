@@ -1,6 +1,6 @@
 # Custom Provider Configuration
 
-Construct supports custom API endpoints for both OpenAI-compatible and Anthropic-compatible providers.
+Revka supports custom API endpoints for both OpenAI-compatible and Anthropic-compatible providers.
 
 ## Provider Types
 
@@ -28,7 +28,7 @@ default_model = "your-model-name"
 
 ### Config File
 
-Edit `~/.construct/config.toml`:
+Edit `~/.revka/config.toml`:
 
 ```toml
 api_key = "your-api-key"
@@ -42,13 +42,13 @@ For `custom:` and `anthropic-custom:` providers, use the generic key env vars:
 
 ```bash
 export API_KEY="your-api-key"
-# or: export CONSTRUCT_API_KEY="your-api-key"
-construct agent
+# or: export REVKA_API_KEY="your-api-key"
+revka agent
 ```
 
 ## llama.cpp Server (Recommended Local Setup)
 
-Construct includes a first-class local provider for `llama-server`:
+Revka includes a first-class local provider for `llama-server`:
 
 - Provider ID: `llamacpp` (alias: `llama.cpp`)
 - Default endpoint: `http://localhost:8080/v1`
@@ -60,7 +60,7 @@ Start a local server (example):
 llama-server -hf ggml-org/gpt-oss-20b-GGUF --jinja -c 133000 --host 127.0.0.1 --port 8033
 ```
 
-Then configure Construct:
+Then configure Revka:
 
 ```toml
 default_provider = "llamacpp"
@@ -72,15 +72,15 @@ default_temperature = 0.7
 Quick validation:
 
 ```bash
-construct models refresh --provider llamacpp
-construct agent -m "hello"
+revka models refresh --provider llamacpp
+revka agent -m "hello"
 ```
 
-You do not need to export `CONSTRUCT_API_KEY=dummy` for this flow.
+You do not need to export `REVKA_API_KEY=dummy` for this flow.
 
 ## SGLang Server
 
-Construct includes a first-class local provider for [SGLang](https://github.com/sgl-project/sglang):
+Revka includes a first-class local provider for [SGLang](https://github.com/sgl-project/sglang):
 
 - Provider ID: `sglang`
 - Default endpoint: `http://localhost:30000/v1`
@@ -92,7 +92,7 @@ Start a local server (example):
 python -m sglang.launch_server --model meta-llama/Llama-3.1-8B-Instruct --port 30000
 ```
 
-Then configure Construct:
+Then configure Revka:
 
 ```toml
 default_provider = "sglang"
@@ -103,15 +103,15 @@ default_temperature = 0.7
 Quick validation:
 
 ```bash
-construct models refresh --provider sglang
-construct agent -m "hello"
+revka models refresh --provider sglang
+revka agent -m "hello"
 ```
 
-You do not need to export `CONSTRUCT_API_KEY=dummy` for this flow.
+You do not need to export `REVKA_API_KEY=dummy` for this flow.
 
 ## vLLM Server
 
-Construct includes a first-class local provider for [vLLM](https://docs.vllm.ai/):
+Revka includes a first-class local provider for [vLLM](https://docs.vllm.ai/):
 
 - Provider ID: `vllm`
 - Default endpoint: `http://localhost:8000/v1`
@@ -123,7 +123,7 @@ Start a local server (example):
 vllm serve meta-llama/Llama-3.1-8B-Instruct
 ```
 
-Then configure Construct:
+Then configure Revka:
 
 ```toml
 default_provider = "vllm"
@@ -134,11 +134,11 @@ default_temperature = 0.7
 Quick validation:
 
 ```bash
-construct models refresh --provider vllm
-construct agent -m "hello"
+revka models refresh --provider vllm
+revka agent -m "hello"
 ```
 
-You do not need to export `CONSTRUCT_API_KEY=dummy` for this flow.
+You do not need to export `REVKA_API_KEY=dummy` for this flow.
 
 ## Testing Configuration
 
@@ -146,10 +146,10 @@ Verify your custom endpoint:
 
 ```bash
 # Interactive mode
-construct agent
+revka agent
 
 # Single message test
-construct agent -m "test message"
+revka agent -m "test message"
 ```
 
 ## Troubleshooting

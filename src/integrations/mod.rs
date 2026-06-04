@@ -79,7 +79,7 @@ fn show_integration_info(config: &Config, name: &str) -> Result<()> {
 
     let Some(entry) = entries.iter().find(|e| e.name.to_lowercase() == name_lower) else {
         anyhow::bail!(
-            "Unknown integration: {name}. Check README for supported integrations or run `construct onboard` to configure channels/providers."
+            "Unknown integration: {name}. Check README for supported integrations or run `revka onboard` to configure channels/providers."
         );
     };
 
@@ -107,26 +107,26 @@ fn show_integration_info(config: &Config, name: &str) -> Result<()> {
             println!("  Setup:");
             println!("    1. Message @BotFather on Telegram");
             println!("    2. Create a bot and copy the token");
-            println!("    3. Run: construct onboard --channels-only");
-            println!("    4. Start: construct channel start");
+            println!("    3. Run: revka onboard --channels-only");
+            println!("    4. Start: revka channel start");
         }
         "Discord" => {
             println!("  Setup:");
             println!("    1. Go to https://discord.com/developers/applications");
             println!("    2. Create app → Bot → Copy token");
             println!("    3. Enable MESSAGE CONTENT intent");
-            println!("    4. Run: construct onboard --channels-only");
+            println!("    4. Run: revka onboard --channels-only");
         }
         "Slack" => {
             println!("  Setup:");
             println!("    1. Go to https://api.slack.com/apps");
             println!("    2. Create app → Bot Token Scopes → Install");
-            println!("    3. Run: construct onboard --channels-only");
+            println!("    3. Run: revka onboard --channels-only");
         }
         "OpenRouter" => {
             println!("  Setup:");
             println!("    1. Get API key at https://openrouter.ai/keys");
-            println!("    2. Run: construct onboard");
+            println!("    2. Run: revka onboard");
             println!("    Access 200+ models with one key.");
         }
         "Ollama" => {
@@ -147,13 +147,13 @@ fn show_integration_info(config: &Config, name: &str) -> Result<()> {
         }
         "Browser" => {
             println!("  Built-in:");
-            println!("    Construct can control Chrome/Chromium for web tasks.");
+            println!("    Revka can control Chrome/Chromium for web tasks.");
             println!("    Uses headless browser automation.");
         }
         "Cron" => {
             println!("  Built-in:");
-            println!("    Schedule tasks in ~/.construct/workspace/cron/");
-            println!("    Run: construct cron list");
+            println!("    Schedule tasks in ~/.revka/workspace/cron/");
+            println!("    Run: revka cron list");
         }
         "Weather" => {
             println!("  Built-in:");
@@ -165,12 +165,12 @@ fn show_integration_info(config: &Config, name: &str) -> Result<()> {
         "Webhooks" => {
             println!("  Built-in:");
             println!("    HTTP endpoint for external triggers.");
-            println!("    Run: construct gateway");
+            println!("    Run: revka gateway");
         }
         _ => {
             if status == IntegrationStatus::ComingSoon {
                 println!("  This integration is planned. Stay tuned!");
-                println!("  Track progress: https://github.com/KumihoIO/construct");
+                println!("  Track progress: https://github.com/KumihoIO/revka");
             }
         }
     }

@@ -165,7 +165,7 @@ async fn fetch_link_summary(url: &str, timeout_secs: u64) -> Option<LinkSummary>
         .timeout(Duration::from_secs(timeout_secs))
         .connect_timeout(Duration::from_secs(5))
         .redirect(reqwest::redirect::Policy::limited(5))
-        .user_agent("Construct/0.1 (link-enricher)")
+        .user_agent("Revka/0.1 (link-enricher)")
         .build()
         .ok()?;
 

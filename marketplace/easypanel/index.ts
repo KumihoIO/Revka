@@ -7,8 +7,8 @@ export function generate(input: Input): Output {
   const appEnv = [
     `API_KEY=${input.apiKey}`,
     `PROVIDER=${input.provider}`,
-    `CONSTRUCT_ALLOW_PUBLIC_BIND=true`,
-    `CONSTRUCT_GATEWAY_PORT=42617`,
+    `REVKA_ALLOW_PUBLIC_BIND=true`,
+    `REVKA_GATEWAY_PORT=42617`,
   ];
 
   services.push({
@@ -30,7 +30,7 @@ export function generate(input: Input): Output {
         {
           type: "volume",
           name: "data",
-          mountPath: "/construct-data",
+          mountPath: "/revka-data",
         },
       ],
     },

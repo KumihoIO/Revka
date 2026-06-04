@@ -1,5 +1,5 @@
 
-export const LOCALE_STORAGE_KEY = 'construct-locale';
+export const LOCALE_STORAGE_KEY = 'revka-locale';
 
 const DEFAULT_LOCALE = 'en';
 

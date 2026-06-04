@@ -1,6 +1,6 @@
 # PR Discipline
 
-Rules for pull request quality, attribution, privacy, and handoff in Construct.
+Rules for pull request quality, attribution, privacy, and handoff in Revka.
 
 ## Privacy / Sensitive Data (Required)
 
@@ -10,11 +10,11 @@ Treat privacy and neutrality as merge gates, not best-effort guidelines.
 - Prohibited data includes (non-exhaustive): real names, personal emails, phone numbers, addresses, access tokens, API keys, credentials, IDs, and private URLs.
 - Use neutral project-scoped placeholders (e.g., `user_a`, `test_user`, `project_bot`, `example.com`) instead of real identity data.
 - Test names/messages/fixtures must be impersonal and system-focused; avoid first-person or identity-specific language.
-- If identity-like context is unavoidable, use Construct-scoped roles/labels only (e.g., `ConstructAgent`, `ConstructOperator`, `construct_user`).
+- If identity-like context is unavoidable, use Revka-scoped roles/labels only (e.g., `RevkaAgent`, `RevkaOperator`, `revka_user`).
 - Recommended identity-safe naming palette:
-    - actor labels: `ConstructAgent`, `ConstructOperator`, `ConstructMaintainer`, `construct_user`
-    - service/runtime labels: `construct_bot`, `construct_service`, `construct_runtime`, `construct_node`
-    - environment labels: `construct_project`, `construct_workspace`, `construct_channel`
+    - actor labels: `RevkaAgent`, `RevkaOperator`, `RevkaMaintainer`, `revka_user`
+    - service/runtime labels: `revka_bot`, `revka_service`, `revka_runtime`, `revka_node`
+    - environment labels: `revka_project`, `revka_workspace`, `revka_channel`
 - If reproducing external incidents, redact and anonymize all payloads before committing.
 - Before push, review `git diff --cached` specifically for accidental sensitive strings and identity leakage.
 

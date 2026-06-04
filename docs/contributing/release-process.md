@@ -1,4 +1,4 @@
-# Construct Release Process
+# Revka Release Process
 
 This runbook defines the maintainers' standard release flow.
 
@@ -107,7 +107,7 @@ Run `Pub Homebrew Core` manually:
 Required repository settings for non-dry-run:
 
 - secret: `HOMEBREW_CORE_BOT_TOKEN` (token from a dedicated bot account, not a personal maintainer account)
-- variable: `HOMEBREW_CORE_BOT_FORK_REPO` (for example `construct-release-bot/homebrew-core`)
+- variable: `HOMEBREW_CORE_BOT_FORK_REPO` (for example `revka-release-bot/homebrew-core`)
 - optional variable: `HOMEBREW_CORE_BOT_EMAIL`
 
 Workflow guardrails:
@@ -127,13 +127,13 @@ Run `Pub Scoop Manifest` manually:
 Required repository settings for non-dry-run:
 
 - secret: `SCOOP_BUCKET_TOKEN` (PAT with push access to the bucket repo)
-- variable: `SCOOP_BUCKET_REPO` (for example `KumihoIO/scoop-construct`)
+- variable: `SCOOP_BUCKET_REPO` (for example `KumihoIO/scoop-revka`)
 
 Workflow guardrails:
 
 - release tag must be `vX.Y.Z` format
 - Windows binary SHA256 extracted from `SHA256SUMS` release asset
-- manifest pushed to `bucket/construct.json` in the Scoop bucket repo
+- manifest pushed to `bucket/revka.json` in the Scoop bucket repo
 
 ### 8) Publish AUR package (Arch Linux)
 
@@ -150,7 +150,7 @@ Workflow guardrails:
 
 - release tag must be `vX.Y.Z` format
 - source tarball SHA256 computed from the tagged release
-- PKGBUILD and .SRCINFO pushed to AUR `construct` package
+- PKGBUILD and .SRCINFO pushed to AUR `revka` package
 
 ## Emergency / Recovery Path
 

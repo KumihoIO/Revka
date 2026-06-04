@@ -28,7 +28,7 @@ async def test_trigger_registry_overlays_latest_kumiho_revision(
 ):
     """Latest workflow revisions must win over stale base disk copies.
 
-    The editable ``~/.construct/workflows/foo.yaml`` file can lag behind the
+    The editable ``~/.revka/workflows/foo.yaml`` file can lag behind the
     latest Kumiho revision artifact ``foo.rN.yaml``. Event chaining should
     register triggers from the latest revision because that is what
     ``resolve_workflow`` executes.
@@ -70,11 +70,11 @@ steps:
             return [
                 {
                     "item_name": "wf-finding",
-                    "kref": "kref://Construct/Workflows/wf-finding.workflow-finding",
+                    "kref": "kref://Revka/Workflows/wf-finding.workflow-finding",
                 },
                 {
                     "item_name": "cross-chronicle-episode-room",
-                    "kref": "kref://Construct/Workflows/cross-chronicle-episode-room.workflow",
+                    "kref": "kref://Revka/Workflows/cross-chronicle-episode-room.workflow",
                 }
             ]
 
@@ -83,7 +83,7 @@ steps:
             assert tag == "latest"
             return {
                 "kref": (
-                    "kref://Construct/Workflows/"
+                    "kref://Revka/Workflows/"
                     "cross-chronicle-episode-room.workflow?r=4"
                 ),
                 "tags": ["latest"],

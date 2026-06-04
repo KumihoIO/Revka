@@ -163,7 +163,7 @@ def _complete_track3_manifest(service_url: str) -> dict:
     return {
         "schema_version": 1,
         "scenario": {
-            "name": "Construct Enterprise AgentOps Control Plane",
+            "name": "Revka Enterprise AgentOps Control Plane",
             "b2b_persona": "Platform engineering leader",
             "business_workflow": "Governed production incident response",
             "measurable_outcome": "A2A incident plan returned from Cloud Run",
@@ -172,7 +172,7 @@ def _complete_track3_manifest(service_url: str) -> dict:
             "google_cloud_deployment": {
                 "project_id": "demo-track3-project",
                 "region": "us-central1",
-                "service_name": "construct-agentops-a2a",
+                "service_name": "revka-agentops-a2a",
                 "service_url": service_url,
                 "evidence_files": ["deploy/cloud-run-service.json", "deploy/deploy-output.txt"],
             },
@@ -190,13 +190,13 @@ def _complete_track3_manifest(service_url: str) -> dict:
             "adk_orchestration": {
                 "framework": "Google ADK",
                 "source_files": [
-                    "examples/google-agents-track3/construct-agentops-a2a/agent.py",
-                    "examples/google-agents-track3/construct-agentops-a2a/main.py",
+                    "examples/google-agents-track3/revka-agentops-a2a/agent.py",
+                    "examples/google-agents-track3/revka-agentops-a2a/main.py",
                 ],
                 "evidence_files": ["runtime/source-manifest.json"],
             },
             "b2b_enterprise_package": {
-                "package_name": "Construct Enterprise AgentOps Control Plane",
+                "package_name": "Revka Enterprise AgentOps Control Plane",
                 "buyer": "Platform engineering or IT operations leader",
                 "workflow": "Production incident response",
                 "evidence_files": ["business/package.md"],
@@ -229,12 +229,12 @@ def _complete_track3_manifest(service_url: str) -> dict:
 
 
 def _write_complete_track3_evidence(evidence_dir: Path) -> None:
-    service_url = "https://construct-agentops-a2a-demo-uc.a.run.app"
+    service_url = "https://revka-agentops-a2a-demo-uc.a.run.app"
     files = {
         "deploy/cloud-run-service.json": json.dumps(
             {
                 "metadata": {
-                    "name": "construct-agentops-a2a",
+                    "name": "revka-agentops-a2a",
                     "labels": {"project": "demo-track3-project"},
                 },
                 "status": {"url": service_url},
@@ -242,14 +242,14 @@ def _write_complete_track3_evidence(evidence_dir: Path) -> None:
             }
         ),
         "deploy/deploy-output.txt": (
-            "Cloud Run service construct-agentops-a2a deployed in project "
+            "Cloud Run service revka-agentops-a2a deployed in project "
             f"demo-track3-project region us-central1 at Cloud Run URL {service_url}"
         ),
         "deploy/rollback-plan.md": (
             "Rollback by redeploying the previous Cloud Run revision and recording approval."
         ),
         "deploy/cloudrun-production.yaml": (
-            "serviceAccountName: construct-agentops-a2a@demo-track3-project.iam.gserviceaccount.com\n"
+            "serviceAccountName: revka-agentops-a2a@demo-track3-project.iam.gserviceaccount.com\n"
             "containerConcurrency: 40\n"
             "timeoutSeconds: 60\n"
             "env:\n"
@@ -264,12 +264,12 @@ def _write_complete_track3_evidence(evidence_dir: Path) -> None:
             "- name: A2A_BEARER_TOKEN\n"
             "  valueFrom:\n"
             "    secretKeyRef:\n"
-            "      name: construct-a2a-bearer-token\n"
+            "      name: revka-a2a-bearer-token\n"
         ),
         "a2a/agent-card.json": json.dumps(
             {
                 "protocolVersion": "0.3",
-                "name": "Construct Enterprise AgentOps Control Plane",
+                "name": "Revka Enterprise AgentOps Control Plane",
                 "description": "B2B A2A agent",
                 "url": service_url,
                 "iconUrl": "data:image/svg+xml;base64,PHN2Zw==",
@@ -329,9 +329,9 @@ def _write_complete_track3_evidence(evidence_dir: Path) -> None:
             }
         ),
         "business/package.md": (
-            "Construct Enterprise AgentOps Control Plane is a B2B package for the buyer: "
+            "Revka Enterprise AgentOps Control Plane is a B2B package for the buyer: "
             "platform engineering or IT operations leader. The workflow is production "
-            "incident response using Construct Enterprise AgentOps."
+            "incident response using Revka Enterprise AgentOps."
         ),
         "governance/controls.md": (
             "Enterprise governance uses per-agent service identity, approval gates, "
@@ -699,7 +699,7 @@ if args[:2] == ["pr", "checks"]:
     ]))
 elif args[:2] == ["pr", "view"]:
     print(json.dumps({
-        "url": "https://github.com/KumihoIO/construct-os/pull/324",
+        "url": "https://github.com/KumihoIO/Revka/pull/324",
         "headRefOid": os.environ["FAKE_HEAD"],
         "baseRefName": "main",
         "reviewDecision": "REVIEW_REQUIRED",
@@ -784,7 +784,7 @@ if args[:2] == ["pr", "checks"]:
     print(json.dumps([{"name": "CI", "state": "SUCCESS", "workflow": "CI"}]))
 elif args[:2] == ["pr", "view"]:
     print(json.dumps({
-        "url": "https://github.com/KumihoIO/construct-os/pull/324",
+        "url": "https://github.com/KumihoIO/Revka/pull/324",
         "headRefOid": os.environ["FAKE_HEAD"],
         "baseRefName": "main",
         "reviewDecision": "REVIEW_REQUIRED",
@@ -864,7 +864,7 @@ if args[:2] == ["pr", "checks"]:
     ]))
 elif args[:2] == ["pr", "view"]:
     print(json.dumps({
-        "url": "https://github.com/KumihoIO/construct-os/pull/324",
+        "url": "https://github.com/KumihoIO/Revka/pull/324",
         "headRefOid": os.environ["FAKE_HEAD"],
         "baseRefName": "release-demo",
         "reviewDecision": "REVIEW_REQUIRED",
@@ -943,7 +943,7 @@ if args[:2] == ["pr", "checks"]:
     ]))
 elif args[:2] == ["pr", "view"]:
     print(json.dumps({
-        "url": "https://github.com/KumihoIO/construct-os/pull/324",
+        "url": "https://github.com/KumihoIO/Revka/pull/324",
         "headRefOid": os.environ["FAKE_HEAD"],
         "baseRefName": "main",
         "reviewDecision": "REVIEW_REQUIRED",
@@ -1116,7 +1116,7 @@ def test_pre_recording_gate_can_require_real_agents_cli_auth(tmp_path):
         if item["check"] == "real_agents_cli"
     )
     assert detail["remediation"] == [
-        "run agents-cli login -i outside Construct, then rerun the strict gate"
+        "run agents-cli login -i outside Revka, then rerun the strict gate"
     ]
 
 

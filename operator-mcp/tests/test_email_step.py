@@ -8,7 +8,7 @@ Covers:
 - Click-tracking link rewriter fires when track_clicks=true and refuses
   to send when misconfigured (missing track_kref or base URL)
 - Recipient/subject/body interpolation against workflow inputs
-- SMTP config falls back to ~/.construct/config.toml when not given
+- SMTP config falls back to ~/.revka/config.toml when not given
   explicitly on the step
 - Failure modes: missing SMTP host, timeout, smtplib exception
 """
@@ -97,7 +97,7 @@ class TestRealSend:
     @pytest.fixture
     def smtp_config(self):
         # Stub the config-file read so tests don't depend on a dev
-        # machine's ~/.construct/config.toml. Returns a minimal but
+        # machine's ~/.revka/config.toml. Returns a minimal but
         # valid SMTP config.
         return {
             "smtp_host": "smtp.test",
@@ -198,9 +198,9 @@ class TestClickTracking:
         return EmailStepConfig(
             to="lead@example.com",
             subject="Hi",
-            body="Visit https://construct.example.com or https://kumiho.io.",
+            body="Visit https://revka.example.com or https://kumiho.io.",
             track_clicks=True,
-            track_kref="kref://Construct/Outreach/leads/acme.contact",
+            track_kref="kref://Revka/Outreach/leads/acme.contact",
             track_base_url="https://gw.example.com",
             dry_run=True,  # We want to inspect the rendered body, not actually send
         )
@@ -210,7 +210,7 @@ class TestClickTracking:
         assert result.status == "completed"
         rendered = result.output_data["rendered"]
         # Originals are gone; tracker URLs replaced them
-        assert "https://construct.example.com" not in rendered or "track/c/" in rendered
+        assert "https://revka.example.com" not in rendered or "track/c/" in rendered
         assert "https://gw.example.com/track/c/" in rendered
         # Encoded kref surfaces in output_data so downstream steps can
         # log it / cross-reference click events.
@@ -269,11 +269,11 @@ class TestClickTracking:
 
 class TestConfigLoading:
     def test_loads_channels_config_email_section(self, tmp_path, monkeypatch):
-        # Drop a fake config.toml at ~/.construct/config.toml — patch
+        # Drop a fake config.toml at ~/.revka/config.toml — patch
         # HOME so the loader looks at our tmp dir.
-        construct_dir = tmp_path / ".construct"
-        construct_dir.mkdir()
-        (construct_dir / "config.toml").write_text(
+        revka_dir = tmp_path / ".revka"
+        revka_dir.mkdir()
+        (revka_dir / "config.toml").write_text(
             """
 [channels_config.email]
 smtp_host = "smtp.example.com"

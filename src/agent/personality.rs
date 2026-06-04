@@ -248,10 +248,8 @@ mod tests {
     use super::*;
 
     fn setup_workspace(files: &[(&str, &str)]) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "construct_personality_test_{}",
-            uuid::Uuid::new_v4()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("revka_personality_test_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         for (name, content) in files {
             std::fs::write(dir.join(name), content).unwrap();

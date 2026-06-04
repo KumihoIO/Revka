@@ -1,4 +1,4 @@
-# Construct Documentation Inventory
+# Revka Documentation Inventory
 
 This inventory classifies docs by intent so readers can distinguish runtime-contract docs from proposals, process docs, and time-bound reports.
 

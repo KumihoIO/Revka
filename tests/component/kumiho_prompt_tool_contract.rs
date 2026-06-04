@@ -1,4 +1,4 @@
-//! Positive guard: every Kumiho tool name advertised in Construct's
+//! Positive guard: every Kumiho tool name advertised in Revka's
 //! prompt-emitting source files must exist as a real MCP tool registration.
 //!
 //! Coherence audit 2026-05, Row 1 (and the broader "Aspirational" pattern)
@@ -24,7 +24,7 @@
 //! - `kumiho/mcp_server.py` (the bare-tools package)
 //! - `kumiho_memory/mcp_tools.py` (the high-level reflexes package)
 //!
-//! Both packages install into `~/.construct/kumiho/venv/` via
+//! Both packages install into `~/.revka/kumiho/venv/` via
 //! `scripts/install-sidecars.sh`. They aren't vendored in this repo, so the
 //! allowlist below is the test-time mirror — keep it in sync when adding
 //! new Kumiho tools upstream.

@@ -16,7 +16,7 @@ use tokio::sync::broadcast;
 
 /// Process-global canvas store shared between the gateway (HTTP/WS routes
 /// subscribe to broadcast channels here) and in-process agents (the native
-/// `canvas` tool writes frames here). Both run in the same `construct daemon`
+/// `canvas` tool writes frames here). Both run in the same `revka daemon`
 /// process, so a singleton ensures every render reaches connected viewers.
 static GLOBAL_STORE: OnceLock<CanvasStore> = OnceLock::new();
 

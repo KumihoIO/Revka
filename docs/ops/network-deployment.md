@@ -1,6 +1,6 @@
-# Network Deployment — Construct on Raspberry Pi and Local Network
+# Network Deployment — Revka on Raspberry Pi and Local Network
 
-This document covers deploying Construct on a Raspberry Pi or other host on your local network, with Telegram and optional webhook channels.
+This document covers deploying Revka on a Raspberry Pi or other host on your local network, with Telegram and optional webhook channels.
 
 ---
 
@@ -8,19 +8,19 @@ This document covers deploying Construct on a Raspberry Pi or other host on your
 
 | Mode | Inbound port needed? | Use case |
 |------|----------------------|----------|
-| **Telegram polling** | No | Construct polls Telegram API; works from anywhere |
-| **Matrix sync (including E2EE)** | No | Construct syncs via Matrix client API; no inbound webhook required |
+| **Telegram polling** | No | Revka polls Telegram API; works from anywhere |
+| **Matrix sync (including E2EE)** | No | Revka syncs via Matrix client API; no inbound webhook required |
 | **Discord/Slack** | No | Same — outbound only |
 | **Nostr** | No | Connects to relays via WebSocket; outbound only |
 | **Gateway webhook** | Yes | POST /webhook, /whatsapp, /linq, /nextcloud-talk need a public URL |
 | **Gateway pairing** | Yes | If you pair clients via the gateway |
 | **Alpine/OpenRC service** | No | System-wide background service on Alpine Linux |
 
-**Key:** Telegram, Discord, Slack, and Nostr use **outbound connections** — Construct connects to external servers/relays. No port forwarding or public IP required.
+**Key:** Telegram, Discord, Slack, and Nostr use **outbound connections** — Revka connects to external servers/relays. No port forwarding or public IP required.
 
 ---
 
-## 2. Construct on Raspberry Pi
+## 2. Revka on Raspberry Pi
 
 ### 2.1 Prerequisites
 
@@ -39,7 +39,7 @@ cargo build --release --features hardware
 
 ### 2.3 Config
 
-Edit `~/.construct/config.toml`:
+Edit `~/.revka/config.toml`:
 
 ```toml
 [peripherals]
@@ -66,17 +66,17 @@ port = 42617
 allow_public_bind = false
 ```
 
-<!-- TODO screenshot: terminal output from `construct daemon --host 0.0.0.0` startup -->
-![Terminal output from construct daemon --host 0.0.0.0 startup](../assets/ops/network-deployment-02-daemon-startup.png)
+<!-- TODO screenshot: terminal output from `revka daemon --host 0.0.0.0` startup -->
+![Terminal output from revka daemon --host 0.0.0.0 startup](../assets/ops/network-deployment-02-daemon-startup.png)
 
 ### 2.4 Run Daemon (Local Only)
 
 ```bash
-construct daemon --host 127.0.0.1 --port 42617
+revka daemon --host 127.0.0.1 --port 42617
 ```
 
 - Gateway binds to `127.0.0.1` — not reachable from other machines
-- Telegram channel works: Construct polls Telegram API (outbound)
+- Telegram channel works: Revka polls Telegram API (outbound)
 - No firewall or port forwarding needed
 
 ---
@@ -98,7 +98,7 @@ allow_public_bind = true
 ```
 
 ```bash
-construct daemon --host 0.0.0.0 --port 42617
+revka daemon --host 0.0.0.0 --port 42617
 ```
 
 **Security:** `allow_public_bind = true` exposes the gateway to your local network. Only use on trusted LANs.
@@ -109,7 +109,7 @@ If you need a **public URL** (e.g. WhatsApp webhook, external clients):
 
 1. Run gateway on localhost:
    ```bash
-   construct daemon --host 127.0.0.1 --port 42617
+   revka daemon --host 127.0.0.1 --port 42617
    ```
 
 2. Start a tunnel:
@@ -117,9 +117,9 @@ If you need a **public URL** (e.g. WhatsApp webhook, external clients):
    [tunnel]
    provider = "tailscale"   # or "ngrok", "cloudflare"
    ```
-   Or use `construct tunnel` (see tunnel docs).
+   Or use `revka tunnel` (see tunnel docs).
 
-3. Construct will refuse `0.0.0.0` unless `allow_public_bind = true` or a tunnel is active.
+3. Revka will refuse `0.0.0.0` unless `allow_public_bind = true` or a tunnel is active.
 
 ---
 
@@ -127,7 +127,7 @@ If you need a **public URL** (e.g. WhatsApp webhook, external clients):
 
 Telegram uses **long-polling** by default:
 
-- Construct calls `https://api.telegram.org/bot{token}/getUpdates`
+- Revka calls `https://api.telegram.org/bot{token}/getUpdates`
 - No inbound port or public IP needed
 - Works behind NAT, on RPi, in a home lab
 
@@ -139,12 +139,12 @@ bot_token = "YOUR_BOT_TOKEN"
 allowed_users = []            # deny-by-default, bind identities explicitly
 ```
 
-Run `construct daemon` — Telegram channel starts automatically.
+Run `revka daemon` — Telegram channel starts automatically.
 
 To approve one Telegram account at runtime:
 
 ```bash
-construct channel bind-telegram <IDENTITY>
+revka channel bind-telegram <IDENTITY>
 ```
 
 `<IDENTITY>` can be a numeric Telegram user ID or a username (without `@`).
@@ -153,7 +153,7 @@ construct channel bind-telegram <IDENTITY>
 
 Telegram Bot API `getUpdates` supports only one active poller per bot token.
 
-- Keep one runtime instance for the same token (recommended: `construct daemon` service).
+- Keep one runtime instance for the same token (recommended: `revka daemon` service).
 - Do not run `cargo run -- channel start` or another bot process at the same time.
 
 If you hit this error:
@@ -200,7 +200,7 @@ Configure Cloudflare Tunnel to forward to `127.0.0.1:42617`, then set your webho
 
 - [ ] Build with `--features hardware` (and `peripheral-rpi` if using native GPIO)
 - [ ] Configure `[peripherals]` and `[channels_config.telegram]`
-- [ ] Run `construct daemon --host 127.0.0.1 --port 42617` (Telegram works without 0.0.0.0)
+- [ ] Run `revka daemon --host 127.0.0.1 --port 42617` (Telegram works without 0.0.0.0)
 - [ ] For LAN access: `--host 0.0.0.0` + `allow_public_bind = true` in config
 - [ ] For webhooks: use Tailscale, ngrok, or Cloudflare tunnel
 
@@ -208,56 +208,56 @@ Configure Cloudflare Tunnel to forward to `127.0.0.1:42617`, then set your webho
 
 ## 7. OpenRC (Alpine Linux Service)
 
-Construct supports OpenRC for Alpine Linux and other distributions using the OpenRC init system. OpenRC services run **system-wide** and require root/sudo.
+Revka supports OpenRC for Alpine Linux and other distributions using the OpenRC init system. OpenRC services run **system-wide** and require root/sudo.
 
 ### 7.1 Prerequisites
 
 - Alpine Linux (or another OpenRC-based distro)
 - Root or sudo access
-- A dedicated `construct` system user (created during install)
+- A dedicated `revka` system user (created during install)
 
 ### 7.2 Install Service
 
 ```bash
 # Install service (OpenRC is auto-detected on Alpine)
-sudo construct service install
+sudo revka service install
 ```
 
 This creates:
-- Init script: `/etc/init.d/construct`
-- Config directory: `/etc/construct/`
-- Log directory: `/var/log/construct/`
+- Init script: `/etc/init.d/revka`
+- Config directory: `/etc/revka/`
+- Log directory: `/var/log/revka/`
 
 ### 7.3 Configuration
 
 Manual config copy is usually not required.
 
-`sudo construct service install` automatically prepares `/etc/construct`, migrates existing runtime state from your user setup when available, and sets ownership/permissions for the `construct` service user.
+`sudo revka service install` automatically prepares `/etc/revka`, migrates existing runtime state from your user setup when available, and sets ownership/permissions for the `revka` service user.
 
-If no prior runtime state is available to migrate, create `/etc/construct/config.toml` before starting the service.
+If no prior runtime state is available to migrate, create `/etc/revka/config.toml` before starting the service.
 
 ### 7.4 Enable and Start
 
 ```bash
 # Add to default runlevel
-sudo rc-update add construct default
+sudo rc-update add revka default
 
 # Start the service
-sudo rc-service construct start
+sudo rc-service revka start
 
 # Check status
-sudo rc-service construct status
+sudo rc-service revka status
 ```
 
 ### 7.5 Manage Service
 
 | Command | Description |
 |---------|-------------|
-| `sudo rc-service construct start` | Start the daemon |
-| `sudo rc-service construct stop` | Stop the daemon |
-| `sudo rc-service construct status` | Check service status |
-| `sudo rc-service construct restart` | Restart the daemon |
-| `sudo construct service status` | Construct status wrapper (uses `/etc/construct` config) |
+| `sudo rc-service revka start` | Start the daemon |
+| `sudo rc-service revka stop` | Stop the daemon |
+| `sudo rc-service revka status` | Check service status |
+| `sudo rc-service revka restart` | Restart the daemon |
+| `sudo revka service status` | Revka status wrapper (uses `/etc/revka` config) |
 
 ### 7.6 Logs
 
@@ -265,41 +265,41 @@ OpenRC routes logs to:
 
 | Log | Path |
 |-----|------|
-| Access/stdout | `/var/log/construct/access.log` |
-| Errors/stderr | `/var/log/construct/error.log` |
+| Access/stdout | `/var/log/revka/access.log` |
+| Errors/stderr | `/var/log/revka/error.log` |
 
 View logs:
 
 ```bash
-sudo tail -f /var/log/construct/error.log
+sudo tail -f /var/log/revka/error.log
 ```
 
 ### 7.7 Uninstall
 
 ```bash
 # Stop and remove from runlevel
-sudo rc-service construct stop
-sudo rc-update del construct default
+sudo rc-service revka stop
+sudo rc-update del revka default
 
 # Remove init script
-sudo construct service uninstall
+sudo revka service uninstall
 ```
 
 ### 7.8 Notes
 
 - OpenRC is **system-wide only** (no user-level services)
 - Requires `sudo` or root for all service operations
-- The service runs as the `construct:construct` user (least privilege)
-- Config must be at `/etc/construct/config.toml` (explicit path in init script)
-- If the `construct` user does not exist, install will fail with instructions to create it
+- The service runs as the `revka:revka` user (least privilege)
+- Config must be at `/etc/revka/config.toml` (explicit path in init script)
+- If the `revka` user does not exist, install will fail with instructions to create it
 
 ### 7.9 Checklist: Alpine/OpenRC Deployment
 
-- [ ] Install: `sudo construct service install`
-- [ ] Enable: `sudo rc-update add construct default`
-- [ ] Start: `sudo rc-service construct start`
-- [ ] Verify: `sudo rc-service construct status`
-- [ ] Check logs: `/var/log/construct/error.log`
+- [ ] Install: `sudo revka service install`
+- [ ] Enable: `sudo rc-update add revka default`
+- [ ] Start: `sudo rc-service revka start`
+- [ ] Verify: `sudo rc-service revka status`
+- [ ] Check logs: `/var/log/revka/error.log`
 
 ---
 

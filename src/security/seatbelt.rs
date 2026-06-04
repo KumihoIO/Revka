@@ -35,7 +35,7 @@ impl SeatbeltSandbox {
             ));
         }
 
-        let policy_dir = std::env::temp_dir().join("construct-seatbelt");
+        let policy_dir = std::env::temp_dir().join("revka-seatbelt");
         std::fs::create_dir_all(&policy_dir)?;
 
         let session_id = uuid::Uuid::new_v4();

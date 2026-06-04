@@ -1,4 +1,4 @@
-# Construct Providers Reference
+# Revka Providers Reference
 
 This document maps provider IDs, aliases, and credential environment variables.
 
@@ -7,7 +7,7 @@ Last verified: **April 21, 2026**.
 ## How to List Providers
 
 ```bash
-construct providers
+revka providers
 ```
 
 ## Credential Resolution Order
@@ -16,7 +16,7 @@ Runtime resolution order is:
 
 1. Explicit credential from config/CLI
 2. Provider-specific env var(s)
-3. Generic fallback env vars: `CONSTRUCT_API_KEY` then `API_KEY`
+3. Generic fallback env vars: `REVKA_API_KEY` then `API_KEY`
 
 For resilient fallback chains (`reliability.fallback_providers`), each fallback
 provider resolves credentials independently. The primary provider's explicit
@@ -64,12 +64,12 @@ credential is not reused for fallback providers.
 | `nvidia` | `nvidia-nim`, `build.nvidia.com` | No | `NVIDIA_API_KEY` |
 | `avian` | — | No | `AVIAN_API_KEY` |
 | `claude-code` | — | No | (uses local Claude Code CLI subscription/session) |
-| `openai-codex` | `codex` | No | OAuth flow via `construct auth login --provider openai-codex` (cached under `~/.construct/auth/` or imported from `~/.codex/auth.json`) |
+| `openai-codex` | `codex` | No | OAuth flow via `revka auth login --provider openai-codex` (cached under `~/.revka/auth/` or imported from `~/.codex/auth.json`) |
 | `gemini-cli` | — | No | OAuth via `~/.gemini/oauth_creds.json`, or `GEMINI_API_KEY` fallback |
 | `copilot` | `github-copilot` | No | GitHub token via config/`API_KEY` fallback |
 | `azure_openai` | `azure-openai`, `azure` | No | `AZURE_OPENAI_API_KEY` (requires endpoint/deployment config) |
 | `telnyx` | — | No | `TELNYX_API_KEY` |
-| `kilocli` | — | No | (see `construct providers` for current endpoint details) |
+| `kilocli` | — | No | (see `revka providers` for current endpoint details) |
 
 ### Vercel AI Gateway Notes
 
@@ -91,14 +91,14 @@ credential is not reused for fallback providers.
 
 - Provider ID: `ollama`
 - Vision input is supported through user message image markers: ``[IMAGE:<source>]``.
-- After multimodal normalization, Construct sends image payloads through Ollama's native `messages[].images` field.
-- If a non-vision provider is selected, Construct returns a structured capability error instead of silently ignoring images.
+- After multimodal normalization, Revka sends image payloads through Ollama's native `messages[].images` field.
+- If a non-vision provider is selected, Revka returns a structured capability error instead of silently ignoring images.
 
 ### Ollama Cloud Routing Notes
 
 - Use `:cloud` model suffix only with a remote Ollama endpoint.
 - Remote endpoint should be set in `api_url` (example: `https://ollama.com`).
-- Construct normalizes a trailing `/api` in `api_url` automatically.
+- Revka normalizes a trailing `/api` in `api_url` automatically.
 - If `default_model` ends with `:cloud` while `api_url` is local or unset, config validation fails early with an actionable error.
 - Local Ollama model discovery intentionally excludes `:cloud` entries to avoid selecting cloud-only models in local mode.
 
@@ -107,7 +107,7 @@ credential is not reused for fallback providers.
 - Provider ID: `llamacpp` (alias: `llama.cpp`)
 - Default endpoint: `http://localhost:8080/v1`
 - API key is optional by default; set `LLAMACPP_API_KEY` only when `llama-server` is started with `--api-key`.
-- Model discovery: `construct models refresh --provider llamacpp`
+- Model discovery: `revka models refresh --provider llamacpp`
 
 ### SGLang Server Notes
 
@@ -115,21 +115,21 @@ credential is not reused for fallback providers.
 - Default endpoint: `http://localhost:30000/v1`
 - API key is optional by default; set `SGLANG_API_KEY` only when the server requires authentication.
 - Tool calling requires launching SGLang with `--tool-call-parser` (e.g. `hermes`, `llama3`, `qwen25`).
-- Model discovery: `construct models refresh --provider sglang`
+- Model discovery: `revka models refresh --provider sglang`
 
 ### vLLM Server Notes
 
 - Provider ID: `vllm`
 - Default endpoint: `http://localhost:8000/v1`
 - API key is optional by default; set `VLLM_API_KEY` only when the server requires authentication.
-- Model discovery: `construct models refresh --provider vllm`
+- Model discovery: `revka models refresh --provider vllm`
 
 ### Osaurus Server Notes
 
 - Provider ID: `osaurus`
 - Default endpoint: `http://localhost:1337/v1`
 - API key defaults to `"osaurus"` but is optional; set `OSAURUS_API_KEY` to override or leave unset for keyless access.
-- Model discovery: `construct models refresh --provider osaurus`
+- Model discovery: `revka models refresh --provider osaurus`
 - [Osaurus](https://github.com/dinoki-ai/osaurus) is a unified AI edge runtime for macOS (Apple Silicon) that combines local MLX inference with cloud provider proxying through a single endpoint.
 - Supports multiple API formats simultaneously: OpenAI-compatible (`/v1/chat/completions`), Anthropic (`/messages`), Ollama (`/chat`), and Open Responses (`/v1/responses`).
 - Built-in MCP (Model Context Protocol) support for tool and context server connectivity.
@@ -173,7 +173,7 @@ Behavior:
 - Canonical provider ID: `nvidia`
 - Aliases: `nvidia-nim`, `build.nvidia.com`
 - Base API URL: `https://integrate.api.nvidia.com/v1`
-- Model discovery: `construct models refresh --provider nvidia`
+- Model discovery: `revka models refresh --provider nvidia`
 
 Recommended starter model IDs (verified against NVIDIA API catalog on February 18, 2026):
 
@@ -184,14 +184,14 @@ Recommended starter model IDs (verified against NVIDIA API catalog on February 1
 
 ### Claude Code / Codex / Gemini CLI Subscription Providers
 
-These providers let Construct reuse a subscription authenticated through the
+These providers let Revka reuse a subscription authenticated through the
 native CLI for that vendor, instead of a direct API key:
 
 - `claude-code` — reuses local Claude Code CLI credentials/session.
-- `openai-codex` (alias `codex`) — OAuth via `construct auth login --provider openai-codex [--device-code]`, or `--import <path>` to reuse `~/.codex/auth.json`.
+- `openai-codex` (alias `codex`) — OAuth via `revka auth login --provider openai-codex [--device-code]`, or `--import <path>` to reuse `~/.codex/auth.json`.
 - `gemini-cli` — uses Gemini CLI OAuth credentials cached at `~/.gemini/oauth_creds.json`.
 
-Active profile management is via `construct auth use --provider <id> --profile <name>`; `construct auth status` prints the active profile and token expiry info.
+Active profile management is via `revka auth use --provider <id> --profile <name>`; `revka auth status` prints the active profile and token expiry info.
 
 ## Custom Endpoints
 
@@ -323,8 +323,8 @@ Recommended workflow:
 1. Keep call sites stable (`hint:reasoning`, `hint:semantic`).
 2. Change only the target model under `[[model_routes]]` or `[[embedding_routes]]`.
 3. Run:
-   - `construct doctor`
-   - `construct status`
+   - `revka doctor`
+   - `revka status`
 4. Smoke test one representative flow (chat + memory retrieval) before rollout.
 
 This minimizes breakage because integrations and prompts do not need to change when model IDs are upgraded.

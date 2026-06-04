@@ -50,78 +50,66 @@ impl PrometheusObserver {
         let registry = Registry::new();
 
         let agent_starts = IntCounterVec::new(
-            prometheus::Opts::new("construct_agent_starts_total", "Total agent invocations"),
+            prometheus::Opts::new("revka_agent_starts_total", "Total agent invocations"),
             &["provider", "model"],
         )
         .expect("valid metric");
 
         let llm_requests = IntCounterVec::new(
-            prometheus::Opts::new(
-                "construct_llm_requests_total",
-                "Total LLM provider requests",
-            ),
+            prometheus::Opts::new("revka_llm_requests_total", "Total LLM provider requests"),
             &["provider", "model", "success"],
         )
         .expect("valid metric");
 
         let tokens_input_total = IntCounterVec::new(
-            prometheus::Opts::new(
-                "construct_tokens_input_total",
-                "Total input tokens consumed",
-            ),
+            prometheus::Opts::new("revka_tokens_input_total", "Total input tokens consumed"),
             &["provider", "model"],
         )
         .expect("valid metric");
 
         let tokens_output_total = IntCounterVec::new(
-            prometheus::Opts::new(
-                "construct_tokens_output_total",
-                "Total output tokens consumed",
-            ),
+            prometheus::Opts::new("revka_tokens_output_total", "Total output tokens consumed"),
             &["provider", "model"],
         )
         .expect("valid metric");
 
         let tool_calls = IntCounterVec::new(
-            prometheus::Opts::new("construct_tool_calls_total", "Total tool calls"),
+            prometheus::Opts::new("revka_tool_calls_total", "Total tool calls"),
             &["tool", "success"],
         )
         .expect("valid metric");
 
         let channel_messages = IntCounterVec::new(
-            prometheus::Opts::new("construct_channel_messages_total", "Total channel messages"),
+            prometheus::Opts::new("revka_channel_messages_total", "Total channel messages"),
             &["channel", "direction"],
         )
         .expect("valid metric");
 
         let heartbeat_ticks =
-            prometheus::IntCounter::new("construct_heartbeat_ticks_total", "Total heartbeat ticks")
+            prometheus::IntCounter::new("revka_heartbeat_ticks_total", "Total heartbeat ticks")
                 .expect("valid metric");
 
         let errors = IntCounterVec::new(
-            prometheus::Opts::new("construct_errors_total", "Total errors by component"),
+            prometheus::Opts::new("revka_errors_total", "Total errors by component"),
             &["component"],
         )
         .expect("valid metric");
 
         let cache_hits = IntCounterVec::new(
-            prometheus::Opts::new("construct_cache_hits_total", "Total response cache hits"),
+            prometheus::Opts::new("revka_cache_hits_total", "Total response cache hits"),
             &["cache_type"],
         )
         .expect("valid metric");
 
         let cache_misses = IntCounterVec::new(
-            prometheus::Opts::new(
-                "construct_cache_misses_total",
-                "Total response cache misses",
-            ),
+            prometheus::Opts::new("revka_cache_misses_total", "Total response cache misses"),
             &["cache_type"],
         )
         .expect("valid metric");
 
         let cache_tokens_saved = IntCounterVec::new(
             prometheus::Opts::new(
-                "construct_cache_tokens_saved_total",
+                "revka_cache_tokens_saved_total",
                 "Total tokens saved by response cache",
             ),
             &["cache_type"],
@@ -130,7 +118,7 @@ impl PrometheusObserver {
 
         let agent_duration = HistogramVec::new(
             HistogramOpts::new(
-                "construct_agent_duration_seconds",
+                "revka_agent_duration_seconds",
                 "Agent invocation duration in seconds",
             )
             .buckets(vec![0.1, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0]),
@@ -140,7 +128,7 @@ impl PrometheusObserver {
 
         let tool_duration = HistogramVec::new(
             HistogramOpts::new(
-                "construct_tool_duration_seconds",
+                "revka_tool_duration_seconds",
                 "Tool execution duration in seconds",
             )
             .buckets(vec![0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 10.0]),
@@ -150,40 +138,38 @@ impl PrometheusObserver {
 
         let request_latency = Histogram::with_opts(
             HistogramOpts::new(
-                "construct_request_latency_seconds",
+                "revka_request_latency_seconds",
                 "Request latency in seconds",
             )
             .buckets(vec![0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0]),
         )
         .expect("valid metric");
 
-        let tokens_used = prometheus::IntGauge::new(
-            "construct_tokens_used_last",
-            "Tokens used in the last request",
-        )
-        .expect("valid metric");
+        let tokens_used =
+            prometheus::IntGauge::new("revka_tokens_used_last", "Tokens used in the last request")
+                .expect("valid metric");
 
         let active_sessions = GaugeVec::new(
-            prometheus::Opts::new("construct_active_sessions", "Number of active sessions"),
+            prometheus::Opts::new("revka_active_sessions", "Number of active sessions"),
             &[],
         )
         .expect("valid metric");
 
         let queue_depth = GaugeVec::new(
-            prometheus::Opts::new("construct_queue_depth", "Message queue depth"),
+            prometheus::Opts::new("revka_queue_depth", "Message queue depth"),
             &[],
         )
         .expect("valid metric");
 
         let hand_runs = IntCounterVec::new(
-            prometheus::Opts::new("construct_hand_runs_total", "Total hand runs by outcome"),
+            prometheus::Opts::new("revka_hand_runs_total", "Total hand runs by outcome"),
             &["hand", "success"],
         )
         .expect("valid metric");
 
         let hand_duration = HistogramVec::new(
             HistogramOpts::new(
-                "construct_hand_duration_seconds",
+                "revka_hand_duration_seconds",
                 "Hand run duration in seconds",
             )
             .buckets(vec![0.1, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0]),
@@ -193,7 +179,7 @@ impl PrometheusObserver {
 
         let hand_findings = IntCounterVec::new(
             prometheus::Opts::new(
-                "construct_hand_findings_total",
+                "revka_hand_findings_total",
                 "Total findings produced by hand runs",
             ),
             &["hand"],
@@ -201,14 +187,14 @@ impl PrometheusObserver {
         .expect("valid metric");
 
         let deployments_total = IntCounterVec::new(
-            prometheus::Opts::new("construct_deployments_total", "Total deployments by status"),
+            prometheus::Opts::new("revka_deployments_total", "Total deployments by status"),
             &["status"],
         )
         .expect("valid metric");
 
         let deployment_lead_time = Histogram::with_opts(
             HistogramOpts::new(
-                "construct_deployment_lead_time_seconds",
+                "revka_deployment_lead_time_seconds",
                 "Deployment lead time from commit to deploy in seconds",
             )
             .buckets(vec![
@@ -218,14 +204,14 @@ impl PrometheusObserver {
         .expect("valid metric");
 
         let deployment_failure_rate = prometheus::Gauge::new(
-            "construct_deployment_failure_rate",
+            "revka_deployment_failure_rate",
             "Ratio of failed deployments to total deployments",
         )
         .expect("valid metric");
 
         let recovery_time = Histogram::with_opts(
             HistogramOpts::new(
-                "construct_recovery_time_seconds",
+                "revka_recovery_time_seconds",
                 "Time to recover from a failed deployment in seconds",
             )
             .buckets(vec![
@@ -234,9 +220,8 @@ impl PrometheusObserver {
         )
         .expect("valid metric");
 
-        let mttr =
-            prometheus::Gauge::new("construct_mttr_seconds", "Mean time to recovery in seconds")
-                .expect("valid metric");
+        let mttr = prometheus::Gauge::new("revka_mttr_seconds", "Mean time to recovery in seconds")
+            .expect("valid metric");
 
         // Register all metrics
         registry.register(Box::new(agent_starts.clone())).ok();
@@ -600,10 +585,10 @@ mod tests {
         obs.record_metric(&ObserverMetric::RequestLatency(Duration::from_millis(250)));
 
         let output = obs.encode();
-        assert!(output.contains("construct_agent_starts_total"));
-        assert!(output.contains("construct_tool_calls_total"));
-        assert!(output.contains("construct_heartbeat_ticks_total"));
-        assert!(output.contains("construct_request_latency_seconds"));
+        assert!(output.contains("revka_agent_starts_total"));
+        assert!(output.contains("revka_tool_calls_total"));
+        assert!(output.contains("revka_heartbeat_ticks_total"));
+        assert!(output.contains("revka_request_latency_seconds"));
     }
 
     #[test]
@@ -615,7 +600,7 @@ mod tests {
         }
 
         let output = obs.encode();
-        assert!(output.contains("construct_heartbeat_ticks_total 3"));
+        assert!(output.contains("revka_heartbeat_ticks_total 3"));
     }
 
     #[test]
@@ -639,8 +624,8 @@ mod tests {
         });
 
         let output = obs.encode();
-        assert!(output.contains(r#"construct_tool_calls_total{success="true",tool="shell"} 2"#));
-        assert!(output.contains(r#"construct_tool_calls_total{success="false",tool="shell"} 1"#));
+        assert!(output.contains(r#"revka_tool_calls_total{success="true",tool="shell"} 2"#));
+        assert!(output.contains(r#"revka_tool_calls_total{success="false",tool="shell"} 1"#));
     }
 
     #[test]
@@ -660,8 +645,8 @@ mod tests {
         });
 
         let output = obs.encode();
-        assert!(output.contains(r#"construct_errors_total{component="provider"} 2"#));
-        assert!(output.contains(r#"construct_errors_total{component="channels"} 1"#));
+        assert!(output.contains(r#"revka_errors_total{component="provider"} 2"#));
+        assert!(output.contains(r#"revka_errors_total{component="channels"} 1"#));
     }
 
     #[test]
@@ -671,7 +656,7 @@ mod tests {
         obs.record_metric(&ObserverMetric::TokensUsed(200));
 
         let output = obs.encode();
-        assert!(output.contains("construct_tokens_used_last 200"));
+        assert!(output.contains("revka_tokens_used_last 200"));
     }
 
     #[test]
@@ -699,13 +684,13 @@ mod tests {
 
         let output = obs.encode();
         assert!(output.contains(
-            r#"construct_llm_requests_total{model="claude-sonnet",provider="openrouter",success="true"} 2"#
+            r#"revka_llm_requests_total{model="claude-sonnet",provider="openrouter",success="true"} 2"#
         ));
         assert!(output.contains(
-            r#"construct_tokens_input_total{model="claude-sonnet",provider="openrouter"} 300"#
+            r#"revka_tokens_input_total{model="claude-sonnet",provider="openrouter"} 300"#
         ));
         assert!(output.contains(
-            r#"construct_tokens_output_total{model="claude-sonnet",provider="openrouter"} 130"#
+            r#"revka_tokens_output_total{model="claude-sonnet",provider="openrouter"} 130"#
         ));
     }
 
@@ -730,10 +715,10 @@ mod tests {
         });
 
         let output = obs.encode();
-        assert!(output.contains(r#"construct_hand_runs_total{hand="review",success="true"} 2"#));
-        assert!(output.contains(r#"construct_hand_runs_total{hand="review",success="false"} 1"#));
-        assert!(output.contains(r#"construct_hand_findings_total{hand="review"} 4"#));
-        assert!(output.contains("construct_hand_duration_seconds"));
+        assert!(output.contains(r#"revka_hand_runs_total{hand="review",success="true"} 2"#));
+        assert!(output.contains(r#"revka_hand_runs_total{hand="review",success="false"} 1"#));
+        assert!(output.contains(r#"revka_hand_findings_total{hand="review"} 4"#));
+        assert!(output.contains("revka_hand_duration_seconds"));
     }
 
     #[test]
@@ -758,10 +743,10 @@ mod tests {
         });
 
         let output = obs.encode();
-        assert!(output.contains("construct_hand_duration_seconds"));
-        assert!(output.contains(r#"construct_hand_findings_total{hand="scan"} 5"#));
-        assert!(output.contains(r#"construct_hand_runs_total{hand="scan",success="true"} 1"#));
-        assert!(output.contains(r#"construct_hand_runs_total{hand="scan",success="false"} 1"#));
+        assert!(output.contains("revka_hand_duration_seconds"));
+        assert!(output.contains(r#"revka_hand_findings_total{hand="scan"} 5"#));
+        assert!(output.contains(r#"revka_hand_runs_total{hand="scan",success="true"} 1"#));
+        assert!(output.contains(r#"revka_hand_runs_total{hand="scan",success="false"} 1"#));
     }
 
     #[test]
@@ -780,11 +765,11 @@ mod tests {
 
         let output = obs.encode();
         assert!(output.contains(
-            r#"construct_llm_requests_total{model="llama3",provider="ollama",success="false"} 1"#
+            r#"revka_llm_requests_total{model="llama3",provider="ollama",success="false"} 1"#
         ));
         // Token counters should not appear (no data recorded)
-        assert!(!output.contains("construct_tokens_input_total{"));
-        assert!(!output.contains("construct_tokens_output_total{"));
+        assert!(!output.contains("revka_tokens_input_total{"));
+        assert!(!output.contains("revka_tokens_output_total{"));
     }
 
     #[test]
@@ -805,8 +790,8 @@ mod tests {
         });
 
         let output = obs.encode();
-        assert!(output.contains(r#"construct_deployments_total{status="success"} 2"#));
-        assert!(output.contains(r#"construct_deployments_total{status="failure"} 1"#));
+        assert!(output.contains(r#"revka_deployments_total{status="success"} 2"#));
+        assert!(output.contains(r#"revka_deployments_total{status="failure"} 1"#));
     }
 
     #[test]
@@ -824,7 +809,7 @@ mod tests {
 
         let output = obs.encode();
         // 1 failure out of 2 total = 0.5
-        assert!(output.contains("construct_deployment_failure_rate 0.5"));
+        assert!(output.contains("revka_deployment_failure_rate 0.5"));
     }
 
     #[test]
@@ -837,9 +822,9 @@ mod tests {
         obs.record_metric(&ObserverMetric::RecoveryTime(Duration::from_secs(600)));
 
         let output = obs.encode();
-        assert!(output.contains("construct_deployment_lead_time_seconds"));
-        assert!(output.contains("construct_recovery_time_seconds"));
-        assert!(output.contains("construct_mttr_seconds 600"));
+        assert!(output.contains("revka_deployment_lead_time_seconds"));
+        assert!(output.contains("revka_recovery_time_seconds"));
+        assert!(output.contains("revka_mttr_seconds 600"));
     }
 
     #[test]

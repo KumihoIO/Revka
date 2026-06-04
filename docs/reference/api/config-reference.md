@@ -1,4 +1,4 @@
-# Construct Config Reference (Operator-Oriented)
+# Revka Config Reference (Operator-Oriented)
 
 This is a high-signal reference for common config sections and defaults.
 
@@ -7,22 +7,22 @@ Last verified: **May 13, 2026**.
 For the complete, machine-readable schema (every key, every default) run:
 
 ```bash
-construct config schema > schema.json
+revka config schema > schema.json
 ```
 
 Config path resolution at startup:
 
-1. `CONSTRUCT_WORKSPACE` override (if set)
-2. persisted `~/.construct/active_workspace.toml` marker (if present)
-3. default `~/.construct/config.toml`
+1. `REVKA_WORKSPACE` override (if set)
+2. persisted `~/.revka/active_workspace.toml` marker (if present)
+3. default `~/.revka/config.toml`
 
-Construct logs the resolved config on startup at `INFO` level:
+Revka logs the resolved config on startup at `INFO` level:
 
 - `Config loaded` with fields: `path`, `workspace`, `source`, `initialized`
 
 Schema export command:
 
-- `construct config schema` (prints JSON Schema draft 2020-12 to stdout)
+- `revka config schema` (prints JSON Schema draft 2020-12 to stdout)
 
 ## Core Keys
 
@@ -43,7 +43,7 @@ Schema export command:
 |---|---|---|
 | `backend` | `none` | Observability backend: `none`, `noop`, `log`, `prometheus`, `otel`, `opentelemetry`, or `otlp` |
 | `otel_endpoint` | `http://localhost:4318` | OTLP HTTP endpoint used when backend is `otel` |
-| `otel_service_name` | `construct` | Service name emitted to OTLP collector |
+| `otel_service_name` | `revka` | Service name emitted to OTLP collector |
 | `runtime_trace_mode` | `none` | Runtime trace storage mode: `none`, `rolling`, or `full` |
 | `runtime_trace_path` | `state/runtime-trace.jsonl` | Runtime trace JSONL path (relative to workspace unless absolute) |
 | `runtime_trace_max_entries` | `200` | Maximum retained events when `runtime_trace_mode = "rolling"` |
@@ -54,9 +54,9 @@ Notes:
 - Alias values `opentelemetry` and `otlp` map to the same OTel backend.
 - Runtime traces are intended for debugging tool-call failures and malformed model tool payloads. They can contain model output text, so keep this disabled by default on shared hosts.
 - Query runtime traces with:
-  - `construct doctor traces --limit 20`
-  - `construct doctor traces --event tool_call_result --contains \"error\"`
-  - `construct doctor traces --id <trace-id>`
+  - `revka doctor traces --limit 20`
+  - `revka doctor traces --event tool_call_result --contains \"error\"`
+  - `revka doctor traces --id <trace-id>`
 
 Example:
 
@@ -64,27 +64,27 @@ Example:
 [observability]
 backend = "otel"
 otel_endpoint = "http://localhost:4318"
-otel_service_name = "construct"
+otel_service_name = "revka"
 runtime_trace_mode = "rolling"
 runtime_trace_path = "state/runtime-trace.jsonl"
 runtime_trace_max_entries = 200
 ```
 
-<!-- TODO screenshot: terminal setting CONSTRUCT_PROVIDER env var and running construct with the overridden provider -->
-![Terminal setting CONSTRUCT_PROVIDER env var and running construct with the overridden provider](../../assets/reference/config-reference-01-env-override-terminal.png)
+<!-- TODO screenshot: terminal setting REVKA_PROVIDER env var and running revka with the overridden provider -->
+![Terminal setting REVKA_PROVIDER env var and running revka with the overridden provider](../../assets/reference/config-reference-01-env-override-terminal.png)
 
 ## Environment Provider Overrides
 
 Provider selection can also be controlled by environment variables. Precedence is:
 
-1. `CONSTRUCT_PROVIDER` (explicit override, always wins when non-empty)
+1. `REVKA_PROVIDER` (explicit override, always wins when non-empty)
 2. `PROVIDER` (legacy fallback, only applied when config provider is unset or still `openrouter`)
 3. `default_provider` in `config.toml`
 
 Operational note for container users:
 
 - If your `config.toml` sets an explicit custom provider like `custom:https://.../v1`, a default `PROVIDER=openrouter` from Docker/container env will no longer replace it.
-- Use `CONSTRUCT_PROVIDER` when you intentionally want runtime env to override a non-default configured provider.
+- Use `REVKA_PROVIDER` when you intentionally want runtime env to override a non-default configured provider.
 
 ## `[agent]`
 
@@ -95,7 +95,7 @@ Operational note for container users:
 | `max_history_messages` | `1000` | Maximum conversation history messages retained per session |
 | `max_context_tokens` | `1050000` | Token budget used by loop-level context trimming/compression |
 | `model_context_windows` | `{}` | Per-model context window overrides used by Operator chat compression and hard-cap checks |
-| `context_window_safety_ratio` | `0.95` | Fraction of the model context window allowed before Construct fails loud |
+| `context_window_safety_ratio` | `0.95` | Fraction of the model context window allowed before Revka fails loud |
 | `parallel_tools` | `true` | Enable parallel tool execution within a single iteration |
 | `tool_dispatcher` | `auto` | Tool dispatch strategy |
 | `tool_call_dedup_exempt` | `[]` | Tool names exempt from within-turn duplicate-call suppression |
@@ -136,7 +136,7 @@ Notes:
 | `terse_internal_outputs` | `true` | Enable concise output contracts for internal operator/agent handoffs |
 | `tool_result_trim_exempt` | `[]` | Tool names exempt from tool-result trimming |
 
-Construct applies the same content-aware compression layer on four token-heavy axes:
+Revka applies the same content-aware compression layer on four token-heavy axes:
 large pasted input, CLI/shell output, general tool output, and code-search output.
 The implementation is deterministic and zero-LLM: JSON is reduced to schema and
 samples, diffs to file/hunk/change summaries, logs to failure lines plus tail, and
@@ -147,20 +147,20 @@ is on `PATH`, it still performs a bounded built-in literal scan so code search
 remains available in zero-install environments.
 The operator MCP side also compresses oversized agent `last_message` fields in
 wait results while preserving the JSON schema; override that budget with
-`CONSTRUCT_AGENT_RESULT_MAX_CHARS`.
+`REVKA_AGENT_RESULT_MAX_CHARS`.
 Base context is reduced separately: native tool-call schemas are compacted
 before provider calls, and system prompts omit duplicated parameter schemas
 when those schemas are already supplied through the provider's tool interface.
 Internal operator/sub-agent prompts use a terse handoff contract; set
-`CONSTRUCT_TERSE_INTERNAL_OUTPUTS=0` to disable the Python operator side.
+`REVKA_TERSE_INTERNAL_OUTPUTS=0` to disable the Python operator side.
 Workflow step skills use compact manifests by default when multiple skill refs
 are assigned, avoiding full `SKILL.md` bodies in every agent prompt. Skill
 manifests keep the `kref` pointer, resolved markdown path when available, and a
 hydrate instruction so the agent can call `memory_resolve_kref` or read the
 resolved file only when the compact manifest is insufficient. Use
-`CONSTRUCT_WORKFLOW_SKILL_MAX_CHARS` to adjust the per-skill manifest budget,
-`CONSTRUCT_WORKFLOW_SKILL_CONTEXT_MODE=pointer` to send only krefs/paths, or
-`CONSTRUCT_WORKFLOW_SKILL_CONTEXT_MODE=full` to restore legacy full-inline
+`REVKA_WORKFLOW_SKILL_MAX_CHARS` to adjust the per-skill manifest budget,
+`REVKA_WORKFLOW_SKILL_CONTEXT_MODE=pointer` to send only krefs/paths, or
+`REVKA_WORKFLOW_SKILL_CONTEXT_MODE=full` to restore legacy full-inline
 skill context.
 
 ### `tool_filter_groups`
@@ -238,7 +238,7 @@ Notes:
 - Domain patterns support wildcard `*`.
 - Category presets expand to curated domain sets during validation.
 - Invalid domain globs or unknown categories fail fast at startup.
-- When `enabled = true` and no OTP secret exists, Construct generates one and prints an enrollment URI once.
+- When `enabled = true` and no OTP secret exists, Revka generates one and prints an enrollment URI once.
 
 Example:
 
@@ -258,14 +258,14 @@ gated_domain_categories = ["banking"]
 | Key | Default | Purpose |
 |---|---|---|
 | `enabled` | `false` | Enable emergency-stop state machine and CLI |
-| `state_file` | `~/.construct/estop-state.json` | Persistent estop state path |
+| `state_file` | `~/.revka/estop-state.json` | Persistent estop state path |
 | `require_otp_to_resume` | `true` | Require OTP validation before resume operations |
 
 Notes:
 
 - Estop state is persisted atomically and reloaded on startup.
 - Corrupted/unreadable estop state falls back to fail-closed `kill_all`.
-- Use CLI command `construct estop` to engage and `construct estop resume` to clear levels.
+- Use CLI command `revka estop` to engage and `revka estop resume` to clear levels.
 
 ## `[agents.<name>]`
 
@@ -342,14 +342,14 @@ Notes:
 
 Notes:
 
-- Security-first default: Construct does **not** clone or sync `open-skills` unless `open_skills_enabled = true`.
+- Security-first default: Revka does **not** clone or sync `open-skills` unless `open_skills_enabled = true`.
 - Environment overrides:
-  - `CONSTRUCT_OPEN_SKILLS_ENABLED` accepts `1/0`, `true/false`, `yes/no`, `on/off`.
-  - `CONSTRUCT_OPEN_SKILLS_DIR` overrides the repository path when non-empty.
-  - `CONSTRUCT_SKILLS_PROMPT_MODE` accepts `full` or `compact`.
-- Precedence for enable flag: `CONSTRUCT_OPEN_SKILLS_ENABLED` → `skills.open_skills_enabled` in `config.toml` → default `false`.
+  - `REVKA_OPEN_SKILLS_ENABLED` accepts `1/0`, `true/false`, `yes/no`, `on/off`.
+  - `REVKA_OPEN_SKILLS_DIR` overrides the repository path when non-empty.
+  - `REVKA_SKILLS_PROMPT_MODE` accepts `full` or `compact`.
+- Precedence for enable flag: `REVKA_OPEN_SKILLS_ENABLED` → `skills.open_skills_enabled` in `config.toml` → default `false`.
 - `prompt_injection_mode = "compact"` is recommended on low-context local models to reduce startup prompt size while keeping skill files available on demand.
-- Skill loading and `construct skills install` both apply a static security audit. Skills that contain symlinks, script-like files, high-risk shell payload snippets, or unsafe markdown link traversal are rejected.
+- Skill loading and `revka skills install` both apply a static security audit. Skills that contain symlinks, script-like files, high-risk shell payload snippets, or unsafe markdown link traversal are rejected.
 
 ## `[composio]`
 
@@ -363,7 +363,7 @@ Notes:
 
 - Backward compatibility: legacy `enable = true` is accepted as an alias for `enabled = true`.
 - If `enabled = false` or `api_key` is missing, the `composio` tool is not registered.
-- Construct requests Composio v3 tools with `toolkit_versions=latest` and executes tools with `version="latest"` to avoid stale default tool revisions.
+- Revka requests Composio v3 tools with `toolkit_versions=latest` and executes tools with `version="latest"` to avoid stale default tool revisions.
 - Typical flow: call `connect`, complete browser OAuth, then run `execute` for the desired tool action.
 - If Composio returns a missing connected-account reference error, call `list_accounts` (optionally with `app`) and pass the returned `connected_account_id` to `execute`.
 
@@ -524,28 +524,28 @@ Notes:
 | `port` | `42617` | gateway listen port |
 | `require_pairing` | `true` | require pairing before bearer auth |
 | `allow_public_bind` | `false` | block accidental public exposure |
-| `path_prefix` | _(none)_ | URL path prefix for reverse-proxy deployments (e.g. `"/construct"`) |
+| `path_prefix` | _(none)_ | URL path prefix for reverse-proxy deployments (e.g. `"/revka"`) |
 | `web_root` | _(none)_ | optional filesystem `web/dist` root for gateway-served dashboard assets |
 
-When deploying behind a reverse proxy that maps Construct to a sub-path,
-set `path_prefix` to that sub-path (e.g. `"/construct"`). All gateway
+When deploying behind a reverse proxy that maps Revka to a sub-path,
+set `path_prefix` to that sub-path (e.g. `"/revka"`). All gateway
 routes will be served under this prefix. The value must start with `/`
 and must not end with `/`.
 
 Dashboard static asset resolution uses this order:
 
-1. `CONSTRUCT_WEB_ROOT`, when set and non-empty
+1. `REVKA_WEB_ROOT`, when set and non-empty
 2. `gateway.web_root`, when set
 3. embedded `web/dist` in the binary
 4. dashboard unavailable response
 
-`CONSTRUCT_BUILD_WEB=1` opts back into the legacy `build.rs` behavior that
+`REVKA_BUILD_WEB=1` opts back into the legacy `build.rs` behavior that
 attempts `npm ci` / `npm run build` during a Rust build. By default, Rust
 builds do not require Node.js.
 
 ## `[tunnel]`
 
-Optional public tunnel for the gateway. Construct ships built-in
+Optional public tunnel for the gateway. Revka ships built-in
 adapters that wrap external tunnel binaries — they spawn the binary
 as a managed subprocess once the gateway is listening, watch its
 output for the public URL, and stop it on daemon shutdown.
@@ -559,12 +559,12 @@ must be present (validated at startup; the daemon refuses to come up
 if the provider's required fields are missing).
 
 If you already run a tunnel binary externally (e.g. `cloudflared` under
-`launchd` or `systemd`) keep `provider = "none"` so Construct does not
+`launchd` or `systemd`) keep `provider = "none"` so Revka does not
 spawn a duplicate.
 
 ### `[tunnel.cloudflare]`
 
-Required when `provider = "cloudflare"`. Construct runs
+Required when `provider = "cloudflare"`. Revka runs
 `cloudflared tunnel --no-autoupdate run --token <TOKEN> --url
 http://localhost:<port>` and parses the public URL from the binary's
 stderr.
@@ -626,8 +626,8 @@ Required when `provider = "custom"` — bring-your-own tunnel binary.
 
 | Key | Default | Purpose |
 |---|---|---|
-| `start_command` | _(required)_ | Shell command Construct runs to launch the tunnel; supports `{host}` and `{port}` placeholders |
-| `health_url` | _(none)_ | Optional URL Construct probes to confirm the tunnel is up |
+| `start_command` | _(required)_ | Shell command Revka runs to launch the tunnel; supports `{host}` and `{port}` placeholders |
+| `health_url` | _(none)_ | Optional URL Revka probes to confirm the tunnel is up |
 | `url_pattern` | _(none)_ | Regex extracted from the binary's stderr to pull the public URL (capture group 1 is the URL) |
 
 ## `[autonomy]`
@@ -638,7 +638,7 @@ Required when `provider = "custom"` — bring-your-own tunnel binary.
 | `workspace_only` | `true` | reject absolute path inputs unless explicitly disabled |
 | `allowed_commands` | _required for shell execution_ | allowlist of executable names, explicit executable paths, or `"*"` |
 | `forbidden_paths` | built-in protected list | explicit path denylist (system paths + sensitive dotdirs by default) |
-| `allowed_roots` | `["~/.construct/workflows"]` | additional roots allowed outside workspace after canonicalization |
+| `allowed_roots` | `["~/.revka/workflows"]` | additional roots allowed outside workspace after canonicalization |
 | `max_actions_per_hour` | `20` | per-policy action budget |
 | `max_cost_per_day_cents` | `500` | per-policy spend guardrail |
 | `require_approval_for_medium_risk` | `true` | approval gate for medium-risk commands (see [Command Risk Classification](../../security/command-risk-classification.md)) |
@@ -721,7 +721,7 @@ Upgrade strategy:
 
 1. Keep hints stable (`hint:reasoning`, `hint:semantic`).
 2. Update only `model = "...new-version..."` in the route entries.
-3. Validate with `construct doctor` before restart/rollout.
+3. Validate with `revka doctor` before restart/rollout.
 
 Natural-language config path:
 
@@ -799,7 +799,7 @@ Notes:
 - When a timeout occurs, users receive: `⚠️ Request timed out while waiting for the model. Please try again.`
 - Telegram-only interruption behavior is controlled with `channels_config.telegram.interrupt_on_new_message` (default `false`).
   When enabled, a newer message from the same sender in the same chat cancels the in-flight request and preserves interrupted user context.
-- While `construct channel start` is running, updates to `default_provider`, `default_model`, `default_temperature`, `api_key`, `api_url`, and `reliability.*` are hot-applied from `config.toml` on the next inbound message.
+- While `revka channel start` is running, updates to `default_provider`, `default_model`, `default_temperature`, `api_key`, `api_url`, and `reliability.*` are hot-applied from `config.toml` on the next inbound message.
 
 ### `[channels_config.nostr]`
 
@@ -858,7 +858,7 @@ Linq Partner V3 API integration for iMessage, RCS, and SMS.
 Notes:
 
 - Webhook endpoint is `POST /linq`.
-- `CONSTRUCT_LINQ_SIGNING_SECRET` overrides `signing_secret` when set.
+- `REVKA_LINQ_SIGNING_SECRET` overrides `signing_secret` when set.
 - Signatures use `X-Webhook-Signature` and `X-Webhook-Timestamp` headers; stale timestamps (>300s) are rejected.
 - See [channels-reference.md](channels-reference.md) for full config examples.
 
@@ -872,12 +872,12 @@ Native Nextcloud Talk bot integration (webhook receive + OCS send API).
 | `app_token` | Yes | Bot app token used for OCS bearer auth |
 | `webhook_secret` | Optional | Enables webhook signature verification |
 | `allowed_users` | Recommended | Allowed Nextcloud actor IDs (`[]` = deny all, `"*"` = allow all) |
-| `bot_name` | Optional | Display name of the bot in Nextcloud Talk (e.g. `"construct"`). Used to filter out the bot's own messages and prevent feedback loops. |
+| `bot_name` | Optional | Display name of the bot in Nextcloud Talk (e.g. `"revka"`). Used to filter out the bot's own messages and prevent feedback loops. |
 
 Notes:
 
 - Webhook endpoint is `POST /nextcloud-talk`.
-- `CONSTRUCT_NEXTCLOUD_TALK_WEBHOOK_SECRET` overrides `webhook_secret` when set.
+- `REVKA_NEXTCLOUD_TALK_WEBHOOK_SECRET` overrides `webhook_secret` when set.
 - See [nextcloud-talk-setup.md](../../setup-guides/nextcloud-talk-setup.md) for setup and troubleshooting.
 
 ## `[hardware]`
@@ -941,15 +941,15 @@ Notes:
 
 ## `[kumiho]`
 
-Kumiho is Construct's canonical persistent graph memory backend. The runtime
+Kumiho is Revka's canonical persistent graph memory backend. The runtime
 automatically injects the Kumiho MCP server and the session-bootstrap system
 prompt into every non-internal agent.
 
 | Key | Default | Purpose |
 |---|---|---|
 | `enabled` | `true` | Enable Kumiho memory injection for non-internal agents |
-| `mcp_path` | `~/.construct/kumiho/run_kumiho_mcp.py` | Absolute path to the MCP runner script |
-| `space_prefix` | `Construct` | Project/space prefix used to scope memories (e.g. `Construct/AgentPool/`) |
+| `mcp_path` | `~/.revka/kumiho/run_kumiho_mcp.py` | Absolute path to the MCP runner script |
+| `space_prefix` | `Revka` | Project/space prefix used to scope memories (e.g. `Revka/AgentPool/`) |
 | `api_url` | `https://api.kumiho.cloud` | Base URL for the Kumiho FastAPI REST API used by the agent-management proxy |
 | `memory_project` | (default) | Project for user memories, sessions, and compactions |
 | `harness_project` | (default) | Project for skills, operational data, and ClawHub installs |
@@ -959,17 +959,17 @@ Notes:
 
 - Disable on deployments where Kumiho is not installed: `enabled = false`.
 - The `api_url` remains the fallback URL for dashboard/API Kumiho traffic.
-  When the installed Kumiho sidecar is available, Construct first tries the
+  When the installed Kumiho sidecar is available, Revka first tries the
   local Kumiho SDK bridge and only falls back to `api_url` when the bridge is
   disabled, unavailable, or does not support a route. Set
-  `CONSTRUCT_KUMIHO_SDK_BRIDGE=0` to force the hosted FastAPI transport.
+  `REVKA_KUMIHO_SDK_BRIDGE=0` to force the hosted FastAPI transport.
 - `KUMIHO_AUTH_TOKEN` is preferred for the local SDK bridge; `KUMIHO_SERVICE_TOKEN`
   remains the FastAPI header token and is used as a fallback when
   `KUMIHO_AUTH_TOKEN` is not set. Response caches are keyed by the effective
   token to avoid cross-account data bleed. When the bridge creates an SDK
   client for a new token, it also forces Kumiho discovery refresh so local
   discovery cache entries from another account are not reused.
-- Namespaces used by Construct under `space_prefix` include `AgentPool`,
+- Namespaces used by Revka under `space_prefix` include `AgentPool`,
   `Plans`, `Sessions`, `Goals`, `AgentTrust`, `ClawHub`, `Teams`, and
   `CognitiveMemory/Skills`.
 
@@ -977,7 +977,7 @@ Notes:
 
 Google Agents CLI integration for ADK / Agent Platform lifecycle commands.
 This enables the `google_agents_cli` tool. `agents-cli` is a lifecycle tool
-for coding agents, not a Construct `agent_type` or session provider.
+for coding agents, not a Revka `agent_type` or session provider.
 
 | Key | Default | Purpose |
 |---|---|---|
@@ -988,7 +988,7 @@ for coding agents, not a Construct `agent_type` or session provider.
 
 Notes:
 
-- Install/authenticate `agents-cli` outside Construct. The tool runs the
+- Install/authenticate `agents-cli` outside Revka. The tool runs the
   existing binary from `PATH`.
 - Safe Google auth/project variables such as `GOOGLE_API_KEY`,
   `GEMINI_API_KEY`, `GOOGLE_APPLICATION_CREDENTIALS`,
@@ -1017,15 +1017,15 @@ every non-internal agent.
 | Key | Default | Purpose |
 |---|---|---|
 | `enabled` | `true` | Enable Operator injection for non-internal agents |
-| `mcp_path` | `~/.construct/operator_mcp/run_operator_mcp.py` | Absolute path to the MCP runner script |
+| `mcp_path` | `~/.revka/operator_mcp/run_operator_mcp.py` | Absolute path to the MCP runner script |
 | `max_tool_iterations` | `80` | Override `agent.max_tool_iterations` for operator-enabled sessions (operator tasks are multi-step by nature) |
 | `tool_timeout_secs` | `600` | Per-tool timeout for the auto-injected operator MCP server. Some operator tools are inherently slow (codex image generation, workflow execution, dry-run, bulk recall); the runtime's global default (180 s) is too tight. Capped at `600` (the runtime's `MAX_TOOL_TIMEOUT_SECS`); higher values are silently truncated. Set to `0` to fall back to the global default. |
 
 Notes:
 
-- Workflow checkpoints are written to `~/.construct/workflow_checkpoints/`.
+- Workflow checkpoints are written to `~/.revka/workflow_checkpoints/`.
 - Per-agent RunLog JSONL audit trails are written to
-  `~/.construct/operator_mcp/runlogs/`.
+  `~/.revka/operator_mcp/runlogs/`.
 - Step types currently supported include `agent`, `shell`, `python`, `compute`,
   `email`, `image`, `output`, `notify`, `a2a`, `conditional`, `parallel`,
   `goto`, `human_approval`, `human_input`, `map_reduce`, `supervisor`,
@@ -1057,7 +1057,7 @@ Notes:
 ## `[trust]`
 
 Trust scoring for domains/tools (regression detection). Agent-template trust
-scores are stored in Kumiho under `Construct/AgentTrust/` and are separate from
+scores are stored in Kumiho under `Revka/AgentTrust/` and are separate from
 this config section.
 
 | Key | Default | Purpose |
@@ -1090,10 +1090,10 @@ Verifiable Intent (VI) credential verification for commerce tool calls.
 After editing config:
 
 ```bash
-construct status
-construct doctor
-construct channel doctor
-construct service restart
+revka status
+revka doctor
+revka channel doctor
+revka service restart
 ```
 
 ## Related Docs

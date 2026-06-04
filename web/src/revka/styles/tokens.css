@@ -1,0 +1,143 @@
+:root {
+  --revka-radius-sm: 6px;
+  --revka-radius-md: 8px;
+  --revka-radius-lg: 10px;
+  --revka-shell-width: 18rem;
+}
+
+:root[data-theme='dark'],
+:root[data-theme='oled'] {
+  --revka-bg-base: #0b0d12;
+  --revka-bg-shell: #0f1218;
+  --revka-bg-surface: #11151c;
+  --revka-bg-elevated: #1a202a;
+  --revka-bg-panel: rgba(17, 21, 28, 0.94);
+  --revka-bg-panel-strong: rgba(21, 26, 35, 0.98);
+  --revka-bg-input: #0f131a;
+  --revka-hover-surface: rgba(109, 125, 255, 0.06);
+
+  --revka-border-soft: rgba(148, 163, 184, 0.13);
+  --revka-border-strong: rgba(148, 163, 184, 0.22);
+  --revka-border-neutral: rgba(226, 232, 240, 0.08);
+
+  --revka-text-primary: #f7f8fc;
+  --revka-text-secondary: #c8ceda;
+  --revka-text-muted: #929bad;
+  --revka-text-faint: #687386;
+
+  --revka-signal-live: #8ab4f8;
+  --revka-signal-live-soft: rgba(138, 180, 248, 0.10);
+  --revka-signal-network: #6d7dff;
+  --revka-signal-network-soft: rgba(109, 125, 255, 0.10);
+  --revka-signal-selected: #8b9cff;
+  --revka-signal-selected-soft: rgba(139, 156, 255, 0.12);
+  --revka-signal-warn: #f6b44b;
+  --revka-signal-danger: #f87171;
+
+  --revka-status-success: #22c55e;
+  --revka-status-ok: #22c55e;
+  --revka-status-warning: #f6b44b;
+  --revka-status-danger: #f87171;
+  --revka-status-error: #f87171;
+  --revka-status-blocked: #f59e0b;
+  --revka-status-idle: #7b8797;
+
+  --revka-shadow-panel: 0 14px 34px rgba(0, 0, 0, 0.28);
+  --revka-shadow-overlay: 0 24px 60px rgba(0, 0, 0, 0.40);
+  --revka-grid-line: rgba(148, 163, 184, 0.035);
+
+  --revka-node-accent-idle: 9%;
+  --revka-node-accent-selected: 22%;
+
+  /* Bridge: remap legacy pc tokens so the shared workflow editor matches
+     the Revka default dark palette. */
+  --pc-bg-base: #0b0d12;
+  --pc-bg-surface: #11151c;
+  --pc-bg-elevated: #1a202a;
+  --pc-bg-input: #0f131a;
+  --pc-bg-code: #0f131a;
+  --pc-bg-sidebar: rgba(15, 18, 24, 0.96);
+  --pc-border: rgba(148, 163, 184, 0.13);
+  --pc-border-strong: rgba(148, 163, 184, 0.22);
+  --pc-text-primary: #f7f8fc;
+  --pc-text-secondary: #c8ceda;
+  --pc-text-muted: #929bad;
+  --pc-text-faint: #687386;
+  --pc-accent: #6d7dff;
+  --pc-accent-light: #8b9cff;
+  --pc-accent-dim: rgba(109, 125, 255, 0.22);
+  --pc-accent-glow: rgba(109, 125, 255, 0.08);
+  --pc-accent-glow-strong: rgba(109, 125, 255, 0.16);
+  --pc-accent-rgb: 109, 125, 255;
+  --pc-hover: rgba(109, 125, 255, 0.05);
+  --pc-hover-strong: rgba(109, 125, 255, 0.09);
+  --pc-separator: rgba(148, 163, 184, 0.10);
+}
+
+:root[data-theme='light'] {
+  --revka-bg-base: #f7f8fb;
+  --revka-bg-shell: #f1f4f8;
+  --revka-bg-surface: #ffffff;
+  --revka-bg-elevated: #eef2f6;
+  --revka-bg-panel: rgba(255, 255, 255, 0.92);
+  --revka-bg-panel-strong: rgba(255, 255, 255, 0.98);
+  --revka-bg-input: #f4f6fa;
+  --revka-hover-surface: rgba(79, 95, 213, 0.05);
+
+  --revka-border-soft: rgba(45, 55, 72, 0.12);
+  --revka-border-strong: rgba(71, 85, 105, 0.18);
+  --revka-border-neutral: rgba(30, 41, 59, 0.10);
+
+  --revka-text-primary: #111827;
+  --revka-text-secondary: #334155;
+  --revka-text-muted: #64748b;
+  --revka-text-faint: #94a3b8;
+
+  --revka-signal-live: #2f6fd7;
+  --revka-signal-live-soft: rgba(47, 111, 215, 0.08);
+  --revka-signal-network: #4f5fd5;
+  --revka-signal-network-soft: rgba(79, 95, 213, 0.08);
+  --revka-signal-selected: #5f6ee8;
+  --revka-signal-selected-soft: rgba(95, 110, 232, 0.09);
+  --revka-signal-warn: #b86f00;
+  --revka-signal-danger: #dc3f58;
+
+  --revka-status-success: #168a4a;
+  --revka-status-ok: #168a4a;
+  --revka-status-warning: #b86f00;
+  --revka-status-danger: #dc3f58;
+  --revka-status-error: #dc3f58;
+  --revka-status-blocked: #a36300;
+  --revka-status-idle: #7a8797;
+
+  --revka-shadow-panel: 0 10px 24px rgba(15, 23, 42, 0.08);
+  --revka-shadow-overlay: 0 18px 42px rgba(15, 23, 42, 0.14);
+  --revka-grid-line: rgba(71, 85, 105, 0.04);
+
+  --revka-node-accent-idle: 18%;
+  --revka-node-accent-selected: 34%;
+
+  /* Bridge: remap V1 tokens so legacy components rendered inside Revka pick up
+     light values when light theme is active (workflow editor, etc.). */
+  --pc-bg-base: #f7f8fb;
+  --pc-bg-surface: #ffffff;
+  --pc-bg-elevated: #eef2f6;
+  --pc-bg-input: #f4f6fa;
+  --pc-bg-code: #f1f4f8;
+  --pc-bg-sidebar: rgba(241, 244, 248, 0.96);
+  --pc-border: rgba(45, 55, 72, 0.12);
+  --pc-border-strong: rgba(71, 85, 105, 0.18);
+  --pc-text-primary: #111827;
+  --pc-text-secondary: #334155;
+  --pc-text-muted: #64748b;
+  --pc-text-faint: #94a3b8;
+  --pc-accent: #4f5fd5;
+  --pc-accent-light: #5f6ee8;
+  --pc-accent-dim: rgba(79, 95, 213, 0.20);
+  --pc-accent-glow: rgba(79, 95, 213, 0.08);
+  --pc-accent-glow-strong: rgba(79, 95, 213, 0.14);
+  --pc-accent-rgb: 79, 95, 213;
+  --pc-hover: rgba(79, 95, 213, 0.05);
+  --pc-hover-strong: rgba(79, 95, 213, 0.09);
+  --pc-separator: rgba(45, 55, 72, 0.08);
+}

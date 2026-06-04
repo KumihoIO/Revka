@@ -1,20 +1,20 @@
-# Construct Documentation
+# Revka Documentation
 
-This page is the primary entry point for the Construct documentation system.
+This page is the primary entry point for the Revka documentation system.
 
-> Construct's core Rust runtime is a fork of [ZeroClaw](https://github.com/zeroclaw-labs/zeroclaw); see [`NOTICE`](../NOTICE) for full attribution and [`upstream/zeroclaw-attribution.md`](upstream/zeroclaw-attribution.md) for the relationship in plain language.
+> Revka's core Rust runtime is a fork of [ZeroClaw](https://github.com/zeroclaw-labs/zeroclaw); see [`NOTICE`](../NOTICE) for full attribution and [`upstream/zeroclaw-attribution.md`](upstream/zeroclaw-attribution.md) for the relationship in plain language.
 
 Last refreshed: **April 27, 2026**.
 
-Localized hubs: [한국어](i18n/ko/README.md) · [Tiếng Việt](i18n/vi/README.md) · [简体中文](i18n/zh-CN/README.md). [What is "Construct"?](../README.md#what-is-construct) at the repository root.
+Localized hubs: [한국어](i18n/ko/README.md) · [Tiếng Việt](i18n/vi/README.md) · [简体中文](i18n/zh-CN/README.md). [What is "Revka"?](../README.md#what-is-revka) at the repository root.
 
 ---
 
 ## Start here by audience
 
-- **New to Construct?** → [one-click-bootstrap.md](setup-guides/one-click-bootstrap.md), then [setup-guides/README.md](setup-guides/README.md)
+- **New to Revka?** → [one-click-bootstrap.md](setup-guides/one-click-bootstrap.md), then [setup-guides/README.md](setup-guides/README.md)
 - **Hardware / embedded target?** → [hardware/README.md](hardware/README.md)
-- **Running Construct in production?** → [ops/README.md](ops/README.md)
+- **Running Revka in production?** → [ops/README.md](ops/README.md)
 - **Integrating via API / MCP?** → [reference/README.md](reference/README.md) and [contributing/README.md](contributing/README.md)
 - **Reviewing or shipping code?** → [contributing/pr-workflow.md](contributing/pr-workflow.md) + [contributing/reviewer-playbook.md](contributing/reviewer-playbook.md)
 - **Looking for something specific?** → [SUMMARY.md](SUMMARY.md) (the unified TOC)
@@ -23,11 +23,11 @@ Localized hubs: [한국어](i18n/ko/README.md) · [Tiếng Việt](i18n/vi/READM
 
 | I want to… | Read this |
 |---|---|
-| Install and run Construct quickly | [README.md (Quick Start)](../README.md#install) |
+| Install and run Revka quickly | [README.md (Quick Start)](../README.md#install) |
 | Bootstrap in one command | [one-click-bootstrap.md](setup-guides/one-click-bootstrap.md) |
 | Set up the Kumiho memory sidecar | [kumiho-operator-setup.md](setup-guides/kumiho-operator-setup.md) |
 | Update or uninstall on macOS | [macos-update-uninstall.md](setup-guides/macos-update-uninstall.md) |
-| Set up Construct on Windows | [windows-setup.md](setup-guides/windows-setup.md) |
+| Set up Revka on Windows | [windows-setup.md](setup-guides/windows-setup.md) |
 | Find commands by task | [commands-reference.md](reference/cli/commands-reference.md) |
 | Check config defaults and keys | [config-reference.md](reference/api/config-reference.md) |
 | Configure custom providers / endpoints | [custom-providers.md](contributing/custom-providers.md) |
@@ -40,10 +40,10 @@ Localized hubs: [한국어](i18n/ko/README.md) · [Tiếng Việt](i18n/vi/READM
 | Package the Google Track 3 Cloud Run A2A demo | [google-agents-track3-enterprise-readiness.md](ops/google-agents-track3-enterprise-readiness.md) |
 | Run Matrix encrypted-room setup and diagnostics | [matrix-e2ee-guide.md](security/matrix-e2ee-guide.md) |
 
-## What makes Construct, Construct
+## What makes Revka, Revka
 
 - A **memory-native Rust agent runtime** — every session, plan, skill, and trust score lives in Kumiho's graph; nothing is forgotten.
-- **Single Rust binary** — the gateway, daemon, embedded React dashboard, and CLI compile to one executable (statically linked on musl Linux); the Operator MCP (Python) installs as a managed sidecar alongside it, while the Session Manager (Node.js) remains opt-in via `construct install --sidecars-only --with-session-manager`.
+- **Single Rust binary** — the gateway, daemon, embedded React dashboard, and CLI compile to one executable (statically linked on musl Linux); the Operator MCP (Python) installs as a managed sidecar alongside it, while the Session Manager (Node.js) remains opt-in via `revka install --sidecars-only --with-session-manager`.
 - **Declarative orchestration** — Operator drives multi-agent workflows defined in YAML.
 - **First-class hardware** — STM32, Arduino, ESP32, Pico, and Aardvark I²C/SPI peripherals all surface as agent tools.
 - **18-route Web UI** — `http://127.0.0.1:42617` covers Orchestration, Operations, and Inspection without leaving the browser; 17 routes live in the main sidebar, with `Workflow Runs` reached contextually.
@@ -65,7 +65,7 @@ Localized hubs: [한국어](i18n/ko/README.md) · [Tiếng Việt](i18n/vi/READM
 - [browser-setup.md](browser-setup.md) — browser channel and headless / VNC modes
 - [aardvark-integration.md](aardvark-integration.md) — Aardvark I²C/SPI host adapter
 
-## Using Construct (day-to-day)
+## Using Revka (day-to-day)
 
 - [commands-reference.md](reference/cli/commands-reference.md) — CLI command lookup by workflow
 - [config-reference.md](reference/api/config-reference.md) — config keys, defaults, and secure defaults
@@ -156,7 +156,7 @@ Localized hubs: [한국어](i18n/ko/README.md) · [Tiếng Việt](i18n/vi/READM
 - [`../NOTICE`](../NOTICE) — root NOTICE with upstream ZeroClaw attribution preserved per Apache 2.0 §4(c)
 - [`../LICENSE-MIT`](../LICENSE-MIT), [`../LICENSE-APACHE`](../LICENSE-APACHE) — dual-license texts
 - [upstream/zeroclaw-attribution.md](upstream/zeroclaw-attribution.md) — what we inherited from ZeroClaw and the fork-compliance checklist
-- [maintainers/trademark.md](maintainers/trademark.md) — Construct naming norms and the ZeroClaw trademark acknowledgement
+- [maintainers/trademark.md](maintainers/trademark.md) — Revka naming norms and the ZeroClaw trademark acknowledgement
 
 ## Other languages
 

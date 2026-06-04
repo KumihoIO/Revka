@@ -6,7 +6,7 @@
 
 ## Context
 
-The Construct operator orchestrates multi-agent workflows (e.g. quantum-soul
+The Revka operator orchestrates multi-agent workflows (e.g. quantum-soul
 arc-room, episode-room) by spawning Claude and Codex agents through a
 three-layer stack:
 
@@ -70,7 +70,7 @@ everything.
 ```
 Python Operator (workflow executor, refinement, recovery)
     ↓ Unix socket HTTP (same API surface)
-Rust construct daemon (agent lifecycle, liveness, events, process mgmt)
+Rust revka daemon (agent lifecycle, liveness, events, process mgmt)
     ↓ Claude Agent SDK (via subprocess) / Codex CLI subprocess
 LLM Agent Processes
 ```
@@ -147,7 +147,7 @@ need to fetch and count events.
 **Effort:** 1–2 weeks
 **Risk:** Medium — new Rust module, existing API compatibility required
 
-Create `src/agent/process_manager.rs` in the construct Rust codebase:
+Create `src/agent/process_manager.rs` in the revka Rust codebase:
 
 1. **Process spawning** — spawn Claude CLI and Codex CLI as child processes
    using `tokio::process::Command`. Track the `Child` handle and PID.
@@ -185,7 +185,7 @@ Create `src/agent/process_manager.rs` in the construct Rust codebase:
    - `GET /agents/:id/events?since=N` → event stream catchup
    - `GET /agents/:id/stream` → SSE live stream
 
-6. **Integration point** — the `construct service` command already manages the
+6. **Integration point** — the `revka service` command already manages the
    Rust daemon. The agent process manager runs as a `tokio::task` inside the
    daemon, replacing the separate Node.js session manager process.
 
@@ -287,7 +287,7 @@ Current State
 ├── Python operator_mcp.py (40+ tools)
 ├── Python subagent_mcp.py (12 tools)
 ├── Python executor.py (workflow engine)
-└── Rust construct daemon (service mgmt, gateway, CLI tools)
+└── Rust revka daemon (service mgmt, gateway, CLI tools)
 
 Phase 0 (days) — Add liveness tracking to Node.js
 ├── Node.js session-manager + liveness flags + lastEventAt
@@ -295,7 +295,7 @@ Phase 0 (days) — Add liveness tracking to Node.js
 └── Everything else unchanged
 
 Phase 1 (weeks) — Rust process manager
-├── Rust construct daemon + process_manager.rs (agent lifecycle)
+├── Rust revka daemon + process_manager.rs (agent lifecycle)
 ├── Remove Node.js session-manager
 ├── Python operator talks to Rust daemon (same API)
 └── Python executor.py unchanged
@@ -335,21 +335,21 @@ Phase 3 (optional, weeks) — Rust executor
 
 | File | Language | Role |
 |------|----------|------|
-| `~/.construct/operator/session-manager/src/agent-manager.ts` | TypeScript | Agent lifecycle, session state |
-| `~/.construct/operator/session-manager/src/providers/claude.ts` | TypeScript | Claude SDK query pump |
-| `~/.construct/operator/session-manager/src/providers/codex.ts` | TypeScript | Codex subprocess management |
-| `~/.construct/operator/session-manager/src/persistence.ts` | TypeScript | Agent state persistence to disk |
-| `~/.construct/operator/session-manager/src/event-emitter.ts` | TypeScript | SSE event broadcasting |
-| `~/.construct/operator/operator_mcp.py` | Python | Full operator MCP (40+ tools) |
-| `~/.construct/operator/subagent_mcp.py` | Python | Sub-agent MCP (12 tools) |
-| `~/.construct/operator/workflow/executor.py` | Python | Workflow step execution |
-| `~/.construct/operator/workflow/recovery.py` | Python | Interrupted run recovery |
-| `~/.construct/operator/patterns/refinement.py` | Python | Agent spawn/wait/refinement loop |
-| `~/.construct/operator/session_manager_client.py` | Python | HTTP client for session manager |
-| `~/construct/src/tools/delegate.rs` | Rust | Native agent delegation tool |
-| `~/construct/src/agent/loop_.rs` | Rust | Agent execution loop |
-| `~/construct/src/agent/operator/mod.rs` | Rust | Operator MCP injection |
-| `~/construct/src/gateway/mod.rs` | Rust | HTTP gateway routes |
+| `~/.revka/operator/session-manager/src/agent-manager.ts` | TypeScript | Agent lifecycle, session state |
+| `~/.revka/operator/session-manager/src/providers/claude.ts` | TypeScript | Claude SDK query pump |
+| `~/.revka/operator/session-manager/src/providers/codex.ts` | TypeScript | Codex subprocess management |
+| `~/.revka/operator/session-manager/src/persistence.ts` | TypeScript | Agent state persistence to disk |
+| `~/.revka/operator/session-manager/src/event-emitter.ts` | TypeScript | SSE event broadcasting |
+| `~/.revka/operator/operator_mcp.py` | Python | Full operator MCP (40+ tools) |
+| `~/.revka/operator/subagent_mcp.py` | Python | Sub-agent MCP (12 tools) |
+| `~/.revka/operator/workflow/executor.py` | Python | Workflow step execution |
+| `~/.revka/operator/workflow/recovery.py` | Python | Interrupted run recovery |
+| `~/.revka/operator/patterns/refinement.py` | Python | Agent spawn/wait/refinement loop |
+| `~/.revka/operator/session_manager_client.py` | Python | HTTP client for session manager |
+| `~/revka/src/tools/delegate.rs` | Rust | Native agent delegation tool |
+| `~/revka/src/agent/loop_.rs` | Rust | Agent execution loop |
+| `~/revka/src/agent/operator/mod.rs` | Rust | Operator MCP injection |
+| `~/revka/src/gateway/mod.rs` | Rust | HTTP gateway routes |
 
 ### Phase 1 Target (new Rust files)
 
@@ -365,7 +365,7 @@ Phase 3 (optional, weeks) — Rust executor
 - **Phase 0:** Zombie detection drops from 120s heuristic to instant (status
   is accurate at query time). No Python-side event count polling needed.
 
-- **Phase 1:** `construct service restart` brings up all agent management. No
+- **Phase 1:** `revka service restart` brings up all agent management. No
   separate Node.js process. Agent death is detected within 1 second via
   `waitpid`. The Python operator's `_wait_for_agent` can remove zombie
   detection logic entirely — it just trusts the status.
@@ -374,6 +374,6 @@ Phase 3 (optional, weeks) — Rust executor
   agent lifecycle operations. No more "tool not found" waste. Workflow tools
   exposed via a single MCP server.
 
-- **Phase 3:** (if pursued) Single `construct` binary handles everything.
+- **Phase 3:** (if pursued) Single `revka` binary handles everything.
   Daemon restart resumes workflows from checkpoint with zero external
   dependencies.

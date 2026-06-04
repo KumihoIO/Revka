@@ -1,6 +1,6 @@
 # 自定义提供商配置
 
-Construct 支持兼容 OpenAI 和兼容 Anthropic 的自定义 API 端点。
+Revka 支持兼容 OpenAI 和兼容 Anthropic 的自定义 API 端点。
 
 ## 提供商类型
 
@@ -28,7 +28,7 @@ default_model = "your-model-name"
 
 ### 配置文件
 
-编辑 `~/.construct/config.toml`：
+编辑 `~/.revka/config.toml`：
 
 ```toml
 api_key = "your-api-key"
@@ -42,13 +42,13 @@ default_model = "claude-sonnet-4-6"
 
 ```bash
 export API_KEY="your-api-key"
-# 或：export CONSTRUCT_API_KEY="your-api-key"
-construct agent
+# 或：export REVKA_API_KEY="your-api-key"
+revka agent
 ```
 
 ## llama.cpp 服务器（推荐本地设置）
 
-Construct 包含 `llama-server` 的一流本地提供商支持：
+Revka 包含 `llama-server` 的一流本地提供商支持：
 
 - 提供商 ID：`llamacpp`（别名：`llama.cpp`）
 - 默认端点：`http://localhost:8080/v1`
@@ -60,7 +60,7 @@ Construct 包含 `llama-server` 的一流本地提供商支持：
 llama-server -hf ggml-org/gpt-oss-20b-GGUF --jinja -c 133000 --host 127.0.0.1 --port 8033
 ```
 
-然后配置 Construct：
+然后配置 Revka：
 
 ```toml
 default_provider = "llamacpp"
@@ -72,15 +72,15 @@ default_temperature = 0.7
 快速验证：
 
 ```bash
-construct models refresh --provider llamacpp
-construct agent -m "hello"
+revka models refresh --provider llamacpp
+revka agent -m "hello"
 ```
 
-此流程不需要导出 `CONSTRUCT_API_KEY=dummy`。
+此流程不需要导出 `REVKA_API_KEY=dummy`。
 
 ## SGLang 服务器
 
-Construct 包含 [SGLang](https://github.com/sgl-project/sglang) 的一流本地提供商支持：
+Revka 包含 [SGLang](https://github.com/sgl-project/sglang) 的一流本地提供商支持：
 
 - 提供商 ID：`sglang`
 - 默认端点：`http://localhost:30000/v1`
@@ -92,7 +92,7 @@ Construct 包含 [SGLang](https://github.com/sgl-project/sglang) 的一流本地
 python -m sglang.launch_server --model meta-llama/Llama-3.1-8B-Instruct --port 30000
 ```
 
-然后配置 Construct：
+然后配置 Revka：
 
 ```toml
 default_provider = "sglang"
@@ -103,15 +103,15 @@ default_temperature = 0.7
 快速验证：
 
 ```bash
-construct models refresh --provider sglang
-construct agent -m "hello"
+revka models refresh --provider sglang
+revka agent -m "hello"
 ```
 
-此流程不需要导出 `CONSTRUCT_API_KEY=dummy`。
+此流程不需要导出 `REVKA_API_KEY=dummy`。
 
 ## vLLM 服务器
 
-Construct 包含 [vLLM](https://docs.vllm.ai/) 的一流本地提供商支持：
+Revka 包含 [vLLM](https://docs.vllm.ai/) 的一流本地提供商支持：
 
 - 提供商 ID：`vllm`
 - 默认端点：`http://localhost:8000/v1`
@@ -123,7 +123,7 @@ Construct 包含 [vLLM](https://docs.vllm.ai/) 的一流本地提供商支持：
 vllm serve meta-llama/Llama-3.1-8B-Instruct
 ```
 
-然后配置 Construct：
+然后配置 Revka：
 
 ```toml
 default_provider = "vllm"
@@ -134,11 +134,11 @@ default_temperature = 0.7
 快速验证：
 
 ```bash
-construct models refresh --provider vllm
-construct agent -m "hello"
+revka models refresh --provider vllm
+revka agent -m "hello"
 ```
 
-此流程不需要导出 `CONSTRUCT_API_KEY=dummy`。
+此流程不需要导出 `REVKA_API_KEY=dummy`。
 
 ## 测试配置
 
@@ -146,10 +146,10 @@ construct agent -m "hello"
 
 ```bash
 # 交互模式
-construct agent
+revka agent
 
 # 单条消息测试
-construct agent -m "test message"
+revka agent -m "test message"
 ```
 
 ## 故障排除

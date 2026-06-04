@@ -155,14 +155,14 @@ def _workspace_root(args: dict[str, Any], story_slug: str) -> Path:
     base = _first(args.get("artifact_root"), args.get("workspace_dir"))
     if base:
         return Path(base).expanduser() / story_slug
-    return Path.home() / ".construct" / "canonworks" / story_slug
+    return Path.home() / ".revka" / "canonworks" / story_slug
 
 
 def _state_root(args: dict[str, Any] | None = None) -> Path:
     raw = _first((args or {}).get("state_root"), (args or {}).get("canonworks_state_root"))
     if raw:
         return Path(raw).expanduser()
-    return Path.home() / ".construct" / "canonworks"
+    return Path.home() / ".revka" / "canonworks"
 
 
 def _utc_now() -> str:

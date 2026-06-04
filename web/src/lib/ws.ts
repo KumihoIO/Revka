@@ -27,7 +27,7 @@ export interface WebSocketClientOptions {
 const DEFAULT_RECONNECT_DELAY = 1000;
 const MAX_RECONNECT_DELAY = 30000;
 
-export const SESSION_STORAGE_KEY = 'construct_session_id';
+export const SESSION_STORAGE_KEY = 'revka_session_id';
 
 /** Return a stable session ID, persisted in sessionStorage across reconnects. */
 export function getOrCreateSessionId(): string {
@@ -103,7 +103,7 @@ export class WebSocketClient {
     if (this.name) params.set('name', this.name);
     const url = `${this.baseUrl}${basePath}/ws/chat?${params.toString()}`;
 
-    this.ws = new WebSocket(url, ['construct.v1']);
+    this.ws = new WebSocket(url, ['revka.v1']);
 
     this.ws.onopen = () => {
       this.currentDelay = this.reconnectDelay;

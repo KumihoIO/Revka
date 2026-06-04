@@ -81,6 +81,7 @@ export interface SkinSummary {
   version: string;
   manifest: SkinManifest;
   assetBasePath: string;
+  builtin?: boolean;
 }
 
 export interface CronJob {

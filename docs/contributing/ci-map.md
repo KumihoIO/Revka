@@ -6,7 +6,7 @@ For event-by-event delivery behavior across PR, merge, push, and release, see [`
 
 > **Canonical file list.** The sections below include historical workflow
 > filenames that do not all exist in the current
-> `Construct/.github/workflows/` tree. For the authoritative list, use the
+> `Revka/.github/workflows/` tree. For the authoritative list, use the
 > table immediately below; then consult the section notes for intent.
 
 ## Workflow Files Present Today

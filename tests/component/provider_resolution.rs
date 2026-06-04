@@ -7,10 +7,8 @@
 //! to provider construction, verifying factory resolution, URL construction,
 //! credential wiring, and auth header format.
 
-use construct::providers::compatible::{AuthStyle, OpenAiCompatibleProvider};
-use construct::providers::{
-    create_provider, create_provider_with_options, create_provider_with_url,
-};
+use revka::providers::compatible::{AuthStyle, OpenAiCompatibleProvider};
+use revka::providers::{create_provider, create_provider_with_options, create_provider_with_url};
 
 /// Helper: assert provider creation succeeds
 fn assert_provider_ok(name: &str, key: Option<&str>, url: Option<&str>) {
@@ -276,7 +274,7 @@ fn factory_resolves_synthetic_provider() {
 
 #[test]
 fn factory_resolves_openai_codex_provider() {
-    let options = construct::providers::ProviderRuntimeOptions::default();
+    let options = revka::providers::ProviderRuntimeOptions::default();
     let result = create_provider_with_options("openai-codex", None, &options);
     assert!(
         result.is_ok(),

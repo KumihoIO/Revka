@@ -1339,32 +1339,32 @@ fn filter_tool_specs_for_architect_strips_denied_tools_when_marker_present() {
 
     let mut specs = vec![
         ToolSpec {
-            name: "construct-operator__create_workflow".into(),
+            name: "revka-operator__create_workflow".into(),
             description: "denied".into(),
             parameters: serde_json::json!({}),
         },
         ToolSpec {
-            name: "construct-operator__save_workflow_preset".into(),
+            name: "revka-operator__save_workflow_preset".into(),
             description: "denied".into(),
             parameters: serde_json::json!({}),
         },
         ToolSpec {
-            name: "construct-operator__run_workflow".into(),
+            name: "revka-operator__run_workflow".into(),
             description: "denied".into(),
             parameters: serde_json::json!({}),
         },
         ToolSpec {
-            name: "construct-operator__validate_workflow".into(),
+            name: "revka-operator__validate_workflow".into(),
             description: "denied".into(),
             parameters: serde_json::json!({}),
         },
         ToolSpec {
-            name: "construct-operator__dry_run_workflow".into(),
+            name: "revka-operator__dry_run_workflow".into(),
             description: "denied".into(),
             parameters: serde_json::json!({}),
         },
         ToolSpec {
-            name: "construct-operator__propose_workflow_yaml".into(),
+            name: "revka-operator__propose_workflow_yaml".into(),
             description: "allowed".into(),
             parameters: serde_json::json!({}),
         },
@@ -1380,27 +1380,27 @@ fn filter_tool_specs_for_architect_strips_denied_tools_when_marker_present() {
 
     let names: Vec<&str> = specs.iter().map(|s| s.name.as_str()).collect();
     assert!(
-        !names.contains(&"construct-operator__create_workflow"),
+        !names.contains(&"revka-operator__create_workflow"),
         "create_workflow must be filtered out in Architect mode; got {names:?}"
     );
     assert!(
-        !names.contains(&"construct-operator__save_workflow_preset"),
+        !names.contains(&"revka-operator__save_workflow_preset"),
         "save_workflow_preset must be filtered out in Architect mode; got {names:?}"
     );
     assert!(
-        !names.contains(&"construct-operator__run_workflow"),
+        !names.contains(&"revka-operator__run_workflow"),
         "run_workflow must be filtered out in Architect mode; got {names:?}"
     );
     assert!(
-        !names.contains(&"construct-operator__validate_workflow"),
+        !names.contains(&"revka-operator__validate_workflow"),
         "validate_workflow must be filtered out in Architect mode; got {names:?}"
     );
     assert!(
-        !names.contains(&"construct-operator__dry_run_workflow"),
+        !names.contains(&"revka-operator__dry_run_workflow"),
         "dry_run_workflow must be filtered out in Architect mode; got {names:?}"
     );
     assert!(
-        names.contains(&"construct-operator__propose_workflow_yaml"),
+        names.contains(&"revka-operator__propose_workflow_yaml"),
         "propose_workflow_yaml must remain available; got {names:?}"
     );
     assert!(
@@ -1418,17 +1418,17 @@ fn filter_tool_specs_for_architect_is_noop_without_marker() {
 
     let mut specs = vec![
         ToolSpec {
-            name: "construct-operator__create_workflow".into(),
+            name: "revka-operator__create_workflow".into(),
             description: "still allowed".into(),
             parameters: serde_json::json!({}),
         },
         ToolSpec {
-            name: "construct-operator__save_workflow_preset".into(),
+            name: "revka-operator__save_workflow_preset".into(),
             description: "still allowed".into(),
             parameters: serde_json::json!({}),
         },
         ToolSpec {
-            name: "construct-operator__propose_workflow_yaml".into(),
+            name: "revka-operator__propose_workflow_yaml".into(),
             description: "still allowed".into(),
             parameters: serde_json::json!({}),
         },
@@ -1445,14 +1445,14 @@ fn filter_tool_specs_for_architect_is_noop_without_marker() {
         "Regular Operator chats must not trigger the Architect tool guard"
     );
     let names: Vec<&str> = specs.iter().map(|s| s.name.as_str()).collect();
-    assert!(names.contains(&"construct-operator__create_workflow"));
-    assert!(names.contains(&"construct-operator__save_workflow_preset"));
-    assert!(names.contains(&"construct-operator__propose_workflow_yaml"));
+    assert!(names.contains(&"revka-operator__create_workflow"));
+    assert!(names.contains(&"revka-operator__save_workflow_preset"));
+    assert!(names.contains(&"revka-operator__propose_workflow_yaml"));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Operator chat context compression — guards against the 1M-token blowup
-// reproduced in /Users/neo/.construct/logs/daemon.stderr.log on 2026-05-11.
+// reproduced in /Users/neo/.revka/logs/daemon.stderr.log on 2026-05-11.
 // Failure mode: `trim_history` is message-count based and missed huge tool
 // results, letting the Anthropic request hit the 1M cap.
 // ═══════════════════════════════════════════════════════════════════════════

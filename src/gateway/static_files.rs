@@ -26,7 +26,7 @@ enum DashboardSource {
 }
 
 fn configured_web_root(state: &AppState) -> Option<PathBuf> {
-    std::env::var("CONSTRUCT_WEB_ROOT")
+    std::env::var("REVKA_WEB_ROOT")
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
@@ -117,7 +117,7 @@ pub async fn handle_static(State(state): State<AppState>, uri: Uri) -> Response 
 }
 
 /// SPA fallback: serve index.html for any non-API, non-static GET request.
-/// Injects `window.__CONSTRUCT_BASE__` so the frontend knows the path prefix.
+/// Injects `window.__REVKA_BASE__` so the frontend knows the path prefix.
 pub async fn handle_spa_fallback(State(state): State<AppState>) -> Response {
     match dashboard_source(&state) {
         DashboardSource::Filesystem(root) => {
@@ -167,7 +167,7 @@ fn serve_index_html(state: &AppState, bytes: &[u8]) -> Response {
     } else {
         let pfx = &state.path_prefix;
         let json_pfx = serde_json::to_string(pfx).unwrap_or_else(|_| "\"\"".to_string());
-        let script = format!("<script>window.__CONSTRUCT_BASE__={json_pfx};</script>");
+        let script = format!("<script>window.__REVKA_BASE__={json_pfx};</script>");
         html.replace("/_app/", &format!("{pfx}/_app/"))
             .replace("<head>", &format!("<head>{script}"))
     };
@@ -213,7 +213,7 @@ fn is_immutable_asset(path: &str) -> bool {
 fn dashboard_unavailable_response() -> Response {
     (
         StatusCode::SERVICE_UNAVAILABLE,
-        "Web dashboard not available. Run `cd web && npm ci && npm run build`, set CONSTRUCT_WEB_ROOT, or build with CONSTRUCT_BUILD_WEB=1.",
+        "Web dashboard not available. Run `cd web && npm ci && npm run build`, set REVKA_WEB_ROOT, or build with REVKA_BUILD_WEB=1.",
     )
         .into_response()
 }

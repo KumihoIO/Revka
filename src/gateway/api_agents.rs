@@ -1,7 +1,7 @@
 //! REST API handlers for agent management (`/api/agents`).
 //!
 //! Proxies to Kumiho FastAPI for persistent agent storage.  Each agent is a
-//! Kumiho item of kind `"agent"` in the `Construct/AgentPool` space.  Agent
+//! Kumiho item of kind `"agent"` in the `Revka/AgentPool` space.  Agent
 //! metadata (identity, soul, expertise, etc.) is stored as revision metadata.
 
 use super::AppState;
@@ -91,7 +91,7 @@ fn agent_project(state: &AppState) -> String {
     state.config.lock().kumiho.harness_project.clone()
 }
 
-/// Full space path for agents, e.g. "/Construct/AgentPool".
+/// Full space path for agents, e.g. "/Revka/AgentPool".
 fn agent_space_path(state: &AppState) -> String {
     format!("/{}/{}", agent_project(state), AGENT_SPACE_NAME)
 }
@@ -817,7 +817,7 @@ pub async fn handle_upload_agent_avatar(
         Err(e) => return kumiho_err(e).into_response(),
     };
 
-    let project_segment = ascii_storage_segment(&agent_project(&state), "construct");
+    let project_segment = ascii_storage_segment(&agent_project(&state), "revka");
     let item_segment = ascii_storage_segment(&item.item_name, "agent");
     let filename = format!("{}.{}", uuid::Uuid::new_v4(), kind.ext);
     let rel_path = PathBuf::from("artifacts")

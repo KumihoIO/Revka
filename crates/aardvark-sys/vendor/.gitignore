@@ -1,7 +1,7 @@
-# Total Phase Aardvark SDK artifacts are NOT redistributable under Construct's
+# Total Phase Aardvark SDK artifacts are NOT redistributable under Revka's
 # dual MIT/Apache-2.0 license. Download the SDK from
 # https://www.totalphase.com/products/aardvark-software-api/ and drop
-# aardvark.h / aardvark.so / aardvark.dll here, or point CONSTRUCT_AARDVARK_LIB
+# aardvark.h / aardvark.so / aardvark.dll here, or point REVKA_AARDVARK_LIB
 # at your own copy.
 aardvark.h
 aardvark.so

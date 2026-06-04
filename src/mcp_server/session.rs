@@ -12,8 +12,8 @@
 //! ship progress events back to the caller, we also publish each event onto
 //! a per-session `tokio::sync::broadcast` channel. Any subscriber holding
 //! the session token can tap that stream via `GET /session/<id>/events` to
-//! observe *every* Construct tool's progress for that session in real time —
-//! which is how the V2 Code tab surfaces "what Construct is doing right now"
+//! observe *every* Revka tool's progress for that session in real time —
+//! which is how the V2 Code tab surfaces "what Revka is doing right now"
 //! while an external CLI is mid tools/call.
 //!
 //! Broadcast capacity is small (64). Slow consumers simply miss frames

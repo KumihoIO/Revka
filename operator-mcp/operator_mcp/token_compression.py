@@ -13,10 +13,10 @@ from typing import Any
 
 
 DEFAULT_AGENT_MESSAGE_MAX_CHARS = int(
-    os.environ.get("CONSTRUCT_AGENT_RESULT_MAX_CHARS", "2000")
+    os.environ.get("REVKA_AGENT_RESULT_MAX_CHARS", "2000")
 )
 DEFAULT_SKILL_CONTEXT_MAX_CHARS = int(
-    os.environ.get("CONSTRUCT_WORKFLOW_SKILL_MAX_CHARS", "1600")
+    os.environ.get("REVKA_WORKFLOW_SKILL_MAX_CHARS", "1600")
 )
 
 _ERROR_KEYWORDS = (
@@ -69,7 +69,7 @@ def compress_text(text: str, max_chars: int = DEFAULT_AGENT_MESSAGE_MAX_CHARS) -
     tail = lines[-40:]
     body: list[str] = []
     body.append(
-        "[Construct token compression: axis=workflow_data, "
+        "[Revka token compression: axis=workflow_data, "
         f"chars {len(text)}->{max_chars}, est_tokens {estimate_tokens(text)}->{max_chars // 4}]"
     )
     if signal:
@@ -162,7 +162,7 @@ def compress_skill_content(
             break
 
     body: list[str] = [
-        f"[Construct skill context: ref={ref}, chars {len(content)}->{max_chars}]",
+        f"[Revka skill context: ref={ref}, chars {len(content)}->{max_chars}]",
         f"skill_ref: {ref}",
     ]
     if resolved_path:
@@ -202,7 +202,7 @@ def build_skill_pointer_manifest(
 ) -> tuple[str, dict[str, Any]]:
     """Build a no-inline skill manifest when only a kref/path pointer is needed."""
     body = [
-        f"[Construct skill context: ref={ref}, mode=pointer]",
+        f"[Revka skill context: ref={ref}, mode=pointer]",
         f"skill_ref: {ref}",
     ]
     if resolved_path:

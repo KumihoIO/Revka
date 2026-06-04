@@ -61,7 +61,7 @@ impl ProxyConfigTool {
     fn parse_scope(raw: &str) -> Option<ProxyScope> {
         match raw.trim().to_ascii_lowercase().as_str() {
             "environment" | "env" => Some(ProxyScope::Environment),
-            "construct" | "internal" | "core" => Some(ProxyScope::Construct),
+            "revka" | "internal" | "core" => Some(ProxyScope::Revka),
             "services" | "service" => Some(ProxyScope::Services),
             _ => None,
         }
@@ -185,7 +185,7 @@ impl ProxyConfigTool {
                 .as_str()
                 .ok_or_else(|| anyhow::anyhow!("'scope' must be a string"))?;
             proxy.scope = Self::parse_scope(scope).ok_or_else(|| {
-                anyhow::anyhow!("Invalid scope '{scope}'. Use environment|construct|services")
+                anyhow::anyhow!("Invalid scope '{scope}'. Use environment|revka|services")
             })?;
         }
 
@@ -342,7 +342,7 @@ impl Tool for ProxyConfigTool {
     }
 
     fn description(&self) -> &str {
-        "Manage Construct proxy settings (scope: environment | construct | services), including runtime and process env application"
+        "Manage Revka proxy settings (scope: environment | revka | services), including runtime and process env application"
     }
 
     fn parameters_schema(&self) -> Value {
@@ -360,7 +360,7 @@ impl Tool for ProxyConfigTool {
                 },
                 "scope": {
                     "type": "string",
-                    "description": "Proxy scope: environment | construct | services"
+                    "description": "Proxy scope: environment | revka | services"
                 },
                 "http_proxy": {
                     "type": ["string", "null"],

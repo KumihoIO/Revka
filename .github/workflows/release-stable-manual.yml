@@ -138,18 +138,18 @@ jobs:
           # ensuring compatibility with Ubuntu 22.04+ (#3573).
           - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
-            artifact: construct
+            artifact: revka
             ext: tar.gz
           - os: ubuntu-22.04
             target: aarch64-unknown-linux-gnu
-            artifact: construct
+            artifact: revka
             ext: tar.gz
             cross_compiler: gcc-aarch64-linux-gnu
             linker_env: CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER
             linker: aarch64-linux-gnu-gcc
           - os: ubuntu-22.04
             target: armv7-unknown-linux-gnueabihf
-            artifact: construct
+            artifact: revka
             ext: tar.gz
             cross_compiler: gcc-arm-linux-gnueabihf
             linker_env: CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER
@@ -157,7 +157,7 @@ jobs:
             skip_prometheus: true
           - os: ubuntu-22.04
             target: arm-unknown-linux-gnueabihf
-            artifact: construct
+            artifact: revka
             ext: tar.gz
             cross_compiler: gcc-arm-linux-gnueabihf
             linker_env: CARGO_TARGET_ARM_UNKNOWN_LINUX_GNUEABIHF_LINKER
@@ -165,11 +165,11 @@ jobs:
             skip_prometheus: true
           - os: macos-14
             target: aarch64-apple-darwin
-            artifact: construct
+            artifact: revka
             ext: tar.gz
           - os: ubuntu-latest
             target: aarch64-linux-android
-            artifact: construct
+            artifact: revka
             ext: tar.gz
             ndk: true
             experimental: true
@@ -177,7 +177,7 @@ jobs:
             cargo_features: "channel-matrix,channel-lark"
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            artifact: construct.exe
+            artifact: revka.exe
             ext: zip
     continue-on-error: ${{ matrix.experimental || false }}
     steps:
@@ -273,18 +273,18 @@ jobs:
         if: runner.os != 'Windows'
         run: |
           cd target/${{ matrix.target }}/release
-          tar czf ../../../construct-${{ matrix.target }}.${{ matrix.ext }} ${{ matrix.artifact }}
+          tar czf ../../../revka-${{ matrix.target }}.${{ matrix.ext }} ${{ matrix.artifact }}
 
       - name: Package (Windows)
         if: runner.os == 'Windows'
         run: |
           cd target/${{ matrix.target }}/release
-          7z a ../../../construct-${{ matrix.target }}.${{ matrix.ext }} ${{ matrix.artifact }}
+          7z a ../../../revka-${{ matrix.target }}.${{ matrix.ext }} ${{ matrix.artifact }}
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: construct-${{ matrix.target }}
-          path: construct-${{ matrix.target }}.${{ matrix.ext }}
+          name: revka-${{ matrix.target }}
+          path: revka-${{ matrix.target }}.${{ matrix.ext }}
           retention-days: 14
 
   build-desktop:
@@ -331,9 +331,9 @@ jobs:
       - name: Prepare desktop release assets
         run: |
           mkdir -p desktop-assets
-          find target -name '*.dmg' -exec cp {} desktop-assets/Construct.dmg \; 2>/dev/null || true
-          find target -name '*.app.tar.gz' -exec cp {} desktop-assets/Construct-macos.app.tar.gz \; 2>/dev/null || true
-          find target -name '*.app.tar.gz.sig' -exec cp {} desktop-assets/Construct-macos.app.tar.gz.sig \; 2>/dev/null || true
+          find target -name '*.dmg' -exec cp {} desktop-assets/Revka.dmg \; 2>/dev/null || true
+          find target -name '*.app.tar.gz' -exec cp {} desktop-assets/Revka-macos.app.tar.gz \; 2>/dev/null || true
+          find target -name '*.app.tar.gz.sig' -exec cp {} desktop-assets/Revka-macos.app.tar.gz.sig \; 2>/dev/null || true
           echo "--- Desktop assets ---"
           ls -lh desktop-assets/
 
@@ -397,7 +397,7 @@ jobs:
 
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          pattern: construct-*
+          pattern: revka-*
           path: artifacts
 
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
@@ -414,14 +414,14 @@ jobs:
         shell: bash
         run: |
           required_assets=(
-            "construct-x86_64-unknown-linux-gnu.tar.gz"
-            "construct-aarch64-unknown-linux-gnu.tar.gz"
-            "construct-armv7-unknown-linux-gnueabihf.tar.gz"
-            "construct-arm-unknown-linux-gnueabihf.tar.gz"
-            "construct-aarch64-apple-darwin.tar.gz"
-            "construct-aarch64-linux-android.tar.gz"
-            "construct-x86_64-pc-windows-msvc.zip"
-            "Construct.dmg"
+            "revka-x86_64-unknown-linux-gnu.tar.gz"
+            "revka-aarch64-unknown-linux-gnu.tar.gz"
+            "revka-armv7-unknown-linux-gnueabihf.tar.gz"
+            "revka-arm-unknown-linux-gnueabihf.tar.gz"
+            "revka-aarch64-apple-darwin.tar.gz"
+            "revka-aarch64-linux-android.tar.gz"
+            "revka-x86_64-pc-windows-msvc.zip"
+            "Revka.dmg"
           )
           missing=0
           for asset in "${required_assets[@]}"; do
@@ -491,7 +491,7 @@ jobs:
         env:
           TAG: ${{ needs.validate.outputs.tag }}
         run: |
-          git tag -a "$TAG" -m "construct $TAG"
+          git tag -a "$TAG" -m "revka $TAG"
           git push origin "$TAG"
 
       - name: Create GitHub Release
@@ -609,8 +609,8 @@ jobs:
           curl -fsSL -X POST \
             -H "Authorization: token $PAT" \
             -H "Accept: application/vnd.github+json" \
-            https://api.github.com/repos/KumihoIO/construct-os-website/dispatches \
-            -d '{"event_type":"new-release","client_payload":{"install_script_url":"https://raw.githubusercontent.com/KumihoIO/construct-os/main/install.sh"}}'
+            https://api.github.com/repos/KumihoIO/Revka-website/dispatches \
+            -d '{"event_type":"new-release","client_payload":{"install_script_url":"https://raw.githubusercontent.com/KumihoIO/Revka/main/install.sh"}}'
 
   docker:
     name: Push Docker Image
@@ -622,24 +622,24 @@ jobs:
 
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: construct-x86_64-unknown-linux-gnu
+          name: revka-x86_64-unknown-linux-gnu
           path: artifacts/
 
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: construct-aarch64-unknown-linux-gnu
+          name: revka-aarch64-unknown-linux-gnu
           path: artifacts/
 
       - name: Prepare Docker context with pre-built binaries
         run: |
           mkdir -p docker-ctx/bin/amd64 docker-ctx/bin/arm64
-          tar xzf artifacts/construct-x86_64-unknown-linux-gnu.tar.gz -C docker-ctx/bin/amd64
-          tar xzf artifacts/construct-aarch64-unknown-linux-gnu.tar.gz -C docker-ctx/bin/arm64
+          tar xzf artifacts/revka-x86_64-unknown-linux-gnu.tar.gz -C docker-ctx/bin/amd64
+          tar xzf artifacts/revka-aarch64-unknown-linux-gnu.tar.gz -C docker-ctx/bin/arm64
 
-          mkdir -p docker-ctx/construct-data/.construct docker-ctx/construct-data/workspace
+          mkdir -p docker-ctx/revka-data/.revka docker-ctx/revka-data/workspace
           printf '%s\n' \
-            'workspace_dir = "/construct-data/workspace"' \
-            'config_path = "/construct-data/.construct/config.toml"' \
+            'workspace_dir = "/revka-data/workspace"' \
+            'config_path = "/revka-data/.revka/config.toml"' \
             'api_key = ""' \
             'default_provider = "openrouter"' \
             'default_model = "anthropic/claude-sonnet-4-20250514"' \
@@ -649,7 +649,7 @@ jobs:
             'port = 42617' \
             'host = "[::]"' \
             'allow_public_bind = true' \
-            > docker-ctx/construct-data/.construct/config.toml
+            > docker-ctx/revka-data/.revka/config.toml
 
           cp Dockerfile.ci docker-ctx/Dockerfile
           cp Dockerfile.debian.ci docker-ctx/Dockerfile.debian
@@ -801,7 +801,7 @@ jobs:
 
   # homebrew-core path disabled — Homebrew/homebrew-core's Acceptable Formulae
   # popularity bar (stars/watchers/forks) blocks new projects. Re-enable once
-  # construct meets the criteria and a manual first-PR has landed upstream.
+  # revka meets the criteria and a manual first-PR has landed upstream.
   # homebrew:
   #   name: Update Homebrew Core
   #   needs: [validate, publish]
@@ -844,7 +844,7 @@ jobs:
   #   uses: ./.github/workflows/tweet-release.yml
   #   with:
   #     release_tag: ${{ needs.validate.outputs.tag }}
-  #     release_url: https://github.com/KumihoIO/construct-os/releases/tag/${{ needs.validate.outputs.tag }}
+  #     release_url: https://github.com/KumihoIO/Revka/releases/tag/${{ needs.validate.outputs.tag }}
   #   secrets: inherit
   #
   # discord:
@@ -854,5 +854,5 @@ jobs:
   #   uses: ./.github/workflows/discord-release.yml
   #   with:
   #     release_tag: ${{ needs.validate.outputs.tag }}
-  #     release_url: https://github.com/KumihoIO/construct-os/releases/tag/${{ needs.validate.outputs.tag }}
+  #     release_url: https://github.com/KumihoIO/Revka/releases/tag/${{ needs.validate.outputs.tag }}
   #   secrets: inherit

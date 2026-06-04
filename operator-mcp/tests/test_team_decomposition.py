@@ -22,15 +22,15 @@ from operator_mcp.tool_handlers.teams import (
 def _make_members(*names_roles):
     """Helper: _make_members(("Alice", "coder"), ("Bob", "reviewer")) -> list of member dicts."""
     return [
-        {"kref": f"kref://Construct/AgentPool/{name}.agent", "name": name, "role": role}
+        {"kref": f"kref://Revka/AgentPool/{name}.agent", "name": name, "role": role}
         for name, role in names_roles
     ]
 
 
 def _make_edge(from_name: str, to_name: str, edge_type: str = "DEPENDS_ON") -> dict[str, str]:
     return {
-        "from_kref": f"kref://Construct/AgentPool/{from_name}.agent",
-        "to_kref": f"kref://Construct/AgentPool/{to_name}.agent",
+        "from_kref": f"kref://Revka/AgentPool/{from_name}.agent",
+        "to_kref": f"kref://Revka/AgentPool/{to_name}.agent",
         "edge_type": edge_type,
     }
 
@@ -225,7 +225,7 @@ class TestBuildRelationshipContext:
         members = _make_members(("Coder", "coder"), ("Reviewer", "reviewer"))
         edges = [_make_edge("Reviewer", "Coder", "DEPENDS_ON")]
         spawned_map = {
-            "kref://Construct/AgentPool/Coder.agent": {
+            "kref://Revka/AgentPool/Coder.agent": {
                 "agent_id": "coder-001", "name": "Coder", "role": "coder",
             },
         }
@@ -239,7 +239,7 @@ class TestBuildRelationshipContext:
         members = _make_members(("Coder", "coder"), ("Reviewer", "reviewer"))
         edges = [_make_edge("Reviewer", "Coder", "DEPENDS_ON")]
         spawned_map = {
-            "kref://Construct/AgentPool/Reviewer.agent": {
+            "kref://Revka/AgentPool/Reviewer.agent": {
                 "agent_id": "rev-001", "name": "Reviewer", "role": "reviewer",
             },
         }
@@ -252,7 +252,7 @@ class TestBuildRelationshipContext:
         members = _make_members(("Researcher", "researcher"), ("Coder", "coder"))
         edges = [_make_edge("Researcher", "Coder", "SUPPORTS")]
         spawned_map = {
-            "kref://Construct/AgentPool/Researcher.agent": {
+            "kref://Revka/AgentPool/Researcher.agent": {
                 "agent_id": "res-001", "name": "Researcher", "role": "researcher",
             },
         }
@@ -300,7 +300,7 @@ class TestCollectUpstreamOutput:
         AGENTS["coder-001"] = agent
 
         spawned_map = {
-            "kref://Construct/AgentPool/Coder.agent": {
+            "kref://Revka/AgentPool/Coder.agent": {
                 "agent_id": "coder-001", "name": "Coder", "role": "coder",
             },
         }
@@ -332,7 +332,7 @@ class TestCollectUpstreamOutput:
         AGENTS["coder-002"] = agent
 
         spawned_map = {
-            "kref://Construct/AgentPool/Coder.agent": {
+            "kref://Revka/AgentPool/Coder.agent": {
                 "agent_id": "coder-002", "name": "Coder", "role": "coder",
             },
         }
@@ -356,7 +356,7 @@ class TestCollectUpstreamOutput:
         AGENTS["coder-003"] = agent
 
         spawned_map = {
-            "kref://Construct/AgentPool/Coder.agent": {
+            "kref://Revka/AgentPool/Coder.agent": {
                 "agent_id": "coder-003", "name": "Coder", "role": "coder",
             },
         }
@@ -381,7 +381,7 @@ class TestCollectUpstreamOutput:
         AGENTS["res-001"] = agent
 
         spawned_map = {
-            "kref://Construct/AgentPool/Researcher.agent": {
+            "kref://Revka/AgentPool/Researcher.agent": {
                 "agent_id": "res-001", "name": "Researcher", "role": "researcher",
             },
         }

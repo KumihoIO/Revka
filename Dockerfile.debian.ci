@@ -17,18 +17,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy the pre-built binary for this platform (amd64 or arm64)
-COPY bin/${TARGETARCH}/construct /usr/local/bin/construct
+COPY bin/${TARGETARCH}/revka /usr/local/bin/revka
 
 # Runtime directory structure and default config
-COPY --chown=65534:65534 construct-data/ /construct-data/
+COPY --chown=65534:65534 revka-data/ /revka-data/
 
 ENV LANG=C.UTF-8
-ENV CONSTRUCT_WORKSPACE=/construct-data/workspace
-ENV HOME=/construct-data
-ENV CONSTRUCT_GATEWAY_PORT=42617
+ENV REVKA_WORKSPACE=/revka-data/workspace
+ENV HOME=/revka-data
+ENV REVKA_GATEWAY_PORT=42617
 
-WORKDIR /construct-data
+WORKDIR /revka-data
 USER 65534:65534
 EXPOSE 42617
-ENTRYPOINT ["construct"]
+ENTRYPOINT ["revka"]
 CMD ["gateway"]

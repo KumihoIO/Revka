@@ -15,19 +15,19 @@ For first-time setup and quick orientation.
 
 | Scenario | Command |
 |----------|---------|
-| I have an API key, want fastest setup | `construct onboard --api-key sk-... --provider openrouter` |
-| I want guided prompts | `construct onboard` |
-| Config exists, just fix channels | `construct onboard --channels-only` |
-| Config exists, I intentionally want full overwrite | `construct onboard --force` |
+| I have an API key, want fastest setup | `revka onboard --api-key sk-... --provider openrouter` |
+| I want guided prompts | `revka onboard` |
+| Config exists, just fix channels | `revka onboard --channels-only` |
+| Config exists, I intentionally want full overwrite | `revka onboard --force` |
 | Using subscription auth | See [Subscription Auth](../../README.md#subscription-auth-openai-codex--claude-code) |
 
 ## Onboarding and Validation
 
-- Quick onboarding: `construct onboard --api-key "sk-..." --provider openrouter`
-- Guided onboarding: `construct onboard`
+- Quick onboarding: `revka onboard --api-key "sk-..." --provider openrouter`
+- Guided onboarding: `revka onboard`
 - Existing config protection: reruns require explicit confirmation (or `--force` in non-interactive flows)
 - Ollama cloud models (`:cloud`) require a remote `api_url` and API key (for example `api_url = "https://ollama.com"`).
-- Validate environment: `construct status` + `construct doctor`
+- Validate environment: `revka status` + `revka doctor`
 - Dashboard dev/build loop: [dashboard-dev.md](dashboard-dev.md)
 
 ## Next

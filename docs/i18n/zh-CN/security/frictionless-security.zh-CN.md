@@ -125,23 +125,23 @@ impl SandboxConfig {
 ### 3. 首次运行：静默日志
 
 ```bash
-$ construct agent -m \"hello\"
+$ revka agent -m \"hello\"
 
 # 首次运行：静默检测
 [INFO] Detecting security features...
 [INFO] ✓ Landlock sandbox enabled (kernel 6.2+)
 [INFO] ✓ Memory monitoring active (512MB limit)
-[INFO] ✓ Audit logging enabled (~/.config/construct/audit.log)
+[INFO] ✓ Audit logging enabled (~/.config/revka/audit.log)
 
 # 后续运行：安静
-$ construct agent -m \"hello\"
+$ revka agent -m \"hello\"
 [agent] Thinking...
 ```
 
 ### 4. 配置文件：所有默认值隐藏
 
 ```toml
-# ~/.config/construct/config.toml
+# ~/.config/revka/config.toml
 
 # 这些部分不会被写入，除非用户自定义
 # [security.sandbox]
@@ -168,21 +168,21 @@ max_memory_mb = 1024  # 用户提高了限制
 
 ```bash
 # 检查哪些功能处于活动状态
-$ construct security --status
+$ revka security --status
 Security Status:
   ✓ Sandbox: Landlock (Linux kernel 6.2)
   ✓ Memory monitoring: 512MB limit
-  ✓ Audit logging: ~/.config/construct/audit.log
+  ✓ Audit logging: ~/.config/revka/audit.log
   → 今日已记录 47 个事件
 
 # 显式禁用沙箱（写入配置）
-$ construct config set security.sandbox.enabled false
+$ revka config set security.sandbox.enabled false
 
 # 启用特定后端
-$ construct config set security.sandbox.backend firejail
+$ revka config set security.sandbox.backend firejail
 
 # 调整限制
-$ construct config set security.resources.max_memory_mb 2048
+$ revka config set security.resources.max_memory_mb 2048
 ```
 
 ### 6. 优雅降级
@@ -268,7 +268,7 @@ impl Default for SandboxBackend {
 ### 之前（当前）
 
 ```bash
-$ construct onboard
+$ revka onboard
 [1/9] Workspace Setup...
 [2/9] AI Provider...
 ...
@@ -279,7 +279,7 @@ $ construct onboard
 ### 之后（带无摩擦安全）
 
 ```bash
-$ construct onboard
+$ revka onboard
 [1/9] Workspace Setup...
 [2/9] AI Provider...
 ...
@@ -307,6 +307,6 @@ $ construct onboard
 ✅ **无新提示** — 静默自动检测
 ✅ **无破坏性变更** — 向后兼容
 ✅ **可选择退出** — 显式配置标志
-✅ **状态可见性** — `construct security --status`
+✅ **状态可见性** — `revka security --status`
 
 向导仍然是「通用应用快速安装」 — 安全只是**默默地更好了**。

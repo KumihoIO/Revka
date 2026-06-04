@@ -53,7 +53,7 @@ struct ConnectParams {
 }
 
 /// The sub-protocol we support for the chat WebSocket.
-const WS_PROTOCOL: &str = "construct.v1";
+const WS_PROTOCOL: &str = "revka.v1";
 
 /// Prefix used in `Sec-WebSocket-Protocol` to carry a bearer token.
 const BEARER_SUBPROTO_PREFIX: &str = "bearer.";
@@ -586,9 +586,9 @@ fn page_context_hint(page: &str) -> Option<&'static str> {
         "agent_pool" => Some(concat!(
             "[Page context: The user is on the **Agent Pool** page.\n",
             "Available tools:\n",
-            "- `construct-operator__save_agent_template` — Create/update an agent\n",
-            "- `construct-operator__search_agent_pool` — Search agents by query\n",
-            "- `construct-operator__list_agent_templates` — List all agents (returns kref, name, role, etc.)\n\n",
+            "- `revka-operator__save_agent_template` — Create/update an agent\n",
+            "- `revka-operator__search_agent_pool` — Search agents by query\n",
+            "- `revka-operator__list_agent_templates` — List all agents (returns kref, name, role, etc.)\n\n",
             "When creating agents, collect: name, role (coder/researcher/reviewer/specialist), ",
             "expertise areas, preferred agent type/model (claude or codex), ",
             "identity, soul, tone, and optionally system_hint.\n",
@@ -602,11 +602,11 @@ fn page_context_hint(page: &str) -> Option<&'static str> {
         "agent_teams" => Some(concat!(
             "[Page context: The user is on the **Agent Teams** page.\n",
             "Available tools:\n",
-            "- `construct-operator__create_team` — Create/update a team with members and edges\n",
-            "- `construct-operator__list_agent_templates` — List all agents (returns kref for member_krefs)\n",
-            "- `construct-operator__search_agent_pool` — Search agents by query\n",
-            "- `construct-operator__list_teams` — List existing teams\n",
-            "- `construct-operator__get_team` — Get team details with members and edges\n\n",
+            "- `revka-operator__create_team` — Create/update a team with members and edges\n",
+            "- `revka-operator__list_agent_templates` — List all agents (returns kref for member_krefs)\n",
+            "- `revka-operator__search_agent_pool` — Search agents by query\n",
+            "- `revka-operator__list_teams` — List existing teams\n",
+            "- `revka-operator__get_team` — Get team details with members and edges\n\n",
             "When creating teams: collect a name, description, and select member agents.\n",
             "Use the `kref` field from list_agent_templates for member_krefs — the system resolves names automatically.\n",
             "Define edges (SUPPORTS, DEPENDS_ON, REPORTS_TO) between members to express the team structure.\n\n",
@@ -621,11 +621,11 @@ fn page_context_hint(page: &str) -> Option<&'static str> {
             "[Page context: The user is on the **Skills Library** page.\n",
             "Skills are reusable behavioral procedures stored in CognitiveMemory/Skills.\n",
             "Available tools:\n",
-            "- `construct-operator__save_skill` — Create/update a skill (if available)\n",
-            "- `construct-operator__list_agent_templates` — List agents (skills may reference agents)\n",
-            "- `construct-operator__search_clawhub` — Search ClawHub public marketplace for community skills\n",
-            "- `construct-operator__browse_clawhub` — Browse trending skills on ClawHub\n",
-            "- `construct-operator__install_from_clawhub` — Install a skill from ClawHub by slug\n\n",
+            "- `revka-operator__save_skill` — Create/update a skill (if available)\n",
+            "- `revka-operator__list_agent_templates` — List agents (skills may reference agents)\n",
+            "- `revka-operator__search_clawhub` — Search ClawHub public marketplace for community skills\n",
+            "- `revka-operator__browse_clawhub` — Browse trending skills on ClawHub\n",
+            "- `revka-operator__install_from_clawhub` — Install a skill from ClawHub by slug\n\n",
             "A skill has: name, description, content (the procedure text), domain ",
             "(Memory/Creative/Privacy/Graph/Behavioral/Other), and tags.\n",
             "Guide the user through defining skills conversationally — help them articulate ",
@@ -641,7 +641,7 @@ fn page_context_hint(page: &str) -> Option<&'static str> {
             "Available tools: create_workflow, list_workflows, validate_workflow, run_workflow, ",
             "get_workflow_status, cancel_workflow, resume_workflow, dry_run_workflow, ",
             "recall_workflow_runs, get_workflow_run_detail, save_workflow_preset, list_workflow_presets ",
-            "(all prefixed with `construct-operator__`).\n\n",
+            "(all prefixed with `revka-operator__`).\n\n",
             "## Workflow schema (use this EXACTLY with create_workflow):\n",
             "```yaml\n",
             "workflow_def:\n",
@@ -697,8 +697,8 @@ fn page_context_hint(page: &str) -> Option<&'static str> {
             "[Page context: The user is on the **Live Canvas** page.\n",
             "The canvas is YOUR primary output — render visual content IMMEDIATELY.\n\n",
             "Available tools:\n",
-            "- `construct-operator__render_canvas` — Push content to the canvas (html, svg, markdown, text)\n",
-            "- `construct-operator__clear_canvas` — Clear a canvas\n\n",
+            "- `revka-operator__render_canvas` — Push content to the canvas (html, svg, markdown, text)\n",
+            "- `revka-operator__clear_canvas` — Clear a canvas\n\n",
             "ALWAYS render to the canvas. The user opened this page to SEE visual output.\n",
             "Use it for:\n",
             "- Interactive HTML dashboards with charts, tables, and metrics\n",
@@ -1163,7 +1163,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(
             "sec-websocket-protocol",
-            "construct.v1, bearer.zc_sub456".parse().unwrap(),
+            "revka.v1, bearer.zc_sub456".parse().unwrap(),
         );
         assert_eq!(extract_ws_token(&headers, None), Some("zc_sub456"));
     }
@@ -1242,14 +1242,14 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(
             "sec-websocket-protocol",
-            "construct.v1, bearer.zc_tok, other".parse().unwrap(),
+            "revka.v1, bearer.zc_tok, other".parse().unwrap(),
         );
         assert_eq!(extract_ws_token(&headers, None), Some("zc_tok"));
     }
 
     #[test]
     fn architect_editor_state_block_extracts_marker_from_page_context() {
-        // Mirrors what `web/src/construct/components/workflows/ArchitectPanel.tsx`
+        // Mirrors what `web/src/revka/components/workflows/ArchitectPanel.tsx`
         // sends as `page_context` on every Architect chat turn.
         let page_context = "v2:workflow_editor:architect\n<editor-state>\n  <workflow_name>foo</workflow_name>\n  <current_yaml>\n    name: foo\n  </current_yaml>\n</editor-state>";
         let block = architect_editor_state_block(page_context).expect("marker present");

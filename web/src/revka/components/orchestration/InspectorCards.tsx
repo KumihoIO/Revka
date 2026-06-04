@@ -1,0 +1,324 @@
+import type { ReactNode } from 'react';
+import { Eye, MessageSquareText } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import type { TaskDefinition } from '@/revka/components/workflows/yamlSync';
+import type { TeamDefinition, TeamMember, TranscriptEntry, WorkflowDefinition, WorkflowRunDetail, WorkflowRunSummary, WorkflowStepDetail } from '@/types/api';
+import { useT } from '@/revka/hooks/useT';
+import { parseWorkflowMeta } from '@/revka/components/workflows/yamlSync';
+import { expandedStepCount, loopProgressLabel } from '@/revka/lib/workflowProgress';
+import Panel from '../ui/Panel';
+import StatusPill from '../ui/StatusPill';
+import AgentAvatar from '../ui/AgentAvatar';
+import { formatLocalDateTime } from '../../lib/datetime';
+
+interface WorkflowMetadataCardProps {
+  workflow: WorkflowDefinition | null;
+}
+
+export function WorkflowMetadataCard({ workflow }: WorkflowMetadataCardProps) {
+  const meta = workflow ? parseWorkflowMeta(workflow.definition) : null;
+
+  return (
+    <Panel className="p-4" variant="utility">
+      <div className="revka-kicker">Workflow Metadata</div>
+      {workflow ? (
+        <div className="mt-3 space-y-2 text-sm">
+          <div><span style={{ color: 'var(--revka-text-faint)' }}>Version</span>: <span style={{ color: 'var(--revka-text-primary)' }}>{workflow.version}</span></div>
+          <div><span style={{ color: 'var(--revka-text-faint)' }}>Steps</span>: <span style={{ color: 'var(--revka-text-primary)' }}>{workflow.steps}</span></div>
+          <div><span style={{ color: 'var(--revka-text-faint)' }}>Tags</span>: <span style={{ color: 'var(--revka-text-primary)' }}>{workflow.tags.join(', ') || 'None'}</span></div>
+          <div><span style={{ color: 'var(--revka-text-faint)' }}>Triggers</span>: <span style={{ color: 'var(--revka-text-primary)' }}>{meta?.triggers.length ?? 0}</span></div>
+        </div>
+      ) : (
+        <div className="mt-3 text-sm" style={{ color: 'var(--revka-text-faint)' }}>No workflow selected.</div>
+      )}
+    </Panel>
+  );
+}
+
+interface SelectedTaskCardProps {
+  task: TaskDefinition | null;
+  step?: WorkflowStepDetail | null;
+  title?: string;
+  emptyText: string;
+  footer?: ReactNode;
+  /** Open the step's full output artifact in a viewer modal. */
+  onViewArtifact?: (step: WorkflowStepDetail) => void;
+}
+
+function isTranscriptEntry(value: unknown): value is TranscriptEntry {
+  if (!value || typeof value !== 'object') return false;
+  const entry = value as Record<string, unknown>;
+  return typeof entry.speaker === 'string'
+    && typeof entry.content === 'string'
+    && (typeof entry.round === 'number' || typeof entry.round === 'string');
+}
+
+function normalizeTranscript(value: unknown): TranscriptEntry[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter(isTranscriptEntry)
+    .map((entry) => ({
+      speaker: entry.speaker,
+      content: entry.content,
+      round: Number(entry.round) || 0,
+    }));
+}
+
+function stepTranscript(step?: WorkflowStepDetail | null): TranscriptEntry[] {
+  if (!step) return [];
+  if (step.transcript?.length) return step.transcript;
+  const outputData = step.output_data as Record<string, unknown> | undefined;
+  return normalizeTranscript(outputData?.transcript ?? outputData?.chat_events);
+}
+
+export function SelectedTaskCard({ task, step, title = 'Selected Node', emptyText, footer, onViewArtifact }: SelectedTaskCardProps) {
+  const { t } = useT();
+  const transcript = stepTranscript(step);
+
+  return (
+    <Panel className="p-4" variant="secondary" skinSlot="stepCard">
+      <div className="revka-kicker">{title}</div>
+      {task ? (
+        <div className="mt-3 space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-sm font-semibold" style={{ color: 'var(--revka-text-primary)' }}>
+              {task.name || task.id}
+            </div>
+            {step ? <StatusPill status={step.status} /> : null}
+          </div>
+          <div className="text-xs uppercase tracking-[0.12em]" style={{ color: 'var(--revka-text-faint)' }}>
+            {task.type}
+          </div>
+          <p className="text-sm leading-6" style={{ color: 'var(--revka-text-secondary)' }}>
+            {task.description || 'No description provided.'}
+          </p>
+          {!step ? (
+            <div className="text-xs" style={{ color: 'var(--revka-text-secondary)' }}>
+              Depends on: {task.depends_on.join(', ') || 'none'}
+            </div>
+          ) : null}
+          {step?.output_preview ? (
+            <div className="rounded-[8px] border p-3 text-xs leading-6" style={{ borderColor: 'var(--revka-border-soft)', color: 'var(--revka-text-secondary)' }}>
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <div className="text-[10px] font-semibold uppercase tracking-[0.12em]" style={{ color: 'var(--revka-text-faint)' }}>
+                  Output preview
+                </div>
+                {step.artifact_path && onViewArtifact ? (
+                  <button
+                    type="button"
+                    onClick={() => onViewArtifact(step)}
+                    className="inline-flex items-center gap-1 rounded-[6px] px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider transition"
+                    style={{
+                      background: 'var(--revka-bg-elevated)',
+                      color: 'var(--revka-text-secondary)',
+                      border: '1px solid var(--revka-border-strong)',
+                    }}
+                  >
+                    <Eye className="h-3 w-3" />
+                    View full
+                  </button>
+                ) : null}
+              </div>
+              <pre className="whitespace-pre-wrap" style={{ fontFamily: 'var(--pc-font-mono)' }}>{step.output_preview}</pre>
+            </div>
+          ) : null}
+          {transcript.length ? (
+            <div className="rounded-[8px] border p-3" style={{ borderColor: 'var(--revka-border-soft)' }}>
+              <div className="mb-2 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.12em]" style={{ color: 'var(--revka-text-faint)' }}>
+                <MessageSquareText className="h-3 w-3" />
+                {t('runs.tab.transcript')}
+              </div>
+              <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
+                {transcript.map((entry, index) => (
+                  <div
+                    key={`${entry.round}-${entry.speaker}-${index}`}
+                    className="rounded-[8px] border p-2"
+                    style={{ borderColor: 'var(--revka-border-soft)' }}
+                  >
+                    <div className="flex items-center justify-between gap-2 text-[10px] font-semibold uppercase tracking-[0.12em]" style={{ color: 'var(--revka-text-faint)' }}>
+                      <span className="truncate">{entry.speaker}</span>
+                      <span>R{entry.round}</span>
+                    </div>
+                    <pre className="mt-1 whitespace-pre-wrap text-xs leading-6" style={{ color: 'var(--revka-text-secondary)', fontFamily: 'var(--pc-font-mono)' }}>{entry.content}</pre>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+          {step ? (
+            <div className="text-xs" style={{ color: 'var(--revka-text-secondary)' }}>
+              Agent: {step.agent_type || 'n/a'} {step.role ? `/ ${step.role}` : ''}
+            </div>
+          ) : null}
+          {step?.skills?.length ? (
+            <div className="text-xs" style={{ color: 'var(--revka-text-secondary)' }}>
+              Skills: {step.skills.join(', ')}
+            </div>
+          ) : null}
+          {step?.agent_id ? (
+            <div className="text-xs font-mono" style={{ color: 'var(--revka-text-faint)' }}>
+              Agent ID: {step.agent_id}
+            </div>
+          ) : null}
+          {footer ? <div className="pt-1">{footer}</div> : null}
+        </div>
+      ) : (
+        <div className="mt-3 text-sm" style={{ color: 'var(--revka-text-faint)' }}>{emptyText}</div>
+      )}
+    </Panel>
+  );
+}
+
+interface RunSummaryCardProps {
+  run: WorkflowRunDetail | null;
+  workflowHref?: string;
+}
+
+export function RunSummaryCard({ run, workflowHref }: RunSummaryCardProps) {
+  const { tpl } = useT();
+  const expanded = run ? expandedStepCount(run) : null;
+  const loopLabel = run ? loopProgressLabel(run, tpl) : null;
+
+  return (
+    <Panel className="p-4" variant="utility" skinSlot="runCard">
+      <div className="revka-kicker">Run Summary</div>
+      {run ? (
+        <div className="mt-3 space-y-2 text-sm">
+          <div className="flex items-center justify-between gap-2">
+            <span style={{ color: 'var(--revka-text-faint)' }}>Status</span>
+            <StatusPill status={run.status} />
+          </div>
+          <div><span style={{ color: 'var(--revka-text-faint)' }}>Started</span>: <span style={{ color: 'var(--revka-text-primary)' }}>{formatLocalDateTime(run.started_at) || '-'}</span></div>
+          <div><span style={{ color: 'var(--revka-text-faint)' }}>Completed</span>: <span style={{ color: 'var(--revka-text-primary)' }}>{formatLocalDateTime(run.completed_at) || '-'}</span></div>
+          <div><span style={{ color: 'var(--revka-text-faint)' }}>Steps</span>: <span style={{ color: 'var(--revka-text-primary)' }}>{run.steps_completed || '0'} / {run.steps_total || '?'}</span></div>
+          {expanded !== null ? (
+            <div><span style={{ color: 'var(--revka-text-faint)' }}>Expanded</span>: <span style={{ color: 'var(--revka-text-primary)' }}>{expanded}</span></div>
+          ) : null}
+          {loopLabel ? (
+            <div><span style={{ color: 'var(--revka-text-faint)' }}>Loop</span>: <span className="font-mono" style={{ color: 'var(--revka-text-primary)' }}>{loopLabel}</span></div>
+          ) : null}
+          {run.error ? (
+            <div className="rounded-[8px] border p-3 text-xs" style={{ borderColor: 'color-mix(in srgb, var(--revka-status-danger) 28%, transparent)', color: 'var(--revka-status-danger)' }}>
+              {run.error}
+            </div>
+          ) : null}
+          {workflowHref ? (
+            <Link
+              to={workflowHref}
+              className="inline-flex items-center gap-2 text-sm"
+              style={{ color: 'var(--revka-signal-network)' }}
+            >
+              Open workflow definition
+            </Link>
+          ) : null}
+        </div>
+      ) : (
+        <div className="mt-3 text-sm" style={{ color: 'var(--revka-text-faint)' }}>No run selected.</div>
+      )}
+    </Panel>
+  );
+}
+
+interface RecentRunsCardProps {
+  runs: WorkflowRunSummary[];
+  workflowKref?: string | null;
+  emptyText: string;
+}
+
+export function RecentRunsCard({ runs, workflowKref, emptyText }: RecentRunsCardProps) {
+  const { tpl } = useT();
+
+  return (
+    <Panel className="p-4" variant="utility">
+      <div className="revka-kicker">Recent Runs</div>
+      <div className="mt-3 space-y-2">
+        {runs.map((run) => (
+          <Link
+            key={run.run_id}
+            to={`/runs?run=${encodeURIComponent(run.run_id)}&workflow=${encodeURIComponent(workflowKref ?? '')}`}
+            className="block rounded-[8px] border p-3 transition-colors hover:bg-[var(--revka-signal-live-soft)]"
+            style={{ borderColor: 'var(--revka-border-soft)' }}
+          >
+            <div className="flex items-center justify-between gap-2">
+              <div className="truncate text-sm font-medium" style={{ color: 'var(--revka-text-primary)' }}>
+                {run.run_id.slice(0, 8)}
+              </div>
+              <StatusPill status={run.status} />
+            </div>
+            <div className="mt-2 flex flex-wrap gap-2 text-xs" style={{ color: 'var(--revka-text-secondary)' }}>
+              <span>{run.steps_completed || '0'} / {run.steps_total || '?'} steps</span>
+              {expandedStepCount(run) !== null ? (
+                <span>{tpl('runs.stats.expanded_steps', { count: expandedStepCount(run) ?? 0 })}</span>
+              ) : null}
+            </div>
+          </Link>
+        ))}
+        {runs.length === 0 ? (
+          <div className="text-sm" style={{ color: 'var(--revka-text-faint)' }}>{emptyText}</div>
+        ) : null}
+      </div>
+    </Panel>
+  );
+}
+
+interface TeamSummaryCardProps {
+  team: TeamDefinition | null;
+}
+
+export function TeamSummaryCard({ team }: TeamSummaryCardProps) {
+  return (
+    <Panel className="p-4" variant="utility">
+      <div className="revka-kicker">Team Summary</div>
+      {team ? (
+        <div className="mt-3 space-y-2 text-sm">
+          <div className="flex items-center gap-3">
+            <AgentAvatar src={team.avatar_url} alt={team.name} size={44} radius={12} kind="team" />
+            <div className="min-w-0 text-sm font-semibold" style={{ color: 'var(--revka-text-primary)' }}>
+              {team.name}
+            </div>
+          </div>
+          <div><span style={{ color: 'var(--revka-text-faint)' }}>Members</span>: <span style={{ color: 'var(--revka-text-primary)' }}>{team.members.length || team.member_count || 0}</span></div>
+          <div><span style={{ color: 'var(--revka-text-faint)' }}>Edges</span>: <span style={{ color: 'var(--revka-text-primary)' }}>{team.edges.length || team.edge_count || 0}</span></div>
+          <p style={{ color: 'var(--revka-text-secondary)' }}>{team.description || 'No description.'}</p>
+        </div>
+      ) : (
+        <div className="mt-3 text-sm" style={{ color: 'var(--revka-text-faint)' }}>No team selected.</div>
+      )}
+    </Panel>
+  );
+}
+
+interface SelectedMemberCardProps {
+  member: TeamMember | null;
+  footer?: ReactNode;
+}
+
+export function SelectedMemberCard({ member, footer }: SelectedMemberCardProps) {
+  return (
+    <Panel className="p-4" variant="secondary">
+      <div className="revka-kicker">Selected Member</div>
+      {member ? (
+        <div className="mt-3 space-y-2">
+          <div className="flex items-center gap-3">
+            <AgentAvatar src={member.avatar_url} alt={member.name} size={40} radius={10} />
+            <div className="min-w-0 text-sm font-semibold" style={{ color: 'var(--revka-text-primary)' }}>{member.name}</div>
+          </div>
+          <div className="text-xs uppercase tracking-[0.12em]" style={{ color: 'var(--revka-text-faint)' }}>
+            {member.role} / {member.agent_type}
+          </div>
+          <p className="text-sm leading-6" style={{ color: 'var(--revka-text-secondary)' }}>
+            {member.identity}
+          </p>
+          <div className="text-xs" style={{ color: 'var(--revka-text-secondary)' }}>
+            Expertise: {member.expertise.join(', ') || 'None'}
+          </div>
+          {footer ? <div className="pt-1">{footer}</div> : null}
+        </div>
+      ) : (
+        <div className="mt-3 text-sm" style={{ color: 'var(--revka-text-faint)' }}>
+          Select a team member in the topology graph to inspect details.
+        </div>
+      )}
+    </Panel>
+  );
+}

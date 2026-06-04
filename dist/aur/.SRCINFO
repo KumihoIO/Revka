@@ -1,8 +1,8 @@
-pkgbase = construct
+pkgbase = revka
 	pkgdesc = Zero overhead. Zero compromise. 100% Rust. The fastest, smallest AI assistant.
 	pkgver = 0.5.9
 	pkgrel = 1
-	url = https://github.com/KumihoIO/construct-os
+	url = https://github.com/KumihoIO/Revka
 	arch = x86_64
 	license = MIT
 	license = Apache-2.0
@@ -10,7 +10,7 @@ pkgbase = construct
 	makedepends = git
 	depends = gcc-libs
 	depends = openssl
-	source = construct-0.5.9.tar.gz::https://github.com/KumihoIO/construct-os/archive/refs/tags/v0.5.9.tar.gz
+	source = revka-0.5.9.tar.gz::https://github.com/KumihoIO/Revka/archive/refs/tags/v0.5.9.tar.gz
 	sha256sums = SKIP
 
-pkgname = construct
+pkgname = revka

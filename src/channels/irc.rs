@@ -18,7 +18,7 @@ static MSG_SEQ: AtomicU64 = AtomicU64::new(0);
 /// IRC over TLS channel.
 ///
 /// Connects to an IRC server using TLS, joins configured channels,
-/// and forwards PRIVMSG messages to the `Construct` message bus.
+/// and forwards PRIVMSG messages to the `Revka` message bus.
 /// Supports both channel messages and private messages (DMs).
 pub struct IrcChannel {
     server: String,
@@ -389,11 +389,7 @@ impl Channel for IrcChannel {
 
         // --- Nick/User registration ---
         Self::send_raw(&mut writer, &format!("NICK {current_nick}")).await?;
-        Self::send_raw(
-            &mut writer,
-            &format!("USER {} 0 * :Construct", self.username),
-        )
-        .await?;
+        Self::send_raw(&mut writer, &format!("USER {} 0 * :Revka", self.username)).await?;
 
         // Store writer for send()
         {
@@ -911,7 +907,7 @@ mod tests {
             server: "irc.example.com".into(),
             port: 6697,
             nickname: "zcbot".into(),
-            username: Some("construct".into()),
+            username: Some("revka".into()),
             channels: vec!["#test".into()],
             allowed_users: vec!["alice".into()],
             server_password: Some("serverpass".into()),
@@ -922,7 +918,7 @@ mod tests {
         assert_eq!(ch.server, "irc.example.com");
         assert_eq!(ch.port, 6697);
         assert_eq!(ch.nickname, "zcbot");
-        assert_eq!(ch.username, "construct");
+        assert_eq!(ch.username, "revka");
         assert_eq!(ch.channels, vec!["#test"]);
         assert_eq!(ch.allowed_users, vec!["alice"]);
         assert_eq!(ch.server_password.as_deref(), Some("serverpass"));
@@ -941,7 +937,7 @@ mod tests {
             server: "irc.example.com".into(),
             port: 6697,
             nickname: "zcbot".into(),
-            username: Some("construct".into()),
+            username: Some("revka".into()),
             channels: vec!["#test".into(), "#dev".into()],
             allowed_users: vec!["alice".into()],
             server_password: None,
@@ -955,7 +951,7 @@ mod tests {
         assert_eq!(parsed.server, "irc.example.com");
         assert_eq!(parsed.port, 6697);
         assert_eq!(parsed.nickname, "zcbot");
-        assert_eq!(parsed.username.as_deref(), Some("construct"));
+        assert_eq!(parsed.username.as_deref(), Some("revka"));
         assert_eq!(parsed.channels, vec!["#test", "#dev"]);
         assert_eq!(parsed.allowed_users, vec!["alice"]);
         assert!(parsed.server_password.is_none());
@@ -1002,7 +998,7 @@ nickname = "bot"
             port: 6697,
             nickname: "zcbot".into(),
             username: None,
-            channels: vec!["#construct".into()],
+            channels: vec!["#revka".into()],
             allowed_users: vec!["*".into()],
             server_password: None,
             nickserv_password: None,

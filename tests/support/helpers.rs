@@ -2,15 +2,15 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
-use construct::agent::agent::Agent;
-use construct::agent::dispatcher::{NativeToolDispatcher, XmlToolDispatcher};
-use construct::agent::memory_loader::MemoryLoader;
-use construct::config::{AgentConfig, MemoryConfig};
-use construct::memory;
-use construct::memory::Memory;
-use construct::observability::{NoopObserver, Observer};
-use construct::providers::{ChatResponse, Provider, ToolCall};
-use construct::tools::Tool;
+use revka::agent::agent::Agent;
+use revka::agent::dispatcher::{NativeToolDispatcher, XmlToolDispatcher};
+use revka::agent::memory_loader::MemoryLoader;
+use revka::config::{AgentConfig, MemoryConfig};
+use revka::memory;
+use revka::memory::Memory;
+use revka::observability::{NoopObserver, Observer};
+use revka::providers::{ChatResponse, Provider, ToolCall};
+use revka::tools::Tool;
 use std::sync::Arc;
 
 /// Create an in-memory "none" backend for tests.

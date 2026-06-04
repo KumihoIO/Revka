@@ -94,8 +94,8 @@ class TestRecordWaveOutcomes:
 
         mock_sdk = AsyncMock()
         mock_sdk.ensure_space = AsyncMock()
-        mock_sdk.create_item = AsyncMock(return_value={"kref": "kref://Construct/Outcomes/test-team-coder-Alice-a1.outcome"})
-        mock_sdk.create_revision = AsyncMock(return_value={"kref": "kref://Construct/Outcomes/test-team-coder-Alice-a1.outcome?r=1"})
+        mock_sdk.create_item = AsyncMock(return_value={"kref": "kref://Revka/Outcomes/test-team-coder-Alice-a1.outcome"})
+        mock_sdk.create_revision = AsyncMock(return_value={"kref": "kref://Revka/Outcomes/test-team-coder-Alice-a1.outcome?r=1"})
         mock_sdk.create_artifact = AsyncMock(return_value={})
 
         with patch("operator_mcp.tool_handlers.teams._get_sdk", return_value=mock_sdk), \
@@ -105,15 +105,15 @@ class TestRecordWaveOutcomes:
         assert "a1" in result
         outcome = result["a1"]
         assert isinstance(outcome, AgentOutcome)
-        assert outcome.revision_kref == "kref://Construct/Outcomes/test-team-coder-Alice-a1.outcome?r=1"
+        assert outcome.revision_kref == "kref://Revka/Outcomes/test-team-coder-Alice-a1.outcome?r=1"
         assert outcome.role == "coder"
         assert len(outcome.files) == 2
         assert outcome.summary.startswith("Done implementing")
 
-        # Verify item created under Construct/Outcomes
+        # Verify item created under Revka/Outcomes
         mock_sdk.create_item.assert_called_once()
         call_args = mock_sdk.create_item.call_args
-        assert call_args[0][0] == "/Construct/Outcomes"
+        assert call_args[0][0] == "/Revka/Outcomes"
         assert call_args[0][2] == "outcome"
 
         # Verify 2 artifacts created
@@ -177,7 +177,7 @@ class TestRecordWaveOutcomes:
 
         async def fake_create_item(space, name, kind, metadata=None):
             call_count[0] += 1
-            return {"kref": f"kref://Construct/Outcomes/{name}.outcome"}
+            return {"kref": f"kref://Revka/Outcomes/{name}.outcome"}
 
         async def fake_create_revision(item_kref, metadata=None, tag=None):
             return {"kref": f"{item_kref}?r=1"}
@@ -363,7 +363,7 @@ class TestBuildUpstreamHandoff:
         outcomes = {
             "a1": _make_outcome(
                 "a1", "coder-Alice", role="coder",
-                rev_kref="kref://Construct/Outcomes/item.outcome?r=1",
+                rev_kref="kref://Revka/Outcomes/item.outcome?r=1",
                 files=["/home/neo/project/src/main.py", "/home/neo/project/tests/test_main.py"],
                 summary="Implemented auth middleware with JWT validation",
             ),
@@ -374,7 +374,7 @@ class TestBuildUpstreamHandoff:
             cwd="/home/neo/project",
         )
         assert "Upstream Deliverables" in result
-        assert "kref://Construct/Outcomes/item.outcome?r=1" in result
+        assert "kref://Revka/Outcomes/item.outcome?r=1" in result
         assert "coder-Alice" in result
         assert "src/main.py" in result  # relative path
         assert "tests/test_main.py" in result
@@ -513,8 +513,8 @@ class TestRecordWaveOutcomesSupersedesAndDiff:
         }
         mock_log.get_errors.return_value = []
 
-        existing_item_kref = "kref://Construct/Outcomes/test-team-coder-Alice.outcome"
-        prev_rev_kref = "kref://Construct/Outcomes/test-team-coder-Alice.outcome?r=1"
+        existing_item_kref = "kref://Revka/Outcomes/test-team-coder-Alice.outcome"
+        prev_rev_kref = "kref://Revka/Outcomes/test-team-coder-Alice.outcome?r=1"
 
         mock_sdk = AsyncMock()
         mock_sdk.ensure_space = AsyncMock()

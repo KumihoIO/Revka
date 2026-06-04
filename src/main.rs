@@ -82,11 +82,11 @@ fn parse_temperature(s: &str) -> std::result::Result<f64, String> {
 }
 
 fn print_no_command_help() -> Result<()> {
-    // No config has been loaded yet, but $LANG / CONSTRUCT_LANG should still
+    // No config has been loaded yet, but $LANG / REVKA_LANG should still
     // localize this hint. Default to English if none of those are set.
-    construct::i18n::init(construct::i18n::detect_lang(None, None));
-    println!("{}", construct::t!("err-no-command"));
-    println!("{}", construct::t!("err-try-onboard"));
+    revka::i18n::init(revka::i18n::detect_lang(None, None));
+    println!("{}", revka::t!("err-no-command"));
+    println!("{}", revka::t!("err-try-onboard"));
     println!();
 
     let mut cmd = Cli::command();
@@ -115,7 +115,7 @@ mod channels;
 mod cli_input;
 mod commands;
 mod rag {
-    pub use construct::rag::*;
+    pub use revka::rag::*;
 }
 mod config;
 mod cost;
@@ -160,7 +160,7 @@ mod verifiable_intent;
 use config::Config;
 
 // Re-export so binary modules can use crate::<CommandEnum> while keeping a single source of truth.
-pub use construct::{
+pub use revka::{
     ChannelCommands, CronCommands, GatewayCommands, HardwareCommands, IntegrationCommands,
     MigrateCommands, PeripheralCommands, ServiceCommands, SkillCommands, SopCommands,
     WorkflowCommands,
@@ -192,9 +192,9 @@ enum EstopLevelArg {
     ToolFreeze,
 }
 
-/// `Construct` - Memory-native AI agent OS. 100% Rust.
+/// `Revka` - Memory-native AI agent OS. 100% Rust.
 #[derive(Parser, Debug)]
-#[command(name = "construct")]
+#[command(name = "revka")]
 #[command(author = "Kumiho Inc.")]
 #[command(version)]
 #[command(about = "The fastest, smallest AI assistant.", long_about = None)]
@@ -240,12 +240,12 @@ enum Commands {
         #[arg(long)]
         quick: bool,
 
-        /// UI language for the wizard. Overrides `CONSTRUCT_LANG`, `$LANG`,
+        /// UI language for the wizard. Overrides `REVKA_LANG`, `$LANG`,
         /// and the `language` field in config.toml. Supported: `en`, `ko`.
         ///
         /// Examples:
-        ///   construct onboard --lang ko
-        ///   CONSTRUCT_LANG=ko construct onboard
+        ///   revka onboard --lang ko
+        ///   REVKA_LANG=ko revka onboard
         #[arg(long, value_name = "LANG")]
         lang: Option<String>,
     },
@@ -258,10 +258,10 @@ Launches an interactive chat session with the configured AI provider. \
 Use --message for single-shot queries without entering interactive mode.
 
 Examples:
-  construct agent                              # interactive session
-  construct agent -m \"Summarize today's logs\"  # single message
-  construct agent -p anthropic --model claude-sonnet-4-20250514
-  construct agent --peripheral nucleo-f401re:/dev/ttyACM0")]
+  revka agent                              # interactive session
+  revka agent -m \"Summarize today's logs\"  # single message
+  revka agent -p anthropic --model claude-sonnet-4-20250514
+  revka agent --peripheral nucleo-f401re:/dev/ttyACM0")]
     Agent {
         /// Single message mode (don't enter interactive mode)
         #[arg(short, long)]
@@ -296,12 +296,12 @@ Start, restart, or inspect the HTTP/WebSocket gateway that accepts \
 incoming webhook events and WebSocket connections.
 
 Examples:
-  construct gateway start              # start gateway
-  construct gateway restart            # restart gateway
-  construct gateway get-paircode       # show pairing code")]
+  revka gateway start              # start gateway
+  revka gateway restart            # restart gateway
+  revka gateway get-paircode       # show pairing code")]
     Gateway {
         #[command(subcommand)]
-        gateway_command: Option<construct::GatewayCommands>,
+        gateway_command: Option<revka::GatewayCommands>,
     },
 
     /// Start ACP (Agent Control Protocol) server over stdio
@@ -315,8 +315,8 @@ responses as notifications.
 Methods: initialize, session/new, session/prompt, session/stop.
 
 Examples:
-  construct acp                        # start ACP server
-  construct acp --max-sessions 5       # limit concurrent sessions")]
+  revka acp                        # start ACP server
+  revka acp --max-sessions 5       # limit concurrent sessions")]
     Acp {
         /// Maximum concurrent sessions (default: 10)
         #[arg(long)]
@@ -331,18 +331,18 @@ Examples:
     #[command(long_about = "\
 Start the long-running autonomous daemon.
 
-Launches the full Construct runtime: gateway server, all configured \
+Launches the full Revka runtime: gateway server, all configured \
 channels (Telegram, Discord, Slack, etc.), heartbeat monitor, and \
-the cron scheduler. This is the recommended way to run Construct in \
+the cron scheduler. This is the recommended way to run Revka in \
 production or as an always-on assistant.
 
-Use 'construct service install' to register the daemon as an OS \
+Use 'revka service install' to register the daemon as an OS \
 service (systemd/launchd) for auto-start on boot.
 
 Examples:
-  construct daemon                   # use config defaults
-  construct daemon -p 9090           # gateway on port 9090
-  construct daemon --host 127.0.0.1  # localhost only")]
+  revka daemon                   # use config defaults
+  revka daemon -p 9090           # gateway on port 9090
+  revka daemon --host 127.0.0.1  # localhost only")]
     Daemon {
         /// Port to listen on (use 0 for random available port); defaults to config gateway.port
         #[arg(short, long)]
@@ -379,19 +379,19 @@ Examples:
     /// Engage, inspect, and resume emergency-stop states.
     ///
     /// Examples:
-    /// - `construct estop`
-    /// - `construct estop --level network-kill`
-    /// - `construct estop --level domain-block --domain "*.chase.com"`
-    /// - `construct estop --level tool-freeze --tool shell --tool browser`
-    /// - `construct estop status`
-    /// - `construct estop resume --network`
-    /// - `construct estop resume --domain "*.chase.com"`
-    /// - `construct estop resume --tool shell`
+    /// - `revka estop`
+    /// - `revka estop --level network-kill`
+    /// - `revka estop --level domain-block --domain "*.chase.com"`
+    /// - `revka estop --level tool-freeze --tool shell --tool browser`
+    /// - `revka estop status`
+    /// - `revka estop resume --network`
+    /// - `revka estop resume --domain "*.chase.com"`
+    /// - `revka estop resume --tool shell`
     Estop {
         #[command(subcommand)]
         estop_command: Option<EstopSubcommands>,
 
-        /// Level used when engaging estop from `construct estop`.
+        /// Level used when engaging estop from `revka estop`.
         #[arg(long, value_enum)]
         level: Option<EstopLevelArg>,
 
@@ -416,15 +416,15 @@ Cron expressions use the standard 5-field format: \
 override with --tz and an IANA timezone name.
 
 Examples:
-  construct cron list
-  construct cron add '0 9 * * 1-5' 'Good morning' --tz America/New_York --agent
-  construct cron add '*/30 * * * *' 'Check system health' --agent
-  construct cron add '*/5 * * * *' 'echo ok'
-  construct cron add-at 2025-01-15T14:00:00Z 'Send reminder' --agent
-  construct cron add-every 60000 'Ping heartbeat'
-  construct cron once 30m 'Run backup in 30 minutes' --agent
-  construct cron pause <task-id>
-  construct cron update <task-id> --expression '0 8 * * *' --tz Europe/London")]
+  revka cron list
+  revka cron add '0 9 * * 1-5' 'Good morning' --tz America/New_York --agent
+  revka cron add '*/30 * * * *' 'Check system health' --agent
+  revka cron add '*/5 * * * *' 'echo ok'
+  revka cron add-at 2025-01-15T14:00:00Z 'Send reminder' --agent
+  revka cron add-every 60000 'Ping heartbeat'
+  revka cron once 30m 'Run backup in 30 minutes' --agent
+  revka cron pause <task-id>
+  revka cron update <task-id> --expression '0 8 * * *' --tz Europe/London")]
     Cron {
         #[command(subcommand)]
         cron_command: CronCommands,
@@ -443,17 +443,17 @@ Examples:
     #[command(long_about = "\
 Manage communication channels.
 
-Add, remove, list, send, and health-check channels that connect Construct \
+Add, remove, list, send, and health-check channels that connect Revka \
 to messaging platforms. Supported channel types: telegram, discord, \
 slack, whatsapp, matrix, imessage, email.
 
 Examples:
-  construct channel list
-  construct channel doctor
-  construct channel add telegram '{\"bot_token\":\"...\",\"name\":\"my-bot\"}'
-  construct channel remove my-bot
-  construct channel bind-telegram construct_user
-  construct channel send 'Alert!' --channel-id telegram --recipient 123456789")]
+  revka channel list
+  revka channel doctor
+  revka channel add telegram '{\"bot_token\":\"...\",\"name\":\"my-bot\"}'
+  revka channel remove my-bot
+  revka channel bind-telegram revka_user
+  revka channel send 'Alert!' --channel-id telegram --recipient 123456789")]
     Channel {
         #[command(subcommand)]
         channel_command: ChannelCommands,
@@ -498,12 +498,12 @@ Enumerate connected USB devices, identify known development boards \
 probe-rs / ST-Link.
 
 Examples:
-  construct hardware discover
-  construct hardware introspect /dev/ttyACM0
-  construct hardware info --chip STM32F401RETx")]
+  revka hardware discover
+  revka hardware introspect /dev/ttyACM0
+  revka hardware info --chip STM32F401RETx")]
     Hardware {
         #[command(subcommand)]
-        hardware_command: construct::HardwareCommands,
+        hardware_command: revka::HardwareCommands,
     },
 
     /// Manage hardware peripherals (STM32, RPi GPIO, etc.)
@@ -515,14 +515,14 @@ to the agent (GPIO, sensors, actuators). Supported boards: \
 nucleo-f401re, rpi-gpio, esp32, arduino-uno.
 
 Examples:
-  construct peripheral list
-  construct peripheral add nucleo-f401re /dev/ttyACM0
-  construct peripheral add rpi-gpio native
-  construct peripheral flash --port /dev/cu.usbmodem12345
-  construct peripheral flash-nucleo")]
+  revka peripheral list
+  revka peripheral add nucleo-f401re /dev/ttyACM0
+  revka peripheral add rpi-gpio native
+  revka peripheral flash --port /dev/cu.usbmodem12345
+  revka peripheral flash-nucleo")]
     Peripheral {
         #[command(subcommand)]
-        peripheral_command: construct::PeripheralCommands,
+        peripheral_command: revka::PeripheralCommands,
     },
 
     /// Manage agent memory (list, get, stats, clear)
@@ -534,11 +534,11 @@ Supports filtering by category and session, pagination, and \
 batch clearing with confirmation.
 
 Examples:
-  construct memory stats
-  construct memory list
-  construct memory list --category core --limit 10
-  construct memory get <key>
-  construct memory clear --category conversation --yes")]
+  revka memory stats
+  revka memory list
+  revka memory list --category core --limit 10
+  revka memory get <key>
+  revka memory clear --category conversation --yes")]
     Memory {
         #[command(subcommand)]
         memory_command: MemoryCommands,
@@ -546,28 +546,28 @@ Examples:
 
     /// Manage configuration
     #[command(long_about = "\
-Manage Construct configuration.
+Manage Revka configuration.
 
 Inspect and export configuration settings. Use 'schema' to dump \
 the full JSON Schema for the config file, which documents every \
 available key, type, and default value.
 
 Examples:
-  construct config schema              # print JSON Schema to stdout
-  construct config schema > schema.json")]
+  revka config schema              # print JSON Schema to stdout
+  revka config schema > schema.json")]
     Config {
         #[command(subcommand)]
         config_command: ConfigCommands,
     },
 
-    /// Install Construct components (first slice: Python MCP sidecars)
+    /// Install Revka components (first slice: Python MCP sidecars)
     #[command(long_about = "\
-Run the unified Construct install flow.
+Run the unified Revka install flow.
 
 Today only the --sidecars-only path is implemented: it installs the \
-Kumiho and Operator Python MCP sidecars under ~/.construct/ using the \
+Kumiho and Operator Python MCP sidecars under ~/.revka/ using the \
 bundled (embedded) install-sidecars script for your platform. You can \
-call this from any Construct binary — no source checkout required.
+call this from any Revka binary — no source checkout required.
 
 The full install flow (prerequisite checks, build, onboard, dashboard \
 launch) is still handled by ./install.sh (POSIX) and setup.bat (Windows) \
@@ -575,9 +575,9 @@ from a source checkout; that path will migrate into this subcommand over \
 time.
 
 Examples:
-  construct install --sidecars-only           # install Kumiho + Operator MCP sidecars
-  construct install --sidecars-only --dry-run # show planned actions (POSIX only)
-  construct install --sidecars-only --skip-kumiho --skip-operator   # no-op smoke test")]
+  revka install --sidecars-only           # install Kumiho + Operator MCP sidecars
+  revka install --sidecars-only --dry-run # show planned actions (POSIX only)
+  revka install --sidecars-only --skip-kumiho --skip-operator   # no-op smoke test")]
     Install {
         /// Install only the Python MCP sidecars (Kumiho + Operator).
         /// Currently required — omitting it prints the full-install pointers.
@@ -608,7 +608,7 @@ Examples:
         /// Explicit Python interpreter path (overrides auto-detection).
         #[arg(long)]
         python: Option<String>,
-        /// Dev-mode: install operator-mcp from a local construct-os checkout
+        /// Dev-mode: install operator-mcp from a local Revka checkout
         /// instead of the binary's embedded snapshot. Pass the repo root —
         /// pip installs from `<PATH>/operator-mcp/` with `--force-reinstall`
         /// and `--no-deps` for fast iteration. Skips the Rust rebuild cycle
@@ -619,7 +619,7 @@ Examples:
 
     /// Check for and apply updates
     #[command(long_about = "\
-Check for and apply Construct updates.
+Check for and apply Revka updates.
 
 By default, downloads and installs the latest release with a \
 6-phase pipeline: preflight, download, backup, validate, swap, \
@@ -630,10 +630,10 @@ Use --force to skip the confirmation prompt.
 Use --version to target a specific release instead of latest.
 
 Examples:
-  construct update                      # download and install latest
-  construct update --check              # check only, don't install
-  construct update --force              # install without confirmation
-  construct update --version 0.6.0      # install specific version")]
+  revka update                      # download and install latest
+  revka update --check              # check only, don't install
+  revka update --force              # install without confirmation
+  revka update --version 0.6.0      # install specific version")]
     Update {
         /// Only check for updates, don't install
         #[arg(long)]
@@ -648,15 +648,15 @@ Examples:
 
     /// Run diagnostic self-tests
     #[command(long_about = "\
-Run diagnostic self-tests to verify the Construct installation.
+Run diagnostic self-tests to verify the Revka installation.
 
 By default, runs the full test suite including network checks \
 (gateway health, memory round-trip). Use --quick to skip network \
 checks for faster offline validation.
 
 Examples:
-  construct self-test             # full suite
-  construct self-test --quick     # quick checks only (no network)")]
+  revka self-test             # full suite
+  revka self-test --quick     # quick checks only (no network)")]
     SelfTest {
         /// Run quick checks only (no network)
         #[arg(long)]
@@ -665,14 +665,14 @@ Examples:
 
     /// Generate shell completion script to stdout
     #[command(long_about = "\
-Generate shell completion scripts for `construct`.
+Generate shell completion scripts for `revka`.
 
 The script is printed to stdout so it can be sourced directly:
 
 Examples:
-  source <(construct completions bash)
-  construct completions zsh > ~/.zfunc/_construct
-  construct completions fish > ~/.config/fish/completions/construct.fish")]
+  source <(revka completions bash)
+  revka completions zsh > ~/.zfunc/_revka
+  revka completions fish > ~/.config/fish/completions/revka.fish")]
     Completions {
         /// Target shell
         #[arg(value_enum)]
@@ -681,7 +681,7 @@ Examples:
 
     /// Launch or install the companion desktop app
     #[command(long_about = "\
-Launch the Construct companion desktop app.
+Launch the Revka companion desktop app.
 
 The companion app is a lightweight menu bar / system tray application \
 that connects to the same gateway as the CLI. It provides quick access \
@@ -690,8 +690,8 @@ to the dashboard, status monitoring, and device pairing.
 Use --install to download the pre-built companion app for your platform.
 
 Examples:
-  construct desktop              # launch the companion app
-  construct desktop --install    # download and install it")]
+  revka desktop              # launch the companion app
+  revka desktop --install    # download and install it")]
     Desktop {
         /// Download and install the companion app
         #[arg(long)]
@@ -953,7 +953,7 @@ async fn main() -> Result<()> {
             bail!("--config-dir cannot be empty");
         }
         // SAFETY: called early in main before any threads are spawned.
-        unsafe { std::env::set_var("CONSTRUCT_CONFIG_DIR", config_dir) };
+        unsafe { std::env::set_var("REVKA_CONFIG_DIR", config_dir) };
     }
 
     // Completions must remain stdout-only and should not load config or initialize logging.
@@ -976,10 +976,10 @@ async fn main() -> Result<()> {
     // Onboard auto-detects the environment: if stdin/stdout are a TTY and no
     // provider flags were given, it runs the full interactive wizard; otherwise
     // it runs the quick (scriptable) setup.  Use --quick to force quick setup,
-    // or set CONSTRUCT_INTERACTIVE=1 to force interactive mode when TTY
+    // or set REVKA_INTERACTIVE=1 to force interactive mode when TTY
     // detection fails.  This means `curl … | bash` and
-    // `construct onboard --api-key …` both take the fast path, while a bare
-    // `construct onboard` in a terminal launches the wizard.
+    // `revka onboard --api-key …` both take the fast path, while a bare
+    // `revka onboard` in a terminal launches the wizard.
     if let Commands::Onboard {
         force,
         reinit,
@@ -1004,11 +1004,11 @@ async fn main() -> Result<()> {
 
         // Initialize the wizard's UI language. No config.toml is loaded yet at
         // this point — that's deliberate, the user might be onboarding for the
-        // first time. Detection priority: --lang flag → CONSTRUCT_LANG env →
+        // first time. Detection priority: --lang flag → REVKA_LANG env →
         // $LC_ALL/$LANG → English. The Step 0 picker can override this once
         // the wizard runs interactively.
-        let initial_lang = construct::i18n::detect_lang(lang_flag.as_deref(), None);
-        construct::i18n::init(initial_lang);
+        let initial_lang = revka::i18n::detect_lang(lang_flag.as_deref(), None);
+        revka::i18n::init(initial_lang);
 
         if reinit && channels_only {
             bail!("--reinit and --channels-only cannot be used together");
@@ -1027,27 +1027,24 @@ async fn main() -> Result<()> {
 
         // Handle --reinit: backup and reset configuration
         if reinit {
-            let (construct_dir, _) =
+            let (revka_dir, _) =
                 crate::config::schema::resolve_runtime_dirs_for_onboarding().await?;
 
-            if construct_dir.exists() {
+            if revka_dir.exists() {
                 let timestamp = chrono::Local::now().format("%Y%m%d%H%M%S");
-                let backup_dir = format!("{}.backup.{}", construct_dir.display(), timestamp);
+                let backup_dir = format!("{}.backup.{}", revka_dir.display(), timestamp);
 
-                println!("{}", construct::t!("reinit-banner"));
+                println!("{}", revka::t!("reinit-banner"));
                 println!(
                     "   {}",
-                    construct::t!(
-                        "reinit-current-dir",
-                        path = construct_dir.display().to_string()
-                    )
+                    revka::t!("reinit-current-dir", path = revka_dir.display().to_string())
                 );
                 println!(
                     "   {}",
-                    construct::t!("reinit-backup-target", path = backup_dir.clone())
+                    revka::t!("reinit-backup-target", path = backup_dir.clone())
                 );
                 println!();
-                print!("{} ", construct::t!("reinit-confirm"));
+                print!("{} ", revka::t!("reinit-confirm"));
                 std::io::stdout()
                     .flush()
                     .context("Failed to flush stdout")?;
@@ -1055,20 +1052,20 @@ async fn main() -> Result<()> {
                 let mut answer = String::new();
                 std::io::stdin().read_line(&mut answer)?;
                 if !answer.trim().eq_ignore_ascii_case("y") {
-                    println!("{}", construct::t!("reinit-aborted"));
+                    println!("{}", revka::t!("reinit-aborted"));
                     return Ok(());
                 }
                 println!();
 
                 // Rename existing directory as backup
-                tokio::fs::rename(&construct_dir, &backup_dir)
+                tokio::fs::rename(&revka_dir, &backup_dir)
                     .await
                     .with_context(|| {
                         format!("Failed to backup existing config to {}", backup_dir)
                     })?;
 
-                println!("   {}", construct::t!("reinit-backup-ok"));
-                println!("   {}\n", construct::t!("reinit-fresh-start"));
+                println!("   {}", revka::t!("reinit-backup-ok"));
+                println!("   {}\n", revka::t!("reinit-fresh-start"));
             }
         }
 
@@ -1077,7 +1074,7 @@ async fn main() -> Result<()> {
         let has_provider_flags =
             api_key.is_some() || provider.is_some() || model.is_some() || memory.is_some();
         let is_tty = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
-        let env_interactive = std::env::var("CONSTRUCT_INTERACTIVE").as_deref() == Ok("1");
+        let env_interactive = std::env::var("REVKA_INTERACTIVE").as_deref() == Ok("1");
 
         let config = if channels_only {
             Box::pin(onboard::run_channels_repair_wizard()).await
@@ -1105,16 +1102,16 @@ async fn main() -> Result<()> {
 
         if config.gateway.require_pairing {
             println!();
-            println!("  {}", construct::t!("next-step-pairing-enabled"));
+            println!("  {}", revka::t!("next-step-pairing-enabled"));
             println!(
                 "  {}",
-                construct::t!("next-step-dashboard", port = config.gateway.port)
+                revka::t!("next-step-dashboard", port = config.gateway.port)
             );
             println!();
         }
 
         // Auto-start channels if user said yes during wizard
-        if std::env::var("CONSTRUCT_AUTOSTART_CHANNELS").as_deref() == Ok("1") {
+        if std::env::var("REVKA_AUTOSTART_CHANNELS").as_deref() == Ok("1") {
             Box::pin(channels::start_channels(config)).await?;
         }
         return Ok(());
@@ -1148,7 +1145,7 @@ async fn main() -> Result<()> {
 
     // If KUMIHO_SERVICE_TOKEN is still missing after .env loading, fall back
     // to the Kumiho CLI's auth file (~/.kumiho/kumiho_authentication.json,
-    // `control_plane_token`). This lets `kumiho login` propagate to Construct
+    // `control_plane_token`). This lets `kumiho login` propagate to Revka
     // without requiring the user to export the token manually — matching the
     // resolution chain that src/agent/kumiho.rs already uses for MCP auth.
     inject_kumiho_service_token_from_auth_file();
@@ -1164,7 +1161,7 @@ async fn main() -> Result<()> {
         let (_validator, enrollment_uri) =
             security::OtpValidator::from_config(&config.security.otp, config_dir, &store)?;
         if let Some(uri) = enrollment_uri {
-            println!("Initialized OTP secret for Construct.");
+            println!("Initialized OTP secret for Revka.");
             println!("Enrollment URI: {uri}");
         }
     }
@@ -1218,10 +1215,10 @@ async fn main() -> Result<()> {
 
         Commands::Gateway { gateway_command } => {
             match gateway_command {
-                Some(construct::GatewayCommands::Restart { port, host }) => {
+                Some(revka::GatewayCommands::Restart { port, host }) => {
                     let (port, host) = resolve_gateway_addr(&config, port, host);
                     let addr = format!("{host}:{port}");
-                    info!("🔄 Restarting Construct Gateway on {addr}");
+                    info!("🔄 Restarting Revka Gateway on {addr}");
 
                     // Try to gracefully shutdown existing gateway via admin endpoint
                     match shutdown_gateway(&host, port).await {
@@ -1254,7 +1251,7 @@ async fn main() -> Result<()> {
                     log_gateway_start(&host, port);
                     Box::pin(gateway::run_gateway(&host, port, config)).await
                 }
-                Some(construct::GatewayCommands::GetPaircode { new }) => {
+                Some(revka::GatewayCommands::GetPaircode { new }) => {
                     let port = config.gateway.port;
                     let host = &config.gateway.host;
 
@@ -1297,12 +1294,12 @@ async fn main() -> Result<()> {
                             println!("   Error: {e}");
                             println!();
                             println!("   Is the gateway running? Start it with:");
-                            println!("     construct gateway start");
+                            println!("     revka gateway start");
                         }
                     }
                     Ok(())
                 }
-                Some(construct::GatewayCommands::Start { port, host }) => {
+                Some(revka::GatewayCommands::Start { port, host }) => {
                     let (port, host) = resolve_gateway_addr(&config, port, host);
                     log_gateway_start(&host, port);
                     Box::pin(gateway::run_gateway(&host, port, config)).await
@@ -1330,9 +1327,9 @@ async fn main() -> Result<()> {
             let port = port.unwrap_or(config.gateway.port);
             let host = host.unwrap_or_else(|| config.gateway.host.clone());
             if port == 0 {
-                info!("🧠 Starting Construct Daemon on {host} (random port)");
+                info!("🧠 Starting Revka Daemon on {host} (random port)");
             } else {
-                info!("🧠 Starting Construct Daemon on {host}:{port}");
+                info!("🧠 Starting Revka Daemon on {host}:{port}");
             }
             Box::pin(daemon::run(config, host, port)).await
         }
@@ -1361,7 +1358,7 @@ async fn main() -> Result<()> {
                     }
                 }
             }
-            println!("🦀 Construct Status");
+            println!("🦀 Revka Status");
             println!();
             println!("Version:     {}", env!("CARGO_PKG_VERSION"));
             println!("Workspace:   {}", config.workspace_dir.display());
@@ -1631,14 +1628,14 @@ async fn main() -> Result<()> {
             let download_url = "https://www.kumiho.io/download";
 
             if do_install {
-                println!("Download the Construct companion app:");
+                println!("Download the Revka companion app:");
                 println!();
                 #[cfg(target_os = "macos")]
                 {
                     println!("  macOS:  {download_url}");
                     println!();
                     println!("Or install via Homebrew (coming soon):");
-                    println!("  brew install --cask construct");
+                    println!("  brew install --cask revka");
                 }
                 #[cfg(target_os = "linux")]
                 {
@@ -1670,13 +1667,13 @@ async fn main() -> Result<()> {
             let desktop_bin = {
                 let mut found = None;
 
-                // 1. macOS: check /Applications/Construct.app
+                // 1. macOS: check /Applications/Revka.app
                 #[cfg(target_os = "macos")]
                 {
                     let app_paths = [
-                        PathBuf::from("/Applications/Construct.app/Contents/MacOS/Construct"),
+                        PathBuf::from("/Applications/Revka.app/Contents/MacOS/Revka"),
                         PathBuf::from(std::env::var("HOME").unwrap_or_default())
-                            .join("Applications/Construct.app/Contents/MacOS/Construct"),
+                            .join("Applications/Revka.app/Contents/MacOS/Revka"),
                     ];
                     for app in &app_paths {
                         if app.is_file() {
@@ -1689,19 +1686,19 @@ async fn main() -> Result<()> {
                 // 2. Same directory as the current executable
                 if found.is_none() {
                     if let Ok(exe) = std::env::current_exe() {
-                        let sibling = exe.with_file_name("construct-desktop");
+                        let sibling = exe.with_file_name("revka-desktop");
                         if sibling.is_file() {
                             found = Some(sibling);
                         }
                     }
                 }
 
-                // 3. ~/.cargo/bin/construct-desktop or ~/.local/bin/construct-desktop
+                // 3. ~/.cargo/bin/revka-desktop or ~/.local/bin/revka-desktop
                 if found.is_none() {
                     if let Some(home) = std::env::var_os("HOME") {
                         let home = PathBuf::from(home);
                         for dir in &[".cargo/bin", ".local/bin"] {
-                            let candidate = home.join(dir).join("construct-desktop");
+                            let candidate = home.join(dir).join("revka-desktop");
                             if candidate.is_file() {
                                 found = Some(candidate);
                                 break;
@@ -1712,7 +1709,7 @@ async fn main() -> Result<()> {
 
                 // 4. Fallback to PATH lookup
                 if found.is_none() {
-                    if let Ok(path) = which::which("construct-desktop") {
+                    if let Ok(path) = which::which("revka-desktop") {
                         found = Some(path);
                     }
                 }
@@ -1722,17 +1719,17 @@ async fn main() -> Result<()> {
 
             match desktop_bin {
                 Some(bin) => {
-                    println!("Launching Construct companion app...");
+                    println!("Launching Revka companion app...");
                     let _child = std::process::Command::new(&bin)
                         .spawn()
                         .with_context(|| format!("Failed to launch {}", bin.display()))?;
                     Ok(())
                 }
                 None => {
-                    println!("Construct companion app is not installed.");
+                    println!("Revka companion app is not installed.");
                     println!();
                     println!("  Download it at: {download_url}");
-                    println!("  Or run: construct desktop --install");
+                    println!("  Or run: revka desktop --install");
                     println!();
                     println!("The companion app is a lightweight menu bar app that");
                     println!("connects to the same gateway as the CLI.");
@@ -1811,7 +1808,7 @@ async fn main() -> Result<()> {
         #[cfg(feature = "plugins-wasm")]
         Commands::Plugin { plugin_command } => match plugin_command {
             PluginCommands::List => {
-                let host = construct::plugins::host::PluginHost::new(&config.workspace_dir)?;
+                let host = revka::plugins::host::PluginHost::new(&config.workspace_dir)?;
                 let plugins = host.list_plugins();
                 if plugins.is_empty() {
                     println!("No plugins installed.");
@@ -1829,19 +1826,19 @@ async fn main() -> Result<()> {
                 Ok(())
             }
             PluginCommands::Install { source } => {
-                let mut host = construct::plugins::host::PluginHost::new(&config.workspace_dir)?;
+                let mut host = revka::plugins::host::PluginHost::new(&config.workspace_dir)?;
                 host.install(&source)?;
                 println!("Plugin installed from {source}");
                 Ok(())
             }
             PluginCommands::Remove { name } => {
-                let mut host = construct::plugins::host::PluginHost::new(&config.workspace_dir)?;
+                let mut host = revka::plugins::host::PluginHost::new(&config.workspace_dir)?;
                 host.remove(&name)?;
                 println!("Plugin '{name}' removed.");
                 Ok(())
             }
             PluginCommands::Info { name } => {
-                let host = construct::plugins::host::PluginHost::new(&config.workspace_dir)?;
+                let host = revka::plugins::host::PluginHost::new(&config.workspace_dir)?;
                 match host.get_plugin(&name) {
                     Some(info) => {
                         println!("Plugin: {} v{}", info.name, info.version);
@@ -1908,7 +1905,7 @@ fn handle_estop_command(
                 let (validator, enrollment_uri) =
                     security::OtpValidator::from_config(&config.security.otp, config_dir, &store)?;
                 if let Some(uri) = enrollment_uri {
-                    println!("Initialized OTP secret for Construct.");
+                    println!("Initialized OTP secret for Revka.");
                     println!("Enrollment URI: {uri}");
                 }
                 Some(validator)
@@ -2059,9 +2056,9 @@ fn resolve_gateway_addr(config: &Config, port: Option<u16>, host: Option<String>
 /// Log gateway startup message.
 fn log_gateway_start(host: &str, port: u16) {
     if port == 0 {
-        info!("🚀 Starting Construct Gateway on {host} (random port)");
+        info!("🚀 Starting Revka Gateway on {host} (random port)");
     } else {
-        info!("🚀 Starting Construct Gateway on {host}:{port}");
+        info!("🚀 Starting Revka Gateway on {host}:{port}");
     }
 }
 
@@ -2481,7 +2478,7 @@ async fn handle_auth_command(auth_command: AuthCommands, config: &Config) -> Res
                         Err(e) => {
                             println!("Callback capture failed: {e}");
                             println!(
-                                "Run `construct auth paste-redirect --provider gemini --profile {profile}`"
+                                "Run `revka auth paste-redirect --provider gemini --profile {profile}`"
                             );
                             return Ok(());
                         }
@@ -2574,7 +2571,7 @@ async fn handle_auth_command(auth_command: AuthCommands, config: &Config) -> Res
                         Err(e) => {
                             println!("Callback capture failed: {e}");
                             println!(
-                                "Run `construct auth paste-redirect --provider openai-codex --profile {profile}`"
+                                "Run `revka auth paste-redirect --provider openai-codex --profile {profile}`"
                             );
                             return Ok(());
                         }
@@ -2612,7 +2609,7 @@ async fn handle_auth_command(auth_command: AuthCommands, config: &Config) -> Res
                 "openai-codex" => {
                     let pending = load_pending_oauth_login(config, "openai")?.ok_or_else(|| {
                         anyhow::anyhow!(
-                            "No pending OpenAI login found. Run `construct auth login --provider openai-codex` first."
+                            "No pending OpenAI login found. Run `revka auth login --provider openai-codex` first."
                         )
                     })?;
 
@@ -2656,7 +2653,7 @@ async fn handle_auth_command(auth_command: AuthCommands, config: &Config) -> Res
                 "gemini" => {
                     let pending = load_pending_oauth_login(config, "gemini")?.ok_or_else(|| {
                         anyhow::anyhow!(
-                            "No pending Gemini login found. Run `construct auth login --provider gemini` first."
+                            "No pending Gemini login found. Run `revka auth login --provider gemini` first."
                         )
                     })?;
 
@@ -2774,7 +2771,7 @@ async fn handle_auth_command(auth_command: AuthCommands, config: &Config) -> Res
                         }
                         None => {
                             bail!(
-                                "No OpenAI Codex auth profile found. Run `construct auth login --provider openai-codex`."
+                                "No OpenAI Codex auth profile found. Run `revka auth login --provider openai-codex`."
                             )
                         }
                     }
@@ -2792,7 +2789,7 @@ async fn handle_auth_command(auth_command: AuthCommands, config: &Config) -> Res
                         }
                         None => {
                             bail!(
-                                "No Gemini auth profile found. Run `construct auth login --provider gemini`."
+                                "No Gemini auth profile found. Run `revka auth login --provider gemini`."
                             )
                         }
                     }
@@ -2949,7 +2946,7 @@ mod tests {
     #[test]
     fn onboard_cli_accepts_model_provider_and_api_key_in_quick_mode() {
         let cli = Cli::try_parse_from([
-            "construct",
+            "revka",
             "onboard",
             "--provider",
             "openrouter",
@@ -2982,7 +2979,7 @@ mod tests {
     #[test]
     fn completions_cli_parses_supported_shells() {
         for shell in ["bash", "fish", "zsh", "powershell", "elvish"] {
-            let cli = Cli::try_parse_from(["construct", "completions", shell])
+            let cli = Cli::try_parse_from(["revka", "completions", shell])
                 .expect("completions invocation should parse");
             match cli.command {
                 Commands::Completions { .. } => {}
@@ -2998,14 +2995,14 @@ mod tests {
             .expect("completion generation should succeed");
         let script = String::from_utf8(output).expect("completion output should be valid utf-8");
         assert!(
-            script.contains("construct"),
+            script.contains("revka"),
             "completion script should reference binary name"
         );
     }
 
     #[test]
     fn onboard_cli_accepts_force_flag() {
-        let cli = Cli::try_parse_from(["construct", "onboard", "--force"])
+        let cli = Cli::try_parse_from(["revka", "onboard", "--force"])
             .expect("onboard --force should parse");
 
         match cli.command {
@@ -3017,12 +3014,12 @@ mod tests {
     #[test]
     fn onboard_cli_rejects_removed_interactive_flag() {
         // --interactive was removed; onboard auto-detects TTY instead.
-        assert!(Cli::try_parse_from(["construct", "onboard", "--interactive"]).is_err());
+        assert!(Cli::try_parse_from(["revka", "onboard", "--interactive"]).is_err());
     }
 
     #[test]
     fn onboard_cli_parses_quick_flag() {
-        let cli = Cli::try_parse_from(["construct", "onboard", "--quick"])
+        let cli = Cli::try_parse_from(["revka", "onboard", "--quick"])
             .expect("onboard --quick should parse");
 
         match cli.command {
@@ -3035,7 +3032,7 @@ mod tests {
     fn onboard_cli_quick_and_channels_only_conflict() {
         // --quick and --channels-only should both parse at the CLI level
         // (the conflict is checked at runtime), but we verify both flags parse.
-        let cli = Cli::try_parse_from(["construct", "onboard", "--quick", "--channels-only"]);
+        let cli = Cli::try_parse_from(["revka", "onboard", "--quick", "--channels-only"]);
         assert!(
             cli.is_ok(),
             "--quick --channels-only should parse at CLI level"
@@ -3044,7 +3041,7 @@ mod tests {
 
     #[test]
     fn onboard_cli_bare_parses() {
-        let cli = Cli::try_parse_from(["construct", "onboard"]).expect("bare onboard should parse");
+        let cli = Cli::try_parse_from(["revka", "onboard"]).expect("bare onboard should parse");
 
         match cli.command {
             Commands::Onboard { .. } => {}
@@ -3054,7 +3051,7 @@ mod tests {
 
     #[test]
     fn cli_parses_estop_default_engage() {
-        let cli = Cli::try_parse_from(["construct", "estop"]).expect("estop command should parse");
+        let cli = Cli::try_parse_from(["revka", "estop"]).expect("estop command should parse");
 
         match cli.command {
             Commands::Estop {
@@ -3074,7 +3071,7 @@ mod tests {
 
     #[test]
     fn cli_parses_estop_resume_domain() {
-        let cli = Cli::try_parse_from(["construct", "estop", "resume", "--domain", "*.chase.com"])
+        let cli = Cli::try_parse_from(["revka", "estop", "resume", "--domain", "*.chase.com"])
             .expect("estop resume command should parse");
 
         match cli.command {
@@ -3088,7 +3085,7 @@ mod tests {
 
     #[test]
     fn agent_command_parses_with_temperature() {
-        let cli = Cli::try_parse_from(["construct", "agent", "--temperature", "0.5"])
+        let cli = Cli::try_parse_from(["revka", "agent", "--temperature", "0.5"])
             .expect("agent command with temperature should parse");
 
         match cli.command {
@@ -3101,7 +3098,7 @@ mod tests {
 
     #[test]
     fn agent_command_parses_without_temperature() {
-        let cli = Cli::try_parse_from(["construct", "agent", "--message", "hello"])
+        let cli = Cli::try_parse_from(["revka", "agent", "--message", "hello"])
             .expect("agent command without temperature should parse");
 
         match cli.command {
@@ -3114,9 +3111,8 @@ mod tests {
 
     #[test]
     fn agent_command_parses_session_state_file() {
-        let cli =
-            Cli::try_parse_from(["construct", "agent", "--session-state-file", "session.json"])
-                .expect("agent command with session state file should parse");
+        let cli = Cli::try_parse_from(["revka", "agent", "--session-state-file", "session.json"])
+            .expect("agent command with session state file should parse");
 
         match cli.command {
             Commands::Agent {

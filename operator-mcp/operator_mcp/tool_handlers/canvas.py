@@ -9,12 +9,12 @@ except ImportError:
     httpx = None  # type: ignore
 
 from .._log import _log
-from ..gateway_client import ConstructGatewayClient
+from ..gateway_client import RevkaGatewayClient
 
 
-async def tool_render_canvas(args: dict[str, Any], gw: ConstructGatewayClient) -> dict[str, Any]:
+async def tool_render_canvas(args: dict[str, Any], gw: RevkaGatewayClient) -> dict[str, Any]:
     if not gw._available:
-        return {"error": "Construct gateway not available."}
+        return {"error": "Revka gateway not available."}
 
     content = args["content"]
     content_type = args.get("content_type", "html")
@@ -38,9 +38,9 @@ async def tool_render_canvas(args: dict[str, Any], gw: ConstructGatewayClient) -
         return {"error": f"Canvas render failed: {e}"}
 
 
-async def tool_clear_canvas(args: dict[str, Any], gw: ConstructGatewayClient) -> dict[str, Any]:
+async def tool_clear_canvas(args: dict[str, Any], gw: RevkaGatewayClient) -> dict[str, Any]:
     if not gw._available:
-        return {"error": "Construct gateway not available."}
+        return {"error": "Revka gateway not available."}
 
     canvas_id = args.get("canvas_id", "default")
 

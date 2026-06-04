@@ -1,6 +1,6 @@
 # CanonWorks 사용 설명서
 
-CanonWorks는 Construct 안에 들어가는 장편 연재 소설 제작 도구다. 별도 앱이 아니라 Operator MCP tool과 built-in workflow 묶음이며, Kumiho의 Project, Space, Item.kind, Revision, Artifact, Bundle, Edge를 사용해 장편 연재의 캐논을 기록하고 다음 회차 생산에 다시 주입한다.
+CanonWorks는 Revka 안에 들어가는 장편 연재 소설 제작 도구다. 별도 앱이 아니라 Operator MCP tool과 built-in workflow 묶음이며, Kumiho의 Project, Space, Item.kind, Revision, Artifact, Bundle, Edge를 사용해 장편 연재의 캐논을 기록하고 다음 회차 생산에 다시 주입한다.
 
 핵심 원칙은 간단하다.
 
@@ -384,7 +384,7 @@ next_workflows
 ```json
 {
   "workflow": "canonworks-serial-episode-factory",
-  "cwd": "G:\\git\\KumihoIO\\construct-os",
+  "cwd": "G:\\git\\KumihoIO\\Revka",
   "inputs": {
     "project_config_yaml": "<canonworks_init가 반환한 project_config_artifact_path>",
     "target_length": "6000자",
@@ -419,7 +419,7 @@ blocked draft if final audit blocks publication
 ```json
 {
   "workflow": "canonworks-serial-canon-state-sync",
-  "cwd": "G:\\git\\KumihoIO\\construct-os",
+  "cwd": "G:\\git\\KumihoIO\\Revka",
   "inputs": {
     "project_config_yaml": "<canonworks_init가 반환한 project_config_artifact_path>",
     "apply_mode": "propose_only",
@@ -502,8 +502,8 @@ python -m py_compile operator-mcp\operator_mcp\operator_mcp.py operator-mcp\oper
 설치된 Operator tool catalog 확인:
 
 ```powershell
-$py = "$env:USERPROFILE\.construct\operator_mcp\venv\Scripts\python.exe"
-$env:PYTHONPATH = "$env:USERPROFILE\.construct"
+$py = "$env:USERPROFILE\.revka\operator_mcp\venv\Scripts\python.exe"
+$env:PYTHONPATH = "$env:USERPROFILE\.revka"
 @'
 import asyncio
 from operator_mcp.operator_mcp import list_tools
@@ -519,8 +519,8 @@ asyncio.run(main())
 설치된 workflow validation:
 
 ```powershell
-$py = "$env:USERPROFILE\.construct\operator_mcp\venv\Scripts\python.exe"
-$env:PYTHONPATH = "$env:USERPROFILE\.construct"
+$py = "$env:USERPROFILE\.revka\operator_mcp\venv\Scripts\python.exe"
+$env:PYTHONPATH = "$env:USERPROFILE\.revka"
 @'
 import asyncio, json
 from operator_mcp.operator_mcp import KUMIHO_SDK
@@ -530,7 +530,7 @@ async def main():
     if hasattr(KUMIHO_SDK, "_lazy_init"):
         KUMIHO_SDK._lazy_init()
     for workflow in ["canonworks-serial-episode-factory", "canonworks-serial-canon-state-sync"]:
-        result = await tool_validate_workflow({"workflow": workflow, "cwd": r"G:\git\KumihoIO\construct-os"})
+        result = await tool_validate_workflow({"workflow": workflow, "cwd": r"G:\git\KumihoIO\Revka"})
         print(json.dumps({"workflow": workflow, "valid": result.get("valid"), "errors": len(result.get("errors") or [])}, ensure_ascii=False))
 
 asyncio.run(main())
@@ -540,8 +540,8 @@ asyncio.run(main())
 서비스 확인:
 
 ```powershell
-$construct = "$env:USERPROFILE\.construct\bin\construct.exe"
-& $construct service status
+$revka = "$env:USERPROFILE\.revka\bin\revka.exe"
+& $revka service status
 Invoke-WebRequest -UseBasicParsing http://127.0.0.1:42617/health
 ```
 

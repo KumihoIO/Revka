@@ -8,8 +8,8 @@
 //! `send_document_by_url()` immediately via `?`, causing the entire reply
 //! (including already-sent text) to fail with no fallback.
 
-use construct::channels::telegram::TelegramChannel;
-use construct::channels::traits::{Channel, SendMessage};
+use revka::channels::telegram::TelegramChannel;
+use revka::channels::traits::{Channel, SendMessage};
 use wiremock::matchers::{method, path_regex};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 

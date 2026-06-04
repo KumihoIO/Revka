@@ -48,7 +48,7 @@ async def test_cost_guard_preflight_failure_is_persisted(monkeypatch, tmp_path):
 
     async def fake_persist_workflow_run(**kwargs):
         persisted.append(kwargs)
-        return "kref://Construct/WorkflowRuns/cost-blocked.workflow_run"
+        return "kref://Revka/WorkflowRuns/cost-blocked.workflow_run"
 
     monkeypatch.setattr(executor, "_check_cost_guard", fake_check_cost_guard)
     monkeypatch.setattr(memory, "persist_workflow_run", fake_persist_workflow_run)
@@ -65,8 +65,8 @@ async def test_cost_guard_preflight_failure_is_persisted(monkeypatch, tmp_path):
         inputs={"topic": "ux"},
         cwd=str(tmp_path),
         run_id="cost-preflight-run",
-        workflow_item_kref="kref://Construct/Workflows/cost-blocked.workflow",
-        workflow_revision_kref="kref://Construct/Workflows/cost-blocked.workflow?r=7",
+        workflow_item_kref="kref://Revka/Workflows/cost-blocked.workflow",
+        workflow_revision_kref="kref://Revka/Workflows/cost-blocked.workflow?r=7",
     )
 
     assert state.status == WorkflowStatus.FAILED
@@ -79,11 +79,11 @@ async def test_cost_guard_preflight_failure_is_persisted(monkeypatch, tmp_path):
     assert persisted[0]["steps_total"] == 1
     assert (
         persisted[0]["workflow_item_kref"]
-        == "kref://Construct/Workflows/cost-blocked.workflow"
+        == "kref://Revka/Workflows/cost-blocked.workflow"
     )
     assert (
         persisted[0]["workflow_revision_kref"]
-        == "kref://Construct/Workflows/cost-blocked.workflow?r=7"
+        == "kref://Revka/Workflows/cost-blocked.workflow?r=7"
     )
 
 
@@ -93,7 +93,7 @@ async def test_validation_preflight_failure_is_persisted(monkeypatch, tmp_path):
 
     async def fake_persist_workflow_run(**kwargs):
         persisted.append(kwargs)
-        return "kref://Construct/WorkflowRuns/invalid.workflow_run"
+        return "kref://Revka/WorkflowRuns/invalid.workflow_run"
 
     monkeypatch.setattr(memory, "persist_workflow_run", fake_persist_workflow_run)
 
@@ -131,7 +131,7 @@ async def test_agent_required_tool_visibility_failure_is_persisted(monkeypatch, 
 
     async def fake_persist_workflow_run(**kwargs):
         persisted.append(kwargs)
-        return "kref://Construct/WorkflowRuns/missing-tool.workflow_run"
+        return "kref://Revka/WorkflowRuns/missing-tool.workflow_run"
 
     monkeypatch.setattr(memory, "persist_workflow_run", fake_persist_workflow_run)
 
@@ -177,7 +177,7 @@ async def test_agent_google_agentops_tools_visible_with_operator_tools(monkeypat
         return None
 
     async def fake_persist_workflow_run(**_kwargs):
-        return "kref://Construct/WorkflowRuns/google-agentops-tools.workflow_run"
+        return "kref://Revka/WorkflowRuns/google-agentops-tools.workflow_run"
 
     async def fake_spawn_and_wait(
         agent_type,
@@ -257,7 +257,7 @@ async def test_agent_google_agentops_tools_visible_with_narrow_tool_mode(monkeyp
         return None
 
     async def fake_persist_workflow_run(**_kwargs):
-        return "kref://Construct/WorkflowRuns/google-agentops-narrow.workflow_run"
+        return "kref://Revka/WorkflowRuns/google-agentops-narrow.workflow_run"
 
     async def fake_spawn_and_wait(
         agent_type,
@@ -333,7 +333,7 @@ async def test_agent_google_agents_cli_requires_operator_tools(monkeypatch, tmp_
 
     async def fake_persist_workflow_run(**kwargs):
         persisted.append(kwargs)
-        return "kref://Construct/WorkflowRuns/missing-google-cli.workflow_run"
+        return "kref://Revka/WorkflowRuns/missing-google-cli.workflow_run"
 
     monkeypatch.setattr(memory, "persist_workflow_run", fake_persist_workflow_run)
 
@@ -381,7 +381,7 @@ async def test_agent_step_uses_workspace_run_sandbox(monkeypatch, tmp_path):
         return None
 
     async def fake_persist_workflow_run(**_kwargs):
-        return "kref://Construct/WorkflowRuns/sandbox.workflow_run"
+        return "kref://Revka/WorkflowRuns/sandbox.workflow_run"
 
     async def fake_spawn_and_wait(
         agent_type,
@@ -454,7 +454,7 @@ async def test_capture_required_step_missing_revision_kref_fails(monkeypatch, tm
         return None
 
     async def fake_persist_workflow_run(**_kwargs):
-        return "kref://Construct/WorkflowRuns/capture-required.workflow_run"
+        return "kref://Revka/WorkflowRuns/capture-required.workflow_run"
 
     async def fake_spawn_and_wait(agent_type, title, cwd, prompt, **_kwargs):
         return (

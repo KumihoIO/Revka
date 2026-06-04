@@ -2,9 +2,9 @@
 setlocal enabledelayedexpansion
 
 :: ===========================================================================
-:: install-sidecars.bat — install Construct's Python MCP sidecars on Windows
+:: install-sidecars.bat — install Revka's Python MCP sidecars on Windows
 ::
-:: Idempotent. Creates scaffolding under %USERPROFILE%\.construct\ only.
+:: Idempotent. Creates scaffolding under %USERPROFILE%\.revka\ only.
 :: Mirrors scripts/install-sidecars.sh on POSIX.
 ::
 :: Usage:
@@ -33,11 +33,11 @@ set "REPO_ROOT=%SCRIPT_DIR%.."
 for %%I in ("%REPO_ROOT%") do set "REPO_ROOT=%%~fI"
 set "OPERATOR_SRC=%REPO_ROOT%\operator-mcp"
 
-set "CONSTRUCT_DIR=%USERPROFILE%\.construct"
-set "KUMIHO_DIR=%CONSTRUCT_DIR%\kumiho"
+set "REVKA_DIR=%USERPROFILE%\.revka"
+set "KUMIHO_DIR=%REVKA_DIR%\kumiho"
 set "KUMIHO_VENV=%KUMIHO_DIR%\venv"
 set "KUMIHO_LAUNCHER=%KUMIHO_DIR%\run_kumiho_mcp.py"
-set "OPERATOR_DIR=%CONSTRUCT_DIR%\operator_mcp"
+set "OPERATOR_DIR=%REVKA_DIR%\operator_mcp"
 set "OPERATOR_LAUNCHER=%OPERATOR_DIR%\run_operator_mcp.py"
 
 :: ── Preflight ────────────────────────────────────────────────────
@@ -47,7 +47,7 @@ if errorlevel 1 (
     exit /b 1
 )
 
-if not exist "%CONSTRUCT_DIR%" mkdir "%CONSTRUCT_DIR%"
+if not exist "%REVKA_DIR%" mkdir "%REVKA_DIR%"
 
 :: ── Operator sidecar ─────────────────────────────────────────────
 if "%SKIP_OPERATOR%"=="true" (
@@ -105,7 +105,7 @@ set "K_PY=%KUMIHO_VENV%\Scripts\python.exe"
 "%K_PY%" -m pip install --quiet --upgrade pip
 :: [mcp] extra pulls in mcp>=1.0.0 + httpx>=0.27.0, required by kumiho.mcp_server.
 :: kumiho_memory (separate package) provides the high-level memory tools
-:: (engage/reflect/recall/consolidate/dream_state) that the Construct
+:: (engage/reflect/recall/consolidate/dream_state) that the Revka
 :: session-bootstrap prompt mandates. kumiho.mcp_server auto-merges them
 :: when the package is importable.
 "%K_PY%" -m pip install --quiet "kumiho[mcp]>=0.9.20" "kumiho_memory>=0.5.0"
@@ -118,7 +118,7 @@ if exist "%KUMIHO_LAUNCHER%" (
 )
 
 > "%KUMIHO_LAUNCHER%" echo #!/usr/bin/env python3
->>"%KUMIHO_LAUNCHER%" echo """Kumiho MCP launcher installed by Construct's install-sidecars script."""
+>>"%KUMIHO_LAUNCHER%" echo """Kumiho MCP launcher installed by Revka's install-sidecars script."""
 >>"%KUMIHO_LAUNCHER%" echo import os, pathlib, sys
 >>"%KUMIHO_LAUNCHER%" echo HERE = pathlib.Path(__file__).resolve().parent
 >>"%KUMIHO_LAUNCHER%" echo VENV_PY = HERE / "venv" / "bin" / "python3"
@@ -134,12 +134,12 @@ echo    [ok] launcher written: %KUMIHO_LAUNCHER%
 echo.
 echo ==^> Done.
 echo Verify with:
-echo   construct doctor
+echo   revka doctor
 echo   dir "%KUMIHO_LAUNCHER%" "%OPERATOR_LAUNCHER%"
 exit /b 0
 
 :show_help
-echo install-sidecars.bat — install Construct Kumiho + Operator MCP sidecars
+echo install-sidecars.bat — install Revka Kumiho + Operator MCP sidecars
 echo.
 echo Usage: scripts\install-sidecars.bat [--skip-kumiho] [--skip-operator] [--python python3]
 exit /b 0

@@ -5,20 +5,20 @@ edition = "2024"
 authors = ["Kumiho Inc."]
 license = "MIT OR Apache-2.0"
 description = "Low-level bindings for the Total Phase Aardvark I2C/SPI/GPIO USB adapter"
-repository = "https://github.com/KumihoIO/construct-os"
+repository = "https://github.com/KumihoIO/Revka"
 
-# NOTE: This crate is the ONLY place in Construct where unsafe code is permitted.
+# NOTE: This crate is the ONLY place in Revka where unsafe code is permitted.
 # The rest of the workspace remains #![forbid(unsafe_code)].
 #
 # The Total Phase SDK (aardvark.h, aardvark.so / .dll / .dylib) is NOT
-# redistributable under Construct's dual MIT/Apache-2.0 license and is not
+# redistributable under Revka's dual MIT/Apache-2.0 license and is not
 # checked in. This crate loads the shared library at runtime via `libloading`
 # and returns AardvarkError::NotFound when the library is unavailable.
 #
 # To enable real hardware, download the SDK from
 # https://www.totalphase.com/products/aardvark-software-api/ and either:
-#   - set CONSTRUCT_AARDVARK_LIB=/absolute/path/to/aardvark.so, or
-#   - drop aardvark.so next to the Construct binary, or
+#   - set REVKA_AARDVARK_LIB=/absolute/path/to/aardvark.so, or
+#   - drop aardvark.so next to the Revka binary, or
 #   - drop it into crates/aardvark-sys/vendor/ for dev builds.
 # See crates/aardvark-sys/README.md for details.
 

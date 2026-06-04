@@ -9,7 +9,7 @@
 //!
 //! # Feature gate
 //! This module is only compiled when `--features runtime-wasm` is enabled.
-//! The default Construct binary excludes it to maintain the 4.6 MB size target.
+//! The default Revka binary excludes it to maintain the 4.6 MB size target.
 
 use super::traits::RuntimeAdapter;
 use crate::config::WasmRuntimeConfig;
@@ -292,7 +292,7 @@ impl RuntimeAdapter for WasmRuntime {
     fn storage_path(&self) -> PathBuf {
         self.workspace_dir
             .as_ref()
-            .map_or_else(|| PathBuf::from(".construct"), |w| w.join(".construct"))
+            .map_or_else(|| PathBuf::from(".revka"), |w| w.join(".revka"))
     }
 
     fn supports_long_running(&self) -> bool {
@@ -385,13 +385,13 @@ mod tests {
     #[test]
     fn wasm_storage_path_default() {
         let rt = WasmRuntime::new(default_config());
-        assert!(rt.storage_path().to_string_lossy().contains("construct"));
+        assert!(rt.storage_path().to_string_lossy().contains("revka"));
     }
 
     #[test]
     fn wasm_storage_path_with_workspace() {
         let rt = WasmRuntime::with_workspace(default_config(), PathBuf::from("/home/user/project"));
-        assert_eq!(rt.storage_path(), PathBuf::from("/home/user/project/.construct"));
+        assert_eq!(rt.storage_path(), PathBuf::from("/home/user/project/.revka"));
     }
 
     // ── Config validation ──────────────────────────────────────

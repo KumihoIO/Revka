@@ -1,6 +1,6 @@
 # Testing Guide
 
-Construct uses a five-level testing taxonomy with filesystem-based organization.
+Revka uses a five-level testing taxonomy with filesystem-based organization.
 
 ## Testing Taxonomy
 
@@ -134,7 +134,7 @@ Trace fixtures are canned LLM response scripts stored as JSON files in `tests/fi
 ## Live Test Conventions
 
 - All live tests must be `#[ignore]`
-- Use `env::var("CONSTRUCT_TEST_*")` for credentials
+- Use `env::var("REVKA_TEST_*")` for credentials
 - Run with `cargo test --test live -- --ignored --nocapture`
 
 ## Manual Tests (`tests/manual/`)

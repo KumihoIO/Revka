@@ -403,7 +403,7 @@ def test_mark_stale_checkpoint_preserves_retry_state(tmp_path, monkeypatch) -> N
     from operator_mcp.workflow.memory import _mark_checkpoint_failed
 
     home = tmp_path / "home"
-    checkpoint_dir = home / ".construct" / "workflow_checkpoints"
+    checkpoint_dir = home / ".revka" / "workflow_checkpoints"
     checkpoint_dir.mkdir(parents=True)
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("USERPROFILE", str(home))
@@ -486,7 +486,7 @@ async def test_wait_for_agent_initializing_timeout_is_bounded(tmp_path, monkeypa
         async def close_agent(self, _agent_id):
             return {"closed": True}
 
-    monkeypatch.setenv("CONSTRUCT_AGENT_INITIALIZING_TIMEOUT_SECS", "0.1")
+    monkeypatch.setenv("REVKA_AGENT_INITIALIZING_TIMEOUT_SECS", "0.1")
     monkeypatch.setattr(agents, "_sidecar_client", StuckInitializingSidecar())
     monkeypatch.setattr(agents, "_event_consumer", None)
 
@@ -544,7 +544,7 @@ async def test_wait_for_agent_prompt_only_runlog_times_out(tmp_path, monkeypatch
             self.lifecycle_errors.append({"message": message, **kwargs})
 
     fake_log = PromptOnlyLog()
-    monkeypatch.setenv("CONSTRUCT_AGENT_INITIALIZING_TIMEOUT_SECS", "0.1")
+    monkeypatch.setenv("REVKA_AGENT_INITIALIZING_TIMEOUT_SECS", "0.1")
     monkeypatch.setattr(agents, "_sidecar_client", RunningSidecar())
     monkeypatch.setattr(agents, "_event_consumer", None)
     monkeypatch.setattr(refinement, "get_log", lambda _agent_id: fake_log)
@@ -629,7 +629,7 @@ async def test_wait_for_subprocess_agent_prompt_only_timeout_is_bounded(tmp_path
     import operator_mcp.patterns.refinement as refinement
     from operator_mcp.agent_state import AGENTS, ManagedAgent
 
-    monkeypatch.setenv("CONSTRUCT_AGENT_INITIALIZING_TIMEOUT_SECS", "0.1")
+    monkeypatch.setenv("REVKA_AGENT_INITIALIZING_TIMEOUT_SECS", "0.1")
 
     cancelled: dict[str, bool] = {}
 

@@ -41,7 +41,7 @@ impl OtelObserver {
         let base_endpoint = endpoint.unwrap_or("http://localhost:4318");
         let traces_endpoint = format!("{}/v1/traces", base_endpoint.trim_end_matches('/'));
         let metrics_endpoint = format!("{}/v1/metrics", base_endpoint.trim_end_matches('/'));
-        let service_name = service_name.unwrap_or("construct");
+        let service_name = service_name.unwrap_or("revka");
 
         // ── Trace exporter ──────────────────────────────────────
         let span_exporter = opentelemetry_otlp::SpanExporter::builder()
@@ -84,90 +84,90 @@ impl OtelObserver {
         global::set_meter_provider(meter_provider);
 
         // ── Create metric instruments ────────────────────────────
-        let meter = global::meter("construct");
+        let meter = global::meter("revka");
 
         let agent_starts = meter
-            .u64_counter("construct.agent.starts")
+            .u64_counter("revka.agent.starts")
             .with_description("Total agent invocations")
             .build();
 
         let agent_duration = meter
-            .f64_histogram("construct.agent.duration")
+            .f64_histogram("revka.agent.duration")
             .with_description("Agent invocation duration in seconds")
             .with_unit("s")
             .build();
 
         let llm_calls = meter
-            .u64_counter("construct.llm.calls")
+            .u64_counter("revka.llm.calls")
             .with_description("Total LLM provider calls")
             .build();
 
         let llm_duration = meter
-            .f64_histogram("construct.llm.duration")
+            .f64_histogram("revka.llm.duration")
             .with_description("LLM provider call duration in seconds")
             .with_unit("s")
             .build();
 
         let tool_calls = meter
-            .u64_counter("construct.tool.calls")
+            .u64_counter("revka.tool.calls")
             .with_description("Total tool calls")
             .build();
 
         let tool_duration = meter
-            .f64_histogram("construct.tool.duration")
+            .f64_histogram("revka.tool.duration")
             .with_description("Tool execution duration in seconds")
             .with_unit("s")
             .build();
 
         let channel_messages = meter
-            .u64_counter("construct.channel.messages")
+            .u64_counter("revka.channel.messages")
             .with_description("Total channel messages")
             .build();
 
         let heartbeat_ticks = meter
-            .u64_counter("construct.heartbeat.ticks")
+            .u64_counter("revka.heartbeat.ticks")
             .with_description("Total heartbeat ticks")
             .build();
 
         let errors = meter
-            .u64_counter("construct.errors")
+            .u64_counter("revka.errors")
             .with_description("Total errors by component")
             .build();
 
         let request_latency = meter
-            .f64_histogram("construct.request.latency")
+            .f64_histogram("revka.request.latency")
             .with_description("Request latency in seconds")
             .with_unit("s")
             .build();
 
         let tokens_used = meter
-            .u64_counter("construct.tokens.used")
+            .u64_counter("revka.tokens.used")
             .with_description("Total tokens consumed (monotonic)")
             .build();
 
         let active_sessions = meter
-            .u64_gauge("construct.sessions.active")
+            .u64_gauge("revka.sessions.active")
             .with_description("Current number of active sessions")
             .build();
 
         let queue_depth = meter
-            .u64_gauge("construct.queue.depth")
+            .u64_gauge("revka.queue.depth")
             .with_description("Current message queue depth")
             .build();
 
         let hand_runs = meter
-            .u64_counter("construct.hand.runs")
+            .u64_counter("revka.hand.runs")
             .with_description("Total hand runs")
             .build();
 
         let hand_duration = meter
-            .f64_histogram("construct.hand.duration")
+            .f64_histogram("revka.hand.duration")
             .with_description("Hand run duration in seconds")
             .with_unit("s")
             .build();
 
         let hand_findings = meter
-            .u64_counter("construct.hand.findings")
+            .u64_counter("revka.hand.findings")
             .with_description("Total findings produced by hand runs")
             .build();
 
@@ -196,7 +196,7 @@ impl OtelObserver {
 
 impl Observer for OtelObserver {
     fn record_event(&self, event: &ObserverEvent) {
-        let tracer = global::tracer("construct");
+        let tracer = global::tracer("revka");
 
         match event {
             ObserverEvent::AgentStart { provider, model } => {
@@ -514,7 +514,7 @@ mod tests {
     fn test_observer() -> OtelObserver {
         // Create with a dummy endpoint — exports will silently fail
         // but the observer itself works fine for recording
-        OtelObserver::new(Some("http://127.0.0.1:19999"), Some("construct-test"))
+        OtelObserver::new(Some("http://127.0.0.1:19999"), Some("revka-test"))
             .expect("observer creation should not fail with valid endpoint format")
     }
 
@@ -684,7 +684,7 @@ mod tests {
     #[test]
     fn otel_observer_creation_with_valid_endpoint_succeeds() {
         // Even though endpoint is unreachable, creation should succeed
-        let result = OtelObserver::new(Some("http://127.0.0.1:12345"), Some("construct-test"));
+        let result = OtelObserver::new(Some("http://127.0.0.1:12345"), Some("revka-test"));
         assert!(
             result.is_ok(),
             "observer creation must succeed even with unreachable endpoint"

@@ -8,7 +8,7 @@ pub const TOOL_LAYER: &str = r#"
 
 === TOOL USAGE ===
 
-You have construct-operator MCP tools available. Call them directly by name.
+You have revka-operator MCP tools available. Call them directly by name.
 
 Quick reference with examples:
 
@@ -46,7 +46,7 @@ Quick reference with examples:
 
   # Deploy a pre-built team
   spawn_team(
-    team_kref="kref://Construct/Teams/security-audit",
+    team_kref="kref://Revka/Teams/security-audit",
     task="Full security audit on the payments module.",
     cwd="/path/to/project"
   )

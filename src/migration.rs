@@ -50,7 +50,7 @@ async fn migrate_openclaw_memory(
     }
 
     if paths_equal(&source_workspace, &config.workspace_dir) {
-        bail!("Source workspace matches current Construct workspace; refusing self-migration");
+        bail!("Source workspace matches current Revka workspace; refusing self-migration");
     }
 
     let mut stats = MigrationStats::default();

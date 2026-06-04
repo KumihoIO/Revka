@@ -85,8 +85,8 @@ def set_workflow_context(ctx: WorkflowContext) -> None:
 
 async def _check_gateway_budget_before_spawn() -> dict[str, Any] | None:
     """Return an error response when the unified gateway budget blocks work."""
-    from ..operator_mcp import CONSTRUCT_GW
-    return await check_agent_budget(CONSTRUCT_GW)
+    from ..operator_mcp import REVKA_GW
+    return await check_agent_budget(REVKA_GW)
 
 
 async def _try_sidecar_create(
@@ -125,8 +125,8 @@ async def _try_sidecar_create(
     agents that just need to read a prompt and write output.
     """
     if not skip_budget_check:
-        from ..operator_mcp import CONSTRUCT_GW
-        await require_agent_budget(CONSTRUCT_GW)
+        from ..operator_mcp import REVKA_GW
+        await require_agent_budget(REVKA_GW)
 
     if _sidecar_client is None:
         return None
@@ -187,7 +187,7 @@ async def _try_sidecar_create(
             clean_build=clean_build, node_env=node_env,
         )
 
-    # Layer in extra env vars (e.g. CONSTRUCT_AUTH_PROFILE_ID for workflow
+    # Layer in extra env vars (e.g. REVKA_AUTH_PROFILE_ID for workflow
     # auth-profile bindings) on top of any existing env config.
     if env_extra:
         existing = config.get("env") or {}

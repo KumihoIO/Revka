@@ -1,16 +1,16 @@
-# Construct Architecture Diagrams
+# Revka Architecture Diagrams
 
-This document provides visual representations of Construct's architecture, execution modes, and data flows.
+This document provides visual representations of Revka's architecture, execution modes, and data flows.
 
 ---
 
 ## 1. Execution Modes
 
-**Ways Construct can be run:**
+**Ways Revka can be run:**
 
 ```mermaid
 flowchart TD
-    Start[construct CLI] --> Onboard[onboard<br/>Setup wizard]
+    Start[revka CLI] --> Onboard[onboard<br/>Setup wizard]
     Start --> Agent[agent<br/>Interactive CLI]
     Start --> Gateway[gateway<br/>HTTP server]
     Start --> Daemon[daemon<br/>Long-running runtime]
@@ -211,7 +211,7 @@ flowchart TD
 
 ```mermaid
 flowchart TB
-    Start[[construct daemon]] --> SpawnComponents
+    Start[[revka daemon]] --> SpawnComponents
 
     SpawnComponents --> SpawnState[Spawn State Writer<br/>5s flush interval]
     SpawnComponents --> SpawnGateway[Spawn Gateway Supervisor]
@@ -292,7 +292,7 @@ flowchart TB
 
 ```mermaid
 flowchart TB
-    Client[HTTP Client] --> Gateway[Construct Gateway]
+    Client[HTTP Client] --> Gateway[Revka Gateway]
 
     Gateway --> PairPOST[POST /pair<br/>Exchange one-time code<br/>for bearer token]
     Gateway --> HealthGET[GET /health<br/>Status check]
@@ -417,8 +417,8 @@ flowchart TB
         ReflectTool[kumiho_memory_reflect<br/>via Kumiho MCP]
         StoreTool[kumiho_memory_store<br/>via Kumiho MCP]
         RetrieveTool[kumiho_memory_retrieve<br/>via Kumiho MCP]
-        OperatorStore[construct-operator__memory_store<br/>via Operator MCP]
-        OperatorSearch[construct-operator__memory_search<br/>via Operator MCP]
+        OperatorStore[revka-operator__memory_store<br/>via Operator MCP]
+        OperatorSearch[revka-operator__memory_search<br/>via Operator MCP]
     end
 
     subgraph Backends[Memory Backends]
@@ -617,7 +617,7 @@ flowchart TB
     Load --> Parse[TOML parse]
     Parse --> Defaults[Apply defaults<br/>Config::default]
 
-    Defaults --> EnvOverrides[apply_env_overrides<br/>CONSTRUCT_* env vars]
+    Defaults --> EnvOverrides[apply_env_overrides<br/>REVKA_* env vars]
 
     EnvOverrides --> Validate[Schema validation]
 
@@ -779,7 +779,7 @@ flowchart TB
 
 ```mermaid
 mindmap
-    root((Construct))
+    root((Revka))
         Modes
             Agent CLI
                 Interactive
@@ -829,4 +829,4 @@ mindmap
 
 ---
 
-*Generated for Construct v0.1.0 - Architecture Documentation*
+Generated for Revka v0.1.0 - Architecture Documentation.

@@ -1,4 +1,4 @@
-# Resource Limits for Construct
+# Resource Limits for Revka
 
 > ⚠️ **Status: Proposal / Roadmap**
 >
@@ -6,7 +6,7 @@
 > For current runtime behavior, see [config-reference.md](../reference/api/config-reference.md), [operations-runbook.md](operations-runbook.md), and [troubleshooting.md](troubleshooting.md).
 
 ## Problem
-Construct has rate limiting (20 actions/hour) but no resource caps. A runaway agent could:
+Revka has rate limiting (20 actions/hour) but no resource caps. A runaway agent could:
 - Exhaust available memory
 - Spin CPU at 100%
 - Fill disk with logs/output
@@ -16,7 +16,7 @@ Construct has rate limiting (20 actions/hour) but no resource caps. A runaway ag
 ## Proposed Solutions
 
 ### Option 1: cgroups v2 (Linux, Recommended)
-Automatically create a cgroup for construct with limits.
+Automatically create a cgroup for revka with limits.
 
 ```bash
 # Create systemd service with limits

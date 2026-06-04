@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# Construct Harness Layer — Docker Smoke Test
+# Revka Harness Layer — Docker Smoke Test
 #
 # Validates the 9-phase harness implementation:
 #   1. Memory store/recall via REST API
@@ -10,7 +10,7 @@
 #   5. Context overflow recovery (stress test)
 #
 # Usage:
-#   docker exec construct-dev bash /construct-data/workspace/test-harness.sh
+#   docker exec revka-dev bash /revka-data/workspace/test-harness.sh
 #   or: ./dev/test-harness.sh  (if running on host with gateway at localhost:42617)
 #
 # Prerequisites:
@@ -21,8 +21,8 @@
 
 set -euo pipefail
 
-BASE_URL="${CONSTRUCT_GATEWAY_URL:-http://localhost:42617}"
-WS_URL="${CONSTRUCT_WS_URL:-ws://localhost:42617/ws/chat}"
+BASE_URL="${REVKA_GATEWAY_URL:-http://localhost:42617}"
+WS_URL="${REVKA_WS_URL:-ws://localhost:42617/ws/chat}"
 PASS=0
 FAIL=0
 SKIP=0
@@ -95,17 +95,17 @@ fi
 echo ""
 echo "=== Test 3: Memory Persistence (brain.db) ==="
 
-BRAIN_DB="/construct-data/workspace/memory/brain.db"
+BRAIN_DB="/revka-data/workspace/memory/brain.db"
 if [ -f "$BRAIN_DB" ]; then
     SIZE=$(stat -c%s "$BRAIN_DB" 2>/dev/null || stat -f%z "$BRAIN_DB" 2>/dev/null || echo "?")
     pass "brain.db exists (${SIZE} bytes)"
 else
     # Check alternate locations
-    FOUND=$(find /construct-data -name "brain.db" 2>/dev/null | head -1)
+    FOUND=$(find /revka-data -name "brain.db" 2>/dev/null | head -1)
     if [ -n "$FOUND" ]; then
         pass "brain.db found at $FOUND"
     else
-        fail "brain.db not found anywhere under /construct-data"
+        fail "brain.db not found anywhere under /revka-data"
     fi
 fi
 

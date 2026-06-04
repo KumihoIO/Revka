@@ -1,6 +1,6 @@
 """Structured per-agent run logs — full audit trail for debugging and review.
 
-Each agent gets a JSONL file at ~/.construct/operator_mcp/runlogs/{agent_id}.jsonl.
+Each agent gets a JSONL file at ~/.revka/operator_mcp/runlogs/{agent_id}.jsonl.
 Every event is appended with full detail: timestamps, tool calls with args/results,
 shell commands with exit codes and stdout/stderr, files touched, reasoning blocks,
 and assistant messages.
@@ -32,7 +32,7 @@ except ImportError:
     import sys
     _log = lambda msg: sys.stderr.write(f"[run_log] {msg}\n")
 
-_RUNLOGS_DIR = os.path.expanduser("~/.construct/operator_mcp/runlogs")
+_RUNLOGS_DIR = os.path.expanduser("~/.revka/operator_mcp/runlogs")
 
 
 def _ensure_dir() -> None:

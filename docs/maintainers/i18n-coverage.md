@@ -1,6 +1,6 @@
-# Construct i18n Coverage and Structure
+# Revka i18n Coverage and Structure
 
-This document defines the localization structure for Construct docs and tracks current coverage.
+This document defines the localization structure for Revka docs and tracks current coverage.
 
 Last refreshed: **April 27, 2026**.
 

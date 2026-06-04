@@ -1,7 +1,7 @@
 //! Discovery of the local in-process MCP server.
 //!
-//! The MCP server runs as a tokio task inside the main construct daemon
-//! (see `gateway::run_gateway`). On boot it writes `~/.construct/mcp.json`
+//! The MCP server runs as a tokio task inside the main revka daemon
+//! (see `gateway::run_gateway`). On boot it writes `~/.revka/mcp.json`
 //! containing `{url, pid, started_at}`. Gateway code (notably the WS
 //! terminal handler that launches CLI tools, plus the `/api/mcp/discovery`
 //! route) reads that file to learn where MCP is listening. Same file
@@ -15,7 +15,7 @@
 //! file's mtime in an `RwLock` — on each read we stat the file and only
 //! re-parse when the mtime changed.
 //!
-//! `read_construct_mcp()` keeps its historical name and now transparently
+//! `read_revka_mcp()` keeps its historical name and now transparently
 //! does the mtime check so existing callers (terminal spawner) stay hot.
 //!
 //! Returns a clear error when the file is absent so the caller can surface
@@ -46,7 +46,7 @@ static CACHE: RwLock<Option<Cached>> = RwLock::new(None);
 
 /// Canonical location of the daemon's discovery file.
 pub fn discovery_path() -> Option<PathBuf> {
-    directories::UserDirs::new().map(|u| u.home_dir().join(".construct").join("mcp.json"))
+    directories::UserDirs::new().map(|u| u.home_dir().join(".revka").join("mcp.json"))
 }
 
 fn file_mtime(path: &std::path::Path) -> Option<SystemTime> {
@@ -57,9 +57,9 @@ fn file_mtime(path: &std::path::Path) -> Option<SystemTime> {
 ///
 /// Returns Err when the file is missing or malformed. Callers should report
 /// this to the user as "no MCP daemon available".
-pub fn read_construct_mcp() -> Result<McpDiscovery> {
+pub fn read_revka_mcp() -> Result<McpDiscovery> {
     let path = discovery_path()
-        .ok_or_else(|| anyhow!("could not resolve home directory for ~/.construct/mcp.json"))?;
+        .ok_or_else(|| anyhow!("could not resolve home directory for ~/.revka/mcp.json"))?;
     let current_mtime = file_mtime(&path);
 
     // Fast path: cached, mtime matches.

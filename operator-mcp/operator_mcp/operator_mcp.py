@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Construct Operator MCP Server — manages agent subprocesses.
+"""Revka Operator MCP Server — manages agent subprocesses.
 
 This is the slim entry point: MCP server setup, tool catalogue, and dispatch.
 All implementation logic lives in sibling modules:
   - kumiho_clients.py   — KumihoSDKClient, AgentPoolClient, TeamClient
-  - gateway_client.py   — ConstructGatewayClient
+  - gateway_client.py   — RevkaGatewayClient
   - journal.py          — SessionJournal
   - agent_state.py      — ManagedAgent, AgentTemplate, AgentPool
   - agent_subprocess.py — subprocess spawn/monitor
@@ -24,13 +24,13 @@ from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
 from ._log import _log
-from .construct_config import (
+from .revka_config import (
     memory_min_relevance_score,
     memory_project,
     memory_retrieval_limit,
 )
 from .kumiho_clients import KumihoAgentPoolClient, KumihoSDKClient, KumihoTeamClient
-from .gateway_client import ConstructGatewayClient
+from .gateway_client import RevkaGatewayClient
 from .journal import SessionJournal
 from .session_manager_client import SessionManagerClient
 from .event_consumer import EventConsumer
@@ -43,10 +43,10 @@ from .workflow.loader import build_trigger_registry_async
 KUMIHO_SDK = KumihoSDKClient()
 KUMIHO_POOL = KumihoAgentPoolClient()
 KUMIHO_TEAMS = KumihoTeamClient()
-CONSTRUCT_GW = ConstructGatewayClient()
+REVKA_GW = RevkaGatewayClient()
 JOURNAL = SessionJournal()
 SIDECAR = SessionManagerClient()
-EVENT_CONSUMER = EventConsumer(SIDECAR, CONSTRUCT_GW)
+EVENT_CONSUMER = EventConsumer(SIDECAR, REVKA_GW)
 WORKFLOW_CTX = WorkflowContext(JOURNAL.session_id)
 
 
@@ -54,7 +54,7 @@ WORKFLOW_CTX = WorkflowContext(JOURNAL.session_id)
 # MCP Server definition
 # ---------------------------------------------------------------------------
 
-app = Server("construct-operator")
+app = Server("revka-operator")
 
 
 # -- Tool catalogue --------------------------------------------------------
@@ -72,7 +72,7 @@ async def list_tools() -> list[Tool]:
                 "properties": {
                     "cwd": {
                         "type": "string",
-                        "description": "Working directory for the agent. Use an absolute path under your project root or workspace (e.g. ~/.construct/workspace, ~/code/myproject). The handler will accept the template's default_cwd when omitted, but the LLM client schema requires you to pass it explicitly.",
+                        "description": "Working directory for the agent. Use an absolute path under your project root or workspace (e.g. ~/.revka/workspace, ~/code/myproject). The handler will accept the template's default_cwd when omitted, but the LLM client schema requires you to pass it explicitly.",
                     },
                     "title": {
                         "type": "string",
@@ -146,7 +146,7 @@ async def list_tools() -> list[Tool]:
                     },
                     "working_directory": {
                         "type": "string",
-                        "description": "ADK project directory. Defaults to Construct workspace.",
+                        "description": "ADK project directory. Defaults to Revka workspace.",
                     },
                     "timeout": {
                         "type": "number",
@@ -476,7 +476,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="list_teams",
-            description="List all agent teams (bundles) from Kumiho Construct/Teams.",
+            description="List all agent teams (bundles) from Kumiho Revka/Teams.",
             inputSchema={
                 "type": "object",
                 "properties": {},
@@ -621,7 +621,7 @@ async def list_tools() -> list[Tool]:
                 "properties": {
                     "revision_kref": {
                         "type": "string",
-                        "description": "The outcome revision kref to resolve (e.g. kref://Construct/Outcomes/team-coder-alice.outcome?r=1)",
+                        "description": "The outcome revision kref to resolve (e.g. kref://Revka/Outcomes/team-coder-alice.outcome?r=1)",
                     },
                 },
                 "required": ["revision_kref"],
@@ -804,7 +804,7 @@ async def list_tools() -> list[Tool]:
         # -- A2A Protocol tools --
         Tool(
             name="a2a_get_card",
-            description="Get the A2A agent card for this Construct instance or a specific template. Returns the JSON agent card following the A2A protocol spec.",
+            description="Get the A2A agent card for this Revka instance or a specific template. Returns the JSON agent card following the A2A protocol spec.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -1077,7 +1077,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="save_plan",
-            description="Save an execution plan to Kumiho (Construct/Plans/) for future recall. Include task description, steps, agent assignments, and outcome.",
+            description="Save an execution plan to Kumiho (Revka/Plans/) for future recall. Include task description, steps, agent assignments, and outcome.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -1114,7 +1114,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="recall_plans",
-            description="Search past execution plans in Kumiho (Construct/Plans/) for similar tasks. Use before decomposing complex tasks to learn from past experience.",
+            description="Search past execution plans in Kumiho (Revka/Plans/) for similar tasks. Use before decomposing complex tasks to learn from past experience.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -1146,7 +1146,7 @@ async def list_tools() -> list[Tool]:
                 f"{memory_project()}/Skills. "
                 "Use this tool whenever the user asks to capture/save/record something as a skill; "
                 "do not use memory_store for skill-guide captures. The tool stores SKILL.md as a "
-                "revision artifact under the Construct workspace artifact tree, keeps agent provenance "
+                "revision artifact under the Revka workspace artifact tree, keeps agent provenance "
                 "in revision metadata rather than in the item name, and reads the previous published "
                 "SKILL.md artifact when updating an existing skill so the new revision can improve it. "
                 "If the procedure is long, either choose a cheap summarization model for summary_model "
@@ -1250,7 +1250,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="create_goal",
-            description="Create a goal in the Construct/Goals/ hierarchy. Goals can have parent goals to form a tree (strategic → tactical → task-level).",
+            description="Create a goal in the Revka/Goals/ hierarchy. Goals can have parent goals to form a tree (strategic → tactical → task-level).",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -1284,7 +1284,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="get_goals",
-            description="List goals from Construct/Goals/, optionally filtered by status or priority.",
+            description="List goals from Revka/Goals/, optionally filtered by status or priority.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -1349,7 +1349,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="install_from_clawhub",
-            description="Install a skill from the public ClawHub marketplace into local Construct. Fetches the SKILL.md from clawhub.ai and creates a local skill in Kumiho.",
+            description="Install a skill from the public ClawHub marketplace into local Revka. Fetches the SKILL.md from clawhub.ai and creates a local skill in Kumiho.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -1453,7 +1453,7 @@ async def list_tools() -> list[Tool]:
                     },
                     "cwd": {
                         "type": "string",
-                        "description": "Working directory for codex (default: ~/.construct/workspace).",
+                        "description": "Working directory for codex (default: ~/.revka/workspace).",
                     },
                     "count": {
                         "type": "integer",
@@ -1495,7 +1495,7 @@ async def list_tools() -> list[Tool]:
                             "Create a Kumiho item + revision under <harness>/<space> and "
                             "attach each generated PNG as an artifact. The on-disk path "
                             "mirrors the kref hierarchy: "
-                            "`~/.construct/workspace/<harness>/<space>/<item>.<kind>/r<N>/<filename>`. "
+                            "`~/.revka/workspace/<harness>/<space>/<item>.<kind>/r<N>/<filename>`. "
                             "When false, falls back to `<cwd>/<output_path>`. Default: true."
                         ),
                         "default": True,
@@ -1739,7 +1739,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="archive_session",
-            description="Archive a completed session to Kumiho (Construct/Sessions/) for long-term recall. Call after a significant multi-agent task completes.",
+            description="Archive a completed session to Kumiho (Revka/Sessions/) for long-term recall. Call after a significant multi-agent task completes.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -2087,7 +2087,7 @@ async def list_tools() -> list[Tool]:
                 "properties": {
                     "workflow_kref": {
                         "type": "string",
-                        "description": "kref of the workflow item, e.g. kref://Construct/Workflows/foo.workflow.",
+                        "description": "kref of the workflow item, e.g. kref://Revka/Workflows/foo.workflow.",
                     },
                     "operations": {
                         "type": "array",
@@ -2135,7 +2135,7 @@ async def list_tools() -> list[Tool]:
         ),
         Tool(
             name="create_workflow",
-            description="Create a new workflow definition and save as YAML to ~/.construct/workflows/.",
+            description="Create a new workflow definition and save as YAML to ~/.revka/workflows/.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -2145,7 +2145,7 @@ async def list_tools() -> list[Tool]:
                     },
                     "directory": {
                         "type": "string",
-                        "description": "Save directory (defaults to ~/.construct/workflows/).",
+                        "description": "Save directory (defaults to ~/.revka/workflows/).",
                     },
                 },
                 "required": ["workflow_def"],
@@ -2577,7 +2577,7 @@ async def list_tools() -> list[Tool]:
                         "maximum": configured_memory_limit,
                         "description": (
                             "Max results to return. Defaults to and is capped by "
-                            "Construct's [kumiho].memory_retrieval_limit."
+                            "Revka's [kumiho].memory_retrieval_limit."
                         ),
                     },
                     "min_score": {
@@ -2588,7 +2588,7 @@ async def list_tools() -> list[Tool]:
                         "description": (
                             "Minimum relevance score required for results to be included "
                             "in returned context. Defaults to and is floored by "
-                            "Construct's [memory].min_relevance_score."
+                            "Revka's [memory].min_relevance_score."
                         ),
                     },
                     "mode": {"type": "string", "enum": ["search", "latest"], "default": "search"},
@@ -3176,7 +3176,7 @@ async def _dispatch(name: str, args: dict[str, Any]) -> dict[str, Any]:
 
     # -- Budget --
     if name == "get_budget_status":
-        gw_cost = await CONSTRUCT_GW.get_cost_summary()
+        gw_cost = await REVKA_GW.get_cost_summary()
         if not gw_cost:
             return {
                 "error": "Gateway budget authority unavailable",
@@ -3185,7 +3185,7 @@ async def _dispatch(name: str, args: dict[str, Any]) -> dict[str, Any]:
             }
         result: dict[str, Any] = dict(gw_cost)
         result["source"] = "gateway"
-        gw_status = await CONSTRUCT_GW.get_status()
+        gw_status = await REVKA_GW.get_status()
         if gw_status:
             result["provider"] = gw_status.get("provider")
             result["model"] = gw_status.get("model")
@@ -3209,28 +3209,28 @@ async def _dispatch(name: str, args: dict[str, Any]) -> dict[str, Any]:
 
     # -- ClawHub --
     if name == "search_clawhub":
-        return await clawhub.tool_search_clawhub(args, CONSTRUCT_GW)
+        return await clawhub.tool_search_clawhub(args, REVKA_GW)
     if name == "install_from_clawhub":
-        return await clawhub.tool_install_from_clawhub(args, CONSTRUCT_GW)
+        return await clawhub.tool_install_from_clawhub(args, REVKA_GW)
     if name == "browse_clawhub":
-        return await clawhub.tool_browse_clawhub(args, CONSTRUCT_GW)
+        return await clawhub.tool_browse_clawhub(args, REVKA_GW)
 
     # -- Canvas --
     if name == "render_canvas":
-        return await canvas.tool_render_canvas(args, CONSTRUCT_GW)
+        return await canvas.tool_render_canvas(args, REVKA_GW)
     if name == "clear_canvas":
-        return await canvas.tool_clear_canvas(args, CONSTRUCT_GW)
+        return await canvas.tool_clear_canvas(args, REVKA_GW)
 
     # -- Codex image generation --
     if name == "generate_image_codex":
         from .tool_handlers import codex_image
-        return await codex_image.tool_generate_image_codex(args, CONSTRUCT_GW)
+        return await codex_image.tool_generate_image_codex(args, REVKA_GW)
 
     # -- Nodes --
     if name == "list_nodes":
-        return await nodes.tool_list_nodes(CONSTRUCT_GW)
+        return await nodes.tool_list_nodes(REVKA_GW)
     if name == "invoke_node":
-        return await nodes.tool_invoke_node(args, CONSTRUCT_GW)
+        return await nodes.tool_invoke_node(args, REVKA_GW)
 
     # -- Permissions --
     from .tool_handlers import permissions as perm_handlers
@@ -3308,7 +3308,7 @@ async def _background_init() -> None:
 
     # Wire gateway client into workflow handlers for Kumiho sync
     from .tool_handlers.workflows import set_gateway_client
-    set_gateway_client(CONSTRUCT_GW)
+    set_gateway_client(REVKA_GW)
 
     # Log channel events to journal
     EVENT_CONSUMER.on_channel_event(
@@ -3375,7 +3375,7 @@ async def _background_init() -> None:
 
 
 async def _run() -> None:
-    _log("Starting Construct Operator MCP Server...")
+    _log("Starting Revka Operator MCP Server...")
 
     # Start the MCP stdio server FIRST so we respond to 'initialize'
     # immediately.  Heavy service init runs as a background task.

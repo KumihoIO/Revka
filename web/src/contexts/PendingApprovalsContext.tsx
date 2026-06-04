@@ -25,7 +25,7 @@ interface PendingApprovalsContextValue {
   dismiss: (runId: string) => void;
 }
 
-const SESSION_KEY = 'construct-pending-approvals-v1';
+const SESSION_KEY = 'revka-pending-approvals-v1';
 
 const PendingApprovalsContext = createContext<PendingApprovalsContextValue>({
   pending: [],

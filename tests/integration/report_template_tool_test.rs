@@ -1,6 +1,6 @@
 //! Integration tests for ReportTemplateTool.
 
-use construct::tools::{ReportTemplateTool, Tool};
+use revka::tools::{ReportTemplateTool, Tool};
 use serde_json::json;
 
 #[tokio::test]
