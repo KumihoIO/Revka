@@ -71,7 +71,7 @@ async def list_tools() -> list[Tool]:
                     "agent_type": {
                         "type": "string",
                         "description": "Agent type.",
-                        "enum": ["claude", "codex"],
+                        "enum": ["claude", "codex", "agy", "agent", "opencode"],
                         "default": "claude",
                     },
                     "initial_prompt": {

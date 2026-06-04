@@ -228,8 +228,9 @@ async def tool_create_agent(args: dict[str, Any], journal: SessionJournal, pool_
     if agent_type is None:
         agent_type = tmpl.agent_type if tmpl else "claude"
 
-    if agent_type not in ("claude", "codex"):
-        return invalid_param("agent_type", agent_type, "'claude' or 'codex'")
+    from ..agent_state import _VALID_AGENT_TYPES
+    if agent_type not in _VALID_AGENT_TYPES:
+        return invalid_param("agent_type", agent_type, f"one of {sorted(_VALID_AGENT_TYPES)}")
 
     # Model selection: explicit arg > template > None (use sidecar default)
     model = args.get("model")

@@ -66,7 +66,7 @@ async def list_tools() -> list[Tool]:
     return [
         Tool(
             name="create_agent",
-            description="Spawn a new coding-agent subprocess (claude or codex). Optionally use a template from the agent pool. For Google ADK lifecycle work, spawn claude/codex and let it call google_agents_cli.",
+            description="Spawn a new coding-agent subprocess (claude, codex, agy, agent, or opencode). Optionally use a template from the agent pool. For Google ADK lifecycle work, spawn claude/codex and let it call google_agents_cli.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -82,7 +82,7 @@ async def list_tools() -> list[Tool]:
                     "agent_type": {
                         "type": "string",
                         "description": "CLI to use. Overrides template agent_type if provided.",
-                        "enum": ["claude", "codex"],
+                        "enum": ["claude", "codex", "agy", "agent", "opencode"],
                     },
                     "initial_prompt": {
                         "type": "string",
@@ -422,7 +422,7 @@ async def list_tools() -> list[Tool]:
                     "agent_type": {
                         "type": "string",
                         "description": "CLI to use.",
-                        "enum": ["claude", "codex"],
+                        "enum": ["claude", "codex", "agy", "agent", "opencode"],
                     },
                     "role": {
                         "type": "string",

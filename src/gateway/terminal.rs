@@ -91,6 +91,8 @@ pub enum CodeTool {
     Codex,
     OpenCode,
     Gemini,
+    Agy,
+    Cursor,
 }
 
 impl CodeTool {
@@ -102,6 +104,8 @@ impl CodeTool {
             "codex" => Some(Self::Codex),
             "opencode" => Some(Self::OpenCode),
             "gemini" => Some(Self::Gemini),
+            "agy" => Some(Self::Agy),
+            "cursor" => Some(Self::Cursor),
             _ => None,
         }
     }
@@ -113,6 +117,8 @@ impl CodeTool {
             Self::Codex => "codex",
             Self::OpenCode => "opencode",
             Self::Gemini => "gemini",
+            Self::Agy => "agy",
+            Self::Cursor => "agent",
         }
     }
 
@@ -128,6 +134,8 @@ impl CodeTool {
             Self::Codex => "CODEX_MCP_CONFIG",
             Self::OpenCode => "OPENCODE_MCP_CONFIG",
             Self::Gemini => "GEMINI_MCP_CONFIG",
+            Self::Agy => "AGY_MCP_CONFIG",
+            Self::Cursor => "CURSOR_MCP_CONFIG",
         }
     }
 }
@@ -267,6 +275,44 @@ pub fn write_cli_config(
                 serde_json::to_vec_pretty(&cfg).expect("serialize gemini config"),
             )
             .map_err(|e| format!("writing gemini config: {e}"))?;
+            Ok(CliInjection {
+                args: vec![],
+                files_written: vec![cfg_path],
+            })
+        }
+
+        // ── Agy (Antigravity CLI) ──────────────────────────────────────
+        // Source: Antigravity CLI configuration - standalone config at
+        // `~/.gemini/config/mcp_config.json` (global) or `.agents/mcp_config.json` (workspace)
+        CodeTool::Agy => {
+            let dir = temp_home.join(".gemini").join("config");
+            std::fs::create_dir_all(&dir).map_err(|e| format!("creating ~/.gemini/config: {e}"))?;
+            let cfg_path = dir.join("mcp_config.json");
+            let cfg = build_mcp_config_json(mcp_url, session_id, token);
+            std::fs::write(
+                &cfg_path,
+                serde_json::to_vec_pretty(&cfg).expect("serialize agy config"),
+            )
+            .map_err(|e| format!("writing agy config: {e}"))?;
+            Ok(CliInjection {
+                args: vec![],
+                files_written: vec![cfg_path],
+            })
+        }
+
+        // ── Cursor CLI (agent) ────────────────────────────────────────
+        // Source: Cursor Agent configuration - global config at
+        // `~/.cursor/mcp.json` or project config `<project-root>/.cursor/mcp.json`
+        CodeTool::Cursor => {
+            let dir = temp_home.join(".cursor");
+            std::fs::create_dir_all(&dir).map_err(|e| format!("creating ~/.cursor: {e}"))?;
+            let cfg_path = dir.join("mcp.json");
+            let cfg = build_mcp_config_json(mcp_url, session_id, token);
+            std::fs::write(
+                &cfg_path,
+                serde_json::to_vec_pretty(&cfg).expect("serialize cursor config"),
+            )
+            .map_err(|e| format!("writing cursor config: {e}"))?;
             Ok(CliInjection {
                 args: vec![],
                 files_written: vec![cfg_path],
@@ -736,6 +782,8 @@ mod tests {
         assert_eq!(CodeTool::from_query("codex"), Some(CodeTool::Codex));
         assert_eq!(CodeTool::from_query("opencode"), Some(CodeTool::OpenCode));
         assert_eq!(CodeTool::from_query("gemini"), Some(CodeTool::Gemini));
+        assert_eq!(CodeTool::from_query("agy"), Some(CodeTool::Agy));
+        assert_eq!(CodeTool::from_query("cursor"), Some(CodeTool::Cursor));
     }
 
     #[test]
@@ -752,6 +800,8 @@ mod tests {
         assert_eq!(CodeTool::Codex.binary(), "codex");
         assert_eq!(CodeTool::OpenCode.binary(), "opencode");
         assert_eq!(CodeTool::Gemini.binary(), "gemini");
+        assert_eq!(CodeTool::Agy.binary(), "agy");
+        assert_eq!(CodeTool::Cursor.binary(), "agent");
     }
 
     #[test]
@@ -918,6 +968,36 @@ mod tests {
         let v: serde_json::Value = serde_json::from_slice(&std::fs::read(&cfg).unwrap()).unwrap();
         let srv = &v["mcpServers"]["revka"];
         assert_eq!(srv["httpUrl"], URL);
+        assert_eq!(srv["headers"]["Authorization"], format!("Bearer {TOK}"));
+        assert_eq!(srv["headers"]["X-Revka-Session"], SESS);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn agy_adapter_writes_mcp_config_json() {
+        let home = tempdir();
+        let inj = write_cli_config(CodeTool::Agy, &home, URL, SESS, TOK).unwrap();
+        assert!(inj.args.is_empty());
+        let cfg = home.join(".gemini").join("config").join("mcp_config.json");
+        assert!(cfg.exists());
+        let v: serde_json::Value = serde_json::from_slice(&std::fs::read(&cfg).unwrap()).unwrap();
+        let srv = &v["mcpServers"]["revka"];
+        assert_eq!(srv["url"], URL);
+        assert_eq!(srv["headers"]["Authorization"], format!("Bearer {TOK}"));
+        assert_eq!(srv["headers"]["X-Revka-Session"], SESS);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn cursor_adapter_writes_mcp_json() {
+        let home = tempdir();
+        let inj = write_cli_config(CodeTool::Cursor, &home, URL, SESS, TOK).unwrap();
+        assert!(inj.args.is_empty());
+        let cfg = home.join(".cursor").join("mcp.json");
+        assert!(cfg.exists());
+        let v: serde_json::Value = serde_json::from_slice(&std::fs::read(&cfg).unwrap()).unwrap();
+        let srv = &v["mcpServers"]["revka"];
+        assert_eq!(srv["url"], URL);
         assert_eq!(srv["headers"]["Authorization"], format!("Bearer {TOK}"));
         assert_eq!(srv["headers"]["X-Revka-Session"], SESS);
         let _ = std::fs::remove_dir_all(&home);

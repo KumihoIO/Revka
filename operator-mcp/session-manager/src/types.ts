@@ -22,7 +22,7 @@ export type McpServerConfig = McpStdioServerConfig | McpHttpServerConfig;
 
 // -- Agent session types -----------------------------------------------------
 
-export type AgentProvider = "claude" | "codex";
+export type AgentProvider = "claude" | "codex" | "agy" | "cursor" | "opencode";
 
 export type AgentStatus = "initializing" | "running" | "idle" | "error" | "closed";
 

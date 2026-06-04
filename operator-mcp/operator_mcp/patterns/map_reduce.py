@@ -131,14 +131,15 @@ async def tool_map_reduce(args: dict[str, Any]) -> dict[str, Any]:
     policy = load_policy()
     mapper_template = _resolve_template(mapper_type)
     reducer_template = _resolve_template(reducer_type)
+    from ..agent_state import _VALID_AGENT_TYPES
     effective_mapper = (
         mapper_template.agent_type if mapper_template
-        else mapper_type if mapper_type in ("claude", "codex")
+        else mapper_type if mapper_type in _VALID_AGENT_TYPES
         else "claude"
     )
     effective_reducer = (
         reducer_template.agent_type if reducer_template
-        else reducer_type if reducer_type in ("claude", "codex")
+        else reducer_type if reducer_type in _VALID_AGENT_TYPES
         else "claude"
     )
     mapper_name = mapper_template.name if mapper_template else "mapper"

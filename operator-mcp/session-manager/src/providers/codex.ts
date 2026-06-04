@@ -194,33 +194,59 @@ export function createCodexSession(
 
     handle.usage = {
       model: config.model,
-      provider: "codex",
+      provider: config.agentType,
     };
     handle.jsonBuffer = "";
 
-    // Approval flags are top-level Codex options, so they must precede `exec`.
-    const args = [
-      "--ask-for-approval",
-      "never",
-      "--sandbox",
-      "danger-full-access",
-      "exec",
-      "--json",
-      "--skip-git-repo-check",
-    ];
+    let binary = "codex";
+    const args: string[] = [];
     const effectivePrompt = config.systemPrompt
       ? `${config.systemPrompt}\n\n${prompt}`
       : prompt;
-    if (config.model) {
-      args.push("--model", config.model);
-    }
-    if (config.mcpServers) {
-      args.push(...codexMcpOverrides(config.mcpServers));
-    }
-    args.push(effectivePrompt);
-    log(`Spawning codex: ${args.slice(0, 7).join(" ")}... (${effectivePrompt.length} chars)`);
 
-    const proc = spawn("codex", args, {
+    if (config.agentType === "codex") {
+      binary = "codex";
+      args.push(
+        "--ask-for-approval",
+        "never",
+        "--sandbox",
+        "danger-full-access",
+        "exec",
+        "--json",
+        "--skip-git-repo-check",
+      );
+      if (config.model) {
+        args.push("--model", config.model);
+      }
+      if (config.mcpServers) {
+        args.push(...codexMcpOverrides(config.mcpServers));
+      }
+      args.push(effectivePrompt);
+    } else if (config.agentType === "agy") {
+      binary = "agy";
+      args.push("--print", "--dangerously-skip-permissions");
+      if (config.model) {
+        args.push("--model", config.model);
+      }
+      args.push(effectivePrompt);
+    } else if (config.agentType === "cursor") {
+      binary = "agent";
+      args.push("--print", "--dangerously-skip-permissions");
+      if (config.model) {
+        args.push("--model", config.model);
+      }
+      args.push(effectivePrompt);
+    } else if (config.agentType === "opencode") {
+      binary = "opencode";
+      args.push("run", effectivePrompt);
+    } else {
+      binary = config.agentType;
+      args.push(effectivePrompt);
+    }
+
+    log(`Spawning ${binary}: ${args.slice(0, 7).join(" ")}... (${effectivePrompt.length} chars)`);
+
+    const proc = spawn(binary, args, {
       cwd: config.cwd,
       stdio: ["ignore", "pipe", "pipe"],
       env: { ...process.env, ...(config.env ?? {}) },
@@ -243,7 +269,7 @@ export function createCodexSession(
             handle.usage = mergeUsage(handle.usage, {
               ...usage,
               model: usage.model ?? config.model,
-              provider: usage.provider ?? "codex",
+              provider: usage.provider ?? config.agentType,
             });
           }
           const timelineText = extractTimelineText(event);
@@ -275,7 +301,7 @@ export function createCodexSession(
               handle.usage = mergeUsage(handle.usage, {
                 ...usage,
                 model: usage.model ?? config.model,
-                provider: usage.provider ?? "codex",
+                provider: usage.provider ?? config.agentType,
               });
             }
             const timelineText = extractTimelineText(event);
