@@ -32,7 +32,7 @@ import {
 const AUTH_ELIGIBLE_STEP_TYPES = new Set(['agent', 'shell', 'python', 'email', 'a2a']);
 
 const AGENT_HINT_OPTIONS = ['coder', 'researcher', 'reviewer'];
-const BUILTIN_AGENT_OPTIONS = ['claude', 'codex'] as const;
+const BUILTIN_AGENT_OPTIONS = ['claude', 'codex', 'agy', 'agent', 'opencode'] as const;
 
 function parseListInput(value: string): string[] {
   return value
@@ -1233,6 +1233,9 @@ export default function StepConfigPanel({
                   >
                     <option value="claude">claude</option>
                     <option value="codex">codex</option>
+                    <option value="agy">agy (Antigravity)</option>
+                    <option value="agent">agent (Cursor)</option>
+                    <option value="opencode">opencode (OpenCode)</option>
                   </select>
                 </div>
                 <div>

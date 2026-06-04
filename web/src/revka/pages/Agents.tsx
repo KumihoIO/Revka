@@ -615,6 +615,9 @@ function AgentEditorModal({
           <select className="revka-input" value={agentType} onChange={(event) => setAgentType(event.target.value)}>
             <option value="claude">Claude</option>
             <option value="codex">Codex</option>
+            <option value="agy">Antigravity (agy)</option>
+            <option value="agent">Cursor (agent)</option>
+            <option value="opencode">OpenCode (opencode)</option>
           </select>
         </label>
       </div>
