@@ -76,6 +76,77 @@ def _write_mcp_config_file(agent_id: str, mcp_servers: dict[str, Any]) -> str:
     return path
 
 
+def _write_agent_home_configs(agent_id: str, agent_type: str, mcp_servers: dict[str, Any]) -> tuple[str, dict[str, str]]:
+    """Write dynamic MCP configurations into a temporary isolated HOME directory
+    for agent CLIs that do not accept --mcp-config directly on the command line
+    (specifically opencode, agy, and agent).
+    Returns the path to the temporary home directory and a dict of env overrides.
+    """
+    agent_home = os.path.join(_PROMPT_DIR, "homes", agent_id)
+    os.makedirs(agent_home, exist_ok=True)
+
+    extra_env = {
+        "HOME": agent_home,
+        "USERPROFILE": agent_home,
+        "HOMEPATH": agent_home,
+        "XDG_CONFIG_HOME": os.path.join(agent_home, ".config"),
+    }
+
+    if agent_type == "opencode":
+        # Write config at ~/.config/opencode/config.json and opencode.json
+        # and translate to opencode local format
+        opencode_dir = os.path.join(agent_home, ".config", "opencode")
+        os.makedirs(opencode_dir, exist_ok=True)
+        
+        opencode_mcp = {}
+        for name, cfg in mcp_servers.items():
+            cmd_list = [cfg["command"]] + cfg.get("args", [])
+            opencode_mcp[name] = {
+                "type": "local",
+                "command": cmd_list,
+                "enabled": True,
+                "environment": cfg.get("env", {})
+            }
+        
+        payload = {
+            "$schema": "https://opencode.ai/config.json",
+            "mcp": opencode_mcp
+        }
+        
+        for filename in ("config.json", "opencode.json"):
+            with open(os.path.join(opencode_dir, filename), "w", encoding="utf-8") as f:
+                json.dump(payload, f, indent=2)
+
+    elif agent_type == "agy":
+        # Write config at ~/.gemini/antigravity-cli/mcp_config.json
+        agy_dir = os.path.join(agent_home, ".gemini", "antigravity-cli")
+        os.makedirs(agy_dir, exist_ok=True)
+        
+        agy_mcp = {}
+        for name, cfg in mcp_servers.items():
+            agy_mcp[name] = {
+                "command": cfg["command"],
+                "args": cfg.get("args", []),
+                "env": cfg.get("env", {})
+            }
+            
+        payload = {"mcpServers": agy_mcp}
+        with open(os.path.join(agy_dir, "mcp_config.json"), "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
+
+    elif agent_type == "agent":
+        # Write config at ~/.cursor/mcp.json (Cursor CLI)
+        cursor_dir = os.path.join(agent_home, ".cursor")
+        os.makedirs(cursor_dir, exist_ok=True)
+        
+        # Format is exactly the standard mcpServers structure
+        payload = {"mcpServers": mcp_servers}
+        with open(os.path.join(cursor_dir, "mcp.json"), "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
+
+    return agent_home, extra_env
+
+
 def _codex_mcp_overrides(mcp_servers: dict[str, Any]) -> list[str]:
     """Translate the MCP server dict into codex `-c` flag pairs.
 
@@ -142,13 +213,18 @@ def _build_command(
         if mcp_servers:
             cmd.extend(_codex_mcp_overrides(mcp_servers))
         return cmd
-    # Prompt is piped via stdin — no -p flag, no ARG_MAX issues,
-    # no shell encoding problems with Korean/Unicode text.
-    cmd = [_resolve_cli("claude"), "--print", "--dangerously-skip-permissions"]
-    if model:
-        cmd.extend(["--model", model])
-    if mcp_config_path:
-        cmd.extend(["--mcp-config", mcp_config_path])
+    binary_name = agent_type if agent_type in ("claude", "agy", "agent", "opencode") else "claude"
+
+    if binary_name == "opencode":
+        cmd = [_resolve_cli("opencode"), "run"]
+    else:
+        # Prompt is piped via stdin — no -p flag, no ARG_MAX issues,
+        # no shell encoding problems with Korean/Unicode text.
+        cmd = [_resolve_cli(binary_name), "--print", "--dangerously-skip-permissions"]
+        if model:
+            cmd.extend(["--model", model])
+        if mcp_config_path and agent_type == "claude":
+            cmd.extend(["--mcp-config", mcp_config_path])
     return cmd
 
 
@@ -270,6 +346,11 @@ async def spawn_agent(
     if mcp_servers and agent.agent_type != "codex":
         mcp_config_path = _write_mcp_config_file(agent.id, mcp_servers)
 
+    # Write configs and prepare home redirection environment variables for opencode, agy, and agent
+    home_env: dict[str, str] = {}
+    if mcp_servers and agent.agent_type in ("opencode", "agy", "agent"):
+        _, home_env = _write_agent_home_configs(agent.id, agent.agent_type, mcp_servers)
+
     cmd = _build_command(
         agent.agent_type,
         model=model,
@@ -279,7 +360,9 @@ async def spawn_agent(
     cwd = os.path.expanduser(agent.cwd)
 
     # Build sanitized environment
-    env = build_agent_env(clean_build=clean_build, node_env=node_env, extra=env_extra)
+    merged_env_extra = dict(env_extra) if env_extra else {}
+    merged_env_extra.update(home_env)
+    env = build_agent_env(clean_build=clean_build, node_env=node_env, extra=merged_env_extra)
 
     # Optionally clean build caches before spawning
     if clean_build:

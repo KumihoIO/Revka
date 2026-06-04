@@ -134,7 +134,8 @@ def _resolve_agent_type(agent_hint: str) -> str:
         if tmpl.name.lower() == agent_hint.lower():
             return tmpl.agent_type
     # Check if it's a direct type
-    if agent_hint.lower() in ("claude", "codex"):
+    from ..agent_state import _VALID_AGENT_TYPES
+    if agent_hint.lower() in _VALID_AGENT_TYPES:
         return agent_hint.lower()
     # Default: use claude for research-like, codex for coding-like
     coding_hints = ("cod", "fix", "implement", "build", "write", "refactor")

@@ -34,7 +34,7 @@ LLM inference is **bring-your-own-provider**. We don't proxy or mark up tokens. 
 
 **Operator** (the orchestration layer) needs a provider for its own LLM calls — supervisor decompose, map-reduce reduce, refinement critic, group-chat moderate. It defaults to an API key and also supports OAuth, configured under `[operator]`.
 
-**Agents that Operator spawns behave differently.** Each `agent` step invokes the **Claude Code** or **Codex CLI** as a subprocess — prompt piped over stdin to avoid `ARG_MAX` and shell-encoding issues — and the CLI's existing OAuth handles auth. Your Claude Pro / Codex CLI subscription becomes the spawned-agent runtime: no per-call API spend on the spawned agents themselves. Direct API keys still apply to one-shot `revka agent` calls and channel-routed conversations.
+**Agents that Operator spawns behave differently.** Each `agent` step invokes a coding CLI subprocess — supporting **Claude Code**, **Codex**, **Antigravity CLI (agy)**, **Cursor CLI (agent)**, and **OpenCode** — with prompts piped over stdin to avoid `ARG_MAX` and shell-encoding issues. The CLI's existing OAuth/login handles auth, so your subscription becomes the spawned-agent runtime: no per-call API spend on the spawned agents themselves. Any Revka-defined MCP servers (such as `kumiho-memory` and `operator-tools`) are cleanly injected and inherited on a per-CLI basis. Direct API keys still apply to one-shot `revka agent` calls and channel-routed conversations.
 
 Revka talks to Kumiho over HTTP via `[kumiho].api_url` in your config. Without a reachable Kumiho endpoint, Revka degrades to stateless single-agent operation — useful for demos and CI, but the cross-session memory, provenance edges, audit chain, and trust scoring all live in the graph. Pricing and self-host: [kumiho.io/pricing](https://kumiho.io/pricing).
 
@@ -158,7 +158,7 @@ Canonical types from `StepType` in `operator-mcp/operator_mcp/workflow/schema.py
 
 | Step Type | Description |
 |-----------|-------------|
-| `agent` | Spawn a Revka coding agent (claude/codex) with prompt, role, model, tools, timeout |
+| `agent` | Spawn a Revka coding agent (claude/codex/agy/agent/opencode) with prompt, role, model, tools, timeout |
 | `shell` | Execute shell commands with timeout and failure handling |
 | `python` | Run a Python script or inline Python with JSON I/O |
 | `email` | Send outbound email via SMTP with optional click tracking and dry-run |
@@ -262,7 +262,7 @@ Reusable agent definitions stored in `~/.revka/operator_mcp/agent_pool.json` and
 | Field | Description |
 |-------|-------------|
 | `name` | Unique identifier |
-| `agent_type` | `claude` or `codex` |
+| `agent_type` | `claude`, `codex`, `agy` (Antigravity), `agent` (Cursor), or `opencode` (OpenCode) |
 | `role` | coder, reviewer, researcher, tester, architect, planner |
 | `capabilities` | Skill tags (e.g., `["rust", "security-audit", "testing"]`) |
 | `description` | What this agent excels at |
@@ -562,7 +562,7 @@ See [`docs/reference/api/config-reference.md`](docs/reference/api/config-referen
 | Layer | Technology |
 |-------|------------|
 | Runtime & Gateway | Rust (edition 2024), Axum + Tower, Hyper; embedded frontend via `rust-embed` |
-| Agent Loop | Rust (async/tokio, 14+ provider adapters: Anthropic, OpenAI, OpenAI-Codex, Bedrock, Azure OpenAI, Gemini, Gemini CLI, GLM, Copilot, Ollama, OpenRouter, Kilo CLI, Telnyx, Claude Code, plus reliable/router/compatible wrappers). Operator's own orchestration calls (decompose / reduce / critic / moderate) use a provider via API key or OAuth under `[operator]`; agents Operator spawns invoke the Claude Code / Codex CLI as subprocesses, inheriting the CLI's OAuth. |
+| Agent Loop | Rust (async/tokio, 14+ provider adapters: Anthropic, OpenAI, OpenAI-Codex, Bedrock, Azure OpenAI, Gemini, Gemini CLI, GLM, Copilot, Ollama, OpenRouter, Kilo CLI, Telnyx, Claude Code, plus reliable/router/compatible wrappers). Operator's own orchestration calls (decompose / reduce / critic / moderate) use a provider via API key or OAuth under `[operator]`; agents Operator spawns invoke coding CLIs (Claude Code, Codex, agy, Cursor CLI, or OpenCode) as subprocesses, cleanly inheriting and accessing Revka-defined MCP servers. |
 | Orchestration | Python 3.11+ Operator MCP server (20 step types, map-reduce / supervisor / group-chat / handoff / refinement patterns) |
 | Web Dashboard | React 19, TypeScript, Tailwind CSS 4, Vite 6, ReactFlow + react-force-graph-2d |
 | Memory Backend | Kumiho — graph-native, schemaless, version-controlled, typed-edge graph (control plane fronted by kumiho-FastAPI BFF; managed service or Enterprise self-host); Python SDKs at [github.com/KumihoIO/kumiho-SDKs](https://github.com/KumihoIO/kumiho-SDKs) — `kumiho` (graph) + `kumiho-memory` (AI cognitive memory) |

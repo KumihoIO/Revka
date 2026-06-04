@@ -61,9 +61,10 @@ def _resolve_agent_descriptor(value: Any, fallback_name: str) -> dict[str, str]:
             "description": "\n".join(part for part in description_parts if part),
         }
 
-    agent_type = hint if hint in ("claude", "codex") else "claude"
+    from ..agent_state import _VALID_AGENT_TYPES
+    agent_type = hint if hint in _VALID_AGENT_TYPES else "claude"
     return {
-        "name": fallback_name if hint in ("claude", "codex") else hint,
+        "name": fallback_name if hint in _VALID_AGENT_TYPES else hint,
         "agent_type": agent_type,
         "role": "participant",
         "description": f"Agent type: {agent_type}",

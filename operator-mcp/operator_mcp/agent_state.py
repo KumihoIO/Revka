@@ -30,7 +30,7 @@ class CacheSafeParams:
 @dataclass
 class ManagedAgent:
     id: str
-    agent_type: str          # "claude" or "codex"
+    agent_type: str          # "claude", "codex", "agy", "agent", or "opencode"
     title: str
     cwd: str
     status: str              # "running", "idle", "error", "closed"
@@ -70,7 +70,7 @@ MAX_CONCURRENT_AGENTS = 10
 @dataclass
 class AgentTemplate:
     name: str              # Unique template name, e.g. "rust-coder", "react-reviewer"
-    agent_type: str        # "claude" or "codex"
+    agent_type: str        # "claude", "codex", "agy", "agent", or "opencode"
     role: str              # "coder", "reviewer", "researcher"
     capabilities: list[str]  # ["rust", "typescript", "testing", "security-audit"]
     description: str       # What this agent is good at
@@ -188,7 +188,7 @@ class AgentPool:
 # ---------------------------------------------------------------------------
 
 _VALID_ROLES = {"coder", "reviewer", "researcher", "tester", "architect", "planner"}
-_VALID_AGENT_TYPES = {"claude", "codex"}
+_VALID_AGENT_TYPES = {"claude", "codex", "agy", "agent", "opencode"}
 
 
 @dataclass
@@ -241,7 +241,7 @@ def validate_template(t: AgentTemplate) -> TemplateValidation:
 
     # Agent type validity
     if t.agent_type not in _VALID_AGENT_TYPES:
-        v.errors.append(f"Invalid agent_type '{t.agent_type}'. Must be 'claude' or 'codex'")
+        v.errors.append(f"Invalid agent_type '{t.agent_type}'. Must be one of: {', '.join(sorted(_VALID_AGENT_TYPES))}")
         score -= 25
 
     # Capability list

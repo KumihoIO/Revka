@@ -55,7 +55,10 @@ export class AgentManager {
             if (config.agentType === "claude") {
                 session.handle = createClaudeSession(config, onEvent);
             }
-            else if (config.agentType === "codex") {
+            else if (config.agentType === "codex" ||
+                config.agentType === "agy" ||
+                config.agentType === "cursor" ||
+                config.agentType === "opencode") {
                 session.handle = createCodexSession(config, onEvent);
             }
             else {

@@ -96,7 +96,7 @@ class StepPosition(BaseModel):
 
 class AgentStepConfig(BaseModel):
     """Config for 'agent' step type."""
-    agent_type: Literal["claude", "codex"] = "claude"
+    agent_type: Literal["claude", "codex", "agy", "agent", "opencode"] = "claude"
     role: str = "coder"
     prompt: str = ""
     model: str | None = None

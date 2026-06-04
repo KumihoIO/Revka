@@ -68,7 +68,7 @@ export default function NewPoolAgentModal({ open, onClose, onCreated }: Props) {
   // stop auto-deriving it from `name`.
   const [slugTouched, setSlugTouched] = useState(false);
   const [slug, setSlug] = useState('');
-  const [agentType, setAgentType] = useState<'claude' | 'codex'>('claude');
+  const [agentType, setAgentType] = useState<'claude' | 'codex' | 'agy' | 'agent' | 'opencode'>('claude');
   const [role, setRole] = useState('coder');
   const [model, setModel] = useState('');
   const [identity, setIdentity] = useState('');
@@ -359,7 +359,7 @@ export default function NewPoolAgentModal({ open, onClose, onCreated }: Props) {
                 padding: 2,
               }}
             >
-              {(['claude', 'codex'] as const).map((opt) => {
+              {(['claude', 'codex', 'agy', 'agent', 'opencode'] as const).map((opt) => {
                 const selected = agentType === opt;
                 return (
                   <button

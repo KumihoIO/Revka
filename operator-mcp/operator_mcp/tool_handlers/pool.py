@@ -49,8 +49,9 @@ async def tool_save_agent_template(args: dict[str, Any], pool_client: KumihoAgen
             capabilities = [c.strip() for c in capabilities.split(",") if c.strip()]
     description = args["description"]
 
-    if agent_type not in ("claude", "codex"):
-        return {"error": f"Invalid agent_type: {agent_type}. Must be 'claude' or 'codex'."}
+    from ..agent_state import _VALID_AGENT_TYPES
+    if agent_type not in _VALID_AGENT_TYPES:
+        return {"error": f"Invalid agent_type: {agent_type}. Must be one of: {', '.join(sorted(_VALID_AGENT_TYPES))}."}
     valid_roles = ("coder", "reviewer", "researcher", "tester", "architect", "planner")
     if role not in valid_roles:
         return {"error": f"Invalid role: {role}. Must be one of: {', '.join(valid_roles)}"}

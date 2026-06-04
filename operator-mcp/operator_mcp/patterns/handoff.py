@@ -148,9 +148,10 @@ async def tool_handoff_agent(args: dict[str, Any]) -> dict[str, Any]:
     receiver_template = _resolve_template(to_agent_type)
     # Normalize agent_type for policy check. Template names resolve through the
     # pool so dashboard-selected handoff receivers are not collapsed to claude.
+    from ..agent_state import _VALID_AGENT_TYPES
     effective_type = (
         receiver_template.agent_type if receiver_template
-        else to_agent_type if to_agent_type in ("claude", "codex")
+        else to_agent_type if to_agent_type in _VALID_AGENT_TYPES
         else "claude"
     )
     policy_failures = policy.preflight_spawn(cwd, effective_type)

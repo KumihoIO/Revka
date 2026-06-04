@@ -82,7 +82,7 @@ export interface TaskDefinition {
   /** Parallel join strategy */
   parallel_join?: 'all' | 'any' | 'majority';
   /** Agent step: agent_type */
-  agent_type?: 'claude' | 'codex';
+  agent_type?: 'claude' | 'codex' | 'agy' | 'agent' | 'opencode';
   /** Agent step: role */
   role?: string;
   /** Agent step: prompt (template) */
@@ -1051,7 +1051,7 @@ function parseStep(s: YAMLObj): TaskDefinition | null {
   // Nested blocks --------------------------------------------------------
   const agent = isObj(s.agent) ? s.agent : undefined;
   if (agent) {
-    t.agent_type = (asStr(agent.agent_type) as 'claude' | 'codex' | undefined);
+    t.agent_type = (asStr(agent.agent_type) as 'claude' | 'codex' | 'agy' | 'agent' | 'opencode' | undefined);
     t.role = asStr(agent.role);
     t.template = asStr(agent.template);
     t.prompt = asStr(agent.prompt);
@@ -2767,7 +2767,7 @@ export function flowToTasks(nodes: Node<TaskNodeData>[], edges: Edge[]): TaskDef
     };
     // Pass through executor-specific fields
     if (st === 'agent') {
-      if (d.agentType) base.agent_type = d.agentType as 'claude' | 'codex';
+      if (d.agentType) base.agent_type = d.agentType as 'claude' | 'codex' | 'agy' | 'agent' | 'opencode';
       if (d.role) base.role = d.role;
       if (d.prompt) base.prompt = d.prompt;
       if (d.timeout && d.timeout !== 300) base.timeout = d.timeout;
