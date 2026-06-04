@@ -228,18 +228,21 @@ Response includes `{"token": "..."}` — save this for subsequent requests.
 
 Here are multi-step sequences you're likely to need:
 
-**"Is my agent healthy?"**
+### Is my agent healthy?
+
 1. Run `revka status` — check provider, model, channels
 2. Run `revka doctor` — check connectivity, diagnose issues
 3. If gateway needed: `curl -sf http://127.0.0.1:42617/health`
 
-**"Set up a new channel"**
+### Set up a new channel
+
 1. Read the current config: `cat ~/.revka/config.toml`
 2. Add the channel config (edit the TOML)
 3. Restart: `revka service restart` (or restart daemon manually)
 4. Verify: `revka channels doctor`
 
-**"Switch to a different model"**
+### Switch to a different model
+
 1. Check available: `revka models list`
 2. Set it: `revka models set <provider/model>`
 3. Verify: `revka status`

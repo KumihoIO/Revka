@@ -829,4 +829,4 @@ mindmap
 
 ---
 
-*Generated for Revka v0.1.0 - Architecture Documentation*
+Generated for Revka v0.1.0 - Architecture Documentation.

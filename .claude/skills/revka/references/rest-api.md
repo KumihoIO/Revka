@@ -27,18 +27,21 @@ Complete endpoint reference for the Revka gateway HTTP API.
 Three authentication mechanisms:
 
 ### Bearer Token (Primary)
+
 ```
 Authorization: Bearer <token>
 ```
 Obtained via `POST /pair`. Required for all `/api/*` endpoints when `require_pairing = true` (default).
 
 ### Webhook Secret
+
 ```
 X-Webhook-Secret: <raw_secret>
 ```
 Optional additional auth for `/webhook`. Server SHA-256 hashes and compares using constant-time comparison.
 
 ### WebSocket Token
+
 ```
 ws://host:port/ws/chat?token=<bearer_token>
 ```
@@ -49,6 +52,7 @@ WebSocket connections pass the token as a query parameter (browsers can't set cu
 ## Public Endpoints
 
 ### GET /health
+
 No authentication required.
 
 **Response 200:**
@@ -62,6 +66,7 @@ No authentication required.
 ```
 
 ### GET /metrics
+
 Prometheus text exposition format.
 
 **Response 200:**
@@ -70,6 +75,7 @@ Content-Type: text/plain; version=0.0.4; charset=utf-8
 ```
 
 ### POST /pair
+
 Exchange a one-time pairing code for a bearer token.
 
 **Rate Limit:** Configurable per-minute limit per IP (default: 10/min).
@@ -117,6 +123,7 @@ Exchange a one-time pairing code for a bearer token.
 ## Webhook
 
 ### POST /webhook
+
 Send a message to the agent and receive a response.
 
 **Rate Limit:** Configurable per-minute limit per IP (default: 60/min).
@@ -158,6 +165,7 @@ Send a message to the agent and receive a response.
 ```
 
 ### Idempotency
+
 - Header: `X-Idempotency-Key: <uuid>`
 - TTL: configurable, default 300 seconds
 - Max tracked keys: configurable, default 10,000
@@ -168,6 +176,7 @@ Send a message to the agent and receive a response.
 ## WebSocket Chat
 
 ### GET /ws/chat?token=<bearer_token>
+
 Streaming agent chat over WebSocket.
 
 **Client → Server:**
@@ -192,6 +201,7 @@ Ignore unknown message types. Invalid JSON triggers an error response.
 ## Status & Health
 
 ### GET /api/status
+
 **Response 200:**
 ```json
 {
@@ -213,12 +223,14 @@ Ignore unknown message types. Invalid JSON triggers an error response.
 ```
 
 ### GET /api/health
+
 Component health snapshot (requires auth).
 ```json
 {"health": {}}
 ```
 
 ### GET or POST /api/doctor
+
 Run system diagnostics.
 ```json
 {
@@ -234,6 +246,7 @@ Run system diagnostics.
 ## Memory
 
 ### GET /api/memory
+
 List or search memory entries.
 
 **Query Parameters:**
@@ -255,6 +268,7 @@ List or search memory entries.
 ```
 
 ### POST /api/memory
+
 Store a memory entry.
 
 **Request Body:**
@@ -273,6 +287,7 @@ Category defaults to `"core"` if omitted. Other values: `daily`, `conversation`,
 ```
 
 ### DELETE /api/memory/{key}
+
 Delete a memory entry.
 
 **Response 200:**
@@ -285,6 +300,7 @@ Delete a memory entry.
 ## Cron
 
 ### GET /api/cron
+
 List all scheduled jobs.
 
 **Response 200:**
@@ -305,6 +321,7 @@ List all scheduled jobs.
 ```
 
 ### POST /api/cron
+
 Add a new job.
 
 **Request Body:**
@@ -325,6 +342,7 @@ Add a new job.
 ```
 
 ### DELETE /api/cron/{id}
+
 Remove a job.
 
 **Response 200:**
@@ -337,6 +355,7 @@ Remove a job.
 ## Tools
 
 ### GET /api/tools
+
 List all registered tools with descriptions and parameter schemas.
 
 **Response 200:**
@@ -354,6 +373,7 @@ List all registered tools with descriptions and parameter schemas.
 ## Configuration
 
 ### GET /api/config
+
 Get current config. Secrets are masked as `***MASKED***`.
 
 **Response 200:**
@@ -362,6 +382,7 @@ Get current config. Secrets are masked as `***MASKED***`.
 ```
 
 ### PUT /api/config
+
 Update config from TOML body. Body limit: 1 MB.
 
 **Request Body:** Raw TOML text.
@@ -385,6 +406,7 @@ or
 ## Integrations
 
 ### GET /api/integrations
+
 List all integrations and their status.
 
 **Response 200:**
@@ -402,6 +424,7 @@ List all integrations and their status.
 ## Cost
 
 ### GET /api/cost
+
 Cost tracking summary.
 
 **Response 200:**
@@ -423,6 +446,7 @@ Cost tracking summary.
 ## Events (SSE)
 
 ### GET /api/events
+
 Server-Sent Events stream. Requires bearer token.
 
 **Content-Type:** `text/event-stream`
@@ -450,17 +474,21 @@ curl -N -H "Authorization: Bearer <token>" http://127.0.0.1:42617/api/events
 These are incoming webhook endpoints for specific messaging channels. They're set up automatically when channels are configured.
 
 ### WhatsApp (Meta Cloud API)
+
 - `GET /whatsapp` — verification (echoes `hub.challenge`)
 - `POST /whatsapp` — incoming messages (signature verified via `X-Hub-Signature-256`)
 
 ### WATI (WhatsApp Business)
+
 - `GET /wati` — verification (echoes `challenge`)
 - `POST /wati` — incoming messages
 
 ### Linq (iMessage/RCS/SMS)
+
 - `POST /linq` — incoming messages (signature verified via `X-Webhook-Signature` + `X-Webhook-Timestamp`)
 
 ### Nextcloud Talk
+
 - `POST /nextcloud-talk` — bot API webhook (signature verified via `X-Nextcloud-Talk-Signature`)
 
 ---
@@ -493,6 +521,7 @@ Max tracked keys: configurable (default: 10,000).
 ```
 
 **Status codes:**
+
 | Code | Meaning |
 |------|---------|
 | 200 | Success |
