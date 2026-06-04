@@ -3924,12 +3924,94 @@ fn kumiho_token_setup_choice(choice: usize) -> KumihoTokenSetupChoice {
 }
 
 fn prompt_existing_kumiho_token() -> Result<Option<String>> {
-    let token: String = dialoguer::Password::new()
-        .with_prompt(format!("  {}", t!("memory-kumiho-token")))
-        .allow_empty_password(true)
-        .interact()?;
-    let token = token.trim().to_string();
-    Ok((!token.is_empty()).then_some(token))
+    loop {
+        println!("  {}", style(t!("memory-kumiho-token-hidden-note")).dim());
+        let token: String = dialoguer::Password::new()
+            .with_prompt(format!("  {}", t!("memory-kumiho-token")))
+            .allow_empty_password(true)
+            .interact()?;
+        let Some(token) = normalize_pasted_kumiho_service_token(&token) else {
+            return Ok(None);
+        };
+
+        println!(
+            "  {} {}",
+            style("✓").green().bold(),
+            style(t!(
+                "memory-kumiho-token-captured",
+                chars = token.chars().count().to_string()
+            ))
+            .green()
+        );
+
+        if kumiho_token_looks_like_jwt(&token) {
+            println!(
+                "  {} {}",
+                style("!").yellow().bold(),
+                style(t!("memory-kumiho-token-jwt-warning")).yellow()
+            );
+            let use_anyway = Confirm::new()
+                .with_prompt(format!("  {}", t!("memory-kumiho-token-use-anyway")))
+                .default(false)
+                .interact()?;
+            if use_anyway {
+                return Ok(Some(token));
+            }
+            println!("  {}", style(t!("memory-kumiho-token-retry")).dim());
+            continue;
+        }
+
+        return Ok(Some(token));
+    }
+}
+
+fn normalize_pasted_kumiho_service_token(raw: &str) -> Option<String> {
+    let mut token = raw.trim();
+    if token.is_empty() {
+        return None;
+    }
+
+    if let Some((key, value)) = token.split_once('=') {
+        let key = key.trim();
+        let key = key.strip_prefix("export ").unwrap_or(key).trim();
+        let key = key.strip_prefix("$env:").unwrap_or(key).trim();
+        if key.eq_ignore_ascii_case("KUMIHO_SERVICE_TOKEN")
+            || key.eq_ignore_ascii_case("KUMIHO_AUTH_TOKEN")
+        {
+            token = value.trim();
+        }
+    }
+
+    if let Some((header, value)) = token.split_once(':') {
+        let header = header.trim();
+        if header.eq_ignore_ascii_case("X-Kumiho-Token")
+            || header.eq_ignore_ascii_case("Authorization")
+        {
+            token = value.trim();
+        }
+    }
+
+    if token
+        .get(..7)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("Bearer "))
+    {
+        let stripped = &token[7..];
+        token = stripped.trim();
+    }
+
+    token = token
+        .trim_matches(|ch| matches!(ch, '"' | '\'' | '`'))
+        .trim();
+    (!token.is_empty()).then(|| token.to_string())
+}
+
+fn kumiho_token_looks_like_jwt(token: &str) -> bool {
+    let token = token.trim();
+    let mut segments = token.split('.');
+    let header = segments.next().unwrap_or_default();
+    let payload = segments.next().unwrap_or_default();
+    let signature = segments.next().unwrap_or_default();
+    !header.is_empty() && !payload.is_empty() && !signature.is_empty() && header.starts_with("eyJ")
 }
 
 fn run_kumiho_cloud_token_flow() -> Result<String> {
@@ -8292,6 +8374,48 @@ mod tests {
             KumihoTokenSetupChoice::ExistingToken
         );
         assert_eq!(kumiho_token_setup_choice(99), KumihoTokenSetupChoice::Skip);
+    }
+
+    #[test]
+    fn normalize_pasted_kumiho_service_token_accepts_common_copy_shapes() {
+        assert_eq!(
+            normalize_pasted_kumiho_service_token("  service-token-123  ").as_deref(),
+            Some("service-token-123")
+        );
+        assert_eq!(
+            normalize_pasted_kumiho_service_token("KUMIHO_SERVICE_TOKEN='service-token-123'")
+                .as_deref(),
+            Some("service-token-123")
+        );
+        assert_eq!(
+            normalize_pasted_kumiho_service_token("export KUMIHO_SERVICE_TOKEN=service-token-123")
+                .as_deref(),
+            Some("service-token-123")
+        );
+        assert_eq!(
+            normalize_pasted_kumiho_service_token("$env:KUMIHO_AUTH_TOKEN=\"service-token-123\"")
+                .as_deref(),
+            Some("service-token-123")
+        );
+        assert_eq!(
+            normalize_pasted_kumiho_service_token("X-Kumiho-Token: service-token-123").as_deref(),
+            Some("service-token-123")
+        );
+        assert_eq!(
+            normalize_pasted_kumiho_service_token("Authorization: bearer service-token-123")
+                .as_deref(),
+            Some("service-token-123")
+        );
+        assert!(normalize_pasted_kumiho_service_token("   ").is_none());
+    }
+
+    #[test]
+    fn kumiho_token_looks_like_jwt_detects_auth_tokens() {
+        assert!(kumiho_token_looks_like_jwt(
+            "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjMifQ.signature"
+        ));
+        assert!(!kumiho_token_looks_like_jwt("service-token-123"));
+        assert!(!kumiho_token_looks_like_jwt("eyJopaque-but-not-jwt"));
     }
 
     #[test]
