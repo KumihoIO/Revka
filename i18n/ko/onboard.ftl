@@ -92,6 +92,7 @@ memory-kumiho-cloud-failed = Kumiho Cloud 온보딩 실패: {$err}
 memory-kumiho-paste-existing = 대신 기존 Kumiho 서비스 토큰을 붙여넣을까요?
 memory-kumiho-token-hidden-note = 토큰을 붙여넣은 뒤 Enter를 누르세요. 보안을 위해 입력은 숨겨지므로 붙여넣은 텍스트가 화면에 표시되지 않습니다.
 memory-kumiho-token-captured = 토큰 입력 확인 ({$chars}자, 숨김)
+memory-kumiho-token-concatenated-warning = 여러 JWT 토큰이 한 번에 붙여넣어진 것처럼 보입니다. Kumiho 서비스 토큰 1개만 붙여넣으세요.
 memory-kumiho-token-jwt-warning = 이 값은 Kumiho 서비스 토큰이 아니라 Firebase/Auth JWT처럼 보입니다. KUMIHO_SERVICE_TOKEN으로 사용하면 Kumiho 401 오류가 발생합니다.
 memory-kumiho-token-use-anyway = 그래도 이 토큰을 사용할까요?
 memory-kumiho-token-retry = Kumiho Cloud의 Service Tokens에서 발급한 서비스 토큰을 붙여넣으세요.
