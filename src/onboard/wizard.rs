@@ -23,6 +23,7 @@ use crate::providers::{
 };
 use crate::t;
 use anyhow::{Context, Result, bail};
+use base64::{Engine as _, engine::general_purpose};
 use console::style;
 use dialoguer::{Confirm, Select};
 use serde::{Deserialize, Serialize};
@@ -3944,7 +3945,7 @@ fn prompt_existing_kumiho_token() -> Result<Option<String>> {
             .green()
         );
 
-        if kumiho_token_looks_like_jwt(&token) {
+        if kumiho_token_looks_like_auth_jwt(&token) {
             println!(
                 "  {} {}",
                 style("!").yellow().bold(),
@@ -3995,8 +3996,7 @@ fn normalize_pasted_kumiho_service_token(raw: &str) -> Option<String> {
         .get(..7)
         .is_some_and(|prefix| prefix.eq_ignore_ascii_case("Bearer "))
     {
-        let stripped = &token[7..];
-        token = stripped.trim();
+        token = token[7..].trim();
     }
 
     token = token
@@ -4005,13 +4005,57 @@ fn normalize_pasted_kumiho_service_token(raw: &str) -> Option<String> {
     (!token.is_empty()).then(|| token.to_string())
 }
 
-fn kumiho_token_looks_like_jwt(token: &str) -> bool {
+fn kumiho_token_looks_like_auth_jwt(token: &str) -> bool {
+    let Some(payload) = decode_jwt_payload(token) else {
+        return false;
+    };
+
+    if kumiho_jwt_payload_is_service_token(&payload) {
+        return false;
+    }
+
+    payload.get("firebase").is_some()
+        || payload
+            .get("iss")
+            .and_then(Value::as_str)
+            .is_some_and(|iss| iss.starts_with("https://securetoken.google.com/"))
+}
+
+fn kumiho_jwt_payload_is_service_token(payload: &Value) -> bool {
+    if payload
+        .get("type")
+        .and_then(Value::as_str)
+        .is_some_and(|token_type| token_type == "service_token")
+    {
+        return true;
+    }
+
+    payload
+        .get("iss")
+        .and_then(Value::as_str)
+        .is_some_and(|iss| iss == "https://control.kumiho.cloud")
+        && payload
+            .get("aud")
+            .and_then(Value::as_str)
+            .is_some_and(|aud| aud == "kumiho-server")
+        && payload.get("tenant_id").and_then(Value::as_str).is_some()
+}
+
+fn decode_jwt_payload(token: &str) -> Option<Value> {
     let token = token.trim();
     let mut segments = token.split('.');
-    let header = segments.next().unwrap_or_default();
-    let payload = segments.next().unwrap_or_default();
-    let signature = segments.next().unwrap_or_default();
-    !header.is_empty() && !payload.is_empty() && !signature.is_empty() && header.starts_with("eyJ")
+    let _header = segments.next()?;
+    let payload = segments.next()?;
+    let signature = segments.next()?;
+    if segments.next().is_some() || payload.is_empty() || signature.is_empty() {
+        return None;
+    }
+
+    let bytes = general_purpose::URL_SAFE_NO_PAD
+        .decode(payload)
+        .or_else(|_| general_purpose::URL_SAFE.decode(payload))
+        .ok()?;
+    serde_json::from_slice(&bytes).ok()
 }
 
 fn run_kumiho_cloud_token_flow() -> Result<String> {
@@ -6829,6 +6873,12 @@ mod tests {
         LOCK.get_or_init(|| Mutex::new(()))
     }
 
+    fn test_jwt(header_json: &str, payload_json: &str) -> String {
+        let header = general_purpose::URL_SAFE_NO_PAD.encode(header_json.as_bytes());
+        let payload = general_purpose::URL_SAFE_NO_PAD.encode(payload_json.as_bytes());
+        format!("{header}.{payload}.signature")
+    }
+
     struct EnvVarGuard {
         key: &'static str,
         previous: Option<String>,
@@ -8410,12 +8460,25 @@ mod tests {
     }
 
     #[test]
-    fn kumiho_token_looks_like_jwt_detects_auth_tokens() {
-        assert!(kumiho_token_looks_like_jwt(
-            "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjMifQ.signature"
-        ));
-        assert!(!kumiho_token_looks_like_jwt("service-token-123"));
-        assert!(!kumiho_token_looks_like_jwt("eyJopaque-but-not-jwt"));
+    fn kumiho_token_detection_accepts_dashboard_service_token_jwts() {
+        let token = test_jwt(
+            r#"{"alg":"ES256","kid":"kumiho-cp-key-1"}"#,
+            r#"{"iss":"https://control.kumiho.cloud","aud":"kumiho-server","type":"service_token","tenant_id":"tenant-1","token_id":"token-1"}"#,
+        );
+
+        assert!(!kumiho_token_looks_like_auth_jwt(&token));
+    }
+
+    #[test]
+    fn kumiho_token_detection_warns_for_firebase_auth_jwts() {
+        let token = test_jwt(
+            r#"{"alg":"RS256","kid":"firebase-key"}"#,
+            r#"{"iss":"https://securetoken.google.com/kumiho-server","aud":"kumiho-server","sub":"user-1","firebase":{"sign_in_provider":"password"}}"#,
+        );
+
+        assert!(kumiho_token_looks_like_auth_jwt(&token));
+        assert!(!kumiho_token_looks_like_auth_jwt("service-token-123"));
+        assert!(!kumiho_token_looks_like_auth_jwt("eyJopaque-but-not-jwt"));
     }
 
     #[test]
