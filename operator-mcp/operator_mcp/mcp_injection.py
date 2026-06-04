@@ -13,23 +13,23 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from .construct_config import kumiho_connection_config
+from .revka_config import kumiho_connection_config
 
 from ._log import _log
 
 # -- Paths -------------------------------------------------------------------
 
 _HOME = os.path.expanduser("~")
-# Canonical location for Construct's own kumiho MCP sidecar — materialized by
-# `construct install --sidecars-only` from resources/sidecars/run_kumiho_mcp.py.
-# The launcher self-execs into ~/.construct/kumiho/venv/bin/python3.
+# Canonical location for Revka's own kumiho MCP sidecar — materialized by
+# `revka install --sidecars-only` from resources/sidecars/run_kumiho_mcp.py.
+# The launcher self-execs into ~/.revka/kumiho/venv/bin/python3.
 #
-# This is intentionally NOT the Claude Code plugin path (~/.construct/workspace/
+# This is intentionally NOT the Claude Code plugin path (~/.revka/workspace/
 # kumiho-plugins/claude/...) — that layout exists for users running Kumiho as a
-# Claude Code plugin directly. When Construct injects MCP via `--mcp-config`,
+# Claude Code plugin directly. When Revka injects MCP via `--mcp-config`,
 # it ships its own sidecar and shouldn't depend on the user having the Claude
 # Code plugin installed. Mirrors src/agent/kumiho.rs::DEFAULT_MCP_PATH_SUFFIX.
-_KUMIHO_SIDECAR_ROOT = os.path.join(_HOME, ".construct/kumiho")
+_KUMIHO_SIDECAR_ROOT = os.path.join(_HOME, ".revka/kumiho")
 _KUMIHO_MCP_SCRIPT = os.path.join(_KUMIHO_SIDECAR_ROOT, "run_kumiho_mcp.py")
 _OPERATOR_DIR = os.path.dirname(os.path.abspath(__file__))
 _OPERATOR_SUBAGENT_MCP = os.path.join(_OPERATOR_DIR, "subagent_mcp.py")
@@ -105,14 +105,14 @@ def _kumiho_forward_env() -> dict[str, str]:
 def kumiho_memory_config() -> dict[str, Any] | None:
     """Build kumiho-memory MCP stdio config for agent injection.
 
-    Points at Construct's own kumiho sidecar (provisioned by `construct
+    Points at Revka's own kumiho sidecar (provisioned by `revka
     install --sidecars-only`). Returns None when the sidecar isn't installed.
     """
     if not os.path.exists(_KUMIHO_MCP_SCRIPT):
         _log(
             f"Kumiho sidecar not installed at {_KUMIHO_MCP_SCRIPT} — "
             "subprocess agents will run without memory access. "
-            "Run `construct install --sidecars-only` to provision it."
+            "Run `revka install --sidecars-only` to provision it."
         )
         return None
 
@@ -142,7 +142,7 @@ def workflow_memory_alias_config() -> dict[str, Any]:
     a stable tiny surface for capture/publish handoffs regardless of those
     upstream names.
     """
-    python = _venv_python(os.path.join(_HOME, ".construct", "operator_mcp", "venv"))
+    python = _venv_python(os.path.join(_HOME, ".revka", "operator_mcp", "venv"))
     return {
         "type": "stdio",
         "command": python,
@@ -158,11 +158,11 @@ def operator_tools_config(socket_path: str | None = None) -> dict[str, Any]:
     check siblings, post to chat rooms, run Google Agents CLI lifecycle
     commands, and call outbound A2A agents.
     """
-    python = _venv_python(os.path.join(_HOME, ".construct", "operator_mcp", "venv"))
+    python = _venv_python(os.path.join(_HOME, ".revka", "operator_mcp", "venv"))
 
     env: dict[str, str] = {}
     if socket_path:
-        env["CONSTRUCT_SIDECAR_SOCKET"] = socket_path
+        env["REVKA_SIDECAR_SOCKET"] = socket_path
 
     return {
         "type": "stdio",
@@ -174,7 +174,7 @@ def operator_tools_config(socket_path: str | None = None) -> dict[str, Any]:
 
 def google_agentops_tools_config() -> dict[str, Any]:
     """Build the reduced Google AgentOps MCP config for workflow agents."""
-    python = _venv_python(os.path.join(_HOME, ".construct", "operator_mcp", "venv"))
+    python = _venv_python(os.path.join(_HOME, ".revka", "operator_mcp", "venv"))
     return {
         "type": "stdio",
         "command": python,
@@ -209,7 +209,7 @@ def build_mcp_servers(
 # -- System prompt layering ---------------------------------------------------
 
 _OPERATOR_PROMPT = """\
-You are a sub-agent managed by the Construct Operator. You have access to \
+You are a sub-agent managed by the Revka Operator. You have access to \
 operator-tools MCP which lets you spawn child agents, check their status, \
 coordinate work, run Google Agents CLI lifecycle commands, and call external \
 A2A agents.
@@ -262,7 +262,7 @@ Output contract for operator handoff:
 
 
 def _terse_internal_outputs_enabled() -> bool:
-    raw = os.environ.get("CONSTRUCT_TERSE_INTERNAL_OUTPUTS", "1").strip().lower()
+    raw = os.environ.get("REVKA_TERSE_INTERNAL_OUTPUTS", "1").strip().lower()
     return raw not in {"0", "false", "no", "off"}
 
 

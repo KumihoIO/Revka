@@ -220,7 +220,7 @@ impl SystemPromptBuilder {
             }
             if output.is_empty() {
                 output.push_str(
-                    "You are Construct, a fast and efficient AI assistant built in Rust. Be helpful, concise, and direct.",
+                    "You are Revka, a fast and efficient AI assistant built in Rust. Be helpful, concise, and direct.",
                 );
             }
         }
@@ -839,11 +839,10 @@ mod tests {
     /// Workspace fixture matching the channel-test `make_workspace`: SOUL,
     /// IDENTITY, USER, AGENTS, TOOLS, HEARTBEAT, MEMORY (no BOOTSTRAP).
     fn make_test_workspace() -> std::path::PathBuf {
-        let dir =
-            std::env::temp_dir().join(format!("construct_prompt_ws_{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("revka_prompt_ws_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("SOUL.md"), "# Soul\nBe helpful.").unwrap();
-        std::fs::write(dir.join("IDENTITY.md"), "# Identity\nName: Construct").unwrap();
+        std::fs::write(dir.join("IDENTITY.md"), "# Identity\nName: Revka").unwrap();
         std::fs::write(dir.join("USER.md"), "# User\nName: Test User").unwrap();
         std::fs::write(dir.join("AGENTS.md"), "# Agents\nFollow instructions.").unwrap();
         std::fs::write(dir.join("TOOLS.md"), "# Tools\nUse shell carefully.").unwrap();
@@ -855,7 +854,7 @@ mod tests {
     #[test]
     fn identity_section_with_aieos_includes_workspace_files() {
         let workspace =
-            std::env::temp_dir().join(format!("construct_prompt_test_{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("revka_prompt_test_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&workspace).unwrap();
         std::fs::write(
             workspace.join("AGENTS.md"),
@@ -1087,7 +1086,7 @@ mod tests {
         // Every canonical section header in canonical order.
         let datetime = idx(&prompt, "## CRITICAL CONTEXT: CURRENT DATE & TIME");
         let identity = idx(&prompt, "## Project Context");
-        let operator = idx(&prompt, "OPERATOR MODE (Construct)"); // OPERATOR_CORE_PROMPT marker
+        let operator = idx(&prompt, "OPERATOR MODE (Revka)"); // OPERATOR_CORE_PROMPT marker
         let kumiho = idx(&prompt, "SESSION-START INSTRUCTION (kumiho-memory");
         let tool_honesty = idx(&prompt, "## CRITICAL: Tool Honesty");
         let tools_idx = idx(&prompt, "## Tools");
@@ -1205,7 +1204,7 @@ mod tests {
         // Empty workspace — exercises the missing-marker rendering through
         // the shared personality loader (no parallel CHANNEL_FILE_ORDER).
         let workspace =
-            std::env::temp_dir().join(format!("construct_channel_pers_{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("revka_channel_pers_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&workspace).unwrap();
         std::fs::write(workspace.join("SOUL.md"), "# Soul\nHello.").unwrap();
         std::fs::write(workspace.join("HEARTBEAT.md"), "# Heartbeat\nBeep.").unwrap();

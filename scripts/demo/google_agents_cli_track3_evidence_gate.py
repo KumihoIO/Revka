@@ -37,7 +37,7 @@ def _template() -> dict[str, Any]:
     return {
         "schema_version": 1,
         "scenario": {
-            "name": "Construct Enterprise AgentOps Control Plane",
+            "name": "Revka Enterprise AgentOps Control Plane",
             "b2b_persona": "Platform engineering leader",
             "business_workflow": "Governed production incident response",
             "measurable_outcome": "A2A incident plan returned from Cloud Run",
@@ -46,7 +46,7 @@ def _template() -> dict[str, Any]:
             "google_cloud_deployment": {
                 "project_id": "your-google-cloud-project",
                 "region": "us-central1",
-                "service_name": "construct-agentops-a2a",
+                "service_name": "revka-agentops-a2a",
                 "service_url": "https://SERVICE_URL",
                 "evidence_files": ["deploy/cloud-run-service.json", "deploy/deploy-output.txt"],
             },
@@ -64,13 +64,13 @@ def _template() -> dict[str, Any]:
             "adk_orchestration": {
                 "framework": "Google ADK",
                 "source_files": [
-                    "examples/google-agents-track3/construct-agentops-a2a/agent.py",
-                    "examples/google-agents-track3/construct-agentops-a2a/main.py",
+                    "examples/google-agents-track3/revka-agentops-a2a/agent.py",
+                    "examples/google-agents-track3/revka-agentops-a2a/main.py",
                 ],
                 "evidence_files": ["runtime/source-manifest.json"],
             },
             "b2b_enterprise_package": {
-                "package_name": "Construct Enterprise AgentOps Control Plane",
+                "package_name": "Revka Enterprise AgentOps Control Plane",
                 "buyer": "Platform engineering or IT operations leader",
                 "workflow": "Production incident response",
                 "evidence_files": ["business/package.md"],
@@ -272,7 +272,7 @@ def _check_text_claim(claim_name: str, files: list[Path]) -> list[str]:
     corpus = _corpus(files).lower()
     failures: list[str] = []
     required = {
-        "b2b_enterprise_package": ("b2b", "buyer", "workflow", "construct enterprise agentops"),
+        "b2b_enterprise_package": ("b2b", "buyer", "workflow", "revka enterprise agentops"),
         "enterprise_governance": ("identity", "rollback", "observability", "cloud logging"),
         "gemini_enterprise_readiness": ("gemini enterprise", "a2a", "agent card", "registration"),
     }.get(claim_name, ())

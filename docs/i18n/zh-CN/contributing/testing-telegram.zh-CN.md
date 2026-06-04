@@ -62,7 +62,7 @@ cargo test telegram --lib
 ### 步骤 1：运行自动化测试
 
 ```bash
-cd /Users/abdzsam/construct
+cd /Users/abdzsam/revka
 
 # 赋予脚本执行权限（已完成）
 chmod +x tests/telegram/test_telegram_integration.sh tests/telegram/quick_test.sh
@@ -106,10 +106,10 @@ Pass Rate:     100%
 
 ```bash
 # 交互式设置
-construct onboard
+revka onboard
 
 # 或仅渠道设置
-construct onboard --channels-only
+revka onboard --channels-only
 ```
 
 提示时：
@@ -120,12 +120,12 @@ construct onboard --channels-only
 ### 步骤 3：验证健康状态
 
 ```bash
-construct channel doctor
+revka channel doctor
 ```
 
 **预期输出：**
 ```
-🩺 Construct Channel Doctor
+🩺 Revka Channel Doctor
 
   ✅ Telegram  healthy
 
@@ -138,7 +138,7 @@ Summary: 1 healthy, 0 unhealthy, 0 timed out
 
 ```bash
 # 终端 1：启动渠道
-construct channel start
+revka channel start
 ```
 
 **在 Telegram 中：**
@@ -216,10 +216,10 @@ cargo update
 
 ```bash
 # 检查配置
-cat ~/.construct/config.toml | grep -A 5 telegram
+cat ~/.revka/config.toml | grep -A 5 telegram
 
 # 重新配置
-construct onboard --channels-only
+revka onboard --channels-only
 ```
 
 ### 问题：健康检查失败
@@ -235,7 +235,7 @@ curl "https://api.telegram.org/bot<YOUR_TOKEN>/getMe"
 
 ```bash
 # 启用调试日志
-RUST_LOG=debug construct channel start
+RUST_LOG=debug revka channel start
 
 # 查找：
 # - "Telegram channel listening for messages..."
@@ -251,11 +251,11 @@ RUST_LOG=debug construct channel start
 |--------|--------|---------|
 | 单元测试通过率 | 24/24 | `cargo test telegram --lib` |
 | 构建时间 | <30s | `time cargo build --release` |
-| 二进制大小 | ~3-4MB | `ls -lh target/release/construct` |
-| 健康检查 | <5s | `time construct channel doctor` |
+| 二进制大小 | ~3-4MB | `ls -lh target/release/revka` |
+| 健康检查 | <5s | `time revka channel doctor` |
 | 首次响应 | <3s | Telegram 中手动测试 |
 | 消息拆分 | <50ms | 检查调试日志 |
-| 内存使用 | <10MB | `ps aux \| grep construct` |
+| 内存使用 | <10MB | `ps aux \| grep revka` |
 
 ## 🔄 CI/CD 集成
 
@@ -285,9 +285,9 @@ RUST_LOG=debug construct channel start
 
 5. **监控日志** 查看任何问题：
    ```bash
-   construct daemon
+   revka daemon
    # 或
-   RUST_LOG=info construct channel start
+   RUST_LOG=info revka channel start
    ```
 
 ## 🎉 成功
@@ -305,6 +305,6 @@ RUST_LOG=debug construct channel start
 
 ## 📞 支持
 
-- Issue：<https://github.com/KumihoIO/construct-os/issues>
+- Issue：<https://github.com/KumihoIO/Revka/issues>
 - 文档：[testing-telegram.md](../../../../tests/telegram/testing-telegram.md)
-- 帮助：`construct --help`
+- 帮助：`revka --help`

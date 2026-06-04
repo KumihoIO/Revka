@@ -1,6 +1,6 @@
-//! Built-in workflow YAMLs bundled into the `construct` binary and seeded
+//! Built-in workflow YAMLs bundled into the `revka` binary and seeded
 //! into the user's workspace during onboarding (and on demand via
-//! `construct workflows sync`).
+//! `revka workflows sync`).
 //!
 //! Source of truth lives at `operator-mcp/operator_mcp/workflow/builtins/`;
 //! the files are embedded here at compile time so users don't need the
@@ -16,7 +16,7 @@ use tokio::fs;
 
 /// Directory inside the workspace where the gateway and cron scheduler
 /// look for built-in workflow YAMLs. Must match
-/// `src/gateway/api_workflows.rs::BUILTIN_WORKFLOWS_DIR` (sans the `.construct/` prefix).
+/// `src/gateway/api_workflows.rs::BUILTIN_WORKFLOWS_DIR` (sans the `.revka/` prefix).
 pub const WORKSPACE_WORKFLOWS_SUBDIR: &str = "operator_mcp/workflow/builtins";
 
 /// Embedded YAML templates. Compiled into the binary at build time.
@@ -63,7 +63,7 @@ pub async fn seed_builtin_workflows(workspace_dir: &Path, force: bool) -> Result
     Ok(report)
 }
 
-/// CLI handler for `construct workflows sync [--force]`.
+/// CLI handler for `revka workflows sync [--force]`.
 pub async fn run_sync(workspace_dir: PathBuf, force: bool) -> Result<()> {
     let report = seed_builtin_workflows(&workspace_dir, force).await?;
     let total = BUILTIN_WORKFLOWS.files().count();
@@ -109,7 +109,7 @@ pub async fn run_sync(workspace_dir: PathBuf, force: bool) -> Result<()> {
     Ok(())
 }
 
-/// CLI handler for `construct workflows list` — reports what's embedded.
+/// CLI handler for `revka workflows list` — reports what's embedded.
 pub fn run_list() {
     let mut names: Vec<&str> = BUILTIN_WORKFLOWS
         .files()

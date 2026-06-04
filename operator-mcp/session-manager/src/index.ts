@@ -1,5 +1,5 @@
 /**
- * Construct Session Manager — HTTP server on Unix socket.
+ * Revka Session Manager — HTTP server on Unix socket.
  *
  * REST API for the Python operator to manage agent SDK sessions.
  * Communicates via Unix socket to avoid port conflicts.
@@ -311,7 +311,7 @@ function main(): void {
   const socketArg = process.argv.indexOf("--socket");
   const socketPath = socketArg >= 0 && process.argv[socketArg + 1]
     ? process.argv[socketArg + 1]
-    : `${process.env.HOME}/.construct/operator_mcp/session-manager.sock`;
+    : `${process.env.HOME}/.revka/operator_mcp/session-manager.sock`;
 
   const pidPath = socketPath + ".pid";
 

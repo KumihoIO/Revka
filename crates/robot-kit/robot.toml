@@ -1,5 +1,5 @@
-# Construct Robot Kit Configuration
-# Copy to ~/.construct/robot.toml
+# Revka Robot Kit Configuration
+# Copy to ~/.revka/robot.toml
 
 # =============================================================================
 # DRIVE SYSTEM

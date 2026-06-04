@@ -2,7 +2,7 @@
 //
 // After the agent completes a multi-step tool-call sequence, this module
 // can persist the execution as a reusable skill definition (SKILL.toml)
-// under `~/.construct/workspace/skills/<slug>/`.
+// under `~/.revka/workspace/skills/<slug>/`.
 
 use crate::config::SkillCreationConfig;
 use crate::memory::embeddings::EmbeddingProvider;
@@ -141,7 +141,7 @@ impl SkillCreator {
             toml_escape(&format!("Auto-generated: {description}"))
         );
         toml.push_str("version = \"0.1.0\"\n");
-        toml.push_str("author = \"construct-auto\"\n");
+        toml.push_str("author = \"revka-auto\"\n");
         toml.push_str("tags = [\"auto-generated\"]\n");
 
         for call in tool_calls {
@@ -225,7 +225,7 @@ impl SkillCreator {
             }
 
             let content = tokio::fs::read_to_string(&toml_path).await?;
-            if content.contains("\"construct-auto\"") || content.contains("\"auto-generated\"") {
+            if content.contains("\"revka-auto\"") || content.contains("\"auto-generated\"") {
                 let modified = tokio::fs::metadata(&toml_path)
                     .await?
                     .modified()
@@ -478,7 +478,7 @@ mod tests {
         );
         assert_eq!(
             skill.get("author").and_then(toml::Value::as_str),
-            Some("construct-auto")
+            Some("revka-auto")
         );
         assert_eq!(
             skill.get("version").and_then(toml::Value::as_str),
@@ -613,7 +613,7 @@ version = "0.1.0"
 name = "existing-skill"
 description = "Auto-generated: Build the project"
 version = "0.1.0"
-author = "construct-auto"
+author = "revka-auto"
 tags = ["auto-generated"]
 "#,
         )
@@ -671,7 +671,7 @@ tags = ["auto-generated"]
 name = "{name}"
 description = "Auto-generated: Skill {i}"
 version = "0.1.0"
-author = "construct-auto"
+author = "revka-auto"
 tags = ["auto-generated"]
 "#
                 ),
@@ -771,7 +771,7 @@ tags = ["auto-generated"]
             .await
             .unwrap();
         assert!(toml_content.contains("build-and-test"));
-        assert!(toml_content.contains("construct-auto"));
+        assert!(toml_content.contains("revka-auto"));
     }
 
     #[tokio::test]
@@ -792,7 +792,7 @@ tags = ["auto-generated"]
 name = "existing"
 description = "Auto-generated: Build and test"
 version = "0.1.0"
-author = "construct-auto"
+author = "revka-auto"
 tags = ["auto-generated"]
 "#,
         )

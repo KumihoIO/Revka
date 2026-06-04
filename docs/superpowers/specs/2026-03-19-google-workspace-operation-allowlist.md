@@ -14,7 +14,7 @@ such as "read and draft, but never send."
 This creates a gap between:
 
 - tool-level safety expectations in first-party skills such as `email-assistant`
-- actual runtime enforcement in the Construct wrapper
+- actual runtime enforcement in the Revka wrapper
 
 ## Current State
 
@@ -35,7 +35,7 @@ It does not currently support:
 
 ## Goals
 
-- Add a method-level allowlist to the Construct `google_workspace` wrapper.
+- Add a method-level allowlist to the Revka `google_workspace` wrapper.
 - Preserve backward compatibility for existing configs.
 - Fail closed when an operation is outside the configured allowlist.
 - Make Gmail-native draft workflows possible without exposing send methods in the wrapper.
@@ -269,7 +269,7 @@ methods = ["list", "get", "create", "update"]
 Operations denied by omission: `gmail/users/messages/send`, `gmail/users/drafts/send`.
 
 This is not a credential-level send prohibition. It is a runtime boundary inside
-the Construct wrapper.
+the Revka wrapper.
 
 ## Follow-On Work
 

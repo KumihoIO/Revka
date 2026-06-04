@@ -1,17 +1,17 @@
-# Adding Boards and Tools — Construct Hardware Guide
+# Adding Boards and Tools — Revka Hardware Guide
 
-This guide explains how to add new hardware boards and custom tools to Construct.
+This guide explains how to add new hardware boards and custom tools to Revka.
 
 ## Quick Start: Add a Board via CLI
 
 ```bash
-# Add a board (updates ~/.construct/config.toml)
-construct peripheral add nucleo-f401re /dev/ttyACM0
-construct peripheral add arduino-uno /dev/cu.usbmodem12345
-construct peripheral add rpi-gpio native   # for Raspberry Pi GPIO (Linux)
+# Add a board (updates ~/.revka/config.toml)
+revka peripheral add nucleo-f401re /dev/ttyACM0
+revka peripheral add arduino-uno /dev/cu.usbmodem12345
+revka peripheral add rpi-gpio native   # for Raspberry Pi GPIO (Linux)
 
 # Restart daemon to apply
-construct daemon --host 127.0.0.1 --port 42617
+revka daemon --host 127.0.0.1 --port 42617
 ```
 
 ## Supported Boards
@@ -26,7 +26,7 @@ construct daemon --host 127.0.0.1 --port 42617
 
 ## Manual Config
 
-Edit `~/.construct/config.toml`:
+Edit `~/.revka/config.toml`:
 
 ```toml
 [peripherals]
@@ -76,7 +76,7 @@ builtin_led: 13
 
 ### PDF Datasheets
 
-With the `rag-pdf` feature, Construct can index PDF files:
+With the `rag-pdf` feature, Revka can index PDF files:
 
 ```bash
 cargo build --features hardware,rag-pdf
@@ -87,7 +87,7 @@ Place PDFs in the datasheet directory. They are extracted and chunked for RAG.
 ## Adding a New Board Type
 
 1. **Create a datasheet** — `docs/datasheets/my-board.md` with pin aliases and GPIO info.
-2. **Add to config** — `construct peripheral add my-board /dev/ttyUSB0`
+2. **Add to config** — `revka peripheral add my-board /dev/ttyUSB0`
 3. **Implement a peripheral** (optional) — For custom protocols, implement the `Peripheral` trait in `src/peripherals/` and register in `create_peripheral_tools`.
 
 See [`docs/hardware/hardware-peripherals-design.md`](../hardware/hardware-peripherals-design.md) for the full design.
@@ -102,12 +102,12 @@ See [`docs/hardware/hardware-peripherals-design.md`](../hardware/hardware-periph
 
 | Command | Description |
 |---------|-------------|
-| `construct peripheral list` | List configured boards |
-| `construct peripheral add <board> <path>` | Add board (writes config) |
-| `construct peripheral flash` | Flash Arduino firmware |
-| `construct peripheral flash-nucleo` | Flash Nucleo firmware |
-| `construct hardware discover` | List USB devices |
-| `construct hardware info` | Chip info via probe-rs |
+| `revka peripheral list` | List configured boards |
+| `revka peripheral add <board> <path>` | Add board (writes config) |
+| `revka peripheral flash` | Flash Arduino firmware |
+| `revka peripheral flash-nucleo` | Flash Nucleo firmware |
+| `revka hardware discover` | List USB devices |
+| `revka hardware info` | Chip info via probe-rs |
 
 ## Troubleshooting
 

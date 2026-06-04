@@ -1,12 +1,12 @@
 """Workflow memory — persist workflow runs to Kumiho graph.
 
-Stores workflow executions in /Construct/WorkflowRuns space so that:
+Stores workflow executions in /Revka/WorkflowRuns space so that:
   - Future workflows can recall what prior runs produced
   - Agents can query workflow history for context
   - Cross-workflow variable sharing works via krefs
 
 Structure:
-  /Construct/WorkflowRuns/<workflow_name>-<run_id>
+  /Revka/WorkflowRuns/<workflow_name>-<run_id>
     revision metadata: status, inputs, step_results, timestamps
     edges: PRODUCED_BY (step → agent), DEPENDS_ON (run → prior run)
 """
@@ -21,7 +21,7 @@ from typing import Any, Callable
 
 from .._log import _log
 from ..artifact_summary import summarize_artifact_metadata
-from ..construct_config import harness_project
+from ..revka_config import harness_project
 
 
 # ---------------------------------------------------------------------------
@@ -72,7 +72,7 @@ async def _kumiho_with_timeout(
 ) -> Any:
     """Bound a Kumiho persistence call so best-effort persistence stays best-effort."""
     timeout_s = (
-        _timeout_from_env("CONSTRUCT_WORKFLOW_MEMORY_TIMEOUT_SECS", _PERSIST_OP_TIMEOUT_SECS)
+        _timeout_from_env("REVKA_WORKFLOW_MEMORY_TIMEOUT_SECS", _PERSIST_OP_TIMEOUT_SECS)
         if timeout is None
         else timeout
     )
@@ -448,7 +448,7 @@ async def persist_workflow_run(
                             f"attach workflow run artifact {sid}",
                             run_id=run_id,
                             timeout=_timeout_from_env(
-                                "CONSTRUCT_WORKFLOW_MEMORY_ARTIFACT_TIMEOUT_SECS",
+                                "REVKA_WORKFLOW_MEMORY_ARTIFACT_TIMEOUT_SECS",
                                 _PERSIST_ARTIFACT_TIMEOUT_SECS,
                             ),
                         )
@@ -526,7 +526,7 @@ async def _ensure_space_path(space_path: str) -> None:
         await asyncio.wait_for(
             asyncio.to_thread(_create),
             timeout=_timeout_from_env(
-                "CONSTRUCT_WORKFLOW_MEMORY_TIMEOUT_SECS",
+                "REVKA_WORKFLOW_MEMORY_TIMEOUT_SECS",
                 _PERSIST_OP_TIMEOUT_SECS,
             ),
         )
@@ -623,8 +623,8 @@ async def publish_workflow_entity(
 
         # Canonicalize the user-supplied space path so the write side here
         # matches the read side in `resolve_entity`. Without this, an output
-        # step writing ``Construct/WorkflowOutputs/Github`` and a resolve
-        # step reading ``/Construct/WorkflowOutputs/Github`` would publish
+        # step writing ``Revka/WorkflowOutputs/Github`` and a resolve
+        # step reading ``/Revka/WorkflowOutputs/Github`` would publish
         # and lookup at different paths.
         space_path = _canonical_space(
             entity_space,
@@ -716,7 +716,7 @@ async def publish_workflow_entity(
                 )
                 artifact_path = ""
         else:
-            artifact_dir = os.path.expanduser(f"~/.construct/artifacts/{workflow_name}/{run_id}")
+            artifact_dir = os.path.expanduser(f"~/.revka/artifacts/{workflow_name}/{run_id}")
             os.makedirs(artifact_dir, exist_ok=True)
             ext = {"json": ".json", "markdown": ".md", "text": ".txt"}.get(
                 content_format, ".md"
@@ -789,7 +789,7 @@ async def publish_workflow_entity(
                     "attach workflow entity artifact",
                     run_id=run_id,
                     timeout=_timeout_from_env(
-                        "CONSTRUCT_WORKFLOW_MEMORY_ARTIFACT_TIMEOUT_SECS",
+                        "REVKA_WORKFLOW_MEMORY_ARTIFACT_TIMEOUT_SECS",
                         _PERSIST_ARTIFACT_TIMEOUT_SECS,
                     ),
                 )
@@ -891,8 +891,8 @@ async def resolve_entity(
         raise RuntimeError("Kumiho SDK not available")
 
     # Search for items matching the kind. Canonicalize the lookup path so
-    # ``space="/Construct/WorkflowOutputs/Github"`` and
-    # ``space="Construct/WorkflowOutputs/Github"`` resolve to the same
+    # ``space="/Revka/WorkflowOutputs/Github"`` and
+    # ``space="Revka/WorkflowOutputs/Github"`` resolve to the same
     # context as the path used by `publish_workflow_entity`.
     context = _canonical_space(
         space,
@@ -1105,7 +1105,7 @@ async def deprecate_entity(
 # ---------------------------------------------------------------------------
 
 async def _resolve_pool_kref(template_name: str) -> str | None:
-    """Resolve an agent template name to its real kref in /Construct/AgentPool."""
+    """Resolve an agent template name to its real kref in /Revka/AgentPool."""
     try:
         from ..operator_mcp import KUMIHO_POOL
         if not KUMIHO_POOL._available:
@@ -1127,7 +1127,7 @@ async def link_agents_to_run(
     """Create edges from the workflow run to Kumiho-stored agents.
 
     For each step that used an agent:
-      1. Try to resolve the agent's template to a real /Construct/AgentPool kref
+      1. Try to resolve the agent's template to a real /Revka/AgentPool kref
          and create a USED_TEMPLATE edge (workflow run → pool agent) with
          step context metadata (step_id, role, action, skills).
       2. Fall back to a PRODUCED_BY edge with the runtime agent ID.
@@ -1200,7 +1200,7 @@ async def link_run_to_team(run_kref: str, team_name: str) -> bool:
 
     Args:
         run_kref: The workflow run item kref.
-        team_name: Team name or kref in /Construct/Teams.
+        team_name: Team name or kref in /Revka/Teams.
 
     Returns:
         True if edge was created.
@@ -1481,7 +1481,7 @@ async def mark_stale_runs() -> int:
 
 def _mark_checkpoint_failed(run_id: str, error: str, completed_at: str) -> bool:
     """Update a local checkpoint to failed without deleting retry state."""
-    checkpoint_dir = os.path.expanduser("~/.construct/workflow_checkpoints")
+    checkpoint_dir = os.path.expanduser("~/.revka/workflow_checkpoints")
     path = os.path.join(checkpoint_dir, f"{run_id}.json")
     if not os.path.exists(path):
         return False

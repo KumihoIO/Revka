@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
-# install-sidecars.sh — install Construct's Python MCP sidecars (Kumiho + Operator)
+# install-sidecars.sh — install Revka's Python MCP sidecars (Kumiho + Operator)
 #
 # This script is idempotent: safe to re-run. It only creates scaffolding under
-# ~/.construct/ and never overwrites an existing config.toml or .env.
+# ~/.revka/ and never overwrites an existing config.toml or .env.
 #
 # It installs:
-#   1. Operator MCP at ~/.construct/operator_mcp/ (via operator-mcp/Makefile when
+#   1. Operator MCP at ~/.revka/operator_mcp/ (via operator-mcp/Makefile when
 #      make is available; falls back to a minimal rsync + pip install).
-#   2. Kumiho MCP at ~/.construct/kumiho/ — creates a venv, installs the
+#   2. Kumiho MCP at ~/.revka/kumiho/ — creates a venv, installs the
 #      `kumiho` package from PyPI, and writes a launcher at
-#      ~/.construct/kumiho/run_kumiho_mcp.py that invokes `python -m
+#      ~/.revka/kumiho/run_kumiho_mcp.py that invokes `python -m
 #      kumiho.mcp_server`.
 #
-# Defaults match the paths in ~/.construct/config.toml:
-#   kumiho.mcp_path   = ~/.construct/kumiho/run_kumiho_mcp.py
-#   operator.mcp_path = ~/.construct/operator_mcp/run_operator_mcp.py
+# Defaults match the paths in ~/.revka/config.toml:
+#   kumiho.mcp_path   = ~/.revka/kumiho/run_kumiho_mcp.py
+#   operator.mcp_path = ~/.revka/operator_mcp/run_operator_mcp.py
 #
 # Usage:
 #   ./scripts/install-sidecars.sh [--skip-kumiho] [--skip-operator] [--dry-run]
@@ -48,11 +48,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 OPERATOR_SRC="$REPO_ROOT/operator-mcp"
 
-CONSTRUCT_DIR="$HOME/.construct"
-KUMIHO_DIR="$CONSTRUCT_DIR/kumiho"
+REVKA_DIR="$HOME/.revka"
+KUMIHO_DIR="$REVKA_DIR/kumiho"
 KUMIHO_VENV="$KUMIHO_DIR/venv"
 KUMIHO_LAUNCHER="$KUMIHO_DIR/run_kumiho_mcp.py"
-OPERATOR_DIR="$CONSTRUCT_DIR/operator_mcp"
+OPERATOR_DIR="$REVKA_DIR/operator_mcp"
 OPERATOR_LAUNCHER="$OPERATOR_DIR/run_operator_mcp.py"
 
 info()    { printf '==> %s\n' "$*"; }
@@ -91,7 +91,7 @@ if [[ "$PY_OK" != "1" ]]; then
   warn "Python >= 3.11 is recommended. Detected: $($PYTHON_BIN --version 2>&1)"
 fi
 
-mkdir -p "$CONSTRUCT_DIR"
+mkdir -p "$REVKA_DIR"
 
 # ── Operator sidecar ──────────────────────────────────────────────
 install_operator() {
@@ -99,7 +99,7 @@ install_operator() {
 
   if [[ ! -d "$OPERATOR_SRC" ]]; then
     warn "operator-mcp/ not found at $OPERATOR_SRC — skipping Operator install"
-    warn "Run this script from a Construct source checkout."
+    warn "Run this script from a Revka source checkout."
     return 0
   fi
 
@@ -170,7 +170,7 @@ install_kumiho() {
   # stdio server in kumiho.mcp_server.
   #
   # `kumiho_memory` (separate package) is required for the high-level memory
-  # tools mandated by the Construct session-bootstrap prompt:
+  # tools mandated by the Revka session-bootstrap prompt:
   # kumiho_memory_engage / reflect / recall / consolidate / dream_state. The
   # bare `kumiho` package only exposes low-level CRUD + memory_store/retrieve;
   # kumiho.mcp_server auto-discovers and merges in kumiho_memory's tools when
@@ -188,11 +188,11 @@ install_kumiho() {
     else
       cat > "$KUMIHO_LAUNCHER" <<PYEOF
 #!/usr/bin/env python3
-"""Kumiho MCP launcher installed by Construct's install-sidecars script.
+"""Kumiho MCP launcher installed by Revka's install-sidecars script.
 
 This script is a thin shim: it re-executes the Kumiho MCP stdio server
 module out of the dedicated Kumiho venv. It is referenced from
-~/.construct/config.toml as kumiho.mcp_path.
+~/.revka/config.toml as kumiho.mcp_path.
 
 Regenerate with: ./scripts/install-sidecars.sh
 """
@@ -213,7 +213,7 @@ if not VENV_PY.exists():
     )
     sys.exit(127)
 
-# Module path: kumiho.mcp_server is the canonical entry used by Construct's
+# Module path: kumiho.mcp_server is the canonical entry used by Revka's
 # operator sidecar (see operator-mcp/operator_mcp/kumiho_clients.py).
 os.execv(str(VENV_PY), [str(VENV_PY), "-m", "kumiho.mcp_server", *sys.argv[1:]])
 PYEOF
@@ -239,7 +239,7 @@ fi
 info "Done."
 echo
 echo "Verify with:"
-echo "  construct doctor"
+echo "  revka doctor"
 echo "  ls -l '$KUMIHO_LAUNCHER' '$OPERATOR_LAUNCHER'"
 # Pick the right venv python path for the current platform.
 if [[ -x "$KUMIHO_VENV/bin/python3" ]]; then

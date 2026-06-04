@@ -32,7 +32,7 @@ venv/
 *.pem
 credentials.json
 .worktrees/
-.construct/*
+.revka/*
 
 # Skill eval workspaces (test outputs, transcripts, grading)
 .claude/skills/*-workspace/

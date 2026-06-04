@@ -503,7 +503,7 @@ mod tests {
     fn weekly_status_renders_with_variables() {
         let tpl = weekly_status_template("en");
         let mut vars = HashMap::new();
-        vars.insert("project_name".into(), "Construct".into());
+        vars.insert("project_name".into(), "Revka".into());
         vars.insert("period".into(), "2026-W10".into());
         vars.insert("completed".into(), "- Task A\n- Task B".into());
         vars.insert("in_progress".into(), "- Task C".into());
@@ -511,7 +511,7 @@ mod tests {
         vars.insert("next_steps".into(), "- Task D".into());
 
         let rendered = tpl.render(&vars);
-        assert!(rendered.contains("Project: Construct"));
+        assert!(rendered.contains("Project: Revka"));
         assert!(rendered.contains("Period: 2026-W10"));
         assert!(rendered.contains("- Task A"));
         assert!(rendered.contains("## Completed"));

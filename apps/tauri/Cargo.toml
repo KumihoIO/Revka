@@ -1,8 +1,8 @@
 [package]
-name = "construct-desktop"
+name = "revka-desktop"
 version = "0.1.0"
 edition = "2024"
-description = "Construct Desktop — Tauri-powered system tray app"
+description = "Revka Desktop — Tauri-powered system tray app"
 license = "MIT OR Apache-2.0"
 publish = false
 

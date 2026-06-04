@@ -21,7 +21,7 @@ from .journal import SessionJournal
 from .run_log import get_log, get_or_create_log
 
 # Temp dir for agent prompt files — survives individual agent lifecycle
-_PROMPT_DIR = os.path.expanduser("~/.construct/tmp/agent_prompts")
+_PROMPT_DIR = os.path.expanduser("~/.revka/tmp/agent_prompts")
 os.makedirs(_PROMPT_DIR, exist_ok=True)
 
 # Stderr patterns that are harmless noise (gRPC fd warnings, telemetry, etc.)
@@ -44,7 +44,7 @@ _TERSE_OUTPUT_CONTRACT = """\
 
 
 def _terse_internal_outputs_enabled() -> bool:
-    raw = os.environ.get("CONSTRUCT_TERSE_INTERNAL_OUTPUTS", "1").strip().lower()
+    raw = os.environ.get("REVKA_TERSE_INTERNAL_OUTPUTS", "1").strip().lower()
     return raw not in {"0", "false", "no", "off"}
 
 

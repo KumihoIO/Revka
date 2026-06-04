@@ -1,4 +1,4 @@
-# Sổ tay Vận hành Construct
+# Sổ tay Vận hành Revka
 
 _Source English version updated 2026-04-21; localized version may be stale until retranslated._
 
@@ -21,59 +21,59 @@ Nếu đây là lần cài đặt đầu tiên, hãy bắt đầu từ [one-clic
 
 | Chế độ | Lệnh | Khi nào dùng |
 |---|---|---|
-| Foreground runtime | `construct daemon` | gỡ lỗi cục bộ, phiên ngắn |
-| Foreground gateway only | `construct gateway` | kiểm thử webhook endpoint |
-| User service | `construct service install && construct service start` | runtime được quản lý liên tục bởi operator |
+| Foreground runtime | `revka daemon` | gỡ lỗi cục bộ, phiên ngắn |
+| Foreground gateway only | `revka gateway` | kiểm thử webhook endpoint |
+| User service | `revka service install && revka service start` | runtime được quản lý liên tục bởi operator |
 
 ## Checklist Cơ bản cho Operator
 
 1. Xác thực cấu hình:
 
 ```bash
-construct status
+revka status
 ```
 
 2. Kiểm tra chẩn đoán:
 
 ```bash
-construct doctor
-construct channel doctor
+revka doctor
+revka channel doctor
 ```
 
 3. Khởi động runtime:
 
 ```bash
-construct daemon
+revka daemon
 ```
 
 4. Để chạy như user session service liên tục:
 
 ```bash
-construct service install
-construct service start
-construct service status
+revka service install
+revka service start
+revka service status
 ```
 
 ## Tín hiệu Sức khoẻ và Trạng thái
 
 | Tín hiệu | Lệnh / File | Kỳ vọng |
 |---|---|---|
-| Tính hợp lệ của config | `construct doctor` | không có lỗi nghiêm trọng |
-| Kết nối channel | `construct channel doctor` | các channel đã cấu hình đều khoẻ mạnh |
-| Tóm tắt runtime | `construct status` | provider/model/channels như mong đợi |
-| Heartbeat/trạng thái daemon | `~/.construct/daemon_state.json` | file được cập nhật định kỳ |
+| Tính hợp lệ của config | `revka doctor` | không có lỗi nghiêm trọng |
+| Kết nối channel | `revka channel doctor` | các channel đã cấu hình đều khoẻ mạnh |
+| Tóm tắt runtime | `revka status` | provider/model/channels như mong đợi |
+| Heartbeat/trạng thái daemon | `~/.revka/daemon_state.json` | file được cập nhật định kỳ |
 
 ## Log và Chẩn đoán
 
 ### macOS / Windows (log của service wrapper)
 
-- `~/.construct/logs/daemon.stdout.log`
-- `~/.construct/logs/daemon.stderr.log`
+- `~/.revka/logs/daemon.stdout.log`
+- `~/.revka/logs/daemon.stderr.log`
 
 ### Linux (systemd user service)
 
 ```bash
-journalctl --user -u construct.service -f
+journalctl --user -u revka.service -f
 ```
 
 ## Quy trình Phân loại Sự cố (Fast Path)
@@ -81,25 +81,25 @@ journalctl --user -u construct.service -f
 1. Chụp trạng thái hệ thống:
 
 ```bash
-construct status
-construct doctor
-construct channel doctor
+revka status
+revka doctor
+revka channel doctor
 ```
 
 2. Kiểm tra trạng thái service:
 
 ```bash
-construct service status
+revka service status
 ```
 
 3. Nếu service không khoẻ, khởi động lại sạch:
 
 ```bash
-construct service stop
-construct service start
+revka service stop
+revka service start
 ```
 
-4. Nếu các channel vẫn thất bại, kiểm tra allowlist và thông tin xác thực trong `~/.construct/config.toml`.
+4. Nếu các channel vẫn thất bại, kiểm tra allowlist và thông tin xác thực trong `~/.revka/config.toml`.
 
 5. Nếu liên quan đến gateway, kiểm tra cài đặt bind/auth (`[gateway]`) và khả năng tiếp cận cục bộ.
 
@@ -107,9 +107,9 @@ construct service start
 
 Trước khi áp dụng thay đổi cấu hình:
 
-1. sao lưu `~/.construct/config.toml`
+1. sao lưu `~/.revka/config.toml`
 2. chỉ áp dụng một thay đổi logic tại một thời điểm
-3. chạy `construct doctor`
+3. chạy `revka doctor`
 4. khởi động lại daemon/service
 5. xác minh bằng `status` + `channel doctor`
 

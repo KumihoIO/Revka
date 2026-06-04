@@ -3,8 +3,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-BIN_PATH="${1:-$ROOT_DIR/target/debug/construct}"
-TMP_ROOT="/tmp/construct-tmux-onboard-$$"
+BIN_PATH="${1:-$ROOT_DIR/target/debug/revka}"
+TMP_ROOT="/tmp/revka-tmux-onboard-$$"
 
 cleanup() {
   tmux kill-session -t "zc_full_$$_custom" >/dev/null 2>&1 || true
@@ -19,8 +19,8 @@ if ! command -v tmux >/dev/null 2>&1; then
 fi
 
 if [[ ! -x "$BIN_PATH" ]]; then
-  echo "Building construct..."
-  cargo build --bin construct >/dev/null
+  echo "Building revka..."
+  cargo build --bin revka >/dev/null
 fi
 
 mkdir -p "$TMP_ROOT"
@@ -147,7 +147,7 @@ run_update_custom_model_flow() {
 
   mkdir -p "$root"
 
-  env CONSTRUCT_CONFIG_DIR="$config_dir" \
+  env REVKA_CONFIG_DIR="$config_dir" \
     "$BIN_PATH" onboard --provider openrouter --api-key seed-key --model openai/gpt-5-mini --force >/dev/null
 
   start_onboard_session "$session" "$config_dir"

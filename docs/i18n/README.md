@@ -1,6 +1,6 @@
 # Other Languages / 다른 언어 / Các ngôn ngữ khác / 其他语言
 
-Construct's documentation is authored in English; supported translations live in the locale folders below.
+Revka's documentation is authored in English; supported translations live in the locale folders below.
 
 ## Supported locales
 

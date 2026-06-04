@@ -43,14 +43,14 @@ const CUSTOM_PROFILE: MemoryBackendProfile = MemoryBackendProfile {
     optional_dependency: false,
 };
 
-/// Construct: Kumiho (via MCP) is the recommended backend, None for stateless.
+/// Revka: Kumiho (via MCP) is the recommended backend, None for stateless.
 const SELECTABLE_MEMORY_BACKENDS: [MemoryBackendProfile; 2] = [KUMIHO_PROFILE, NONE_PROFILE];
 
 pub fn selectable_memory_backends() -> &'static [MemoryBackendProfile] {
     &SELECTABLE_MEMORY_BACKENDS
 }
 
-/// Construct: Kumiho is the default persistent memory backend.
+/// Revka: Kumiho is the default persistent memory backend.
 pub fn default_memory_backend_key() -> &'static str {
     KUMIHO_PROFILE.key
 }

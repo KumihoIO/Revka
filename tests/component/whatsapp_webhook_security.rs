@@ -23,7 +23,7 @@ fn whatsapp_signature_rejects_missing_sha256_prefix() {
     let body = b"test payload";
     let bad_sig = "abc123"; // Missing sha256= prefix
 
-    assert!(!construct::gateway::verify_whatsapp_signature(
+    assert!(!revka::gateway::verify_whatsapp_signature(
         secret, body, bad_sig
     ));
 }
@@ -34,7 +34,7 @@ fn whatsapp_signature_rejects_invalid_hex() {
     let body = b"test payload";
     let bad_sig = "sha256=not-valid-hex!!";
 
-    assert!(!construct::gateway::verify_whatsapp_signature(
+    assert!(!revka::gateway::verify_whatsapp_signature(
         secret, body, bad_sig
     ));
 }
@@ -45,7 +45,7 @@ fn whatsapp_signature_rejects_wrong_signature() {
     let body = b"test payload";
     let bad_sig = "sha256=00112233445566778899aabbccddeeff";
 
-    assert!(!construct::gateway::verify_whatsapp_signature(
+    assert!(!revka::gateway::verify_whatsapp_signature(
         secret, body, bad_sig
     ));
 }
@@ -56,7 +56,7 @@ fn whatsapp_signature_accepts_valid_signature() {
     let body = b"test payload";
     let valid_sig = compute_signature(secret, body);
 
-    assert!(construct::gateway::verify_whatsapp_signature(
+    assert!(revka::gateway::verify_whatsapp_signature(
         secret, body, &valid_sig
     ));
 }
@@ -71,7 +71,7 @@ fn whatsapp_signature_rejects_tampered_body() {
     let sig = compute_signature(secret, original_body);
 
     // Tampered body should be rejected even with valid-looking signature
-    assert!(!construct::gateway::verify_whatsapp_signature(
+    assert!(!revka::gateway::verify_whatsapp_signature(
         secret,
         tampered_body,
         &sig
@@ -88,7 +88,7 @@ fn whatsapp_signature_rejects_wrong_secret() {
     let sig = compute_signature(correct_secret, body);
 
     // Wrong secret should reject the signature
-    assert!(!construct::gateway::verify_whatsapp_signature(
+    assert!(!revka::gateway::verify_whatsapp_signature(
         wrong_secret,
         body,
         &sig
@@ -100,9 +100,7 @@ fn whatsapp_signature_rejects_empty_signature() {
     let secret = "test_app_secret";
     let body = b"test payload";
 
-    assert!(!construct::gateway::verify_whatsapp_signature(
-        secret, body, ""
-    ));
+    assert!(!revka::gateway::verify_whatsapp_signature(secret, body, ""));
 }
 
 #[test]
@@ -118,16 +116,16 @@ fn whatsapp_signature_different_secrets_produce_different_sigs() {
     assert_ne!(sig1, sig2);
 
     // Each signature should only verify with its own secret
-    assert!(construct::gateway::verify_whatsapp_signature(
+    assert!(revka::gateway::verify_whatsapp_signature(
         secret1, body, &sig1
     ));
-    assert!(!construct::gateway::verify_whatsapp_signature(
+    assert!(!revka::gateway::verify_whatsapp_signature(
         secret2, body, &sig1
     ));
-    assert!(construct::gateway::verify_whatsapp_signature(
+    assert!(revka::gateway::verify_whatsapp_signature(
         secret2, body, &sig2
     ));
-    assert!(!construct::gateway::verify_whatsapp_signature(
+    assert!(!revka::gateway::verify_whatsapp_signature(
         secret1, body, &sig2
     ));
 }

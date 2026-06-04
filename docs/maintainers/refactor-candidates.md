@@ -130,7 +130,7 @@ Changes deferred from the project-cleanup pass. Each entry includes rationale an
 
 **Why:** "SOP" is jargon-heavy and doesn't communicate what the module does. "Runbooks" is the industry-standard term for trigger-driven automated procedures with approval gates.
 
-**Scope:** Rename module (`src/sop/` → `src/runbooks/`), update config keys (`[sop]` → `[runbooks]`), CLI subcommand (`construct sop` → `construct runbook`), all internal types (`Sop*` → `Runbook*`), docs (`docs/sop/` → matching new structure), and references in CLAUDE.md.
+**Scope:** Rename module (`src/sop/` → `src/runbooks/`), update config keys (`[sop]` → `[runbooks]`), CLI subcommand (`revka sop` → `revka runbook`), all internal types (`Sop*` → `Runbook*`), docs (`docs/sop/` → matching new structure), and references in CLAUDE.md.
 
 ### Consolidate i18n docs into `docs/i18n/<locale>/`
 
@@ -146,7 +146,7 @@ Changes deferred from the project-cleanup pass. Each entry includes rationale an
 
 ### TODO: Fuzz testing — upgrade stubs to real coverage
 
-**Current state:** 5 fuzz targets exist in `fuzz/fuzz_targets/`, but only `fuzz_command_validation` tests real Construct code. The other 4 (`fuzz_config_parse`, `fuzz_tool_params`, `fuzz_webhook_payload`, `fuzz_provider_response`) just fuzz `serde_json::from_str::<Value>` or `toml::from_str::<Value>` — they test third-party crate internals, not Construct logic.
+**Current state:** 5 fuzz targets exist in `fuzz/fuzz_targets/`, but only `fuzz_command_validation` tests real Revka code. The other 4 (`fuzz_config_parse`, `fuzz_tool_params`, `fuzz_webhook_payload`, `fuzz_provider_response`) just fuzz `serde_json::from_str::<Value>` or `toml::from_str::<Value>` — they test third-party crate internals, not Revka logic.
 
 **Wire existing stubs to real code paths:**
 

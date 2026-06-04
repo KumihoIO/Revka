@@ -293,7 +293,7 @@ impl VoiceCallChannel {
         }
     }
 
-    /// Construct a full webhook URL from a path.
+    /// Revka a full webhook URL from a path.
     fn webhook_url(&self, path: &str) -> String {
         if let Some(ref base) = self.config.webhook_base_url {
             format!("{}{}", base.trim_end_matches('/'), path)

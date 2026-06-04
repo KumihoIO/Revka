@@ -3,14 +3,14 @@
 //! `name="…"` registration in `operator-mcp/operator_mcp/operator_mcp.py`.
 //!
 //! Companion to `kumiho_prompt_tool_contract.rs` (PR #137). Together the
-//! two contract tests cover Construct's two prompt-emitting sidecars:
+//! two contract tests cover Revka's two prompt-emitting sidecars:
 //! Kumiho memory (always-on, vendored externally) and the Operator
 //! orchestration MCP (vendored in-repo at `operator-mcp/`).
 //!
 //! ## Why
 //!
 //! Coherence audit 2026-05 surfaced multiple "Aspirational" rows where
-//! Construct prompts named tools that the runtime didn't actually
+//! Revka prompts named tools that the runtime didn't actually
 //! register (Row 1 / Row 7 / Row 14). The negative guard at
 //! `no_legacy_memory_tool_advertisements.rs` catches regressions to
 //! known-bad names. The positive guards catch new typos / renames /

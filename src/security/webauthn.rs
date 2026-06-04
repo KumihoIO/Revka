@@ -53,7 +53,7 @@ impl Default for WebAuthnConfig {
             enabled: false,
             rp_id: "localhost".into(),
             rp_origin: "http://localhost:42617".into(),
-            rp_name: "Construct".into(),
+            rp_name: "Revka".into(),
         }
     }
 }
@@ -204,7 +204,7 @@ impl WebAuthnManager {
     /// Create a new `WebAuthnManager`.
     ///
     /// `storage_dir` is the directory where the encrypted credentials file
-    /// will be stored (typically `~/.construct/`).
+    /// will be stored (typically `~/.revka/`).
     pub fn new(config: WebAuthnConfig, secret_store: Arc<SecretStore>, storage_dir: &Path) -> Self {
         Self {
             config,
@@ -725,7 +725,7 @@ mod tests {
             enabled: true,
             rp_id: "localhost".into(),
             rp_origin: "http://localhost:42617".into(),
-            rp_name: "Construct Test".into(),
+            rp_name: "Revka Test".into(),
         }
     }
 
@@ -742,7 +742,7 @@ mod tests {
         let (creation, state) = mgr.start_registration("user1", "Alice").unwrap();
 
         assert_eq!(creation.rp.id, "localhost");
-        assert_eq!(creation.rp.name, "Construct Test");
+        assert_eq!(creation.rp.name, "Revka Test");
         assert_eq!(creation.user.name, "Alice");
         assert_eq!(creation.attestation, "none");
         assert!(!creation.challenge.is_empty());
@@ -1369,6 +1369,6 @@ mod tests {
         let config = WebAuthnConfig::default();
         assert!(!config.enabled);
         assert_eq!(config.rp_id, "localhost");
-        assert_eq!(config.rp_name, "Construct");
+        assert_eq!(config.rp_name, "Revka");
     }
 }

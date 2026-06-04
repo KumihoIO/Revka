@@ -20,7 +20,7 @@ from operator_mcp.tracking import (
 
 class TestCodec:
     def test_roundtrip_no_secret(self):
-        kref = "kref://Construct/Sessions/sess-1/Outcomes/x.outcome?r=1"
+        kref = "kref://Revka/Sessions/sess-1/Outcomes/x.outcome?r=1"
         token = encode_kref(kref)
         decoded, verified = decode_kref(token)
         assert decoded == kref
@@ -28,7 +28,7 @@ class TestCodec:
         assert verified is False
 
     def test_roundtrip_with_secret_verifies(self):
-        kref = "kref://Construct/Outreach/contacts/acme.contact?r=2"
+        kref = "kref://Revka/Outreach/contacts/acme.contact?r=2"
         token = encode_kref(kref, secret="s3cret")
         decoded, verified = decode_kref(token, secret="s3cret")
         assert decoded == kref
@@ -38,7 +38,7 @@ class TestCodec:
         # Tamper detection: same token decoded with a different secret
         # MUST surface verified=False so a click handler can drop the
         # event rather than counting forged clicks.
-        kref = "kref://Construct/Outreach/contacts/acme.contact?r=2"
+        kref = "kref://Revka/Outreach/contacts/acme.contact?r=2"
         token = encode_kref(kref, secret="right")
         _decoded, verified = decode_kref(token, secret="wrong")
         assert verified is False
@@ -46,7 +46,7 @@ class TestCodec:
     def test_token_is_url_safe(self):
         # No padding, no slashes, no plus signs — safe to drop into a
         # URL path segment without further escaping.
-        token = encode_kref("kref://Construct/x.item")
+        token = encode_kref("kref://Revka/x.item")
         assert "=" not in token
         assert "/" not in token
         assert "+" not in token
@@ -73,7 +73,7 @@ class TestRewrite:
 
     def test_wraps_single_url(self):
         out = rewrite_links_with_tracker(
-            "Check out https://construct.example.com today.",
+            "Check out https://revka.example.com today.",
             encoded_kref="ABC123",
             base_url="https://gw.example.com",
         )

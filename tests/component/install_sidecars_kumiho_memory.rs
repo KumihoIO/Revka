@@ -3,7 +3,7 @@
 //! bare `kumiho` package.
 //!
 //! Without `kumiho_memory`, the high-level memory tools mandated by the
-//! Construct session-bootstrap prompt (`kumiho_memory_engage`,
+//! Revka session-bootstrap prompt (`kumiho_memory_engage`,
 //! `kumiho_memory_reflect`, etc.) are NOT registered in the MCP server,
 //! and the agent fires tool calls into the void on stock install.
 //! Coherence audit 2026-05, row 13.

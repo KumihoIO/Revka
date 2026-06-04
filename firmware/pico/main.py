@@ -1,2 +1,2 @@
-# Construct Pico firmware — serial protocol handler
+# Revka Pico firmware — serial protocol handler
 # Placeholder: replace with actual MicroPython firmware for Pico deployment

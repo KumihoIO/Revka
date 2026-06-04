@@ -1,5 +1,5 @@
-const TOKEN_KEY = 'construct_token';
-const OLD_TOKEN_KEY = 'construct_token';
+const TOKEN_KEY = 'revka_token';
+const OLD_TOKEN_KEY = 'revka_token';
 
 // Migrate token from old key on first access
 try {

@@ -7,7 +7,7 @@ use std::sync::{Arc, OnceLock, RwLock};
 /// pending approvals) and the channel listeners (Discord/Slack/Telegram) which
 /// handle keyword replies.
 ///
-/// Both components run in the same process when started via `construct daemon`.
+/// Both components run in the same process when started via `revka daemon`.
 /// This singleton is created on first access and lives for the process lifetime.
 static GLOBAL_REGISTRY: OnceLock<Arc<ApprovalRegistry>> = OnceLock::new();
 

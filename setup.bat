@@ -2,8 +2,8 @@
 setlocal enabledelayedexpansion
 
 :: ============================================================================
-:: Construct Windows Setup Script
-:: Simplifies building and installing Construct on Windows.
+:: Revka Windows Setup Script
+:: Simplifies building and installing Revka on Windows.
 :: Usage: setup.bat [--prebuilt | --minimal | --standard | --full | --help]
 :: ============================================================================
 
@@ -17,7 +17,7 @@ set "VERSION=%VERSION:"=%"
 set "VERSION=%VERSION: =%"
 set "RUST_MIN_VERSION=1.87"
 set "TARGET=x86_64-pc-windows-msvc"
-set "REPO=https://github.com/KumihoIO/construct-os"
+set "REPO=https://github.com/KumihoIO/Revka"
 
 :: Colors via ANSI (Windows 10+ Terminal)
 set "GREEN=[32m"
@@ -39,7 +39,7 @@ if "%~1"=="--full"     set "MODE=full"     & goto :start
 :start
 echo.
 echo %BOLD%%BLUE%=========================================%RESET%
-echo %BOLD%%BLUE%  Construct Windows Setup  v%VERSION%%RESET%
+echo %BOLD%%BLUE%  Revka Windows Setup  v%VERSION%%RESET%
 echo %BOLD%%BLUE%=========================================%RESET%
 echo.
 
@@ -164,12 +164,12 @@ if %ERRORLEVEL% EQU 0 (
 )
 
 if not defined DOWNLOAD_URL (
-    :: Fallback: construct URL from known release pattern
-    set "DOWNLOAD_URL=https://github.com/KumihoIO/construct-os/releases/latest/download/construct-%TARGET%.zip"
+    :: Fallback: revka URL from known release pattern
+    set "DOWNLOAD_URL=https://github.com/KumihoIO/Revka/releases/latest/download/revka-%TARGET%.zip"
 )
 
 echo   Downloading from release...
-curl -sSfL -o "%TEMP%\construct-windows.zip" "!DOWNLOAD_URL!"
+curl -sSfL -o "%TEMP%\revka-windows.zip" "!DOWNLOAD_URL!"
 if %ERRORLEVEL% NEQ 0 (
     echo   %YELLOW%Prebuilt binary not available. Falling back to source build ^(standard^).%RESET%
     goto :build_standard
@@ -177,16 +177,16 @@ if %ERRORLEVEL% NEQ 0 (
 
 :: Extract
 echo   Extracting...
-mkdir "%USERPROFILE%\.construct\bin" 2>nul
-tar -xf "%TEMP%\construct-windows.zip" -C "%USERPROFILE%\.construct\bin"
+mkdir "%USERPROFILE%\.revka\bin" 2>nul
+tar -xf "%TEMP%\revka-windows.zip" -C "%USERPROFILE%\.revka\bin"
 if %ERRORLEVEL% NEQ 0 (
-    powershell -Command "Expand-Archive -Force '%TEMP%\construct-windows.zip' '%USERPROFILE%\.construct\bin'"
+    powershell -Command "Expand-Archive -Force '%TEMP%\revka-windows.zip' '%USERPROFILE%\.revka\bin'"
 )
 
 :: Add to User PATH (idempotent, registry-backed — see :add_to_user_path)
 call :add_to_user_path
 
-echo   %GREEN%OK%RESET% Binary installed to %USERPROFILE%\.construct\bin\construct.exe
+echo   %GREEN%OK%RESET% Binary installed to %USERPROFILE%\.revka\bin\revka.exe
 goto :install_sidecars
 
 :: ---- Minimal build ----
@@ -210,15 +210,15 @@ goto :do_build
 :: ---- Build from source ----
 :do_build
 echo.
-echo %BOLD%[3/5] Building Construct (%BUILD_DESC%)...%RESET%
+echo %BOLD%[3/5] Building Revka (%BUILD_DESC%)...%RESET%
 echo   Target: %TARGET%
 
 :: Ensure we're in the repo root (check for Cargo.toml)
 if not exist "Cargo.toml" (
-    echo   %RED%ERROR: Cargo.toml not found. Run this script from the construct repository root.%RESET%
+    echo   %RED%ERROR: Cargo.toml not found. Run this script from the revka repository root.%RESET%
     echo   Example:
     echo     git clone %REPO%
-    echo     cd construct
+    echo     cd revka
     echo     setup.bat
     goto :error_exit
 )
@@ -245,9 +245,9 @@ echo   %GREEN%OK%RESET% Build succeeded.
 :: Copy binary to a convenient location
 echo.
 echo %BOLD%[4/5] Installing binary...%RESET%
-mkdir "%USERPROFILE%\.construct\bin" 2>nul
-copy /Y "target\%TARGET%\release\construct.exe" "%USERPROFILE%\.construct\bin\construct.exe" >nul
-echo   %GREEN%OK%RESET% Installed to %USERPROFILE%\.construct\bin\construct.exe
+mkdir "%USERPROFILE%\.revka\bin" 2>nul
+copy /Y "target\%TARGET%\release\revka.exe" "%USERPROFILE%\.revka\bin\revka.exe" >nul
+echo   %GREEN%OK%RESET% Installed to %USERPROFILE%\.revka\bin\revka.exe
 
 :: Add to User PATH (idempotent, registry-backed — see :add_to_user_path)
 call :add_to_user_path
@@ -256,7 +256,7 @@ goto :install_sidecars
 
 :: ---- Python MCP sidecars (Kumiho + Operator) ----
 :: If operator-mcp\ is present and Python is available, auto-install the
-:: Kumiho and Operator sidecars under %USERPROFILE%\.construct\. Reached by
+:: Kumiho and Operator sidecars under %USERPROFILE%\.revka\. Reached by
 :: both prebuilt and source-build paths.
 :install_sidecars
 if not exist "%~dp0operator-mcp" goto :post_install
@@ -269,7 +269,7 @@ if !ERRORLEVEL! NEQ 0 (
     goto :post_install
 )
 
-if exist "%USERPROFILE%\.construct\kumiho\run_kumiho_mcp.py" goto :post_install
+if exist "%USERPROFILE%\.revka\kumiho\run_kumiho_mcp.py" goto :post_install
 
 echo.
 echo %BOLD%[4.5/5] Installing Python MCP sidecars (Kumiho + Operator)...%RESET%
@@ -287,48 +287,48 @@ echo %BOLD%[5/5] Verifying installation...%RESET%
 
 :: Step A: prove the binary itself runs (uses absolute path, independent
 :: of PATH state).  Failure here is a build/copy bug.
-"%USERPROFILE%\.construct\bin\construct.exe" --version >nul 2>&1
+"%USERPROFILE%\.revka\bin\revka.exe" --version >nul 2>&1
 if %ERRORLEVEL% NEQ 0 (
-    echo   %RED%ERROR:%RESET% Binary not found at %USERPROFILE%\.construct\bin\construct.exe
+    echo   %RED%ERROR:%RESET% Binary not found at %USERPROFILE%\.revka\bin\revka.exe
     goto :error_exit
 )
-for /f "tokens=*" %%v in ('"%USERPROFILE%\.construct\bin\construct.exe" --version 2^>nul') do (
+for /f "tokens=*" %%v in ('"%USERPROFILE%\.revka\bin\revka.exe" --version 2^>nul') do (
     echo   %GREEN%OK%RESET% %%v
 )
 
 :: Step B: confirm the User PATH registry entry is present (NOT just
 :: this session's %PATH% — that's a separate, in-memory copy).  This
 :: tests what new terminals will inherit, which is the user's actual
-:: question: "will `construct` work after I close and reopen my shell?"
+:: question: "will `revka` work after I close and reopen my shell?"
 where powershell >nul 2>&1
 if %ERRORLEVEL% EQU 0 (
-    powershell -NoProfile -Command "$u = [Environment]::GetEnvironmentVariable('Path', 'User'); if (($u -split ';') -contains ($env:USERPROFILE + '\.construct\bin')) { exit 0 } else { exit 1 }" >nul 2>&1
+    powershell -NoProfile -Command "$u = [Environment]::GetEnvironmentVariable('Path', 'User'); if (($u -split ';') -contains ($env:USERPROFILE + '\.revka\bin')) { exit 0 } else { exit 1 }" >nul 2>&1
     if !ERRORLEVEL! EQU 0 (
-        echo   %GREEN%OK%RESET% On User PATH ^(close + reopen your terminal to use 'construct'^)
+        echo   %GREEN%OK%RESET% On User PATH ^(close + reopen your terminal to use 'revka'^)
     ) else (
         echo   %YELLOW%WARNING:%RESET% Not on User PATH yet. Add manually:
-        echo     %USERPROFILE%\.construct\bin
+        echo     %USERPROFILE%\.revka\bin
     )
 )
 
 echo.
 echo %BOLD%%GREEN%=========================================%RESET%
-echo %BOLD%%GREEN%  Construct setup complete!%RESET%
+echo %BOLD%%GREEN%  Revka setup complete!%RESET%
 echo %BOLD%%GREEN%=========================================%RESET%
 echo.
 echo   Next steps:
 echo     1. Restart your terminal (for PATH changes)
-echo     2. Run: construct onboard           ^(guided provider + config setup^)
-echo     3. Run: construct gateway           ^(starts the web dashboard at http://127.0.0.1:42617^)
+echo     2. Run: revka onboard           ^(guided provider + config setup^)
+echo     3. Run: revka gateway           ^(starts the web dashboard at http://127.0.0.1:42617^)
 echo.
 echo   Useful commands:
-echo     construct status                    ^(health check^)
-echo     construct agent -m "Hello"          ^(one-shot message^)
-echo     construct doctor                    ^(diagnose issues^)
+echo     revka status                    ^(health check^)
+echo     revka agent -m "Hello"          ^(one-shot message^)
+echo     revka doctor                    ^(diagnose issues^)
 echo.
 echo   Alternative install via Scoop:
-echo     scoop bucket add construct https://github.com/KumihoIO/scoop-construct
-echo     scoop install construct
+echo     scoop bucket add revka https://github.com/KumihoIO/scoop-revka
+echo     scoop install revka
 echo.
 echo   Documentation: https://www.kumiho.io/docs
 echo.
@@ -337,7 +337,7 @@ goto :end
 :: ---- Help ----
 :show_help
 echo.
-echo Construct Windows Setup Script
+echo Revka Windows Setup Script
 echo.
 echo Usage: setup.bat [OPTIONS]
 echo.
@@ -359,7 +359,7 @@ echo.
 goto :end
 
 :: ---- Subroutine: idempotent User PATH append ─────────────────────────────
-:: Appends %USERPROFILE%\.construct\bin to the **User** PATH (HKCU\Environment\Path)
+:: Appends %USERPROFILE%\.revka\bin to the **User** PATH (HKCU\Environment\Path)
 :: via PowerShell's [Environment]::SetEnvironmentVariable API.
 ::
 :: Why not `setx PATH "%PATH%;..."`?  That's the obvious-looking call but it's
@@ -376,26 +376,26 @@ goto :end
 ::
 :: Idempotent: re-running setup.bat does not append duplicates.
 :: Also updates the current session's %PATH% so the verification step
-:: below can resolve `construct` without the user restarting their shell.
+:: below can resolve `revka` without the user restarting their shell.
 :add_to_user_path
 where powershell >nul 2>&1
 if %ERRORLEVEL% NEQ 0 (
     echo   %YELLOW%WARNING:%RESET% PowerShell not found — cannot update User PATH.
-    echo   %YELLOW%Add manually:%RESET% %USERPROFILE%\.construct\bin
+    echo   %YELLOW%Add manually:%RESET% %USERPROFILE%\.revka\bin
     goto :eof
 )
 set "PATH_RESULT=error"
-for /f "delims=" %%r in ('powershell -NoProfile -ExecutionPolicy Bypass -Command "$b=$env:USERPROFILE+'\.construct\bin'; $u=[Environment]::GetEnvironmentVariable('Path','User'); if (($u -split ';') -notcontains $b) { $n = if ([string]::IsNullOrEmpty($u)) { $b } else { $u.TrimEnd(';') + ';' + $b }; [Environment]::SetEnvironmentVariable('Path',$n,'User'); 'added' } else { 'present' }" 2^>nul') do set "PATH_RESULT=%%r"
+for /f "delims=" %%r in ('powershell -NoProfile -ExecutionPolicy Bypass -Command "$b=$env:USERPROFILE+'\.revka\bin'; $u=[Environment]::GetEnvironmentVariable('Path','User'); if (($u -split ';') -notcontains $b) { $n = if ([string]::IsNullOrEmpty($u)) { $b } else { $u.TrimEnd(';') + ';' + $b }; [Environment]::SetEnvironmentVariable('Path',$n,'User'); 'added' } else { 'present' }" 2^>nul') do set "PATH_RESULT=%%r"
 
 if "!PATH_RESULT!"=="added" (
-    set "PATH=!PATH!;%USERPROFILE%\.construct\bin"
-    echo   %GREEN%OK%RESET% Added %USERPROFILE%\.construct\bin to User PATH
+    set "PATH=!PATH!;%USERPROFILE%\.revka\bin"
+    echo   %GREEN%OK%RESET% Added %USERPROFILE%\.revka\bin to User PATH
 ) else if "!PATH_RESULT!"=="present" (
-    set "PATH=!PATH!;%USERPROFILE%\.construct\bin"
-    echo   %GREEN%OK%RESET% %USERPROFILE%\.construct\bin already on User PATH
+    set "PATH=!PATH!;%USERPROFILE%\.revka\bin"
+    echo   %GREEN%OK%RESET% %USERPROFILE%\.revka\bin already on User PATH
 ) else (
     echo   %YELLOW%WARNING:%RESET% Failed to update User PATH automatically.
-    echo   %YELLOW%Add manually:%RESET% %USERPROFILE%\.construct\bin
+    echo   %YELLOW%Add manually:%RESET% %USERPROFILE%\.revka\bin
 )
 goto :eof
 

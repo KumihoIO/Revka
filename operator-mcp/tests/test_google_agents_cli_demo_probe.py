@@ -127,7 +127,7 @@ def test_google_agents_cli_demo_probe_rejects_documented_outcome_drift(monkeypat
             [
                 "# Google Agents CLI Demo Readiness",
                 "",
-                "| Outcome to show | Expected Construct behavior | Evidence to check before recording |",
+                "| Outcome to show | Expected Revka behavior | Evidence to check before recording |",
                 "|---|---|---|",
                 "| Drifted outcome | behavior | evidence |",
                 "",

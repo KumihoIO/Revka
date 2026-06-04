@@ -1,4 +1,4 @@
-# Construct 运维操作手册
+# Revka 运维操作手册
 
 _Source English version updated 2026-04-21; localized version may be stale until retranslated._
 
@@ -21,59 +21,59 @@ _Source English version updated 2026-04-21; localized version may be stale until
 
 | 模式 | 命令 | 使用场景 |
 |---|---|---|
-| 前台运行时 | `construct daemon` | 本地调试、短期会话 |
-| 仅前台网关 | `construct gateway` | webhook 端点测试 |
-| 用户服务 | `construct service install && construct service start` | 持久化运维管理的运行时 |
+| 前台运行时 | `revka daemon` | 本地调试、短期会话 |
+| 仅前台网关 | `revka gateway` | webhook 端点测试 |
+| 用户服务 | `revka service install && revka service start` | 持久化运维管理的运行时 |
 
 ## 运维基线检查清单
 
 1. 验证配置：
 
 ```bash
-construct status
+revka status
 ```
 
 2. 验证诊断：
 
 ```bash
-construct doctor
-construct channel doctor
+revka doctor
+revka channel doctor
 ```
 
 3. 启动运行时：
 
 ```bash
-construct daemon
+revka daemon
 ```
 
 4. 对于持久化用户会话服务：
 
 ```bash
-construct service install
-construct service start
-construct service status
+revka service install
+revka service start
+revka service status
 ```
 
 ## 健康和状态信号
 
 | 信号 | 命令 / 文件 | 预期结果 |
 |---|---|---|
-| 配置有效性 | `construct doctor` | 无严重错误 |
-| 渠道连通性 | `construct channel doctor` | 配置的渠道健康 |
-| 运行时摘要 | `construct status` | 预期的提供商/模型/渠道 |
-| 守护进程心跳/状态 | `~/.construct/daemon_state.json` | 文件定期更新 |
+| 配置有效性 | `revka doctor` | 无严重错误 |
+| 渠道连通性 | `revka channel doctor` | 配置的渠道健康 |
+| 运行时摘要 | `revka status` | 预期的提供商/模型/渠道 |
+| 守护进程心跳/状态 | `~/.revka/daemon_state.json` | 文件定期更新 |
 
 ## 日志和诊断
 
 ### macOS / Windows（服务包装器日志）
 
-- `~/.construct/logs/daemon.stdout.log`
-- `~/.construct/logs/daemon.stderr.log`
+- `~/.revka/logs/daemon.stdout.log`
+- `~/.revka/logs/daemon.stderr.log`
 
 ### Linux（systemd 用户服务）
 
 ```bash
-journalctl --user -u construct.service -f
+journalctl --user -u revka.service -f
 ```
 
 ## 事件分类流程（快速路径）
@@ -81,25 +81,25 @@ journalctl --user -u construct.service -f
 1. 快照系统状态：
 
 ```bash
-construct status
-construct doctor
-construct channel doctor
+revka status
+revka doctor
+revka channel doctor
 ```
 
 2. 检查服务状态：
 
 ```bash
-construct service status
+revka service status
 ```
 
 3. 如果服务不健康，干净重启：
 
 ```bash
-construct service stop
-construct service start
+revka service stop
+revka service start
 ```
 
-4. 如果渠道仍然失败，验证 `~/.construct/config.toml` 中的白名单和凭证。
+4. 如果渠道仍然失败，验证 `~/.revka/config.toml` 中的白名单和凭证。
 
 5. 如果涉及网关，验证绑定/认证设置（`[gateway]`）和本地可达性。
 
@@ -107,9 +107,9 @@ construct service start
 
 应用配置更改前：
 
-1. 备份 `~/.construct/config.toml`
+1. 备份 `~/.revka/config.toml`
 2. 每次只应用一个逻辑变更
-3. 运行 `construct doctor`
+3. 运行 `revka doctor`
 4. 重启守护进程/服务
 5. 使用 `status` + `channel doctor` 验证
 

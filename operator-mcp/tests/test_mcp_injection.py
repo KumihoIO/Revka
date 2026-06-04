@@ -84,7 +84,7 @@ class TestKumihoMemoryConfig:
             config = kumiho_memory_config()
             assert config["env"]["KUMIHO_AUTH_TOKEN"] == "test-token"
 
-    def test_reads_construct_config_when_env_missing(self, tmp_path):
+    def test_reads_revka_config_when_env_missing(self, tmp_path):
         cfg = tmp_path / "config.toml"
         workspace = tmp_path / "workspace"
         workspace.mkdir()
@@ -99,9 +99,9 @@ class TestKumihoMemoryConfig:
             ]),
             encoding="utf-8",
         )
-        with patch("operator_mcp.construct_config._CONFIG_PATH", str(cfg)), \
-             patch("operator_mcp.construct_config._cached_workspace_dir", None), \
-             patch.dict("os.environ", {"CONSTRUCT_WORKSPACE": str(workspace)}, clear=True):
+        with patch("operator_mcp.revka_config._CONFIG_PATH", str(cfg)), \
+             patch("operator_mcp.revka_config._cached_workspace_dir", None), \
+             patch.dict("os.environ", {"REVKA_WORKSPACE": str(workspace)}, clear=True):
             env = _kumiho_forward_env()
             assert env["KUMIHO_AUTH_TOKEN"] == "config-token"
             assert env["KUMIHO_API_URL"] == "https://kumiho.example.test"
@@ -124,9 +124,9 @@ class TestKumihoMemoryConfig:
             ]),
             encoding="utf-8",
         )
-        with patch("operator_mcp.construct_config._CONFIG_PATH", str(cfg)), \
-             patch("operator_mcp.construct_config._cached_workspace_dir", None), \
-             patch.dict("os.environ", {"CONSTRUCT_WORKSPACE": str(workspace)}, clear=True):
+        with patch("operator_mcp.revka_config._CONFIG_PATH", str(cfg)), \
+             patch("operator_mcp.revka_config._cached_workspace_dir", None), \
+             patch.dict("os.environ", {"REVKA_WORKSPACE": str(workspace)}, clear=True):
             env = _kumiho_forward_env()
             assert env["KUMIHO_AUTH_TOKEN"] == "workspace-token"
             assert env["KUMIHO_SERVICE_TOKEN"] == "workspace-token"
@@ -144,7 +144,7 @@ class TestOperatorToolsConfig:
     def test_with_socket_path(self):
         with patch("os.path.exists", return_value=False):
             config = operator_tools_config(socket_path="/tmp/test.sock")
-            assert config["env"]["CONSTRUCT_SIDECAR_SOCKET"] == "/tmp/test.sock"
+            assert config["env"]["REVKA_SIDECAR_SOCKET"] == "/tmp/test.sock"
 
     def test_no_socket_path(self):
         with patch("os.path.exists", return_value=False):
@@ -226,7 +226,7 @@ class TestBuildSystemPrompt:
     def test_top_level_with_operator(self):
         with patch("operator_mcp.skill_loader.load_skills_for_pattern", return_value=""):
             prompt = build_system_prompt(is_top_level=True, include_operator=True, include_memory=True)
-            assert "sub-agent managed by the Construct Operator" in prompt
+            assert "sub-agent managed by the Revka Operator" in prompt
             assert "kumiho-memory MCP" in prompt
 
     def test_sub_agent(self):

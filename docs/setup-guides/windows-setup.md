@@ -1,6 +1,6 @@
 # Windows Setup Guide
 
-This guide covers building and installing Construct on Windows.
+This guide covers building and installing Revka on Windows.
 
 ## Quick Start
 
@@ -25,8 +25,8 @@ You can also pass flags to skip the interactive menu:
 ### Option B: Scoop (package manager)
 
 ```powershell
-scoop bucket add construct https://github.com/KumihoIO/scoop-construct
-scoop install construct
+scoop bucket add revka https://github.com/KumihoIO/scoop-revka
+scoop install revka
 ```
 
 ### Option C: Manual build
@@ -34,7 +34,7 @@ scoop install construct
 ```cmd
 rustup target add x86_64-pc-windows-msvc
 cargo build --release --locked --features channel-matrix,channel-lark --target x86_64-pc-windows-msvc
-copy target\x86_64-pc-windows-msvc\release\construct.exe %USERPROFILE%\.construct\bin\
+copy target\x86_64-pc-windows-msvc\release\revka.exe %USERPROFILE%\.revka\bin\
 ```
 
 ## Prerequisites
@@ -61,7 +61,7 @@ Alternatively, if you have Visual Studio 2019+ installed with the C++ workload, 
 
 ## Feature Flags
 
-Construct uses Cargo feature flags to control which integrations are compiled in:
+Revka uses Cargo feature flags to control which integrations are compiled in:
 
 | Feature | Description | Default? |
 |---------|-------------|----------|
@@ -81,27 +81,27 @@ To build with specific features:
 cargo build --release --locked --features channel-matrix,channel-lark --target x86_64-pc-windows-msvc
 ```
 
-<!-- TODO screenshot: PowerShell terminal showing successful `construct onboard` completion on Windows -->
-![PowerShell terminal showing successful construct onboard completion on Windows](../assets/setup/windows-setup-02-construct-onboard-terminal.png)
+<!-- TODO screenshot: PowerShell terminal showing successful `revka onboard` completion on Windows -->
+![PowerShell terminal showing successful revka onboard completion on Windows](../assets/setup/windows-setup-02-revka-onboard-terminal.png)
 
-<!-- TODO screenshot: Edge browser displaying the Construct dashboard at http://127.0.0.1:42617 after onboarding -->
-![Edge browser displaying the Construct dashboard at 127.0.0.1:42617 after onboarding](../assets/setup/windows-setup-03-dashboard-browser.png)
+<!-- TODO screenshot: Edge browser displaying the Revka dashboard at http://127.0.0.1:42617 after onboarding -->
+![Edge browser displaying the Revka dashboard at 127.0.0.1:42617 after onboarding](../assets/setup/windows-setup-03-dashboard-browser.png)
 
 ## Post-Installation
 
 1. **Restart your terminal** for PATH changes to take effect
-2. **Initialize Construct:**
+2. **Initialize Revka:**
    ```cmd
-   construct onboard
+   revka onboard
    ```
-3. **Configure your API key** in `%USERPROFILE%\.construct\config.toml`
+3. **Configure your API key** in `%USERPROFILE%\.revka\config.toml`
 4. **Start the gateway + dashboard** at `http://127.0.0.1:42617`:
    ```cmd
-   construct gateway
+   revka gateway
    ```
    Or run the full runtime (gateway + channels + heartbeat + cron scheduler):
    ```cmd
-   construct daemon
+   revka daemon
    ```
 
 ## Troubleshooting

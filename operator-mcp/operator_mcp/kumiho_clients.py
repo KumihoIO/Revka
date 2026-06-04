@@ -1,11 +1,11 @@
-"""Kumiho clients for Construct Operator.
+"""Kumiho clients for Revka Operator.
 
 Uses kumiho.mcp_server tool functions (shared venv) instead of raw gRPC.
 
 Contains:
 - KumihoSDKClient — thin wrapper around kumiho.mcp_server tool_* functions
-- KumihoAgentPoolClient — manages Construct/AgentPool
-- KumihoTeamClient — manages Construct/Teams bundles
+- KumihoAgentPoolClient — manages Revka/AgentPool
+- KumihoTeamClient — manages Revka/Teams bundles
 - resolve_agent_krefs() — resolve LLM-provided names to actual Kumiho krefs
 """
 from __future__ import annotations
@@ -15,7 +15,7 @@ import os
 from typing import Any
 
 from ._log import _log
-from .construct_config import harness_project, kumiho_connection_config
+from .revka_config import harness_project, kumiho_connection_config
 
 _KUMIHO_IMPORT_ERROR: BaseException | None = None
 
@@ -518,7 +518,7 @@ def _get_sdk() -> KumihoSDKClient | None:
 
 
 # ---------------------------------------------------------------------------
-# KumihoAgentPoolClient — manages Construct/AgentPool
+# KumihoAgentPoolClient — manages Revka/AgentPool
 # ---------------------------------------------------------------------------
 
 class KumihoAgentPoolClient:
@@ -887,7 +887,7 @@ def _dedupe_and_sort_edges(edges: list[dict[str, str]]) -> list[dict[str, str]]:
 
 
 # ---------------------------------------------------------------------------
-# KumihoTeamClient — manages Construct/Teams bundles
+# KumihoTeamClient — manages Revka/Teams bundles
 # ---------------------------------------------------------------------------
 
 class KumihoTeamClient:
@@ -922,7 +922,7 @@ class KumihoTeamClient:
         return {"X-Kumiho-Token": self.auth_token, "Accept": "application/json"}
 
     async def list_teams(self) -> list[dict[str, Any]]:
-        """List all team bundles from Construct/Teams."""
+        """List all team bundles from Revka/Teams."""
         if not self._ensure_available():
             return []
         sdk = _get_sdk()

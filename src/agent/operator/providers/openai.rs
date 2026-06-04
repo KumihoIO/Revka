@@ -8,7 +8,7 @@ pub const TOOL_LAYER: &str = r#"
 
 === TOOL USAGE ===
 
-You have construct-operator tools available. Each tool accepts a JSON object with
+You have revka-operator tools available. Each tool accepts a JSON object with
 named parameters. Below is every tool with its parameters and usage examples.
 
 --- Agent Lifecycle ---
@@ -119,7 +119,7 @@ spawn_team — Deploy a pre-built team.
 
   ```
   spawn_team({
-    "team_kref": "kref://Construct/Teams/security-audit",
+    "team_kref": "kref://Revka/Teams/security-audit",
     "task": "Full security audit on the payments module.",
     "cwd": "/path/to/project"
   })

@@ -624,7 +624,7 @@ steps:
       args = payload.get('args', {})
 
       def load_opencrab_url():
-          config_path = Path.home() / '.construct' / 'config.toml'
+          config_path = Path.home() / '.revka' / 'config.toml'
           if tomllib and config_path.exists():
               try:
                   data = tomllib.loads(config_path.read_text(encoding='utf-8'))

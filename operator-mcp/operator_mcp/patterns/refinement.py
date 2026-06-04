@@ -21,7 +21,7 @@ from typing import Any
 
 from .._log import _log
 from ..agent_state import AGENTS, ManagedAgent
-from ..construct_config import harness_project
+from ..revka_config import harness_project
 from ..agent_subprocess import compose_agent_prompt, spawn_agent
 from ..failure_classification import (
     agent_not_found,
@@ -160,7 +160,7 @@ def _subprocess_progress_marker(agent: ManagedAgent, runlog_dir: str) -> int:
 
 def _initializing_timeout_secs(timeout: float) -> float:
     try:
-        configured = float(os.getenv("CONSTRUCT_AGENT_INITIALIZING_TIMEOUT_SECS", "180"))
+        configured = float(os.getenv("REVKA_AGENT_INITIALIZING_TIMEOUT_SECS", "180"))
     except (TypeError, ValueError):
         configured = 180.0
     return min(timeout, max(0.1, configured))
@@ -300,7 +300,7 @@ async def _wait_for_agent(
     _ZOMBIE_RATIO = 0.4               # 40% of step timeout
     _LIVENESS_CHECK_INTERVAL = 30.0   # how often to fetch event counts
     _INITIALIZING_TIMEOUT = _initializing_timeout_secs(timeout)
-    _RUNLOG_DIR = os.path.expanduser("~/.construct/operator_mcp/runlogs")
+    _RUNLOG_DIR = os.path.expanduser("~/.revka/operator_mcp/runlogs")
 
     zombie_window = max(_ZOMBIE_MIN, timeout * _ZOMBIE_RATIO)
 
@@ -596,7 +596,7 @@ async def _spawn_and_wait(
 
     ``env_extra`` is forwarded to the agent subprocess (CLI mode) and to
     the sidecar create_agent config (sidecar mode). Used by workflow
-    auth-profile bindings to expose CONSTRUCT_AUTH_PROFILE_ID without
+    auth-profile bindings to expose REVKA_AUTH_PROFILE_ID without
     injecting it into the system prompt.
     """
     from ..budget_authority import BudgetGateError, require_agent_budget
@@ -639,8 +639,8 @@ async def _spawn_and_wait(
 
     if use_cli:
         try:
-            from ..operator_mcp import CONSTRUCT_GW
-            await require_agent_budget(CONSTRUCT_GW)
+            from ..operator_mcp import REVKA_GW
+            await require_agent_budget(REVKA_GW)
         except BudgetGateError as exc:
             agent.status = "error"
             return agent, str(exc.response.get("error", exc))

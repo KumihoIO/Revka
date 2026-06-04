@@ -86,14 +86,14 @@ pub const MAX_BODY_SIZE: usize = 65_536;
 /// Default request timeout (30s) — prevents slow-loris attacks.
 pub const REQUEST_TIMEOUT_SECS: u64 = 30;
 
-/// Read gateway request timeout from `CONSTRUCT_GATEWAY_TIMEOUT_SECS` env var
+/// Read gateway request timeout from `REVKA_GATEWAY_TIMEOUT_SECS` env var
 /// at runtime, falling back to [`REQUEST_TIMEOUT_SECS`].
 ///
 /// Agentic workloads with tool use (web search, MCP tools, sub-agent
 /// delegation) regularly exceed 30 seconds. This allows operators to
 /// increase the timeout without recompiling.
 pub fn gateway_request_timeout_secs() -> u64 {
-    std::env::var("CONSTRUCT_GATEWAY_TIMEOUT_SECS")
+    std::env::var("REVKA_GATEWAY_TIMEOUT_SECS")
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(REQUEST_TIMEOUT_SECS)
@@ -527,7 +527,7 @@ pub async fn run_gateway_with_mcp_registry(
         &providers::ProviderRuntimeOptions {
             auth_profile_override: None,
             provider_api_url: config.api_url.clone(),
-            construct_dir: config.config_path.parent().map(std::path::PathBuf::from),
+            revka_dir: config.config_path.parent().map(std::path::PathBuf::from),
             secrets_encrypt: config.secrets.encrypt,
             reasoning_enabled: config.runtime.reasoning_enabled,
             reasoning_effort: config.runtime.reasoning_effort.clone(),
@@ -752,7 +752,7 @@ pub async fn run_gateway_with_mcp_registry(
 
     // WhatsApp app secret for webhook signature verification
     // Priority: environment variable > config file
-    let whatsapp_app_secret: Option<Arc<str>> = std::env::var("CONSTRUCT_WHATSAPP_APP_SECRET")
+    let whatsapp_app_secret: Option<Arc<str>> = std::env::var("REVKA_WHATSAPP_APP_SECRET")
         .ok()
         .and_then(|secret| {
             let secret = secret.trim();
@@ -780,7 +780,7 @@ pub async fn run_gateway_with_mcp_registry(
 
     // Linq signing secret for webhook signature verification
     // Priority: environment variable > config file
-    let linq_signing_secret: Option<Arc<str>> = std::env::var("CONSTRUCT_LINQ_SIGNING_SECRET")
+    let linq_signing_secret: Option<Arc<str>> = std::env::var("REVKA_LINQ_SIGNING_SECRET")
         .ok()
         .and_then(|secret| {
             let secret = secret.trim();
@@ -825,7 +825,7 @@ pub async fn run_gateway_with_mcp_registry(
     // Nextcloud Talk webhook secret for signature verification
     // Priority: environment variable > config file
     let nextcloud_talk_webhook_secret: Option<Arc<str>> =
-        std::env::var("CONSTRUCT_NEXTCLOUD_TALK_WEBHOOK_SECRET")
+        std::env::var("REVKA_NEXTCLOUD_TALK_WEBHOOK_SECRET")
             .ok()
             .and_then(|secret| {
                 let secret = secret.trim();
@@ -947,7 +947,7 @@ pub async fn run_gateway_with_mcp_registry(
     }
 
     let pfx = path_prefix.unwrap_or("");
-    println!("🦀 Construct Gateway listening on http://{display_addr}{pfx}");
+    println!("🦀 Revka Gateway listening on http://{display_addr}{pfx}");
     if let Some(ref url) = tunnel_url {
         println!("  🌐 Public URL: {url}");
     }
@@ -961,7 +961,7 @@ pub async fn run_gateway_with_mcp_registry(
         println!("     Send: POST {pfx}/pair with header X-Pairing-Code: {code}");
     } else if pairing.require_pairing() {
         println!("  🔒 Pairing: ACTIVE (bearer token required)");
-        println!("     To pair a new device: construct gateway get-paircode --new");
+        println!("     To pair a new device: revka gateway get-paircode --new");
         println!();
     } else {
         println!("  ⚠️  Pairing: DISABLED (all requests accepted)");
@@ -1021,7 +1021,7 @@ pub async fn run_gateway_with_mcp_registry(
 
     // ── Encrypted credential store for workflow auth-profile dropdown ────
     //
-    // Surfaces the existing AuthProfilesStore (~/.construct/auth-profiles.json,
+    // Surfaces the existing AuthProfilesStore (~/.revka/auth-profiles.json,
     // ChaCha20-Poly1305 via SecretStore) over GET /api/auth/profiles. The
     // resolve endpoint is gated by a service token that lives next to the
     // store on disk — this lets the operator-mcp runtime read it back with
@@ -1098,7 +1098,7 @@ pub async fn run_gateway_with_mcp_registry(
                 Some(Arc::new(crate::providers::ProviderRuntimeOptions {
                     auth_profile_override: None,
                     provider_api_url: config.api_url.clone(),
-                    construct_dir: config.config_path.parent().map(std::path::PathBuf::from),
+                    revka_dir: config.config_path.parent().map(std::path::PathBuf::from),
                     secrets_encrypt: config.secrets.encrypt,
                     reasoning_enabled: config.runtime.reasoning_enabled,
                     reasoning_effort: config.runtime.reasoning_effort.clone(),
@@ -1140,7 +1140,7 @@ pub async fn run_gateway_with_mcp_registry(
 
         // Mirror the gateway MCP wrapper wiring into the external MCP server.
         // `all_tools_with_runtime()` does not know about the shared MCP registry;
-        // without this, `/api/tools` exposes operator/kumiho while `~/.construct/mcp.json`
+        // without this, `/api/tools` exposes operator/kumiho while `~/.revka/mcp.json`
         // clients only see the baseline local tools.
         if let Some(registry) = mcp_registry_shared.as_ref() {
             if gateway_mcp_config.deferred_loading {
@@ -1269,7 +1269,7 @@ pub async fn run_gateway_with_mcp_registry(
     // them into agent prompts.  See `src/skills/effectiveness_cache.rs`.
     //
     // On startup we:
-    //   1. Construct an empty `Arc<EffectivenessCache>`.
+    //   1. Revka an empty `Arc<EffectivenessCache>`.
     //   2. Install it as the process-wide global so
     //      `effectiveness_cache::global_provider()` returns it.
     //   3. Spawn a background task that refreshes scores from Kumiho every
@@ -1556,7 +1556,7 @@ pub async fn run_gateway_with_mcp_registry(
     // ── Spawn the in-process MCP server ─────────────────────────────────
     //
     // Binds 127.0.0.1:0 (ephemeral, as external clients expect), writes
-    // ~/.construct/mcp.json with {url,pid,started_at} atomically, and tears
+    // ~/.revka/mcp.json with {url,pid,started_at} atomically, and tears
     // down on gateway shutdown. If the bind fails we log and move on —
     // this is non-fatal for the gateway itself.
     let mcp_shutdown_watch = state.shutdown_tx.subscribe();
@@ -1581,7 +1581,7 @@ pub async fn run_gateway_with_mcp_registry(
                     tracing::warn!("mcp-server: failed to write discovery file: {e}");
                 } else {
                     tracing::info!(
-                        "mcp-server: listening on {url} (discovery at ~/.construct/mcp.json)"
+                        "mcp-server: listening on {url} (discovery at ~/.revka/mcp.json)"
                     );
                 }
 
@@ -2125,7 +2125,7 @@ pub async fn run_gateway_with_mcp_registry(
                     });
                 }
                 _ = shutdown_signal.changed() => {
-                    tracing::info!("🦀 Construct Gateway shutting down...");
+                    tracing::info!("🦀 Revka Gateway shutting down...");
                     break;
                 }
             }
@@ -2138,7 +2138,7 @@ pub async fn run_gateway_with_mcp_registry(
         )
         .with_graceful_shutdown(async move {
             let _ = shutdown_rx.changed().await;
-            tracing::info!("🦀 Construct Gateway shutting down...");
+            tracing::info!("🦀 Revka Gateway shutting down...");
         })
         .await?;
     }
@@ -3314,7 +3314,7 @@ async fn handle_admin_paircode_new(
 /// (e.g. an attacker scanning exposed ngrok/Cloudflare tunnels during first-run)
 /// fetch the code before the legitimate operator. Host-side dashboards should
 /// reach the gateway over loopback; containerized setups can call this via
-/// `docker exec` or fetch the code from `construct onboard` output.
+/// `docker exec` or fetch the code from `revka onboard` output.
 async fn handle_pair_code(
     State(state): State<AppState>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
@@ -3372,7 +3372,7 @@ mod tests {
     fn gateway_timeout_falls_back_to_default() {
         // When env var is not set, should return the default constant
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::remove_var("CONSTRUCT_GATEWAY_TIMEOUT_SECS") };
+        unsafe { std::env::remove_var("REVKA_GATEWAY_TIMEOUT_SECS") };
         assert_eq!(gateway_request_timeout_secs(), 30);
     }
 
@@ -3530,7 +3530,7 @@ mod tests {
 
         let body = response.into_body().collect().await.unwrap().to_bytes();
         let text = String::from_utf8(body.to_vec()).unwrap();
-        assert!(text.contains("construct_heartbeat_ticks_total 1"));
+        assert!(text.contains("revka_heartbeat_ticks_total 1"));
     }
 
     #[test]

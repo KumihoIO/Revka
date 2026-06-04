@@ -17,7 +17,7 @@
 //! # Testability
 //!
 //! The tools accept a `SkillSource` so unit tests can hand in a tmp dir or a
-//! mocked executor without needing to reach into the real `~/.construct` tree.
+//! mocked executor without needing to reach into the real `~/.revka` tree.
 
 use crate::security::SecurityPolicy;
 use crate::skills::Skill;
@@ -110,7 +110,7 @@ impl Tool for SkillsListTool {
     }
 
     fn description(&self) -> &str {
-        "List all Construct skills available to the local daemon. Returns a JSON array of { id, name, description, version, tags, tool_count, location } objects."
+        "List all Revka skills available to the local daemon. Returns a JSON array of { id, name, description, version, tags, tool_count, location } objects."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -148,7 +148,7 @@ impl Tool for SkillsDescribeTool {
     }
 
     fn description(&self) -> &str {
-        "Return the full body (markdown / SKILL.toml) plus metadata for a single Construct skill by id."
+        "Return the full body (markdown / SKILL.toml) plus metadata for a single Revka skill by id."
     }
 
     fn parameters_schema(&self) -> Value {
@@ -333,7 +333,7 @@ impl Tool for SkillsExecuteTool {
     }
 
     fn description(&self) -> &str {
-        "Execute a Construct skill by id. For markdown skills this returns the skill body; for skills with [[tools]] entries it invokes the named sub-tool (or the first one) with the supplied `arguments` object."
+        "Execute a Revka skill by id. For markdown skills this returns the skill body; for skills with [[tools]] entries it invokes the named sub-tool (or the first one) with the supplied `arguments` object."
     }
 
     fn parameters_schema(&self) -> Value {

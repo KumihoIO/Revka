@@ -91,24 +91,24 @@ jobs:
         env:
           VERSION: ${{ steps.ver.outputs.version }}
         run: |
-          cat > templates/compose/construct.yaml << 'TEMPLATE'
-          # documentation: https://github.com/KumihoIO/construct-os
+          cat > templates/compose/revka.yaml << 'TEMPLATE'
+          # documentation: https://github.com/KumihoIO/Revka
           # slogan: Fast, small, fully autonomous AI personal assistant infrastructure — deploy anywhere, swap anything
           # tags: ai, agent, assistant, self-hosted, llm, chatbot, rust
-          # logo: svgs/construct.png
+          # logo: svgs/revka.png
           # port: 42617
 
           services:
-            construct:
-              image: ghcr.io/kumihoio/construct-os:latest
+            revka:
+              image: ghcr.io/kumihoio/revka:latest
               restart: unless-stopped
               environment:
                 - API_KEY=${SERVICE_PASSWORD_APIKEY:-}
                 - PROVIDER=openrouter
-                - CONSTRUCT_ALLOW_PUBLIC_BIND=true
-                - CONSTRUCT_GATEWAY_PORT=42617
+                - REVKA_ALLOW_PUBLIC_BIND=true
+                - REVKA_GATEWAY_PORT=42617
               volumes:
-                - construct-data:/construct-data
+                - revka-data:/revka-data
               ports:
                 - "42617:42617"
               deploy:
@@ -120,25 +120,25 @@ jobs:
                     cpus: "0.5"
                     memory: 32M
               healthcheck:
-                test: ["CMD", "construct", "status", "--format=exit-code"]
+                test: ["CMD", "revka", "status", "--format=exit-code"]
                 interval: 60s
                 timeout: 10s
                 retries: 3
                 start_period: 10s
 
           volumes:
-            construct-data:
+            revka-data:
           TEMPLATE
 
       - name: Copy logo if missing
         working-directory: coolify
         run: |
-          if [ ! -f svgs/construct.png ]; then
-            curl -fsSL -o svgs/construct.png \
-              "https://raw.githubusercontent.com/KumihoIO/construct-os/main/.github/assets/construct-logo.png"
+          if [ ! -f svgs/revka.png ]; then
+            curl -fsSL -o svgs/revka.png \
+              "https://raw.githubusercontent.com/KumihoIO/Revka/main/.github/assets/revka-logo.png"
           fi
 
-      - name: Close superseded open PRs from previous Construct sync runs
+      - name: Close superseded open PRs from previous Revka sync runs
         env:
           GH_TOKEN: ${{ secrets.MARKETPLACE_PAT }}
           VERSION: ${{ steps.ver.outputs.version }}
@@ -147,13 +147,13 @@ jobs:
           # release opens a new one. Comment + close instead of letting
           # anti-slop's stale handling do it for us.
           gh pr list --repo coollabsio/coolify \
-            --search "is:open is:pr in:title \"Construct service template\"" \
+            --search "is:open is:pr in:title \"Revka service template\"" \
             --json number,title \
             --jq '.[] | select(.title | contains("v'"${VERSION}"'") | not) | .number' \
           | while read -r num; do
               [ -z "$num" ] && continue
               gh pr comment "$num" --repo coollabsio/coolify \
-                --body "Superseded by Construct v${VERSION}; closing in favor of the newer PR." || true
+                --body "Superseded by Revka v${VERSION}; closing in favor of the newer PR." || true
               gh pr close "$num" --repo coollabsio/coolify --comment "Superseded by v${VERSION}." || true
             done
 
@@ -163,15 +163,15 @@ jobs:
           GH_TOKEN: ${{ secrets.MARKETPLACE_PAT }}
           VERSION: ${{ steps.ver.outputs.version }}
         run: |
-          BRANCH="construct/update-v${VERSION}"
+          BRANCH="revka/update-v${VERSION}"
           git checkout -b "$BRANCH"
           git add -A
           git diff --cached --quiet && echo "No changes" && exit 0
 
           # See preamble: this email MUST match the MARKETPLACE_PAT account.
-          git config user.name "Construct Bot"
+          git config user.name "Revka Bot"
           git config user.email "kumihoclouds@gmail.com"
-          git commit -m "feat: add/update Construct service template (v${VERSION})"
+          git commit -m "feat: add/update Revka service template (v${VERSION})"
           git push -u origin "$BRANCH"
 
           # Body shape mirrors coollabsio/coolify's PULL_REQUEST_TEMPLATE.md
@@ -184,14 +184,14 @@ jobs:
           gh pr create \
             --repo coollabsio/coolify \
             --base next \
-            --title "feat: add Construct service template (v${VERSION})" \
+            --title "feat: add Revka service template (v${VERSION})" \
             --body "$(cat <<EOF
           ## Changes
 
-          Adds/updates the Construct one-click service template at v${VERSION}.
-          Construct is a fast, small, fully autonomous AI personal assistant
+          Adds/updates the Revka one-click service template at v${VERSION}.
+          Revka is a fast, small, fully autonomous AI personal assistant
           runtime built in Rust. The image is published to GitHub Container
-          Registry by the upstream KumihoIO/construct-os release pipeline
+          Registry by the upstream KumihoIO/Revka release pipeline
           (multi-arch: linux/amd64 + linux/arm64).
 
           ## Category
@@ -211,13 +211,13 @@ jobs:
           ## Testing
 
           - Deployed via Coolify "Empty" → Docker Compose import
-          - Health check passes: \`construct status --format=exit-code\`
+          - Health check passes: \`revka status --format=exit-code\`
           - Gateway accessible on port 42617
 
           ## Links
 
-          - https://github.com/KumihoIO/construct-os
-          - https://github.com/orgs/KumihoIO/packages/container/package/construct
+          - https://github.com/KumihoIO/Revka
+          - https://github.com/orgs/KumihoIO/packages/container/package/revka
           EOF
           )"
 
@@ -252,30 +252,30 @@ jobs:
         env:
           VERSION: ${{ steps.ver.outputs.version }}
         run: |
-          mkdir -p blueprints/construct
+          mkdir -p blueprints/revka
 
           # docker-compose.yml — pin to exact version (Dokploy requirement)
-          cat > blueprints/construct/docker-compose.yml << COMPOSE
+          cat > blueprints/revka/docker-compose.yml << COMPOSE
           version: "3.8"
           services:
-            construct:
-              image: ghcr.io/kumihoio/construct-os:${VERSION}
+            revka:
+              image: ghcr.io/kumihoio/revka:${VERSION}
               restart: unless-stopped
               environment:
                 - API_KEY=\${API_KEY}
                 - PROVIDER=openrouter
-                - CONSTRUCT_ALLOW_PUBLIC_BIND=true
-                - CONSTRUCT_GATEWAY_PORT=42617
+                - REVKA_ALLOW_PUBLIC_BIND=true
+                - REVKA_GATEWAY_PORT=42617
               volumes:
-                - construct-data:/construct-data
+                - revka-data:/revka-data
               expose:
                 - 42617
           volumes:
-            construct-data: {}
+            revka-data: {}
           COMPOSE
 
           # template.toml
-          cat > blueprints/construct/template.toml << 'TOML'
+          cat > blueprints/revka/template.toml << 'TOML'
           [variables]
           main_domain = "${domain}"
           api_key = "${password:64}"
@@ -285,20 +285,20 @@ jobs:
           env = [
             "API_KEY=${api_key}",
             "PROVIDER=${provider}",
-            "CONSTRUCT_ALLOW_PUBLIC_BIND=true",
-            "CONSTRUCT_GATEWAY_PORT=42617"
+            "REVKA_ALLOW_PUBLIC_BIND=true",
+            "REVKA_GATEWAY_PORT=42617"
           ]
 
           [[config.domains]]
-          serviceName = "construct"
+          serviceName = "revka"
           port = 42617
           host = "${main_domain}"
           TOML
 
           # Copy logo if missing
-          if [ ! -f blueprints/construct/construct.png ]; then
-            curl -fsSL -o blueprints/construct/construct.png \
-              "https://raw.githubusercontent.com/KumihoIO/construct-os/main/.github/assets/construct-logo.png"
+          if [ ! -f blueprints/revka/revka.png ]; then
+            curl -fsSL -o blueprints/revka/revka.png \
+              "https://raw.githubusercontent.com/KumihoIO/Revka/main/.github/assets/revka-logo.png"
           fi
 
       - name: Update meta.json
@@ -308,24 +308,24 @@ jobs:
         run: |
           ENTRY=$(cat <<JSON
           {
-            "id": "construct",
-            "name": "Construct",
+            "id": "revka",
+            "name": "Revka",
             "version": "${VERSION}",
             "description": "Fast, small, and fully autonomous AI personal assistant infrastructure. Deploy anywhere, swap anything. 100% Rust.",
-            "logo": "construct.png",
+            "logo": "revka.png",
             "links": {
-              "github": "https://github.com/KumihoIO/construct-os",
+              "github": "https://github.com/KumihoIO/Revka",
               "website": "https://kumiho.io",
-              "docs": "https://github.com/KumihoIO/construct-os#readme"
+              "docs": "https://github.com/KumihoIO/Revka#readme"
             },
             "tags": ["ai", "self-hosted"]
           }
           JSON
           )
 
-          if jq -e '.[] | select(.id == "construct")' meta.json > /dev/null 2>&1; then
+          if jq -e '.[] | select(.id == "revka")' meta.json > /dev/null 2>&1; then
             jq --argjson entry "$ENTRY" '
-              [.[] | if .id == "construct" then $entry else . end] | sort_by(.id)
+              [.[] | if .id == "revka" then $entry else . end] | sort_by(.id)
             ' meta.json > meta.tmp && mv meta.tmp meta.json
           else
             jq --argjson entry "$ENTRY" '. + [$entry] | sort_by(.id)' meta.json > meta.tmp && mv meta.tmp meta.json
@@ -338,21 +338,21 @@ jobs:
             node dedupe-and-sort-meta.js
           fi
 
-      - name: Close superseded open PRs from previous Construct sync runs
+      - name: Close superseded open PRs from previous Revka sync runs
         env:
           GH_TOKEN: ${{ secrets.MARKETPLACE_PAT }}
           VERSION: ${{ steps.ver.outputs.version }}
         run: |
-          # Dokploy currently leaves Construct PRs open without action;
+          # Dokploy currently leaves Revka PRs open without action;
           # close older ones ourselves so the upstream queue stays at 1.
           gh pr list --repo Dokploy/templates \
-            --search "is:open is:pr in:title \"add/update Construct template\"" \
+            --search "is:open is:pr in:title \"add/update Revka template\"" \
             --json number,title \
             --jq '.[] | select(.title | contains("v'"${VERSION}"'") | not) | .number' \
           | while read -r num; do
               [ -z "$num" ] && continue
               gh pr comment "$num" --repo Dokploy/templates \
-                --body "Superseded by Construct v${VERSION}; closing in favor of the newer PR." || true
+                --body "Superseded by Revka v${VERSION}; closing in favor of the newer PR." || true
               gh pr close "$num" --repo Dokploy/templates --comment "Superseded by v${VERSION}." || true
             done
 
@@ -362,25 +362,25 @@ jobs:
           GH_TOKEN: ${{ secrets.MARKETPLACE_PAT }}
           VERSION: ${{ steps.ver.outputs.version }}
         run: |
-          BRANCH="construct/update-v${VERSION}"
+          BRANCH="revka/update-v${VERSION}"
           git checkout -b "$BRANCH"
           git add -A
           git diff --cached --quiet && echo "No changes" && exit 0
 
-          git config user.name "Construct Bot"
+          git config user.name "Revka Bot"
           git config user.email "kumihoclouds@gmail.com"
-          git commit -m "feat: add/update Construct template (v${VERSION})"
+          git commit -m "feat: add/update Revka template (v${VERSION})"
           git push -u origin "$BRANCH"
 
           gh pr create \
             --repo Dokploy/templates \
             --base main \
-            --title "feat: add/update Construct template (v${VERSION})" \
+            --title "feat: add/update Revka template (v${VERSION})" \
             --body "$(cat <<'EOF'
           ## Summary
-          - Adds/updates Construct template to v${VERSION}
-          - Image: `ghcr.io/kumihoio/construct-os:${VERSION}`
-          - Construct is a fast, small, fully autonomous AI personal assistant (100% Rust)
+          - Adds/updates Revka template to v${VERSION}
+          - Image: `ghcr.io/kumihoio/revka:${VERSION}`
+          - Revka is a fast, small, fully autonomous AI personal assistant (100% Rust)
           - Multi-arch: linux/amd64 + linux/arm64
 
           ## Checklist
@@ -394,8 +394,8 @@ jobs:
           - Health check passes
 
           ## Links
-          - https://github.com/KumihoIO/construct-os
-          - https://github.com/orgs/KumihoIO/packages/container/package/construct
+          - https://github.com/KumihoIO/Revka
+          - https://github.com/orgs/KumihoIO/packages/container/package/revka
           EOF
           )"
 
@@ -437,19 +437,19 @@ jobs:
         env:
           VERSION: ${{ steps.ver.outputs.version }}
         run: |
-          mkdir -p templates/construct/assets
+          mkdir -p templates/revka/assets
 
           # Copy logo if missing
-          if [ ! -f templates/construct/assets/logo.png ]; then
-            curl -fsSL -o templates/construct/assets/logo.png \
-              "https://raw.githubusercontent.com/KumihoIO/construct-os/main/.github/assets/construct-logo.png"
+          if [ ! -f templates/revka/assets/logo.png ]; then
+            curl -fsSL -o templates/revka/assets/logo.png \
+              "https://raw.githubusercontent.com/KumihoIO/Revka/main/.github/assets/revka-logo.png"
           fi
 
           # meta.yaml — update version and changelog
-          cat > templates/construct/meta.yaml << META
-          name: Construct
+          cat > templates/revka/meta.yaml << META
+          name: Revka
           description: |
-            Construct is a fast, small, and fully autonomous AI personal assistant
+            Revka is a fast, small, and fully autonomous AI personal assistant
             infrastructure built in 100% Rust. Deploy anywhere, swap anything.
             Connect any LLM provider (OpenRouter, OpenAI, Anthropic, Ollama) and
             interact via a built-in web dashboard, REST API, or WebSocket gateway.
@@ -458,7 +458,7 @@ jobs:
             autonomous tool use.
 
           instructions: |
-            After deployment, access the Construct gateway at the assigned domain
+            After deployment, access the Revka gateway at the assigned domain
             on port 42617. Set your LLM provider API key in the environment
             variables. The default provider is OpenRouter — get a key at
             https://openrouter.ai/keys. You can switch to OpenAI, Anthropic,
@@ -472,9 +472,9 @@ jobs:
             - label: Website
               url: https://kumiho.io
             - label: Documentation
-              url: https://github.com/KumihoIO/construct-os#readme
+              url: https://github.com/KumihoIO/Revka#readme
             - label: Github
-              url: https://github.com/KumihoIO/construct-os
+              url: https://github.com/KumihoIO/Revka
 
           contributors:
             - name: Kumiho Inc.
@@ -491,11 +491,11 @@ jobs:
               appServiceName:
                 type: string
                 title: App Service Name
-                default: construct
+                default: revka
               appServiceImage:
                 type: string
                 title: App Service Image
-                default: ghcr.io/kumihoio/construct-os:${VERSION}
+                default: ghcr.io/kumihoio/revka:${VERSION}
               apiKey:
                 type: string
                 title: LLM Provider API Key
@@ -550,7 +550,7 @@ jobs:
           META
 
           # index.ts — update default image version
-          cat > templates/construct/index.ts << 'TYPESCRIPT'
+          cat > templates/revka/index.ts << 'TYPESCRIPT'
           import { Output, Services } from "~templates-utils";
           import { Input } from "./meta";
 
@@ -560,8 +560,8 @@ jobs:
             const appEnv = [
               `API_KEY=${input.apiKey}`,
               `PROVIDER=${input.provider}`,
-              `CONSTRUCT_ALLOW_PUBLIC_BIND=true`,
-              `CONSTRUCT_GATEWAY_PORT=42617`,
+              `REVKA_ALLOW_PUBLIC_BIND=true`,
+              `REVKA_GATEWAY_PORT=42617`,
             ];
 
             services.push({
@@ -583,7 +583,7 @@ jobs:
                   {
                     type: "volume",
                     name: "data",
-                    mountPath: "/construct-data",
+                    mountPath: "/revka-data",
                   },
                 ],
               },
@@ -602,19 +602,19 @@ jobs:
             npm run prettier || true
           fi
 
-      - name: Close superseded open PRs from previous Construct sync runs
+      - name: Close superseded open PRs from previous Revka sync runs
         env:
           GH_TOKEN: ${{ secrets.MARKETPLACE_PAT }}
           VERSION: ${{ steps.ver.outputs.version }}
         run: |
           gh pr list --repo easypanel-io/templates \
-            --search "is:open is:pr in:title \"add/update Construct template\"" \
+            --search "is:open is:pr in:title \"add/update Revka template\"" \
             --json number,title \
             --jq '.[] | select(.title | contains("v'"${VERSION}"'") | not) | .number' \
           | while read -r num; do
               [ -z "$num" ] && continue
               gh pr comment "$num" --repo easypanel-io/templates \
-                --body "Superseded by Construct v${VERSION}; closing in favor of the newer PR." || true
+                --body "Superseded by Revka v${VERSION}; closing in favor of the newer PR." || true
               gh pr close "$num" --repo easypanel-io/templates --comment "Superseded by v${VERSION}." || true
             done
 
@@ -624,25 +624,25 @@ jobs:
           GH_TOKEN: ${{ secrets.MARKETPLACE_PAT }}
           VERSION: ${{ steps.ver.outputs.version }}
         run: |
-          BRANCH="construct/update-v${VERSION}"
+          BRANCH="revka/update-v${VERSION}"
           git checkout -b "$BRANCH"
           git add -A
           git diff --cached --quiet && echo "No changes" && exit 0
 
-          git config user.name "Construct Bot"
+          git config user.name "Revka Bot"
           git config user.email "kumihoclouds@gmail.com"
-          git commit -m "feat: add/update Construct template (v${VERSION})"
+          git commit -m "feat: add/update Revka template (v${VERSION})"
           git push -u origin "$BRANCH"
 
           gh pr create \
             --repo easypanel-io/templates \
             --base main \
-            --title "feat: add/update Construct template (v${VERSION})" \
+            --title "feat: add/update Revka template (v${VERSION})" \
             --body "$(cat <<'EOF'
           ## Summary
-          - Adds/updates Construct template to v${VERSION}
-          - Image: `ghcr.io/kumihoio/construct-os:${VERSION}`
-          - Construct is a fast, small, fully autonomous AI personal assistant (100% Rust)
+          - Adds/updates Revka template to v${VERSION}
+          - Image: `ghcr.io/kumihoio/revka:${VERSION}`
+          - Revka is a fast, small, fully autonomous AI personal assistant (100% Rust)
           - Multi-arch: linux/amd64 + linux/arm64
 
           ## PR Checklist
@@ -658,7 +658,7 @@ jobs:
           - Health check passes
 
           ## Links
-          - https://github.com/KumihoIO/construct-os
-          - https://github.com/orgs/KumihoIO/packages/container/package/construct
+          - https://github.com/KumihoIO/Revka
+          - https://github.com/orgs/KumihoIO/packages/container/package/revka
           EOF
           )"

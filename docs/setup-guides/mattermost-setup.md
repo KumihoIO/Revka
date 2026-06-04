@@ -1,6 +1,6 @@
 # Mattermost Integration Guide
 
-Construct supports native integration with Mattermost via its REST API v4. This integration is ideal for self-hosted, private, or air-gapped environments where sovereign communication is a requirement.
+Revka supports native integration with Mattermost via its REST API v4. This integration is ideal for self-hosted, private, or air-gapped environments where sovereign communication is a requirement.
 
 <!-- TODO screenshot: Mattermost Main Menu expanded to Integrations > Bot Accounts -->
 ![Mattermost Main Menu expanded to Integrations > Bot Accounts](../assets/setup/mattermost-setup-01-bot-accounts-menu.png)
@@ -17,7 +17,7 @@ Construct supports native integration with Mattermost via its REST API v4. This 
 2.  **Bot Account**:
     - Go to **Main Menu > Integrations > Bot Accounts**.
     - Click **Add Bot Account**.
-    - Set a username (e.g., `construct-bot`).
+    - Set a username (e.g., `revka-bot`).
     - Enable **post:all** and **channel:read** permissions (or appropriate scopes).
     - Save the **Access Token**.
 3.  **Channel ID**:
@@ -48,18 +48,18 @@ mention_only = true
 | `channel_id` | (Optional) The ID of the channel to listen to. Required for `listen` mode. |
 | `allowed_users` | (Optional) A list of Mattermost User IDs permitted to interact with the bot. Use `["*"]` to allow everyone. |
 | `thread_replies` | (Optional) Whether top-level user messages should be answered in a thread. Default: `true`. Existing thread replies always remain in-thread. |
-| `mention_only` | (Optional) When `true`, only messages that explicitly mention the bot username (for example `@construct-bot`) are processed. Default: `false`. |
+| `mention_only` | (Optional) When `true`, only messages that explicitly mention the bot username (for example `@revka-bot`) are processed. Default: `false`. |
 
 ## Threaded Conversations
 
-Construct supports Mattermost threads in both modes:
-- If a user sends a message in an existing thread, Construct always replies within that same thread.
+Revka supports Mattermost threads in both modes:
+- If a user sends a message in an existing thread, Revka always replies within that same thread.
 - If `thread_replies = true` (default), top-level messages are answered by threading on that post.
 - If `thread_replies = false`, top-level messages are answered at channel root level.
 
 ## Mention-Only Mode
 
-When `mention_only = true`, Construct applies an extra filter after `allowed_users` authorization:
+When `mention_only = true`, Revka applies an extra filter after `allowed_users` authorization:
 
 - Messages without an explicit bot mention are ignored.
 - Messages with `@bot_username` are processed.

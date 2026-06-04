@@ -422,7 +422,7 @@ def _run_real_agents_cli_gate(require_auth: bool) -> dict[str, Any]:
     remediation: list[str] = []
     if require_auth and not authenticated:
         failures.append("agents-cli login --status did not report an authenticated session")
-        remediation.append("run agents-cli login -i outside Construct, then rerun the strict gate")
+        remediation.append("run agents-cli login -i outside Revka, then rerun the strict gate")
 
     return _check(
         "real_agents_cli",
@@ -893,7 +893,7 @@ def main(argv: list[str] | None = None) -> int:
         help="Also require agents-cli login --status to report an authenticated session",
     )
     parser.add_argument("--pr-number", type=int, help="Optional PR number to verify with gh")
-    parser.add_argument("--repo", default="KumihoIO/construct-os", help="GitHub repo for PR checks")
+    parser.add_argument("--repo", default="KumihoIO/Revka", help="GitHub repo for PR checks")
     parser.add_argument(
         "--pr-base-ref",
         default="main",

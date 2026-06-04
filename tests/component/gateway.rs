@@ -1,12 +1,12 @@
 //! Gateway component tests.
 //!
 //! Tests public gateway infrastructure (rate limiter, idempotency, signature
-//! verification) in isolation. The gateway module (`construct::gateway`) exposes
+//! verification) in isolation. The gateway module (`revka::gateway`) exposes
 //! `verify_whatsapp_signature` and the server function `run_gateway`, but the
 //! internal rate limiter and idempotency store constructors are crate-private.
 //! Tests here verify behavior through the public API surface.
 
-use construct::gateway::verify_whatsapp_signature;
+use revka::gateway::verify_whatsapp_signature;
 
 // ═════════════════════════════════════════════════════════════════════════════
 // WhatsApp webhook signature verification (public API)
@@ -131,7 +131,7 @@ fn gateway_whatsapp_different_secrets_differ() {
 #[test]
 fn gateway_body_limit_is_reasonable() {
     assert_eq!(
-        construct::gateway::MAX_BODY_SIZE,
+        revka::gateway::MAX_BODY_SIZE,
         65_536,
         "Max body size should be 64KB"
     );
@@ -141,7 +141,7 @@ fn gateway_body_limit_is_reasonable() {
 #[test]
 fn gateway_timeout_is_reasonable() {
     assert_eq!(
-        construct::gateway::REQUEST_TIMEOUT_SECS,
+        revka::gateway::REQUEST_TIMEOUT_SECS,
         30,
         "Request timeout should be 30 seconds"
     );
@@ -151,7 +151,7 @@ fn gateway_timeout_is_reasonable() {
 #[test]
 fn gateway_rate_limit_window_is_60s() {
     assert_eq!(
-        construct::gateway::RATE_LIMIT_WINDOW_SECS,
+        revka::gateway::RATE_LIMIT_WINDOW_SECS,
         60,
         "Rate limit window should be 60 seconds"
     );

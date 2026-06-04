@@ -1,17 +1,17 @@
-# 添加开发板和工具 — Construct 硬件指南
+# 添加开发板和工具 — Revka 硬件指南
 
-本指南解释如何向 Construct 添加新的硬件开发板和自定义工具。
+本指南解释如何向 Revka 添加新的硬件开发板和自定义工具。
 
 ## 快速开始：通过 CLI 添加开发板
 
 ```bash
-# 添加开发板（更新 ~/.construct/config.toml）
-construct peripheral add nucleo-f401re /dev/ttyACM0
-construct peripheral add arduino-uno /dev/cu.usbmodem12345
-construct peripheral add rpi-gpio native   # 用于树莓派 GPIO（Linux）
+# 添加开发板（更新 ~/.revka/config.toml）
+revka peripheral add nucleo-f401re /dev/ttyACM0
+revka peripheral add arduino-uno /dev/cu.usbmodem12345
+revka peripheral add rpi-gpio native   # 用于树莓派 GPIO（Linux）
 
 # 重启守护进程应用更改
-construct daemon --host 127.0.0.1 --port 42617
+revka daemon --host 127.0.0.1 --port 42617
 ```
 
 ## 支持的开发板
@@ -26,7 +26,7 @@ construct daemon --host 127.0.0.1 --port 42617
 
 ## 手动配置
 
-编辑 `~/.construct/config.toml`：
+编辑 `~/.revka/config.toml`：
 
 ```toml
 [peripherals]
@@ -76,7 +76,7 @@ builtin_led: 13
 
 ### PDF 数据手册
 
-使用 `rag-pdf` 特性时，Construct 可以索引 PDF 文件：
+使用 `rag-pdf` 特性时，Revka 可以索引 PDF 文件：
 
 ```bash
 cargo build --features hardware,rag-pdf
@@ -87,7 +87,7 @@ cargo build --features hardware,rag-pdf
 ## 添加新的开发板类型
 
 1. **创建数据手册** — `docs/datasheets/my-board.md`，包含引脚别名和 GPIO（通用输入输出）信息。
-2. **添加到配置** — `construct peripheral add my-board /dev/ttyUSB0`
+2. **添加到配置** — `revka peripheral add my-board /dev/ttyUSB0`
 3. **实现外设**（可选）—— 对于自定义协议，在 `src/peripherals/` 中实现 `Peripheral` 特征，并在 `create_peripheral_tools` 中注册。
 
 完整设计请参见 [`docs/hardware/hardware-peripherals-design.md`](../hardware/hardware-peripherals-design.zh-CN.md)。
@@ -102,12 +102,12 @@ cargo build --features hardware,rag-pdf
 
 | 命令 | 描述 |
 |---------|-------------|
-| `construct peripheral list` | 列出已配置的开发板 |
-| `construct peripheral add <board> <path>` | 添加开发板（写入配置） |
-| `construct peripheral flash` | 烧录 Arduino 固件 |
-| `construct peripheral flash-nucleo` | 烧录 Nucleo 固件 |
-| `construct hardware discover` | 列出 USB 设备 |
-| `construct hardware info` | 通过 probe-rs 获取芯片信息 |
+| `revka peripheral list` | 列出已配置的开发板 |
+| `revka peripheral add <board> <path>` | 添加开发板（写入配置） |
+| `revka peripheral flash` | 烧录 Arduino 固件 |
+| `revka peripheral flash-nucleo` | 烧录 Nucleo 固件 |
+| `revka hardware discover` | 列出 USB 设备 |
+| `revka hardware info` | 通过 probe-rs 获取芯片信息 |
 
 ## 故障排除
 

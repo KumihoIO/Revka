@@ -4,7 +4,7 @@ import { BrowserRouter } from 'react-router-dom';
 import App from './App';
 import { basePath } from './lib/basePath';
 import './index.css';
-import './construct/styles/theme.css';
+import './revka/styles/theme.css';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

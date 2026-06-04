@@ -9,10 +9,10 @@ except ImportError:
     httpx = None  # type: ignore
 
 from .._log import _log
-from ..gateway_client import ConstructGatewayClient
+from ..gateway_client import RevkaGatewayClient
 
 
-async def tool_list_nodes(gw: ConstructGatewayClient) -> dict[str, Any]:
+async def tool_list_nodes(gw: RevkaGatewayClient) -> dict[str, Any]:
     if not gw._available:
         return {"error": "Gateway not available. Cannot list nodes.", "nodes": []}
     try:
@@ -28,7 +28,7 @@ async def tool_list_nodes(gw: ConstructGatewayClient) -> dict[str, Any]:
         return {"error": f"Failed to list nodes: {e}", "nodes": []}
 
 
-async def tool_invoke_node(args: dict[str, Any], gw: ConstructGatewayClient) -> dict[str, Any]:
+async def tool_invoke_node(args: dict[str, Any], gw: RevkaGatewayClient) -> dict[str, Any]:
     if not gw._available:
         return {"error": "Gateway not available. Cannot invoke node."}
 

@@ -131,7 +131,7 @@ function buildUserMessage(text) {
     };
 }
 /**
- * Normalize Construct McpServerConfig to Claude SDK format.
+ * Normalize Revka McpServerConfig to Claude SDK format.
  */
 function normalizeMcpServers(servers) {
     const result = {};
@@ -155,7 +155,7 @@ function normalizeMcpServers(servers) {
     return result;
 }
 /**
- * Build Claude SDK options from a Construct session config.
+ * Build Claude SDK options from a Revka session config.
  */
 function buildClaudeOptions(config, onStderr) {
     const opts = {

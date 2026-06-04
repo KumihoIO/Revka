@@ -2,7 +2,7 @@
 //!
 //! This module provides an additive, no-op-by-default surface that tools can
 //! use to emit progress events during execution. Callers that care about
-//! progress (e.g. a future MCP server wrapping Construct tools and forwarding
+//! progress (e.g. a future MCP server wrapping Revka tools and forwarding
 //! `notifications/progress`) can supply a real [`ProgressSink`]; everyone else
 //! gets a [`NoopProgressSink`] and pays no cost.
 //!
@@ -105,7 +105,7 @@ pub fn noop_sink() -> &'static dyn ProgressSink {
 /// Ergonomic scoped handle: binds a [`ProgressToken`] to a [`ProgressSink`]
 /// so tool code can emit without repeating the token argument.
 ///
-/// Construct one at the top of a long-running tool's `execute_with_progress`
+/// Revka one at the top of a long-running tool's `execute_with_progress`
 /// and call [`ProgressHandle::update`] as work proceeds.
 pub struct ProgressHandle<'a> {
     sink: &'a dyn ProgressSink,

@@ -21,11 +21,11 @@
 //! `mcp_session` and `mcp_token` are also present, a per-session MCP config
 //! file is written to a temp dir and exported via env vars so the CLI can
 //! auto-register the in-process MCP server (run as a tokio task inside the
-//! main daemon; discovered via `~/.construct/mcp.json`). The temp dir is
+//! main daemon; discovered via `~/.revka/mcp.json`). The temp dir is
 //! removed when the socket closes.
 
 use super::AppState;
-use super::mcp_discovery::read_construct_mcp;
+use super::mcp_discovery::read_revka_mcp;
 use axum::{
     extract::{
         Query, State, WebSocketUpgrade,
@@ -44,7 +44,7 @@ use tracing::{debug, error, warn};
 use uuid::Uuid;
 
 /// The sub-protocol we support for terminal WebSocket.
-const WS_PROTOCOL: &str = "construct.v1";
+const WS_PROTOCOL: &str = "revka.v1";
 
 /// Prefix used in `Sec-WebSocket-Protocol` to carry a bearer token.
 const BEARER_SUBPROTO_PREFIX: &str = "bearer.";
@@ -190,18 +190,15 @@ pub fn write_cli_config(
             std::fs::create_dir_all(&dir).map_err(|e| format!("creating ~/.codex: {e}"))?;
             let cfg_path = dir.join("config.toml");
             let mut toml = String::new();
-            toml.push_str("[mcp_servers.construct]\n");
+            toml.push_str("[mcp_servers.revka]\n");
             toml.push_str(&format!("url = {}\n", toml_string(mcp_url)));
             toml.push_str("transport = \"http\"\n");
-            toml.push_str("[mcp_servers.construct.headers]\n");
+            toml.push_str("[mcp_servers.revka.headers]\n");
             toml.push_str(&format!(
                 "Authorization = {}\n",
                 toml_string(&format!("Bearer {token}"))
             ));
-            toml.push_str(&format!(
-                "X-Construct-Session = {}\n",
-                toml_string(session_id)
-            ));
+            toml.push_str(&format!("X-Revka-Session = {}\n", toml_string(session_id)));
             std::fs::write(&cfg_path, toml.as_bytes())
                 .map_err(|e| format!("writing codex config: {e}"))?;
             Ok(CliInjection {
@@ -223,13 +220,13 @@ pub fn write_cli_config(
             let cfg = json!({
                 "$schema": "https://opencode.ai/config.json",
                 "mcp": {
-                    "construct": {
+                    "revka": {
                         "type": "remote",
                         "url": mcp_url,
                         "enabled": true,
                         "headers": {
                             "Authorization": format!("Bearer {token}"),
-                            "X-Construct-Session": session_id,
+                            "X-Revka-Session": session_id,
                         }
                     }
                 }
@@ -256,11 +253,11 @@ pub fn write_cli_config(
             let cfg_path = dir.join("settings.json");
             let cfg = json!({
                 "mcpServers": {
-                    "construct": {
+                    "revka": {
                         "httpUrl": mcp_url,
                         "headers": {
                             "Authorization": format!("Bearer {token}"),
-                            "X-Construct-Session": session_id,
+                            "X-Revka-Session": session_id,
                         }
                     }
                 }
@@ -344,17 +341,17 @@ fn extract_ws_token<'a>(headers: &'a HeaderMap, query_token: Option<&'a str>) ->
 /// MCP-aware CLIs:
 ///
 /// ```json
-/// { "mcpServers": { "construct": { "url": "...", "headers": { ... } } } }
+/// { "mcpServers": { "revka": { "url": "...", "headers": { ... } } } }
 /// ```
 pub fn build_mcp_config_json(mcp_url: &str, session_id: &str, token: &str) -> serde_json::Value {
     json!({
         "mcpServers": {
-            "construct": {
+            "revka": {
                 "type": "http",
                 "url": mcp_url,
                 "headers": {
                     "Authorization": format!("Bearer {token}"),
-                    "X-Construct-Session": session_id,
+                    "X-Revka-Session": session_id,
                 }
             }
         }
@@ -444,12 +441,12 @@ fn plan_spawn(
     mcp_token: Option<&str>,
 ) -> Result<SpawnPlan, String> {
     // `plan_spawn_with_discovery` is the real implementation; the non-suffixed
-    // variant calls `read_construct_mcp()` for the prod path. Split out so the
+    // variant calls `read_revka_mcp()` for the prod path. Split out so the
     // per-CLI adapter tests can pass in a fake discovery URL without needing
-    // `~/.construct/mcp.json` on disk.
+    // `~/.revka/mcp.json` on disk.
     let discovery_url = if tool.is_some() && mcp_session.is_some() && mcp_token.is_some() {
         Some(
-            read_construct_mcp()
+            read_revka_mcp()
                 .map_err(|e| format!("in-process MCP server not available: {e}"))?
                 .url,
         )
@@ -473,7 +470,7 @@ fn plan_spawn_with_discovery(
             let mut cmd = CommandBuilder::new(bin);
 
             if let (Some(sess), Some(tok), Some(url)) = (mcp_session, mcp_token, mcp_url) {
-                let dir = std::env::temp_dir().join(format!("construct-code-{}", Uuid::new_v4()));
+                let dir = std::env::temp_dir().join(format!("revka-code-{}", Uuid::new_v4()));
                 std::fs::create_dir_all(&dir).map_err(|e| format!("creating temp dir: {e}"))?;
 
                 // Per-CLI adapter: writes the right config file(s) under
@@ -492,9 +489,9 @@ fn plan_spawn_with_discovery(
                 cmd.env("XDG_CONFIG_HOME", dir.join(".config"));
 
                 // Stable fallback env — harmless if unused.
-                cmd.env("CONSTRUCT_MCP_URL", url);
-                cmd.env("CONSTRUCT_MCP_SESSION", sess);
-                cmd.env("CONSTRUCT_MCP_TOKEN", tok);
+                cmd.env("REVKA_MCP_URL", url);
+                cmd.env("REVKA_MCP_SESSION", sess);
+                cmd.env("REVKA_MCP_TOKEN", tok);
 
                 (cmd, Some(TempSpawnDir(dir)))
             } else {
@@ -768,11 +765,11 @@ mod tests {
     #[test]
     fn mcp_config_json_has_expected_shape() {
         let v = build_mcp_config_json("http://127.0.0.1:54500/mcp", "sess-abc", "tok-xyz");
-        let srv = &v["mcpServers"]["construct"];
+        let srv = &v["mcpServers"]["revka"];
         assert_eq!(srv["url"], "http://127.0.0.1:54500/mcp");
         assert_eq!(srv["type"], "http");
         assert_eq!(srv["headers"]["Authorization"], "Bearer tok-xyz");
-        assert_eq!(srv["headers"]["X-Construct-Session"], "sess-abc");
+        assert_eq!(srv["headers"]["X-Revka-Session"], "sess-abc");
         // JSON round-trips cleanly.
         let s = serde_json::to_string(&v).unwrap();
         let back: serde_json::Value = serde_json::from_str(&s).unwrap();
@@ -787,7 +784,7 @@ mod tests {
 
     #[test]
     fn resolve_cwd_rejects_missing_path() {
-        assert!(resolve_cwd(Some("/this/should/not/exist/construct-xyz")).is_err());
+        assert!(resolve_cwd(Some("/this/should/not/exist/revka-xyz")).is_err());
     }
 
     #[test]
@@ -833,7 +830,7 @@ mod tests {
     // ── Per-CLI adapter tests ───────────────────────────────────────
 
     fn tempdir() -> PathBuf {
-        let p = std::env::temp_dir().join(format!("construct-test-{}", Uuid::new_v4()));
+        let p = std::env::temp_dir().join(format!("revka-test-{}", Uuid::new_v4()));
         std::fs::create_dir_all(&p).unwrap();
         p
     }
@@ -857,13 +854,13 @@ mod tests {
 
         let content: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&cfg_path).unwrap()).unwrap();
-        assert_eq!(content["mcpServers"]["construct"]["url"], URL);
+        assert_eq!(content["mcpServers"]["revka"]["url"], URL);
         assert_eq!(
-            content["mcpServers"]["construct"]["headers"]["Authorization"],
+            content["mcpServers"]["revka"]["headers"]["Authorization"],
             format!("Bearer {TOK}")
         );
         assert_eq!(
-            content["mcpServers"]["construct"]["headers"]["X-Construct-Session"],
+            content["mcpServers"]["revka"]["headers"]["X-Revka-Session"],
             SESS
         );
         let _ = std::fs::remove_dir_all(&home);
@@ -877,16 +874,16 @@ mod tests {
         let cfg = home.join(".codex").join("config.toml");
         assert!(cfg.exists(), "{} should exist", cfg.display());
         let body = std::fs::read_to_string(&cfg).unwrap();
-        assert!(body.contains("[mcp_servers.construct]"));
+        assert!(body.contains("[mcp_servers.revka]"));
         assert!(body.contains(&format!("url = \"{URL}\"")), "body: {body}");
         assert!(body.contains("transport = \"http\""));
-        assert!(body.contains("[mcp_servers.construct.headers]"));
+        assert!(body.contains("[mcp_servers.revka.headers]"));
         assert!(
             body.contains(&format!("Authorization = \"Bearer {TOK}\"")),
             "body: {body}"
         );
         assert!(
-            body.contains(&format!("X-Construct-Session = \"{SESS}\"")),
+            body.contains(&format!("X-Revka-Session = \"{SESS}\"")),
             "body: {body}"
         );
         // Sanity: parses as TOML round-trip.
@@ -902,12 +899,12 @@ mod tests {
         let cfg = home.join(".config").join("opencode").join("config.json");
         assert!(cfg.exists());
         let v: serde_json::Value = serde_json::from_slice(&std::fs::read(&cfg).unwrap()).unwrap();
-        let srv = &v["mcp"]["construct"];
+        let srv = &v["mcp"]["revka"];
         assert_eq!(srv["type"], "remote");
         assert_eq!(srv["url"], URL);
         assert_eq!(srv["enabled"], true);
         assert_eq!(srv["headers"]["Authorization"], format!("Bearer {TOK}"));
-        assert_eq!(srv["headers"]["X-Construct-Session"], SESS);
+        assert_eq!(srv["headers"]["X-Revka-Session"], SESS);
         let _ = std::fs::remove_dir_all(&home);
     }
 
@@ -919,10 +916,10 @@ mod tests {
         let cfg = home.join(".gemini").join("settings.json");
         assert!(cfg.exists());
         let v: serde_json::Value = serde_json::from_slice(&std::fs::read(&cfg).unwrap()).unwrap();
-        let srv = &v["mcpServers"]["construct"];
+        let srv = &v["mcpServers"]["revka"];
         assert_eq!(srv["httpUrl"], URL);
         assert_eq!(srv["headers"]["Authorization"], format!("Bearer {TOK}"));
-        assert_eq!(srv["headers"]["X-Construct-Session"], SESS);
+        assert_eq!(srv["headers"]["X-Revka-Session"], SESS);
         let _ = std::fs::remove_dir_all(&home);
     }
 

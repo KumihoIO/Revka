@@ -1,37 +1,37 @@
 # Kumiho Graph-Native Cognitive Memory Integration
 
-**Audience:** Integration developers wiring Construct agents into Kumiho's persistent graph memory.
+**Audience:** Integration developers wiring Revka agents into Kumiho's persistent graph memory.
 
-This document describes the integration patterns Construct uses on top of the **Kumiho MCP** sidecar — Construct's graph-native, cross-session memory backend. For installation and config, start at [`../setup-guides/kumiho-operator-setup.md`](../setup-guides/kumiho-operator-setup.md). For the `[kumiho]` config block, see [`../reference/api/config-reference.md`](../reference/api/config-reference.md).
+This document describes the integration patterns Revka uses on top of the **Kumiho MCP** sidecar — Revka's graph-native, cross-session memory backend. For installation and config, start at [`../setup-guides/kumiho-operator-setup.md`](../setup-guides/kumiho-operator-setup.md). For the `[kumiho]` config block, see [`../reference/api/config-reference.md`](../reference/api/config-reference.md).
 
 ---
 
 ## Why Kumiho memory matters
 
-A stateless LLM call forgets everything once the response is sent. Kumiho gives every Construct agent four properties a stateless agent cannot have:
+A stateless LLM call forgets everything once the response is sent. Kumiho gives every Revka agent four properties a stateless agent cannot have:
 
 - **Cross-session continuity** — what an agent learned yesterday is still load-bearing today.
 - **Graph-structured recall** — memories carry typed edges (`DERIVED_FROM`, `DEPENDS_ON`, `REFERENCED`, `CONTAINS`, `CREATED_FROM`, `BELONGS_TO`), so chain-of-decision queries traverse provenance instead of fuzzy-matching strings.
 - **Provenance** — every capture can link back to the sources that produced it, so a downstream agent can audit how a fact was derived.
 - **Shared substrate** — multiple agents on the same Kumiho control plane see each other's reflections, which is the foundation for handoff (`HANDED_OFF_TO`), supervisor delegation, and team memory.
 
-Construct does not own this memory; the Kumiho control plane (`api.kumiho.cloud` by default) does. Construct talks to it through the **Kumiho MCP server** that runs as a sidecar of the Construct daemon.
+Revka does not own this memory; the Kumiho control plane (`api.kumiho.cloud` by default) does. Revka talks to it through the **Kumiho MCP server** that runs as a sidecar of the Revka daemon.
 
 ---
 
 ## Prerequisites
 
-1. The Kumiho MCP sidecar is installed and running. If you haven't, follow [`../setup-guides/kumiho-operator-setup.md`](../setup-guides/kumiho-operator-setup.md) — this puts a Python venv at `~/.construct/kumiho/venv/` and a runner shim at `~/.construct/kumiho/run_kumiho_mcp.py`.
-2. `[kumiho]` is configured in `~/.construct/config.toml` with `api_url`, `auth_token` (or `KUMIHO_AUTH_TOKEN` env), and the desired `space_prefix` (Construct's default is `Construct`).
-3. The Construct daemon has Kumiho MCP wired up — verify by querying the dashboard at `http://127.0.0.1:42617/tools` and confirming the `kumiho_memory_*` tools appear in the agent tool catalog.
+1. The Kumiho MCP sidecar is installed and running. If you haven't, follow [`../setup-guides/kumiho-operator-setup.md`](../setup-guides/kumiho-operator-setup.md) — this puts a Python venv at `~/.revka/kumiho/venv/` and a runner shim at `~/.revka/kumiho/run_kumiho_mcp.py`.
+2. `[kumiho]` is configured in `~/.revka/config.toml` with `api_url`, `auth_token` (or `KUMIHO_AUTH_TOKEN` env), and the desired `space_prefix` (Revka's default is `Revka`).
+3. The Revka daemon has Kumiho MCP wired up — verify by querying the dashboard at `http://127.0.0.1:42617/tools` and confirming the `kumiho_memory_*` tools appear in the agent tool catalog.
 
-If MCP tools don't appear, check `~/.construct/logs/` for the Kumiho MCP stderr trail. Most failures are missing `KUMIHO_AUTH_TOKEN` or an unreachable `api_url`.
+If MCP tools don't appear, check `~/.revka/logs/` for the Kumiho MCP stderr trail. Most failures are missing `KUMIHO_AUTH_TOKEN` or an unreachable `api_url`.
 
 ---
 
 ## The two-reflex pattern
 
-Almost every Construct agent loop follows the same shape: **engage** memory before responding, **reflect** after responding. This is the canonical integration pattern.
+Almost every Revka agent loop follows the same shape: **engage** memory before responding, **reflect** after responding. This is the canonical integration pattern.
 
 ### Engage — before you respond
 
@@ -44,7 +44,7 @@ When the user's request touches anything that might have history, call `kumiho_m
     "query": "<query derived from user's message>",
     "graph_augmented": false,
     "limit": 5,
-    "space_paths": ["Construct/AgentPool", "CognitiveMemory/Skills"]
+    "space_paths": ["Revka/AgentPool", "CognitiveMemory/Skills"]
   }
 }
 ```
@@ -118,10 +118,10 @@ Always use **absolute dates** in titles (`"on Apr 27"`, not `"today"`). Memories
 
 ## Provenance edges
 
-Provenance is what separates a graph memory from a flat note. Construct uses six edge types:
+Provenance is what separates a graph memory from a flat note. Revka uses six edge types:
 
 - `DERIVED_FROM` — implied automatically when you pass `source_krefs` to `reflect`. The new capture is "derived from" each kref.
-- `DEPENDS_ON` — used by Construct plans where step B cannot start until step A completes. Set explicitly via `kumiho_create_edge`.
+- `DEPENDS_ON` — used by Revka plans where step B cannot start until step A completes. Set explicitly via `kumiho_create_edge`.
 - `REFERENCED` — soft pointer; one memory mentions another without depending on it.
 - `CONTAINS` — bundle/membership semantics; e.g., a session contains its captures.
 - `CREATED_FROM` — used when one item is a forked or transformed version of another.
@@ -133,21 +133,21 @@ When in doubt, let `discover_edges: true` on `reflect` infer the edges. Manually
 
 ## Space organisation
 
-Kumiho organises memory into hierarchical **spaces**. Construct's prefix is `Construct/...`; the `CognitiveMemory/...` tree is shared across Construct and its sibling agents.
+Kumiho organises memory into hierarchical **spaces**. Revka's prefix is `Revka/...`; the `CognitiveMemory/...` tree is shared across Revka and its sibling agents.
 
-Conventions Construct relies on:
+Conventions Revka relies on:
 
 | Space | Purpose |
 |---|---|
-| `Construct/AgentPool` | Per-agent state — identity, expertise, tone, allowed tools. |
-| `Construct/Plans/<project>` | Plans the Operator decomposed for a project. |
-| `Construct/Sessions` | Active and historical chat sessions. |
-| `Construct/Goals` | Long-running goals an agent is working toward. |
-| `Construct/AgentTrust` | Per-agent trust scores and recent outcome buffer. |
-| `Construct/ClawHub` | Marketplace catalog state (skills, agents, workflows). |
-| `Construct/Teams` | Team composition and delegation topology. |
-| `Construct/WorkflowRuns` | Operator workflow run state and history. |
-| `Construct/Outcomes` | Per-run outcomes feeding the trust score calculation. |
+| `Revka/AgentPool` | Per-agent state — identity, expertise, tone, allowed tools. |
+| `Revka/Plans/<project>` | Plans the Operator decomposed for a project. |
+| `Revka/Sessions` | Active and historical chat sessions. |
+| `Revka/Goals` | Long-running goals an agent is working toward. |
+| `Revka/AgentTrust` | Per-agent trust scores and recent outcome buffer. |
+| `Revka/ClawHub` | Marketplace catalog state (skills, agents, workflows). |
+| `Revka/Teams` | Team composition and delegation topology. |
+| `Revka/WorkflowRuns` | Operator workflow run state and history. |
+| `Revka/Outcomes` | Per-run outcomes feeding the trust score calculation. |
 | `CognitiveMemory/Skills` | Shared skill library (cross-agent procedures). |
 
 When writing new captures, set `space_hint` on the capture itself, not just the top-level `space_path`, so per-capture space targeting wins over the bulk default.
@@ -185,7 +185,7 @@ After ~20 exchanges, or when the session ends, trigger consolidation:
 }
 ```
 
-This compacts session-buffered responses into durable summaries, runs DreamState edge discovery on the session's new captures, and clears the session buffer. Construct's daemon does this automatically on session end, but long-running agents should self-trigger periodically.
+This compacts session-buffered responses into durable summaries, runs DreamState edge discovery on the session's new captures, and clears the session buffer. Revka's daemon does this automatically on session end, but long-running agents should self-trigger periodically.
 
 ---
 
@@ -197,7 +197,7 @@ This compacts session-buffered responses into durable summaries, runs DreamState
 - **Explicit "remember this".** When the user says "remember this", "keep this in mind", "note that", or similar, you MUST capture via `reflect`. Never silently skip an explicit remember request.
 - **Privacy.** Raw conversation transcripts stay local. The Kumiho control plane stores only summaries and structured captures. Never put credentials, secrets, or sensitive payloads into capture content.
 - **One engage per turn.** The Kumiho MCP server enforces a 5-second deduplication window on engage calls. Calling engage twice in one turn either wastes a slot or returns cached results.
-- **Silent degraded mode.** If the control plane is unreachable, Kumiho MCP fails closed — engage and reflect return errors, and the agent should continue without persistence rather than block. Always wrap engage/reflect in try/catch and log the error to `~/.construct/logs/` for operator review.
+- **Silent degraded mode.** If the control plane is unreachable, Kumiho MCP fails closed — engage and reflect return errors, and the agent should continue without persistence rather than block. Always wrap engage/reflect in try/catch and log the error to `~/.revka/logs/` for operator review.
 
 ---
 

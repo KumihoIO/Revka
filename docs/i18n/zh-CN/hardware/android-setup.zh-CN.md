@@ -1,6 +1,6 @@
 # Android 安装指南
 
-Construct 为 Android 设备提供预构建二进制文件。
+Revka 为 Android 设备提供预构建二进制文件。
 
 ## 支持的架构
 
@@ -11,7 +11,7 @@ Construct 为 Android 设备提供预构建二进制文件。
 
 ## 通过 Termux 安装
 
-在 Android 上运行 Construct 最简单的方式是通过 [Termux](https://termux.dev/)。
+在 Android 上运行 Revka 最简单的方式是通过 [Termux](https://termux.dev/)。
 
 ### 1. 安装 Termux
 
@@ -19,7 +19,7 @@ Construct 为 Android 设备提供预构建二进制文件。
 
 > ⚠️ **注意：** Play Store 版本已过时且不受支持。
 
-### 2. 下载 Construct
+### 2. 下载 Revka
 
 ```bash
 # 检查你的架构
@@ -28,36 +28,36 @@ uname -m
 
 # 下载对应的二进制文件
 # 64 位（aarch64）：
-curl -LO https://github.com/KumihoIO/construct-os/releases/latest/download/construct-aarch64-linux-android.tar.gz
-tar xzf construct-aarch64-linux-android.tar.gz
+curl -LO https://github.com/KumihoIO/Revka/releases/latest/download/revka-aarch64-linux-android.tar.gz
+tar xzf revka-aarch64-linux-android.tar.gz
 
 # 32 位（armv7）：
-curl -LO https://github.com/KumihoIO/construct-os/releases/latest/download/construct-armv7-linux-androideabi.tar.gz
-tar xzf construct-armv7-linux-androideabi.tar.gz
+curl -LO https://github.com/KumihoIO/Revka/releases/latest/download/revka-armv7-linux-androideabi.tar.gz
+tar xzf revka-armv7-linux-androideabi.tar.gz
 ```
 
 ### 3. 安装和运行
 
 ```bash
-chmod +x construct
-mv construct $PREFIX/bin/
+chmod +x revka
+mv revka $PREFIX/bin/
 
 # 验证安装
-construct --version
+revka --version
 
 # 运行设置
-construct onboard
+revka onboard
 ```
 
 ## 通过 ADB 直接安装
 
-适用于希望在 Termux 之外运行 Construct 的高级用户：
+适用于希望在 Termux 之外运行 Revka 的高级用户：
 
 ```bash
 # 在安装了 ADB（Android 调试桥）的电脑上执行
-adb push construct /data/local/tmp/
-adb shell chmod +x /data/local/tmp/construct
-adb shell /data/local/tmp/construct --version
+adb push revka /data/local/tmp/
+adb shell chmod +x /data/local/tmp/revka
+adb shell /data/local/tmp/revka --version
 ```
 
 > ⚠️ 在 Termux 之外运行需要 root 权限或特定权限才能获得完整功能。
@@ -91,7 +91,7 @@ cargo build --release --target aarch64-linux-android
 ### "Permission denied"
 
 ```bash
-chmod +x construct
+chmod +x revka
 ```
 
 ### "not found" 或链接器错误

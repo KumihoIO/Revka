@@ -1,7 +1,7 @@
 //! Google Gemini provider with support for:
 //! - Direct API key (`GEMINI_API_KEY` env var or config)
 //! - Gemini CLI OAuth tokens (reuse existing ~/.gemini/ authentication)
-//! - Construct auth-profiles OAuth tokens
+//! - Revka auth-profiles OAuth tokens
 //! - Google Cloud ADC (`GOOGLE_APPLICATION_CREDENTIALS`)
 
 use crate::auth::AuthService;
@@ -991,9 +991,9 @@ impl GeminiProvider {
                 "Gemini API key not found. Options:\n\
                  1. Set GEMINI_API_KEY env var\n\
                  2. Run `gemini` CLI to authenticate (tokens will be reused)\n\
-                 3. Run `construct auth login --provider gemini`\n\
+                 3. Run `revka auth login --provider gemini`\n\
                  4. Get an API key from https://aistudio.google.com/app/apikey\n\
-                 5. Run `construct onboard` to configure"
+                 5. Run `revka onboard` to configure"
             )
         })?;
 
@@ -1019,7 +1019,7 @@ impl GeminiProvider {
                     .await?
                     .ok_or_else(|| {
                         anyhow::anyhow!(
-                            "Gemini auth profile not found. Run `construct auth login --provider gemini`."
+                            "Gemini auth profile not found. Run `revka auth login --provider gemini`."
                         )
                     })?;
                 let proj = self.resolve_oauth_project(&token).await?;
@@ -1285,7 +1285,7 @@ impl Provider for GeminiProvider {
                         .await?
                         .ok_or_else(|| {
                             anyhow::anyhow!(
-                                "Gemini auth profile not found or expired. Run: construct auth login --provider gemini"
+                                "Gemini auth profile not found or expired. Run: revka auth login --provider gemini"
                             )
                         })?;
 

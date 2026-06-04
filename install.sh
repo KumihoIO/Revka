@@ -1,5 +1,5 @@
 #!/usr/bin/env sh
-# Construct installer
+# Revka installer
 # POSIX preamble: ensure bash is available, then re-exec under bash.
 set -eu
 
@@ -25,7 +25,7 @@ _ensure_bash() {
   elif _have_cmd dnf; then _run_privileged dnf install -y bash
   elif _have_cmd pacman; then
     if _is_container_runtime; then
-      _PACMAN_CFG="$(mktemp /tmp/construct-pacman.XXXXXX.conf)"
+      _PACMAN_CFG="$(mktemp /tmp/revka-pacman.XXXXXX.conf)"
       cp /etc/pacman.conf "$_PACMAN_CFG"
       grep -Eq '^[[:space:]]*DisableSandboxSyscalls([[:space:]]|$)' "$_PACMAN_CFG" || printf '\nDisableSandboxSyscalls\n' >> "$_PACMAN_CFG"
       _run_privileged pacman --config "$_PACMAN_CFG" -Sy --noconfirm
@@ -89,12 +89,12 @@ error() {
 
 usage() {
   cat <<'USAGE'
-Construct installer — one-click bootstrap
+Revka installer — one-click bootstrap
 
 Usage:
   ./install.sh [options]
 
-The installer builds Construct, configures your provider and API key,
+The installer builds Revka, configures your provider and API key,
 starts the gateway service, and opens the dashboard — all in one step.
 
 Options:
@@ -115,7 +115,7 @@ Options:
   --skip-install             Skip cargo install step
   --install-sidecars         Install Kumiho & Operator Python MCP sidecars
                              (auto-enabled when operator-mcp/ is present and
-                             sidecars are missing under ~/.construct/)
+                             sidecars are missing under ~/.revka/)
   --skip-sidecars            Disable auto-install of the Python MCP sidecars
   --build-first              Alias for explicitly enabling separate `cargo build --release --locked`
   -h, --help                 Show help
@@ -137,18 +137,18 @@ Examples:
   ./install.sh --skip-onboard
 
 Environment:
-  CONSTRUCT_CONTAINER_CLI     Container CLI command (default: docker; auto-fallback: podman)
-  CONSTRUCT_DOCKER_DATA_DIR   Host path for Docker config/workspace persistence
-  CONSTRUCT_DOCKER_IMAGE      Docker image tag to build/run (default: construct-bootstrap:local)
-  CONSTRUCT_API_KEY           Used when --api-key is not provided
-  CONSTRUCT_PROVIDER          Used when --provider is not provided (default: openrouter)
-  CONSTRUCT_MODEL             Used when --model is not provided
-  CONSTRUCT_CARGO_FEATURES    Extra cargo features for source builds (comma/space separated)
-  CONSTRUCT_BOOTSTRAP_MIN_RAM_MB   Minimum RAM threshold for source build preflight (default: 2048)
-  CONSTRUCT_BOOTSTRAP_MIN_DISK_MB  Minimum free disk threshold for source build preflight (default: 6144)
-  CONSTRUCT_DISABLE_ALPINE_AUTO_DEPS
+  REVKA_CONTAINER_CLI     Container CLI command (default: docker; auto-fallback: podman)
+  REVKA_DOCKER_DATA_DIR   Host path for Docker config/workspace persistence
+  REVKA_DOCKER_IMAGE      Docker image tag to build/run (default: revka-bootstrap:local)
+  REVKA_API_KEY           Used when --api-key is not provided
+  REVKA_PROVIDER          Used when --provider is not provided (default: openrouter)
+  REVKA_MODEL             Used when --model is not provided
+  REVKA_CARGO_FEATURES    Extra cargo features for source builds (comma/space separated)
+  REVKA_BOOTSTRAP_MIN_RAM_MB   Minimum RAM threshold for source build preflight (default: 2048)
+  REVKA_BOOTSTRAP_MIN_DISK_MB  Minimum free disk threshold for source build preflight (default: 6144)
+  REVKA_DISABLE_ALPINE_AUTO_DEPS
                             Set to 1 to disable Alpine auto-install of missing prerequisites
-  CONSTRUCT_SKIP_VERIFY       Set to 1 to skip SHA256/cosign verification of release artifacts
+  REVKA_SKIP_VERIFY       Set to 1 to skip SHA256/cosign verification of release artifacts
                               (not recommended; use only for local/offline testing)
 USAGE
 }
@@ -316,8 +316,8 @@ should_attempt_prebuilt_for_resources() {
   local workspace="${1:-.}"
   local min_ram_mb min_disk_mb total_ram_mb free_disk_mb low_resource
 
-  min_ram_mb="${CONSTRUCT_BOOTSTRAP_MIN_RAM_MB:-2048}"
-  min_disk_mb="${CONSTRUCT_BOOTSTRAP_MIN_DISK_MB:-6144}"
+  min_ram_mb="${REVKA_BOOTSTRAP_MIN_RAM_MB:-2048}"
+  min_disk_mb="${REVKA_BOOTSTRAP_MIN_DISK_MB:-6144}"
   total_ram_mb="$(get_total_memory_mb || true)"
   free_disk_mb="$(get_available_disk_mb "$workspace" || true)"
   low_resource=false
@@ -349,7 +349,7 @@ should_attempt_prebuilt_for_resources() {
 
 resolve_asset_url() {
   local asset_name="$1"
-  local api_url="https://api.github.com/repos/KumihoIO/construct-os/releases"
+  local api_url="https://api.github.com/repos/KumihoIO/Revka/releases"
   local releases_json download_url
 
   # Fetch up to 10 recent releases (includes prereleases) and find the first
@@ -392,15 +392,15 @@ verify_release_artifact() {
   #
   # Arguments:
   #   $1 archive_path  local path to downloaded archive
-  #   $2 asset_name    filename expected in SHA256SUMS (e.g. construct-<target>.tar.gz)
+  #   $2 asset_name    filename expected in SHA256SUMS (e.g. revka-<target>.tar.gz)
   #   $3 archive_url   full URL the archive was fetched from
   local archive_path="$1" asset_name="$2" archive_url="$3"
   local base_url sums_url sig_url pem_url
   local temp_dir sums_path sig_path pem_path
   local expected_hash actual_hash identity_regexp issuer_url
 
-  if [[ "${CONSTRUCT_SKIP_VERIFY:-0}" == "1" ]]; then
-    warn "CONSTRUCT_SKIP_VERIFY=1 set — skipping release artifact verification."
+  if [[ "${REVKA_SKIP_VERIFY:-0}" == "1" ]]; then
+    warn "REVKA_SKIP_VERIFY=1 set — skipping release artifact verification."
     return 0
   fi
 
@@ -409,7 +409,7 @@ verify_release_artifact() {
   sig_url="${base_url}/SHA256SUMS.sig"
   pem_url="${base_url}/SHA256SUMS.pem"
 
-  temp_dir="$(mktemp -d -t construct-verify-XXXXXX)"
+  temp_dir="$(mktemp -d -t revka-verify-XXXXXX)"
   sums_path="$temp_dir/SHA256SUMS"
   sig_path="$temp_dir/SHA256SUMS.sig"
   pem_path="$temp_dir/SHA256SUMS.pem"
@@ -418,7 +418,7 @@ verify_release_artifact() {
 
   if ! curl -fsSL "$sums_url" -o "$sums_path"; then
     warn "Could not fetch SHA256SUMS from $sums_url"
-    warn "Release integrity cannot be verified. Set CONSTRUCT_SKIP_VERIFY=1 to bypass."
+    warn "Release integrity cannot be verified. Set REVKA_SKIP_VERIFY=1 to bypass."
     rm -rf "$temp_dir"
     return 1
   fi
@@ -459,7 +459,7 @@ verify_release_artifact() {
     return 0
   fi
 
-  identity_regexp='^https://github\.com/KumihoIO/construct-os/\.github/workflows/release-.*\.yml@refs/'
+  identity_regexp='^https://github\.com/KumihoIO/Revka/\.github/workflows/release-.*\.yml@refs/'
   issuer_url='https://token.actions.githubusercontent.com'
 
   if ! COSIGN_EXPERIMENTAL=1 cosign verify-blob \
@@ -504,16 +504,16 @@ install_prebuilt_binary() {
     return 1
   fi
 
-  asset_name="construct-${target}.tar.gz"
+  asset_name="revka-${target}.tar.gz"
 
   # Try the GitHub API first to find the newest release (including prereleases)
   # that actually contains the asset, then fall back to /releases/latest/.
   archive_url="$(resolve_asset_url "$asset_name" || true)"
   if [[ -z "$archive_url" ]]; then
-    archive_url="https://github.com/KumihoIO/construct-os/releases/latest/download/${asset_name}"
+    archive_url="https://github.com/KumihoIO/Revka/releases/latest/download/${asset_name}"
   fi
 
-  temp_dir="$(mktemp -d -t construct-prebuilt-XXXXXX)"
+  temp_dir="$(mktemp -d -t revka-prebuilt-XXXXXX)"
   archive_path="$temp_dir/${asset_name}"
 
   step_dot "Attempting pre-built binary install for target: $target"
@@ -535,22 +535,22 @@ install_prebuilt_binary() {
     return 1
   fi
 
-  extracted_bin="$temp_dir/construct"
+  extracted_bin="$temp_dir/revka"
   if [[ ! -x "$extracted_bin" ]]; then
-    extracted_bin="$(find "$temp_dir" -maxdepth 2 -type f -name construct -perm -u+x | head -n 1 || true)"
+    extracted_bin="$(find "$temp_dir" -maxdepth 2 -type f -name revka -perm -u+x | head -n 1 || true)"
   fi
   if [[ -z "$extracted_bin" || ! -x "$extracted_bin" ]]; then
-    warn "Archive did not contain an executable construct binary."
+    warn "Archive did not contain an executable revka binary."
     rm -rf "$temp_dir"
     return 1
   fi
 
   install_dir="$HOME/.cargo/bin"
   mkdir -p "$install_dir"
-  install -m 0755 "$extracted_bin" "$install_dir/construct"
+  install -m 0755 "$extracted_bin" "$install_dir/revka"
   rm -rf "$temp_dir"
 
-  step_ok "Installed pre-built binary to $install_dir/construct"
+  step_ok "Installed pre-built binary to $install_dir/revka"
   if [[ ":$PATH:" != *":$install_dir:"* ]]; then
     warn "$install_dir is not in PATH for this shell."
     warn "Run: export PATH=\"$install_dir:\$PATH\""
@@ -595,7 +595,7 @@ run_pacman() {
 
   local pacman_cfg_tmp=""
   local pacman_rc=0
-  pacman_cfg_tmp="$(mktemp /tmp/construct-pacman.XXXXXX.conf)"
+  pacman_cfg_tmp="$(mktemp /tmp/revka-pacman.XXXXXX.conf)"
   cp /etc/pacman.conf "$pacman_cfg_tmp"
   if ! grep -Eq '^[[:space:]]*DisableSandboxSyscalls([[:space:]]|$)' "$pacman_cfg_tmp"; then
     printf '\nDisableSandboxSyscalls\n' >> "$pacman_cfg_tmp"
@@ -765,7 +765,7 @@ MSG
       # Detect un-accepted Xcode/CLT license (causes `cc` to exit 69).
       # xcrun --show-sdk-path can succeed even without an accepted license,
       # so we test-compile a trivial C file which reliably triggers the error.
-      _xcode_test_file="$(mktemp /tmp/construct-xcode-check.XXXXXX.c)"
+      _xcode_test_file="$(mktemp /tmp/revka-xcode-check.XXXXXX.c)"
       printf 'int main(){return 0;}\n' > "$_xcode_test_file"
       if ! cc -x c "$_xcode_test_file" -o /dev/null 2>/dev/null; then
         rm -f "$_xcode_test_file"
@@ -894,7 +894,7 @@ prompt_api_key() {
     API_KEY="$api_key_input"
     step_ok "API key set"
   else
-    warn "No API key entered — you can configure it later with construct onboard"
+    warn "No API key entered — you can configure it later with revka onboard"
     SKIP_ONBOARD=true
   fi
 }
@@ -923,7 +923,7 @@ run_guided_installer() {
   fi
 
   echo
-  echo -e "  ${BOLD_BLUE}${CRAB} Construct Guided Installer${RESET}"
+  echo -e "  ${BOLD_BLUE}${CRAB} Revka Guided Installer${RESET}"
   echo -e "  ${DIM}Answer a few questions, then the installer will handle everything.${RESET}"
   echo
 
@@ -980,8 +980,8 @@ ensure_default_config_and_workspace() {
   # onboard wizard was skipped (e.g. --skip-build --prefer-prebuilt, or
   # Docker mode without an API key).
   #
-  # $1 — config directory  (e.g. ~/.construct or $docker_data_dir/.construct)
-  # $2 — workspace directory (e.g. ~/.construct/workspace or $docker_data_dir/workspace)
+  # $1 — config directory  (e.g. ~/.revka or $docker_data_dir/.revka)
+  # $2 — workspace directory (e.g. ~/.revka/workspace or $docker_data_dir/workspace)
   # $3 — provider name      (default: openrouter)
   local config_dir="$1"
   local workspace_dir="$2"
@@ -994,8 +994,8 @@ ensure_default_config_and_workspace() {
   if [[ ! -f "$config_path" ]]; then
     step_dot "Creating default config.toml"
     cat > "$config_path" <<TOML
-# Construct configuration — generated by install.sh
-# Edit this file or run 'construct onboard' to reconfigure.
+# Revka configuration — generated by install.sh
+# Edit this file or run 'revka onboard' to reconfigure.
 
 default_provider = "${provider}"
 workspace_dir = "${workspace_dir}"
@@ -1047,11 +1047,11 @@ deferred_loading = true
 
 [kumiho]
 enabled = true
-mcp_path = "~/.construct/kumiho/run_kumiho_mcp.py"
-space_prefix = "Construct"
+mcp_path = "~/.revka/kumiho/run_kumiho_mcp.py"
+space_prefix = "Revka"
 api_url = "https://api.kumiho.cloud"
 memory_project = "CognitiveMemory"
-harness_project = "Construct"
+harness_project = "Revka"
 memory_retrieval_limit = 3
 
 [operator]
@@ -1074,7 +1074,7 @@ TOML
 
   # Seed workspace markdown files only if they don't already exist.
   local user_name="${USER:-User}"
-  local agent_name="Construct"
+  local agent_name="Revka"
 
   _write_if_missing() {
     local filepath="$1"
@@ -1178,7 +1178,7 @@ _is_wsl() {
 
 resolve_container_cli() {
   local requested_cli
-  requested_cli="${CONSTRUCT_CONTAINER_CLI:-docker}"
+  requested_cli="${REVKA_CONTAINER_CLI:-docker}"
 
   if have_cmd "$requested_cli"; then
     CONTAINER_CLI="$requested_cli"
@@ -1200,9 +1200,9 @@ resolve_container_cli() {
 
   error "Container CLI '$requested_cli' is not installed."
   if [[ "$requested_cli" != "docker" ]]; then
-    error "Set CONSTRUCT_CONTAINER_CLI to an installed Docker-compatible CLI (e.g., docker or podman)."
+    error "Set REVKA_CONTAINER_CLI to an installed Docker-compatible CLI (e.g., docker or podman)."
   else
-    error "Install Docker, install podman, or set CONSTRUCT_CONTAINER_CLI to an available Docker-compatible CLI."
+    error "Install Docker, install podman, or set REVKA_CONTAINER_CLI to an available Docker-compatible CLI."
   fi
   exit 1
 }
@@ -1221,17 +1221,17 @@ run_docker_bootstrap() {
   local docker_image docker_data_dir default_data_dir fallback_image
   local config_mount workspace_mount
   local -a container_run_user_args container_run_namespace_args
-  docker_image="${CONSTRUCT_DOCKER_IMAGE:-construct-bootstrap:local}"
-  fallback_image="ghcr.io/kumihoio/construct-os:latest"
+  docker_image="${REVKA_DOCKER_IMAGE:-revka-bootstrap:local}"
+  fallback_image="ghcr.io/kumihoio/revka:latest"
   if [[ "$TEMP_CLONE" == true ]]; then
-    default_data_dir="$HOME/.construct-docker"
+    default_data_dir="$HOME/.revka-docker"
   else
-    default_data_dir="$WORK_DIR/.construct-docker"
+    default_data_dir="$WORK_DIR/.revka-docker"
   fi
-  docker_data_dir="${CONSTRUCT_DOCKER_DATA_DIR:-$default_data_dir}"
+  docker_data_dir="${REVKA_DOCKER_DATA_DIR:-$default_data_dir}"
   DOCKER_DATA_DIR="$docker_data_dir"
 
-  mkdir -p "$docker_data_dir/.construct" "$docker_data_dir/workspace"
+  mkdir -p "$docker_data_dir/.revka" "$docker_data_dir/workspace"
 
   if [[ "$SKIP_INSTALL" == true ]]; then
     warn "--skip-install has no effect with --docker."
@@ -1244,7 +1244,7 @@ run_docker_bootstrap() {
     info "Skipping Docker image build"
     if ! "$CONTAINER_CLI" image inspect "$docker_image" >/dev/null 2>&1; then
       warn "Local Docker image ($docker_image) was not found."
-      info "Pulling official Construct image ($fallback_image)"
+      info "Pulling official Revka image ($fallback_image)"
       if ! "$CONTAINER_CLI" pull "$fallback_image"; then
         error "Failed to pull fallback Docker image: $fallback_image"
         error "Run without --skip-build to build locally, or verify access to GHCR."
@@ -1257,8 +1257,8 @@ run_docker_bootstrap() {
     fi
   fi
 
-  config_mount="$docker_data_dir/.construct:/construct-data/.construct"
-  workspace_mount="$docker_data_dir/workspace:/construct-data/workspace"
+  config_mount="$docker_data_dir/.revka:/revka-data/.revka"
+  workspace_mount="$docker_data_dir/workspace:/revka-data/workspace"
   if [[ "$CONTAINER_CLI" == "podman" ]]; then
     config_mount+=":Z"
     workspace_mount+=":Z"
@@ -1295,20 +1295,20 @@ run_docker_bootstrap() {
     "$CONTAINER_CLI" run --rm -it \
       "${container_run_namespace_args[@]+"${container_run_namespace_args[@]}"}" \
       "${container_run_user_args[@]}" \
-      -e HOME=/construct-data \
-      -e CONSTRUCT_WORKSPACE=/construct-data/workspace \
+      -e HOME=/revka-data \
+      -e REVKA_WORKSPACE=/revka-data/workspace \
       -v "$config_mount" \
       -v "$workspace_mount" \
       "$docker_image" \
       "${onboard_cmd[@]}" || true
   else
-    info "Docker image ready. Run construct onboard inside the container to configure."
+    info "Docker image ready. Run revka onboard inside the container to configure."
   fi
 
   # Ensure config.toml and workspace scaffold exist on the host even when
   # onboard was skipped, failed, or ran non-interactively inside the container.
   ensure_default_config_and_workspace \
-    "$docker_data_dir/.construct" \
+    "$docker_data_dir/.revka" \
     "$docker_data_dir/workspace" \
     "$PROVIDER"
 }
@@ -1316,7 +1316,7 @@ run_docker_bootstrap() {
 SCRIPT_PATH="${BASH_SOURCE[0]:-$0}"
 SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" >/dev/null 2>&1 && pwd || pwd)"
 ROOT_DIR="$SCRIPT_DIR"
-REPO_URL="https://github.com/KumihoIO/construct-os.git"
+REPO_URL="https://github.com/KumihoIO/Revka.git"
 ORIGINAL_ARG_COUNT=$#
 GUIDED_MODE="auto"
 
@@ -1331,14 +1331,14 @@ SKIP_BUILD=false
 SKIP_INSTALL=false
 # --install-sidecars / --skip-sidecars: default behaviour is auto-detect
 # (install if operator-mcp/ is present in the checkout AND the launchers are
-# missing under ~/.construct/).  An explicit flag overrides detection.
+# missing under ~/.revka/).  An explicit flag overrides detection.
 INSTALL_SIDECARS_MODE="auto"
 PREBUILT_INSTALLED=false
-CONTAINER_CLI="${CONSTRUCT_CONTAINER_CLI:-docker}"
-API_KEY="${CONSTRUCT_API_KEY:-}"
-PROVIDER="${CONSTRUCT_PROVIDER:-openrouter}"
-MODEL="${CONSTRUCT_MODEL:-}"
-CARGO_FEATURES_INPUT="${CONSTRUCT_CARGO_FEATURES:-}"
+CONTAINER_CLI="${REVKA_CONTAINER_CLI:-docker}"
+API_KEY="${REVKA_API_KEY:-}"
+PROVIDER="${REVKA_PROVIDER:-openrouter}"
+MODEL="${REVKA_MODEL:-}"
+CARGO_FEATURES_INPUT="${REVKA_CARGO_FEATURES:-}"
 CARGO_NO_DEFAULT_FEATURES=false
 CARGO_FEATURES_CSV=""
 CARGO_FEATURE_ARGS=()
@@ -1478,11 +1478,11 @@ if [[ "$DOCKER_MODE" == true ]]; then
       warn "--install-rust is ignored with --docker."
   fi
 else
-  if [[ "$OS_NAME" == "Linux" && -z "${CONSTRUCT_DISABLE_ALPINE_AUTO_DEPS:-}" ]] && have_cmd apk; then
+  if [[ "$OS_NAME" == "Linux" && -z "${REVKA_DISABLE_ALPINE_AUTO_DEPS:-}" ]] && have_cmd apk; then
     find_missing_alpine_prereqs
     if [[ ${#ALPINE_MISSING_PKGS[@]} -gt 0 && "$INSTALL_SYSTEM_DEPS" == false ]]; then
       info "Detected Alpine with missing prerequisites: ${ALPINE_MISSING_PKGS[*]}"
-      info "Auto-enabling system dependency installation (set CONSTRUCT_DISABLE_ALPINE_AUTO_DEPS=1 to disable)."
+      info "Auto-enabling system dependency installation (set REVKA_DISABLE_ALPINE_AUTO_DEPS=1 to disable)."
       INSTALL_SYSTEM_DEPS=true
     fi
   fi
@@ -1494,7 +1494,7 @@ else
   # Always check Xcode/CLT license on macOS, regardless of --install-system-deps.
   # An un-accepted license causes `cc` to exit 69, breaking all Rust builds.
   if [[ "$OS_NAME" == "Darwin" ]]; then
-    _xcode_test_file="$(mktemp /tmp/construct-xcode-check.XXXXXX.c)"
+    _xcode_test_file="$(mktemp /tmp/revka-xcode-check.XXXXXX.c)"
     printf 'int main(){return 0;}\n' > "$_xcode_test_file"
     if ! cc -x c "$_xcode_test_file" -o /dev/null 2>/dev/null; then
       rm -f "$_xcode_test_file"
@@ -1509,7 +1509,7 @@ else
       if [[ "$_xcode_accept_ok" == true ]]; then
         step_ok "Xcode license accepted"
         # Re-test compilation to confirm it's fixed.
-        _xcode_test_file="$(mktemp /tmp/construct-xcode-check.XXXXXX.c)"
+        _xcode_test_file="$(mktemp /tmp/revka-xcode-check.XXXXXX.c)"
         printf 'int main(){return 0;}\n' > "$_xcode_test_file"
         if ! cc -x c "$_xcode_test_file" -o /dev/null 2>/dev/null; then
           rm -f "$_xcode_test_file"
@@ -1560,7 +1560,7 @@ if [[ ! -f "$WORK_DIR/Cargo.toml" ]]; then
       exit 1
     fi
 
-    TEMP_DIR="$(mktemp -d -t construct-bootstrap-XXXXXX)"
+    TEMP_DIR="$(mktemp -d -t revka-bootstrap-XXXXXX)"
     info "No local repository detected; cloning latest main branch"
     git clone --depth 1 --branch main "$REPO_URL" "$TEMP_DIR"
     WORK_DIR="$TEMP_DIR"
@@ -1569,7 +1569,7 @@ if [[ ! -f "$WORK_DIR/Cargo.toml" ]]; then
 fi
 
 echo
-echo -e "  ${BOLD_BLUE}${CRAB} Construct Installer${RESET}"
+echo -e "  ${BOLD_BLUE}${CRAB} Revka Installer${RESET}"
 echo -e "  ${DIM}Build it, run it, trust it.${RESET}"
 echo
 step_ok "Detected: ${BOLD}$(echo "$OS_NAME" | tr '[:upper:]' '[:lower:]')${RESET}"
@@ -1577,11 +1577,11 @@ step_ok "Detected: ${BOLD}$(echo "$OS_NAME" | tr '[:upper:]' '[:lower:]')${RESET
 # --- Detect existing installation and version ---
 EXISTING_VERSION=""
 INSTALL_MODE="fresh"
-if have_cmd construct; then
-  EXISTING_VERSION="$(construct --version 2>/dev/null | awk '{print $NF}' || true)"
+if have_cmd revka; then
+  EXISTING_VERSION="$(revka --version 2>/dev/null | awk '{print $NF}' || true)"
   INSTALL_MODE="upgrade"
-elif [[ -x "$HOME/.cargo/bin/construct" ]]; then
-  EXISTING_VERSION="$("$HOME/.cargo/bin/construct" --version 2>/dev/null | awk '{print $NF}' || true)"
+elif [[ -x "$HOME/.cargo/bin/revka" ]]; then
+  EXISTING_VERSION="$("$HOME/.cargo/bin/revka" --version 2>/dev/null | awk '{print $NF}' || true)"
   INSTALL_MODE="upgrade"
 fi
 
@@ -1609,9 +1609,9 @@ if [[ -n "$TARGET_VERSION" ]]; then
 fi
 step_dot "Workspace: $WORK_DIR"
 if [[ "$INSTALL_MODE" == "upgrade" && -n "$EXISTING_VERSION" ]]; then
-  step_dot "Existing Construct installation detected, upgrading from v${EXISTING_VERSION}"
+  step_dot "Existing Revka installation detected, upgrading from v${EXISTING_VERSION}"
 elif [[ "$INSTALL_MODE" == "upgrade" ]]; then
-  step_dot "Existing Construct installation detected, upgrading"
+  step_dot "Existing Revka installation detected, upgrading"
 fi
 
 cd "$WORK_DIR"
@@ -1631,15 +1631,15 @@ if [[ "$DOCKER_MODE" == true ]]; then
   echo
   echo -e "${BOLD_BLUE}${CRAB} Docker bootstrap complete!${RESET}"
   echo
-  echo -e "${BOLD}Your containerized Construct data is persisted under:${RESET}"
+  echo -e "${BOLD}Your containerized Revka data is persisted under:${RESET}"
   echo -e "  ${DIM}$DOCKER_DATA_DIR${RESET}"
   echo
   echo -e "${BOLD}Dashboard URL:${RESET} ${BLUE}http://127.0.0.1:42617${RESET}"
   echo
   echo -e "${BOLD}Next steps:${RESET}"
-  echo -e "  ${DIM}construct status${RESET}"
-  echo -e "  ${DIM}construct agent -m \"Hello, Construct!\"${RESET}"
-  echo -e "  ${DIM}construct gateway${RESET}"
+  echo -e "  ${DIM}revka status${RESET}"
+  echo -e "  ${DIM}revka agent -m \"Hello, Revka!\"${RESET}"
+  echo -e "  ${DIM}revka gateway${RESET}"
   echo
   echo -e "${BOLD}Docs:${RESET} ${BLUE}https://www.kumiho.io/docs${RESET}"
   exit 0
@@ -1703,9 +1703,9 @@ else
 fi
 
 echo
-echo -e "${BOLD_BLUE}[2/3]${RESET} ${BOLD}Installing Construct${RESET}"
+echo -e "${BOLD_BLUE}[2/3]${RESET} ${BOLD}Installing Revka${RESET}"
 if [[ -n "$TARGET_VERSION" ]]; then
-  step_dot "Installing Construct v${TARGET_VERSION}"
+  step_dot "Installing Revka v${TARGET_VERSION}"
 fi
 if [[ "$SKIP_BUILD" == false ]]; then
   # Clean stale build artifacts on upgrade to prevent bindgen/build-script
@@ -1743,15 +1743,15 @@ else
 fi
 
 if [[ "$SKIP_INSTALL" == false ]]; then
-  step_dot "Installing construct to cargo bin"
+  step_dot "Installing revka to cargo bin"
 
   # Same bash 3.2 + set -u + empty-array guard as the build call above.
   cargo install --path "$WORK_DIR" --force --locked ${CARGO_FEATURE_ARGS[@]+"${CARGO_FEATURE_ARGS[@]}"}
-  step_ok "Construct installed"
+  step_ok "Revka installed"
 
   # Sync binary to ~/.local/bin so PATH lookups find the fresh version
   if [[ -d "$HOME/.local/bin" ]]; then
-    cp -f "$HOME/.cargo/bin/construct" "$HOME/.local/bin/construct" 2>/dev/null && \
+    cp -f "$HOME/.cargo/bin/revka" "$HOME/.local/bin/revka" 2>/dev/null && \
       step_ok "Synced binary to ~/.local/bin" || true
   fi
 else
@@ -1787,18 +1787,18 @@ if [[ "$DEVICE_CLASS" == "desktop" ]]; then
   # Check if the companion app is already installed
   case "$OS_NAME" in
     Darwin)
-      if [[ -d "/Applications/Construct.app" ]] || [[ -d "$HOME/Applications/Construct.app" ]]; then
+      if [[ -d "/Applications/Revka.app" ]] || [[ -d "$HOME/Applications/Revka.app" ]]; then
         DESKTOP_APP_DETECTED=true
-        step_ok "Companion app found (Construct.app)"
+        step_ok "Companion app found (Revka.app)"
       fi
       ;;
     Linux)
-      if have_cmd construct-desktop; then
+      if have_cmd revka-desktop; then
         DESKTOP_APP_DETECTED=true
-        step_ok "Companion app found (construct-desktop)"
-      elif [[ -x "$HOME/.local/bin/construct-desktop" ]]; then
+        step_ok "Companion app found (revka-desktop)"
+      elif [[ -x "$HOME/.local/bin/revka-desktop" ]]; then
         DESKTOP_APP_DETECTED=true
-        step_ok "Companion app found (~/.local/bin/construct-desktop)"
+        step_ok "Companion app found (~/.local/bin/revka-desktop)"
       fi
       ;;
   esac
@@ -1806,7 +1806,7 @@ if [[ "$DEVICE_CLASS" == "desktop" ]]; then
   if [[ "$DESKTOP_APP_DETECTED" == false ]]; then
     echo
     echo -e "${BOLD}Companion App${RESET}"
-    echo -e "  Menu bar access to your Construct agent."
+    echo -e "  Menu bar access to your Revka agent."
     echo -e "  Works alongside the CLI — connects to the same gateway."
     echo
     case "$OS_NAME" in
@@ -1817,7 +1817,7 @@ if [[ "$DEVICE_CLASS" == "desktop" ]]; then
         echo -e "  ${BOLD}Download for Linux:${RESET} ${BLUE}${DESKTOP_DOWNLOAD_URL}${RESET}"
         ;;
     esac
-    echo -e "  ${DIM}Or run: construct desktop --install${RESET}"
+    echo -e "  ${DIM}Or run: revka desktop --install${RESET}"
   fi
 elif [[ "$DEVICE_CLASS" != "desktop" ]]; then
   # Non-desktop device — explain why companion app is not offered
@@ -1837,37 +1837,37 @@ elif [[ "$DEVICE_CLASS" != "desktop" ]]; then
   esac
 fi
 
-CONSTRUCT_BIN=""
-if [[ -x "$HOME/.cargo/bin/construct" ]]; then
-  CONSTRUCT_BIN="$HOME/.cargo/bin/construct"
-elif [[ -x "$WORK_DIR/target/release/construct" ]]; then
-  CONSTRUCT_BIN="$WORK_DIR/target/release/construct"
-elif have_cmd construct; then
-  CONSTRUCT_BIN="construct"
+REVKA_BIN=""
+if [[ -x "$HOME/.cargo/bin/revka" ]]; then
+  REVKA_BIN="$HOME/.cargo/bin/revka"
+elif [[ -x "$WORK_DIR/target/release/revka" ]]; then
+  REVKA_BIN="$WORK_DIR/target/release/revka"
+elif have_cmd revka; then
+  REVKA_BIN="revka"
 fi
 
 echo
 echo -e "${BOLD_BLUE}[3/3]${RESET} ${BOLD}Finalizing setup${RESET}"
 
 # --- Inline onboarding (provider + API key configuration) ---
-if [[ "$SKIP_ONBOARD" == false && -n "$CONSTRUCT_BIN" ]]; then
+if [[ "$SKIP_ONBOARD" == false && -n "$REVKA_BIN" ]]; then
   if [[ -n "$API_KEY" ]]; then
     step_dot "Configuring provider: ${PROVIDER}"
-    ONBOARD_CMD=("$CONSTRUCT_BIN" onboard --api-key "$API_KEY" --provider "$PROVIDER")
+    ONBOARD_CMD=("$REVKA_BIN" onboard --api-key "$API_KEY" --provider "$PROVIDER")
     if [[ -n "$MODEL" ]]; then
       ONBOARD_CMD+=(--model "$MODEL")
     fi
     if "${ONBOARD_CMD[@]}" 2>/dev/null; then
       step_ok "Provider configured"
     else
-      step_fail "Provider configuration failed — run construct onboard to retry"
+      step_fail "Provider configuration failed — run revka onboard to retry"
     fi
   elif [[ "$PROVIDER" == "ollama" ]]; then
     step_dot "Configuring Ollama (no API key needed)"
-    if "$CONSTRUCT_BIN" onboard --provider ollama 2>/dev/null; then
+    if "$REVKA_BIN" onboard --provider ollama 2>/dev/null; then
       step_ok "Ollama configured"
     else
-      step_fail "Ollama configuration failed — run construct onboard to retry"
+      step_fail "Ollama configuration failed — run revka onboard to retry"
     fi
   else
     # No API key and not ollama — prompt inline if interactive, skip otherwise
@@ -1875,41 +1875,41 @@ if [[ "$SKIP_ONBOARD" == false && -n "$CONSTRUCT_BIN" ]]; then
       prompt_provider
       prompt_api_key
       if [[ -n "$API_KEY" ]]; then
-        ONBOARD_CMD=("$CONSTRUCT_BIN" onboard --api-key "$API_KEY" --provider "$PROVIDER")
+        ONBOARD_CMD=("$REVKA_BIN" onboard --api-key "$API_KEY" --provider "$PROVIDER")
         if [[ -n "$MODEL" ]]; then
           ONBOARD_CMD+=(--model "$MODEL")
         fi
         if "${ONBOARD_CMD[@]}" 2>/dev/null; then
           step_ok "Provider configured"
         else
-          step_fail "Provider configuration failed — run construct onboard to retry"
+          step_fail "Provider configuration failed — run revka onboard to retry"
         fi
       fi
     else
-      step_dot "No API key provided — run construct onboard to configure"
+      step_dot "No API key provided — run revka onboard to configure"
     fi
   fi
 elif [[ "$SKIP_ONBOARD" == true ]]; then
-  step_dot "Skipping configuration (run construct onboard later)"
-elif [[ -z "$CONSTRUCT_BIN" ]]; then
-  warn "Construct binary not found — cannot configure provider"
+  step_dot "Skipping configuration (run revka onboard later)"
+elif [[ -z "$REVKA_BIN" ]]; then
+  warn "Revka binary not found — cannot configure provider"
 fi
 
 # Ensure config.toml and workspace scaffold exist even when onboard was
 # skipped, unavailable, or failed (e.g. --skip-build --prefer-prebuilt
 # without an API key, or when the binary could not run onboard).
-_native_config_dir="${CONSTRUCT_CONFIG_DIR:-$HOME/.construct}"
-_native_workspace_dir="${CONSTRUCT_WORKSPACE:-$_native_config_dir/workspace}"
+_native_config_dir="${REVKA_CONFIG_DIR:-$HOME/.revka}"
+_native_workspace_dir="${REVKA_WORKSPACE:-$_native_config_dir/workspace}"
 ensure_default_config_and_workspace "$_native_config_dir" "$_native_workspace_dir" "$PROVIDER"
 
 # --- Kumiho + Operator Python MCP sidecar installation ---
 # These sidecars back config.toml [kumiho] / [operator] mcp_path defaults.
 # Auto-install when operator-mcp/ exists in the checkout AND sidecars aren't
-# already present under ~/.construct/.  Disabled entirely by --skip-sidecars
+# already present under ~/.revka/.  Disabled entirely by --skip-sidecars
 # and forced on by --install-sidecars.
 _sidecar_script="$WORK_DIR/scripts/install-sidecars.sh"
-_kumiho_launcher="$HOME/.construct/kumiho/run_kumiho_mcp.py"
-_operator_launcher="$HOME/.construct/operator_mcp/run_operator_mcp.py"
+_kumiho_launcher="$HOME/.revka/kumiho/run_kumiho_mcp.py"
+_operator_launcher="$HOME/.revka/operator_mcp/run_operator_mcp.py"
 
 _should_install_sidecars=false
 case "$INSTALL_SIDECARS_MODE" in
@@ -1929,7 +1929,7 @@ if [[ "$_should_install_sidecars" == true ]]; then
     step_dot "Installing Python MCP sidecars (Kumiho + Operator)"
     if have_cmd python3 || have_cmd python; then
       if bash "$_sidecar_script" 2>&1 | sed 's/^/    /'; then
-        step_ok "Sidecars installed (~/.construct/kumiho, ~/.construct/operator_mcp)"
+        step_ok "Sidecars installed (~/.revka/kumiho, ~/.revka/operator_mcp)"
       else
         step_fail "Sidecar install reported errors — see docs/setup-guides/kumiho-operator-setup.md"
       fi
@@ -1945,47 +1945,47 @@ elif [[ "$INSTALL_SIDECARS_MODE" == "off" ]]; then
 fi
 
 # --- Gateway service management ---
-if [[ -n "$CONSTRUCT_BIN" ]]; then
+if [[ -n "$REVKA_BIN" ]]; then
   # Try to install and start the gateway service
   step_dot "Checking gateway service"
-  if "$CONSTRUCT_BIN" service install 2>/dev/null; then
+  if "$REVKA_BIN" service install 2>/dev/null; then
     step_ok "Gateway service installed"
-    if "$CONSTRUCT_BIN" service restart 2>/dev/null; then
+    if "$REVKA_BIN" service restart 2>/dev/null; then
       step_ok "Gateway service restarted"
 
     else
-      step_fail "Gateway service restart failed — re-run with construct service start"
+      step_fail "Gateway service restart failed — re-run with revka service start"
     fi
   else
-    step_dot "Gateway service not installed (run construct service install later)"
+    step_dot "Gateway service not installed (run revka service install later)"
   fi
 
   # --- Post-install doctor check ---
   step_dot "Running doctor to validate installation"
-  if "$CONSTRUCT_BIN" doctor 2>/dev/null; then
+  if "$REVKA_BIN" doctor 2>/dev/null; then
     step_ok "Doctor complete"
   else
-    warn "Doctor reported issues — run construct doctor --fix to resolve"
+    warn "Doctor reported issues — run revka doctor --fix to resolve"
   fi
 fi
 
 # --- Determine installed version ---
 INSTALLED_VERSION=""
-if [[ -n "$CONSTRUCT_BIN" ]]; then
-  INSTALLED_VERSION="$("$CONSTRUCT_BIN" --version 2>/dev/null | awk '{print $NF}' || true)"
+if [[ -n "$REVKA_BIN" ]]; then
+  INSTALLED_VERSION="$("$REVKA_BIN" --version 2>/dev/null | awk '{print $NF}' || true)"
 fi
 
 # --- Success banner ---
 echo
 if [[ -n "$INSTALLED_VERSION" ]]; then
-  echo -e "${BOLD_BLUE}${CRAB} Construct installed successfully (Construct ${INSTALLED_VERSION})!${RESET}"
+  echo -e "${BOLD_BLUE}${CRAB} Revka installed successfully (Revka ${INSTALLED_VERSION})!${RESET}"
 else
-  echo -e "${BOLD_BLUE}${CRAB} Construct installed successfully!${RESET}"
+  echo -e "${BOLD_BLUE}${CRAB} Revka installed successfully!${RESET}"
 fi
 
-if [[ -x "$HOME/.cargo/bin/construct" ]] && ! have_cmd construct; then
+if [[ -x "$HOME/.cargo/bin/revka" ]] && ! have_cmd revka; then
   echo
-  warn "construct is installed in $HOME/.cargo/bin, but that directory is not in PATH for this shell."
+  warn "revka is installed in $HOME/.cargo/bin, but that directory is not in PATH for this shell."
   warn 'Run: export PATH="$HOME/.cargo/bin:$PATH"'
   step_dot "To persist it, add that export line to ~/.bashrc, ~/.zshrc, or your shell profile, then open a new shell."
 fi
@@ -2042,14 +2042,14 @@ fi
 
 echo
 echo -e "${BOLD}Next steps:${RESET}"
-echo -e "  ${DIM}construct status${RESET}"
-echo -e "  ${DIM}construct agent -m \"Hello, Construct!\"${RESET}"
-echo -e "  ${DIM}construct gateway${RESET}"
+echo -e "  ${DIM}revka status${RESET}"
+echo -e "  ${DIM}revka agent -m \"Hello, Revka!\"${RESET}"
+echo -e "  ${DIM}revka gateway${RESET}"
 if [[ "$DEVICE_CLASS" == "desktop" ]]; then
   if [[ "$DESKTOP_APP_DETECTED" == true ]]; then
-    echo -e "  ${DIM}construct desktop${RESET}                ${DIM}# Launch the menu bar app${RESET}"
+    echo -e "  ${DIM}revka desktop${RESET}                ${DIM}# Launch the menu bar app${RESET}"
   else
-    echo -e "  ${DIM}construct desktop --install${RESET}      ${DIM}# Download the companion app${RESET}"
+    echo -e "  ${DIM}revka desktop --install${RESET}      ${DIM}# Download the companion app${RESET}"
   fi
 fi
 echo

@@ -1,7 +1,7 @@
 {
-  "name": "@construct/operator-mcp",
+  "name": "@revka/operator-mcp",
   "version": "0.2.0",
-  "description": "Construct Operator MCP Server — agent orchestration control plane",
+  "description": "Revka Operator MCP Server — agent orchestration control plane",
   "private": true,
   "type": "module",
   "workspaces": [

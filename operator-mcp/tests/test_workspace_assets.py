@@ -30,13 +30,13 @@ def _reset_token_cache():
 def fake_token(tmp_path, monkeypatch):
     token_file = tmp_path / "service-token"
     token_file.write_text("test-token-value-1234", encoding="utf-8")
-    monkeypatch.setenv("CONSTRUCT_SERVICE_TOKEN_PATH", str(token_file))
+    monkeypatch.setenv("REVKA_SERVICE_TOKEN_PATH", str(token_file))
     return b"test-token-value-1234"
 
 
 def test_sign_workspace_url_format(fake_token):
-    url = workspace_assets.sign_workspace_url("Construct/Images/foo.png", ttl_secs=3600)
-    assert url.startswith("/workspace/Construct/Images/foo.png?")
+    url = workspace_assets.sign_workspace_url("Revka/Images/foo.png", ttl_secs=3600)
+    assert url.startswith("/workspace/Revka/Images/foo.png?")
     # exp + sig query params present.
     m = re.search(r"\?exp=(\d+)&sig=([0-9a-f]+)$", url)
     assert m, f"unexpected URL shape: {url}"
@@ -53,19 +53,19 @@ def test_sign_uses_hmac_sha256_over_path_newline_exp(fake_token):
 
 
 def test_sign_strips_leading_slash_and_normalizes_separators(fake_token):
-    url = workspace_assets.sign_workspace_url("\\Construct\\Images\\foo.png")
-    assert url.startswith("/workspace/Construct/Images/foo.png?")
+    url = workspace_assets.sign_workspace_url("\\Revka\\Images\\foo.png")
+    assert url.startswith("/workspace/Revka/Images/foo.png?")
 
 
 def test_workspace_url_for_path_inside_workspace(tmp_path, fake_token):
     workspace = tmp_path / "ws"
-    nested = workspace / "Construct" / "Images"
+    nested = workspace / "Revka" / "Images"
     nested.mkdir(parents=True)
     target = nested / "foo.png"
     target.write_bytes(b"\x89PNG")
     url = workspace_assets.workspace_url_for_path(target, workspace)
     assert url is not None
-    assert url.startswith("/workspace/Construct/Images/foo.png?")
+    assert url.startswith("/workspace/Revka/Images/foo.png?")
 
 
 def test_workspace_url_for_path_outside_workspace_returns_none(tmp_path, fake_token):

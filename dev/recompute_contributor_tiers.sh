@@ -23,8 +23,8 @@ Options:
   -h, --help              Show this help
 
 Examples:
-  ./$SCRIPT_NAME --repo KumihoIO/construct-os --limit 50
-  ./$SCRIPT_NAME --repo KumihoIO/construct-os --kind prs --state open --apply
+  ./$SCRIPT_NAME --repo KumihoIO/Revka --limit 50
+  ./$SCRIPT_NAME --repo KumihoIO/Revka --kind prs --state open --apply
 USAGE
 }
 

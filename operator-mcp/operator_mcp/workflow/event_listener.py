@@ -1,4 +1,4 @@
-"""Event-driven workflow chaining for Construct.
+"""Event-driven workflow chaining for Revka.
 
 Listens for Kumiho ``revision.tagged`` events and triggers matching workflows
 based on registered trigger rules.  Each workflow can declare one or more
@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-from operator_mcp.construct_config import harness_project
+from operator_mcp.revka_config import harness_project
 from operator_mcp.workflow.schema import TriggerDef, WorkflowDef, WorkflowStatus
 
 try:
@@ -43,7 +43,7 @@ except ImportError:
 # Logging
 # ---------------------------------------------------------------------------
 
-_logger = logging.getLogger("construct.event_listener")
+_logger = logging.getLogger("revka.event_listener")
 _LAST_LIMITED_LOG_AT: dict[str, float] = {}
 _LIMITED_LOG_INTERVAL_SECS = 300.0
 
@@ -191,7 +191,7 @@ class WorkflowEventListener:
         self._registry = registry
         self._cwd = cwd or os.path.expanduser("~")
         self._cursor_path = cursor_path or os.path.expanduser(
-            "~/.construct/event_listener_cursor.txt"
+            "~/.revka/event_listener_cursor.txt"
         )
         self._task: asyncio.Task[None] | None = None
         self._poll_task: asyncio.Task[None] | None = None
@@ -217,8 +217,8 @@ class WorkflowEventListener:
 
     # -- Lifecycle ----------------------------------------------------------
 
-    _LISTENER_LOCK_PATH = os.path.expanduser("~/.construct/event_listener.lock")
-    _ENTITY_SEEN_PATH = os.path.expanduser("~/.construct/entity_trigger_seen.json")
+    _LISTENER_LOCK_PATH = os.path.expanduser("~/.revka/event_listener.lock")
+    _ENTITY_SEEN_PATH = os.path.expanduser("~/.revka/entity_trigger_seen.json")
     _ENTITY_POLL_INTERVAL_SECS = 30.0
 
     async def start(self) -> None:
@@ -337,7 +337,7 @@ class WorkflowEventListener:
                 # False).  Reset backoff for next potential restart.
                 backoff = 5
 
-    _STREAM_LOCK_PATH = os.path.expanduser("~/.construct/event_stream.lock")
+    _STREAM_LOCK_PATH = os.path.expanduser("~/.revka/event_stream.lock")
 
     def _sync_listen(self, cursor: str | None) -> bool:
         """Synchronous event stream consumption (runs in thread executor).
@@ -559,7 +559,7 @@ class WorkflowEventListener:
     # tag from yesterday gets re-delivered today and we'd re-launch the
     # same run_id.  Persisted to disk so dedup survives restart and
     # cross-process (mirror of the poller's seen-set at `_SEEN_PATH`).
-    _CLAIMED_RUNS_PATH = os.path.expanduser("~/.construct/event_listener_claimed_runs.json")
+    _CLAIMED_RUNS_PATH = os.path.expanduser("~/.revka/event_listener_claimed_runs.json")
     _claimed_runs: set[str] = set()
     _claimed_runs_loaded: bool = False
 
@@ -822,8 +822,8 @@ class WorkflowEventListener:
 
     # -- Persistent seen-set helpers -----------------------------------------
 
-    _SEEN_PATH = os.path.expanduser("~/.construct/poller_seen.json")
-    _LOCK_PATH = os.path.expanduser("~/.construct/poller.lock")
+    _SEEN_PATH = os.path.expanduser("~/.revka/poller_seen.json")
+    _LOCK_PATH = os.path.expanduser("~/.revka/poller.lock")
 
     def _load_seen(self) -> set[str]:
         """Load persistent seen-set from disk."""

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Local HTTP bridge from Construct to the Kumiho Python SDK.
+"""Local HTTP bridge from Revka to the Kumiho Python SDK.
 
 The bridge intentionally exposes a small FastAPI-compatible subset under
 ``/api/v1`` so the Rust gateway can bypass the hosted BFF for high-frequency
@@ -310,7 +310,7 @@ def _error_payload(exc: BaseException) -> dict[str, Any]:
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "ConstructKumihoSdkBridge/1"
+    server_version = "RevkaKumihoSdkBridge/1"
 
     def do_GET(self) -> None:  # noqa: N802
         self._handle("GET")
@@ -330,7 +330,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(int(status))
         self.send_header("content-type", "application/json")
         self.send_header("content-length", str(len(body)))
-        self.send_header("x-construct-kumiho-transport", "sdk-bridge")
+        self.send_header("x-revka-kumiho-transport", "sdk-bridge")
         self.end_headers()
         self.wfile.write(body)
 
@@ -584,7 +584,7 @@ def main() -> int:
     port = int(os.environ.get("KUMIHO_SDK_BRIDGE_PORT", "0") or "0")
     server = LoopbackThreadingHTTPServer((host, port), Handler)
     sys.stderr.write(
-        f"construct kumiho sdk bridge listening on http://{host}:{server.server_port}\n"
+        f"revka kumiho sdk bridge listening on http://{host}:{server.server_port}\n"
     )
     sys.stderr.flush()
     server.serve_forever()

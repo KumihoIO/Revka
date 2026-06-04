@@ -67,7 +67,7 @@ steps:
       kind: "qs-episode-final"
       tag: "published"
       name_pattern: "qs-*"
-      space: "Construct/WorkflowOutputs"
+      space: "Revka/WorkflowOutputs"
       mode: latest
       fields: [part, episode_number, episode_goal, arc_name]
       fail_if_missing: false
@@ -82,7 +82,7 @@ steps:
       kind: "qs-arc-plan"
       tag: "ready"
       name_pattern: "qs-arc-*"
-      space: "Construct/WorkflowOutputs"
+      space: "Revka/WorkflowOutputs"
       mode: latest
       fields: [part, arc_name, episode_range, arc_goal, continuity_context, episode_queue]
       fail_if_missing: false
@@ -535,7 +535,7 @@ steps:
       entity_name: "qs-arc-${inputs.arc_name}"
       entity_kind: "qs-arc-plan"
       entity_tag: "ready"
-      entity_space: "Construct/WorkflowOutputs"
+      entity_space: "Revka/WorkflowOutputs"
       entity_metadata:
         part: "${resolve_cursor.output_data.part}"
         part_input: "${inputs.part}"

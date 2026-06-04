@@ -1,4 +1,4 @@
-# Construct 트러블슈팅
+# Revka 트러블슈팅
 
 설치·런타임에서 자주 부딪히는 실패 사례와 빠른 해결 경로입니다.
 
@@ -78,10 +78,10 @@
 
 증상:
 
-- `cargo check` / `cargo build`가 한참 동안 `Checking construct`에서 멈춰 있음
+- `cargo check` / `cargo build`가 한참 동안 `Checking revka`에서 멈춰 있음
 - `Blocking waiting for file lock on package cache` 또는 `build directory` 메시지가 반복됨
 
-Construct에서 이런 일이 자주 일어나는 이유:
+Revka에서 이런 일이 자주 일어나는 이유:
 
 - Matrix E2EE 스택(`matrix-sdk`, `ruma`, `vodozemac`)은 크고 타입 체크 비용이 높습니다.
 - TLS·암호화 네이티브 빌드 스크립트(`aws-lc-sys`, `ring`)가 컴파일 시간을 눈에 띄게 늘립니다.
@@ -125,17 +125,17 @@ pgrep -af "cargo (check|build|test)|cargo check|cargo build|cargo test"
 
 본인 빌드를 시작하기 전에 관련 없는 cargo 작업은 정리하세요.
 
-### 설치 후에도 `construct` 명령을 찾을 수 없음
+### 설치 후에도 `revka` 명령을 찾을 수 없음
 
 증상:
 
-- 설치는 성공했는데 셸이 `construct`를 못 찾음
+- 설치는 성공했는데 셸이 `revka`를 못 찾음
 
 조치:
 
 ```bash
 export PATH="$HOME/.cargo/bin:$PATH"
-which construct
+which revka
 ```
 
 필요하면 셸 프로파일에도 추가해 두세요.
@@ -147,11 +147,11 @@ which construct
 점검:
 
 ```bash
-construct status
-construct doctor
+revka status
+revka doctor
 ```
 
-`~/.construct/config.toml` 확인 항목:
+`~/.revka/config.toml` 확인 항목:
 
 - `[gateway].host` (기본 `127.0.0.1`)
 - `[gateway].port` (기본 `42617`)
@@ -166,7 +166,7 @@ construct doctor
 3. 진단 재실행:
 
    ```bash
-   construct doctor
+   revka doctor
    ```
 
 ## 채널 이슈
@@ -180,14 +180,14 @@ construct doctor
 조치:
 
 - 해당 토큰에 대해 활성 런타임을 하나만 남기세요.
-- 잉여 `construct daemon` / `construct channel start` 프로세스를 정리하세요.
+- 잉여 `revka daemon` / `revka channel start` 프로세스를 정리하세요.
 
 ### `channel doctor`에서 채널이 unhealthy로 보임
 
 점검:
 
 ```bash
-construct channel doctor
+revka channel doctor
 ```
 
 이어서 채널별 자격 증명과 설정의 허용 목록 항목을 검증하세요.
@@ -199,26 +199,26 @@ construct channel doctor
 점검:
 
 ```bash
-construct service status
+revka service status
 ```
 
 복구:
 
 ```bash
-construct service stop
-construct service start
+revka service stop
+revka service start
 ```
 
 Linux 로그:
 
 ```bash
-journalctl --user -u construct.service -f
+journalctl --user -u revka.service -f
 ```
 
 ## 인스톨러 URL
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/KumihoIO/construct-os/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/KumihoIO/Revka/main/install.sh | bash
 ```
 
 ## 그래도 막혔다면
@@ -226,10 +226,10 @@ curl -fsSL https://raw.githubusercontent.com/KumihoIO/construct-os/main/install.
 이슈를 등록할 때 다음 출력을 함께 첨부해 주세요.
 
 ```bash
-construct --version
-construct status
-construct doctor
-construct channel doctor
+revka --version
+revka status
+revka doctor
+revka channel doctor
 ```
 
 OS, 설치 방법, 비밀이 제거된 설정 스니펫도 같이 적어 주세요.

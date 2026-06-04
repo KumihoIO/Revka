@@ -1,11 +1,11 @@
 [package]
-name = "construct-robot-kit"
+name = "revka-robot-kit"
 version = "0.1.0"
 edition = "2024"
 authors = ["Kumiho Inc."]
 license = "MIT OR Apache-2.0"
-description = "Robot control toolkit for Construct - drive, vision, speech, sensors, safety"
-repository = "https://github.com/KumihoIO/construct-os"
+description = "Robot control toolkit for Revka - drive, vision, speech, sensors, safety"
+repository = "https://github.com/KumihoIO/Revka"
 readme = "README.md"
 keywords = ["robotics", "raspberry-pi", "ai", "agent", "ros2"]
 categories = ["science::robotics", "embedded", "hardware-support"]
@@ -21,8 +21,8 @@ lidar = []            # LIDAR support
 vision = []           # Camera + vision model
 
 [dependencies]
-# Re-use construct's tool trait (optional - can also be standalone)
-# construct = { path = "../..", optional = true }
+# Re-use revka's tool trait (optional - can also be standalone)
+# revka = { path = "../..", optional = true }
 
 # Async runtime
 tokio = { version = "1.50", features = ["rt-multi-thread", "macros", "time", "sync", "process", "fs", "io-util"] }

@@ -1,6 +1,6 @@
 // Composio Tool Provider — optional managed tool surface with 1000+ OAuth integrations.
 //
-// When enabled, Construct can execute actions on Gmail, Notion, GitHub, Slack, etc.
+// When enabled, Revka can execute actions on Gmail, Notion, GitHub, Slack, etc.
 // through Composio's API without storing raw OAuth tokens locally.
 //
 // This is opt-in. Users who prefer sovereign/local-only mode skip this entirely.
@@ -526,7 +526,7 @@ impl ComposioTool {
     /// Fetch full metadata for a single tool by slug, including input/output parameter schemas.
     ///
     /// Calls `GET /api/v3/tools/{tool_slug}` which returns the detailed schema
-    /// the LLM needs to construct correct `params` for `execute`.
+    /// the LLM needs to revka correct `params` for `execute`.
     async fn get_tool_schema(&self, tool_slug: &str) -> anyhow::Result<serde_json::Value> {
         let slug = normalize_tool_slug(tool_slug);
         let url = format!("{COMPOSIO_API_BASE_V3}/tools/{slug}");

@@ -1,7 +1,7 @@
 //! Generic Kumiho API proxy.
 //!
 //! This route intentionally does not implement Kumiho transport policy itself.
-//! Auth is checked at the Construct gateway boundary, then all Kumiho network
+//! Auth is checked at the Revka gateway boundary, then all Kumiho network
 //! access goes through [`super::kumiho_client::KumihoClient`].
 
 use super::AppState;
@@ -23,13 +23,13 @@ fn raw_response_to_http(raw: RawKumihoResponse) -> Response {
     );
     if let Some(cache_state) = raw.cache_state {
         headers.insert(
-            HeaderName::from_static("x-construct-cache"),
+            HeaderName::from_static("x-revka-cache"),
             HeaderValue::from_static(cache_state),
         );
     }
     if let Some(transport) = raw.transport {
         headers.insert(
-            HeaderName::from_static("x-construct-kumiho-transport"),
+            HeaderName::from_static("x-revka-kumiho-transport"),
             HeaderValue::from_static(transport),
         );
     }
@@ -76,14 +76,14 @@ mod tests {
         assert_eq!(
             response
                 .headers()
-                .get("x-construct-kumiho-transport")
+                .get("x-revka-kumiho-transport")
                 .and_then(|v| v.to_str().ok()),
             Some("sdk-bridge"),
         );
         assert_eq!(
             response
                 .headers()
-                .get("x-construct-cache")
+                .get("x-revka-cache")
                 .and_then(|v| v.to_str().ok()),
             Some("hit"),
         );

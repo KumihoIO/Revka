@@ -1,14 +1,14 @@
 /**
  * Session Persistence — saves/restores agent state to disk.
  *
- * Agent state files live in ~/.construct/operator_mcp/agents/{agent_id}.json.
+ * Agent state files live in ~/.revka/operator_mcp/agents/{agent_id}.json.
  * On sidecar startup, persisted sessions with status "running" or "idle"
  * are eligible for resume via the Claude SDK's `resume` option.
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 const log = (msg) => process.stderr.write(`[session-mgr:persist] ${msg}\n`);
-const AGENTS_DIR = join(process.env.HOME ?? "~", ".construct/operator_mcp/agents");
+const AGENTS_DIR = join(process.env.HOME ?? "~", ".revka/operator_mcp/agents");
 /**
  * Ensure the agents state directory exists.
  */

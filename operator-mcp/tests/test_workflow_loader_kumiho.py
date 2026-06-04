@@ -35,7 +35,7 @@ class FakeKumihoSDK:
         return [
             {
                 "name": "workflow.yaml",
-                "location": "file:///Users/neo/.construct/workflows/metadata-backed-workflow.r7.yaml",
+                "location": "file:///Users/neo/.revka/workflows/metadata-backed-workflow.r7.yaml",
             }
         ]
 
@@ -53,7 +53,7 @@ async def test_kumiho_workflow_loads_from_metadata_when_artifact_path_is_remote(
     result = await loader._load_workflow_item_from_kumiho(
         {
             "item_name": "metadata-backed-workflow",
-            "kref": "kref://Construct/Workflows/metadata-backed-workflow.workflow",
+            "kref": "kref://Revka/Workflows/metadata-backed-workflow.workflow",
         }
     )
 
@@ -61,7 +61,7 @@ async def test_kumiho_workflow_loads_from_metadata_when_artifact_path_is_remote(
     workflow, item_kref, revision_kref = result
     assert workflow.name == "metadata-backed-workflow"
     assert workflow.steps[0].id == "draft"
-    assert item_kref == "kref://Construct/Workflows/metadata-backed-workflow.workflow"
+    assert item_kref == "kref://Revka/Workflows/metadata-backed-workflow.workflow"
     assert revision_kref.endswith("?r=7")
 
 
@@ -75,6 +75,6 @@ async def test_kumiho_workflow_errors_only_when_artifact_and_metadata_are_unusab
         await loader._load_workflow_item_from_kumiho(
             {
                 "item_name": "metadata-backed-workflow",
-                "kref": "kref://Construct/Workflows/metadata-backed-workflow.workflow",
+                "kref": "kref://Revka/Workflows/metadata-backed-workflow.workflow",
             }
         )

@@ -15,15 +15,15 @@ Common key patterns:
 
 ## 2. Inspection Paths
 
-<!-- TODO screenshot: terminal showing `construct sop list` output -->
-![Terminal showing construct sop list output](../../assets/reference/observability-01-sop-list.png)
+<!-- TODO screenshot: terminal showing `revka sop list` output -->
+![Terminal showing revka sop list output](../../assets/reference/observability-01-sop-list.png)
 
 ### 2.1 Definition-level CLI
 
 ```bash
-construct sop list
-construct sop validate [name]
-construct sop show <name>
+revka sop list
+revka sop validate [name]
+revka sop show <name>
 ```
 
 <!-- TODO screenshot: dashboard showing in-flight SOP runs and per-step gate status -->
@@ -38,11 +38,11 @@ SOP run state is queried from in-agent tools:
 - `sop_approve` — approve waiting run step
 - `sop_advance` — submit step result and move run forward
 
-<!-- TODO screenshot: Prometheus metrics endpoint response for Construct SOP execution counters -->
-![Prometheus metrics endpoint response for Construct SOP execution counters](../../assets/reference/observability-03-prometheus-metrics.png)
+<!-- TODO screenshot: Prometheus metrics endpoint response for Revka SOP execution counters -->
+![Prometheus metrics endpoint response for Revka SOP execution counters](../../assets/reference/observability-03-prometheus-metrics.png)
 
 ## 3. Metrics
 
 - `/metrics` exposes observer metrics when `[observability] backend = "prometheus"`.
-- Current exported names are `construct_*` families (general runtime metrics).
+- Current exported names are `revka_*` families (general runtime metrics).
 - SOP-specific aggregates are available through `sop_status` with `include_metrics: true`.

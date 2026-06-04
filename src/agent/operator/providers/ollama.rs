@@ -8,7 +8,7 @@ pub const TOOL_LAYER: &str = r#"
 
 === TOOL USAGE ===
 
-You have construct-operator tools available. To use a tool, call it by name with
+You have revka-operator tools available. To use a tool, call it by name with
 a JSON object containing the parameters.
 
 IMPORTANT: Follow these patterns exactly. Do not invent tool names or parameters.

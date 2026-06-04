@@ -1,4 +1,4 @@
-# Audit Logging for Construct
+# Audit Logging for Revka
 
 > ⚠️ **Status: Proposal / Roadmap**
 >
@@ -6,7 +6,7 @@
 > For current runtime behavior, see [config-reference.md](../reference/api/config-reference.md), [operations-runbook.md](../ops/operations-runbook.md), and [troubleshooting.md](../ops/troubleshooting.md).
 
 ## Problem
-Construct logs actions but lacks tamper-evident audit trails for:
+Revka logs actions but lacks tamper-evident audit trails for:
 - Who executed what command
 - When and from which channel
 - What resources were accessed
@@ -118,13 +118,13 @@ impl AuditLogger {
 ```toml
 [security.audit]
 enabled = true
-log_path = "~/.config/construct/audit.log"
+log_path = "~/.config/revka/audit.log"
 max_size_mb = 100
 rotate = "daily"  # daily | weekly | size
 
 # Tamper evidence
 sign_events = true
-signing_key_path = "~/.config/construct/audit.key"
+signing_key_path = "~/.config/revka/audit.key"
 
 # What to log
 log_commands = true
@@ -142,19 +142,19 @@ log_policy_violations = true
 
 ```bash
 # Show all commands executed by @alice
-construct audit --user @alice
+revka audit --user @alice
 
 # Show all high-risk commands
-construct audit --risk high
+revka audit --risk high
 
 # Show violations from last 24 hours
-construct audit --since 24h --violations-only
+revka audit --since 24h --violations-only
 
 # Export to JSON for analysis
-construct audit --format json --output audit.json
+revka audit --format json --output audit.json
 
 # Verify log integrity
-construct audit --verify-signatures
+revka audit --verify-signatures
 ```
 
 ---

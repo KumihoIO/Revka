@@ -50,7 +50,7 @@ import { apiOrigin, basePath } from './basePath';
 import {
   EDITOR_SESSION_HEADER,
   getEditorSessionId,
-} from '../construct/components/workflows/sessionId';
+} from '../revka/components/workflows/sessionId';
 
 // ---------------------------------------------------------------------------
 // Base fetch wrapper
@@ -93,7 +93,7 @@ export async function apiFetch<T = unknown>(
 
   if (response.status === 401) {
     clearToken();
-    window.dispatchEvent(new Event('construct-unauthorized'));
+    window.dispatchEvent(new Event('revka-unauthorized'));
     throw new UnauthorizedError();
   }
 
@@ -1145,7 +1145,7 @@ export async function fetchMemoryGraph(params?: {
 }
 
 // ---------------------------------------------------------------------------
-// Kumiho proxy — calls Kumiho via Construct gateway (/api/kumiho/*)
+// Kumiho proxy — calls Kumiho via Revka gateway (/api/kumiho/*)
 // ---------------------------------------------------------------------------
 
 export async function kumihoProxy<T>(

@@ -1,6 +1,6 @@
 # Mattermost 集成指南
 
-Construct 通过 REST API v4 原生支持与 Mattermost 集成。这种集成非常适合需要自主可控通信的自托管、私有或隔离网络环境。
+Revka 通过 REST API v4 原生支持与 Mattermost 集成。这种集成非常适合需要自主可控通信的自托管、私有或隔离网络环境。
 
 ## 前置条件
 
@@ -8,7 +8,7 @@ Construct 通过 REST API v4 原生支持与 Mattermost 集成。这种集成非
 2.  **机器人账户**：
     - 前往 **主菜单 > 集成 > 机器人账户**。
     - 点击 **添加机器人账户**。
-    - 设置用户名（例如 `construct-bot`）。
+    - 设置用户名（例如 `revka-bot`）。
     - 启用 **post:all** 和 **channel:read** 权限（或适当的作用域）。
     - 保存 **访问令牌**。
 3.  **频道 ID**：
@@ -39,18 +39,18 @@ mention_only = true
 | `channel_id` | （可选）要监听的频道 ID。`listen` 模式下必填。 |
 | `allowed_users` | （可选）允许与机器人交互的 Mattermost 用户 ID 列表。使用 `[\"*\"]` 允许所有用户。 |
 | `thread_replies` | （可选）是否在话题中回复顶层用户消息。默认：`true`。现有话题中的回复始终保持在话题内。 |
-| `mention_only` | （可选）当为 `true` 时，仅处理显式@机器人用户名的消息（例如 `@construct-bot`）。默认：`false`。 |
+| `mention_only` | （可选）当为 `true` 时，仅处理显式@机器人用户名的消息（例如 `@revka-bot`）。默认：`false`。 |
 
 ## 话题对话
 
-Construct 在两种模式下都支持 Mattermost 话题：
-- 如果用户在现有话题中发送消息，Construct 始终在同一个话题中回复。
+Revka 在两种模式下都支持 Mattermost 话题：
+- 如果用户在现有话题中发送消息，Revka 始终在同一个话题中回复。
 - 如果 `thread_replies = true`（默认），顶层消息会通过创建话题来回复。
 - 如果 `thread_replies = false`，顶层消息会在频道根层级回复。
 
 ## 仅@模式
 
-当 `mention_only = true` 时，Construct 在 `allowed_users` 授权后会应用额外的过滤：
+当 `mention_only = true` 时，Revka 在 `allowed_users` 授权后会应用额外的过滤：
 
 - 没有显式@机器人的消息会被忽略。
 - 包含 `@bot_username` 的消息会被处理。

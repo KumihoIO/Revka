@@ -8,7 +8,7 @@
 //!
 //! Session auth headers (required on `POST /mcp`):
 //! - `Authorization: Bearer <token>`
-//! - `X-Construct-Session: <session_id>`
+//! - `X-Revka-Session: <session_id>`
 //!
 //! `POST /mcp` dispatch:
 //! - `initialize`     → plain JSON response with server info + capabilities.
@@ -127,7 +127,7 @@ pub fn build_router(state: AppState) -> Router {
         .with_state(state)
 }
 
-/// Build an [`AppState`] with Construct's baseline tool registry (no Config).
+/// Build an [`AppState`] with Revka's baseline tool registry (no Config).
 ///
 /// Kept as the M1 entry point — returns the curated set of ~16 tools and no
 /// integrations. Tests targeting the baseline surface call this directly.
@@ -200,7 +200,7 @@ pub async fn serve_on(addr: SocketAddr, state: AppState) -> anyhow::Result<McpSe
             })
             .await;
         if let Err(e) = res {
-            tracing::error!("construct-mcp server exited: {e}");
+            tracing::error!("revka-mcp server exited: {e}");
         }
     });
 
@@ -219,7 +219,7 @@ pub async fn serve_on(addr: SocketAddr, state: AppState) -> anyhow::Result<McpSe
 /// handles (workspace manager, channel map, session store, …) can be
 /// threaded in.
 ///
-/// Attempts to load a real Construct `Config`. On failure falls back to the
+/// Attempts to load a real Revka `Config`. On failure falls back to the
 /// baseline registry so the server still advertises the curated tool set.
 pub async fn run_daemon(workspace_dir: PathBuf) -> anyhow::Result<()> {
     let _ = start_time();
@@ -227,14 +227,14 @@ pub async fn run_daemon(workspace_dir: PathBuf) -> anyhow::Result<()> {
     let (state, skipped) = match Box::pin(Config::load_or_init()).await {
         Ok(config) => {
             tracing::info!(
-                "mcp-server: loaded Construct config from {}",
+                "mcp-server: loaded Revka config from {}",
                 config.config_path.display()
             );
             state_from_config(&workspace_dir, &config)
         }
         Err(err) => {
             tracing::warn!(
-                "mcp-server: failed to load Construct config ({err}) — continuing with baseline registry"
+                "mcp-server: failed to load Revka config ({err}) — continuing with baseline registry"
             );
             default_state(&workspace_dir)
         }
@@ -257,10 +257,10 @@ pub async fn run_daemon(workspace_dir: PathBuf) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Absolute path of the MCP discovery file (`~/.construct/mcp.json`).
+/// Absolute path of the MCP discovery file (`~/.revka/mcp.json`).
 #[must_use]
 pub fn discovery_path() -> Option<PathBuf> {
-    directories::UserDirs::new().map(|u| u.home_dir().join(".construct").join("mcp.json"))
+    directories::UserDirs::new().map(|u| u.home_dir().join(".revka").join("mcp.json"))
 }
 
 /// Write the MCP discovery file atomically (tempfile + rename) so external
@@ -353,7 +353,7 @@ fn resolve_cwd(supplied: Option<&str>) -> PathBuf {
 /// GET /session/<session_id>/events — session-wide progress SSE stream.
 ///
 /// Auth: `Authorization: Bearer <token>` where `<token>` matches the token
-/// that was issued by `POST /session`. `X-Construct-Session` is not required
+/// that was issued by `POST /session`. `X-Revka-Session` is not required
 /// here because the session id is already in the URL.
 ///
 /// Every `ProgressEvent` published to the session's broadcast sender (by any
@@ -365,7 +365,7 @@ async fn session_events_handler(
     Path(session_id): Path<String>,
     headers: HeaderMap,
 ) -> Response {
-    // Reuse the `Authorization: Bearer <token>` header; `X-Construct-Session`
+    // Reuse the `Authorization: Bearer <token>` header; `X-Revka-Session`
     // would duplicate `session_id` so we skip it.
     let Some(token) = headers
         .get(header::AUTHORIZATION)
@@ -412,14 +412,14 @@ fn auth_or_401(headers: &HeaderMap) -> Result<(String, String), Response> {
         .and_then(|s| s.strip_prefix("Bearer "))
         .map(str::trim);
     let session_id = headers
-        .get("x-construct-session")
+        .get("x-revka-session")
         .and_then(|v| v.to_str().ok())
         .map(str::trim);
     match (bearer, session_id) {
         (Some(t), Some(s)) if !t.is_empty() && !s.is_empty() => Ok((s.to_string(), t.to_string())),
         _ => Err((
             StatusCode::UNAUTHORIZED,
-            "missing Authorization: Bearer <token> or X-Construct-Session header",
+            "missing Authorization: Bearer <token> or X-Revka-Session header",
         )
             .into_response()),
     }
@@ -468,7 +468,7 @@ fn initialize_result() -> Value {
             "tools": { "listChanged": false }
         },
         "serverInfo": {
-            "name": "construct-mcp",
+            "name": "revka-mcp",
             "version": env!("CARGO_PKG_VERSION"),
         }
     })

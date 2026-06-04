@@ -1,11 +1,11 @@
-# Construct Operator: Agent SDK Migration Plan
+# Revka Operator: Agent SDK Migration Plan
 
 ## Overview
 
 Replace the current fire-and-forget `claude --print` subprocess model with
 long-lived, multi-turn agent sessions using the **TypeScript Agent SDK**
 (`@anthropic-ai/claude-agent-sdk` v0.2.x) via a Node.js session manager
-sidecar — bringing Paseo-level orchestration to Construct.
+sidecar — bringing Paseo-level orchestration to Revka.
 
 The Python operator keeps its role as MCP tool dispatcher, Kumiho gRPC client,
 and state manager. The TS sidecar handles only agent lifecycle, streaming, and
@@ -31,7 +31,7 @@ gracefully to Python SDK, then to subprocess.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│ Construct Gateway (Rust)                                          │
+│ Revka Gateway (Rust)                                          │
 │   ├── REST API, WebSocket, TLS, Auth                            │
 │   ├── Channel Bridge (Slack, Discord, etc.)  ← agent events     │
 │   └── SSE / WebSocket to Dashboard                              │
@@ -62,7 +62,7 @@ gracefully to Python SDK, then to subprocess.
 
 ### Operator ↔ Session Manager Protocol
 
-Local HTTP API on a Unix socket (`~/.construct/operator_mcp/session-manager.sock`):
+Local HTTP API on a Unix socket (`~/.revka/operator_mcp/session-manager.sock`):
 
 ```
 POST   /agents              → create agent session
@@ -88,14 +88,14 @@ GET    /chat/rooms          → list rooms
 ### New module structure
 
 ```
-~/.construct/operator_mcp/
+~/.revka/operator_mcp/
 ├── operator_mcp.py          # MCP server entry, tool dispatch (slim ~400 lines)
 ├── kumiho_clients.py          # KumihoSDKClient, AgentPoolClient, TeamClient
 ├── agent_state.py             # ManagedAgent, SDKManagedAgent, AgentPool, timeline
 ├── agent_subprocess.py        # Legacy subprocess spawn/monitor (codex, fallback)
 ├── session_manager_client.py  # HTTP client to TS sidecar
 ├── chat_service.py            # ChatRoom, ChatMessage, mention routing
-├── gateway_client.py          # ConstructGatewayClient (cost, status, canvas, nodes)
+├── gateway_client.py          # RevkaGatewayClient (cost, status, canvas, nodes)
 ├── journal.py                 # SessionJournal (NDJSON persistence)
 ├── tool_handlers/
 │   ├── agents.py              # create_agent, wait, send, list, activity
@@ -252,7 +252,7 @@ app.get('/agents/:id/stream', (req, res) => {
 
 ## Phase 2 — Streaming Timeline & Channel Events
 
-**Goal:** Structured event log with broadcast to Construct channels.
+**Goal:** Structured event log with broadcast to Revka channels.
 
 ### 2.1 Timeline event model
 
@@ -326,10 +326,10 @@ const kumihoMemoryConfig: McpStdioServerConfig = {
     type: 'stdio',
     command: path.join(os.homedir(), '.kumiho/venv/bin/python3'),
     args: [path.join(os.homedir(),
-        '.construct/workspace/kumiho-plugins/claude/scripts/run_kumiho_mcp.py')],
+        '.revka/workspace/kumiho-plugins/claude/scripts/run_kumiho_mcp.py')],
     env: {
         CLAUDE_PLUGIN_ROOT: path.join(os.homedir(),
-            '.construct/workspace/kumiho-plugins/claude'),
+            '.revka/workspace/kumiho-plugins/claude'),
         KUMIHO_AUTO_CONFIGURE: '1',
     },
 };
@@ -408,7 +408,7 @@ When agent A posts with `mentions=[agent_B_id]`:
 
 ### 4.4 Channel visibility
 
-Chat room activity is forwarded to Construct channels:
+Chat room activity is forwarded to Revka channels:
 - Users can see agent-to-agent coordination in real-time
 - Users can post to chat rooms via channel commands
 - Enables human-in-the-loop team collaboration
@@ -416,17 +416,17 @@ Chat room activity is forwarded to Construct channels:
 ### 4.5 Persistence
 
 In-memory during session. Optionally persist to Kumiho
-(`Construct/ChatRooms/`) for cross-session continuity.
+(`Revka/ChatRooms/`) for cross-session continuity.
 
 ---
 
 ## Phase 5 — Orchestration Skills
 
-**Goal:** Port Paseo orchestration patterns as Construct skills.
+**Goal:** Port Paseo orchestration patterns as Revka skills.
 
 ### 5.1 Skills to port
 
-| Paseo Skill | Construct Equivalent | Key Pattern |
+| Paseo Skill | Revka Equivalent | Key Pattern |
 |-------------|-------------------|-------------|
 | `paseo-orchestrator` | `operator-orchestrator` | Chat-room-centric team coordination |
 | `paseo-loop` | `operator-loop` | Worker/verifier iterative cycles |
@@ -440,13 +440,13 @@ In-memory during session. Optionally persist to Kumiho
 - Replace `paseo chat` CLI → `chat_create/post/read` tools
 - Keep cross-provider review: Codex implements → Claude reviews
 - Keep provider strength guidance: Codex = methodical, Claude = fast tool use
-- Leverage Construct-specific features: agent pool, trust scores, budget governance
+- Leverage Revka-specific features: agent pool, trust scores, budget governance
 - Skills must work across channels (Slack, Discord, dashboard) — no CLI assumptions
 
 ### 5.3 Delivery
 
 Save as skills in `CognitiveMemory/Skills` via `capture_skill` tool, and
-optionally install via `~/.construct/skills/` directory.
+optionally install via `~/.revka/skills/` directory.
 
 ---
 
@@ -497,7 +497,7 @@ Permission requests that need user input:
 
 ### 7.1 Agent state file
 
-`~/.construct/operator_mcp/agents/{agent_id}.json`:
+`~/.revka/operator_mcp/agents/{agent_id}.json`:
 ```json
 {
     "id": "...",
@@ -603,7 +603,7 @@ as claude-code. The sidecar adds a process boundary but gains:
 
 ### Why not port everything to TypeScript
 
-Construct's operator has deep Python integrations:
+Revka's operator has deep Python integrations:
 - Kumiho gRPC via `kumiho` Python SDK (not available in JS)
 - 31 MCP tools with complex Kumiho state management
 - MCP server protocol via `mcp` Python library
@@ -628,8 +628,8 @@ painful retrofit later.
 
 - TypeScript Agent SDK: `@anthropic-ai/claude-agent-sdk` v0.2.89
 - Python Agent SDK: `claude-agent-sdk` v0.1.53 (fallback)
-- Paseo source: `~/.construct/workspace/paseo/packages/server/src/server/agent/`
+- Paseo source: `~/.revka/workspace/paseo/packages/server/src/server/agent/`
 - Claude Code source: `~/git/claude-code/src/`
-- Current operator: `~/.construct/operator_mcp/operator_mcp.py` (3,422 lines, 31 tools)
+- Current operator: `~/.revka/operator_mcp/operator_mcp.py` (3,422 lines, 31 tools)
 - SDK protocol: NDJSON over stdio (`--output-format=stream-json`)
-- Channel bridge: `construct/src/gateway/channels/`
+- Channel bridge: `revka/src/gateway/channels/`

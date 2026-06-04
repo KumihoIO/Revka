@@ -60,9 +60,9 @@ static RUNTIME_PROXY_CLIENT_CACHE: OnceLock<RwLock<HashMap<String, reqwest::Clie
 
 // ── Top-level config ──────────────────────────────────────────────
 
-/// Top-level Construct configuration, loaded from `config.toml`.
+/// Top-level Revka configuration, loaded from `config.toml`.
 ///
-/// Resolution order: `CONSTRUCT_WORKSPACE` env → `active_workspace.toml` marker → `~/.construct/config.toml`.
+/// Resolution order: `REVKA_WORKSPACE` env → `active_workspace.toml` marker → `~/.revka/config.toml`.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct Config {
     /// Workspace directory - computed from home, not serialized
@@ -71,7 +71,7 @@ pub struct Config {
     /// Path to config.toml - computed from home, not serialized
     #[serde(skip)]
     pub config_path: PathBuf,
-    /// API key for the selected provider. Overridden by `CONSTRUCT_API_KEY` or `API_KEY` env vars.
+    /// API key for the selected provider. Overridden by `REVKA_API_KEY` or `API_KEY` env vars.
     pub api_key: Option<String>,
     /// Base URL override for provider API (e.g. "http://10.0.0.1:11434" for remote Ollama)
     pub api_url: Option<String>,
@@ -95,14 +95,14 @@ pub struct Config {
     )]
     pub default_temperature: f64,
 
-    /// UI/CLI display language for interactive surfaces (`construct onboard`,
+    /// UI/CLI display language for interactive surfaces (`revka onboard`,
     /// future wizards). Default: `"en"`.
     ///
-    /// Resolution priority at runtime: `--lang` CLI flag → `CONSTRUCT_LANG`
+    /// Resolution priority at runtime: `--lang` CLI flag → `REVKA_LANG`
     /// env var → this config field → POSIX `LC_ALL`/`LANG` → English.
     /// Supported values: `"en"`, `"ko"`. Unrecognized values fall back to English.
     ///
-    /// This field is independent of `CONSTRUCT_LOCALE` / `tool_descriptions/`,
+    /// This field is independent of `REVKA_LOCALE` / `tool_descriptions/`,
     /// which control LLM-facing tool description translations and accept a
     /// wider locale set (e.g. `"zh-CN"`, `"ja-JP"`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -129,7 +129,7 @@ pub struct Config {
     /// `X-Title`) for request routing or policy enforcement. Headers defined here
     /// augment (and override) the program's default headers.
     ///
-    /// Can also be set via `CONSTRUCT_EXTRA_HEADERS` environment variable using
+    /// Can also be set via `REVKA_EXTRA_HEADERS` environment variable using
     /// the format `Key:Value,Key2:Value2`. Env var headers override config file headers.
     #[serde(default)]
     pub extra_headers: HashMap<String, String>,
@@ -425,7 +425,7 @@ pub struct Config {
     /// `tool_descriptions/<locale>.toml`. Falls back to English, then to
     /// hardcoded descriptions.
     ///
-    /// If omitted or empty, the locale is auto-detected from `CONSTRUCT_LOCALE`,
+    /// If omitted or empty, the locale is auto-detected from `REVKA_LOCALE`,
     /// `LANG`, or `LC_ALL` environment variables (defaulting to `"en"`).
     #[serde(default)]
     pub locale: Option<String>,
@@ -498,7 +498,7 @@ pub struct WorkspaceConfig {
 }
 
 fn default_workspaces_dir() -> String {
-    "~/.construct/workspaces".to_string()
+    "~/.revka/workspaces".to_string()
 }
 
 impl Default for WorkspaceConfig {
@@ -997,7 +997,7 @@ impl Default for McpConfig {
 /// Kumiho graph-memory integration (`[kumiho]` section).
 ///
 /// Controls automatic injection of the Kumiho MCP server and session-bootstrap
-/// system prompt into every non-internal agent.  Kumiho is Construct's canonical
+/// system prompt into every non-internal agent.  Kumiho is Revka's canonical
 /// persistent memory store; disable only for testing or air-gapped deployments.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct KumihoConfig {
@@ -1008,14 +1008,14 @@ pub struct KumihoConfig {
     /// Absolute path to the `run_kumiho_mcp.py` script.
     ///
     /// Supports tilde expansion.  Defaults to
-    /// `~/.construct/kumiho/run_kumiho_mcp.py`.
+    /// `~/.revka/kumiho/run_kumiho_mcp.py`.
     #[serde(default = "default_kumiho_mcp_path")]
     pub mcp_path: String,
 
     /// Kumiho project / space prefix used to scope memories.
     ///
     /// Memories are stored under `<space_prefix>/<context>`.  Defaults to
-    /// `"Construct"`.
+    /// `"Revka"`.
     #[serde(default = "default_kumiho_space_prefix")]
     pub space_prefix: String,
 
@@ -1040,11 +1040,11 @@ pub struct KumihoConfig {
 }
 
 fn default_kumiho_mcp_path() -> String {
-    "~/.construct/kumiho/run_kumiho_mcp.py".to_string()
+    "~/.revka/kumiho/run_kumiho_mcp.py".to_string()
 }
 
 fn default_kumiho_space_prefix() -> String {
-    "Construct".to_string()
+    "Revka".to_string()
 }
 
 fn default_kumiho_api_url() -> String {
@@ -1056,7 +1056,7 @@ fn default_kumiho_memory_project() -> String {
 }
 
 fn default_kumiho_harness_project() -> String {
-    "Construct".to_string()
+    "Revka".to_string()
 }
 
 fn default_kumiho_memory_retrieval_limit() -> usize {
@@ -1093,7 +1093,7 @@ pub struct OperatorConfig {
     /// Absolute path to the `run_operator_mcp.py` script.
     ///
     /// Supports tilde expansion.  Defaults to
-    /// `~/.construct/operator_mcp/run_operator_mcp.py`.
+    /// `~/.revka/operator_mcp/run_operator_mcp.py`.
     #[serde(default)]
     pub mcp_path: String,
 
@@ -1108,7 +1108,7 @@ pub struct OperatorConfig {
     pub max_tool_iterations: usize,
 
     /// Tool-call timeout in seconds for the auto-injected
-    /// `construct-operator` MCP server.
+    /// `revka-operator` MCP server.
     ///
     /// Some operator tools are inherently slow: codex image generation
     /// (typically 80–110 s/image with significant variance), workflow
@@ -1543,7 +1543,7 @@ pub struct AgentConfig {
     /// `gpt-5_5 = 1050000`.
     #[serde(default)]
     pub model_context_windows: HashMap<String, usize>,
-    /// Fraction of the model context window allowed before Construct fails loud.
+    /// Fraction of the model context window allowed before Revka fails loud.
     ///
     /// Defaults to `0.95` to leave headroom for provider-side accounting drift.
     #[serde(default = "default_context_window_safety_ratio")]
@@ -3097,7 +3097,7 @@ fn default_project_intel_language() -> String {
 }
 
 fn default_project_intel_report_dir() -> String {
-    "~/.construct/project-reports".into()
+    "~/.revka/project-reports".into()
 }
 
 fn default_project_intel_risk_sensitivity() -> String {
@@ -3473,7 +3473,7 @@ impl Default for PluginSecurityConfig {
 }
 
 fn default_plugins_dir() -> String {
-    "~/.construct/plugins".to_string()
+    "~/.revka/plugins".to_string()
 }
 
 fn default_max_plugins() -> usize {
@@ -3817,7 +3817,7 @@ impl Default for ClaudeCodeConfig {
 /// Claude Code task runner configuration (`[claude_code_runner]` section).
 ///
 /// Spawns Claude Code in a tmux session with HTTP hooks that POST tool
-/// execution events back to Construct's gateway, updating a Slack message
+/// execution events back to Revka's gateway, updating a Slack message
 /// in-place with progress plus an SSH handoff link.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ClaudeCodeRunnerConfig {
@@ -4033,9 +4033,9 @@ impl Default for OpenCodeCliConfig {
 pub enum ProxyScope {
     /// Use system environment proxy variables only.
     Environment,
-    /// Apply proxy to all Construct-managed HTTP traffic (default).
+    /// Apply proxy to all Revka-managed HTTP traffic (default).
     #[default]
-    Construct,
+    Revka,
     /// Apply proxy only to explicitly listed service selectors.
     Services,
 }
@@ -4074,7 +4074,7 @@ impl Default for ProxyConfig {
             https_proxy: None,
             all_proxy: None,
             no_proxy: Vec::new(),
-            scope: ProxyScope::Construct,
+            scope: ProxyScope::Revka,
             services: Vec::new(),
         }
     }
@@ -4147,7 +4147,7 @@ impl ProxyConfig {
 
         match self.scope {
             ProxyScope::Environment => false,
-            ProxyScope::Construct => true,
+            ProxyScope::Revka => true,
             ProxyScope::Services => {
                 let service_key = service_key.trim().to_ascii_lowercase();
                 if service_key.is_empty() {
@@ -4965,7 +4965,7 @@ fn find_header_end(buf: &[u8]) -> Option<usize> {
 fn parse_proxy_scope(raw: &str) -> Option<ProxyScope> {
     match raw.trim().to_ascii_lowercase().as_str() {
         "environment" | "env" => Some(ProxyScope::Environment),
-        "construct" | "internal" | "core" => Some(ProxyScope::Construct),
+        "revka" | "internal" | "core" => Some(ProxyScope::Revka),
         "services" | "service" => Some(ProxyScope::Services),
         _ => None,
     }
@@ -5048,7 +5048,7 @@ impl Default for StorageProviderConfig {
 
 /// Memory backend configuration (`[memory]` section).
 ///
-/// Persistent memory in Construct is handled exclusively by Kumiho MCP; this
+/// Persistent memory in Revka is handled exclusively by Kumiho MCP; this
 /// section controls in-session auto-save behaviour and response caching.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[allow(clippy::struct_excessive_bools)]
@@ -5208,7 +5208,7 @@ pub struct ObservabilityConfig {
     #[serde(default)]
     pub otel_endpoint: Option<String>,
 
-    /// Service name reported to the OTel collector. Defaults to "construct".
+    /// Service name reported to the OTel collector. Defaults to "revka".
     #[serde(default)]
     pub otel_service_name: Option<String>,
 
@@ -5379,7 +5379,7 @@ pub struct AutonomyConfig {
 
     /// Extra directory roots the agent may read/write outside the workspace.
     /// Supports absolute, `~/...`, and workspace-relative entries.
-    /// Defaults include Construct's workflow-definition store so Operator can
+    /// Defaults include Revka's workflow-definition store so Operator can
     /// inspect saved workflow YAMLs without requiring a per-user allowlist edit.
     /// Resolved paths under any of these roots pass `is_resolved_path_allowed`.
     #[serde(default = "default_allowed_roots")]
@@ -5394,7 +5394,7 @@ pub struct AutonomyConfig {
 }
 
 fn default_auto_approve() -> Vec<String> {
-    // Audit row 11: `memory_recall` removed from the default — Construct
+    // Audit row 11: `memory_recall` removed from the default — Revka
     // has no native `impl Tool` of that name, so listing it here just
     // produced a stale entry. Existing user configs that still reference
     // it continue to load (the merge logic preserves user entries) and
@@ -5418,7 +5418,7 @@ fn default_always_ask() -> Vec<String> {
 }
 
 fn default_allowed_roots() -> Vec<String> {
-    vec!["~/.construct/workflows".into()]
+    vec!["~/.revka/workflows".into()]
 }
 
 impl AutonomyConfig {
@@ -5437,7 +5437,7 @@ impl AutonomyConfig {
 /// Audit row 11/12: emit a one-line `tracing::warn!` per legacy bare
 /// `memory_*` tool name found in the user's config. These names previously
 /// appeared in default `auto_approve` / `gated_actions` lists but have no
-/// native `impl Tool` in Construct — recall and persistence are now handled
+/// native `impl Tool` in Revka — recall and persistence are now handled
 /// by the Kumiho-memory MCP. The warning is advisory only; the daemon
 /// continues to load and run the config.
 pub fn warn_on_legacy_memory_tool_names(config: &Config) {
@@ -5453,11 +5453,11 @@ pub fn warn_on_legacy_memory_tool_names(config: &Config) {
         ),
         (
             "memory_store",
-            "use `kumiho_memory_store` (Kumiho MCP) or `construct-operator__memory_store` (Operator MCP)",
+            "use `kumiho_memory_store` (Kumiho MCP) or `revka-operator__memory_store` (Operator MCP)",
         ),
         (
             "memory_search",
-            "use `kumiho_memory_engage` (Kumiho MCP) or `construct-operator__memory_search` (Operator MCP)",
+            "use `kumiho_memory_engage` (Kumiho MCP) or `revka-operator__memory_search` (Operator MCP)",
         ),
     ];
 
@@ -5482,7 +5482,7 @@ pub fn warn_on_legacy_memory_tool_names(config: &Config) {
             }
             tracing::warn!(
                 "Config references legacy tool name '{name}' in {fields}. \
-                 Construct has no native tool of that name — {hint}. \
+                 Revka has no native tool of that name — {hint}. \
                  The entry is harmless (no tool resolves to it) but should be \
                  removed to avoid confusion. See docs/audit-row-5-10-11-12-scrub-inventory.md.",
                 name = name,
@@ -6865,7 +6865,7 @@ pub struct MatrixConfig {
     #[serde(default = "default_multi_message_delay_ms")]
     pub multi_message_delay_ms: u64,
     /// Optional Matrix recovery key for automatic E2EE key backup restore.
-    /// When set, Construct recovers room keys and cross-signing secrets on startup.
+    /// When set, Revka recovers room keys and cross-signing secrets on startup.
     #[serde(default)]
     pub recovery_key: Option<String>,
 }
@@ -6961,7 +6961,7 @@ pub struct WhatsAppConfig {
     #[serde(default)]
     pub verify_token: Option<String>,
     /// App secret from Meta Business Suite (for webhook signature verification)
-    /// Can also be set via `CONSTRUCT_WHATSAPP_APP_SECRET` environment variable
+    /// Can also be set via `REVKA_WHATSAPP_APP_SECRET` environment variable
     /// Only used in Cloud API mode
     #[serde(default)]
     pub app_secret: Option<String>,
@@ -7001,13 +7001,13 @@ pub struct WhatsAppConfig {
     /// Regex patterns for DM mention gating (case-insensitive).
     /// When non-empty, only direct messages matching at least one pattern are
     /// processed; matched fragments are stripped from the forwarded content.
-    /// Example: `["@?Construct", "\\+?15555550123"]`
+    /// Example: `["@?Revka", "\\+?15555550123"]`
     #[serde(default)]
     pub dm_mention_patterns: Vec<String>,
     /// Regex patterns for group-chat mention gating (case-insensitive).
     /// When non-empty, only group messages matching at least one pattern are
     /// processed; matched fragments are stripped from the forwarded content.
-    /// Example: `["@?Construct", "\\+?15555550123"]`
+    /// Example: `["@?Revka", "\\+?15555550123"]`
     #[serde(default)]
     pub group_mention_patterns: Vec<String>,
     /// Per-channel proxy URL (http, https, socks5, socks5h).
@@ -7090,7 +7090,7 @@ pub struct NextcloudTalkConfig {
     pub app_token: String,
     /// Shared secret for webhook signature verification.
     ///
-    /// Can also be set via `CONSTRUCT_NEXTCLOUD_TALK_WEBHOOK_SECRET`.
+    /// Can also be set via `REVKA_NEXTCLOUD_TALK_WEBHOOK_SECRET`.
     #[serde(default)]
     pub webhook_secret: Option<String>,
     /// Allowed Nextcloud actor IDs (`[]` = deny all, `"*"` = allow all).
@@ -7100,7 +7100,7 @@ pub struct NextcloudTalkConfig {
     /// Overrides the global `[proxy]` setting for this channel only.
     #[serde(default)]
     pub proxy_url: Option<String>,
-    /// Display name of the bot in Nextcloud Talk (e.g. "construct").
+    /// Display name of the bot in Nextcloud Talk (e.g. "revka").
     /// Used to filter out the bot's own messages and prevent feedback loops.
     /// If not set, defaults to an empty string (no self-message filtering by name).
     #[serde(default)]
@@ -7189,7 +7189,7 @@ fn default_irc_port() -> u16 {
     6697
 }
 
-/// How Construct receives events from Feishu / Lark.
+/// How Revka receives events from Feishu / Lark.
 ///
 /// - `websocket` (default) — persistent WSS long-connection; no public URL required.
 /// - `webhook`             — HTTP callback server; requires a public HTTPS endpoint.
@@ -7334,7 +7334,7 @@ pub struct WebAuthnConfig {
     /// Relying Party origin URL (e.g. "https://example.com"). Default: "http://localhost:42617".
     #[serde(default = "default_webauthn_rp_origin")]
     pub rp_origin: String,
-    /// Relying Party display name. Default: "Construct".
+    /// Relying Party display name. Default: "Revka".
     #[serde(default = "default_webauthn_rp_name")]
     pub rp_name: String,
 }
@@ -7359,7 +7359,7 @@ fn default_webauthn_rp_origin() -> String {
 }
 
 fn default_webauthn_rp_name() -> String {
-    "Construct".into()
+    "Revka".into()
 }
 
 /// OTP validation strategy.
@@ -7426,7 +7426,7 @@ fn default_otp_challenge_max_attempts() -> u32 {
 
 fn default_otp_gated_actions() -> Vec<String> {
     // Audit row 11: `memory_forget` removed — there is no native tool of
-    // that name in Construct, so gating it here was a no-op that confused
+    // that name in Revka, so gating it here was a no-op that confused
     // operators reading the config.
     vec![
         "shell".to_string(),
@@ -7469,7 +7469,7 @@ pub struct EstopConfig {
 }
 
 fn default_estop_state_file() -> String {
-    "~/.construct/estop-state.json".to_string()
+    "~/.revka/estop-state.json".to_string()
 }
 
 impl Default for EstopConfig {
@@ -7484,7 +7484,7 @@ impl Default for EstopConfig {
 
 /// Nevis IAM integration configuration.
 ///
-/// When `enabled` is true, Construct validates incoming requests against a Nevis
+/// When `enabled` is true, Revka validates incoming requests against a Nevis
 /// Security Suite instance and maps Nevis roles to tool/workspace permissions.
 #[derive(Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -7517,7 +7517,7 @@ pub struct NevisConfig {
     #[serde(default)]
     pub jwks_url: Option<String>,
 
-    /// Nevis role to Construct permission mappings.
+    /// Nevis role to Revka permission mappings.
     #[serde(default)]
     pub role_mapping: Vec<NevisRoleMappingConfig>,
 
@@ -7623,7 +7623,7 @@ impl Default for NevisConfig {
     }
 }
 
-/// Maps a Nevis role to Construct tool permissions and workspace access.
+/// Maps a Nevis role to Revka tool permissions and workspace access.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct NevisRoleMappingConfig {
@@ -7632,7 +7632,7 @@ pub struct NevisRoleMappingConfig {
 
     /// Tool names this role can access. Use `"all"` for unrestricted tool access.
     #[serde(default)]
-    pub construct_permissions: Vec<String>,
+    pub revka_permissions: Vec<String>,
 
     /// Workspace names this role can access. Use `"all"` for unrestricted.
     #[serde(default)]
@@ -7741,7 +7741,7 @@ pub struct AuditConfig {
     #[serde(default = "default_audit_enabled")]
     pub enabled: bool,
 
-    /// Path to audit log file (relative to construct dir)
+    /// Path to audit log file (relative to revka dir)
     #[serde(default = "default_audit_log_path")]
     pub log_path: String,
 
@@ -7946,7 +7946,7 @@ impl ChannelConfig for BlueskyConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct VoiceWakeConfig {
     /// Wake word phrase to listen for (case-insensitive substring match).
-    /// Default: `"hey construct"`.
+    /// Default: `"hey revka"`.
     #[serde(default = "default_voice_wake_word")]
     pub wake_word: String,
     /// Silence timeout in milliseconds — how long to wait after the last
@@ -7965,7 +7965,7 @@ pub struct VoiceWakeConfig {
 
 #[cfg(feature = "voice-wake")]
 fn default_voice_wake_word() -> String {
-    "hey construct".into()
+    "hey revka".into()
 }
 
 #[cfg(feature = "voice-wake")]
@@ -8374,7 +8374,7 @@ pub struct SecurityOpsConfig {
 }
 
 fn default_playbooks_dir() -> String {
-    "~/.construct/playbooks".into()
+    "~/.revka/playbooks".into()
 }
 
 fn default_require_approval() -> bool {
@@ -8386,7 +8386,7 @@ fn default_max_auto_severity() -> String {
 }
 
 fn default_report_output_dir() -> String {
-    "~/.construct/security-reports".into()
+    "~/.revka/security-reports".into()
 }
 
 impl Default for SecurityOpsConfig {
@@ -8409,11 +8409,11 @@ impl Default for Config {
     fn default() -> Self {
         let home =
             UserDirs::new().map_or_else(|| PathBuf::from("."), |u| u.home_dir().to_path_buf());
-        let construct_dir = home.join(".construct");
+        let revka_dir = home.join(".revka");
 
         Self {
-            workspace_dir: construct_dir.join("workspace"),
-            config_path: construct_dir.join("config.toml"),
+            workspace_dir: revka_dir.join("workspace"),
+            config_path: revka_dir.join("config.toml"),
             api_key: None,
             api_url: None,
             api_path: None,
@@ -8517,14 +8517,14 @@ struct ActiveWorkspaceState {
 fn default_config_dir() -> Result<PathBuf> {
     if let Ok(home) = std::env::var("HOME") {
         if !home.is_empty() {
-            return Ok(PathBuf::from(home).join(".construct"));
+            return Ok(PathBuf::from(home).join(".revka"));
         }
     }
 
     let home = UserDirs::new()
         .map(|u| u.home_dir().to_path_buf())
         .context("Could not find home directory")?;
-    Ok(home.join(".construct"))
+    Ok(home.join(".revka"))
 }
 
 fn active_workspace_state_path(default_dir: &Path) -> PathBuf {
@@ -8672,9 +8672,7 @@ pub(crate) fn resolve_config_dir_for_workspace(workspace_dir: &Path) -> (PathBuf
         );
     }
 
-    let legacy_config_dir = workspace_dir
-        .parent()
-        .map(|parent| parent.join(".construct"));
+    let legacy_config_dir = workspace_dir.parent().map(|parent| parent.join(".revka"));
     if let Some(legacy_dir) = legacy_config_dir {
         if legacy_dir.join("config.toml").exists() {
             return (legacy_dir, workspace_config_dir);
@@ -8697,11 +8695,11 @@ pub(crate) fn resolve_config_dir_for_workspace(workspace_dir: &Path) -> (PathBuf
 /// Resolve the current runtime config/workspace directories for onboarding flows.
 ///
 /// This mirrors the same precedence used by `Config::load_or_init()`:
-/// `CONSTRUCT_CONFIG_DIR` > `CONSTRUCT_WORKSPACE` > active workspace marker > defaults.
+/// `REVKA_CONFIG_DIR` > `REVKA_WORKSPACE` > active workspace marker > defaults.
 pub async fn resolve_runtime_dirs_for_onboarding() -> Result<(PathBuf, PathBuf)> {
-    let (default_construct_dir, default_workspace_dir) = default_config_and_workspace_dirs()?;
+    let (default_revka_dir, default_workspace_dir) = default_config_and_workspace_dirs()?;
     let (config_dir, workspace_dir, _) =
-        resolve_runtime_config_dirs(&default_construct_dir, &default_workspace_dir).await?;
+        resolve_runtime_config_dirs(&default_revka_dir, &default_workspace_dir).await?;
     Ok((config_dir, workspace_dir))
 }
 
@@ -8716,8 +8714,8 @@ enum ConfigResolutionSource {
 impl ConfigResolutionSource {
     const fn as_str(self) -> &'static str {
         match self {
-            Self::EnvConfigDir => "CONSTRUCT_CONFIG_DIR",
-            Self::EnvWorkspace => "CONSTRUCT_WORKSPACE",
+            Self::EnvConfigDir => "REVKA_CONFIG_DIR",
+            Self::EnvWorkspace => "REVKA_WORKSPACE",
             Self::ActiveWorkspaceMarker => "active_workspace.toml",
             Self::DefaultConfigDir => "default",
         }
@@ -8754,45 +8752,45 @@ fn expand_tilde_path(path: &str) -> PathBuf {
 }
 
 async fn resolve_runtime_config_dirs(
-    default_construct_dir: &Path,
+    default_revka_dir: &Path,
     default_workspace_dir: &Path,
 ) -> Result<(PathBuf, PathBuf, ConfigResolutionSource)> {
-    if let Ok(custom_config_dir) = std::env::var("CONSTRUCT_CONFIG_DIR") {
+    if let Ok(custom_config_dir) = std::env::var("REVKA_CONFIG_DIR") {
         let custom_config_dir = custom_config_dir.trim();
         if !custom_config_dir.is_empty() {
-            let construct_dir = expand_tilde_path(custom_config_dir);
+            let revka_dir = expand_tilde_path(custom_config_dir);
             return Ok((
-                construct_dir.clone(),
-                construct_dir.join("workspace"),
+                revka_dir.clone(),
+                revka_dir.join("workspace"),
                 ConfigResolutionSource::EnvConfigDir,
             ));
         }
     }
 
-    if let Ok(custom_workspace) = std::env::var("CONSTRUCT_WORKSPACE") {
+    if let Ok(custom_workspace) = std::env::var("REVKA_WORKSPACE") {
         if !custom_workspace.is_empty() {
             let expanded = expand_tilde_path(&custom_workspace);
-            let (construct_dir, workspace_dir) = resolve_config_dir_for_workspace(&expanded);
+            let (revka_dir, workspace_dir) = resolve_config_dir_for_workspace(&expanded);
             return Ok((
-                construct_dir,
+                revka_dir,
                 workspace_dir,
                 ConfigResolutionSource::EnvWorkspace,
             ));
         }
     }
 
-    if let Some((construct_dir, workspace_dir)) =
-        load_persisted_workspace_dirs(default_construct_dir).await?
+    if let Some((revka_dir, workspace_dir)) =
+        load_persisted_workspace_dirs(default_revka_dir).await?
     {
         return Ok((
-            construct_dir,
+            revka_dir,
             workspace_dir,
             ConfigResolutionSource::ActiveWorkspaceMarker,
         ));
     }
 
     Ok((
-        default_construct_dir.to_path_buf(),
+        default_revka_dir.to_path_buf(),
         default_workspace_dir.to_path_buf(),
         ConfigResolutionSource::DefaultConfigDir,
     ))
@@ -8861,7 +8859,7 @@ fn encrypt_secret(
 fn config_dir_creation_error(path: &Path) -> String {
     format!(
         "Failed to create config directory: {}. If running as an OpenRC service, \
-         ensure this path is writable by user 'construct'.",
+         ensure this path is writable by user 'revka'.",
         path.display()
     )
 }
@@ -8885,7 +8883,7 @@ fn has_ollama_cloud_credential(config_api_key: Option<&str>) -> bool {
         return true;
     }
 
-    ["OLLAMA_API_KEY", "CONSTRUCT_API_KEY", "API_KEY"]
+    ["OLLAMA_API_KEY", "REVKA_API_KEY", "API_KEY"]
         .iter()
         .any(|name| {
             std::env::var(name)
@@ -8894,7 +8892,7 @@ fn has_ollama_cloud_credential(config_api_key: Option<&str>) -> bool {
         })
 }
 
-/// Parse the `CONSTRUCT_EXTRA_HEADERS` environment variable value.
+/// Parse the `REVKA_EXTRA_HEADERS` environment variable value.
 ///
 /// Format: `Key:Value,Key2:Value2`
 ///
@@ -8911,7 +8909,7 @@ pub fn parse_extra_headers_env(raw: &str) -> Vec<(String, String)> {
             let key = key.trim();
             let value = value.trim();
             if key.is_empty() {
-                tracing::warn!("Ignoring extra header with empty name in CONSTRUCT_EXTRA_HEADERS");
+                tracing::warn!("Ignoring extra header with empty name in REVKA_EXTRA_HEADERS");
                 continue;
             }
             result.push((key.to_string(), value.to_string()));
@@ -8951,7 +8949,7 @@ fn read_codex_openai_api_key() -> Option<String> {
 
 /// Ensure that essential bootstrap files exist in the workspace directory.
 ///
-/// When the workspace is created outside of `construct onboard` (e.g., non-tty
+/// When the workspace is created outside of `revka onboard` (e.g., non-tty
 /// daemon/cron sessions), these files would otherwise be missing. This function
 /// creates sensible defaults that allow the agent to operate with a basic identity.
 async fn ensure_bootstrap_files(workspace_dir: &Path) -> Result<()> {
@@ -8959,7 +8957,7 @@ async fn ensure_bootstrap_files(workspace_dir: &Path) -> Result<()> {
         (
             "IDENTITY.md",
             "# IDENTITY.md — Who Am I?\n\n\
-             I am Construct, an autonomous AI agent.\n\n\
+             I am Revka, an autonomous AI agent.\n\n\
              ## Traits\n\
              - Helpful, precise, and safety-conscious\n\
              - I prioritize clarity and correctness\n",
@@ -8967,7 +8965,7 @@ async fn ensure_bootstrap_files(workspace_dir: &Path) -> Result<()> {
         (
             "SOUL.md",
             "# SOUL.md — Who You Are\n\n\
-             You are Construct, an autonomous AI agent.\n\n\
+             You are Revka, an autonomous AI agent.\n\n\
              ## Core Principles\n\
              - Be helpful and accurate\n\
              - Respect user intent and boundaries\n\
@@ -8990,16 +8988,16 @@ async fn ensure_bootstrap_files(workspace_dir: &Path) -> Result<()> {
 
 impl Config {
     pub async fn load_or_init() -> Result<Self> {
-        let (default_construct_dir, default_workspace_dir) = default_config_and_workspace_dirs()?;
+        let (default_revka_dir, default_workspace_dir) = default_config_and_workspace_dirs()?;
 
-        let (construct_dir, workspace_dir, resolution_source) =
-            resolve_runtime_config_dirs(&default_construct_dir, &default_workspace_dir).await?;
+        let (revka_dir, workspace_dir, resolution_source) =
+            resolve_runtime_config_dirs(&default_revka_dir, &default_workspace_dir).await?;
 
-        let config_path = construct_dir.join("config.toml");
+        let config_path = revka_dir.join("config.toml");
 
-        fs::create_dir_all(&construct_dir)
+        fs::create_dir_all(&revka_dir)
             .await
-            .with_context(|| config_dir_creation_error(&construct_dir))?;
+            .with_context(|| config_dir_creation_error(&revka_dir))?;
         fs::create_dir_all(&workspace_dir)
             .await
             .context("Failed to create workspace directory")?;
@@ -9092,7 +9090,7 @@ impl Config {
             // Set computed paths that are skipped during serialization
             config.config_path = config_path.clone();
             config.workspace_dir = workspace_dir;
-            let store = crate::security::SecretStore::new(&construct_dir, config.secrets.encrypt);
+            let store = crate::security::SecretStore::new(&revka_dir, config.secrets.encrypt);
             decrypt_optional_secret(&store, &mut config.api_key, "config.api_key")?;
             decrypt_optional_secret(
                 &store,
@@ -10158,8 +10156,8 @@ impl Config {
 
     /// Apply environment variable overrides to config
     pub fn apply_env_overrides(&mut self) {
-        // API Key: CONSTRUCT_API_KEY or API_KEY (generic)
-        if let Ok(key) = std::env::var("CONSTRUCT_API_KEY").or_else(|_| std::env::var("API_KEY")) {
+        // API Key: REVKA_API_KEY or API_KEY (generic)
+        if let Ok(key) = std::env::var("REVKA_API_KEY").or_else(|_| std::env::var("API_KEY")) {
             if !key.is_empty() {
                 self.api_key = Some(key);
             }
@@ -10183,15 +10181,15 @@ impl Config {
         }
 
         // Provider override precedence:
-        // 1) CONSTRUCT_PROVIDER always wins when set.
-        // 2) CONSTRUCT_MODEL_PROVIDER/MODEL_PROVIDER (Codex app-server style).
+        // 1) REVKA_PROVIDER always wins when set.
+        // 2) REVKA_MODEL_PROVIDER/MODEL_PROVIDER (Codex app-server style).
         // 3) Legacy PROVIDER is honored only when config still uses default provider.
-        if let Ok(provider) = std::env::var("CONSTRUCT_PROVIDER") {
+        if let Ok(provider) = std::env::var("REVKA_PROVIDER") {
             if !provider.is_empty() {
                 self.default_provider = Some(provider);
             }
         } else if let Ok(provider) =
-            std::env::var("CONSTRUCT_MODEL_PROVIDER").or_else(|_| std::env::var("MODEL_PROVIDER"))
+            std::env::var("REVKA_MODEL_PROVIDER").or_else(|_| std::env::var("MODEL_PROVIDER"))
         {
             if !provider.is_empty() {
                 self.default_provider = Some(provider);
@@ -10206,15 +10204,15 @@ impl Config {
             }
         }
 
-        // Model: CONSTRUCT_MODEL or MODEL
-        if let Ok(model) = std::env::var("CONSTRUCT_MODEL").or_else(|_| std::env::var("MODEL")) {
+        // Model: REVKA_MODEL or MODEL
+        if let Ok(model) = std::env::var("REVKA_MODEL").or_else(|_| std::env::var("MODEL")) {
             if !model.is_empty() {
                 self.default_model = Some(model);
             }
         }
 
-        // Provider HTTP timeout: CONSTRUCT_PROVIDER_TIMEOUT_SECS
-        if let Ok(timeout_secs) = std::env::var("CONSTRUCT_PROVIDER_TIMEOUT_SECS") {
+        // Provider HTTP timeout: REVKA_PROVIDER_TIMEOUT_SECS
+        if let Ok(timeout_secs) = std::env::var("REVKA_PROVIDER_TIMEOUT_SECS") {
             if let Ok(timeout_secs) = timeout_secs.parse::<u64>() {
                 if timeout_secs > 0 {
                     self.provider_timeout_secs = timeout_secs;
@@ -10222,10 +10220,10 @@ impl Config {
             }
         }
 
-        // Extra provider headers: CONSTRUCT_EXTRA_HEADERS
+        // Extra provider headers: REVKA_EXTRA_HEADERS
         // Format: "Key:Value,Key2:Value2"
         // Env var headers override config file headers with the same name.
-        if let Ok(raw) = std::env::var("CONSTRUCT_EXTRA_HEADERS") {
+        if let Ok(raw) = std::env::var("REVKA_EXTRA_HEADERS") {
             for header in parse_extra_headers_env(&raw) {
                 self.extra_headers.insert(header.0, header.1);
             }
@@ -10234,8 +10232,8 @@ impl Config {
         // Apply named provider profile remapping (Codex app-server compatibility).
         self.apply_named_model_provider_profile();
 
-        // Workspace directory: CONSTRUCT_WORKSPACE
-        if let Ok(workspace) = std::env::var("CONSTRUCT_WORKSPACE") {
+        // Workspace directory: REVKA_WORKSPACE
+        if let Ok(workspace) = std::env::var("REVKA_WORKSPACE") {
             if !workspace.is_empty() {
                 let expanded = expand_tilde_path(&workspace);
                 let (_, workspace_dir) = resolve_config_dir_for_workspace(&expanded);
@@ -10243,105 +10241,101 @@ impl Config {
             }
         }
 
-        // Open-skills opt-in flag: CONSTRUCT_OPEN_SKILLS_ENABLED
-        if let Ok(flag) = std::env::var("CONSTRUCT_OPEN_SKILLS_ENABLED") {
+        // Open-skills opt-in flag: REVKA_OPEN_SKILLS_ENABLED
+        if let Ok(flag) = std::env::var("REVKA_OPEN_SKILLS_ENABLED") {
             if !flag.trim().is_empty() {
                 match flag.trim().to_ascii_lowercase().as_str() {
                     "1" | "true" | "yes" | "on" => self.skills.open_skills_enabled = true,
                     "0" | "false" | "no" | "off" => self.skills.open_skills_enabled = false,
                     _ => tracing::warn!(
-                        "Ignoring invalid CONSTRUCT_OPEN_SKILLS_ENABLED (valid: 1|0|true|false|yes|no|on|off)"
+                        "Ignoring invalid REVKA_OPEN_SKILLS_ENABLED (valid: 1|0|true|false|yes|no|on|off)"
                     ),
                 }
             }
         }
 
-        // Open-skills directory override: CONSTRUCT_OPEN_SKILLS_DIR
-        if let Ok(path) = std::env::var("CONSTRUCT_OPEN_SKILLS_DIR") {
+        // Open-skills directory override: REVKA_OPEN_SKILLS_DIR
+        if let Ok(path) = std::env::var("REVKA_OPEN_SKILLS_DIR") {
             let trimmed = path.trim();
             if !trimmed.is_empty() {
                 self.skills.open_skills_dir = Some(trimmed.to_string());
             }
         }
 
-        // Skills script-file audit override: CONSTRUCT_SKILLS_ALLOW_SCRIPTS
-        if let Ok(flag) = std::env::var("CONSTRUCT_SKILLS_ALLOW_SCRIPTS") {
+        // Skills script-file audit override: REVKA_SKILLS_ALLOW_SCRIPTS
+        if let Ok(flag) = std::env::var("REVKA_SKILLS_ALLOW_SCRIPTS") {
             if !flag.trim().is_empty() {
                 match flag.trim().to_ascii_lowercase().as_str() {
                     "1" | "true" | "yes" | "on" => self.skills.allow_scripts = true,
                     "0" | "false" | "no" | "off" => self.skills.allow_scripts = false,
                     _ => tracing::warn!(
-                        "Ignoring invalid CONSTRUCT_SKILLS_ALLOW_SCRIPTS (valid: 1|0|true|false|yes|no|on|off)"
+                        "Ignoring invalid REVKA_SKILLS_ALLOW_SCRIPTS (valid: 1|0|true|false|yes|no|on|off)"
                     ),
                 }
             }
         }
 
-        // Skills prompt mode override: CONSTRUCT_SKILLS_PROMPT_MODE
-        if let Ok(mode) = std::env::var("CONSTRUCT_SKILLS_PROMPT_MODE") {
+        // Skills prompt mode override: REVKA_SKILLS_PROMPT_MODE
+        if let Ok(mode) = std::env::var("REVKA_SKILLS_PROMPT_MODE") {
             if !mode.trim().is_empty() {
                 if let Some(parsed) = parse_skills_prompt_injection_mode(&mode) {
                     self.skills.prompt_injection_mode = parsed;
                 } else {
                     tracing::warn!(
-                        "Ignoring invalid CONSTRUCT_SKILLS_PROMPT_MODE (valid: full|compact)"
+                        "Ignoring invalid REVKA_SKILLS_PROMPT_MODE (valid: full|compact)"
                     );
                 }
             }
         }
 
-        // Gateway port: CONSTRUCT_GATEWAY_PORT or PORT
-        if let Ok(port_str) =
-            std::env::var("CONSTRUCT_GATEWAY_PORT").or_else(|_| std::env::var("PORT"))
+        // Gateway port: REVKA_GATEWAY_PORT or PORT
+        if let Ok(port_str) = std::env::var("REVKA_GATEWAY_PORT").or_else(|_| std::env::var("PORT"))
         {
             if let Ok(port) = port_str.parse::<u16>() {
                 self.gateway.port = port;
             }
         }
 
-        // Gateway host: CONSTRUCT_GATEWAY_HOST or HOST
-        if let Ok(host) = std::env::var("CONSTRUCT_GATEWAY_HOST").or_else(|_| std::env::var("HOST"))
-        {
+        // Gateway host: REVKA_GATEWAY_HOST or HOST
+        if let Ok(host) = std::env::var("REVKA_GATEWAY_HOST").or_else(|_| std::env::var("HOST")) {
             if !host.is_empty() {
                 self.gateway.host = host;
             }
         }
 
-        // Allow public bind: CONSTRUCT_ALLOW_PUBLIC_BIND
-        if let Ok(val) = std::env::var("CONSTRUCT_ALLOW_PUBLIC_BIND") {
+        // Allow public bind: REVKA_ALLOW_PUBLIC_BIND
+        if let Ok(val) = std::env::var("REVKA_ALLOW_PUBLIC_BIND") {
             self.gateway.allow_public_bind = val == "1" || val.eq_ignore_ascii_case("true");
         }
 
-        // Require pairing: CONSTRUCT_REQUIRE_PAIRING
-        if let Ok(val) = std::env::var("CONSTRUCT_REQUIRE_PAIRING") {
+        // Require pairing: REVKA_REQUIRE_PAIRING
+        if let Ok(val) = std::env::var("REVKA_REQUIRE_PAIRING") {
             self.gateway.require_pairing = val == "1" || val.eq_ignore_ascii_case("true");
         }
 
-        // Temperature: CONSTRUCT_TEMPERATURE
-        if let Ok(temp_str) = std::env::var("CONSTRUCT_TEMPERATURE") {
+        // Temperature: REVKA_TEMPERATURE
+        if let Ok(temp_str) = std::env::var("REVKA_TEMPERATURE") {
             match temp_str.parse::<f64>() {
                 Ok(temp) if TEMPERATURE_RANGE.contains(&temp) => {
                     self.default_temperature = temp;
                 }
                 Ok(temp) => {
                     tracing::warn!(
-                        "Ignoring CONSTRUCT_TEMPERATURE={temp}: \
+                        "Ignoring REVKA_TEMPERATURE={temp}: \
                          value out of range (expected {}..={})",
                         TEMPERATURE_RANGE.start(),
                         TEMPERATURE_RANGE.end()
                     );
                 }
                 Err(_) => {
-                    tracing::warn!(
-                        "Ignoring CONSTRUCT_TEMPERATURE={temp_str:?}: not a valid number"
-                    );
+                    tracing::warn!("Ignoring REVKA_TEMPERATURE={temp_str:?}: not a valid number");
                 }
             }
         }
 
-        // Reasoning override: CONSTRUCT_REASONING_ENABLED or REASONING_ENABLED
-        if let Ok(flag) = std::env::var("CONSTRUCT_REASONING_ENABLED")
-            .or_else(|_| std::env::var("REASONING_ENABLED"))
+        // Reasoning override: REVKA_REASONING_ENABLED or REASONING_ENABLED
+        if let Ok(flag) =
+            std::env::var("REVKA_REASONING_ENABLED").or_else(|_| std::env::var("REASONING_ENABLED"))
         {
             let normalized = flag.trim().to_ascii_lowercase();
             match normalized.as_str() {
@@ -10351,9 +10345,9 @@ impl Config {
             }
         }
 
-        if let Ok(raw) = std::env::var("CONSTRUCT_REASONING_EFFORT")
+        if let Ok(raw) = std::env::var("REVKA_REASONING_EFFORT")
             .or_else(|_| std::env::var("REASONING_EFFORT"))
-            .or_else(|_| std::env::var("CONSTRUCT_CODEX_REASONING_EFFORT"))
+            .or_else(|_| std::env::var("REVKA_CODEX_REASONING_EFFORT"))
         {
             match normalize_reasoning_effort(&raw) {
                 Ok(effort) => self.runtime.reasoning_effort = Some(effort),
@@ -10361,15 +10355,15 @@ impl Config {
             }
         }
 
-        // Web search enabled: CONSTRUCT_WEB_SEARCH_ENABLED or WEB_SEARCH_ENABLED
-        if let Ok(enabled) = std::env::var("CONSTRUCT_WEB_SEARCH_ENABLED")
+        // Web search enabled: REVKA_WEB_SEARCH_ENABLED or WEB_SEARCH_ENABLED
+        if let Ok(enabled) = std::env::var("REVKA_WEB_SEARCH_ENABLED")
             .or_else(|_| std::env::var("WEB_SEARCH_ENABLED"))
         {
             self.web_search.enabled = enabled == "1" || enabled.eq_ignore_ascii_case("true");
         }
 
-        // Web search provider: CONSTRUCT_WEB_SEARCH_PROVIDER or WEB_SEARCH_PROVIDER
-        if let Ok(provider) = std::env::var("CONSTRUCT_WEB_SEARCH_PROVIDER")
+        // Web search provider: REVKA_WEB_SEARCH_PROVIDER or WEB_SEARCH_PROVIDER
+        if let Ok(provider) = std::env::var("REVKA_WEB_SEARCH_PROVIDER")
             .or_else(|_| std::env::var("WEB_SEARCH_PROVIDER"))
         {
             let provider = provider.trim();
@@ -10378,9 +10372,9 @@ impl Config {
             }
         }
 
-        // Brave API key: CONSTRUCT_BRAVE_API_KEY or BRAVE_API_KEY
+        // Brave API key: REVKA_BRAVE_API_KEY or BRAVE_API_KEY
         if let Ok(api_key) =
-            std::env::var("CONSTRUCT_BRAVE_API_KEY").or_else(|_| std::env::var("BRAVE_API_KEY"))
+            std::env::var("REVKA_BRAVE_API_KEY").or_else(|_| std::env::var("BRAVE_API_KEY"))
         {
             let api_key = api_key.trim();
             if !api_key.is_empty() {
@@ -10388,8 +10382,8 @@ impl Config {
             }
         }
 
-        // SearXNG instance URL: CONSTRUCT_SEARXNG_INSTANCE_URL or SEARXNG_INSTANCE_URL
-        if let Ok(instance_url) = std::env::var("CONSTRUCT_SEARXNG_INSTANCE_URL")
+        // SearXNG instance URL: REVKA_SEARXNG_INSTANCE_URL or SEARXNG_INSTANCE_URL
+        if let Ok(instance_url) = std::env::var("REVKA_SEARXNG_INSTANCE_URL")
             .or_else(|_| std::env::var("SEARXNG_INSTANCE_URL"))
         {
             let instance_url = instance_url.trim();
@@ -10398,8 +10392,8 @@ impl Config {
             }
         }
 
-        // Web search max results: CONSTRUCT_WEB_SEARCH_MAX_RESULTS or WEB_SEARCH_MAX_RESULTS
-        if let Ok(max_results) = std::env::var("CONSTRUCT_WEB_SEARCH_MAX_RESULTS")
+        // Web search max results: REVKA_WEB_SEARCH_MAX_RESULTS or WEB_SEARCH_MAX_RESULTS
+        if let Ok(max_results) = std::env::var("REVKA_WEB_SEARCH_MAX_RESULTS")
             .or_else(|_| std::env::var("WEB_SEARCH_MAX_RESULTS"))
         {
             if let Ok(max_results) = max_results.parse::<usize>() {
@@ -10409,8 +10403,8 @@ impl Config {
             }
         }
 
-        // Web search timeout: CONSTRUCT_WEB_SEARCH_TIMEOUT_SECS or WEB_SEARCH_TIMEOUT_SECS
-        if let Ok(timeout_secs) = std::env::var("CONSTRUCT_WEB_SEARCH_TIMEOUT_SECS")
+        // Web search timeout: REVKA_WEB_SEARCH_TIMEOUT_SECS or WEB_SEARCH_TIMEOUT_SECS
+        if let Ok(timeout_secs) = std::env::var("REVKA_WEB_SEARCH_TIMEOUT_SECS")
             .or_else(|_| std::env::var("WEB_SEARCH_TIMEOUT_SECS"))
         {
             if let Ok(timeout_secs) = timeout_secs.parse::<u64>() {
@@ -10420,32 +10414,32 @@ impl Config {
             }
         }
 
-        // Storage provider key (optional backend override): CONSTRUCT_STORAGE_PROVIDER
-        if let Ok(provider) = std::env::var("CONSTRUCT_STORAGE_PROVIDER") {
+        // Storage provider key (optional backend override): REVKA_STORAGE_PROVIDER
+        if let Ok(provider) = std::env::var("REVKA_STORAGE_PROVIDER") {
             let provider = provider.trim();
             if !provider.is_empty() {
                 self.storage.provider.config.provider = provider.to_string();
             }
         }
 
-        // Storage connection URL (for remote backends): CONSTRUCT_STORAGE_DB_URL
-        if let Ok(db_url) = std::env::var("CONSTRUCT_STORAGE_DB_URL") {
+        // Storage connection URL (for remote backends): REVKA_STORAGE_DB_URL
+        if let Ok(db_url) = std::env::var("REVKA_STORAGE_DB_URL") {
             let db_url = db_url.trim();
             if !db_url.is_empty() {
                 self.storage.provider.config.db_url = Some(db_url.to_string());
             }
         }
 
-        // Storage connect timeout: CONSTRUCT_STORAGE_CONNECT_TIMEOUT_SECS
-        if let Ok(timeout_secs) = std::env::var("CONSTRUCT_STORAGE_CONNECT_TIMEOUT_SECS") {
+        // Storage connect timeout: REVKA_STORAGE_CONNECT_TIMEOUT_SECS
+        if let Ok(timeout_secs) = std::env::var("REVKA_STORAGE_CONNECT_TIMEOUT_SECS") {
             if let Ok(timeout_secs) = timeout_secs.parse::<u64>() {
                 if timeout_secs > 0 {
                     self.storage.provider.config.connect_timeout_secs = Some(timeout_secs);
                 }
             }
         }
-        // Proxy enabled flag: CONSTRUCT_PROXY_ENABLED
-        let explicit_proxy_enabled = std::env::var("CONSTRUCT_PROXY_ENABLED")
+        // Proxy enabled flag: REVKA_PROXY_ENABLED
+        let explicit_proxy_enabled = std::env::var("REVKA_PROXY_ENABLED")
             .ok()
             .as_deref()
             .and_then(parse_proxy_enabled);
@@ -10453,28 +10447,27 @@ impl Config {
             self.proxy.enabled = enabled;
         }
 
-        // Proxy URLs: CONSTRUCT_* wins, then generic *PROXY vars.
+        // Proxy URLs: REVKA_* wins, then generic *PROXY vars.
         let mut proxy_url_overridden = false;
         if let Ok(proxy_url) =
-            std::env::var("CONSTRUCT_HTTP_PROXY").or_else(|_| std::env::var("HTTP_PROXY"))
+            std::env::var("REVKA_HTTP_PROXY").or_else(|_| std::env::var("HTTP_PROXY"))
         {
             self.proxy.http_proxy = normalize_proxy_url_option(Some(&proxy_url));
             proxy_url_overridden = true;
         }
         if let Ok(proxy_url) =
-            std::env::var("CONSTRUCT_HTTPS_PROXY").or_else(|_| std::env::var("HTTPS_PROXY"))
+            std::env::var("REVKA_HTTPS_PROXY").or_else(|_| std::env::var("HTTPS_PROXY"))
         {
             self.proxy.https_proxy = normalize_proxy_url_option(Some(&proxy_url));
             proxy_url_overridden = true;
         }
         if let Ok(proxy_url) =
-            std::env::var("CONSTRUCT_ALL_PROXY").or_else(|_| std::env::var("ALL_PROXY"))
+            std::env::var("REVKA_ALL_PROXY").or_else(|_| std::env::var("ALL_PROXY"))
         {
             self.proxy.all_proxy = normalize_proxy_url_option(Some(&proxy_url));
             proxy_url_overridden = true;
         }
-        if let Ok(no_proxy) =
-            std::env::var("CONSTRUCT_NO_PROXY").or_else(|_| std::env::var("NO_PROXY"))
+        if let Ok(no_proxy) = std::env::var("REVKA_NO_PROXY").or_else(|_| std::env::var("NO_PROXY"))
         {
             self.proxy.no_proxy = normalize_no_proxy_list(vec![no_proxy]);
         }
@@ -10487,18 +10480,18 @@ impl Config {
         }
 
         // Proxy scope and service selectors.
-        if let Ok(scope_raw) = std::env::var("CONSTRUCT_PROXY_SCOPE") {
+        if let Ok(scope_raw) = std::env::var("REVKA_PROXY_SCOPE") {
             if let Some(scope) = parse_proxy_scope(&scope_raw) {
                 self.proxy.scope = scope;
             } else {
                 tracing::warn!(
                     scope = %scope_raw,
-                    "Ignoring invalid CONSTRUCT_PROXY_SCOPE (valid: environment|construct|services)"
+                    "Ignoring invalid REVKA_PROXY_SCOPE (valid: environment|revka|services)"
                 );
             }
         }
 
-        if let Ok(services_raw) = std::env::var("CONSTRUCT_PROXY_SERVICES") {
+        if let Ok(services_raw) = std::env::var("REVKA_PROXY_SERVICES") {
             self.proxy.services = normalize_service_list(vec![services_raw]);
         }
 
@@ -10530,15 +10523,15 @@ impl Config {
             return Ok(self.config_path.clone());
         }
 
-        let (default_construct_dir, default_workspace_dir) = default_config_and_workspace_dirs()?;
-        let (construct_dir, _workspace_dir, source) =
-            resolve_runtime_config_dirs(&default_construct_dir, &default_workspace_dir).await?;
+        let (default_revka_dir, default_workspace_dir) = default_config_and_workspace_dirs()?;
+        let (revka_dir, _workspace_dir, source) =
+            resolve_runtime_config_dirs(&default_revka_dir, &default_workspace_dir).await?;
         let file_name = self
             .config_path
             .file_name()
             .filter(|name| !name.is_empty())
             .unwrap_or_else(|| std::ffi::OsStr::new("config.toml"));
-        let resolved = construct_dir.join(file_name);
+        let resolved = revka_dir.join(file_name);
         tracing::warn!(
             path = %self.config_path.display(),
             resolved = %resolved.display(),
@@ -10552,10 +10545,10 @@ impl Config {
         // Encrypt secrets before serialization
         let mut config_to_save = self.clone();
         let config_path = self.resolve_config_path_for_save().await?;
-        let construct_dir = config_path
+        let revka_dir = config_path
             .parent()
             .context("Config path must have a parent directory")?;
-        let store = crate::security::SecretStore::new(construct_dir, self.secrets.encrypt);
+        let store = crate::security::SecretStore::new(revka_dir, self.secrets.encrypt);
 
         encrypt_optional_secret(&store, &mut config_to_save.api_key, "config.api_key")?;
         encrypt_optional_secret(
@@ -11018,7 +11011,7 @@ async fn sync_directory(path: &Path) -> Result<()> {
             .with_context(|| format!("Failed to open directory for fsync: {}", path.display()))?;
         // FlushFileBuffers on a directory handle is not portably supported on
         // Windows: NTFS commonly returns ERROR_ACCESS_DENIED (os error 5) for
-        // user-profile paths like C:\Users\<user>\.construct, even when the
+        // user-profile paths like C:\Users\<user>\.revka, even when the
         // process owns the directory. NTFS journals directory metadata
         // updates internally, so the file-level sync_all() that callers
         // perform on the actual file inside the directory already covers the
@@ -11171,7 +11164,7 @@ mod tests {
     async fn expand_tilde_path_expands_tilde_when_home_set() {
         // This test verifies that tilde expansion works when HOME is set.
         // In normal environments, HOME is set, so ~ should expand.
-        let path = expand_tilde_path("~/.construct");
+        let path = expand_tilde_path("~/.revka");
         // The path should not literally start with '~' if HOME is set
         // (it should be expanded to the actual home directory)
         if std::env::var("HOME").is_ok() {
@@ -11276,10 +11269,10 @@ mod tests {
 
     #[test]
     async fn config_dir_creation_error_mentions_openrc_and_path() {
-        let msg = config_dir_creation_error(Path::new("/etc/construct"));
-        assert!(msg.contains("/etc/construct"));
+        let msg = config_dir_creation_error(Path::new("/etc/revka"));
+        assert!(msg.contains("/etc/revka"));
         assert!(msg.contains("OpenRC"));
-        assert!(msg.contains("construct"));
+        assert!(msg.contains("revka"));
     }
 
     #[test]
@@ -11358,10 +11351,7 @@ mod tests {
         assert!(a.require_approval_for_medium_risk);
         assert!(a.block_high_risk_commands);
         assert!(a.shell_env_passthrough.is_empty());
-        assert!(
-            a.allowed_roots
-                .contains(&"~/.construct/workflows".to_string())
-        );
+        assert!(a.allowed_roots.contains(&"~/.revka/workflows".to_string()));
     }
 
     #[test]
@@ -11834,22 +11824,22 @@ provider_timeout_secs = 300
 
     #[test]
     async fn parse_extra_headers_env_basic() {
-        let headers = parse_extra_headers_env("User-Agent:MyApp/1.0,X-Title:construct");
+        let headers = parse_extra_headers_env("User-Agent:MyApp/1.0,X-Title:revka");
         assert_eq!(headers.len(), 2);
         assert_eq!(
             headers[0],
             ("User-Agent".to_string(), "MyApp/1.0".to_string())
         );
-        assert_eq!(headers[1], ("X-Title".to_string(), "construct".to_string()));
+        assert_eq!(headers[1], ("X-Title".to_string(), "revka".to_string()));
     }
 
     #[test]
     async fn parse_extra_headers_env_with_url_value() {
-        let headers = parse_extra_headers_env("HTTP-Referer:https://github.com/KumihoIO/construct");
+        let headers = parse_extra_headers_env("HTTP-Referer:https://github.com/KumihoIO/revka");
         assert_eq!(headers.len(), 1);
         // Only splits on first colon, preserving URL colons in value
         assert_eq!(headers[0].0, "HTTP-Referer");
-        assert_eq!(headers[0].1, "https://github.com/KumihoIO/construct");
+        assert_eq!(headers[0].1, "https://github.com/KumihoIO/revka");
     }
 
     #[test]
@@ -11860,9 +11850,9 @@ provider_timeout_secs = 300
 
     #[test]
     async fn parse_extra_headers_env_whitespace_trimming() {
-        let headers = parse_extra_headers_env("  X-Title : construct , User-Agent : cli/1.0 ");
+        let headers = parse_extra_headers_env("  X-Title : revka , User-Agent : cli/1.0 ");
         assert_eq!(headers.len(), 2);
-        assert_eq!(headers[0], ("X-Title".to_string(), "construct".to_string()));
+        assert_eq!(headers[0], ("X-Title".to_string(), "revka".to_string()));
         assert_eq!(
             headers[1],
             ("User-Agent".to_string(), "cli/1.0".to_string())
@@ -11893,9 +11883,9 @@ provider_timeout_secs = 300
 
     #[test]
     async fn parse_extra_headers_env_trailing_comma() {
-        let headers = parse_extra_headers_env("X-Title:construct,");
+        let headers = parse_extra_headers_env("X-Title:revka,");
         assert_eq!(headers.len(), 1);
-        assert_eq!(headers[0], ("X-Title".to_string(), "construct".to_string()));
+        assert_eq!(headers[0], ("X-Title".to_string(), "revka".to_string()));
     }
 
     #[test]
@@ -11905,12 +11895,12 @@ default_temperature = 0.7
 
 [extra_headers]
 User-Agent = "MyApp/1.0"
-X-Title = "construct"
+X-Title = "revka"
 "#;
         let parsed = parse_test_config(raw);
         assert_eq!(parsed.extra_headers.len(), 2);
         assert_eq!(parsed.extra_headers.get("User-Agent").unwrap(), "MyApp/1.0");
-        assert_eq!(parsed.extra_headers.get("X-Title").unwrap(), "construct");
+        assert_eq!(parsed.extra_headers.get("X-Title").unwrap(), "revka");
     }
 
     #[test]
@@ -12079,7 +12069,7 @@ default_temperature = 0.7
     #[tokio::test]
     async fn sync_directory_handles_existing_directory() {
         let dir = std::env::temp_dir().join(format!(
-            "construct_test_sync_directory_{}",
+            "revka_test_sync_directory_{}",
             uuid::Uuid::new_v4()
         ));
         fs::create_dir_all(&dir).await.unwrap();
@@ -12091,7 +12081,7 @@ default_temperature = 0.7
 
     #[tokio::test]
     async fn config_save_and_load_tmpdir() {
-        let dir = std::env::temp_dir().join("construct_test_config");
+        let dir = std::env::temp_dir().join("revka_test_config");
         let _ = fs::remove_dir_all(&dir).await;
         fs::create_dir_all(&dir).await.unwrap();
 
@@ -12208,7 +12198,7 @@ default_temperature = 0.7
     #[tokio::test]
     async fn config_save_encrypts_nested_credentials() {
         let dir = std::env::temp_dir().join(format!(
-            "construct_test_nested_credentials_{}",
+            "revka_test_nested_credentials_{}",
             uuid::Uuid::new_v4()
         ));
         fs::create_dir_all(&dir).await.unwrap();
@@ -12336,8 +12326,7 @@ default_temperature = 0.7
 
     #[tokio::test]
     async fn config_save_atomic_cleanup() {
-        let dir =
-            std::env::temp_dir().join(format!("construct_test_config_{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("revka_test_config_{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&dir).await.unwrap();
 
         let config_path = dir.join("config.toml");
@@ -12911,7 +12900,7 @@ channel_ids = ["C123", "D456"]
             phone_number_id: Some("123".into()),
             verify_token: Some("ver".into()),
             app_secret: None,
-            session_path: Some("~/.construct/state/whatsapp-web/session.db".into()),
+            session_path: Some("~/.revka/state/whatsapp-web/session.db".into()),
             pair_phone: None,
             pair_code: None,
             allowed_numbers: vec!["+1".into()],
@@ -12934,7 +12923,7 @@ channel_ids = ["C123", "D456"]
             phone_number_id: None,
             verify_token: None,
             app_secret: None,
-            session_path: Some("~/.construct/state/whatsapp-web/session.db".into()),
+            session_path: Some("~/.revka/state/whatsapp-web/session.db".into()),
             pair_phone: None,
             pair_code: None,
             allowed_numbers: vec![],
@@ -13089,8 +13078,8 @@ channel_ids = ["C123", "D456"]
             pair_rate_limit_per_minute: 12,
             webhook_rate_limit_per_minute: 80,
             trust_forwarded_headers: true,
-            path_prefix: Some("/construct".into()),
-            web_root: Some("/tmp/construct-web".into()),
+            path_prefix: Some("/revka".into()),
+            web_root: Some("/tmp/revka-web".into()),
             rate_limit_max_keys: 2048,
             idempotency_ttl_secs: 600,
             idempotency_max_keys: 4096,
@@ -13109,8 +13098,8 @@ channel_ids = ["C123", "D456"]
         assert_eq!(parsed.pair_rate_limit_per_minute, 12);
         assert_eq!(parsed.webhook_rate_limit_per_minute, 80);
         assert!(parsed.trust_forwarded_headers);
-        assert_eq!(parsed.path_prefix.as_deref(), Some("/construct"));
-        assert_eq!(parsed.web_root.as_deref(), Some("/tmp/construct-web"));
+        assert_eq!(parsed.path_prefix.as_deref(), Some("/revka"));
+        assert_eq!(parsed.web_root.as_deref(), Some("/tmp/revka-web"));
         assert_eq!(parsed.rate_limit_max_keys, 2048);
         assert_eq!(parsed.idempotency_ttl_secs, 600);
         assert_eq!(parsed.idempotency_max_keys, 4096);
@@ -13340,13 +13329,13 @@ default_temperature = 0.7
 
     fn clear_proxy_env_test_vars() {
         for key in [
-            "CONSTRUCT_PROXY_ENABLED",
-            "CONSTRUCT_HTTP_PROXY",
-            "CONSTRUCT_HTTPS_PROXY",
-            "CONSTRUCT_ALL_PROXY",
-            "CONSTRUCT_NO_PROXY",
-            "CONSTRUCT_PROXY_SCOPE",
-            "CONSTRUCT_PROXY_SERVICES",
+            "REVKA_PROXY_ENABLED",
+            "REVKA_HTTP_PROXY",
+            "REVKA_HTTPS_PROXY",
+            "REVKA_ALL_PROXY",
+            "REVKA_NO_PROXY",
+            "REVKA_PROXY_SCOPE",
+            "REVKA_PROXY_SERVICES",
             "HTTP_PROXY",
             "HTTPS_PROXY",
             "ALL_PROXY",
@@ -13368,12 +13357,12 @@ default_temperature = 0.7
         assert!(config.api_key.is_none());
 
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::set_var("CONSTRUCT_API_KEY", "sk-test-env-key") };
+        unsafe { std::env::set_var("REVKA_API_KEY", "sk-test-env-key") };
         config.apply_env_overrides();
         assert_eq!(config.api_key.as_deref(), Some("sk-test-env-key"));
 
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::remove_var("CONSTRUCT_API_KEY") };
+        unsafe { std::env::remove_var("REVKA_API_KEY") };
     }
 
     #[test]
@@ -13382,7 +13371,7 @@ default_temperature = 0.7
         let mut config = Config::default();
 
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::remove_var("CONSTRUCT_API_KEY") };
+        unsafe { std::env::remove_var("REVKA_API_KEY") };
         // SAFETY: test-only, single-threaded test runner.
         unsafe { std::env::set_var("API_KEY", "sk-fallback-key") };
         config.apply_env_overrides();
@@ -13398,12 +13387,12 @@ default_temperature = 0.7
         let mut config = Config::default();
 
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::set_var("CONSTRUCT_PROVIDER", "anthropic") };
+        unsafe { std::env::set_var("REVKA_PROVIDER", "anthropic") };
         config.apply_env_overrides();
         assert_eq!(config.default_provider.as_deref(), Some("anthropic"));
 
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::remove_var("CONSTRUCT_PROVIDER") };
+        unsafe { std::env::remove_var("REVKA_PROVIDER") };
     }
 
     #[test]
@@ -13412,14 +13401,14 @@ default_temperature = 0.7
         let mut config = Config::default();
 
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::remove_var("CONSTRUCT_PROVIDER") };
+        unsafe { std::env::remove_var("REVKA_PROVIDER") };
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::set_var("CONSTRUCT_MODEL_PROVIDER", "openai-codex") };
+        unsafe { std::env::set_var("REVKA_MODEL_PROVIDER", "openai-codex") };
         config.apply_env_overrides();
         assert_eq!(config.default_provider.as_deref(), Some("openai-codex"));
 
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::remove_var("CONSTRUCT_MODEL_PROVIDER") };
+        unsafe { std::env::remove_var("REVKA_MODEL_PROVIDER") };
     }
 
     #[test]
@@ -13459,13 +13448,13 @@ requires_openai_auth = true
         );
 
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::set_var("CONSTRUCT_OPEN_SKILLS_ENABLED", "true") };
+        unsafe { std::env::set_var("REVKA_OPEN_SKILLS_ENABLED", "true") };
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::set_var("CONSTRUCT_OPEN_SKILLS_DIR", "/tmp/open-skills") };
+        unsafe { std::env::set_var("REVKA_OPEN_SKILLS_DIR", "/tmp/open-skills") };
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::set_var("CONSTRUCT_SKILLS_ALLOW_SCRIPTS", "yes") };
+        unsafe { std::env::set_var("REVKA_SKILLS_ALLOW_SCRIPTS", "yes") };
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::set_var("CONSTRUCT_SKILLS_PROMPT_MODE", "compact") };
+        unsafe { std::env::set_var("REVKA_SKILLS_PROMPT_MODE", "compact") };
         config.apply_env_overrides();
 
         assert!(config.skills.open_skills_enabled);
@@ -13480,13 +13469,13 @@ requires_openai_auth = true
         );
 
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::remove_var("CONSTRUCT_OPEN_SKILLS_ENABLED") };
+        unsafe { std::env::remove_var("REVKA_OPEN_SKILLS_ENABLED") };
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::remove_var("CONSTRUCT_OPEN_SKILLS_DIR") };
+        unsafe { std::env::remove_var("REVKA_OPEN_SKILLS_DIR") };
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::remove_var("CONSTRUCT_SKILLS_ALLOW_SCRIPTS") };
+        unsafe { std::env::remove_var("REVKA_SKILLS_ALLOW_SCRIPTS") };
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::remove_var("CONSTRUCT_SKILLS_PROMPT_MODE") };
+        unsafe { std::env::remove_var("REVKA_SKILLS_PROMPT_MODE") };
     }
 
     #[test]
@@ -13498,11 +13487,11 @@ requires_openai_auth = true
         config.skills.prompt_injection_mode = SkillsPromptInjectionMode::Compact;
 
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::set_var("CONSTRUCT_OPEN_SKILLS_ENABLED", "maybe") };
+        unsafe { std::env::set_var("REVKA_OPEN_SKILLS_ENABLED", "maybe") };
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::set_var("CONSTRUCT_SKILLS_ALLOW_SCRIPTS", "maybe") };
+        unsafe { std::env::set_var("REVKA_SKILLS_ALLOW_SCRIPTS", "maybe") };
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::set_var("CONSTRUCT_SKILLS_PROMPT_MODE", "invalid") };
+        unsafe { std::env::set_var("REVKA_SKILLS_PROMPT_MODE", "invalid") };
         config.apply_env_overrides();
 
         assert!(config.skills.open_skills_enabled);
@@ -13512,11 +13501,11 @@ requires_openai_auth = true
             SkillsPromptInjectionMode::Compact
         );
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::remove_var("CONSTRUCT_OPEN_SKILLS_ENABLED") };
+        unsafe { std::env::remove_var("REVKA_OPEN_SKILLS_ENABLED") };
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::remove_var("CONSTRUCT_SKILLS_ALLOW_SCRIPTS") };
+        unsafe { std::env::remove_var("REVKA_SKILLS_ALLOW_SCRIPTS") };
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::remove_var("CONSTRUCT_SKILLS_PROMPT_MODE") };
+        unsafe { std::env::remove_var("REVKA_SKILLS_PROMPT_MODE") };
     }
 
     #[test]
@@ -13525,7 +13514,7 @@ requires_openai_auth = true
         let mut config = Config::default();
 
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::remove_var("CONSTRUCT_PROVIDER") };
+        unsafe { std::env::remove_var("REVKA_PROVIDER") };
         // SAFETY: test-only, single-threaded test runner.
         unsafe { std::env::set_var("PROVIDER", "openai") };
         config.apply_env_overrides();
@@ -13544,7 +13533,7 @@ requires_openai_auth = true
         };
 
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::remove_var("CONSTRUCT_PROVIDER") };
+        unsafe { std::env::remove_var("REVKA_PROVIDER") };
         // SAFETY: test-only, single-threaded test runner.
         unsafe { std::env::set_var("PROVIDER", "openrouter") };
         config.apply_env_overrides();
@@ -13566,14 +13555,14 @@ requires_openai_auth = true
         };
 
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::set_var("CONSTRUCT_PROVIDER", "openrouter") };
+        unsafe { std::env::set_var("REVKA_PROVIDER", "openrouter") };
         // SAFETY: test-only, single-threaded test runner.
         unsafe { std::env::set_var("PROVIDER", "anthropic") };
         config.apply_env_overrides();
         assert_eq!(config.default_provider.as_deref(), Some("openrouter"));
 
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::remove_var("CONSTRUCT_PROVIDER") };
+        unsafe { std::env::remove_var("REVKA_PROVIDER") };
         // SAFETY: test-only, single-threaded test runner.
         unsafe { std::env::remove_var("PROVIDER") };
     }
@@ -13618,12 +13607,12 @@ requires_openai_auth = true
         let mut config = Config::default();
 
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::set_var("CONSTRUCT_MODEL", "gpt-4o") };
+        unsafe { std::env::set_var("REVKA_MODEL", "gpt-4o") };
         config.apply_env_overrides();
         assert_eq!(config.default_model.as_deref(), Some("gpt-4o"));
 
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::remove_var("CONSTRUCT_MODEL") };
+        unsafe { std::env::remove_var("REVKA_MODEL") };
     }
 
     #[test]
@@ -13697,15 +13686,15 @@ requires_openai_auth = true
     async fn save_repairs_bare_config_filename_using_runtime_resolution() {
         let _env_guard = env_override_lock().await;
         let temp_home =
-            std::env::temp_dir().join(format!("construct_test_home_{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("revka_test_home_{}", uuid::Uuid::new_v4()));
         let workspace_dir = temp_home.join("workspace");
-        let resolved_config_path = temp_home.join(".construct").join("config.toml");
+        let resolved_config_path = temp_home.join(".revka").join("config.toml");
 
         let original_home = std::env::var("HOME").ok();
         // SAFETY: test-only, single-threaded test runner.
         unsafe { std::env::set_var("HOME", &temp_home) };
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::set_var("CONSTRUCT_WORKSPACE", &workspace_dir) };
+        unsafe { std::env::set_var("REVKA_WORKSPACE", &workspace_dir) };
 
         let mut config = Config::default();
         config.workspace_dir = workspace_dir;
@@ -13721,7 +13710,7 @@ requires_openai_auth = true
         assert_eq!(parsed.default_temperature, 0.5);
 
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::remove_var("CONSTRUCT_WORKSPACE") };
+        unsafe { std::env::remove_var("REVKA_WORKSPACE") };
         if let Some(home) = original_home {
             // SAFETY: test-only, single-threaded test runner.
             unsafe { std::env::set_var("HOME", home) };
@@ -13805,7 +13794,7 @@ requires_openai_auth = true
         let mut config = Config::default();
 
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::remove_var("CONSTRUCT_MODEL") };
+        unsafe { std::env::remove_var("REVKA_MODEL") };
         // SAFETY: test-only, single-threaded test runner.
         unsafe { std::env::set_var("MODEL", "anthropic/claude-3.5-sonnet") };
         config.apply_env_overrides();
@@ -13824,12 +13813,12 @@ requires_openai_auth = true
         let mut config = Config::default();
 
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::set_var("CONSTRUCT_WORKSPACE", "/custom/workspace") };
+        unsafe { std::env::set_var("REVKA_WORKSPACE", "/custom/workspace") };
         config.apply_env_overrides();
         assert_eq!(config.workspace_dir, PathBuf::from("/custom/workspace"));
 
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::remove_var("CONSTRUCT_WORKSPACE") };
+        unsafe { std::env::remove_var("REVKA_WORKSPACE") };
     }
 
     #[test]
@@ -13840,7 +13829,7 @@ requires_openai_auth = true
         let workspace_dir = default_config_dir.join("profile-a");
 
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::set_var("CONSTRUCT_WORKSPACE", &workspace_dir) };
+        unsafe { std::env::set_var("REVKA_WORKSPACE", &workspace_dir) };
         let (config_dir, resolved_workspace_dir, source) =
             resolve_runtime_config_dirs(&default_config_dir, &default_workspace_dir)
                 .await
@@ -13851,7 +13840,7 @@ requires_openai_auth = true
         assert_eq!(resolved_workspace_dir, workspace_dir.join("workspace"));
 
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::remove_var("CONSTRUCT_WORKSPACE") };
+        unsafe { std::env::remove_var("REVKA_WORKSPACE") };
         let _ = fs::remove_dir_all(default_config_dir).await;
     }
 
@@ -13873,9 +13862,9 @@ requires_openai_auth = true
             .unwrap();
 
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::set_var("CONSTRUCT_CONFIG_DIR", &explicit_config_dir) };
+        unsafe { std::env::set_var("REVKA_CONFIG_DIR", &explicit_config_dir) };
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::remove_var("CONSTRUCT_WORKSPACE") };
+        unsafe { std::env::remove_var("REVKA_WORKSPACE") };
 
         let (config_dir, resolved_workspace_dir, source) =
             resolve_runtime_config_dirs(&default_config_dir, &default_workspace_dir)
@@ -13890,7 +13879,7 @@ requires_openai_auth = true
         );
 
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::remove_var("CONSTRUCT_CONFIG_DIR") };
+        unsafe { std::env::remove_var("REVKA_CONFIG_DIR") };
         let _ = fs::remove_dir_all(default_config_dir).await;
     }
 
@@ -13903,7 +13892,7 @@ requires_openai_auth = true
         let state_path = default_config_dir.join(ACTIVE_WORKSPACE_STATE_FILE);
 
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::remove_var("CONSTRUCT_WORKSPACE") };
+        unsafe { std::env::remove_var("REVKA_WORKSPACE") };
         fs::create_dir_all(&default_config_dir).await.unwrap();
         let state = ActiveWorkspaceState {
             config_dir: marker_config_dir.to_string_lossy().into_owned(),
@@ -13931,7 +13920,7 @@ requires_openai_auth = true
         let default_workspace_dir = default_config_dir.join("workspace");
 
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::remove_var("CONSTRUCT_WORKSPACE") };
+        unsafe { std::env::remove_var("REVKA_WORKSPACE") };
         let (config_dir, resolved_workspace_dir, source) =
             resolve_runtime_config_dirs(&default_config_dir, &default_workspace_dir)
                 .await
@@ -13948,14 +13937,14 @@ requires_openai_auth = true
     async fn load_or_init_workspace_override_uses_workspace_root_for_config() {
         let _env_guard = env_override_lock().await;
         let temp_home =
-            std::env::temp_dir().join(format!("construct_test_home_{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("revka_test_home_{}", uuid::Uuid::new_v4()));
         let workspace_dir = temp_home.join("profile-a");
 
         let original_home = std::env::var("HOME").ok();
         // SAFETY: test-only, single-threaded test runner.
         unsafe { std::env::set_var("HOME", &temp_home) };
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::set_var("CONSTRUCT_WORKSPACE", &workspace_dir) };
+        unsafe { std::env::set_var("REVKA_WORKSPACE", &workspace_dir) };
 
         let config = Box::pin(Config::load_or_init()).await.unwrap();
 
@@ -13964,7 +13953,7 @@ requires_openai_auth = true
         assert!(workspace_dir.join("config.toml").exists());
 
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::remove_var("CONSTRUCT_WORKSPACE") };
+        unsafe { std::env::remove_var("REVKA_WORKSPACE") };
         if let Some(home) = original_home {
             // SAFETY: test-only, single-threaded test runner.
             unsafe { std::env::set_var("HOME", home) };
@@ -13979,15 +13968,15 @@ requires_openai_auth = true
     async fn load_or_init_workspace_suffix_uses_legacy_config_layout() {
         let _env_guard = env_override_lock().await;
         let temp_home =
-            std::env::temp_dir().join(format!("construct_test_home_{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("revka_test_home_{}", uuid::Uuid::new_v4()));
         let workspace_dir = temp_home.join("workspace");
-        let legacy_config_path = temp_home.join(".construct").join("config.toml");
+        let legacy_config_path = temp_home.join(".revka").join("config.toml");
 
         let original_home = std::env::var("HOME").ok();
         // SAFETY: test-only, single-threaded test runner.
         unsafe { std::env::set_var("HOME", &temp_home) };
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::set_var("CONSTRUCT_WORKSPACE", &workspace_dir) };
+        unsafe { std::env::set_var("REVKA_WORKSPACE", &workspace_dir) };
 
         let config = Box::pin(Config::load_or_init()).await.unwrap();
 
@@ -13996,7 +13985,7 @@ requires_openai_auth = true
         assert!(config.config_path.exists());
 
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::remove_var("CONSTRUCT_WORKSPACE") };
+        unsafe { std::env::remove_var("REVKA_WORKSPACE") };
         if let Some(home) = original_home {
             // SAFETY: test-only, single-threaded test runner.
             unsafe { std::env::set_var("HOME", home) };
@@ -14011,9 +14000,9 @@ requires_openai_auth = true
     async fn load_or_init_workspace_override_keeps_existing_legacy_config() {
         let _env_guard = env_override_lock().await;
         let temp_home =
-            std::env::temp_dir().join(format!("construct_test_home_{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("revka_test_home_{}", uuid::Uuid::new_v4()));
         let workspace_dir = temp_home.join("custom-workspace");
-        let legacy_config_dir = temp_home.join(".construct");
+        let legacy_config_dir = temp_home.join(".revka");
         let legacy_config_path = legacy_config_dir.join("config.toml");
 
         fs::create_dir_all(&legacy_config_dir).await.unwrap();
@@ -14030,7 +14019,7 @@ default_model = "legacy-model"
         // SAFETY: test-only, single-threaded test runner.
         unsafe { std::env::set_var("HOME", &temp_home) };
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::set_var("CONSTRUCT_WORKSPACE", &workspace_dir) };
+        unsafe { std::env::set_var("REVKA_WORKSPACE", &workspace_dir) };
 
         let config = Box::pin(Config::load_or_init()).await.unwrap();
 
@@ -14039,7 +14028,7 @@ default_model = "legacy-model"
         assert_eq!(config.default_model.as_deref(), Some("legacy-model"));
 
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::remove_var("CONSTRUCT_WORKSPACE") };
+        unsafe { std::env::remove_var("REVKA_WORKSPACE") };
         if let Some(home) = original_home {
             // SAFETY: test-only, single-threaded test runner.
             unsafe { std::env::set_var("HOME", home) };
@@ -14054,8 +14043,8 @@ default_model = "legacy-model"
     async fn load_or_init_decrypts_feishu_channel_secrets() {
         let _env_guard = env_override_lock().await;
         let temp_home =
-            std::env::temp_dir().join(format!("construct_test_home_{}", uuid::Uuid::new_v4()));
-        let config_dir = temp_home.join(".construct");
+            std::env::temp_dir().join(format!("revka_test_home_{}", uuid::Uuid::new_v4()));
+        let config_dir = temp_home.join(".revka");
         let config_path = config_dir.join("config.toml");
 
         fs::create_dir_all(&config_dir).await.unwrap();
@@ -14064,7 +14053,7 @@ default_model = "legacy-model"
         // SAFETY: test-only, single-threaded test runner.
         unsafe { std::env::set_var("HOME", &temp_home) };
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::remove_var("CONSTRUCT_WORKSPACE") };
+        unsafe { std::env::remove_var("REVKA_WORKSPACE") };
 
         let mut config = Config::default();
         config.config_path = config_path.clone();
@@ -14102,8 +14091,8 @@ default_model = "legacy-model"
     async fn load_or_init_uses_persisted_active_workspace_marker() {
         let _env_guard = env_override_lock().await;
         let temp_home =
-            std::env::temp_dir().join(format!("construct_test_home_{}", uuid::Uuid::new_v4()));
-        let temp_default_dir = temp_home.join(".construct");
+            std::env::temp_dir().join(format!("revka_test_home_{}", uuid::Uuid::new_v4()));
+        let temp_default_dir = temp_home.join(".revka");
         let custom_config_dir = temp_home.join("profiles").join("agent-alpha");
 
         fs::create_dir_all(&custom_config_dir).await.unwrap();
@@ -14131,7 +14120,7 @@ default_model = "legacy-model"
         // SAFETY: test-only, single-threaded test runner.
         unsafe { std::env::set_var("HOME", &temp_home) };
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::remove_var("CONSTRUCT_WORKSPACE") };
+        unsafe { std::env::remove_var("REVKA_WORKSPACE") };
 
         let config = Box::pin(Config::load_or_init()).await.unwrap();
 
@@ -14153,8 +14142,8 @@ default_model = "legacy-model"
     async fn load_or_init_env_workspace_override_takes_priority_over_marker() {
         let _env_guard = env_override_lock().await;
         let temp_home =
-            std::env::temp_dir().join(format!("construct_test_home_{}", uuid::Uuid::new_v4()));
-        let temp_default_dir = temp_home.join(".construct");
+            std::env::temp_dir().join(format!("revka_test_home_{}", uuid::Uuid::new_v4()));
+        let temp_default_dir = temp_home.join(".revka");
         let marker_config_dir = temp_home.join("profiles").join("persisted-profile");
         let env_workspace_dir = temp_home.join("env-workspace");
 
@@ -14175,7 +14164,7 @@ default_model = "legacy-model"
         // SAFETY: test-only, single-threaded test runner.
         unsafe { std::env::set_var("HOME", &temp_home) };
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::set_var("CONSTRUCT_WORKSPACE", &env_workspace_dir) };
+        unsafe { std::env::set_var("REVKA_WORKSPACE", &env_workspace_dir) };
 
         let config = Box::pin(Config::load_or_init()).await.unwrap();
 
@@ -14183,7 +14172,7 @@ default_model = "legacy-model"
         assert_eq!(config.config_path, env_workspace_dir.join("config.toml"));
 
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::remove_var("CONSTRUCT_WORKSPACE") };
+        unsafe { std::env::remove_var("REVKA_WORKSPACE") };
         if let Some(home) = original_home {
             // SAFETY: test-only, single-threaded test runner.
             unsafe { std::env::set_var("HOME", home) };
@@ -14197,8 +14186,8 @@ default_model = "legacy-model"
     #[test]
     async fn persist_active_workspace_marker_is_cleared_for_default_config_dir() {
         let temp_home =
-            std::env::temp_dir().join(format!("construct_test_home_{}", uuid::Uuid::new_v4()));
-        let default_config_dir = temp_home.join(".construct");
+            std::env::temp_dir().join(format!("revka_test_home_{}", uuid::Uuid::new_v4()));
+        let default_config_dir = temp_home.join(".revka");
         let custom_config_dir = temp_home.join("profiles").join("custom-profile");
         let marker_path = default_config_dir.join(ACTIVE_WORKSPACE_STATE_FILE);
 
@@ -14222,7 +14211,7 @@ default_model = "legacy-model"
     async fn load_or_init_logs_existing_config_as_initialized() {
         let _env_guard = env_override_lock().await;
         let temp_home =
-            std::env::temp_dir().join(format!("construct_test_home_{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("revka_test_home_{}", uuid::Uuid::new_v4()));
         let workspace_dir = temp_home.join("profile-a");
         let config_path = workspace_dir.join("config.toml");
 
@@ -14240,7 +14229,7 @@ default_model = "persisted-profile"
         // SAFETY: test-only, single-threaded test runner.
         unsafe { std::env::set_var("HOME", &temp_home) };
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::set_var("CONSTRUCT_WORKSPACE", &workspace_dir) };
+        unsafe { std::env::set_var("REVKA_WORKSPACE", &workspace_dir) };
 
         let capture = SharedLogBuffer::default();
         let subscriber = tracing_subscriber::fmt()
@@ -14265,7 +14254,7 @@ default_model = "persisted-profile"
         assert!(!logs.contains("initialized=false"), "{logs}");
 
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::remove_var("CONSTRUCT_WORKSPACE") };
+        unsafe { std::env::remove_var("REVKA_WORKSPACE") };
         if let Some(home) = original_home {
             // SAFETY: test-only, single-threaded test runner.
             unsafe { std::env::set_var("HOME", home) };
@@ -14283,12 +14272,12 @@ default_model = "persisted-profile"
         let original_provider = config.default_provider.clone();
 
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::set_var("CONSTRUCT_PROVIDER", "") };
+        unsafe { std::env::set_var("REVKA_PROVIDER", "") };
         config.apply_env_overrides();
         assert_eq!(config.default_provider, original_provider);
 
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::remove_var("CONSTRUCT_PROVIDER") };
+        unsafe { std::env::remove_var("REVKA_PROVIDER") };
     }
 
     #[test]
@@ -14298,12 +14287,12 @@ default_model = "persisted-profile"
         assert_eq!(config.gateway.port, 42617);
 
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::set_var("CONSTRUCT_GATEWAY_PORT", "8080") };
+        unsafe { std::env::set_var("REVKA_GATEWAY_PORT", "8080") };
         config.apply_env_overrides();
         assert_eq!(config.gateway.port, 8080);
 
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::remove_var("CONSTRUCT_GATEWAY_PORT") };
+        unsafe { std::env::remove_var("REVKA_GATEWAY_PORT") };
     }
 
     #[test]
@@ -14312,7 +14301,7 @@ default_model = "persisted-profile"
         let mut config = Config::default();
 
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::remove_var("CONSTRUCT_GATEWAY_PORT") };
+        unsafe { std::env::remove_var("REVKA_GATEWAY_PORT") };
         // SAFETY: test-only, single-threaded test runner.
         unsafe { std::env::set_var("PORT", "9000") };
         config.apply_env_overrides();
@@ -14329,12 +14318,12 @@ default_model = "persisted-profile"
         assert_eq!(config.gateway.host, "127.0.0.1");
 
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::set_var("CONSTRUCT_GATEWAY_HOST", "0.0.0.0") };
+        unsafe { std::env::set_var("REVKA_GATEWAY_HOST", "0.0.0.0") };
         config.apply_env_overrides();
         assert_eq!(config.gateway.host, "0.0.0.0");
 
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::remove_var("CONSTRUCT_GATEWAY_HOST") };
+        unsafe { std::env::remove_var("REVKA_GATEWAY_HOST") };
     }
 
     #[test]
@@ -14343,7 +14332,7 @@ default_model = "persisted-profile"
         let mut config = Config::default();
 
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::remove_var("CONSTRUCT_GATEWAY_HOST") };
+        unsafe { std::env::remove_var("REVKA_GATEWAY_HOST") };
         // SAFETY: test-only, single-threaded test runner.
         unsafe { std::env::set_var("HOST", "0.0.0.0") };
         config.apply_env_overrides();
@@ -14360,17 +14349,17 @@ default_model = "persisted-profile"
         assert!(config.gateway.require_pairing);
 
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::set_var("CONSTRUCT_REQUIRE_PAIRING", "false") };
+        unsafe { std::env::set_var("REVKA_REQUIRE_PAIRING", "false") };
         config.apply_env_overrides();
         assert!(!config.gateway.require_pairing);
 
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::set_var("CONSTRUCT_REQUIRE_PAIRING", "true") };
+        unsafe { std::env::set_var("REVKA_REQUIRE_PAIRING", "true") };
         config.apply_env_overrides();
         assert!(config.gateway.require_pairing);
 
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::remove_var("CONSTRUCT_REQUIRE_PAIRING") };
+        unsafe { std::env::remove_var("REVKA_REQUIRE_PAIRING") };
     }
 
     #[test]
@@ -14379,12 +14368,12 @@ default_model = "persisted-profile"
         let mut config = Config::default();
 
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::set_var("CONSTRUCT_TEMPERATURE", "0.5") };
+        unsafe { std::env::set_var("REVKA_TEMPERATURE", "0.5") };
         config.apply_env_overrides();
         assert!((config.default_temperature - 0.5).abs() < f64::EPSILON);
 
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::remove_var("CONSTRUCT_TEMPERATURE") };
+        unsafe { std::env::remove_var("REVKA_TEMPERATURE") };
     }
 
     #[test]
@@ -14392,14 +14381,14 @@ default_model = "persisted-profile"
         let _env_guard = env_override_lock().await;
         // Clean up any leftover env vars from other tests
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::remove_var("CONSTRUCT_TEMPERATURE") };
+        unsafe { std::env::remove_var("REVKA_TEMPERATURE") };
 
         let mut config = Config::default();
         let original_temp = config.default_temperature;
 
         // Temperature > 2.0 should be ignored
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::set_var("CONSTRUCT_TEMPERATURE", "3.0") };
+        unsafe { std::env::set_var("REVKA_TEMPERATURE", "3.0") };
         config.apply_env_overrides();
         assert!(
             (config.default_temperature - original_temp).abs() < f64::EPSILON,
@@ -14407,7 +14396,7 @@ default_model = "persisted-profile"
         );
 
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::remove_var("CONSTRUCT_TEMPERATURE") };
+        unsafe { std::env::remove_var("REVKA_TEMPERATURE") };
     }
 
     #[test]
@@ -14417,17 +14406,17 @@ default_model = "persisted-profile"
         assert_eq!(config.runtime.reasoning_enabled, None);
 
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::set_var("CONSTRUCT_REASONING_ENABLED", "false") };
+        unsafe { std::env::set_var("REVKA_REASONING_ENABLED", "false") };
         config.apply_env_overrides();
         assert_eq!(config.runtime.reasoning_enabled, Some(false));
 
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::set_var("CONSTRUCT_REASONING_ENABLED", "true") };
+        unsafe { std::env::set_var("REVKA_REASONING_ENABLED", "true") };
         config.apply_env_overrides();
         assert_eq!(config.runtime.reasoning_enabled, Some(true));
 
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::remove_var("CONSTRUCT_REASONING_ENABLED") };
+        unsafe { std::env::remove_var("REVKA_REASONING_ENABLED") };
     }
 
     #[test]
@@ -14437,12 +14426,12 @@ default_model = "persisted-profile"
         config.runtime.reasoning_enabled = Some(false);
 
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::set_var("CONSTRUCT_REASONING_ENABLED", "maybe") };
+        unsafe { std::env::set_var("REVKA_REASONING_ENABLED", "maybe") };
         config.apply_env_overrides();
         assert_eq!(config.runtime.reasoning_enabled, Some(false));
 
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::remove_var("CONSTRUCT_REASONING_ENABLED") };
+        unsafe { std::env::remove_var("REVKA_REASONING_ENABLED") };
     }
 
     #[test]
@@ -14452,12 +14441,12 @@ default_model = "persisted-profile"
         assert_eq!(config.runtime.reasoning_effort, None);
 
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::set_var("CONSTRUCT_REASONING_EFFORT", "HIGH") };
+        unsafe { std::env::set_var("REVKA_REASONING_EFFORT", "HIGH") };
         config.apply_env_overrides();
         assert_eq!(config.runtime.reasoning_effort.as_deref(), Some("high"));
 
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::remove_var("CONSTRUCT_REASONING_EFFORT") };
+        unsafe { std::env::remove_var("REVKA_REASONING_EFFORT") };
     }
 
     #[test]
@@ -14466,12 +14455,12 @@ default_model = "persisted-profile"
         let mut config = Config::default();
 
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::set_var("CONSTRUCT_CODEX_REASONING_EFFORT", "minimal") };
+        unsafe { std::env::set_var("REVKA_CODEX_REASONING_EFFORT", "minimal") };
         config.apply_env_overrides();
         assert_eq!(config.runtime.reasoning_effort.as_deref(), Some("minimal"));
 
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::remove_var("CONSTRUCT_CODEX_REASONING_EFFORT") };
+        unsafe { std::env::remove_var("REVKA_CODEX_REASONING_EFFORT") };
     }
 
     #[test]
@@ -14557,11 +14546,11 @@ default_model = "persisted-profile"
         let mut config = Config::default();
 
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::set_var("CONSTRUCT_STORAGE_PROVIDER", "qdrant") };
+        unsafe { std::env::set_var("REVKA_STORAGE_PROVIDER", "qdrant") };
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::set_var("CONSTRUCT_STORAGE_DB_URL", "http://localhost:6333") };
+        unsafe { std::env::set_var("REVKA_STORAGE_DB_URL", "http://localhost:6333") };
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::set_var("CONSTRUCT_STORAGE_CONNECT_TIMEOUT_SECS", "15") };
+        unsafe { std::env::set_var("REVKA_STORAGE_CONNECT_TIMEOUT_SECS", "15") };
 
         config.apply_env_overrides();
 
@@ -14576,11 +14565,11 @@ default_model = "persisted-profile"
         );
 
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::remove_var("CONSTRUCT_STORAGE_PROVIDER") };
+        unsafe { std::env::remove_var("REVKA_STORAGE_PROVIDER") };
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::remove_var("CONSTRUCT_STORAGE_DB_URL") };
+        unsafe { std::env::remove_var("REVKA_STORAGE_DB_URL") };
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::remove_var("CONSTRUCT_STORAGE_CONNECT_TIMEOUT_SECS") };
+        unsafe { std::env::remove_var("REVKA_STORAGE_CONNECT_TIMEOUT_SECS") };
     }
 
     #[test]
@@ -14606,18 +14595,15 @@ default_model = "persisted-profile"
 
         let mut config = Config::default();
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::set_var("CONSTRUCT_PROXY_ENABLED", "true") };
+        unsafe { std::env::set_var("REVKA_PROXY_ENABLED", "true") };
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::set_var("CONSTRUCT_HTTP_PROXY", "http://127.0.0.1:7890") };
+        unsafe { std::env::set_var("REVKA_HTTP_PROXY", "http://127.0.0.1:7890") };
         // SAFETY: test-only, single-threaded test runner.
         unsafe {
-            std::env::set_var(
-                "CONSTRUCT_PROXY_SERVICES",
-                "provider.openai, tool.http_request",
-            );
+            std::env::set_var("REVKA_PROXY_SERVICES", "provider.openai, tool.http_request");
         }
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::set_var("CONSTRUCT_PROXY_SCOPE", "services") };
+        unsafe { std::env::set_var("REVKA_PROXY_SCOPE", "services") };
 
         config.apply_env_overrides();
 
@@ -14641,15 +14627,15 @@ default_model = "persisted-profile"
 
         let mut config = Config::default();
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::set_var("CONSTRUCT_PROXY_ENABLED", "true") };
+        unsafe { std::env::set_var("REVKA_PROXY_ENABLED", "true") };
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::set_var("CONSTRUCT_PROXY_SCOPE", "environment") };
+        unsafe { std::env::set_var("REVKA_PROXY_SCOPE", "environment") };
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::set_var("CONSTRUCT_HTTP_PROXY", "http://127.0.0.1:7890") };
+        unsafe { std::env::set_var("REVKA_HTTP_PROXY", "http://127.0.0.1:7890") };
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::set_var("CONSTRUCT_HTTPS_PROXY", "http://127.0.0.1:7891") };
+        unsafe { std::env::set_var("REVKA_HTTPS_PROXY", "http://127.0.0.1:7891") };
         // SAFETY: test-only, single-threaded test runner.
-        unsafe { std::env::set_var("CONSTRUCT_NO_PROXY", "localhost,127.0.0.1") };
+        unsafe { std::env::set_var("REVKA_NO_PROXY", "localhost,127.0.0.1") };
 
         config.apply_env_overrides();
 
@@ -15180,7 +15166,7 @@ gated_domain_categories = ["banking"]
 
 [security.estop]
 enabled = true
-state_file = "~/.construct/estop-state.json"
+state_file = "~/.revka/estop-state.json"
 require_otp_to_resume = true
 "#,
         );
@@ -15227,10 +15213,8 @@ require_otp_to_resume = true
 
     #[tokio::test]
     async fn channel_secret_telegram_bot_token_roundtrip() {
-        let dir = std::env::temp_dir().join(format!(
-            "construct_test_tg_bot_token_{}",
-            uuid::Uuid::new_v4()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("revka_test_tg_bot_token_{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&dir).await.unwrap();
 
         let plaintext_token = "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11";
@@ -15623,10 +15607,8 @@ require_otp_to_resume = true
 
     #[tokio::test]
     async fn nevis_client_secret_encrypt_decrypt_roundtrip() {
-        let dir = std::env::temp_dir().join(format!(
-            "construct_test_nevis_secret_{}",
-            uuid::Uuid::new_v4()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("revka_test_nevis_secret_{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&dir).await.unwrap();
 
         let plaintext_secret = "nevis-test-client-secret-value";
@@ -16080,8 +16062,8 @@ require_otp_to_resume = true
     /// The TOML template baked into Docker images (Dockerfile + Dockerfile.debian).
     /// Kept here so changes to the Dockerfiles can be validated by `cargo test`.
     const DOCKER_CONFIG_TEMPLATE: &str = r#"
-workspace_dir = "/construct-data/workspace"
-config_path = "/construct-data/.construct/config.toml"
+workspace_dir = "/revka-data/workspace"
+config_path = "/revka-data/.revka/config.toml"
 api_key = ""
 default_provider = "openrouter"
 default_model = "anthropic/claude-sonnet-4-20250514"

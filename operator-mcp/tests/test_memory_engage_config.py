@@ -4,26 +4,26 @@ import pytest
 
 
 def test_memory_retrieval_limit_prefers_env(monkeypatch):
-    from operator_mcp import construct_config
+    from operator_mcp import revka_config
 
     monkeypatch.setenv("KUMIHO_MEMORY_RETRIEVAL_LIMIT", "3")
-    monkeypatch.setattr(construct_config, "_cached_memory_retrieval_limit", None)
+    monkeypatch.setattr(revka_config, "_cached_memory_retrieval_limit", None)
 
-    assert construct_config.memory_retrieval_limit() == 3
+    assert revka_config.memory_retrieval_limit() == 3
 
 
 def test_memory_min_relevance_score_prefers_env(monkeypatch):
-    from operator_mcp import construct_config
+    from operator_mcp import revka_config
 
-    monkeypatch.setenv("CONSTRUCT_MEMORY_MIN_RELEVANCE_SCORE", "0.7")
-    monkeypatch.setattr(construct_config, "_cached_memory_min_relevance_score", None)
+    monkeypatch.setenv("REVKA_MEMORY_MIN_RELEVANCE_SCORE", "0.7")
+    monkeypatch.setattr(revka_config, "_cached_memory_min_relevance_score", None)
 
-    assert construct_config.memory_min_relevance_score() == 0.7
+    assert revka_config.memory_min_relevance_score() == 0.7
 
 
 @pytest.mark.asyncio
 async def test_memory_engage_applies_configured_limit_and_min_score(monkeypatch):
-    from operator_mcp import construct_config
+    from operator_mcp import revka_config
     from operator_mcp.tool_handlers import memory
 
     captured: dict = {}
@@ -48,9 +48,9 @@ async def test_memory_engage_applies_configured_limit_and_min_score(monkeypatch)
             return "\n\n".join(mem["summary"] for mem in memories)
 
     monkeypatch.setenv("KUMIHO_MEMORY_RETRIEVAL_LIMIT", "3")
-    monkeypatch.setenv("CONSTRUCT_MEMORY_MIN_RELEVANCE_SCORE", "0.7")
-    monkeypatch.setattr(construct_config, "_cached_memory_retrieval_limit", None)
-    monkeypatch.setattr(construct_config, "_cached_memory_min_relevance_score", None)
+    monkeypatch.setenv("REVKA_MEMORY_MIN_RELEVANCE_SCORE", "0.7")
+    monkeypatch.setattr(revka_config, "_cached_memory_retrieval_limit", None)
+    monkeypatch.setattr(revka_config, "_cached_memory_min_relevance_score", None)
     monkeypatch.setattr(memory, "_HAS_KUMIHO_MEMORY", True)
     monkeypatch.setattr(memory, "_km_tool_memory_engage", fake_engage)
     monkeypatch.setattr(memory, "_km_get_manager", lambda: FakeManager())
@@ -71,13 +71,13 @@ async def test_memory_engage_applies_configured_limit_and_min_score(monkeypatch)
 
 @pytest.mark.asyncio
 async def test_memory_engage_schema_uses_configured_limit_and_min_score(monkeypatch):
-    from operator_mcp import construct_config
+    from operator_mcp import revka_config
     from operator_mcp.operator_mcp import list_tools
 
     monkeypatch.setenv("KUMIHO_MEMORY_RETRIEVAL_LIMIT", "3")
-    monkeypatch.setenv("CONSTRUCT_MEMORY_MIN_RELEVANCE_SCORE", "0.7")
-    monkeypatch.setattr(construct_config, "_cached_memory_retrieval_limit", None)
-    monkeypatch.setattr(construct_config, "_cached_memory_min_relevance_score", None)
+    monkeypatch.setenv("REVKA_MEMORY_MIN_RELEVANCE_SCORE", "0.7")
+    monkeypatch.setattr(revka_config, "_cached_memory_retrieval_limit", None)
+    monkeypatch.setattr(revka_config, "_cached_memory_min_relevance_score", None)
 
     tools = await list_tools()
     memory_engage = next(tool for tool in tools if tool.name == "memory_engage")

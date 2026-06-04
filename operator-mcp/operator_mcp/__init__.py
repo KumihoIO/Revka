@@ -1,4 +1,4 @@
-"""Construct Operator — MCP server for agent orchestration."""
+"""Revka Operator — MCP server for agent orchestration."""
 
 # Bootstrap: ensure the Kumiho venv site-packages are on sys.path so the
 # operator can import kumiho regardless of which Python interpreter runs it.

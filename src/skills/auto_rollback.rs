@@ -88,7 +88,7 @@ impl SkillRollbackTracker {
 /// Constructed once at startup and threaded into the background task
 /// that consumes [`SkillRegressionCandidate`]s.
 pub struct AutoRollbackContext {
-    /// Construct workspace root — `SKILL.toml` lives at
+    /// Revka workspace root — `SKILL.toml` lives at
     /// `<workspace>/skills/<slug>/SKILL.toml`.
     pub workspace_dir: PathBuf,
     /// Kumiho client used to retag `published`.  Shared with the

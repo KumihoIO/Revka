@@ -1,8 +1,8 @@
 //! Pure-Rust sidecar provisioning.
 //!
 //! Replaces the legacy `install-sidecars.{sh,bat}` scripts. Creates per-sidecar
-//! Python venvs under `~/.construct/{kumiho,operator_mcp}/` and materializes
-//! embedded launchers so Construct itself does not depend on any particular
+//! Python venvs under `~/.revka/{kumiho,operator_mcp}/` and materializes
+//! embedded launchers so Revka itself does not depend on any particular
 //! Python on PATH at runtime.
 
 mod install;
@@ -20,29 +20,29 @@ pub enum SidecarStatus {
     Missing,
 }
 
-/// Return the `~/.construct` root directory.
-pub fn construct_root() -> Result<PathBuf> {
+/// Return the `~/.revka` root directory.
+pub fn revka_root() -> Result<PathBuf> {
     let home = directories::UserDirs::new()
         .map(|u| u.home_dir().to_path_buf())
         .ok_or_else(|| anyhow::anyhow!("could not determine home directory"))?;
-    Ok(home.join(".construct"))
+    Ok(home.join(".revka"))
 }
 
 /// Path to the Kumiho sidecar launcher.
 pub fn kumiho_launcher_path() -> Result<PathBuf> {
-    Ok(construct_root()?.join("kumiho").join("run_kumiho_mcp.py"))
+    Ok(revka_root()?.join("kumiho").join("run_kumiho_mcp.py"))
 }
 
 /// Path to the Operator sidecar launcher.
 pub fn operator_launcher_path() -> Result<PathBuf> {
-    Ok(construct_root()?
+    Ok(revka_root()?
         .join("operator_mcp")
         .join("run_operator_mcp.py"))
 }
 
 /// Probe current state of a sidecar (both venv interpreter and launcher).
 pub fn status(sidecar: Sidecar) -> SidecarStatus {
-    let Ok(root) = construct_root() else {
+    let Ok(root) = revka_root() else {
         return SidecarStatus::Missing;
     };
     let (dir, launcher) = match sidecar {
@@ -81,7 +81,7 @@ pub async fn ensure_sidecars_ready(interactive: bool) -> Result<()> {
 
     if interactive && !prompt_install(kumiho, operator)? {
         anyhow::bail!(
-            "sidecars not installed; re-run with `construct install --sidecars-only` when ready"
+            "sidecars not installed; re-run with `revka install --sidecars-only` when ready"
         );
     }
 
@@ -103,7 +103,7 @@ fn prompt_install(kumiho: SidecarStatus, operator: SidecarStatus) -> Result<bool
         missing.push("Operator");
     }
     eprintln!(
-        "==> Construct needs to install the {} MCP sidecar{} (one-time, ~60s).",
+        "==> Revka needs to install the {} MCP sidecar{} (one-time, ~60s).",
         missing.join(" + "),
         if missing.len() == 1 { "" } else { "s" }
     );

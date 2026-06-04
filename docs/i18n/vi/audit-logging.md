@@ -6,7 +6,7 @@
 > Để biết hành vi runtime hiện tại, xem [config-reference.md](config-reference.md), [operations-runbook.md](operations-runbook.md), và [troubleshooting.md](troubleshooting.md).
 
 ## Vấn đề
-Construct ghi log các hành động nhưng thiếu audit trail chống giả mạo cho:
+Revka ghi log các hành động nhưng thiếu audit trail chống giả mạo cho:
 - Ai đã thực thi lệnh nào
 - Khi nào và từ channel nào
 - Những tài nguyên nào được truy cập
@@ -115,13 +115,13 @@ impl AuditLogger {
 ```toml
 [security.audit]
 enabled = true
-log_path = "~/.config/construct/audit.log"
+log_path = "~/.config/revka/audit.log"
 max_size_mb = 100
 rotate = "daily"  # daily | weekly | size
 
 # Chống giả mạo
 sign_events = true
-signing_key_path = "~/.config/construct/audit.key"
+signing_key_path = "~/.config/revka/audit.key"
 
 # Những gì cần log
 log_commands = true
@@ -136,19 +136,19 @@ log_policy_violations = true
 
 ```bash
 # Hiển thị tất cả lệnh được thực thi bởi @alice
-construct audit --user @alice
+revka audit --user @alice
 
 # Hiển thị tất cả lệnh rủi ro cao
-construct audit --risk high
+revka audit --risk high
 
 # Hiển thị vi phạm trong 24 giờ qua
-construct audit --since 24h --violations-only
+revka audit --since 24h --violations-only
 
 # Xuất sang JSON để phân tích
-construct audit --format json --output audit.json
+revka audit --format json --output audit.json
 
 # Xác minh tính toàn vẹn của log
-construct audit --verify-signatures
+revka audit --verify-signatures
 ```
 
 ---

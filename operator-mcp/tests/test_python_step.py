@@ -219,7 +219,7 @@ class TestKrefEncodeBuiltin:
         return json.loads(proc.stdout)
 
     def test_encode_decode_roundtrip_no_secret(self):
-        kref = "kref://Construct/Sessions/sess-1/Outcomes/x.outcome?r=1"
+        kref = "kref://Revka/Sessions/sess-1/Outcomes/x.outcome?r=1"
         enc = self._run({"op": "encode", "kref": kref})
         assert "encoded" in enc
         assert "/" not in enc["encoded"]  # url-safe, no padding
@@ -232,7 +232,7 @@ class TestKrefEncodeBuiltin:
         assert dec["verified"] is False
 
     def test_encode_decode_with_secret_verifies(self):
-        kref = "kref://Construct/Outreach/contacts/acme.contact?r=2"
+        kref = "kref://Revka/Outreach/contacts/acme.contact?r=2"
         enc = self._run({"op": "encode", "kref": kref, "secret": "s3cret"})
         dec = self._run(
             {"op": "decode", "encoded": enc["encoded"], "secret": "s3cret"}
@@ -243,7 +243,7 @@ class TestKrefEncodeBuiltin:
     def test_decode_with_wrong_secret_does_not_verify(self):
         # Tamper resistance: a forged token under a different secret
         # decodes (we still return the bytes) but `verified` is False.
-        kref = "kref://Construct/Outreach/contacts/acme.contact?r=2"
+        kref = "kref://Revka/Outreach/contacts/acme.contact?r=2"
         enc = self._run({"op": "encode", "kref": kref, "secret": "right"})
         dec = self._run(
             {"op": "decode", "encoded": enc["encoded"], "secret": "wrong"}

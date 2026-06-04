@@ -9,7 +9,7 @@ from urllib.parse import unquote, urlparse
 
 from .._log import _log
 from ..artifact_summary import summarize_artifact_metadata
-from ..construct_config import memory_project, workspace_dir
+from ..revka_config import memory_project, workspace_dir
 from ..kumiho_clients import KumihoAgentPoolClient
 from ..skill_loader import list_skills as list_local_skills
 from ..skill_loader import load_skill as load_local_skill

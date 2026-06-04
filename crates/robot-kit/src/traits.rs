@@ -1,7 +1,7 @@
 //! Tool trait definition
 //!
 //! This defines the interface that all robot tools implement.
-//! It is compatible with Construct's Tool trait but standalone.
+//! It is compatible with Revka's Tool trait but standalone.
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -66,7 +66,7 @@ pub struct ToolSpec {
 /// # Example
 ///
 /// ```rust,ignore
-/// use construct_robot_kit::{Tool, ToolResult};
+/// use revka_robot_kit::{Tool, ToolResult};
 /// use async_trait::async_trait;
 /// use serde_json::{json, Value};
 ///

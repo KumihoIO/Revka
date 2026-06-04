@@ -1,13 +1,13 @@
 {
-  "id": "construct",
-  "name": "Construct",
+  "id": "revka",
+  "name": "Revka",
   "version": "2026.4.24",
   "description": "Fast, small, and fully autonomous AI personal assistant infrastructure. Deploy anywhere, swap anything. 100% Rust.",
-  "logo": "construct.png",
+  "logo": "revka.png",
   "links": {
-    "github": "https://github.com/KumihoIO/construct-os",
-    "website": "https://construct.com/",
-    "docs": "https://github.com/KumihoIO/construct-os#readme"
+    "github": "https://github.com/KumihoIO/Revka",
+    "website": "https://revka.com/",
+    "docs": "https://github.com/KumihoIO/Revka#readme"
   },
   "tags": ["ai", "self-hosted"]
 }

@@ -148,16 +148,16 @@ class TestExecutor:
             return {
                 "requested": 1,
                 "generated": 1,
-                "files": ["/ws/Construct/Images/gen.image/r1/gen.png"],
-                "urls": ["/workspace/Construct/Images/gen.image/r1/gen.png?exp=1&sig=abc"],
+                "files": ["/ws/Revka/Images/gen.image/r1/gen.png"],
+                "urls": ["/workspace/Revka/Images/gen.image/r1/gen.png?exp=1&sig=abc"],
                 "canvas": {"canvas_id": "default", "frame_id": "frame-1"},
                 "artifact": {
-                    "item_kref": "kref://Construct/Images/gen.image",
-                    "revision_kref": "kref://Construct/Images/gen.image?r=1",
+                    "item_kref": "kref://Revka/Images/gen.image",
+                    "revision_kref": "kref://Revka/Images/gen.image?r=1",
                     "revision_number": 1,
-                    "artifact_krefs": ["kref://Construct/Images/gen.image?r=1#0"],
-                    "space_path": "Construct/Images",
-                    "directory": "/ws/Construct/Images/gen.image/r1",
+                    "artifact_krefs": ["kref://Revka/Images/gen.image?r=1#0"],
+                    "space_path": "Revka/Images",
+                    "directory": "/ws/Revka/Images/gen.image/r1",
                 },
             }
 
@@ -189,8 +189,8 @@ class TestExecutor:
                 "urls": ["/workspace/a.png?sig=1", "/workspace/b.png?sig=2"],
                 "canvas": {"canvas_id": "default", "frame_id": "f-9"},
                 "artifact": {
-                    "item_kref": "kref://Construct/Images/x.image",
-                    "revision_kref": "kref://Construct/Images/x.image?r=3",
+                    "item_kref": "kref://Revka/Images/x.image",
+                    "revision_kref": "kref://Revka/Images/x.image?r=3",
                     "artifact_krefs": ["k0", "k1"],
                 },
             }
@@ -207,7 +207,7 @@ class TestExecutor:
             "/workspace/a.png?sig=1",
             "/workspace/b.png?sig=2",
         ]
-        assert result.output_data["item_kref"] == "kref://Construct/Images/x.image"
+        assert result.output_data["item_kref"] == "kref://Revka/Images/x.image"
         assert result.output_data["canvas_frame_id"] == "f-9"
         # Downstream steps reference these via ${gen.output_data.urls} and
         # ${gen.output_data.item_kref}; pinning the keys keeps us honest

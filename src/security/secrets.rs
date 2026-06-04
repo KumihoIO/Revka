@@ -1,7 +1,7 @@
 // Encrypted secret store — defense-in-depth for API keys and tokens.
 //
 // Secrets are encrypted using ChaCha20-Poly1305 AEAD with a random key stored
-// in `~/.construct/.secret_key` with restrictive file permissions (0600). The
+// in `~/.revka/.secret_key` with restrictive file permissions (0600). The
 // config file stores only hex-encoded ciphertext, never plaintext keys.
 //
 // Each encryption generates a fresh random 12-byte nonce, prepended to the
@@ -35,7 +35,7 @@ const NONCE_LEN: usize = 12;
 /// Manages encrypted storage of secrets (API keys, tokens, etc.)
 #[derive(Debug, Clone)]
 pub struct SecretStore {
-    /// Path to the key file (`~/.construct/.secret_key`)
+    /// Path to the key file (`~/.revka/.secret_key`)
     key_path: PathBuf,
     /// Whether encryption is enabled
     enabled: bool,
@@ -43,9 +43,9 @@ pub struct SecretStore {
 
 impl SecretStore {
     /// Create a new secret store rooted at the given directory.
-    pub fn new(construct_dir: &Path, enabled: bool) -> Self {
+    pub fn new(revka_dir: &Path, enabled: bool) -> Self {
         Self {
-            key_path: construct_dir.join(".secret_key"),
+            key_path: revka_dir.join(".secret_key"),
             enabled,
         }
     }

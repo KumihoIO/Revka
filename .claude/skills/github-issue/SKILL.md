@@ -1,14 +1,14 @@
 # Skill: github-issue
 
-File a structured GitHub issue (bug report or feature request) for Construct interactively from Claude Code.
+File a structured GitHub issue (bug report or feature request) for Revka interactively from Claude Code.
 
 ## When to Use
 
-Trigger when the user wants to file a GitHub issue, report a bug, or request a feature for Construct. Keywords: "file issue", "report bug", "feature request", "open issue", "create issue", "github issue".
+Trigger when the user wants to file a GitHub issue, report a bug, or request a feature for Revka. Keywords: "file issue", "report bug", "feature request", "open issue", "create issue", "github issue".
 
 ## Instructions
 
-You are filing a GitHub issue against the Construct repository using structured issue forms. Follow this workflow exactly.
+You are filing a GitHub issue against the Revka repository using structured issue forms. Follow this workflow exactly.
 
 ### Step 1: Detect Issue Type and Read the Template
 
@@ -41,7 +41,7 @@ git diff --stat HEAD~1 2>/dev/null
 uname -s -r -m                          # OS info
 sw_vers 2>/dev/null                     # macOS version
 rustc --version 2>/dev/null             # Rust version
-cargo metadata --format-version=1 --no-deps 2>/dev/null | jq -r '.packages[] | select(.name=="construct") | .version' 2>/dev/null   # Construct version
+cargo metadata --format-version=1 --no-deps 2>/dev/null | jq -r '.packages[] | select(.name=="revka") | .version' 2>/dev/null   # Revka version
 git rev-parse --short HEAD              # commit SHA fallback
 ```
 
@@ -89,7 +89,7 @@ If multi-concept issues are detected:
 3. Offer to file separate issues for each group, reusing shared context (environment, etc.).
 4. Let the user decide: proceed as-is or split.
 
-### Step 5: Construct Issue Body
+### Step 5: Revka Issue Body
 
 Build the issue body as markdown sections matching GitHub's form-field rendering format. GitHub renders form-submitted issues with `### <Field Label>` sections, so use that exact structure.
 
@@ -127,7 +127,7 @@ Return the resulting issue URL to the user.
 
 - **Always read the template file** — never assume field names, options, or structure. The templates are the source of truth and may change over time.
 - **Never include personal/sensitive data** in the issue. Redact secrets, tokens, emails, real names.
-- **Use neutral project-scoped placeholders** per Construct's privacy contract.
+- **Use neutral project-scoped placeholders** per Revka's privacy contract.
 - **One concept per issue** — enforce the scope guard.
 - **Auto-detect, don't guess** — use real command output for environment fields.
 - **Match GitHub's rendering** — use `### Field Label` sections so issues look consistent whether filed via web UI or this skill.

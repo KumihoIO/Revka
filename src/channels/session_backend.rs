@@ -49,7 +49,7 @@ pub trait SessionBackend: Send + Sync {
 
     /// List sessions with metadata.
     fn list_sessions_with_metadata(&self) -> Vec<SessionMetadata> {
-        // Default: construct metadata from messages (backends can override for efficiency)
+        // Default: revka metadata from messages (backends can override for efficiency)
         self.list_sessions()
             .into_iter()
             .map(|key| {

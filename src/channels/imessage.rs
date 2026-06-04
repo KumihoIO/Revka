@@ -1191,7 +1191,7 @@ mod tests {
     #[test]
     fn extract_four_byte_length_prefix() {
         // Test the 0x82 branch: 4-byte little-endian u32 length prefix.
-        // Construct directly — make_attributed_body only emits 0x82 for >64KB.
+        // Revka directly — make_attributed_body only emits 0x82 for >64KB.
         let text = b"Hello";
         let mut blob = Vec::new();
         blob.extend_from_slice(b"\x01\x2B"); // start marker

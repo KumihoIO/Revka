@@ -5,7 +5,7 @@ import remarkGfm from 'remark-gfm';
 import type { ChatMessage } from './types';
 import { operatorPhaseColor } from './chat-utils';
 import { ThinkingTrace, OperatorTrace } from './TraceDisclosure';
-import { useTheme } from '@/construct/hooks/useTheme';
+import { useTheme } from '@/revka/hooks/useTheme';
 
 // ---------------------------------------------------------------------------
 // Operator badge — compact inline status for orchestration events

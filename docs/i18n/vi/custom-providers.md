@@ -1,6 +1,6 @@
 # Cấu hình Provider Tùy chỉnh
 
-Construct hỗ trợ endpoint API tùy chỉnh cho cả provider tương thích OpenAI lẫn Anthropic.
+Revka hỗ trợ endpoint API tùy chỉnh cho cả provider tương thích OpenAI lẫn Anthropic.
 
 ## Các loại Provider
 
@@ -28,7 +28,7 @@ default_model = "your-model-name"
 
 ### File Config
 
-Chỉnh sửa `~/.construct/config.toml`:
+Chỉnh sửa `~/.revka/config.toml`:
 
 ```toml
 api_key = "your-api-key"
@@ -42,8 +42,8 @@ Với provider `custom:` và `anthropic-custom:`, dùng biến môi trường ch
 
 ```bash
 export API_KEY="your-api-key"
-# hoặc: export CONSTRUCT_API_KEY="your-api-key"
-construct agent
+# hoặc: export REVKA_API_KEY="your-api-key"
+revka agent
 ```
 
 ## Kiểm tra cấu hình
@@ -52,10 +52,10 @@ Xác minh endpoint tùy chỉnh của bạn:
 
 ```bash
 # Chế độ tương tác
-construct agent
+revka agent
 
 # Kiểm tra tin nhắn đơn
-construct agent -m "test message"
+revka agent -m "test message"
 ```
 
 ## Xử lý sự cố

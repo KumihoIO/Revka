@@ -24,10 +24,8 @@ impl RuntimeAdapter for NativeRuntime {
     }
 
     fn storage_path(&self) -> PathBuf {
-        directories::UserDirs::new().map_or_else(
-            || PathBuf::from(".construct"),
-            |u| u.home_dir().join(".construct"),
-        )
+        directories::UserDirs::new()
+            .map_or_else(|| PathBuf::from(".revka"), |u| u.home_dir().join(".revka"))
     }
 
     fn supports_long_running(&self) -> bool {
@@ -85,9 +83,9 @@ mod tests {
     }
 
     #[test]
-    fn native_storage_path_contains_construct() {
+    fn native_storage_path_contains_revka() {
         let path = NativeRuntime::new().storage_path();
-        assert!(path.to_string_lossy().contains("construct"));
+        assert!(path.to_string_lossy().contains("revka"));
     }
 
     #[test]

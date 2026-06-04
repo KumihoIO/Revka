@@ -2,20 +2,20 @@
 
 ## 1. Summary
 
-- **Purpose:** Provide a pre-recording readiness matrix for demos that show Construct agents using Google Agents CLI lifecycle commands.
+- **Purpose:** Provide a pre-recording readiness matrix for demos that show Revka agents using Google Agents CLI lifecycle commands.
 - **Audience:** Operators, reviewers, and demo authors.
-- **Scope:** The Construct `google_agents_cli` integration path in the Rust runtime and Operator MCP sidecar.
+- **Scope:** The Revka `google_agents_cli` integration path in the Rust runtime and Operator MCP sidecar.
 - **Non-goals:** This document does not set up Google Cloud projects, authenticate Google credentials, design the business demo story, or prove live deploy/eval/publish results.
 
 ## 2. Architecture Guardrail
 
-`agents-cli` is a lifecycle CLI for Google ADK / Agent Platform work. It is not a Construct `agent_type`, session provider, or replacement for Claude/Codex.
+`agents-cli` is a lifecycle CLI for Google ADK / Agent Platform work. It is not a Revka `agent_type`, session provider, or replacement for Claude/Codex.
 
 For demo narration, use this model:
 
-1. Construct starts or coordinates an existing coding agent such as `claude` or `codex`.
+1. Revka starts or coordinates an existing coding agent such as `claude` or `codex`.
 2. That agent calls the `google_agents_cli` tool when it needs `agents-cli setup`, `create`, `scaffold`, `install`, `lint`, `run`, `eval`, `deploy`, `publish`, `infra`, `data-ingestion`, `playground`, `update`, `login --status`, or `info`.
-3. Construct executes the bounded tool call with argv tokens, workspace-bound cwd validation, timeout/output limits, and noninteractive defaults.
+3. Revka executes the bounded tool call with argv tokens, workspace-bound cwd validation, timeout/output limits, and noninteractive defaults.
 
 For declarative workflows, this means an `agent` step normally uses
 `agent.tools: google_agentops` and declares
@@ -29,7 +29,7 @@ Avoid this model:
 
 1. Do not say `agents-cli` is a third coding agent.
 2. Do not configure `agent_type = "agents-cli"`.
-3. Do not imply Construct injects MCP tools into `agents-cli run`.
+3. Do not imply Revka injects MCP tools into `agents-cli run`.
 
 ## 3. Prerequisites
 
@@ -40,14 +40,14 @@ Avoid this model:
 enabled = true
 ```
 
-- Install and authenticate `agents-cli` outside Construct.
-- Keep demo working directories under the configured Construct workspace.
+- Install and authenticate `agents-cli` outside Revka.
+- Keep demo working directories under the configured Revka workspace.
 - Treat `deploy`, `publish`, `infra`, and some `eval` flows as externally side-effecting Google operations.
 - Prefer `agents-cli info` and `agents-cli login --status` for non-mutating environment checks.
 
 ## 4. Demo Outcome Matrix
 
-| Outcome to show | Expected Construct behavior | Evidence to check before recording |
+| Outcome to show | Expected Revka behavior | Evidence to check before recording |
 |---|---|---|
 | Existing agent uses Google lifecycle tooling | Operator guidance tells users to spawn `claude`/`codex` and call `google_agents_cli`; workflow `agent` steps use `agent.tools: google_agentops` plus `required_tools` for the reduced Google/A2A tool surface, or `all` when broader Operator MCP tools are needed; tool schemas keep `create_agent.agent_type` limited to `claude` or `codex` | `operator-mcp/operator_mcp/google_agentops_mcp.py`; `operator-mcp/operator_mcp/workflow/executor.py`; `operator-mcp/operator_mcp/operator_mcp.py`; `operator-mcp/operator_mcp/subagent_mcp.py`; `src/agent/operator/core.rs`; `src/gateway/ws.rs` |
 | Current CLI project/tooling inspection | `agents-cli info` is accepted by both Rust and Operator MCP handlers | `google_agents_cli_accepts_current_info_command`; `test_google_agents_cli_accepts_info_command` |
@@ -107,8 +107,8 @@ when `agents-cli login --status` does not report an authenticated session.
 For PR-backed demos, also verify:
 
 ```bash
-gh pr checks <PR_NUMBER> --repo KumihoIO/construct-os --watch --interval 30
-gh pr view <PR_NUMBER> --repo KumihoIO/construct-os --json headRefOid,reviewDecision,mergeStateStatus,isDraft,state
+gh pr checks <PR_NUMBER> --repo KumihoIO/Revka --watch --interval 30
+gh pr view <PR_NUMBER> --repo KumihoIO/Revka --json headRefOid,reviewDecision,mergeStateStatus,isDraft,state
 ```
 
 Expected PR state before recording:

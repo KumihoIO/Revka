@@ -74,7 +74,7 @@ fn has_launchable_channels(channels: &ChannelsConfig) -> bool {
 // ── Step 0: language picker ──────────────────────────────────────
 
 /// Bilingual language selection shown before the banner. Pre-selects whatever
-/// language was already active (from `--lang`, `CONSTRUCT_LANG`, or `$LANG`),
+/// language was already active (from `--lang`, `REVKA_LANG`, or `$LANG`),
 /// so users who set the flag can just press Enter; users who didn't see a
 /// "Select your language / 언어를 선택하세요" prompt that's readable either way.
 fn setup_language() -> Result<()> {
@@ -169,7 +169,7 @@ pub async fn run_wizard(force: bool) -> Result<Config> {
         model_providers: std::collections::HashMap::new(),
         default_temperature: 0.7,
         // Persist the wizard's UI language so subsequent runs default to it
-        // without requiring --lang / CONSTRUCT_LANG / $LANG every time.
+        // without requiring --lang / REVKA_LANG / $LANG every time.
         language: Some(i18n::lang().code().to_string()),
         provider_timeout_secs: 120,
         provider_max_tokens: None,
@@ -394,7 +394,7 @@ pub async fn run_wizard(force: bool) -> Result<Config> {
             println!();
             // Signal to main.rs to call start_channels after wizard returns
             // SAFETY: called during single-threaded onboarding wizard before async runtime.
-            unsafe { std::env::set_var("CONSTRUCT_AUTOSTART_CHANNELS", "1") };
+            unsafe { std::env::set_var("REVKA_AUTOSTART_CHANNELS", "1") };
         }
     }
 
@@ -414,7 +414,7 @@ pub async fn run_channels_repair_wizard() -> Result<Config> {
 
     let mut config = Box::pin(Config::load_or_init()).await?;
 
-    print_step(1, 1, "Channels (How You Talk to Construct)");
+    print_step(1, 1, "Channels (How You Talk to Revka)");
     config.channels_config = setup_channels()?;
     config.save().await?;
     persist_workspace_selection(&config.config_path).await?;
@@ -447,7 +447,7 @@ pub async fn run_channels_repair_wizard() -> Result<Config> {
             println!();
             // Signal to main.rs to call start_channels after wizard returns
             // SAFETY: called during single-threaded onboarding wizard before async runtime.
-            unsafe { std::env::set_var("CONSTRUCT_AUTOSTART_CHANNELS", "1") };
+            unsafe { std::env::set_var("REVKA_AUTOSTART_CHANNELS", "1") };
         }
     }
 
@@ -510,7 +510,7 @@ async fn run_provider_update_wizard(workspace_dir: &Path, config_path: &Path) ->
             );
             println!();
             // SAFETY: called during single-threaded onboarding wizard before async runtime.
-            unsafe { std::env::set_var("CONSTRUCT_AUTOSTART_CHANNELS", "1") };
+            unsafe { std::env::set_var("REVKA_AUTOSTART_CHANNELS", "1") };
         }
     }
 
@@ -537,7 +537,7 @@ fn apply_provider_update(
 // ── Quick setup (zero prompts) ───────────────────────────────────
 
 /// Non-interactive setup: generates a sensible default config instantly.
-/// Use `construct onboard` or `construct onboard --api-key sk-... --provider openrouter --memory kumiho|none`.
+/// Use `revka onboard` or `revka onboard --api-key sk-... --provider openrouter --memory kumiho|none`.
 fn backend_key_from_choice(choice: usize) -> &'static str {
     selectable_memory_backends()
         .get(choice)
@@ -593,7 +593,7 @@ pub async fn run_quick_setup(
 }
 
 fn resolve_quick_setup_dirs_with_home(home: &Path) -> (PathBuf, PathBuf) {
-    if let Ok(custom_config_dir) = std::env::var("CONSTRUCT_CONFIG_DIR") {
+    if let Ok(custom_config_dir) = std::env::var("REVKA_CONFIG_DIR") {
         let trimmed = custom_config_dir.trim();
         if !trimmed.is_empty() {
             let config_dir = PathBuf::from(shellexpand::tilde(trimmed).as_ref());
@@ -601,7 +601,7 @@ fn resolve_quick_setup_dirs_with_home(home: &Path) -> (PathBuf, PathBuf) {
         }
     }
 
-    if let Ok(custom_workspace) = std::env::var("CONSTRUCT_WORKSPACE") {
+    if let Ok(custom_workspace) = std::env::var("REVKA_WORKSPACE") {
         let trimmed = custom_workspace.trim();
         if !trimmed.is_empty() {
             let expanded = shellexpand::tilde(trimmed);
@@ -611,22 +611,22 @@ fn resolve_quick_setup_dirs_with_home(home: &Path) -> (PathBuf, PathBuf) {
         }
     }
 
-    let config_dir = home.join(".construct");
+    let config_dir = home.join(".revka");
     (config_dir.clone(), config_dir.join("workspace"))
 }
 
 fn homebrew_prefix_for_exe(exe: &Path) -> Option<&'static str> {
     let exe = exe.to_string_lossy();
-    if exe == "/opt/homebrew/bin/construct"
-        || exe.starts_with("/opt/homebrew/Cellar/construct/")
-        || exe.starts_with("/opt/homebrew/opt/construct/")
+    if exe == "/opt/homebrew/bin/revka"
+        || exe.starts_with("/opt/homebrew/Cellar/revka/")
+        || exe.starts_with("/opt/homebrew/opt/revka/")
     {
         return Some("/opt/homebrew");
     }
 
-    if exe == "/usr/local/bin/construct"
-        || exe.starts_with("/usr/local/Cellar/construct/")
-        || exe.starts_with("/usr/local/opt/construct/")
+    if exe == "/usr/local/bin/revka"
+        || exe.starts_with("/usr/local/Cellar/revka/")
+        || exe.starts_with("/usr/local/opt/revka/")
     {
         return Some("/usr/local");
     }
@@ -640,7 +640,7 @@ fn quick_setup_homebrew_service_note(
     exe: &Path,
 ) -> Option<String> {
     let prefix = homebrew_prefix_for_exe(exe)?;
-    let service_root = Path::new(prefix).join("var").join("construct");
+    let service_root = Path::new(prefix).join("var").join("revka");
     let service_config = service_root.join("config.toml");
     let service_workspace = service_root.join("workspace");
 
@@ -649,7 +649,7 @@ fn quick_setup_homebrew_service_note(
     }
 
     Some(format!(
-        "Homebrew service note: `brew services` uses {} (config {}) by default. Your onboarding just wrote {}. If you plan to run Construct as a service, copy or link this workspace first.",
+        "Homebrew service note: `brew services` uses {} (config {}) by default. Your onboarding just wrote {}. If you plan to run Revka as a service, copy or link this workspace first.",
         service_workspace.display(),
         service_config.display(),
         config_path.display(),
@@ -674,8 +674,8 @@ async fn run_quick_setup_with_home(
     );
     println!();
 
-    let (construct_dir, workspace_dir) = resolve_quick_setup_dirs_with_home(home);
-    let config_path = construct_dir.join("config.toml");
+    let (revka_dir, workspace_dir) = resolve_quick_setup_dirs_with_home(home);
+    let config_path = revka_dir.join("config.toml");
 
     ensure_onboard_overwrite_allowed(&config_path, force)?;
     fs::create_dir_all(&workspace_dir)
@@ -708,7 +708,7 @@ async fn run_quick_setup_with_home(
         model_providers: std::collections::HashMap::new(),
         default_temperature: 0.7,
         // Persist the wizard's UI language so subsequent runs default to it
-        // without requiring --lang / CONSTRUCT_LANG / $LANG every time.
+        // without requiring --lang / REVKA_LANG / $LANG every time.
         language: Some(i18n::lang().code().to_string()),
         provider_timeout_secs: 120,
         provider_max_tokens: None,
@@ -795,7 +795,7 @@ async fn run_quick_setup_with_home(
     let default_ctx = ProjectContext {
         user_name: std::env::var("USER").unwrap_or_else(|_| "User".into()),
         timezone: "UTC".into(),
-        agent_name: "Construct".into(),
+        agent_name: "Revka".into(),
         communication_style:
             "Be warm, natural, and clear. Use occasional relevant emojis (1-2 max) and avoid robotic phrasing."
                 .into(),
@@ -2143,7 +2143,7 @@ pub async fn run_models_refresh(
             print_model_preview(&cached.models);
             println!();
             println!(
-                "Tip: run `construct models refresh --force --provider {}` to fetch latest now.",
+                "Tip: run `revka models refresh --force --provider {}` to fetch latest now.",
                 provider_name
             );
             return Ok(());
@@ -2207,7 +2207,7 @@ pub async fn run_models_list(config: &Config, provider_override: Option<&str>) -
     let Some(cached) = cached else {
         println!();
         println!(
-            "  No cached models for '{provider_name}'. Run: construct models refresh --provider {provider_name}"
+            "  No cached models for '{provider_name}'. Run: revka models refresh --provider {provider_name}"
         );
         println!();
         return Ok(());
@@ -3721,7 +3721,7 @@ fn setup_project_context() -> Result<ProjectContext> {
 
     let agent_name: String = Input::new()
         .with_prompt(format!("  {}", t!("ctx-agent-name")))
-        .default("Construct".to_string())
+        .default("Revka".to_string())
         .interact_text()?;
 
     let style_direct = t!("ctx-style-direct");
@@ -3793,7 +3793,7 @@ pub struct MemorySetupResult {
 }
 
 fn setup_memory() -> Result<MemorySetupResult> {
-    print_bullet("Choose how Construct stores and searches memories.");
+    print_bullet("Choose how Revka stores and searches memories.");
     print_bullet("Kumiho is the recommended graph-native memory backend.");
     print_bullet("You can always change this later in config.toml.");
     println!();
@@ -4074,10 +4074,10 @@ fn issue_kumiho_service_token(
         .unwrap_or(config.endpoints.control_plane.as_str());
     let token_name = Input::new()
         .with_prompt(format!("  {}", t!("memory-kumiho-token-name")))
-        .default("Construct onboard".to_string())
+        .default("Revka onboard".to_string())
         .interact_text()?;
-    let token_name = normalize_optional_prompt_value(token_name)
-        .unwrap_or_else(|| "Construct onboard".to_string());
+    let token_name =
+        normalize_optional_prompt_value(token_name).unwrap_or_else(|| "Revka onboard".to_string());
     let service_token =
         client.create_service_token(control_plane_url, &session.id_token, &token_name)?;
 
@@ -5003,7 +5003,7 @@ fn setup_channels() -> Result<ChannelsConfig> {
 
                     let session_path: String = Input::new()
                         .with_prompt(format!("  {}", t!("whatsapp-web-session-prompt")))
-                        .default("~/.construct/state/whatsapp-web/session.db".to_string())
+                        .default("~/.revka/state/whatsapp-web/session.db".to_string())
                         .interact_text()?;
 
                     if session_path.trim().is_empty() {
@@ -5099,7 +5099,7 @@ fn setup_channels() -> Result<ChannelsConfig> {
 
                 let verify_token: String = Input::new()
                     .with_prompt(format!("  {}", t!("whatsapp-cloud-verify-token-prompt")))
-                    .default("construct-whatsapp-verify".to_string())
+                    .default("revka-whatsapp-verify".to_string())
                     .interact_text()?;
 
                 // Test connection (run entirely in separate thread — Response must be used/dropped there)
@@ -5155,7 +5155,7 @@ fn setup_channels() -> Result<ChannelsConfig> {
                     access_token: Some(access_token.trim().to_string()),
                     phone_number_id: Some(phone_number_id.trim().to_string()),
                     verify_token: Some(verify_token.trim().to_string()),
-                    app_secret: None, // Can be set via CONSTRUCT_WHATSAPP_APP_SECRET env var
+                    app_secret: None, // Can be set via REVKA_WHATSAPP_APP_SECRET env var
                     session_path: None,
                     pair_phone: None,
                     pair_code: None,
@@ -6146,7 +6146,7 @@ async fn scaffold_workspace(
     memory_backend: &str,
 ) -> Result<()> {
     let agent = if ctx.agent_name.is_empty() {
-        "Construct"
+        "Revka"
     } else {
         &ctx.agent_name
     };
@@ -6507,7 +6507,7 @@ fn print_summary(config: &Config) {
     println!(
         "  {}  {}",
         style("⚡").cyan(),
-        style("Construct is ready!").white().bold()
+        style("Revka is ready!").white().bold()
     );
     println!(
         "  {}",
@@ -6652,7 +6652,7 @@ fn print_summary(config: &Config) {
             );
             println!(
                 "       {}",
-                style("construct auth login --provider openai-codex --device-code").yellow()
+                style("revka auth login --provider openai-codex --device-code").yellow()
             );
         } else if provider == "anthropic" {
             println!(
@@ -6665,10 +6665,8 @@ fn print_summary(config: &Config) {
             );
             println!(
                 "       {}",
-                style(
-                    "or: construct auth paste-token --provider anthropic --auth-kind authorization"
-                )
-                .yellow()
+                style("or: revka auth paste-token --provider anthropic --auth-kind authorization")
+                    .yellow()
             );
         } else {
             let env_var = provider_env_var(provider);
@@ -6692,7 +6690,7 @@ fn print_summary(config: &Config) {
             style(format!("{step}.")).cyan().bold(),
             style("Launch your channels").white().bold()
         );
-        println!("       {}", style("construct channel start").yellow());
+        println!("       {}", style("revka channel start").yellow());
         println!();
         step += 1;
     }
@@ -6703,7 +6701,7 @@ fn print_summary(config: &Config) {
     );
     println!(
         "       {}",
-        style("construct agent -m \"Hello, Construct!\"").yellow()
+        style("revka agent -m \"Hello, Revka!\"").yellow()
     );
     println!();
     step += 1;
@@ -6712,7 +6710,7 @@ fn print_summary(config: &Config) {
         "    {} Start interactive CLI mode:",
         style(format!("{step}.")).cyan().bold()
     );
-    println!("       {}", style("construct agent").yellow());
+    println!("       {}", style("revka agent").yellow());
     println!();
     step += 1;
 
@@ -6720,7 +6718,7 @@ fn print_summary(config: &Config) {
         "    {} Check full status:",
         style(format!("{step}.")).cyan().bold()
     );
-    println!("       {}", style("construct status").yellow());
+    println!("       {}", style("revka status").yellow());
 
     println!();
     println!(
@@ -6842,8 +6840,8 @@ mod tests {
     #[tokio::test]
     async fn quick_setup_model_override_persists_to_config_toml() {
         let _env_guard = env_lock().lock().await;
-        let _workspace_env = EnvVarGuard::unset("CONSTRUCT_WORKSPACE");
-        let _config_env = EnvVarGuard::unset("CONSTRUCT_CONFIG_DIR");
+        let _workspace_env = EnvVarGuard::unset("REVKA_WORKSPACE");
+        let _config_env = EnvVarGuard::unset("REVKA_CONFIG_DIR");
         let tmp = TempDir::new().unwrap();
 
         let config = Box::pin(run_quick_setup_with_home(
@@ -6869,8 +6867,8 @@ mod tests {
     #[tokio::test]
     async fn quick_setup_without_model_uses_provider_default_model() {
         let _env_guard = env_lock().lock().await;
-        let _workspace_env = EnvVarGuard::unset("CONSTRUCT_WORKSPACE");
-        let _config_env = EnvVarGuard::unset("CONSTRUCT_CONFIG_DIR");
+        let _workspace_env = EnvVarGuard::unset("REVKA_WORKSPACE");
+        let _config_env = EnvVarGuard::unset("REVKA_CONFIG_DIR");
         let tmp = TempDir::new().unwrap();
 
         let config = Box::pin(run_quick_setup_with_home(
@@ -6892,13 +6890,13 @@ mod tests {
     #[tokio::test]
     async fn quick_setup_existing_config_requires_force_when_non_interactive() {
         let _env_guard = env_lock().lock().await;
-        let _workspace_env = EnvVarGuard::unset("CONSTRUCT_WORKSPACE");
-        let _config_env = EnvVarGuard::unset("CONSTRUCT_CONFIG_DIR");
+        let _workspace_env = EnvVarGuard::unset("REVKA_WORKSPACE");
+        let _config_env = EnvVarGuard::unset("REVKA_CONFIG_DIR");
         let tmp = TempDir::new().unwrap();
-        let construct_dir = tmp.path().join(".construct");
-        let config_path = construct_dir.join("config.toml");
+        let revka_dir = tmp.path().join(".revka");
+        let config_path = revka_dir.join("config.toml");
 
-        tokio::fs::create_dir_all(&construct_dir).await.unwrap();
+        tokio::fs::create_dir_all(&revka_dir).await.unwrap();
         tokio::fs::write(&config_path, "default_provider = \"openrouter\"\n")
             .await
             .unwrap();
@@ -6922,13 +6920,13 @@ mod tests {
     #[tokio::test]
     async fn quick_setup_existing_config_overwrites_with_force() {
         let _env_guard = env_lock().lock().await;
-        let _workspace_env = EnvVarGuard::unset("CONSTRUCT_WORKSPACE");
-        let _config_env = EnvVarGuard::unset("CONSTRUCT_CONFIG_DIR");
+        let _workspace_env = EnvVarGuard::unset("REVKA_WORKSPACE");
+        let _config_env = EnvVarGuard::unset("REVKA_CONFIG_DIR");
         let tmp = TempDir::new().unwrap();
-        let construct_dir = tmp.path().join(".construct");
-        let config_path = construct_dir.join("config.toml");
+        let revka_dir = tmp.path().join(".revka");
+        let config_path = revka_dir.join("config.toml");
 
-        tokio::fs::create_dir_all(&construct_dir).await.unwrap();
+        tokio::fs::create_dir_all(&revka_dir).await.unwrap();
         tokio::fs::write(
             &config_path,
             "default_provider = \"anthropic\"\ndefault_model = \"stale-model\"\n",
@@ -6960,15 +6958,13 @@ mod tests {
     async fn quick_setup_respects_zero_claw_workspace_env_layout() {
         let _env_guard = env_lock().lock().await;
         let tmp = TempDir::new().unwrap();
-        let workspace_root = tmp.path().join("construct-data");
+        let workspace_root = tmp.path().join("revka-data");
         let workspace_dir = workspace_root.join("workspace");
-        let expected_config_path = workspace_root.join(".construct").join("config.toml");
+        let expected_config_path = workspace_root.join(".revka").join("config.toml");
 
-        let _workspace_env = EnvVarGuard::set(
-            "CONSTRUCT_WORKSPACE",
-            workspace_dir.to_string_lossy().as_ref(),
-        );
-        let _config_env = EnvVarGuard::unset("CONSTRUCT_CONFIG_DIR");
+        let _workspace_env =
+            EnvVarGuard::set("REVKA_WORKSPACE", workspace_dir.to_string_lossy().as_ref());
+        let _config_env = EnvVarGuard::unset("REVKA_CONFIG_DIR");
 
         let config = Box::pin(run_quick_setup_with_home(
             Some("sk-env"),
@@ -6979,7 +6975,7 @@ mod tests {
             tmp.path(),
         ))
         .await
-        .expect("quick setup should honor CONSTRUCT_WORKSPACE");
+        .expect("quick setup should honor REVKA_WORKSPACE");
 
         assert_eq!(config.workspace_dir, workspace_dir);
         assert_eq!(config.config_path, expected_config_path);
@@ -6988,46 +6984,44 @@ mod tests {
     #[test]
     fn homebrew_prefix_for_exe_detects_supported_layouts() {
         assert_eq!(
-            homebrew_prefix_for_exe(Path::new("/opt/homebrew/bin/construct")),
+            homebrew_prefix_for_exe(Path::new("/opt/homebrew/bin/revka")),
             Some("/opt/homebrew")
         );
         assert_eq!(
-            homebrew_prefix_for_exe(Path::new(
-                "/opt/homebrew/Cellar/construct/0.5.0/bin/construct",
-            )),
+            homebrew_prefix_for_exe(Path::new("/opt/homebrew/Cellar/revka/0.5.0/bin/revka",)),
             Some("/opt/homebrew")
         );
         assert_eq!(
-            homebrew_prefix_for_exe(Path::new("/usr/local/bin/construct")),
+            homebrew_prefix_for_exe(Path::new("/usr/local/bin/revka")),
             Some("/usr/local")
         );
-        assert_eq!(homebrew_prefix_for_exe(Path::new("/tmp/construct")), None);
+        assert_eq!(homebrew_prefix_for_exe(Path::new("/tmp/revka")), None);
     }
 
     #[test]
     fn quick_setup_homebrew_service_note_mentions_service_workspace() {
         let note = quick_setup_homebrew_service_note(
-            Path::new("/Users/alix/.construct/config.toml"),
-            Path::new("/Users/alix/.construct/workspace"),
-            Path::new("/opt/homebrew/bin/construct"),
+            Path::new("/Users/alix/.revka/config.toml"),
+            Path::new("/Users/alix/.revka/workspace"),
+            Path::new("/opt/homebrew/bin/revka"),
         )
         .expect("homebrew installs should emit a service workspace note");
 
-        assert!(note.contains("/opt/homebrew/var/construct/workspace"));
-        assert!(note.contains("/opt/homebrew/var/construct/config.toml"));
-        assert!(note.contains("/Users/alix/.construct/config.toml"));
+        assert!(note.contains("/opt/homebrew/var/revka/workspace"));
+        assert!(note.contains("/opt/homebrew/var/revka/config.toml"));
+        assert!(note.contains("/Users/alix/.revka/config.toml"));
     }
 
     #[test]
     fn quick_setup_homebrew_service_note_skips_matching_service_layout() {
-        let service_config = Path::new("/opt/homebrew/var/construct/config.toml");
-        let service_workspace = Path::new("/opt/homebrew/var/construct/workspace");
+        let service_config = Path::new("/opt/homebrew/var/revka/config.toml");
+        let service_workspace = Path::new("/opt/homebrew/var/revka/workspace");
 
         assert!(
             quick_setup_homebrew_service_note(
                 service_config,
                 service_workspace,
-                Path::new("/opt/homebrew/bin/construct"),
+                Path::new("/opt/homebrew/bin/revka"),
             )
             .is_none()
         );
@@ -7203,8 +7197,8 @@ mod tests {
             .await
             .unwrap();
         assert!(
-            identity.contains("**Name:** Construct"),
-            "should default agent name to Construct"
+            identity.contains("**Name:** Revka"),
+            "should default agent name to Revka"
         );
 
         let user_md = tokio::fs::read_to_string(tmp.path().join("USER.md"))
@@ -7435,7 +7429,7 @@ mod tests {
             assert!(tools.contains(tool), "TOOLS.md should list tool: {tool}");
         }
         // Audit row 11: bare `memory_*` tool names must not appear in TOOLS.md
-        // — they have no native impl in Construct and the bootstrap prompt
+        // — they have no native impl in Revka and the bootstrap prompt
         // teaches the model to use the kumiho-namespaced tools instead.
         for stale in &["memory_recall", "memory_forget"] {
             assert!(
@@ -7481,7 +7475,7 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let ctx = ProjectContext {
             user_name: "José María".into(),
-            agent_name: "Construct-v2".into(),
+            agent_name: "Revka-v2".into(),
             timezone: "Europe/Madrid".into(),
             communication_style: "Be direct.".into(),
         };
@@ -7497,7 +7491,7 @@ mod tests {
         let soul = tokio::fs::read_to_string(tmp.path().join("SOUL.md"))
             .await
             .unwrap();
-        assert!(soul.contains("Construct-v2"));
+        assert!(soul.contains("Revka-v2"));
     }
 
     // ── scaffold_workspace: full personalization round-trip ─────
@@ -8298,8 +8292,8 @@ mod tests {
     #[test]
     fn normalize_optional_prompt_value_trims_blank_values() {
         assert_eq!(
-            normalize_optional_prompt_value("  Construct  ".to_string()).as_deref(),
-            Some("Construct")
+            normalize_optional_prompt_value("  Revka  ".to_string()).as_deref(),
+            Some("Revka")
         );
         assert!(normalize_optional_prompt_value("   ".to_string()).is_none());
     }

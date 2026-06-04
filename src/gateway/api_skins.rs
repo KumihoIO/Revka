@@ -1,6 +1,6 @@
 //! UI skin package API.
 //!
-//! Skins are local ZIP packages containing a root `construct-skin.json`
+//! Skins are local ZIP packages containing a root `revka-skin.json`
 //! manifest plus image assets under `assets/`. The gateway validates and
 //! stores them under the configured workspace directory.
 
@@ -24,9 +24,11 @@ use super::{AppState, api::require_auth};
 pub const SKIN_ZIP_MAX_BODY: usize = 25 * 1024 * 1024;
 const SKIN_MAX_EXTRACTED_BYTES: u64 = 50 * 1024 * 1024;
 const SKIN_MAX_FILE_COUNT: usize = 128;
-const MANIFEST_FILE: &str = "construct-skin.json";
+const MANIFEST_FILE: &str = "revka-skin.json";
 const STORED_MANIFEST_FILE: &str = "manifest.json";
 const ASSET_DIR: &str = "assets";
+const BUILTIN_REVKA_SKIN_ID: &str = "revka";
+const BUILTIN_MATRIX_SKIN_ID: &str = "matrix";
 
 const ASSET_SLOTS: &[&str] = &[
     "brandLogo",
@@ -57,6 +59,166 @@ const ASSET_SLOTS: &[&str] = &[
 
 const PACKAGE_EXTENSIONS: &[&str] = &["json", "png", "jpg", "jpeg", "webp"];
 const ASSET_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "webp"];
+
+const MATRIX_COMMON_TOKENS: &[(&str, &str)] = &[
+    ("--revka-radius-sm", "10px"),
+    ("--revka-radius-md", "14px"),
+    ("--revka-radius-lg", "18px"),
+    ("--revka-shell-width", "18rem"),
+];
+
+const REVKA_COMMON_TOKENS: &[(&str, &str)] = &[
+    ("--revka-radius-sm", "6px"),
+    ("--revka-radius-md", "8px"),
+    ("--revka-radius-lg", "10px"),
+    ("--revka-shell-width", "18rem"),
+];
+
+const REVKA_DARK_TOKENS: &[(&str, &str)] = &[
+    ("--revka-bg-base", "#0b0d12"),
+    ("--revka-bg-shell", "#0f1218"),
+    ("--revka-bg-surface", "#11151c"),
+    ("--revka-bg-elevated", "#1a202a"),
+    ("--revka-bg-panel", "rgba(17, 21, 28, 0.94)"),
+    ("--revka-bg-panel-strong", "rgba(21, 26, 35, 0.98)"),
+    ("--revka-bg-input", "#0f131a"),
+    ("--revka-hover-surface", "rgba(109, 125, 255, 0.06)"),
+    ("--revka-border-soft", "rgba(148, 163, 184, 0.13)"),
+    ("--revka-border-strong", "rgba(148, 163, 184, 0.22)"),
+    ("--revka-border-neutral", "rgba(226, 232, 240, 0.08)"),
+    ("--revka-text-primary", "#f7f8fc"),
+    ("--revka-text-secondary", "#c8ceda"),
+    ("--revka-text-muted", "#929bad"),
+    ("--revka-text-faint", "#687386"),
+    ("--revka-signal-live", "#8ab4f8"),
+    ("--revka-signal-live-soft", "rgba(138, 180, 248, 0.10)"),
+    ("--revka-signal-network", "#6d7dff"),
+    ("--revka-signal-network-soft", "rgba(109, 125, 255, 0.10)"),
+    ("--revka-signal-selected", "#8b9cff"),
+    ("--revka-signal-selected-soft", "rgba(139, 156, 255, 0.12)"),
+    ("--revka-signal-warn", "#f6b44b"),
+    ("--revka-signal-danger", "#f87171"),
+    ("--revka-status-success", "#22c55e"),
+    ("--revka-status-ok", "#22c55e"),
+    ("--revka-status-warning", "#f6b44b"),
+    ("--revka-status-danger", "#f87171"),
+    ("--revka-status-error", "#f87171"),
+    ("--revka-status-blocked", "#f59e0b"),
+    ("--revka-status-idle", "#7b8797"),
+    ("--revka-shadow-panel", "0 14px 34px rgba(0, 0, 0, 0.28)"),
+    ("--revka-shadow-overlay", "0 24px 60px rgba(0, 0, 0, 0.40)"),
+    ("--revka-grid-line", "rgba(148, 163, 184, 0.035)"),
+    ("--revka-node-accent-idle", "9%"),
+    ("--revka-node-accent-selected", "22%"),
+];
+
+const REVKA_LIGHT_TOKENS: &[(&str, &str)] = &[
+    ("--revka-bg-base", "#f7f8fb"),
+    ("--revka-bg-shell", "#f1f4f8"),
+    ("--revka-bg-surface", "#ffffff"),
+    ("--revka-bg-elevated", "#eef2f6"),
+    ("--revka-bg-panel", "rgba(255, 255, 255, 0.92)"),
+    ("--revka-bg-panel-strong", "rgba(255, 255, 255, 0.98)"),
+    ("--revka-bg-input", "#f4f6fa"),
+    ("--revka-hover-surface", "rgba(79, 95, 213, 0.05)"),
+    ("--revka-border-soft", "rgba(45, 55, 72, 0.12)"),
+    ("--revka-border-strong", "rgba(71, 85, 105, 0.18)"),
+    ("--revka-border-neutral", "rgba(30, 41, 59, 0.10)"),
+    ("--revka-text-primary", "#111827"),
+    ("--revka-text-secondary", "#334155"),
+    ("--revka-text-muted", "#64748b"),
+    ("--revka-text-faint", "#94a3b8"),
+    ("--revka-signal-live", "#2f6fd7"),
+    ("--revka-signal-live-soft", "rgba(47, 111, 215, 0.08)"),
+    ("--revka-signal-network", "#4f5fd5"),
+    ("--revka-signal-network-soft", "rgba(79, 95, 213, 0.08)"),
+    ("--revka-signal-selected", "#5f6ee8"),
+    ("--revka-signal-selected-soft", "rgba(95, 110, 232, 0.09)"),
+    ("--revka-signal-warn", "#b86f00"),
+    ("--revka-signal-danger", "#dc3f58"),
+    ("--revka-status-success", "#168a4a"),
+    ("--revka-status-ok", "#168a4a"),
+    ("--revka-status-warning", "#b86f00"),
+    ("--revka-status-danger", "#dc3f58"),
+    ("--revka-status-error", "#dc3f58"),
+    ("--revka-status-blocked", "#a36300"),
+    ("--revka-status-idle", "#7a8797"),
+    ("--revka-shadow-panel", "0 10px 24px rgba(15, 23, 42, 0.08)"),
+    (
+        "--revka-shadow-overlay",
+        "0 18px 42px rgba(15, 23, 42, 0.14)",
+    ),
+    ("--revka-grid-line", "rgba(71, 85, 105, 0.04)"),
+    ("--revka-node-accent-idle", "18%"),
+    ("--revka-node-accent-selected", "34%"),
+];
+
+const MATRIX_DARK_TOKENS: &[(&str, &str)] = &[
+    ("--revka-bg-base", "#05080a"),
+    ("--revka-bg-shell", "#08100f"),
+    ("--revka-bg-surface", "#0c1413"),
+    ("--revka-bg-elevated", "#111a18"),
+    ("--revka-bg-panel", "rgba(12, 20, 19, 0.88)"),
+    ("--revka-bg-panel-strong", "rgba(15, 24, 22, 0.96)"),
+    ("--revka-bg-input", "#0f1716"),
+    ("--revka-border-soft", "rgba(125, 255, 155, 0.08)"),
+    ("--revka-border-strong", "rgba(125, 255, 155, 0.18)"),
+    ("--revka-border-neutral", "rgba(255, 255, 255, 0.08)"),
+    ("--revka-text-primary", "#e7f1eb"),
+    ("--revka-text-secondary", "#afc0b7"),
+    ("--revka-text-muted", "#73877e"),
+    ("--revka-text-faint", "#53645d"),
+    ("--revka-signal-live", "#7dff9b"),
+    ("--revka-signal-live-soft", "rgba(125, 255, 155, 0.16)"),
+    ("--revka-signal-network", "#72d8ff"),
+    ("--revka-signal-network-soft", "rgba(114, 216, 255, 0.14)"),
+    ("--revka-signal-selected", "#b8ffca"),
+    ("--revka-status-success", "#7dff9b"),
+    ("--revka-status-warning", "#ffcc66"),
+    ("--revka-status-danger", "#ff6b7a"),
+    ("--revka-status-blocked", "#f59e0b"),
+    ("--revka-status-idle", "#64748b"),
+    ("--revka-shadow-panel", "0 16px 34px rgba(0, 0, 0, 0.34)"),
+    ("--revka-shadow-overlay", "0 24px 60px rgba(0, 0, 0, 0.44)"),
+    ("--revka-grid-line", "rgba(125, 255, 155, 0.05)"),
+    ("--revka-node-accent-idle", "8%"),
+    ("--revka-node-accent-selected", "18%"),
+];
+
+const MATRIX_LIGHT_TOKENS: &[(&str, &str)] = &[
+    ("--revka-bg-base", "#f4f8f5"),
+    ("--revka-bg-shell", "#eef4f0"),
+    ("--revka-bg-surface", "#ffffff"),
+    ("--revka-bg-elevated", "#f8fbf8"),
+    ("--revka-bg-panel", "rgba(255, 255, 255, 0.92)"),
+    ("--revka-bg-panel-strong", "rgba(255, 255, 255, 0.98)"),
+    ("--revka-bg-input", "#f2f6f3"),
+    ("--revka-border-soft", "rgba(63, 175, 104, 0.12)"),
+    ("--revka-border-strong", "rgba(63, 175, 104, 0.24)"),
+    ("--revka-border-neutral", "rgba(15, 23, 42, 0.10)"),
+    ("--revka-text-primary", "#13201b"),
+    ("--revka-text-secondary", "#33463e"),
+    ("--revka-text-muted", "#60746b"),
+    ("--revka-text-faint", "#819289"),
+    ("--revka-signal-live", "#3faf68"),
+    ("--revka-signal-live-soft", "rgba(63, 175, 104, 0.14)"),
+    ("--revka-signal-network", "#4da3d9"),
+    ("--revka-signal-network-soft", "rgba(77, 163, 217, 0.14)"),
+    ("--revka-signal-selected", "#2c8f57"),
+    ("--revka-status-success", "#2f9e5a"),
+    ("--revka-status-warning", "#c98a18"),
+    ("--revka-status-danger", "#d25563"),
+    ("--revka-status-blocked", "#b7791f"),
+    ("--revka-status-idle", "#7a8797"),
+    ("--revka-shadow-panel", "0 10px 24px rgba(15, 23, 42, 0.08)"),
+    (
+        "--revka-shadow-overlay",
+        "0 18px 40px rgba(15, 23, 42, 0.12)",
+    ),
+    ("--revka-grid-line", "rgba(63, 175, 104, 0.05)"),
+    ("--revka-node-accent-idle", "22%"),
+    ("--revka-node-accent-selected", "38%"),
+];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -94,6 +256,7 @@ struct SkinSummary {
     version: String,
     manifest: SkinManifest,
     asset_base_path: String,
+    builtin: bool,
 }
 
 struct ParsedSkinPackage {
@@ -107,7 +270,8 @@ pub async fn handle_list_skins(State(state): State<AppState>, headers: HeaderMap
     }
 
     let root = skins_root(&state.config.lock().workspace_dir);
-    let mut skins = Vec::new();
+    let mut skins = builtin_skin_summaries();
+    let mut seen_ids: HashSet<String> = skins.iter().map(|skin| skin.id.clone()).collect();
     let mut dir = match tokio::fs::read_dir(&root).await {
         Ok(dir) => dir,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
@@ -130,7 +294,17 @@ pub async fn handle_list_skins(State(state): State<AppState>, headers: HeaderMap
                     continue;
                 };
                 match serde_json::from_slice::<SkinManifest>(&bytes) {
-                    Ok(manifest) => skins.push(skin_summary(manifest)),
+                    Ok(manifest) => {
+                        if !seen_ids.insert(manifest.id.clone()) {
+                            tracing::warn!(
+                                id = %manifest.id,
+                                path = %manifest_path.display(),
+                                "skipping stored skin because id is reserved or duplicated"
+                            );
+                            continue;
+                        }
+                        skins.push(skin_summary(manifest));
+                    }
                     Err(err) => tracing::warn!(
                         err = %err,
                         path = %manifest_path.display(),
@@ -173,6 +347,12 @@ pub async fn handle_import_skin(
         Ok(parsed) => parsed,
         Err(err) => return json_error(StatusCode::BAD_REQUEST, &err),
     };
+    if is_builtin_skin_id(&parsed.manifest.id) {
+        return json_error(
+            StatusCode::BAD_REQUEST,
+            "skin id is reserved for a built-in skin",
+        );
+    }
 
     let workspace_dir = state.config.lock().workspace_dir.clone();
     let root = skins_root(&workspace_dir);
@@ -273,6 +453,9 @@ pub async fn handle_delete_skin(
     if !valid_skin_id(&id) {
         return json_error(StatusCode::BAD_REQUEST, "invalid skin id");
     }
+    if is_builtin_skin_id(&id) {
+        return StatusCode::NO_CONTENT.into_response();
+    }
 
     let root = skins_root(&state.config.lock().workspace_dir);
     let Err(err) = tokio::fs::create_dir_all(&root).await else {
@@ -354,8 +537,80 @@ fn skin_summary(manifest: SkinManifest) -> SkinSummary {
         name: manifest.name.clone(),
         version: manifest.version.clone(),
         asset_base_path: format!("/api/skins/{}/assets", manifest.id),
+        builtin: false,
         manifest,
     }
+}
+
+fn builtin_skin_summaries() -> Vec<SkinSummary> {
+    vec![builtin_revka_skin_summary(), builtin_matrix_skin_summary()]
+}
+
+fn builtin_revka_skin_summary() -> SkinSummary {
+    let manifest = builtin_revka_manifest();
+    SkinSummary {
+        id: manifest.id.clone(),
+        name: manifest.name.clone(),
+        version: manifest.version.clone(),
+        asset_base_path: format!("/api/skins/{}/assets", manifest.id),
+        builtin: true,
+        manifest,
+    }
+}
+
+fn builtin_matrix_skin_summary() -> SkinSummary {
+    let manifest = builtin_matrix_manifest();
+    SkinSummary {
+        id: manifest.id.clone(),
+        name: manifest.name.clone(),
+        version: manifest.version.clone(),
+        asset_base_path: format!("/api/skins/{}/assets", manifest.id),
+        builtin: true,
+        manifest,
+    }
+}
+
+fn builtin_revka_manifest() -> SkinManifest {
+    SkinManifest {
+        schema_version: 1,
+        id: BUILTIN_REVKA_SKIN_ID.to_string(),
+        name: "Revka Default".to_string(),
+        version: "1.0.0".to_string(),
+        modes: SkinModes {
+            light: Some(builtin_skin_mode(REVKA_COMMON_TOKENS, REVKA_LIGHT_TOKENS)),
+            dark: Some(builtin_skin_mode(REVKA_COMMON_TOKENS, REVKA_DARK_TOKENS)),
+        },
+    }
+}
+
+fn builtin_matrix_manifest() -> SkinManifest {
+    SkinManifest {
+        schema_version: 1,
+        id: BUILTIN_MATRIX_SKIN_ID.to_string(),
+        name: "Matrix".to_string(),
+        version: "1.0.0".to_string(),
+        modes: SkinModes {
+            light: Some(builtin_skin_mode(MATRIX_COMMON_TOKENS, MATRIX_LIGHT_TOKENS)),
+            dark: Some(builtin_skin_mode(MATRIX_COMMON_TOKENS, MATRIX_DARK_TOKENS)),
+        },
+    }
+}
+
+fn builtin_skin_mode(common_tokens: &[(&str, &str)], mode_tokens: &[(&str, &str)]) -> SkinMode {
+    let tokens = common_tokens
+        .iter()
+        .chain(mode_tokens.iter())
+        .map(|(name, value)| ((*name).to_string(), (*value).to_string()))
+        .collect();
+    SkinMode {
+        tokens,
+        assets: BTreeMap::new(),
+        preview: None,
+    }
+}
+
+fn is_builtin_skin_id(id: &str) -> bool {
+    id == BUILTIN_REVKA_SKIN_ID || id == BUILTIN_MATRIX_SKIN_ID
 }
 
 fn parse_skin_package(bytes: &[u8]) -> Result<ParsedSkinPackage, String> {
@@ -415,10 +670,10 @@ fn parse_skin_package(bytes: &[u8]) -> Result<ParsedSkinPackage, String> {
 
         if normalized == MANIFEST_FILE {
             if manifest.is_some() {
-                return Err("duplicate construct-skin.json manifest".to_string());
+                return Err("duplicate revka-skin.json manifest".to_string());
             }
             let raw = String::from_utf8(content)
-                .map_err(|_| "construct-skin.json must be UTF-8 JSON".to_string())?;
+                .map_err(|_| "revka-skin.json must be UTF-8 JSON".to_string())?;
             manifest = Some(validate_manifest(&raw)?);
             continue;
         }
@@ -428,14 +683,14 @@ fn parse_skin_package(bytes: &[u8]) -> Result<ParsedSkinPackage, String> {
             .and_then(|name| name.to_str())
             .is_some_and(|name| name == MANIFEST_FILE)
         {
-            return Err("construct-skin.json is only allowed at ZIP root".to_string());
+            return Err("revka-skin.json is only allowed at ZIP root".to_string());
         }
 
         let asset_path = validate_asset_file_path(&enclosed)?;
         assets.push((asset_path, content));
     }
 
-    let manifest = manifest.ok_or_else(|| "missing root construct-skin.json".to_string())?;
+    let manifest = manifest.ok_or_else(|| "missing root revka-skin.json".to_string())?;
     let available_assets = assets
         .iter()
         .filter_map(|(path, _)| normalize_path_for_manifest(path).ok())
@@ -562,9 +817,9 @@ fn validate_manifest_asset_references(
 }
 
 fn validate_token(mode: &str, name: &str, value: &str) -> Result<(), String> {
-    if !name.starts_with("--construct-") {
+    if !name.starts_with("--revka-") {
         return Err(format!(
-            "{mode} token `{name}` must use the --construct-* namespace"
+            "{mode} token `{name}` must use the --revka-* namespace"
         ));
     }
     if name.starts_with("--pc-") {
@@ -763,11 +1018,11 @@ mod tests {
         }"##;
 
         let err = validate_manifest(raw).expect_err("pc token should be rejected");
-        assert!(err.contains("--construct-*"));
+        assert!(err.contains("--revka-*"));
     }
 
     #[test]
-    fn manifest_accepts_construct_tokens_and_asset_slots() {
+    fn manifest_accepts_revka_tokens_and_asset_slots() {
         let raw = r##"{
             "schemaVersion": 1,
             "id": "noir_rose",
@@ -776,8 +1031,8 @@ mod tests {
             "modes": {
                 "dark": {
                     "tokens": {
-                        "--construct-bg-base": "#080506",
-                        "--construct-radius-md": "14px"
+                        "--revka-bg-base": "#080506",
+                        "--revka-radius-md": "14px"
                     },
                     "assets": {
                         "brandLogo": "assets/logo.webp",
@@ -791,6 +1046,90 @@ mod tests {
 
         let manifest = validate_manifest(raw).expect("valid manifest");
         assert_eq!(manifest.id, "noir_rose");
+    }
+
+    #[test]
+    fn builtin_revka_skin_is_available() {
+        let summary = builtin_revka_skin_summary();
+        let dark = summary
+            .manifest
+            .modes
+            .dark
+            .as_ref()
+            .expect("revka dark mode");
+        let light = summary
+            .manifest
+            .modes
+            .light
+            .as_ref()
+            .expect("revka light mode");
+
+        assert_eq!(summary.id, BUILTIN_REVKA_SKIN_ID);
+        assert!(summary.builtin);
+        assert_eq!(
+            dark.tokens.get("--revka-bg-base"),
+            Some(&"#0b0d12".to_string())
+        );
+        assert_eq!(
+            light.tokens.get("--revka-signal-live"),
+            Some(&"#2f6fd7".to_string())
+        );
+        assert_eq!(
+            light.tokens.get("--revka-radius-md"),
+            Some(&"8px".to_string())
+        );
+    }
+
+    #[test]
+    fn builtin_matrix_skin_is_available() {
+        let summary = builtin_matrix_skin_summary();
+        let dark = summary
+            .manifest
+            .modes
+            .dark
+            .as_ref()
+            .expect("matrix dark mode");
+        let light = summary
+            .manifest
+            .modes
+            .light
+            .as_ref()
+            .expect("matrix light mode");
+
+        assert_eq!(summary.id, BUILTIN_MATRIX_SKIN_ID);
+        assert!(summary.builtin);
+        assert_eq!(
+            dark.tokens.get("--revka-bg-base"),
+            Some(&"#05080a".to_string())
+        );
+        assert_eq!(
+            light.tokens.get("--revka-signal-live"),
+            Some(&"#3faf68".to_string())
+        );
+    }
+
+    #[test]
+    fn builtin_skin_ids_are_reserved() {
+        assert!(is_builtin_skin_id("revka"));
+        assert!(is_builtin_skin_id("matrix"));
+        assert!(!is_builtin_skin_id("uploaded"));
+    }
+
+    #[test]
+    fn imported_skin_summary_is_not_builtin() {
+        let manifest = SkinManifest {
+            schema_version: 1,
+            id: "uploaded".to_string(),
+            name: "Uploaded".to_string(),
+            version: "1.0.0".to_string(),
+            modes: SkinModes {
+                light: None,
+                dark: Some(SkinMode::default()),
+            },
+        };
+
+        let summary = skin_summary(manifest);
+        assert!(!summary.builtin);
     }
 
     #[test]

@@ -5,7 +5,7 @@
 //!
 //! # Library search order
 //!
-//! 1. `CONSTRUCT_AARDVARK_LIB` environment variable (full path to `aardvark.so`)
+//! 1. `REVKA_AARDVARK_LIB` environment variable (full path to `aardvark.so`)
 //! 2. `<workspace>/crates/aardvark-sys/vendor/aardvark.so` (development default)
 //! 3. `./aardvark.so` (next to the binary, for deployment)
 //!
@@ -14,7 +14,7 @@
 //!
 //! # Safety
 //!
-//! This crate is the **only** place in Construct where `unsafe` is permitted.
+//! This crate is the **only** place in Revka where `unsafe` is permitted.
 //! All `unsafe` is confined to `extern "C"` call sites inside this file.
 //! The public API is fully safe Rust.
 
@@ -46,7 +46,7 @@ fn lib() -> Option<&'static Library> {
         .get_or_init(|| {
             let candidates: Vec<PathBuf> = vec![
                 // 1. Explicit env-var override (full path)
-                std::env::var("CONSTRUCT_AARDVARK_LIB")
+                std::env::var("REVKA_AARDVARK_LIB")
                     .ok()
                     .map(PathBuf::from)
                     .unwrap_or_default(),
@@ -115,7 +115,7 @@ fn lib() -> Option<&'static Library> {
                 }
             }
             if !tried_any {
-                eprintln!("[aardvark-sys] no library candidates found; set CONSTRUCT_AARDVARK_LIB or place aardvark.so next to the binary");
+                eprintln!("[aardvark-sys] no library candidates found; set REVKA_AARDVARK_LIB or place aardvark.so next to the binary");
             }
             None
         })
@@ -144,7 +144,7 @@ pub enum AardvarkError {
     #[error("GPIO error (code {0})")]
     GpioError(i32),
     /// `aardvark.so` could not be found or loaded.
-    #[error("aardvark.so not found — set CONSTRUCT_AARDVARK_LIB or place it next to the binary")]
+    #[error("aardvark.so not found — set REVKA_AARDVARK_LIB or place it next to the binary")]
     LibraryNotFound,
 }
 

@@ -4,7 +4,7 @@ V2 is the intended replacement for V1 once parity and usability are strong enoug
 
 ## Goals
 
-- Ship V2 as the primary Construct UI.
+- Ship V2 as the primary Revka UI.
 - Preserve the existing V2 color direction.
 - Raise V2 to at least V1 parity on critical operator workflows.
 - Replace row-heavy page composition with denser operational workspaces.

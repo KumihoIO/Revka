@@ -2,7 +2,7 @@
 
 Subscribes to per-agent SSE event streams from the TS Session Manager sidecar,
 translates raw timeline events into structured channel events, and pushes them
-to the Construct gateway for broadcast to connected channels (dashboard, Slack,
+to the Revka gateway for broadcast to connected channels (dashboard, Slack,
 Discord).
 
 Channel event types:
@@ -20,7 +20,7 @@ from typing import Any
 import json as _json
 
 from ._log import _log
-from .gateway_client import ConstructGatewayClient
+from .gateway_client import RevkaGatewayClient
 from .run_log import get_or_create_log
 from .session_manager_client import SessionManagerClient
 
@@ -94,7 +94,7 @@ class EventConsumer:
     def __init__(
         self,
         sidecar: SessionManagerClient,
-        gateway: ConstructGatewayClient,
+        gateway: RevkaGatewayClient,
     ) -> None:
         self._sidecar = sidecar
         self._gateway = gateway

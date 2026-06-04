@@ -1,6 +1,6 @@
 # Telegram Integration Testing Guide
 
-This guide covers testing the Telegram channel integration for Construct.
+This guide covers testing the Telegram channel integration for Revka.
 
 ## 🚀 Quick Start
 
@@ -65,7 +65,7 @@ After running automated tests, perform these manual checks:
 1. **Basic messaging**
 
     ```bash
-    construct channel start
+    revka channel start
     ```
 
     - Send "Hello bot!" in Telegram
@@ -86,7 +86,7 @@ After running automated tests, perform these manual checks:
 3. **Unauthorized user blocking**
 
     ```toml
-    # Edit ~/.construct/config.toml
+    # Edit ~/.revka/config.toml
     allowed_users = ["999999999"]
     ```
 
@@ -104,7 +104,7 @@ After running automated tests, perform these manual checks:
 5. **Mention-only mode (group chats)**
 
     ```toml
-    # Edit ~/.construct/config.toml
+    # Edit ~/.revka/config.toml
     [channels.telegram]
     mention_only = true
     ```
@@ -119,7 +119,7 @@ After running automated tests, perform these manual checks:
 6. **Error logging**
 
     ```bash
-    RUST_LOG=debug construct channel start
+    RUST_LOG=debug revka channel start
     ```
 
     - Check for unexpected errors
@@ -128,7 +128,7 @@ After running automated tests, perform these manual checks:
 6. **Health check timeout**
 
     ```bash
-    time construct channel doctor
+    time revka channel doctor
     ```
 
     - Verify: Completes in <5 seconds
@@ -159,7 +159,7 @@ Solution: Check user allowlist
   1. Send message to bot
   2. Check logs for user_id
   3. Update config: allowed_users = ["YOUR_ID"]
-  4. Run: construct onboard --channels-only
+  4. Run: revka onboard --channels-only
 ```
 
 **Issue: Message splitting not working**
@@ -179,16 +179,16 @@ Solution: Verify code changes
 ./tests/telegram/test_telegram_integration.sh
 
 # 2. Configure Telegram
-construct onboard
+revka onboard
 # Select Telegram channel
 # Enter bot token (from @BotFather)
 # Enter your user ID
 
 # 3. Verify health
-construct channel doctor
+revka channel doctor
 
 # 4. Start channel
-construct channel start
+revka channel start
 
 # 5. Send test message in Telegram
 ```
@@ -203,7 +203,7 @@ construct channel start
 ./tests/telegram/test_telegram_integration.sh
 
 # 3. Manual smoke test
-construct channel start
+revka channel start
 # Send message in Telegram
 ```
 
@@ -223,10 +223,10 @@ for i in {1..100}; do
 done
 
 # 3. Monitor logs
-RUST_LOG=info construct daemon
+RUST_LOG=info revka daemon
 
 # 4. Check metrics
-construct status
+revka status
 ```
 
 ## 📊 Performance Benchmarks
@@ -235,11 +235,11 @@ Expected values after all fixes:
 
 | Metric                 | Expected   | How to Measure                   |
 | ---------------------- | ---------- | -------------------------------- |
-| Health check time      | <5s        | `time construct channel doctor`   |
+| Health check time      | <5s        | `time revka channel doctor`   |
 | First response time    | <3s        | Time from sending to receiving   |
 | Message split overhead | <50ms      | Check logs for timing            |
-| Memory usage           | <10MB      | `ps aux \| grep construct`        |
-| Binary size            | ~3-4MB     | `ls -lh target/release/construct` |
+| Memory usage           | <10MB      | `ps aux \| grep revka`        |
+| Binary size            | ~3-4MB     | `ls -lh target/release/revka` |
 | Unit test coverage     | 61/61 pass | `cargo test telegram --lib`      |
 
 ## 🐛 Debugging Failed Tests
@@ -261,14 +261,14 @@ cargo test telegram --lib -- --ignored
 
 ```bash
 # Maximum logging
-RUST_LOG=trace construct channel start
+RUST_LOG=trace revka channel start
 
 # Check Telegram API directly
 curl "https://api.telegram.org/bot<TOKEN>/getMe"
 curl "https://api.telegram.org/bot<TOKEN>/getUpdates"
 
 # Validate config
-cat ~/.construct/config.toml | grep -A 3 "\[channels_config.telegram\]"
+cat ~/.revka/config.toml | grep -A 3 "\[channels_config.telegram\]"
 ```
 
 ### Debug Build Issues
@@ -338,15 +338,15 @@ git revert <commit-hash>
 cargo build --release
 
 # 4. Restart service
-construct service restart
+revka service restart
 
 # 5. Verify
-construct channel doctor
+revka channel doctor
 ```
 
 ## 📚 Additional Resources
 
 - [Telegram Bot API Documentation](https://core.telegram.org/bots/api)
-- [Construct Main README](../../README.md)
+- [Revka Main README](../../README.md)
 - [Contributing Guide](../../CONTRIBUTING.md)
-- [Issue Tracker](https://github.com/KumihoIO/construct-os/issues)
+- [Issue Tracker](https://github.com/KumihoIO/Revka/issues)

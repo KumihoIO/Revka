@@ -231,8 +231,8 @@ def _install_stream_router(fc, att_map: dict):
 async def test_register_output_publishes_entity(
     monkeypatch, tmp_home, fake_kumiho_sdk,
 ):
-    from operator_mcp import construct_config
-    monkeypatch.setattr(construct_config, "_cached_manus", None)
+    from operator_mcp import revka_config
+    monkeypatch.setattr(revka_config, "_cached_manus", None)
     fc = _make_attachment_url_client(poll_responses=[
         _FakeResp(200, {"ok": True, "data": [
             {"id": "e1", "type": "assistant_message",
@@ -265,7 +265,7 @@ async def test_register_output_publishes_entity(
                 entity_name="my-report",
                 entity_kind="research-report",
                 entity_tag="published",
-                entity_space="Construct/WorkflowOutputs/Research",
+                entity_space="Revka/WorkflowOutputs/Research",
             ),
             **_FAST_CFG,
         )
@@ -280,12 +280,12 @@ async def test_register_output_publishes_entity(
     assert call["entity_kind"] == "research-report"
     assert call["entity_tag"] == "published"
     # Space canonicalized — same string in publish + on disk.
-    assert call["entity_space"] == "Construct/WorkflowOutputs/Research"
+    assert call["entity_space"] == "Revka/WorkflowOutputs/Research"
     assert call["artifact_path_override"] is not None
 
     expected_dir = os.path.join(
         tmp_home,
-        ".construct/artifacts/Construct/WorkflowOutputs/Research/research-report/my-report",
+        ".revka/artifacts/Revka/WorkflowOutputs/Research/research-report/my-report",
     )
     content_path = os.path.join(expected_dir, "content.md")
     assert os.path.exists(content_path), f"expected {content_path} on disk"
@@ -296,7 +296,7 @@ async def test_register_output_publishes_entity(
     assert od["content_path"] == content_path
     assert od["registered_entity"]["name"] == "my-report"
     assert od["registered_entity"]["kind"] == "research-report"
-    assert od["registered_entity"]["space"] == "Construct/WorkflowOutputs/Research"
+    assert od["registered_entity"]["space"] == "Revka/WorkflowOutputs/Research"
     assert od["registered_entity"]["item_kref"] == "kref://item/test"
     assert od["registered_entity"]["revision_kref"] == "kref://rev/test"
 
@@ -310,8 +310,8 @@ async def test_register_output_publishes_entity(
 async def test_attachments_downloaded_to_entity_path(
     monkeypatch, tmp_home, fake_kumiho_sdk,
 ):
-    from operator_mcp import construct_config
-    monkeypatch.setattr(construct_config, "_cached_manus", None)
+    from operator_mcp import revka_config
+    monkeypatch.setattr(revka_config, "_cached_manus", None)
     att1_url = "https://manus.ai/files/a.pdf"
     att2_url = "https://manus.ai/files/b.csv"
     fc = _make_attachment_url_client(
@@ -347,7 +347,7 @@ async def test_attachments_downloaded_to_entity_path(
             register_output=ManusRegisterOutputConfig(
                 entity_name="report",
                 entity_kind="r-kind",
-                entity_space="Construct/WorkflowOutputs/Research",
+                entity_space="Revka/WorkflowOutputs/Research",
             ),
             **_FAST_CFG,
         )
@@ -358,7 +358,7 @@ async def test_attachments_downloaded_to_entity_path(
     assert result.status == "completed"
     expected_dir = os.path.join(
         tmp_home,
-        ".construct/artifacts/Construct/WorkflowOutputs/Research/r-kind/report/attachments",
+        ".revka/artifacts/Revka/WorkflowOutputs/Research/r-kind/report/attachments",
     )
     assert os.path.exists(os.path.join(expected_dir, "a.pdf"))
     assert os.path.exists(os.path.join(expected_dir, "b.csv"))
@@ -381,8 +381,8 @@ async def test_attachments_downloaded_to_entity_path(
 async def test_attachment_download_failure_is_best_effort(
     monkeypatch, tmp_home, fake_kumiho_sdk,
 ):
-    from operator_mcp import construct_config
-    monkeypatch.setattr(construct_config, "_cached_manus", None)
+    from operator_mcp import revka_config
+    monkeypatch.setattr(revka_config, "_cached_manus", None)
     good_url = "https://manus.ai/files/good.bin"
     bad_url = "https://manus.ai/files/bad.bin"
     fc = _make_attachment_url_client(
@@ -443,8 +443,8 @@ async def test_attachment_download_failure_is_best_effort(
 async def test_filename_sanitization(
     monkeypatch, tmp_home, fake_kumiho_sdk,
 ):
-    from operator_mcp import construct_config
-    monkeypatch.setattr(construct_config, "_cached_manus", None)
+    from operator_mcp import revka_config
+    monkeypatch.setattr(revka_config, "_cached_manus", None)
     evil_url = "https://manus.ai/files/evil"
     fc = _make_attachment_url_client(
         poll_responses=[
@@ -493,7 +493,7 @@ async def test_filename_sanitization(
     # The file must be inside the entity's attachments/ dir — never outside it.
     local = od["attachments_downloaded"][0]["local_path"]
     expected_prefix = os.path.join(
-        tmp_home, ".construct/artifacts",
+        tmp_home, ".revka/artifacts",
     )
     assert local.startswith(expected_prefix)
     # And the basename only contained the leftover characters after stripping
@@ -510,8 +510,8 @@ async def test_filename_sanitization(
 async def test_filename_collision_gets_suffix(
     monkeypatch, tmp_home, fake_kumiho_sdk,
 ):
-    from operator_mcp import construct_config
-    monkeypatch.setattr(construct_config, "_cached_manus", None)
+    from operator_mcp import revka_config
+    monkeypatch.setattr(revka_config, "_cached_manus", None)
     url_a = "https://manus.ai/files/dup-a"
     url_b = "https://manus.ai/files/dup-b"
     fc = _make_attachment_url_client(
@@ -567,8 +567,8 @@ async def test_filename_collision_gets_suffix(
 async def test_content_source_structured(
     monkeypatch, tmp_home, fake_kumiho_sdk,
 ):
-    from operator_mcp import construct_config
-    monkeypatch.setattr(construct_config, "_cached_manus", None)
+    from operator_mcp import revka_config
+    monkeypatch.setattr(revka_config, "_cached_manus", None)
     fc = _make_attachment_url_client(poll_responses=[
         _FakeResp(200, {"ok": True, "data": [
             {"id": "e1", "type": "assistant_message",
@@ -619,8 +619,8 @@ async def test_content_source_structured(
 async def test_register_output_skipped_when_step_fails(
     monkeypatch, tmp_home, fake_kumiho_sdk,
 ):
-    from operator_mcp import construct_config
-    monkeypatch.setattr(construct_config, "_cached_manus", None)
+    from operator_mcp import revka_config
+    monkeypatch.setattr(revka_config, "_cached_manus", None)
     fc = _make_attachment_url_client(poll_responses=[
         _FakeResp(200, {"ok": True, "data": [
             {"id": "e1", "type": "status_update",
@@ -660,7 +660,7 @@ async def test_register_output_skipped_when_step_fails(
     # No entity dir created.
     entity_dir = os.path.join(
         tmp_home,
-        ".construct/artifacts",
+        ".revka/artifacts",
     )
     # The artifacts root might exist for other tests in the same tmp_home,
     # but the per-entity content.md must NOT.
@@ -679,8 +679,8 @@ async def test_register_output_skipped_when_step_fails(
 async def test_create_artifact_called_per_attachment(
     monkeypatch, tmp_home, fake_kumiho_sdk,
 ):
-    from operator_mcp import construct_config
-    monkeypatch.setattr(construct_config, "_cached_manus", None)
+    from operator_mcp import revka_config
+    monkeypatch.setattr(revka_config, "_cached_manus", None)
     u1 = "https://manus.ai/files/x.txt"
     u2 = "https://manus.ai/files/y.txt"
     fc = _make_attachment_url_client(
@@ -746,8 +746,8 @@ async def test_create_artifact_called_per_attachment(
 async def test_register_attachments_false_skips_downloads(
     monkeypatch, tmp_home, fake_kumiho_sdk,
 ):
-    from operator_mcp import construct_config
-    monkeypatch.setattr(construct_config, "_cached_manus", None)
+    from operator_mcp import revka_config
+    monkeypatch.setattr(revka_config, "_cached_manus", None)
     # If the executor tries to hit this URL the test will fail (no
     # attachment_responses entry → 404, which would land in attachments_failed).
     att_url = "https://manus.ai/files/forbidden.bin"
@@ -801,7 +801,7 @@ async def test_register_attachments_false_skips_downloads(
     # No attachments/ subdir created.
     attachments_dir = os.path.join(
         tmp_home,
-        ".construct/artifacts/Construct/WorkflowOutputs/r-kind/report/attachments",
+        ".revka/artifacts/Revka/WorkflowOutputs/r-kind/report/attachments",
     )
     assert not os.path.exists(attachments_dir)
 
@@ -815,8 +815,8 @@ async def test_register_attachments_false_skips_downloads(
 async def test_path_uses_canonical_space(
     monkeypatch, tmp_home, fake_kumiho_sdk,
 ):
-    from operator_mcp import construct_config
-    monkeypatch.setattr(construct_config, "_cached_manus", None)
+    from operator_mcp import revka_config
+    monkeypatch.setattr(revka_config, "_cached_manus", None)
     fc = _make_attachment_url_client(poll_responses=[
         _FakeResp(200, {"ok": True, "data": [
             {"id": "e1", "type": "assistant_message",
@@ -846,7 +846,7 @@ async def test_path_uses_canonical_space(
                 entity_name="report",
                 entity_kind="r-kind",
                 # Doubled slashes + trailing slash — must be canonicalized.
-                entity_space="Construct//WorkflowOutputs/Github/",
+                entity_space="Revka//WorkflowOutputs/Github/",
             ),
             **_FAST_CFG,
         )
@@ -858,11 +858,11 @@ async def test_path_uses_canonical_space(
     # Disk path uses the normalized form.
     expected_dir = os.path.join(
         tmp_home,
-        ".construct/artifacts/Construct/WorkflowOutputs/Github/r-kind/report",
+        ".revka/artifacts/Revka/WorkflowOutputs/Github/r-kind/report",
     )
     assert os.path.exists(os.path.join(expected_dir, "content.md"))
     # Publish call sees the canonicalized space too.
-    assert publish_calls[0]["entity_space"] == "Construct/WorkflowOutputs/Github"
+    assert publish_calls[0]["entity_space"] == "Revka/WorkflowOutputs/Github"
 
 
 # ---------------------------------------------------------------------------
@@ -878,8 +878,8 @@ async def test_entity_name_traversal_rejected(
     the artifacts root. Either the sanitizer strips it to empty (skip,
     error recorded) or the containment check refuses. Either way: step
     still completes, no Kumiho publish call, no escape on disk."""
-    from operator_mcp import construct_config
-    monkeypatch.setattr(construct_config, "_cached_manus", None)
+    from operator_mcp import revka_config
+    monkeypatch.setattr(revka_config, "_cached_manus", None)
     fc = _make_attachment_url_client(poll_responses=[
         _FakeResp(200, {"ok": True, "data": [
             {"id": "e1", "type": "assistant_message",
@@ -916,10 +916,10 @@ async def test_entity_name_traversal_rejected(
         _exit_all(ctxs)
 
     # Step still completes — Manus task succeeded. Whatever happened next,
-    # the security invariant is: nothing written outside ~/.construct/artifacts/.
+    # the security invariant is: nothing written outside ~/.revka/artifacts/.
     assert result.status == "completed"
     home_real = os.path.realpath(tmp_home)
-    artifacts_root = os.path.join(home_real, ".construct/artifacts")
+    artifacts_root = os.path.join(home_real, ".revka/artifacts")
     for root, _dirs, files in os.walk(home_real):
         for f in files:
             full = os.path.join(root, f)
@@ -955,8 +955,8 @@ async def test_attachment_size_cap_enforced(
     partial file removed, entry recorded in attachments_failed. We patch
     MAX_ATTACHMENT_BYTES to 1KB and have the fake yield 2KB so the test
     finishes in milliseconds without allocating real megabytes."""
-    from operator_mcp import construct_config
-    monkeypatch.setattr(construct_config, "_cached_manus", None)
+    from operator_mcp import revka_config
+    monkeypatch.setattr(revka_config, "_cached_manus", None)
     import operator_mcp.workflow.executor as ex
     monkeypatch.setattr(ex, "MAX_ATTACHMENT_BYTES", 1024)
 
@@ -1009,7 +1009,7 @@ async def test_attachment_size_cap_enforced(
     # Partial file must have been removed.
     attachments_dir = os.path.join(
         tmp_home,
-        ".construct/artifacts/Construct/WorkflowOutputs/r-kind/report/attachments",
+        ".revka/artifacts/Revka/WorkflowOutputs/r-kind/report/attachments",
     )
     if os.path.exists(attachments_dir):
         leftover = os.listdir(attachments_dir)
@@ -1028,8 +1028,8 @@ async def test_redirect_followed(
     """The attachment-download httpx client must be constructed with
     ``follow_redirects=True`` — Manus CDN URLs often 302. We capture the
     constructor kwargs and assert the flag is set."""
-    from operator_mcp import construct_config
-    monkeypatch.setattr(construct_config, "_cached_manus", None)
+    from operator_mcp import revka_config
+    monkeypatch.setattr(revka_config, "_cached_manus", None)
     blob_url = "https://manus.ai/files/redirected.bin"
     fc = _make_attachment_url_client(
         poll_responses=[
@@ -1097,8 +1097,8 @@ async def test_publish_raise_becomes_register_error(
     """When publish_workflow_entity raises, the step must still complete
     and surface the error through output_data.register_output_error
     instead of crashing the executor."""
-    from operator_mcp import construct_config
-    monkeypatch.setattr(construct_config, "_cached_manus", None)
+    from operator_mcp import revka_config
+    monkeypatch.setattr(revka_config, "_cached_manus", None)
     fc = _make_attachment_url_client(poll_responses=[
         _FakeResp(200, {"ok": True, "data": [
             {"id": "e1", "type": "assistant_message",
@@ -1148,8 +1148,8 @@ async def test_empty_sanitized_entity_name_skips_registration(
     """An entity_name made entirely of traversal chars (``"...."``)
     sanitizes to empty. The executor must skip registration, record an
     error, and not crash."""
-    from operator_mcp import construct_config
-    monkeypatch.setattr(construct_config, "_cached_manus", None)
+    from operator_mcp import revka_config
+    monkeypatch.setattr(revka_config, "_cached_manus", None)
     fc = _make_attachment_url_client(poll_responses=[
         _FakeResp(200, {"ok": True, "data": [
             {"id": "e1", "type": "assistant_message",

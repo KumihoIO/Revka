@@ -124,23 +124,23 @@ impl SandboxConfig {
 ### 3. Lần chạy đầu: ghi log âm thầm
 
 ```bash
-$ construct agent -m "hello"
+$ revka agent -m "hello"
 
 # Lần đầu: phát hiện âm thầm
 [INFO] Detecting security features...
 [INFO] ✓ Landlock sandbox enabled (kernel 6.2+)
 [INFO] ✓ Memory monitoring active (512MB limit)
-[INFO] ✓ Audit logging enabled (~/.config/construct/audit.log)
+[INFO] ✓ Audit logging enabled (~/.config/revka/audit.log)
 
 # Các lần sau: yên lặng
-$ construct agent -m "hello"
+$ revka agent -m "hello"
 [agent] Thinking...
 ```
 
 ### 4. File config: tất cả giá trị mặc định được ẩn
 
 ```toml
-# ~/.config/construct/config.toml
+# ~/.config/revka/config.toml
 
 # Các section này KHÔNG được ghi trừ khi người dùng tùy chỉnh
 # [security.sandbox]
@@ -167,21 +167,21 @@ max_memory_mb = 1024  # Người dùng tăng giới hạn
 
 ```bash
 # Kiểm tra trạng thái đang hoạt động
-$ construct security --status
+$ revka security --status
 Security Status:
   ✓ Sandbox: Landlock (Linux kernel 6.2)
   ✓ Memory monitoring: 512MB limit
-  ✓ Audit logging: ~/.config/construct/audit.log
+  ✓ Audit logging: ~/.config/revka/audit.log
   → 47 events logged today
 
 # Tắt sandbox tường minh (ghi vào config)
-$ construct config set security.sandbox.enabled false
+$ revka config set security.sandbox.enabled false
 
 # Bật backend cụ thể
-$ construct config set security.sandbox.backend firejail
+$ revka config set security.sandbox.backend firejail
 
 # Điều chỉnh giới hạn
-$ construct config set security.resources.max_memory_mb 2048
+$ revka config set security.resources.max_memory_mb 2048
 ```
 
 ### 6. Giảm cấp nhẹ nhàng
@@ -266,7 +266,7 @@ impl Default for SandboxBackend {
 
 ### Trước (hiện tại)
 ```bash
-$ construct onboard
+$ revka onboard
 [1/9] Workspace Setup...
 [2/9] AI Provider...
 ...
@@ -276,7 +276,7 @@ $ construct onboard
 
 ### Sau (với bảo mật không gây cản trở)
 ```bash
-$ construct onboard
+$ revka onboard
 [1/9] Workspace Setup...
 [2/9] AI Provider...
 ...
@@ -304,6 +304,6 @@ $ construct onboard
 ✅ **Không thêm prompt** — tự phát hiện âm thầm
 ✅ **Không breaking change** — tương thích ngược
 ✅ **Có thể opt-out** — flag config tường minh
-✅ **Hiển thị trạng thái** — `construct security --status`
+✅ **Hiển thị trạng thái** — `revka security --status`
 
 Wizard vẫn là "thiết lập nhanh ứng dụng phổ quát" — bảo mật chỉ **lặng lẽ tốt hơn**.

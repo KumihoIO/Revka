@@ -1,4 +1,4 @@
-/// Embedding providers — removed in Construct.
+/// Embedding providers — removed in Revka.
 ///
 /// Persistent memory (and vector search) is exclusively handled via the
 /// Kumiho MCP server. The `EmbeddingProvider` trait and `NoopEmbedding`
@@ -49,7 +49,7 @@ impl EmbeddingProvider for NoopEmbedding {
 
 // ── Factory (stub) ───────────────────────────────────────────
 
-/// Embedding provider factory — removed in Construct.
+/// Embedding provider factory — removed in Revka.
 ///
 /// All embedding providers now return `NoopEmbedding`. Semantic search
 /// is handled by the Kumiho MCP server.

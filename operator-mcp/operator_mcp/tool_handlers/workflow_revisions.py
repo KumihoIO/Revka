@@ -22,7 +22,7 @@ except ImportError:  # pragma: no cover — yaml is a hard dep of operator-mcp
 from pydantic import BaseModel, Field, ValidationError as PydanticValidationError
 
 from .._log import _log
-from ..gateway_client import ConstructGatewayClient
+from ..gateway_client import RevkaGatewayClient
 from ..workflow.loader import _read_workflow_text, load_workflow_from_dict
 from ..workflow.schema import StepType, WorkflowDef
 from ..workflow.validator import validate_workflow
@@ -757,7 +757,7 @@ async def _load_current_yaml(workflow_kref: str) -> tuple[str, str]:
 
 async def tool_revise_workflow(
     args: dict[str, Any],
-    _gw: ConstructGatewayClient | None = None,
+    _gw: RevkaGatewayClient | None = None,
 ) -> dict[str, Any]:
     """Apply structured operations to a workflow's current revision and emit a
     new Kumiho revision.
@@ -968,7 +968,7 @@ async def tool_revise_workflow(
 
     gw = _gw
     if gw is None:
-        gw = ConstructGatewayClient()
+        gw = RevkaGatewayClient()
 
     rationale_tags = list(parsed.tags or [])
     if rationale and "rationale:" not in " ".join(rationale_tags):

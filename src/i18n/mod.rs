@@ -3,7 +3,7 @@
 //! - **Tool descriptions** (`tool_descriptions` submodule, re-exported here)
 //!   — TOML-based locale files under `tool_descriptions/<locale>.toml`, used
 //!   by the agent runtime when rendering tool surfaces to LLMs.
-//! - **Interactive wizards** (`construct onboard` etc.) — Fluent (`.ftl`)
+//! - **Interactive wizards** (`revka onboard` etc.) — Fluent (`.ftl`)
 //!   bundles embedded at compile time from `i18n/<lang>/*.ftl`.
 //!
 //! The two were intentionally split: tool descriptions need many languages
@@ -13,7 +13,7 @@
 //!
 //! # Wizard detection priority
 //! 1. CLI flag (`--lang ko`)
-//! 2. `CONSTRUCT_LANG` environment variable
+//! 2. `REVKA_LANG` environment variable
 //! 3. `language` field in `config.toml`
 //! 4. POSIX `LC_ALL` / `LANG` (matched on the leading two-letter code)
 //! 5. Default: English
@@ -38,7 +38,7 @@ use unic_langid::{LanguageIdentifier, langid};
 
 // ── Language enum ────────────────────────────────────────────────
 
-/// Languages supported by `construct onboard`.
+/// Languages supported by `revka onboard`.
 ///
 /// New variants must be added to `parse`, `id`, `code`, `display_name`,
 /// and `bundles_for`. The `.ftl` file under `i18n/<code>/onboard.ftl` is
@@ -215,7 +215,7 @@ pub fn detect_lang(cli_flag: Option<&str>, config_lang: Option<&str>) -> Lang {
             return l;
         }
     }
-    if let Ok(s) = std::env::var("CONSTRUCT_LANG") {
+    if let Ok(s) = std::env::var("REVKA_LANG") {
         if let Some(l) = Lang::parse(&s) {
             return l;
         }
@@ -401,7 +401,7 @@ mod tests {
         let i = I18n::new(Lang::En);
         // welcome-title is one of the Phase 1 keys — if this changes, update
         // the assertion to whatever the new English source says.
-        assert_eq!(i.t("welcome-title"), "Welcome to the Construct.");
+        assert_eq!(i.t("welcome-title"), "Welcome to the Revka.");
     }
 
     #[test]
@@ -409,7 +409,7 @@ mod tests {
         let i = I18n::new(Lang::Ko);
         // The Korean translation of welcome-title — kept in sync with
         // i18n/ko/onboard.ftl.
-        assert_eq!(i.t("welcome-title"), "Construct에 오신 것을 환영합니다.");
+        assert_eq!(i.t("welcome-title"), "Revka에 오신 것을 환영합니다.");
     }
 
     #[test]

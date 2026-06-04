@@ -58,7 +58,7 @@ cargo test telegram --lib
 ### Step 1: Run Automated Tests
 
 ```bash
-cd /Users/abdzsam/construct
+cd /Users/abdzsam/revka
 
 # Make scripts executable (already done)
 chmod +x tests/telegram/test_telegram_integration.sh tests/telegram/quick_test.sh
@@ -102,10 +102,10 @@ Pass Rate:     100%
 
 ```bash
 # Guided setup
-construct onboard
+revka onboard
 
 # Or channels-only setup
-construct onboard --channels-only
+revka onboard --channels-only
 ```
 
 When prompted:
@@ -116,12 +116,12 @@ When prompted:
 ### Step 3: Verify Health
 
 ```bash
-construct channel doctor
+revka channel doctor
 ```
 
 **Expected output:**
 ```
-🩺 Construct Channel Doctor
+🩺 Revka Channel Doctor
 
   ✅ Telegram  healthy
 
@@ -134,7 +134,7 @@ Summary: 1 healthy, 0 unhealthy, 0 timed out
 
 ```bash
 # Terminal 1: Start the channel
-construct channel start
+revka channel start
 ```
 
 **In Telegram:**
@@ -209,10 +209,10 @@ cargo update
 
 ```bash
 # Check config
-cat ~/.construct/config.toml | grep -A 5 telegram
+cat ~/.revka/config.toml | grep -A 5 telegram
 
 # Reconfigure
-construct onboard --channels-only
+revka onboard --channels-only
 ```
 
 ### Issue: Health check fails
@@ -228,7 +228,7 @@ curl "https://api.telegram.org/bot<YOUR_TOKEN>/getMe"
 
 ```bash
 # Enable debug logging
-RUST_LOG=debug construct channel start
+RUST_LOG=debug revka channel start
 
 # Look for:
 # - "Telegram channel listening for messages..."
@@ -244,11 +244,11 @@ After all fixes, you should see:
 |--------|--------|---------|
 | Unit test pass | 24/24 | `cargo test telegram --lib` |
 | Build time | <30s | `time cargo build --release` |
-| Binary size | ~3-4MB | `ls -lh target/release/construct` |
-| Health check | <5s | `time construct channel doctor` |
+| Binary size | ~3-4MB | `ls -lh target/release/revka` |
+| Health check | <5s | `time revka channel doctor` |
 | First response | <3s | Manual test in Telegram |
 | Message split | <50ms | Check debug logs |
-| Memory usage | <10MB | `ps aux \| grep construct` |
+| Memory usage | <10MB | `ps aux \| grep revka` |
 
 ## 🔄 CI/CD Integration
 
@@ -278,9 +278,9 @@ Add to your workflow:
 
 5. **Monitor logs** for any issues:
    ```bash
-   construct daemon
+   revka daemon
    # or
-   RUST_LOG=info construct channel start
+   RUST_LOG=info revka channel start
    ```
 
 ## 🎉 Success!
@@ -298,6 +298,6 @@ If all tests pass:
 
 ## 📞 Support
 
-- Issues: https://github.com/KumihoIO/construct-os/issues
+- Issues: https://github.com/KumihoIO/Revka/issues
 - Docs: [testing-telegram.md](../../tests/telegram/testing-telegram.md)
-- Help: `construct --help`
+- Help: `revka --help`

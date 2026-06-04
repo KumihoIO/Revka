@@ -1,10 +1,10 @@
-"""Pydantic models for Construct declarative workflow DSL.
+"""Pydantic models for Revka declarative workflow DSL.
 
 Workflows are defined in YAML with typed steps, variable interpolation,
 conditional branching, parallel execution, and checkpoint support.
 
 Step types:
-  - agent: Spawn a Construct agent (claude/codex) with a prompt.
+  - agent: Spawn a Revka agent (claude/codex) with a prompt.
   - shell: Run a shell command.
   - compute: Evaluate sandboxed expressions into typed outputs.
   - conditional: Branch based on expressions over prior step outputs.
@@ -120,8 +120,8 @@ class ShellStepConfig(BaseModel):
     timeout: float = 60.0
     allow_failure: bool = False  # If True, non-zero exit doesn't fail the workflow
     # Auth profile binding — resolved at runtime; the decrypted token is passed
-    # to the subprocess via the CONSTRUCT_AUTH_TOKEN env var (kind in
-    # CONSTRUCT_AUTH_KIND). Format: "<provider>:<profile_name>".
+    # to the subprocess via the REVKA_AUTH_TOKEN env var (kind in
+    # REVKA_AUTH_KIND). Format: "<provider>:<profile_name>".
     auth: str | None = None
 
 
@@ -129,7 +129,7 @@ class EmailStepConfig(BaseModel):
     """Config for 'email' step type — send an outbound email via SMTP.
 
     Reads SMTP credentials from ``[channels_config.email]`` in
-    ``~/.construct/config.toml`` by default (the same section the email
+    ``~/.revka/config.toml`` by default (the same section the email
     channel uses for its inbox/SMTP). Per-step overrides are supported
     for fan-out workflows that send through multiple senders.
 
@@ -166,7 +166,7 @@ class EmailStepConfig(BaseModel):
     track_base_url: str | None = None  # Default: from config / env GATEWAY_URL
 
     # SMTP overrides — by default we read from
-    # ~/.construct/config.toml [channels_config.email].
+    # ~/.revka/config.toml [channels_config.email].
     smtp_host: str | None = None
     smtp_port: int | None = None  # default: 465 if smtp_tls, else 587
     smtp_tls: bool | None = None  # default: true
@@ -192,11 +192,11 @@ class ImageStepConfig(BaseModel):
     ``codex`` agent and hoping it calls the right tool.
 
     Defaults are tuned for the common case (one PNG, push to canvas,
-    register a Construct/Images artifact).
+    register a Revka/Images artifact).
     """
     prompt: str
     output_path: str = ""              # filename only when register_artifact=true; relative-to-cwd path otherwise
-    cwd: str | None = None             # default: ~/.construct/workspace
+    cwd: str | None = None             # default: ~/.revka/workspace
     count: int = Field(default=1, ge=1, le=5)
     output_pattern: str | None = None  # template with {n} when count > 1
     # local reference image path(s) forwarded to codex exec --image
@@ -251,7 +251,7 @@ class PythonStepConfig(BaseModel):
     # at a project-local venv instead.
     python: str | None = None
     # Auth profile binding — resolved at runtime; decrypted token passed via
-    # CONSTRUCT_AUTH_TOKEN env var. Format: "<provider>:<profile_name>".
+    # REVKA_AUTH_TOKEN env var. Format: "<provider>:<profile_name>".
     auth: str | None = None
 
     @model_validator(mode="after")
@@ -326,7 +326,7 @@ class ParallelStepConfig(BaseModel):
 
 
 class GotoStepConfig(BaseModel):
-    """Config for 'goto' step type — loop construct."""
+    """Config for 'goto' step type — loop revka."""
     target: str  # Step ID to jump to
     condition: str | None = None  # Optional guard expression
     max_iterations: int = Field(default=3, ge=1, le=20)
@@ -392,7 +392,7 @@ class OutputStepConfig(BaseModel):
     entity_name: str | None = None        # Item name (supports ${...} interpolation)
     entity_kind: str | None = None        # Item kind (e.g. "analysis-report")
     entity_tag: str = "ready"             # Tag to apply to the revision (triggers listeners)
-    entity_space: str | None = None       # Space path (defaults to /Construct/WorkflowOutputs)
+    entity_space: str | None = None       # Space path (defaults to /Revka/WorkflowOutputs)
     entity_metadata: dict[str, str] = {}  # Key-value pairs stored on entity (supports ${...} interpolation)
                                           # Downstream triggers auto-map matching keys to workflow inputs
     metadata_target: Literal["item", "revision", "artifact"] = "item"
@@ -714,7 +714,7 @@ class ManusRegisterOutputConfig(BaseModel):
 
     1. Picks a content source (assistant message text or structured output
        JSON) and writes it to disk at an entity-anchored path:
-       ``~/.construct/artifacts/<canonical_space>/<entity_kind>/<entity_name>/content.md``
+       ``~/.revka/artifacts/<canonical_space>/<entity_kind>/<entity_name>/content.md``
     2. Downloads all attachments (best-effort) into
        ``<entity_dir>/attachments/`` with sanitized filenames + collision
        suffixes.
@@ -748,7 +748,7 @@ class ManusStepConfig(BaseModel):
     ``${manus_step.output_data.*}``.
 
     Auth: the Manus API key is read from the env var named in
-    ``[manus].api_key_env`` (default ``MANUS_API_KEY``). Construct never
+    ``[manus].api_key_env`` (default ``MANUS_API_KEY``). Revka never
     persists the key value — only the env var name — so workflow YAML
     stays safe to commit.
 
@@ -1098,7 +1098,7 @@ class StepDef(BaseModel):
         return getattr(self, self.type.value, None)
 
     def resolve_agent_config(self) -> AgentStepConfig:
-        """Return explicit agent config, or auto-construct from action + hints."""
+        """Return explicit agent config, or auto-revka from action + hints."""
         if self.agent is not None:
             # Wire assign → template if agent config has no template set
             if not self.agent.template and self.assign:

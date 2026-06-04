@@ -1,7 +1,7 @@
 import { Bot } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { useTheme } from '@/construct/hooks/useTheme';
+import { useTheme } from '@/revka/hooks/useTheme';
 
 interface StreamingBubbleProps {
   content: string;

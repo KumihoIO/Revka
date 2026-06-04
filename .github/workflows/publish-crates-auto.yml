@@ -19,7 +19,7 @@ env:
 jobs:
   detect-version-change:
     name: Detect Version Bump
-    if: github.repository == 'KumihoIO/construct-os'
+    if: github.repository == 'KumihoIO/Revka'
     runs-on: ubuntu-latest
     outputs:
       changed: ${{ steps.check.outputs.changed }}
@@ -74,7 +74,7 @@ jobs:
         run: |
           set -euo pipefail
           status=$(curl -s -o /dev/null -w "%{http_code}" \
-            "https://crates.io/api/v1/crates/kumiho-construct/${VERSION}")
+            "https://crates.io/api/v1/crates/kumiho-revka/${VERSION}")
 
           if [[ "$status" == "200" ]]; then
             echo "Version ${VERSION} already exists on crates.io — skipping"
@@ -156,7 +156,7 @@ jobs:
           OUTPUT=$(cargo publish --locked --allow-dirty --no-verify 2>&1) && exit 0
           echo "$OUTPUT"
           if echo "$OUTPUT" | grep -q 'already exists'; then
-            echo "::notice::kumiho-construct@${VERSION} already on crates.io — skipping"
+            echo "::notice::kumiho-revka@${VERSION} already on crates.io — skipping"
             exit 0
           fi
           exit 1
@@ -170,10 +170,10 @@ jobs:
           echo "Waiting for crates.io to index..."
           sleep 15
           status=$(curl -s -o /dev/null -w "%{http_code}" \
-            "https://crates.io/api/v1/crates/kumiho-construct/${VERSION}")
+            "https://crates.io/api/v1/crates/kumiho-revka/${VERSION}")
           if [[ "$status" == "200" ]]; then
-            echo "kumiho-construct v${VERSION} is live on crates.io"
-            echo "Install: cargo install kumiho-construct"
+            echo "kumiho-revka v${VERSION} is live on crates.io"
+            echo "Install: cargo install kumiho-revka"
           else
-            echo "::warning::Version may still be indexing — check https://crates.io/crates/kumiho-construct"
+            echo "::warning::Version may still be indexing — check https://crates.io/crates/kumiho-revka"
           fi

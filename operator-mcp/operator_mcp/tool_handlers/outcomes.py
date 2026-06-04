@@ -4,14 +4,14 @@ Step 2 of the self-improving agent plan. Each agent run can record structured
 "outcomes" (discoveries, decisions, lessons, insights, warnings) into a
 session-scoped space at ``<harness_project>/Sessions/<session_id>/Outcomes/``,
 where ``<harness_project>`` comes from `[kumiho].harness_project` in
-``~/.construct/config.toml`` (default ``Construct``). Downstream agents in
+``~/.revka/config.toml`` (default ``Revka``). Downstream agents in
 the same workflow / chat / handoff chain can then inherit those outcomes via
 ``recall_session_outcomes`` and start with the team's accumulated knowledge
 instead of re-discovering everything.
 
 Storage layout (with default harness)::
 
-    Construct/                       ← <harness_project> from config.toml
+    Revka/                       ← <harness_project> from config.toml
         Sessions/
             <session_id>/
                 Outcomes/
@@ -28,7 +28,7 @@ import asyncio
 from typing import Any
 
 from .._log import _log
-from ..construct_config import harness_project
+from ..revka_config import harness_project
 
 try:
     from kumiho.mcp_server import (
@@ -57,7 +57,7 @@ _OUTCOME_KINDS = {
 
 def _unavailable() -> dict[str, Any]:
     return {
-        "error": "kumiho package not available — install via `construct sidecars install`",
+        "error": "kumiho package not available — install via `revka sidecars install`",
     }
 
 
@@ -73,7 +73,7 @@ def _normalize_kind(kind: str | None) -> str:
 def _outcomes_space(session_id: str) -> str:
     """Resolve the storage space path for a session's outcomes.
 
-    Uses the configured harness_project (default 'Construct') so deployments
+    Uses the configured harness_project (default 'Revka') so deployments
     that rebrand the harness project keep all session data under the right
     namespace.
     """

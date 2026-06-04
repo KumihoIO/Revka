@@ -1,6 +1,6 @@
 import { Handle, Position, type NodeTypes } from '@xyflow/react';
 import { getRoleColor } from './graphHelpers';
-import AgentAvatar from '@/construct/components/ui/AgentAvatar';
+import AgentAvatar from '@/revka/components/ui/AgentAvatar';
 
 export interface AgentNodeData {
   label: string;

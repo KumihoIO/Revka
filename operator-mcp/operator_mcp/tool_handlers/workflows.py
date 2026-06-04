@@ -17,16 +17,16 @@ from typing import Any
 
 from .._log import _log
 from ..failure_classification import classified_error, VALIDATION_ERROR
-from ..gateway_client import ConstructGatewayClient
+from ..gateway_client import RevkaGatewayClient
 
-_gateway: ConstructGatewayClient | None = None
+_gateway: RevkaGatewayClient | None = None
 
 # Background tasks for non-blocking workflow execution.
 # Maps run_id -> asyncio.Task so we can monitor/cancel them.
 _BACKGROUND_TASKS: dict[str, asyncio.Task] = {}
 
 
-def set_gateway_client(gw: ConstructGatewayClient) -> None:
+def set_gateway_client(gw: RevkaGatewayClient) -> None:
     global _gateway
     _gateway = gw
 
@@ -508,7 +508,7 @@ async def tool_create_workflow(args: dict[str, Any]) -> dict[str, Any]:
 
     Args:
         workflow_def: Workflow definition as dict (required).
-        directory: Optional save directory (defaults to ~/.construct/workflows/).
+        directory: Optional save directory (defaults to ~/.revka/workflows/).
     """
     from ..workflow.loader import load_workflow_from_dict, save_workflow_yaml
     from ..workflow.validator import validate_workflow as _validate

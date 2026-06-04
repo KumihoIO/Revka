@@ -26,12 +26,12 @@ pub fn icon_for_state(connected: bool, status: AgentStatus) -> Image<'static> {
 /// Tooltip text for the current state.
 pub fn tooltip_for_state(connected: bool, status: AgentStatus) -> &'static str {
     if !connected {
-        return "Construct — Disconnected";
+        return "Revka — Disconnected";
     }
     match status {
-        AgentStatus::Idle => "Construct — Idle",
-        AgentStatus::Working => "Construct — Working",
-        AgentStatus::Error => "Construct — Error",
+        AgentStatus::Idle => "Revka — Idle",
+        AgentStatus::Working => "Revka — Working",
+        AgentStatus::Error => "Revka — Error",
     }
 }
 
@@ -58,33 +58,27 @@ mod tests {
     fn tooltip_disconnected() {
         assert_eq!(
             tooltip_for_state(false, AgentStatus::Idle),
-            "Construct — Disconnected"
+            "Revka — Disconnected"
         );
         // Agent status is irrelevant when disconnected.
         assert_eq!(
             tooltip_for_state(false, AgentStatus::Working),
-            "Construct — Disconnected"
+            "Revka — Disconnected"
         );
         assert_eq!(
             tooltip_for_state(false, AgentStatus::Error),
-            "Construct — Disconnected"
+            "Revka — Disconnected"
         );
     }
 
     #[test]
     fn tooltip_connected_variants() {
-        assert_eq!(
-            tooltip_for_state(true, AgentStatus::Idle),
-            "Construct — Idle"
-        );
+        assert_eq!(tooltip_for_state(true, AgentStatus::Idle), "Revka — Idle");
         assert_eq!(
             tooltip_for_state(true, AgentStatus::Working),
-            "Construct — Working"
+            "Revka — Working"
         );
-        assert_eq!(
-            tooltip_for_state(true, AgentStatus::Error),
-            "Construct — Error"
-        );
+        assert_eq!(tooltip_for_state(true, AgentStatus::Error), "Revka — Error");
     }
 
     #[test]

@@ -1,4 +1,4 @@
-//! Performance benchmarks for Construct hot paths.
+//! Performance benchmarks for Revka hot paths.
 //!
 //! Benchmarks cover:
 //!   - Tool dispatch (XML parsing, native parsing)
@@ -6,20 +6,20 @@
 //!
 //! Run: `cargo bench`
 //!
-//! Ref: https://github.com/KumihoIO/construct-os/issues/618 (item 7)
+//! Ref: https://github.com/KumihoIO/Revka/issues/618 (item 7)
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use std::hint::black_box;
 use std::sync::{Arc, Mutex};
 
-use construct::agent::agent::Agent;
-use construct::agent::dispatcher::{NativeToolDispatcher, ToolDispatcher, XmlToolDispatcher};
-use construct::config::MemoryConfig;
-use construct::memory;
-use construct::memory::Memory;
-use construct::observability::{NoopObserver, Observer};
-use construct::providers::{ChatRequest, ChatResponse, Provider, ToolCall};
-use construct::tools::{Tool, ToolResult};
+use revka::agent::agent::Agent;
+use revka::agent::dispatcher::{NativeToolDispatcher, ToolDispatcher, XmlToolDispatcher};
+use revka::config::MemoryConfig;
+use revka::memory;
+use revka::memory::Memory;
+use revka::observability::{NoopObserver, Observer};
+use revka::providers::{ChatRequest, ChatResponse, Provider, ToolCall};
+use revka::tools::{Tool, ToolResult};
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -144,7 +144,7 @@ fn bench_xml_parsing(c: &mut Criterion) {
         text: Some(
             r#"Here is my analysis.
 <tool_call>
-{"name": "search", "arguments": {"query": "construct architecture"}}
+{"name": "search", "arguments": {"query": "revka architecture"}}
 </tool_call>
 Let me know if you need more."#
                 .into(),
@@ -194,7 +194,7 @@ fn bench_native_parsing(c: &mut Criterion) {
             ToolCall {
                 id: "tc1".into(),
                 name: "search".into(),
-                arguments: r#"{"query": "construct"}"#.into(),
+                arguments: r#"{"query": "revka"}"#.into(),
             },
             ToolCall {
                 id: "tc2".into(),

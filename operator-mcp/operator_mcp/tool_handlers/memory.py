@@ -15,7 +15,7 @@ import asyncio
 import re
 from typing import Any
 
-from ..construct_config import memory_min_relevance_score, memory_retrieval_limit
+from ..revka_config import memory_min_relevance_score, memory_retrieval_limit
 
 # Strip question framing from queries before forwarding to engage. The
 # graph engine scores documents against the query terms; question framing
@@ -44,7 +44,7 @@ def _normalize_query(q: str) -> str:
 
 
 def _configured_limit(args: dict[str, Any]) -> int:
-    """Apply Construct's configured memory recall limit as default and cap."""
+    """Apply Revka's configured memory recall limit as default and cap."""
     configured = memory_retrieval_limit()
     raw = args.get("limit")
     try:
@@ -57,7 +57,7 @@ def _configured_limit(args: dict[str, Any]) -> int:
 
 
 def _configured_min_score(args: dict[str, Any]) -> float:
-    """Apply Construct's configured memory relevance score as default floor."""
+    """Apply Revka's configured memory relevance score as default floor."""
     configured = memory_min_relevance_score()
     raw = args.get("min_score")
     try:
@@ -154,7 +154,7 @@ except ImportError:
 
 def _unavailable() -> dict[str, Any]:
     return {
-        "error": "kumiho package not available — install via `construct sidecars install`",
+        "error": "kumiho package not available — install via `revka sidecars install`",
     }
 
 
@@ -162,7 +162,7 @@ def _unavailable_kumiho_memory() -> dict[str, Any]:
     return {
         "error": (
             "kumiho-memory package not available — install via "
-            "`construct sidecars install` or `pip install kumiho-memory`"
+            "`revka sidecars install` or `pip install kumiho-memory`"
         ),
     }
 

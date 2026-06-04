@@ -2,7 +2,7 @@
 
 Exercises the core apply-loop and reference-broken scan in isolation. We
 inject the YAML via the test-only ``workflow_yaml`` arg and a mocked
-``ConstructGatewayClient`` so no live gateway/Kumiho is required.
+``RevkaGatewayClient`` so no live gateway/Kumiho is required.
 """
 from __future__ import annotations
 
@@ -53,7 +53,7 @@ def fake_gateway():
     gw = AsyncMock()
     gw._available = True
     gw.register_workflow = AsyncMock(
-        return_value="kref://Construct/Workflows/revise-test.workflow"
+        return_value="kref://Revka/Workflows/revise-test.workflow"
     )
     return gw
 
@@ -71,13 +71,13 @@ async def test_revise_happy_path_add_and_wire(fake_gateway, monkeypatch):
     class _StubSDK:
         _available = True
         async def get_latest_revision(self, item_kref: str, tag: str = "published"):
-            return {"kref": "kref://Construct/Workflows/revise-test.r2"}
+            return {"kref": "kref://Revka/Workflows/revise-test.r2"}
 
     monkeypatch.setattr(op_mod, "KUMIHO_SDK", _StubSDK())
 
     result = await tool_revise_workflow(
         {
-            "workflow_kref": "kref://Construct/Workflows/revise-test.workflow",
+            "workflow_kref": "kref://Revka/Workflows/revise-test.workflow",
             "workflow_yaml": _BASE_YAML,
             "operations": [
                 {
@@ -110,7 +110,7 @@ async def test_revise_happy_path_add_and_wire(fake_gateway, monkeypatch):
     assert result["success"] is True, result
     assert result["applied_count"] == 2
     assert result["skipped_items"] == []
-    assert result["new_revision_kref"] == "kref://Construct/Workflows/revise-test.r2"
+    assert result["new_revision_kref"] == "kref://Revka/Workflows/revise-test.r2"
     fake_gateway.register_workflow.assert_awaited_once()
     # Verify the YAML passed to the gateway round-trips and contains the new step
     kwargs = fake_gateway.register_workflow.await_args.kwargs
@@ -134,13 +134,13 @@ async def test_revise_skip_path_continues_after_failure(fake_gateway, monkeypatc
     class _StubSDK:
         _available = True
         async def get_latest_revision(self, item_kref: str, tag: str = "published"):
-            return {"kref": "kref://Construct/Workflows/revise-test.r2"}
+            return {"kref": "kref://Revka/Workflows/revise-test.r2"}
 
     monkeypatch.setattr(op_mod, "KUMIHO_SDK", _StubSDK())
 
     result = await tool_revise_workflow(
         {
-            "workflow_kref": "kref://Construct/Workflows/revise-test.workflow",
+            "workflow_kref": "kref://Revka/Workflows/revise-test.workflow",
             "workflow_yaml": _BASE_YAML,
             "operations": [
                 {
@@ -185,13 +185,13 @@ async def test_revise_reorder_accepts_before_position_keyword(fake_gateway, monk
     class _StubSDK:
         _available = True
         async def get_latest_revision(self, item_kref: str, tag: str = "published"):
-            return {"kref": "kref://Construct/Workflows/revise-test.r2"}
+            return {"kref": "kref://Revka/Workflows/revise-test.r2"}
 
     monkeypatch.setattr(op_mod, "KUMIHO_SDK", _StubSDK())
 
     result = await tool_revise_workflow(
         {
-            "workflow_kref": "kref://Construct/Workflows/revise-test.workflow",
+            "workflow_kref": "kref://Revka/Workflows/revise-test.workflow",
             "workflow_yaml": _BASE_YAML,
             "operations": [
                 {
@@ -220,13 +220,13 @@ async def test_revise_add_step_accepts_before_position_keyword(fake_gateway, mon
     class _StubSDK:
         _available = True
         async def get_latest_revision(self, item_kref: str, tag: str = "published"):
-            return {"kref": "kref://Construct/Workflows/revise-test.r2"}
+            return {"kref": "kref://Revka/Workflows/revise-test.r2"}
 
     monkeypatch.setattr(op_mod, "KUMIHO_SDK", _StubSDK())
 
     result = await tool_revise_workflow(
         {
-            "workflow_kref": "kref://Construct/Workflows/revise-test.workflow",
+            "workflow_kref": "kref://Revka/Workflows/revise-test.workflow",
             "workflow_yaml": _BASE_YAML,
             "operations": [
                 {
@@ -270,7 +270,7 @@ async def test_load_current_yaml_pins_utf8_for_korean_artifacts(tmp_path, monkey
         _available = True
 
         async def get_latest_revision(self, item_kref: str, tag: str = "published"):
-            return {"kref": "kref://Construct/Workflows/korean-test.r1"}
+            return {"kref": "kref://Revka/Workflows/korean-test.r1"}
 
         async def get_artifacts(self, revision_kref: str):
             return [{"location": str(workflow_path)}]
@@ -291,10 +291,10 @@ async def test_load_current_yaml_pins_utf8_for_korean_artifacts(tmp_path, monkey
     monkeypatch.setattr("builtins.open", cp949_default_open)
 
     yaml_text, revision_kref = await _load_current_yaml(
-        "kref://Construct/Workflows/korean-test.workflow"
+        "kref://Revka/Workflows/korean-test.workflow"
     )
 
-    assert revision_kref == "kref://Construct/Workflows/korean-test.r1"
+    assert revision_kref == "kref://Revka/Workflows/korean-test.r1"
     assert "한글 워크플로우" in yaml_text
 
 
@@ -310,7 +310,7 @@ async def test_revise_delete_reports_reference_broken(fake_gateway, monkeypatch)
     class _StubSDK:
         _available = True
         async def get_latest_revision(self, item_kref: str, tag: str = "published"):
-            return {"kref": "kref://Construct/Workflows/revise-test.r2"}
+            return {"kref": "kref://Revka/Workflows/revise-test.r2"}
 
     monkeypatch.setattr(op_mod, "KUMIHO_SDK", _StubSDK())
 
@@ -318,7 +318,7 @@ async def test_revise_delete_reports_reference_broken(fake_gateway, monkeypatch)
     # broken ref. depends_on auto-cleans, so the workflow still parses.
     result = await tool_revise_workflow(
         {
-            "workflow_kref": "kref://Construct/Workflows/revise-test.workflow",
+            "workflow_kref": "kref://Revka/Workflows/revise-test.workflow",
             "workflow_yaml": _BASE_YAML,
             "operations": [
                 {"op": "delete_step", "step_id": "first"},

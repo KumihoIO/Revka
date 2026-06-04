@@ -1,4 +1,4 @@
-# Construct onboard wizard — English source bundle.
+# Revka onboard wizard — English source bundle.
 #
 # Keys are kebab-case grouped by surface area. Args use {$name} placeholders.
 # When you add a new key here, mirror it in i18n/ko/onboard.ftl (or whatever
@@ -12,7 +12,7 @@
 
 ## ── Banner / welcome ─────────────────────────────────────────────
 
-welcome-title = Welcome to the Construct.
+welcome-title = Welcome to the Revka.
 welcome-subtitle = This wizard will configure your agent in under 60 seconds.
 
 ## ── Language picker (Step 0) ─────────────────────────────────────
@@ -26,7 +26,7 @@ step-header = Step {$num}/{$total}: {$title}
 
 step-1-title = Workspace Setup
 step-2-title = AI Provider & API Key
-step-3-title = Channels (How You Talk to Construct)
+step-3-title = Channels (How You Talk to Revka)
 step-4-title = Tunnel (Expose to Internet)
 step-5-title = Tool Mode & Security
 step-6-title = Hardware (Physical World)
@@ -53,7 +53,7 @@ provider-tier-custom = Custom (OpenAI-compatible endpoint)
 
 provider-select = Select your AI provider
 provider-api-key-prompt = Paste your API key (or press Enter to skip)
-provider-api-base-prompt = API base URL (e.g. http://localhost:1234 — where Construct sends LLM requests)
+provider-api-base-prompt = API base URL (e.g. http://localhost:1234 — where Revka sends LLM requests)
 provider-api-key-optional = API key (or Enter to skip if not needed)
 provider-model-name = Model name (e.g. llama3, gpt-4o, mistral)
 provider-select-model = Select your default model
@@ -74,14 +74,14 @@ secrets-encrypt = Enable encrypted secret storage?
 
 ## ── Step 6: Hardware ─────────────────────────────────────────────
 
-hardware-prompt = How should Construct interact with the physical world?
+hardware-prompt = How should Revka interact with the physical world?
 
 ## ── Step 7: Memory ───────────────────────────────────────────────
 
 memory-select = Select memory backend
 memory-kumiho-api-url = Kumiho API URL
 memory-kumiho-token = Kumiho service token (KUMIHO_SERVICE_TOKEN)
-memory-kumiho-managed-default = Construct uses the managed Kumiho Cloud endpoint by default.
+memory-kumiho-managed-default = Revka uses the managed Kumiho Cloud endpoint by default.
 memory-kumiho-no-endpoint = No Kumiho HTTP endpoint is required unless you self-host later.
 memory-kumiho-token-setup = Kumiho token setup
 memory-kumiho-token-cloud = Create/sign in to Kumiho Cloud and generate a token
@@ -95,7 +95,7 @@ memory-kumiho-token-not-configured = not configured
 memory-kumiho-account-email = Kumiho account email
 memory-kumiho-account-password = Kumiho account password
 memory-kumiho-existing-tenant = Existing Kumiho tenant: {$tenant}
-memory-kumiho-token-for-existing = Generate a Construct service token for this tenant?
+memory-kumiho-token-for-existing = Generate a Revka service token for this tenant?
 memory-kumiho-display-name = Display name (optional)
 memory-kumiho-display-name-warning = Could not update display name: {$err}
 memory-kumiho-org-name = Organization/workspace name (optional)
@@ -136,7 +136,7 @@ setup-mode-cancel = Cancel
 
 ## ── Reinit flow (--reinit) ───────────────────────────────────────
 
-reinit-banner = ⚠️  Reinitializing Construct configuration...
+reinit-banner = ⚠️  Reinitializing Revka configuration...
 reinit-current-dir = Current config directory: {$path}
 reinit-backup-target = This will back up your existing config to: {$path}
 reinit-confirm = Continue? [y/N]
@@ -148,18 +148,18 @@ reinit-fresh-start = Starting fresh initialization...
 
 next-steps-header = Next steps:
 next-step-chat = Start chatting with your agent:
-next-step-chat-cmd = construct agent
+next-step-chat-cmd = revka agent
 next-step-gateway = Run the gateway (channels, dashboard):
-next-step-gateway-cmd = construct gateway start
+next-step-gateway-cmd = revka gateway start
 next-step-status = Check status anytime:
-next-step-status-cmd = construct status
+next-step-status-cmd = revka status
 next-step-pairing-enabled = Pairing is enabled. A one-time pairing code will be displayed when the gateway starts.
 next-step-dashboard = Dashboard: http://127.0.0.1:{$port}
 
 ## ── Errors / misc ────────────────────────────────────────────────
 
 err-no-command = No command provided.
-err-try-onboard = Try `construct onboard` to initialize your workspace.
+err-try-onboard = Try `revka onboard` to initialize your workspace.
 
 # ════════════════════════════════════════════════════════════════════
 # PHASE 2 — provider sub-flows, hardware/project/tunnel details, etc.
@@ -169,7 +169,7 @@ err-try-onboard = Try `construct onboard` to initialize your workspace.
 
 custom-provider-title = Custom Provider Setup
 custom-provider-subtitle = — any OpenAI-compatible API
-custom-provider-info-1 = Construct works with ANY API that speaks the OpenAI chat completions format.
+custom-provider-info-1 = Revka works with ANY API that speaks the OpenAI chat completions format.
 custom-provider-info-2 = Examples: LiteLLM, LocalAI, vLLM, text-generation-webui, LM Studio, etc.
 custom-provider-confirmed = ✓ Provider: {$provider} | Model: {$model}
 
@@ -210,7 +210,7 @@ osaurus-key-prompt = API key for Osaurus server (or Enter to skip)
 ## ── Step 2: Gemini OAuth + API key sub-flow ──────────────────────
 
 gemini-cli-detected = Gemini CLI credentials detected! You can skip the API key.
-gemini-cli-reuse-info = Construct will reuse your existing Gemini CLI authentication.
+gemini-cli-reuse-info = Revka will reuse your existing Gemini CLI authentication.
 gemini-cli-confirm = Use existing Gemini CLI authentication?
 gemini-cli-using = Using Gemini CLI OAuth tokens
 gemini-key-url-info = Get your API key at: https://aistudio.google.com/app/apikey
@@ -267,24 +267,24 @@ model-source-prompt = Model source
 
 ## ── Step 5: Tool mode info + Composio sub-flow ───────────────────
 
-tool-mode-info-1 = Choose how Construct connects to external apps.
+tool-mode-info-1 = Choose how Revka connects to external apps.
 tool-mode-info-2 = You can always change this later in config.toml.
 composio-title = Composio Setup
 composio-subtitle = — 1000+ OAuth integrations (Gmail, Notion, GitHub, Slack, ...)
 composio-key-url = Get your API key at: https://app.composio.dev/settings
-composio-info = Construct uses Composio as a tool — your core agent stays local.
+composio-info = Revka uses Composio as a tool — your core agent stays local.
 composio-key-prompt = Composio API key (or Enter to skip)
 composio-skipped = Skipped — set composio.api_key in config.toml later
 composio-confirmed = Composio: {$value} (1000+ OAuth tools available)
 
-secrets-info-1 = Construct can encrypt API keys stored in config.toml.
+secrets-info-1 = Revka can encrypt API keys stored in config.toml.
 secrets-info-2 = A local key file protects against plaintext exposure and accidental leaks.
 secrets-status-encrypted = Secrets: {$value} — keys encrypted with local key file
 secrets-status-plaintext = Secrets: {$value} — keys stored as plaintext (not recommended)
 
 ## ── Step 6: Hardware setup details ───────────────────────────────
 
-hardware-info-1 = Construct can talk to physical hardware (LEDs, sensors, motors).
+hardware-info-1 = Revka can talk to physical hardware (LEDs, sensors, motors).
 hardware-scanning = Scanning for connected devices...
 hardware-no-devices = No connected devices detected.
 hardware-enable-later = You can enable hardware later in config.toml under [hardware].
@@ -367,12 +367,12 @@ next-action-login = Login:
 next-action-set-key = Set your API key:
 next-action-or-edit = Or edit:
 
-next-cmd-chat-hello = construct agent -m "Hello!"
-next-cmd-gateway = construct gateway
-next-cmd-status = construct status
-next-cmd-login = construct auth login --provider {$provider}
+next-cmd-chat-hello = revka agent -m "Hello!"
+next-cmd-gateway = revka gateway
+next-cmd-status = revka status
+next-cmd-login = revka auth login --provider {$provider}
 next-cmd-export-key = export {$env_var}="sk-..."
-next-cmd-config-toml = ~/.construct/config.toml
+next-cmd-config-toml = ~/.revka/config.toml
 
 ## ── Step 9: builtin workflows scaffolding ────────────────────────
 
@@ -389,7 +389,7 @@ workflows-summary = {$count} built-in workflows
 
 ## ── Channels: shared strings ──────────────────────────────────────
 
-channels-info-1 = Channels let you talk to Construct from anywhere.
+channels-info-1 = Channels let you talk to Revka from anywhere.
 channels-info-2 = CLI is always available. Connect more channels now.
 channels-summary = Channels: {$active}
 
@@ -402,7 +402,7 @@ channel-conn-failed-creds = Connection failed — check your credentials
 ## ── Telegram ──────────────────────────────────────────────────────
 
 telegram-title = Telegram Setup
-telegram-subtitle = talk to Construct from Telegram
+telegram-subtitle = talk to Revka from Telegram
 telegram-step-1 = 1. Open Telegram and message @BotFather
 telegram-step-2 = 2. Send /newbot and follow the prompts
 telegram-step-3 = 3. Copy the bot token and paste it below
@@ -417,7 +417,7 @@ telegram-allowlist-warn = No users allowlisted — Telegram inbound messages wil
 ## ── Discord ───────────────────────────────────────────────────────
 
 discord-title = Discord Setup
-discord-subtitle = talk to Construct from Discord
+discord-subtitle = talk to Revka from Discord
 discord-step-1 = 1. Go to https://discord.com/developers/applications
 discord-step-2 = 2. Create a New Application → Bot → Copy token
 discord-step-3 = 3. Enable MESSAGE CONTENT intent under Bot settings
@@ -434,7 +434,7 @@ discord-allowlist-warn = No users allowlisted — Discord inbound messages will 
 ## ── Slack ─────────────────────────────────────────────────────────
 
 slack-title = Slack Setup
-slack-subtitle = talk to Construct from Slack
+slack-subtitle = talk to Revka from Slack
 slack-step-1 = 1. Go to https://api.slack.com/apps → Create New App
 slack-step-2 = 2. Add Bot Token Scopes: chat:write, channels:history
 slack-step-3 = 3. Install to workspace and copy the Bot Token
@@ -455,7 +455,7 @@ slack-allowlist-warn = No users allowlisted — Slack inbound messages will be d
 imessage-title = iMessage Setup
 imessage-subtitle = macOS only, reads from Messages.app
 imessage-macos-only = iMessage is only available on macOS.
-imessage-info-1 = Construct reads your iMessage database and replies via AppleScript.
+imessage-info-1 = Revka reads your iMessage database and replies via AppleScript.
 imessage-info-2 = You need to grant Full Disk Access to your terminal in System Settings.
 imessage-contacts-prompt = Allowed contacts (comma-separated phone/email, or * for all)
 imessage-configured = iMessage configured (contacts: {$contacts})
@@ -621,7 +621,7 @@ qq-allowlist-prompt = Allowed user IDs (comma-separated, '*' for all)
 ## ── Lark / Feishu ────────────────────────────────────────────────
 
 lark-title = {$provider} Setup
-lark-subtitle = talk to Construct from {$provider}
+lark-subtitle = talk to Revka from {$provider}
 lark-step-1 = 1. Go to {$provider} Open Platform ({$host})
 lark-step-2 = 2. Create an app and enable 'Bot' capability
 lark-step-3 = 3. Copy the App ID and App Secret
@@ -642,7 +642,7 @@ lark-allowlist-warn = No users allowlisted — {$provider} inbound messages will
 
 nostr-title = Nostr Setup
 nostr-subtitle = private messages via NIP-04 & NIP-17
-nostr-info-1 = Construct will listen for encrypted DMs on Nostr relays.
+nostr-info-1 = Revka will listen for encrypted DMs on Nostr relays.
 nostr-info-2 = You need a Nostr private key (hex or nsec) and at least one relay.
 nostr-key-prompt = Private key (hex or nsec1...)
 nostr-key-valid = Key valid — public key: {$pubkey}

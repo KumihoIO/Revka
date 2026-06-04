@@ -1,13 +1,12 @@
-//! `construct update` — self-update pipeline with rollback.
+//! `revka update` — self-update pipeline with rollback.
 
 use anyhow::{Context, Result, bail};
 use std::path::Path;
 use tracing::{info, warn};
 
 const GITHUB_RELEASES_LATEST_URL: &str =
-    "https://api.github.com/repos/KumihoIO/construct/releases/latest";
-const GITHUB_RELEASES_TAG_URL: &str =
-    "https://api.github.com/repos/KumihoIO/construct/releases/tags";
+    "https://api.github.com/repos/KumihoIO/revka/releases/latest";
+const GITHUB_RELEASES_TAG_URL: &str = "https://api.github.com/repos/KumihoIO/revka/releases/tags";
 
 #[derive(Debug)]
 pub struct UpdateInfo {
@@ -24,7 +23,7 @@ pub async fn check(target_version: Option<&str>) -> Result<UpdateInfo> {
     let current = env!("CARGO_PKG_VERSION").to_string();
 
     let client = reqwest::Client::builder()
-        .user_agent(format!("construct/{current}"))
+        .user_agent(format!("revka/{current}"))
         .timeout(std::time::Duration::from_secs(15))
         .build()?;
 
@@ -96,7 +95,7 @@ pub async fn run(target_version: Option<&str>) -> Result<()> {
     // Phase 2: Download
     info!("Phase 2/6: Downloading...");
     let temp_dir = tempfile::tempdir().context("failed to create temp dir")?;
-    let download_path = temp_dir.path().join("construct_new");
+    let download_path = temp_dir.path().join("revka_new");
     download_binary(&download_url, &download_path).await?;
 
     // Phase 3: Backup
@@ -192,7 +191,7 @@ fn version_is_newer(current: &str, candidate: &str) -> bool {
 
 async fn download_binary(url: &str, dest: &Path) -> Result<()> {
     let client = reqwest::Client::builder()
-        .user_agent(format!("construct/{}", env!("CARGO_PKG_VERSION")))
+        .user_agent(format!("revka/{}", env!("CARGO_PKG_VERSION")))
         .timeout(std::time::Duration::from_secs(300))
         .build()?;
 
@@ -207,7 +206,7 @@ async fn download_binary(url: &str, dest: &Path) -> Result<()> {
 
     let bytes = resp.bytes().await.context("failed to read download body")?;
 
-    // Release assets are .tar.gz archives containing a single `construct` binary.
+    // Release assets are .tar.gz archives containing a single `revka` binary.
     // Extract the binary from the archive instead of writing the raw tarball.
     if url.ends_with(".tar.gz") || url.ends_with(".tgz") {
         extract_tar_gz(&bytes, dest).context("failed to extract binary from tar.gz archive")?;
@@ -228,7 +227,7 @@ async fn download_binary(url: &str, dest: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Extract the `construct` binary from a `.tar.gz` archive.
+/// Extract the `revka` binary from a `.tar.gz` archive.
 fn extract_tar_gz(archive_bytes: &[u8], dest: &Path) -> Result<()> {
     use flate2::read::GzDecoder;
     use std::io::Read;
@@ -241,10 +240,10 @@ fn extract_tar_gz(archive_bytes: &[u8], dest: &Path) -> Result<()> {
         let mut entry = entry.context("failed to read tar entry")?;
         let path = entry.path().context("failed to read entry path")?;
 
-        // The archive contains a single binary named "construct" (or "construct.exe" on Windows).
+        // The archive contains a single binary named "revka" (or "revka.exe" on Windows).
         let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
 
-        if file_name == "construct" || file_name == "construct.exe" {
+        if file_name == "revka" || file_name == "revka.exe" {
             let mut buf = Vec::new();
             entry
                 .read_to_end(&mut buf)
@@ -254,7 +253,7 @@ fn extract_tar_gz(archive_bytes: &[u8], dest: &Path) -> Result<()> {
         }
     }
 
-    bail!("archive does not contain a 'construct' binary")
+    bail!("archive does not contain a 'revka' binary")
 }
 
 async fn validate_binary(path: &Path) -> Result<()> {
@@ -282,8 +281,8 @@ async fn validate_binary(path: &Path) -> Result<()> {
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    if !stdout.contains("construct") {
-        bail!("downloaded binary does not appear to be construct");
+    if !stdout.contains("revka") {
+        bail!("downloaded binary does not appear to be revka");
     }
 
     Ok(())
@@ -439,11 +438,11 @@ mod tests {
     #[test]
     fn find_asset_url_picks_correct_gnu_over_android() {
         let release = make_release(&[
-            "construct-aarch64-linux-android.tar.gz",
-            "construct-aarch64-unknown-linux-gnu.tar.gz",
-            "construct-x86_64-unknown-linux-gnu.tar.gz",
-            "construct-x86_64-apple-darwin.tar.gz",
-            "construct-aarch64-apple-darwin.tar.gz",
+            "revka-aarch64-linux-android.tar.gz",
+            "revka-aarch64-unknown-linux-gnu.tar.gz",
+            "revka-x86_64-unknown-linux-gnu.tar.gz",
+            "revka-x86_64-apple-darwin.tar.gz",
+            "revka-aarch64-apple-darwin.tar.gz",
         ]);
 
         let url = find_asset_url(&release);
@@ -530,8 +529,8 @@ mod tests {
         use flate2::write::GzEncoder;
         use std::io::Write;
 
-        // Build a tar.gz in memory containing a fake "construct" binary.
-        let fake_binary = b"#!/bin/sh\necho construct";
+        // Build a tar.gz in memory containing a fake "revka" binary.
+        let fake_binary = b"#!/bin/sh\necho revka";
         let mut tar_buf = Vec::new();
         {
             let mut builder = tar::Builder::new(&mut tar_buf);
@@ -540,7 +539,7 @@ mod tests {
             header.set_mode(0o755);
             header.set_cksum();
             builder
-                .append_data(&mut header, "construct", &fake_binary[..])
+                .append_data(&mut header, "revka", &fake_binary[..])
                 .unwrap();
             builder.finish().unwrap();
         }
@@ -553,7 +552,7 @@ mod tests {
         }
 
         let tmp = tempfile::tempdir().unwrap();
-        let dest = tmp.path().join("construct_extracted");
+        let dest = tmp.path().join("revka_extracted");
         extract_tar_gz(&gz_buf, &dest).unwrap();
 
         let content = std::fs::read(&dest).unwrap();
@@ -566,7 +565,7 @@ mod tests {
         use flate2::write::GzEncoder;
         use std::io::Write;
 
-        // Build a tar.gz with a file that is NOT named "construct".
+        // Build a tar.gz with a file that is NOT named "revka".
         let mut tar_buf = Vec::new();
         {
             let mut builder = tar::Builder::new(&mut tar_buf);
@@ -588,7 +587,7 @@ mod tests {
         }
 
         let tmp = tempfile::tempdir().unwrap();
-        let dest = tmp.path().join("construct_extracted");
+        let dest = tmp.path().join("revka_extracted");
         let result = extract_tar_gz(&gz_buf, &dest);
         assert!(result.is_err());
         assert!(

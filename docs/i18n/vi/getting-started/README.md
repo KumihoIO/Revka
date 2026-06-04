@@ -12,16 +12,16 @@ Dành cho cài đặt lần đầu và làm quen nhanh.
 
 | Tình huống | Lệnh |
 |----------|---------|
-| Có API key, muốn cài nhanh nhất | `construct onboard --api-key sk-... --provider openrouter` |
-| Muốn được hướng dẫn từng bước | `construct onboard` |
-| Đã có config, chỉ cần sửa kênh | `construct onboard --channels-only` |
+| Có API key, muốn cài nhanh nhất | `revka onboard --api-key sk-... --provider openrouter` |
+| Muốn được hướng dẫn từng bước | `revka onboard` |
+| Đã có config, chỉ cần sửa kênh | `revka onboard --channels-only` |
 | Dùng xác thực subscription | Xem [Subscription Auth](../../../README.md#subscription-auth-openai-codex--claude-code) |
 
 ## Thiết lập và kiểm tra
 
-- Thiết lập nhanh: `construct onboard --api-key "sk-..." --provider openrouter`
-- Thiết lập hướng dẫn: `construct onboard`
-- Kiểm tra môi trường: `construct status` + `construct doctor`
+- Thiết lập nhanh: `revka onboard --api-key "sk-..." --provider openrouter`
+- Thiết lập hướng dẫn: `revka onboard`
+- Kiểm tra môi trường: `revka status` + `revka doctor`
 
 ## Tiếp theo
 

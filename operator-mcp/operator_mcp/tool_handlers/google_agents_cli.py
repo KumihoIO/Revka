@@ -6,7 +6,7 @@ import os
 import shutil
 from typing import Any
 
-from ..construct_config import workspace_dir
+from ..revka_config import workspace_dir
 from ..failure_classification import classified_error, VALIDATION_ERROR, RUNTIME_ENV_ERROR
 
 SAFE_ENV_VARS = {
@@ -92,7 +92,7 @@ def _validate_command(command: list[str], allow_interactive: bool) -> str | None
         if not allow_interactive and arg in {"-i", "--interactive"}:
             return "Interactive agents-cli flags are disabled by default"
     if first == "login" and not any(arg in {"--status", "status"} for arg in command) and not allow_interactive:
-        return "Use `agents-cli login --status`; interactive login must be done outside Construct"
+        return "Use `agents-cli login --status`; interactive login must be done outside Revka"
     return None
 
 

@@ -1,6 +1,6 @@
 # Raspberry Pi 5 Robot Setup Guide
 
-Complete guide to setting up a Construct-powered robot on Raspberry Pi 5.
+Complete guide to setting up a Revka-powered robot on Raspberry Pi 5.
 
 ## Hardware Requirements
 
@@ -130,8 +130,8 @@ bash ./models/download-ggml-model.sh base
 
 # Install
 sudo cp main /usr/local/bin/whisper-cpp
-mkdir -p ~/.construct/models
-cp models/ggml-base.bin ~/.construct/models/
+mkdir -p ~/.revka/models
+cp models/ggml-base.bin ~/.revka/models/
 ```
 
 ### 5. Install Piper TTS (Text-to-Speech)
@@ -143,13 +143,13 @@ tar -xzf piper_arm64.tar.gz
 sudo cp piper/piper /usr/local/bin/
 
 # Download voice model
-mkdir -p ~/.construct/models/piper
-cd ~/.construct/models/piper
+mkdir -p ~/.revka/models/piper
+cd ~/.revka/models/piper
 wget https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx
 wget https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx.json
 
 # Test
-echo "Hello, I am your robot!" | piper --model ~/.construct/models/piper/en_US-lessac-medium.onnx --output_file test.wav
+echo "Hello, I am your robot!" | piper --model ~/.revka/models/piper/en_US-lessac-medium.onnx --output_file test.wav
 aplay test.wav
 ```
 
@@ -167,17 +167,17 @@ sudo usermod -aG dialout $USER
 # Logout and login for group change to take effect
 ```
 
-### 7. Build Construct Robot Kit
+### 7. Build Revka Robot Kit
 
 ```bash
 # Clone repo (or copy from USB)
-git clone https://github.com/KumihoIO/construct-os
-cd construct
+git clone https://github.com/KumihoIO/Revka
+cd revka
 
 # Build robot kit
-cargo build --release -p construct-robot-kit
+cargo build --release -p revka-robot-kit
 
-# Build main construct (optional, if using as agent)
+# Build main revka (optional, if using as agent)
 cargo build --release
 ```
 
@@ -186,12 +186,12 @@ cargo build --release
 ### Create robot.toml
 
 ```bash
-mkdir -p ~/.construct
-nano ~/.construct/robot.toml
+mkdir -p ~/.revka
+nano ~/.revka/robot.toml
 ```
 
 ```toml
-# ~/.construct/robot.toml - Real Hardware Configuration
+# ~/.revka/robot.toml - Real Hardware Configuration
 
 # =============================================================================
 # DRIVE SYSTEM
@@ -292,7 +292,7 @@ arecord -D plughw:1,0 -f S16_LE -r 16000 -c 1 -d 3 test.wav
 aplay test.wav
 
 # Test speaker
-echo "Testing speaker" | piper --model ~/.construct/models/piper/en_US-lessac-medium.onnx --output_file - | aplay -D plughw:0,0
+echo "Testing speaker" | piper --model ~/.revka/models/piper/en_US-lessac-medium.onnx --output_file - | aplay -D plughw:0,0
 
 # Test Ollama
 curl http://localhost:11434/api/generate -d '{"model":"llama3.2:3b","prompt":"Say hello"}'
@@ -315,7 +315,7 @@ import json
 import time
 from rplidar import RPLidar
 
-FIFO_PATH = "/tmp/construct_sensors.fifo"
+FIFO_PATH = "/tmp/revka_sensors.fifo"
 
 def main():
     if not os.path.exists(FIFO_PATH):
@@ -354,11 +354,11 @@ chmod +x ~/sensor_loop.py
 nohup python3 ~/sensor_loop.py &
 ```
 
-### Start Construct Agent
+### Start Revka Agent
 
 ```bash
-# Configure Construct to use robot tools
-cat > ~/.construct/config.toml << 'EOF'
+# Configure Revka to use robot tools
+cat > ~/.revka/config.toml << 'EOF'
 api_key = ""  # Not needed for local Ollama
 default_provider = "ollama"
 default_model = "llama3.2:3b"
@@ -373,10 +373,10 @@ workspace_only = true
 EOF
 
 # Copy robot personality
-cp ~/construct/crates/robot-kit/SOUL.md ~/.construct/workspace/
+cp ~/revka/crates/robot-kit/SOUL.md ~/.revka/workspace/
 
 # Start agent
-./target/release/construct agent
+./target/release/revka agent
 ```
 
 ### Full Robot Startup Script
@@ -396,15 +396,15 @@ if ! pgrep -x "ollama" > /dev/null; then
 fi
 
 # Start sensor loop
-if [ ! -p /tmp/construct_sensors.fifo ]; then
-    mkfifo /tmp/construct_sensors.fifo
+if [ ! -p /tmp/revka_sensors.fifo ]; then
+    mkfifo /tmp/revka_sensors.fifo
 fi
 python3 ~/sensor_loop.py &
 SENSOR_PID=$!
 
-# Start construct
-cd ~/construct
-./target/release/construct daemon &
+# Start revka
+cd ~/revka
+./target/release/revka daemon &
 AGENT_PID=$!
 
 echo "Robot started!"
@@ -419,16 +419,16 @@ wait
 ## Systemd Services (Auto-Start on Boot)
 
 ```bash
-# /etc/systemd/system/construct-robot.service
-sudo tee /etc/systemd/system/construct-robot.service << 'EOF'
+# /etc/systemd/system/revka-robot.service
+sudo tee /etc/systemd/system/revka-robot.service << 'EOF'
 [Unit]
-Description=Construct Robot
+Description=Revka Robot
 After=network.target ollama.service
 
 [Service]
 Type=simple
 User=pi
-WorkingDirectory=/home/pi/construct
+WorkingDirectory=/home/pi/revka
 ExecStart=/home/pi/start_robot.sh
 Restart=on-failure
 RestartSec=10
@@ -438,12 +438,12 @@ WantedBy=multi-user.target
 EOF
 
 sudo systemctl daemon-reload
-sudo systemctl enable construct-robot
-sudo systemctl start construct-robot
+sudo systemctl enable revka-robot
+sudo systemctl start revka-robot
 
 # Check status
-sudo systemctl status construct-robot
-journalctl -u construct-robot -f  # View logs
+sudo systemctl status revka-robot
+journalctl -u revka-robot -f  # View logs
 ```
 
 ## Troubleshooting

@@ -1,6 +1,6 @@
 """Policy evaluation — pre-flight checks and structured permission handling.
 
-Loads autonomy policy from ~/.construct/config.toml and provides:
+Loads autonomy policy from ~/.revka/config.toml and provides:
   - Pre-flight validation before agent spawn (will this cwd be allowed?)
   - Tool permission classification (auto-approve, needs-approval, blocked)
   - Structured permission denial messages with policy context
@@ -28,7 +28,7 @@ except ImportError:
         tomllib = None  # type: ignore[assignment]
 
 from ._log import _log
-from .construct_config import workspace_dir as configured_workspace_dir
+from .revka_config import workspace_dir as configured_workspace_dir
 
 
 # ---------------------------------------------------------------------------
@@ -72,7 +72,7 @@ class PolicyCheckResult:
 class Policy:
     """Loaded autonomy policy from config.toml."""
     level: str = "supervised"  # supervised, autonomous, locked
-    workspace_dir: str = "~/.construct/workspace"
+    workspace_dir: str = "~/.revka/workspace"
     workspace_only: bool = True
     allowed_commands: list[str] = field(default_factory=list)
     forbidden_paths: list[str] = field(default_factory=list)
@@ -257,12 +257,12 @@ class Policy:
 # Loading
 # ---------------------------------------------------------------------------
 
-_CONFIG_PATH = os.path.expanduser("~/.construct/config.toml")
+_CONFIG_PATH = os.path.expanduser("~/.revka/config.toml")
 _cached_policy: Policy | None = None
 
 
 def load_policy(*, force_reload: bool = False) -> Policy:
-    """Load policy from ~/.construct/config.toml. Caches after first load."""
+    """Load policy from ~/.revka/config.toml. Caches after first load."""
     global _cached_policy
     if _cached_policy is not None and not force_reload:
         return _cached_policy

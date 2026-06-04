@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::str::FromStr;
 
-const SERVICE_LABEL: &str = "com.construct.daemon";
-const WINDOWS_TASK_NAME: &str = "Construct Daemon";
+const SERVICE_LABEL: &str = "com.revka.daemon";
+const WINDOWS_TASK_NAME: &str = "Revka Daemon";
 
 /// Soft NumberOfFiles for the daemon process. 16× launchd's default of 256
 /// (real-world incident 2026-05-11: user hit Too many open files spawning
@@ -147,7 +147,7 @@ fn daemon_state_pid_alive(_pid: u64) -> bool {
     true
 }
 
-/// Returns whether the Construct daemon service is currently running.
+/// Returns whether the Revka daemon service is currently running.
 pub fn is_running() -> bool {
     if cfg!(target_os = "macos") {
         run_capture(Command::new("launchctl").arg("list"))
@@ -165,13 +165,13 @@ pub fn is_running() -> bool {
 
 fn is_running_linux() -> bool {
     // Try systemd first, then OpenRC — mirrors detect_init_system() order
-    if run_capture(Command::new("systemctl").args(["--user", "is-active", "construct.service"]))
+    if run_capture(Command::new("systemctl").args(["--user", "is-active", "revka.service"]))
         .map(|out| out.trim() == "active")
         .unwrap_or(false)
     {
         return true;
     }
-    run_capture(Command::new("rc-service").args(["construct", "status"]))
+    run_capture(Command::new("rc-service").args(["revka", "status"]))
         .map(|out| out.contains("started"))
         .unwrap_or(false)
 }
@@ -410,7 +410,7 @@ fn start_windows_direct_daemon(config: &Config, reason: &str) -> Result<()> {
         child.id()
     );
     println!("   Logs: {}", logs_dir.display());
-    println!("   Run `construct service install` later to enable logon auto-start.");
+    println!("   Run `revka service install` later to enable logon auto-start.");
     Ok(())
 }
 
@@ -429,10 +429,10 @@ fn start_linux(init_system: InitSystem) -> Result<()> {
     match init_system {
         InitSystem::Systemd => {
             run_checked(Command::new("systemctl").args(["--user", "daemon-reload"]))?;
-            run_checked(Command::new("systemctl").args(["--user", "start", "construct.service"]))?;
+            run_checked(Command::new("systemctl").args(["--user", "start", "revka.service"]))?;
         }
         InitSystem::Openrc => {
-            run_checked(Command::new("rc-service").args(["construct", "start"]))?;
+            run_checked(Command::new("rc-service").args(["revka", "start"]))?;
         }
         InitSystem::Auto => unreachable!("Auto should be resolved before this point"),
     }
@@ -468,14 +468,11 @@ fn stop(config: &Config, init_system: InitSystem) -> Result<()> {
 fn stop_linux(init_system: InitSystem) -> Result<()> {
     match init_system {
         InitSystem::Systemd => {
-            let _ = run_checked(Command::new("systemctl").args([
-                "--user",
-                "stop",
-                "construct.service",
-            ]));
+            let _ =
+                run_checked(Command::new("systemctl").args(["--user", "stop", "revka.service"]));
         }
         InitSystem::Openrc => {
-            let _ = run_checked(Command::new("rc-service").args(["construct", "stop"]));
+            let _ = run_checked(Command::new("rc-service").args(["revka", "stop"]));
         }
         InitSystem::Auto => unreachable!("Auto should be resolved before this point"),
     }
@@ -510,14 +507,10 @@ fn restart_linux(init_system: InitSystem) -> Result<()> {
     match init_system {
         InitSystem::Systemd => {
             run_checked(Command::new("systemctl").args(["--user", "daemon-reload"]))?;
-            run_checked(Command::new("systemctl").args([
-                "--user",
-                "restart",
-                "construct.service",
-            ]))?;
+            run_checked(Command::new("systemctl").args(["--user", "restart", "revka.service"]))?;
         }
         InitSystem::Openrc => {
-            run_checked(Command::new("rc-service").args(["construct", "restart"]))?;
+            run_checked(Command::new("rc-service").args(["revka", "restart"]))?;
         }
         InitSystem::Auto => unreachable!("Auto should be resolved before this point"),
     }
@@ -587,17 +580,17 @@ fn status_linux(config: &Config, init_system: InitSystem) -> Result<()> {
             let out = run_capture(Command::new("systemctl").args([
                 "--user",
                 "is-active",
-                "construct.service",
+                "revka.service",
             ]))
             .unwrap_or_else(|_| "unknown".into());
             println!("Service state: {}", out.trim());
             println!("Unit: {}", linux_service_file(config)?.display());
         }
         InitSystem::Openrc => {
-            let out = run_capture(Command::new("rc-service").args(["construct", "status"]))
+            let out = run_capture(Command::new("rc-service").args(["revka", "status"]))
                 .unwrap_or_else(|_| "unknown".into());
             println!("Service state: {}", out.trim());
-            println!("Unit: /etc/init.d/construct");
+            println!("Unit: /etc/init.d/revka");
         }
         InitSystem::Auto => unreachable!("Auto should be resolved before this point"),
     }
@@ -676,7 +669,7 @@ fn logs_linux(config: &Config, init_system: InitSystem, lines: usize, follow: bo
             let mut args = vec![
                 "--user".to_string(),
                 "-u".to_string(),
-                "construct.service".to_string(),
+                "revka.service".to_string(),
                 "-n".to_string(),
                 lines.to_string(),
                 "--no-pager".to_string(),
@@ -693,13 +686,13 @@ fn logs_linux(config: &Config, init_system: InitSystem, lines: usize, follow: bo
             }
         }
         InitSystem::Openrc => {
-            // OpenRC logs go to /var/log/construct/error.log (as configured in the init script)
-            let log_file = Path::new("/var/log/construct/error.log");
+            // OpenRC logs go to /var/log/revka/error.log (as configured in the init script)
+            let log_file = Path::new("/var/log/revka/error.log");
             if !log_file.exists() {
                 // Fall back to access log
-                let access_log = Path::new("/var/log/construct/access.log");
+                let access_log = Path::new("/var/log/revka/access.log");
                 if !access_log.exists() {
-                    bail!("No log files found at /var/log/construct/. Is the service installed?");
+                    bail!("No log files found at /var/log/revka/. Is the service installed?");
                 }
                 return tail_file(access_log, lines, follow);
             }
@@ -807,7 +800,7 @@ fn uninstall(config: &Config, init_system: InitSystem) -> Result<()> {
             .parent()
             .map_or_else(|| PathBuf::from("."), PathBuf::from)
             .join("logs")
-            .join("construct-daemon.cmd");
+            .join("revka-daemon.cmd");
         if wrapper.exists() {
             fs::remove_file(&wrapper).ok();
         }
@@ -830,19 +823,19 @@ fn uninstall_linux(config: &Config, init_system: InitSystem) -> Result<()> {
             println!("✅ Service uninstalled ({})", file.display());
         }
         InitSystem::Openrc => {
-            let init_script = Path::new("/etc/init.d/construct");
+            let init_script = Path::new("/etc/init.d/revka");
             if init_script.exists() {
                 if let Err(err) =
-                    run_checked(Command::new("rc-update").args(["del", "construct", "default"]))
+                    run_checked(Command::new("rc-update").args(["del", "revka", "default"]))
                 {
                     eprintln!(
-                        "⚠️  Warning: Could not remove construct from OpenRC default runlevel: {err}"
+                        "⚠️  Warning: Could not remove revka from OpenRC default runlevel: {err}"
                     );
                 }
                 fs::remove_file(init_script)
                     .with_context(|| format!("Failed to remove {}", init_script.display()))?;
             }
-            println!("✅ Service uninstalled (/etc/init.d/construct)");
+            println!("✅ Service uninstalled (/etc/init.d/revka)");
         }
         InitSystem::Auto => unreachable!("Auto should be resolved before this point"),
     }
@@ -870,8 +863,8 @@ fn uninstall_linux(config: &Config, init_system: InitSystem) -> Result<()> {
 ///   install user). Adds `$HOME`-rooted dirs and folds in the
 ///   install-time `PATH` env so unusual setups (nvm, asdf, fnm, custom
 ///   prefixes) keep working without hand-editing.
-/// - **false** for OpenRC's system `construct:construct` user where
-///   `$HOME` resolves to `/var/lib/construct` and the install user's
+/// - **false** for OpenRC's system `revka:revka` user where
+///   `$HOME` resolves to `/var/lib/revka` and the install user's
 ///   PATH is irrelevant. Returns just the system-wide locations.
 fn build_unix_daemon_path(include_user_dirs: bool) -> String {
     let mut path_dirs: Vec<String> = Vec::new();
@@ -930,7 +923,7 @@ fn build_windows_daemon_path() -> String {
 }
 
 /// Detect if the executable lives under a Homebrew prefix and return the
-/// corresponding `var/construct` directory.
+/// corresponding `var/revka` directory.
 ///
 /// Homebrew installs binaries into `<prefix>/Cellar/<formula>/<version>/bin/`
 /// and symlinks them to `<prefix>/bin/`. The canonical `var` directory is
@@ -938,21 +931,21 @@ fn build_windows_daemon_path() -> String {
 fn detect_homebrew_var_dir(exe: &Path) -> Option<PathBuf> {
     let path_str = exe.to_string_lossy();
 
-    // Symlinked binary: <prefix>/bin/construct
-    // Cellar binary:    <prefix>/Cellar/construct/<version>/bin/construct
+    // Symlinked binary: <prefix>/bin/revka
+    // Cellar binary:    <prefix>/Cellar/revka/<version>/bin/revka
     let prefix = if path_str.contains("/Cellar/") {
-        // Walk up from .../Cellar/construct/<ver>/bin/construct to the prefix
+        // Walk up from .../Cellar/revka/<ver>/bin/revka to the prefix
         let mut ancestor = exe.to_path_buf();
         while let Some(parent) = ancestor.parent() {
             ancestor = parent.to_path_buf();
             if ancestor.file_name().map_or(false, |n| n == "Cellar") {
                 // prefix is one level above Cellar
-                return ancestor.parent().map(|p| p.join("var").join("construct"));
+                return ancestor.parent().map(|p| p.join("var").join("revka"));
             }
         }
         return None;
     } else if let Some(bin_parent) = exe.parent() {
-        // <prefix>/bin/construct → check if <prefix>/Cellar exists (Homebrew marker)
+        // <prefix>/bin/revka → check if <prefix>/Cellar exists (Homebrew marker)
         if let Some(prefix) = bin_parent.parent() {
             if prefix.join("Cellar").is_dir() {
                 Some(prefix.to_path_buf())
@@ -966,7 +959,7 @@ fn detect_homebrew_var_dir(exe: &Path) -> Option<PathBuf> {
         None
     };
 
-    prefix.map(|p| p.join("var").join("construct"))
+    prefix.map(|p| p.join("var").join("revka"))
 }
 
 fn install_macos(config: &Config) -> Result<()> {
@@ -978,7 +971,7 @@ fn install_macos(config: &Config) -> Result<()> {
     let exe = std::env::current_exe().context("Failed to resolve current executable")?;
 
     // When installed via Homebrew, use the Homebrew var directory for runtime
-    // data so that `brew services start construct` works out of the box.
+    // data so that `brew services start revka` works out of the box.
     let homebrew_var_dir = detect_homebrew_var_dir(&exe);
     if let Some(ref var_dir) = homebrew_var_dir {
         fs::create_dir_all(var_dir).with_context(|| {
@@ -1010,11 +1003,11 @@ fn install_macos(config: &Config) -> Result<()> {
     if let Some(ref var_dir) = homebrew_var_dir {
         println!("   Homebrew var: {}", var_dir.display());
     }
-    println!("   Start with: construct service start");
+    println!("   Start with: revka service start");
     Ok(())
 }
 
-/// Build the launchd plist contents for the Construct daemon.
+/// Build the launchd plist contents for the Revka daemon.
 ///
 /// Extracted from `install_macos` so tests can pin the generated XML
 /// without performing filesystem side effects. See `install_macos` for
@@ -1030,7 +1023,7 @@ fn format_macos_plist(
     let path_env = build_unix_daemon_path(true);
 
     // EnvironmentVariables always carries PATH; under Homebrew it also
-    // carries CONSTRUCT_CONFIG_DIR. WorkingDirectory is Homebrew-only
+    // carries REVKA_CONFIG_DIR. WorkingDirectory is Homebrew-only
     // (lives outside the EnvironmentVariables dict, so it stays a
     // separate stanza).
     let env_section = if let Some(var_dir) = homebrew_var_dir {
@@ -1039,7 +1032,7 @@ fn format_macos_plist(
   <dict>
     <key>PATH</key>
     <string>{path}</string>
-    <key>CONSTRUCT_CONFIG_DIR</key>
+    <key>REVKA_CONFIG_DIR</key>
     <string>{config_dir}</string>
   </dict>
   <key>WorkingDirectory</key>
@@ -1064,7 +1057,7 @@ fn format_macos_plist(
     // Resource limits — real-world incident 2026-05-11: a user hit
     // `Failed to spawn MCP server: Too many open files (os error 24)`
     // because launchd's default NumberOfFiles is 256, and each
-    // Construct agent spawns 3 MCP sidecars over stdio pipes. Bump the
+    // Revka agent spawns 3 MCP sidecars over stdio pipes. Bump the
     // soft cap to DAEMON_NOFILE_SOFT (operators can `ulimit -n` up to
     // the hard cap at runtime without re-installing).
     let resource_limits = format!(
@@ -1128,7 +1121,7 @@ fn install_linux(config: &Config, init_system: InitSystem) -> Result<()> {
     }
 }
 
-/// Build the systemd user-unit contents for the Construct daemon.
+/// Build the systemd user-unit contents for the Revka daemon.
 ///
 /// Extracted from `install_linux_systemd` so tests can pin the
 /// generated unit body without performing filesystem side effects.
@@ -1136,7 +1129,7 @@ fn format_systemd_unit(exe: &Path) -> String {
     let path_env = build_unix_daemon_path(true);
     format!(
         "[Unit]\n\
-         Description=Construct daemon\n\
+         Description=Revka daemon\n\
          After=network.target\n\
          \n\
          [Service]\n\
@@ -1182,9 +1175,9 @@ fn install_linux_systemd(config: &Config) -> Result<()> {
 
     fs::write(&file, unit)?;
     let _ = run_checked(Command::new("systemctl").args(["--user", "daemon-reload"]));
-    let _ = run_checked(Command::new("systemctl").args(["--user", "enable", "construct.service"]));
+    let _ = run_checked(Command::new("systemctl").args(["--user", "enable", "revka.service"]));
     println!("✅ Installed systemd user service: {}", file.display());
-    println!("   Start with: construct service start");
+    println!("   Start with: revka service start");
     Ok(())
 }
 
@@ -1202,22 +1195,20 @@ fn is_root() -> bool {
     false
 }
 
-/// Check if the construct user exists and has expected properties.
+/// Check if the revka user exists and has expected properties.
 /// Returns Ok if user doesn't exist (OpenRC will handle creation or fail gracefully).
 /// Returns error if user exists but has unexpected properties.
-fn check_construct_user() -> Result<()> {
-    let output = Command::new("getent")
-        .args(["passwd", "construct"])
-        .output();
+fn check_revka_user() -> Result<()> {
+    let output = Command::new("getent").args(["passwd", "revka"]).output();
     let is_alpine = Path::new("/etc/alpine-release").exists();
 
     let (del_cmd, add_cmd) = if is_alpine {
         (
-            "deluser construct && delgroup construct",
-            "addgroup -S construct && adduser -S -s /sbin/nologin -H -D -G construct construct",
+            "deluser revka && delgroup revka",
+            "addgroup -S revka && adduser -S -s /sbin/nologin -H -D -G revka revka",
         )
     } else {
-        ("userdel construct", "useradd -r -s /sbin/nologin construct")
+        ("userdel revka", "useradd -r -s /sbin/nologin revka")
     };
 
     match output {
@@ -1232,7 +1223,7 @@ fn check_construct_user() -> Result<()> {
 
                 if uid.parse::<u32>().unwrap_or(999) >= 1000 {
                     bail!(
-                        "User 'construct' exists but has unexpected UID {} (expected system UID < 1000).\n\
+                        "User 'revka' exists but has unexpected UID {} (expected system UID < 1000).\n\
                          Recreate with: sudo {} && sudo {}",
                         uid,
                         del_cmd,
@@ -1242,7 +1233,7 @@ fn check_construct_user() -> Result<()> {
 
                 if !shell.contains("nologin") && !shell.contains("false") {
                     bail!(
-                        "User 'construct' exists but has unexpected shell '{}'.\n\
+                        "User 'revka' exists but has unexpected shell '{}'.\n\
                          Expected nologin/false for security. Fix with: sudo {} && sudo {}",
                         shell,
                         del_cmd,
@@ -1250,9 +1241,9 @@ fn check_construct_user() -> Result<()> {
                     );
                 }
 
-                if home != "/var/lib/construct" && home != "/nonexistent" {
+                if home != "/var/lib/revka" && home != "/nonexistent" {
                     eprintln!(
-                        "⚠️  Warning: construct user has home directory '{}' (expected /var/lib/construct or /nonexistent)",
+                        "⚠️  Warning: revka user has home directory '{}' (expected /var/lib/revka or /nonexistent)",
                         home
                     );
                 }
@@ -1265,33 +1256,31 @@ fn check_construct_user() -> Result<()> {
     }
 }
 
-fn ensure_construct_user() -> Result<()> {
-    let output = Command::new("getent")
-        .args(["passwd", "construct"])
-        .output();
+fn ensure_revka_user() -> Result<()> {
+    let output = Command::new("getent").args(["passwd", "revka"]).output();
     if let Ok(output) = output {
         if output.status.success() {
-            return check_construct_user();
+            return check_revka_user();
         }
     }
 
     let is_alpine = Path::new("/etc/alpine-release").exists();
 
     if is_alpine {
-        let group_output = Command::new("getent").args(["group", "construct"]).output();
+        let group_output = Command::new("getent").args(["group", "revka"]).output();
         let group_exists = group_output.map(|o| o.status.success()).unwrap_or(false);
 
         if !group_exists {
             let output = Command::new("addgroup")
-                .args(["-S", "construct"])
+                .args(["-S", "revka"])
                 .output()
-                .context("Failed to create construct group")?;
+                .context("Failed to create revka group")?;
 
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                bail!("Failed to create construct group: {}", stderr.trim());
+                bail!("Failed to create revka group: {}", stderr.trim());
             }
-            println!("✅ Created system group: construct");
+            println!("✅ Created system group: revka");
         }
 
         let output = Command::new("adduser")
@@ -1302,44 +1291,44 @@ fn ensure_construct_user() -> Result<()> {
                 "-H",
                 "-D",
                 "-G",
-                "construct",
-                "construct",
+                "revka",
+                "revka",
             ])
             .output()
-            .context("Failed to create construct user")?;
+            .context("Failed to create revka user")?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            bail!("Failed to create construct user: {}", stderr.trim());
+            bail!("Failed to create revka user: {}", stderr.trim());
         }
     } else {
         let output = Command::new("useradd")
-            .args(["-r", "-s", "/sbin/nologin", "construct"])
+            .args(["-r", "-s", "/sbin/nologin", "revka"])
             .output()
-            .context("Failed to create construct user")?;
+            .context("Failed to create revka user")?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            bail!("Failed to create construct user: {}", stderr.trim());
+            bail!("Failed to create revka user: {}", stderr.trim());
         }
     }
 
-    println!("✅ Created system user: construct");
+    println!("✅ Created system user: revka");
     Ok(())
 }
 
-/// Change ownership of a path to construct:construct
+/// Change ownership of a path to revka:revka
 #[cfg(unix)]
-fn chown_to_construct(path: &Path) -> Result<()> {
+fn chown_to_revka(path: &Path) -> Result<()> {
     let output = Command::new("chown")
-        .args(["construct:construct", &path.to_string_lossy()])
+        .args(["revka:revka", &path.to_string_lossy()])
         .output()
         .context("Failed to run chown")?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         bail!(
-            "Failed to change ownership of {} to construct:construct: {}",
+            "Failed to change ownership of {} to revka:revka: {}",
             path.display(),
             stderr.trim(),
         );
@@ -1348,21 +1337,21 @@ fn chown_to_construct(path: &Path) -> Result<()> {
 }
 
 #[cfg(not(unix))]
-fn chown_to_construct(_path: &Path) -> Result<()> {
+fn chown_to_revka(_path: &Path) -> Result<()> {
     Ok(())
 }
 
 #[cfg(unix)]
-fn chown_recursive_to_construct(path: &Path) -> Result<()> {
+fn chown_recursive_to_revka(path: &Path) -> Result<()> {
     let output = Command::new("chown")
-        .args(["-R", "construct:construct", &path.to_string_lossy()])
+        .args(["-R", "revka:revka", &path.to_string_lossy()])
         .output()
         .context("Failed to run recursive chown")?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         bail!(
-            "Failed to recursively change ownership of {} to construct:construct: {}",
+            "Failed to recursively change ownership of {} to revka:revka: {}",
             path.display(),
             stderr.trim(),
         );
@@ -1372,7 +1361,7 @@ fn chown_recursive_to_construct(path: &Path) -> Result<()> {
 }
 
 #[cfg(not(unix))]
-fn chown_recursive_to_construct(_path: &Path) -> Result<()> {
+fn chown_recursive_to_revka(_path: &Path) -> Result<()> {
     Ok(())
 }
 
@@ -1421,7 +1410,7 @@ fn resolve_invoking_user_config_dir() -> Option<PathBuf> {
                 let entry = String::from_utf8_lossy(&output.stdout);
                 let fields: Vec<&str> = entry.trim().split(':').collect();
                 if fields.len() >= 6 {
-                    return Some(PathBuf::from(fields[5]).join(".construct"));
+                    return Some(PathBuf::from(fields[5]).join(".revka"));
                 }
             }
         }
@@ -1430,7 +1419,7 @@ fn resolve_invoking_user_config_dir() -> Option<PathBuf> {
     std::env::var("HOME")
         .ok()
         .map(PathBuf::from)
-        .map(|home| home.join(".construct"))
+        .map(|home| home.join(".revka"))
 }
 
 fn migrate_openrc_runtime_state_if_needed(config_dir: &Path) -> Result<()> {
@@ -1474,7 +1463,7 @@ fn build_openrc_writability_probe_command(path: &Path, has_runuser: bool) -> (St
             "runuser".to_string(),
             vec![
                 "-u".to_string(),
-                "construct".to_string(),
+                "revka".to_string(),
                 "--".to_string(),
                 "sh".to_string(),
                 "-c".to_string(),
@@ -1489,7 +1478,7 @@ fn build_openrc_writability_probe_command(path: &Path, has_runuser: bool) -> (St
                 "/bin/sh".to_string(),
                 "-c".to_string(),
                 probe,
-                "construct".to_string(),
+                "revka".to_string(),
             ],
         )
     }
@@ -1517,8 +1506,8 @@ fn ensure_openrc_runtime_path_writable(path: &Path) -> Result<()> {
             stderr.trim()
         };
         bail!(
-            "OpenRC runtime user 'construct' cannot write {} ({details}). \
-             Re-run `sudo construct service install` and ensure ownership is construct:construct.",
+            "OpenRC runtime user 'revka' cannot write {} ({details}). \
+             Re-run `sudo revka service install` and ensure ownership is revka:revka.",
             path.display(),
         );
     }
@@ -1554,7 +1543,7 @@ fn warn_if_binary_in_home(exe_path: &Path) {
         eprintln!(
             "⚠️  Warning: Binary path '{}' appears to be in a user home directory.\n\
              For system-wide OpenRC service, consider installing to /usr/local/bin:\n\
-             sudo cp '{}' /usr/local/bin/construct",
+             sudo cp '{}' /usr/local/bin/revka",
             exe_path.display(),
             exe_path.display()
         );
@@ -1563,29 +1552,29 @@ fn warn_if_binary_in_home(exe_path: &Path) {
 
 /// Generate OpenRC init script content (pure function for testability)
 fn generate_openrc_script(exe_path: &Path, config_dir: &Path) -> String {
-    // OpenRC's daemon runs as the system `construct:construct` user
-    // whose HOME is `/var/lib/construct`. The install user's `~/.cargo/bin`
+    // OpenRC's daemon runs as the system `revka:revka` user
+    // whose HOME is `/var/lib/revka`. The install user's `~/.cargo/bin`
     // / `~/.local/bin` are not relevant here, so we ask for the
     // system-only PATH set.
     let path_env = build_unix_daemon_path(false);
     format!(
         r#"#!/sbin/openrc-run
 
-name="construct"
-description="Construct daemon"
+name="revka"
+description="Revka daemon"
 
 command="{exe}"
 command_args="--config-dir {config_dir} daemon"
 command_background="yes"
-command_user="construct:construct"
+command_user="revka:revka"
 pidfile="/run/${{RC_SVCNAME}}.pid"
 umask 027
-output_log="/var/log/construct/access.log"
-error_log="/var/log/construct/error.log"
+output_log="/var/log/revka/access.log"
+error_log="/var/log/revka/error.log"
 
 # Provide HOME so headless browsers can create profile/cache directories.
 # Without this, Chromium/Firefox fail with sandbox or profile errors.
-export HOME="/var/lib/construct"
+export HOME="/var/lib/revka"
 
 # File-descriptor limit — real-world incident 2026-05-11: a user hit
 # `Too many open files` spawning MCP servers. Each agent spawns 3 MCP
@@ -1595,7 +1584,7 @@ export HOME="/var/lib/construct"
 # service. Single-value syntax (no separate hard cap).
 rc_ulimit="-n {nofile_soft}"
 
-# PATH override — the OpenRC system `construct` user starts with the
+# PATH override — the OpenRC system `revka` user starts with the
 # default supervised-process PATH which can be even narrower than the
 # user's interactive shell. Daemon subprocess spawns of codex/claude/agents-cli/etc
 # need /usr/local/bin and friends explicitly listed.
@@ -1607,7 +1596,7 @@ depend() {{
 }}
 
 start_pre() {{
-    checkpath --directory --owner construct:construct --mode 0750 /var/lib/construct
+    checkpath --directory --owner revka:revka --mode 0750 /var/lib/revka
 }}
 "#,
         exe = exe_path.display(),
@@ -1617,7 +1606,7 @@ start_pre() {{
 }
 
 fn resolve_openrc_executable() -> Result<PathBuf> {
-    let preferred = Path::new("/usr/local/bin/construct");
+    let preferred = Path::new("/usr/local/bin/revka");
     if preferred.exists() {
         return Ok(preferred.to_path_buf());
     }
@@ -1630,18 +1619,18 @@ fn install_linux_openrc(config: &Config) -> Result<()> {
     if !is_root() {
         bail!(
             "OpenRC service installation requires root privileges.\n\
-             Please run with sudo: sudo construct service install"
+             Please run with sudo: sudo revka service install"
         );
     }
 
-    ensure_construct_user()?;
+    ensure_revka_user()?;
 
     let exe = resolve_openrc_executable()?;
     warn_if_binary_in_home(&exe);
 
-    let config_dir = Path::new("/etc/construct");
+    let config_dir = Path::new("/etc/revka");
     let workspace_dir = config_dir.join("workspace");
-    let log_dir = Path::new("/var/log/construct");
+    let log_dir = Path::new("/var/log/revka");
 
     if !config_dir.exists() {
         fs::create_dir_all(config_dir)
@@ -1668,9 +1657,9 @@ fn install_linux_openrc(config: &Config) -> Result<()> {
                 || format!("Failed to set permissions on {}", workspace_dir.display()),
             )?;
         }
-        chown_to_construct(&workspace_dir)?;
+        chown_to_revka(&workspace_dir)?;
         println!(
-            "✅ Created directory: {} (owned by construct:construct)",
+            "✅ Created directory: {} (owned by revka:revka)",
             workspace_dir.display()
         );
     }
@@ -1701,7 +1690,7 @@ fn install_linux_openrc(config: &Config) -> Result<()> {
         }
     }
 
-    chown_recursive_to_construct(config_dir)?;
+    chown_recursive_to_revka(config_dir)?;
 
     let created_log_dir = !log_dir.exists();
     if created_log_dir {
@@ -1715,19 +1704,19 @@ fn install_linux_openrc(config: &Config) -> Result<()> {
         }
     }
 
-    chown_to_construct(log_dir)?;
+    chown_to_revka(log_dir)?;
 
     ensure_openrc_runtime_dirs_writable(config_dir, &workspace_dir, log_dir)?;
 
     if created_log_dir {
         println!(
-            "✅ Created directory: {} (owned by construct:construct)",
+            "✅ Created directory: {} (owned by revka:revka)",
             log_dir.display()
         );
     }
 
     let init_script = generate_openrc_script(&exe, config_dir);
-    let init_path = Path::new("/etc/init.d/construct");
+    let init_path = Path::new("/etc/init.d/revka");
     fs::write(init_path, init_script)
         .with_context(|| format!("Failed to write {}", init_path.display()))?;
 
@@ -1738,10 +1727,10 @@ fn install_linux_openrc(config: &Config) -> Result<()> {
             .with_context(|| format!("Failed to set permissions on {}", init_path.display()))?;
     }
 
-    run_checked(Command::new("rc-update").args(["add", "construct", "default"]))?;
-    println!("✅ Installed OpenRC service: /etc/init.d/construct");
-    println!("   Config path: /etc/construct/config.toml");
-    println!("   Start with: sudo construct service start");
+    run_checked(Command::new("rc-update").args(["add", "revka", "default"]))?;
+    println!("✅ Installed OpenRC service: /etc/init.d/revka");
+    println!("   Config path: /etc/revka/config.toml");
+    println!("   Start with: sudo revka service start");
     let _ = config;
     Ok(())
 }
@@ -1757,7 +1746,7 @@ fn install_windows(config: &Config) -> Result<()> {
     fs::create_dir_all(&logs_dir)?;
 
     // Create a wrapper script that redirects output to log files
-    let wrapper = logs_dir.join("construct-daemon.cmd");
+    let wrapper = logs_dir.join("revka-daemon.cmd");
     let stdout_log = logs_dir.join("daemon.stdout.log");
     let stderr_log = logs_dir.join("daemon.stderr.log");
 
@@ -1800,7 +1789,7 @@ fn install_windows(config: &Config) -> Result<()> {
     println!("✅ Installed Windows scheduled task: {}", task_name);
     println!("   Wrapper: {}", wrapper.display());
     println!("   Logs: {}", logs_dir.display());
-    println!("   Start with: construct service start");
+    println!("   Start with: revka service start");
     Ok(())
 }
 
@@ -1823,7 +1812,7 @@ fn linux_service_file(config: &Config) -> Result<PathBuf> {
         .join(".config")
         .join("systemd")
         .join("user")
-        .join("construct.service"))
+        .join("revka.service"))
 }
 
 fn run_checked(command: &mut Command) -> Result<()> {
@@ -1891,12 +1880,12 @@ mod tests {
     fn linux_service_file_has_expected_suffix() {
         let file = linux_service_file(&Config::default()).unwrap();
         let path = file.to_string_lossy();
-        assert!(path.ends_with(".config/systemd/user/construct.service"));
+        assert!(path.ends_with(".config/systemd/user/revka.service"));
     }
 
     #[test]
     fn windows_task_name_is_constant() {
-        assert_eq!(windows_task_name(), "Construct Daemon");
+        assert_eq!(windows_task_name(), "Revka Daemon");
     }
 
     #[cfg(target_os = "windows")]
@@ -2000,22 +1989,22 @@ mod tests {
     fn generate_openrc_script_contains_required_directives() {
         use std::path::PathBuf;
 
-        let exe_path = PathBuf::from("/usr/local/bin/construct");
-        let script = generate_openrc_script(&exe_path, Path::new("/etc/construct"));
+        let exe_path = PathBuf::from("/usr/local/bin/revka");
+        let script = generate_openrc_script(&exe_path, Path::new("/etc/revka"));
 
         assert!(script.starts_with("#!/sbin/openrc-run"));
-        assert!(script.contains("name=\"construct\""));
-        assert!(script.contains("description=\"Construct daemon\""));
-        assert!(script.contains("command=\"/usr/local/bin/construct\""));
-        assert!(script.contains("command_args=\"--config-dir /etc/construct daemon\""));
-        assert!(!script.contains("env CONSTRUCT_CONFIG_DIR"));
-        assert!(!script.contains("env CONSTRUCT_WORKSPACE"));
+        assert!(script.contains("name=\"revka\""));
+        assert!(script.contains("description=\"Revka daemon\""));
+        assert!(script.contains("command=\"/usr/local/bin/revka\""));
+        assert!(script.contains("command_args=\"--config-dir /etc/revka daemon\""));
+        assert!(!script.contains("env REVKA_CONFIG_DIR"));
+        assert!(!script.contains("env REVKA_WORKSPACE"));
         assert!(script.contains("command_background=\"yes\""));
-        assert!(script.contains("command_user=\"construct:construct\""));
+        assert!(script.contains("command_user=\"revka:revka\""));
         assert!(script.contains("pidfile=\"/run/${RC_SVCNAME}.pid\""));
         assert!(script.contains("umask 027"));
-        assert!(script.contains("output_log=\"/var/log/construct/access.log\""));
-        assert!(script.contains("error_log=\"/var/log/construct/error.log\""));
+        assert!(script.contains("output_log=\"/var/log/revka/access.log\""));
+        assert!(script.contains("error_log=\"/var/log/revka/error.log\""));
         assert!(script.contains("depend()"));
         assert!(script.contains("need net"));
         assert!(script.contains("after firewall"));
@@ -2025,11 +2014,11 @@ mod tests {
     fn generate_openrc_script_sets_home_for_browser() {
         use std::path::PathBuf;
 
-        let exe_path = PathBuf::from("/usr/local/bin/construct");
-        let script = generate_openrc_script(&exe_path, Path::new("/etc/construct"));
+        let exe_path = PathBuf::from("/usr/local/bin/revka");
+        let script = generate_openrc_script(&exe_path, Path::new("/etc/revka"));
 
         assert!(
-            script.contains("export HOME=\"/var/lib/construct\""),
+            script.contains("export HOME=\"/var/lib/revka\""),
             "OpenRC script must set HOME for headless browser support"
         );
     }
@@ -2038,28 +2027,28 @@ mod tests {
     fn generate_openrc_script_creates_home_directory() {
         use std::path::PathBuf;
 
-        let exe_path = PathBuf::from("/usr/local/bin/construct");
-        let script = generate_openrc_script(&exe_path, Path::new("/etc/construct"));
+        let exe_path = PathBuf::from("/usr/local/bin/revka");
+        let script = generate_openrc_script(&exe_path, Path::new("/etc/revka"));
 
         assert!(
             script.contains("start_pre()"),
             "OpenRC script must have start_pre to create HOME dir"
         );
         assert!(
-            script.contains("checkpath --directory --owner construct:construct"),
-            "start_pre must ensure /var/lib/construct exists with correct ownership"
+            script.contains("checkpath --directory --owner revka:revka"),
+            "start_pre must ensure /var/lib/revka exists with correct ownership"
         );
     }
 
     #[test]
     fn systemd_unit_contains_home_and_pass_environment() {
         let unit = "[Unit]\n\
-             Description=Construct daemon\n\
+             Description=Revka daemon\n\
              After=network.target\n\
              \n\
              [Service]\n\
              Type=simple\n\
-             ExecStart=/usr/local/bin/construct daemon\n\
+             ExecStart=/usr/local/bin/revka daemon\n\
              Restart=always\n\
              RestartSec=3\n\
              # Ensure HOME is set so headless browsers can create profile/cache dirs.\n\
@@ -2113,7 +2102,7 @@ mod tests {
     fn build_unix_daemon_path_without_user_dirs_drops_home_paths() {
         // include_user_dirs=false (OpenRC daemon runs as system user)
         // → must NOT inject ~/.cargo/bin etc., since those resolve to
-        // the install user's home which the system `construct` user
+        // the install user's home which the system `revka` user
         // can't read.
         let path = build_unix_daemon_path(false);
         assert!(
@@ -2156,8 +2145,8 @@ mod tests {
         // `ulimit -n 4096` before exec'ing the daemon.
         use std::path::PathBuf;
 
-        let exe_path = PathBuf::from("/usr/local/bin/construct");
-        let script = generate_openrc_script(&exe_path, Path::new("/etc/construct"));
+        let exe_path = PathBuf::from("/usr/local/bin/revka");
+        let script = generate_openrc_script(&exe_path, Path::new("/etc/revka"));
 
         assert!(
             script.contains("rc_ulimit=\"-n 4096\""),
@@ -2169,7 +2158,7 @@ mod tests {
     fn systemd_unit_sets_fd_limit() {
         // Real-world incident 2026-05-11: same root cause as the launchd
         // / OpenRC variants. systemd format is `<soft>:<hard>`.
-        let exe_path = Path::new("/usr/local/bin/construct");
+        let exe_path = Path::new("/usr/local/bin/revka");
         let unit = format_systemd_unit(exe_path);
 
         assert!(
@@ -2184,9 +2173,9 @@ mod tests {
         // is 256. Plist must declare both Soft + HardResourceLimits with
         // NumberOfFiles entries so a freshly-installed daemon can spawn
         // its MCP sidecars at scale.
-        let exe = Path::new("/usr/local/bin/construct");
-        let stdout = Path::new("/var/log/construct/daemon.stdout.log");
-        let stderr = Path::new("/var/log/construct/daemon.stderr.log");
+        let exe = Path::new("/usr/local/bin/revka");
+        let stdout = Path::new("/var/log/revka/daemon.stdout.log");
+        let stderr = Path::new("/var/log/revka/daemon.stderr.log");
         let plist = format_macos_plist(exe, None, stdout, stderr);
 
         assert!(
@@ -2215,8 +2204,8 @@ mod tests {
     fn generate_openrc_script_sets_path_for_subprocess_spawns() {
         use std::path::PathBuf;
 
-        let exe_path = PathBuf::from("/usr/local/bin/construct");
-        let script = generate_openrc_script(&exe_path, Path::new("/etc/construct"));
+        let exe_path = PathBuf::from("/usr/local/bin/revka");
+        let script = generate_openrc_script(&exe_path, Path::new("/etc/revka"));
 
         assert!(
             script.contains("export PATH=\""),
@@ -2237,14 +2226,14 @@ mod tests {
     fn warn_if_binary_in_home_detects_home_path() {
         use std::path::PathBuf;
 
-        let home_path = PathBuf::from("/home/user/.cargo/bin/construct");
+        let home_path = PathBuf::from("/home/user/.cargo/bin/revka");
         assert!(home_path.to_string_lossy().contains("/home/"));
         assert!(home_path.to_string_lossy().contains(".cargo/bin"));
 
-        let cargo_path = PathBuf::from("/home/user/.cargo/bin/construct");
+        let cargo_path = PathBuf::from("/home/user/.cargo/bin/revka");
         assert!(cargo_path.to_string_lossy().contains(".cargo/bin"));
 
-        let system_path = PathBuf::from("/usr/local/bin/construct");
+        let system_path = PathBuf::from("/usr/local/bin/revka");
         assert!(!system_path.to_string_lossy().contains("/home/"));
         assert!(!system_path.to_string_lossy().contains(".cargo/bin"));
     }
@@ -2261,39 +2250,38 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn openrc_writability_probe_prefers_runuser_when_available() {
-        let (program, args) =
-            build_openrc_writability_probe_command(Path::new("/etc/construct"), true);
+        let (program, args) = build_openrc_writability_probe_command(Path::new("/etc/revka"), true);
         assert_eq!(program, "runuser");
         assert_eq!(
             args,
             vec![
                 "-u".to_string(),
-                "construct".to_string(),
+                "revka".to_string(),
                 "--".to_string(),
                 "sh".to_string(),
                 "-c".to_string(),
-                "test -w '/etc/construct'".to_string()
+                "test -w '/etc/revka'".to_string()
             ]
         );
     }
 
     #[test]
     fn detect_homebrew_var_dir_from_cellar_path() {
-        let exe = PathBuf::from("/opt/homebrew/Cellar/construct/1.2.3/bin/construct");
+        let exe = PathBuf::from("/opt/homebrew/Cellar/revka/1.2.3/bin/revka");
         let var_dir = detect_homebrew_var_dir(&exe);
-        assert_eq!(var_dir, Some(PathBuf::from("/opt/homebrew/var/construct")));
+        assert_eq!(var_dir, Some(PathBuf::from("/opt/homebrew/var/revka")));
     }
 
     #[test]
     fn detect_homebrew_var_dir_intel_cellar_path() {
-        let exe = PathBuf::from("/usr/local/Cellar/construct/1.0.0/bin/construct");
+        let exe = PathBuf::from("/usr/local/Cellar/revka/1.0.0/bin/revka");
         let var_dir = detect_homebrew_var_dir(&exe);
-        assert_eq!(var_dir, Some(PathBuf::from("/usr/local/var/construct")));
+        assert_eq!(var_dir, Some(PathBuf::from("/usr/local/var/revka")));
     }
 
     #[test]
     fn detect_homebrew_var_dir_non_homebrew_path() {
-        let exe = PathBuf::from("/home/user/.cargo/bin/construct");
+        let exe = PathBuf::from("/home/user/.cargo/bin/revka");
         let var_dir = detect_homebrew_var_dir(&exe);
         assert_eq!(var_dir, None);
     }
@@ -2302,7 +2290,7 @@ mod tests {
     #[test]
     fn openrc_writability_probe_falls_back_to_su() {
         let (program, args) =
-            build_openrc_writability_probe_command(Path::new("/etc/construct/workspace"), false);
+            build_openrc_writability_probe_command(Path::new("/etc/revka/workspace"), false);
         assert_eq!(program, "su");
         assert_eq!(
             args,
@@ -2310,8 +2298,8 @@ mod tests {
                 "-s".to_string(),
                 "/bin/sh".to_string(),
                 "-c".to_string(),
-                "test -w '/etc/construct/workspace'".to_string(),
-                "construct".to_string()
+                "test -w '/etc/revka/workspace'".to_string(),
+                "revka".to_string()
             ]
         );
     }
@@ -2319,7 +2307,7 @@ mod tests {
     #[cfg(not(target_os = "windows"))]
     #[test]
     fn tail_file_errors_on_missing_file() {
-        let missing = Path::new("/tmp/construct-test-nonexistent-log-file.log");
+        let missing = Path::new("/tmp/revka-test-nonexistent-log-file.log");
         let result = tail_file(missing, 10, false);
         assert!(result.is_err(), "tail on missing file should fail");
     }

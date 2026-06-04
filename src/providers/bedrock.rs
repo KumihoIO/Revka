@@ -1396,7 +1396,7 @@ mod tests {
 
     #[test]
     fn creates_without_credentials() {
-        // Provider should construct even without env vars.
+        // Provider should revka even without env vars.
         let _provider = BedrockProvider::new();
     }
 

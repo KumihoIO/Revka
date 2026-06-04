@@ -1,8 +1,8 @@
-# Construct 文档目录（简体中文 — 统一目录）
+# Revka 文档目录（简体中文 — 统一目录）
 
 > 📖 [English version](../../SUMMARY.md)
 >
-> Construct 的 Rust 核心运行时是 [ZeroClaw](https://github.com/zeroclaw-labs/zeroclaw) 的 fork；完整署名见 [`NOTICE`](../../../NOTICE) 与 [`docs/upstream/zeroclaw-attribution.md`](../../upstream/zeroclaw-attribution.md)。
+> Revka 的 Rust 核心运行时是 [ZeroClaw](https://github.com/zeroclaw-labs/zeroclaw) 的 fork；完整署名见 [`NOTICE`](../../../NOTICE) 与 [`docs/upstream/zeroclaw-attribution.md`](../../upstream/zeroclaw-attribution.md)。
 
 最后对齐：**April 27, 2026**。
 

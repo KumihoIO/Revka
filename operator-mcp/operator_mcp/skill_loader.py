@@ -1,4 +1,4 @@
-"""Skill loader — reads orchestration skills from ~/.construct/skills/.
+"""Skill loader — reads orchestration skills from ~/.revka/skills/.
 
 Skills are markdown instruction files that get injected into agent system
 prompts based on the task context. The operator selects which skills to
@@ -12,8 +12,8 @@ from typing import Any
 from ._log import _log
 
 _SKILLS_DIRS = [
-    os.path.expanduser("~/.construct/skills"),
-    os.path.expanduser("~/.construct/workspace/skills"),
+    os.path.expanduser("~/.revka/skills"),
+    os.path.expanduser("~/.revka/workspace/skills"),
 ]
 
 # Skill name → filename mapping

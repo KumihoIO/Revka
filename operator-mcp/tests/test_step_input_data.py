@@ -303,7 +303,7 @@ class TestResolve:
         cfg = ResolveStepConfig(
             kind="report",
             tag="published",
-            space="Construct/${{ lower(inputs.team) }}/${inputs.suffix}",
+            space="Revka/${{ lower(inputs.team) }}/${inputs.suffix}",
             fail_if_missing=False,
         )
         step = StepDef(id="r", type=StepType.RESOLVE, resolve=cfg)
@@ -311,8 +311,8 @@ class TestResolve:
             result = await _exec_resolve(step, _state(inputs={"team": "OPS", "suffix": "Inbox"}))
 
         assert result.status == "completed"
-        assert result.input_data["space"] == "Construct/ops/Inbox"
-        assert calls["space"] == "Construct/ops/Inbox"
+        assert result.input_data["space"] == "Revka/ops/Inbox"
+        assert calls["space"] == "Revka/ops/Inbox"
 
     async def test_interpolated_query_values_are_visible_in_output_preview(self):
         calls: dict[str, Any] = {}
@@ -400,10 +400,10 @@ class TestOutput:
             assert kwargs["metadata_target"] == "item"
             assert kwargs["artifact_summary_model"] == "claude-haiku-4-5-20251001"
             return {
-                "item_kref": "kref://Construct/WorkflowOutputs/report.report",
-                "revision_kref": "kref://Construct/WorkflowOutputs/report.report?r=7",
+                "item_kref": "kref://Revka/WorkflowOutputs/report.report",
+                "revision_kref": "kref://Revka/WorkflowOutputs/report.report?r=7",
                 "artifact_path": "/tmp/publish.md",
-                "artifact_kref": "kref://Construct/WorkflowOutputs/report.report?r=7#a1",
+                "artifact_kref": "kref://Revka/WorkflowOutputs/report.report?r=7#a1",
                 "artifact_attached": True,
                 "artifact_error": "",
                 "artifact_summary": "summary",
@@ -440,10 +440,10 @@ class TestOutput:
         async def fake_publish_workflow_entity(**kwargs):
             assert kwargs["metadata_target"] == "revision"
             return {
-                "item_kref": "kref://Construct/WorkflowOutputs/report.report",
-                "revision_kref": "kref://Construct/WorkflowOutputs/report.report?r=7",
+                "item_kref": "kref://Revka/WorkflowOutputs/report.report",
+                "revision_kref": "kref://Revka/WorkflowOutputs/report.report?r=7",
                 "artifact_path": "/tmp/publish.md",
-                "artifact_kref": "kref://Construct/WorkflowOutputs/report.report?r=7#a1",
+                "artifact_kref": "kref://Revka/WorkflowOutputs/report.report?r=7#a1",
                 "artifact_attached": True,
                 "artifact_error": "",
                 "tag_applied": True,
@@ -472,8 +472,8 @@ class TestOutput:
 
         async def fake_publish_workflow_entity(**_kwargs):
             return {
-                "item_kref": "kref://Construct/WorkflowOutputs/report.report",
-                "revision_kref": "kref://Construct/WorkflowOutputs/report.report?r=7",
+                "item_kref": "kref://Revka/WorkflowOutputs/report.report",
+                "revision_kref": "kref://Revka/WorkflowOutputs/report.report?r=7",
                 "artifact_path": "/tmp/publish.md",
                 "artifact_kref": "",
                 "artifact_attached": False,
@@ -505,7 +505,7 @@ class TestNotify:
         cfg = NotifyStepConfig(title="Hi", message="${inputs.body}", channels=["dashboard"])
         step = StepDef(id="n", type=StepType.NOTIFY, notify=cfg)
         # Don't actually push to gateway — patch the client to be unavailable.
-        with patch("operator_mcp.gateway_client.ConstructGatewayClient") as gw:
+        with patch("operator_mcp.gateway_client.RevkaGatewayClient") as gw:
             gw.return_value._available = False
             result = await _exec_notify(step, _state(inputs={"body": "msg!"}))
         assert result.status == "completed"
@@ -616,7 +616,7 @@ class TestForEach:
         result = await _exec_for_each(loop, state, str(tmp_path), wf)
 
         assert result.status == "completed"
-        art_dir = tmp_path / ".construct" / "artifacts" / "t" / "r"
+        art_dir = tmp_path / ".revka" / "artifacts" / "t" / "r"
         iter_1 = art_dir / "draft__iter_1.md"
         iter_2 = art_dir / "draft__iter_2.md"
         assert iter_1.read_text(encoding="utf-8") == "# draft 1\n"
@@ -639,7 +639,7 @@ class TestForEach:
 
         async def fake_publish_workflow_entity(**kwargs):
             calls.append(kwargs)
-            artifact_dir = tmp_path / ".construct" / "artifacts" / kwargs["workflow_name"] / kwargs["run_id"]
+            artifact_dir = tmp_path / ".revka" / "artifacts" / kwargs["workflow_name"] / kwargs["run_id"]
             artifact_dir.mkdir(parents=True, exist_ok=True)
             artifact_path = artifact_dir / f"{kwargs['step_id']}.md"
             artifact_path.write_text(kwargs["content"], encoding="utf-8")
@@ -679,7 +679,7 @@ class TestForEach:
 
         assert result.status == "completed"
         assert [call["step_id"] for call in calls] == ["emit__iter_1", "emit__iter_2"]
-        art_dir = tmp_path / ".construct" / "artifacts" / "t" / "r"
+        art_dir = tmp_path / ".revka" / "artifacts" / "t" / "r"
         iter_1 = art_dir / "emit__iter_1.md"
         iter_2 = art_dir / "emit__iter_2.md"
         assert iter_1.read_text(encoding="utf-8") == "# alpha\n"
@@ -1025,7 +1025,7 @@ class TestPersistRoundTrip:
 
         import operator_mcp.operator_mcp as op_mod
         monkeypatch.setattr(op_mod, "KUMIHO_SDK", FakeSDK(), raising=False)
-        monkeypatch.setenv("CONSTRUCT_WORKFLOW_MEMORY_TIMEOUT_SECS", "0.01")
+        monkeypatch.setenv("REVKA_WORKFLOW_MEMORY_TIMEOUT_SECS", "0.01")
 
         item_kref = await persist_workflow_run(
             workflow_name="room",

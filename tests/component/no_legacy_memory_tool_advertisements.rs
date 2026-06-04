@@ -3,7 +3,7 @@
 //! Audit rows 11/12 found `memory_store` / `memory_recall` / `memory_forget`
 //! / `memory_search` advertised in prompts, defaults, scaffolds, and locale
 //! files even though only `memory_store` and `memory_search` are real
-//! Operator MCP tools (and dispatched under the `construct-operator__`
+//! Operator MCP tools (and dispatched under the `revka-operator__`
 //! prefix). The bare names were uncallable.
 //!
 //! Round-1 guard tests were local: each one only checked a single string
@@ -47,7 +47,7 @@ const ALLOWLIST: &[&str] = &[
     // live in files we already permit; listed here for clarity if a
     // reviewer searches.)
     // ── D: intentional kumiho/operator-prefixed surfaces ──
-    ".claude/skills/construct/references/cli-reference.md",
+    ".claude/skills/revka/references/cli-reference.md",
     "docs/assets/architecture-diagrams.md",
     "docs/contributing/kumiho-memory-integration.md",
     "docs/i18n/zh-CN/maintainers/repo-map.zh-CN.md",
@@ -136,7 +136,7 @@ fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
 
 /// A line in a tracked file that mentions one of the LEGACY_NAMES, except
 /// when the surrounding context shows it is the namespaced form
-/// (`kumiho_memory_<name>` or `construct-operator__memory_<name>`).
+/// (`kumiho_memory_<name>` or `revka-operator__memory_<name>`).
 struct Hit {
     rel_path: String,
     line_no: usize,
@@ -148,7 +148,7 @@ fn line_has_bare_legacy(line: &str, name: &str) -> bool {
     // Find every occurrence of the legacy name in the line. A hit
     // counts as "bare" only if the immediate prefix is not
     // `kumiho_` (Kumiho MCP) or `__` (Operator MCP prefix
-    // `construct-operator__`).
+    // `revka-operator__`).
     let bytes = line.as_bytes();
     let needle = name.as_bytes();
     let mut start = 0usize;

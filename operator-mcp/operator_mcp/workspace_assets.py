@@ -1,7 +1,7 @@
 """Mint HMAC-signed workspace-asset URLs.
 
 Mirrors the Rust gateway's `src/gateway/workspace_assets.rs`. The shared
-HMAC key is the gateway's service-token at ``~/.construct/service-token``,
+HMAC key is the gateway's service-token at ``~/.revka/service-token``,
 which both the gateway and operator-mcp already read for their own auth
 flows. Tools call ``sign_workspace_url(rel_path)`` to mint URLs they
 embed in canvas/HTML output; the gateway verifies sig + exp on each
@@ -31,8 +31,8 @@ def _service_token_bytes() -> bytes:
     """
     token_path = Path(
         os.environ.get(
-            "CONSTRUCT_SERVICE_TOKEN_PATH",
-            str(Path.home() / ".construct" / "service-token"),
+            "REVKA_SERVICE_TOKEN_PATH",
+            str(Path.home() / ".revka" / "service-token"),
         )
     )
     return token_path.read_text(encoding="utf-8").strip().encode("utf-8")
@@ -47,7 +47,7 @@ def sign_workspace_url(rel_path: str, ttl_secs: int = DEFAULT_TTL_SECS) -> str:
     """Return ``/workspace/<rel_path>?exp=…&sig=…`` valid for ``ttl_secs``.
 
     ``rel_path`` is relative to ``config.workspace_dir`` (typically
-    ``~/.construct/workspace``). Use forward slashes; the gateway
+    ``~/.revka/workspace``). Use forward slashes; the gateway
     normalizes both forward and backslash separators on Windows.
     """
     rel = rel_path.replace("\\", "/").lstrip("/")

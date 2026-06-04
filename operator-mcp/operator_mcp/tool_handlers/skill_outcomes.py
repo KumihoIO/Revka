@@ -13,7 +13,7 @@ and an optional summary / error. Outcomes accumulate at::
 from the most recent outcomes, exposing it for the prompt builder
 (``SkillsSection`` on the Rust side) to rerank skills before injection.
 That is the substrate Hermes Agent calls "skill self-improvement during
-use" — Construct gets the same loop without the SQLite + DSPy stack
+use" — Revka gets the same loop without the SQLite + DSPy stack
 because the outcomes already live in the Kumiho graph with edges back
 to the skill they exercised.
 """
@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from .._log import _log
-from ..construct_config import memory_project
+from ..revka_config import memory_project
 
 try:
     from kumiho.mcp_server import (
@@ -40,7 +40,7 @@ except ImportError:
 
 def _unavailable() -> dict[str, Any]:
     return {
-        "error": "kumiho package not available — install via `construct sidecars install`",
+        "error": "kumiho package not available — install via `revka sidecars install`",
     }
 
 

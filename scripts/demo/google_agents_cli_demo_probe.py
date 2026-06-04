@@ -2,7 +2,7 @@
 """Run deterministic Google Agents CLI demo-readiness probes.
 
 The default mode installs a temporary fake ``agents-cli`` binary so the probe
-can exercise Construct's Operator MCP handler without touching Google Cloud.
+can exercise Revka's Operator MCP handler without touching Google Cloud.
 Use ``--output`` to keep the JSON evidence bundle for a demo checklist.
 """
 from __future__ import annotations
@@ -25,7 +25,7 @@ OPERATOR_MCP = REPO_ROOT / "operator-mcp"
 if str(OPERATOR_MCP) not in sys.path:
     sys.path.insert(0, str(OPERATOR_MCP))
 
-from operator_mcp import construct_config  # noqa: E402
+from operator_mcp import revka_config  # noqa: E402
 from operator_mcp.tool_handlers import google_agents_cli as google_agents_cli_handler  # noqa: E402
 
 
@@ -643,9 +643,9 @@ def _build_outcome_matrix(results: list[dict[str, Any]]) -> dict[str, Any]:
 
 async def _main_async(args: argparse.Namespace) -> int:
     original_path = os.environ.get("PATH", "")
-    original_workspace = os.environ.get("CONSTRUCT_WORKSPACE")
+    original_workspace = os.environ.get("REVKA_WORKSPACE")
     original_enterprise_app = os.environ.get("GEMINI_ENTERPRISE_APP_ID")
-    with tempfile.TemporaryDirectory(prefix="construct-google-agents-probe-") as temp:
+    with tempfile.TemporaryDirectory(prefix="revka-google-agents-probe-") as temp:
         root = Path(temp)
         workspace = root / "workspace"
         workspace.mkdir()
@@ -656,22 +656,22 @@ async def _main_async(args: argparse.Namespace) -> int:
 
         fake_path = str(bin_dir) + os.pathsep + original_path
         os.environ["PATH"] = fake_path
-        os.environ["CONSTRUCT_WORKSPACE"] = str(workspace)
+        os.environ["REVKA_WORKSPACE"] = str(workspace)
         os.environ["GEMINI_ENTERPRISE_APP_ID"] = "demo-enterprise-app"
-        construct_config._cached_workspace_dir = None
+        revka_config._cached_workspace_dir = None
 
         results = await _run_probes(workspace, fake_path)
 
     os.environ["PATH"] = original_path
     if original_workspace is None:
-        os.environ.pop("CONSTRUCT_WORKSPACE", None)
+        os.environ.pop("REVKA_WORKSPACE", None)
     else:
-        os.environ["CONSTRUCT_WORKSPACE"] = original_workspace
+        os.environ["REVKA_WORKSPACE"] = original_workspace
     if original_enterprise_app is None:
         os.environ.pop("GEMINI_ENTERPRISE_APP_ID", None)
     else:
         os.environ["GEMINI_ENTERPRISE_APP_ID"] = original_enterprise_app
-    construct_config._cached_workspace_dir = None
+    revka_config._cached_workspace_dir = None
     failures = [item for item in results if item["status"] != "pass"]
     outcome_matrix = _build_outcome_matrix(results)
     failed_outcomes = outcome_matrix["summary"]["failed"]

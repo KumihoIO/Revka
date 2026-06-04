@@ -1,4 +1,4 @@
-//! System tray integration for Construct Desktop.
+//! System tray integration for Revka Desktop.
 
 pub mod events;
 pub mod icon;
@@ -14,7 +14,7 @@ pub fn setup_tray<R: Runtime>(app: &App<R>) -> Result<TrayIcon<R>, tauri::Error>
     let menu = menu::create_tray_menu(app)?;
 
     TrayIconBuilder::with_id("main")
-        .tooltip("Construct — Disconnected")
+        .tooltip("Revka — Disconnected")
         .icon(icon::icon_for_state(false, crate::state::AgentStatus::Idle))
         .menu(&menu)
         .show_menu_on_left_click(false)

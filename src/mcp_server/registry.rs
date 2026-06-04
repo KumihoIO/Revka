@@ -5,7 +5,7 @@
 //! 1. **Baseline** (`build_default_tools`) — a curated set of ~16 zero-dep
 //!    tools that need nothing beyond a `SecurityPolicy` and the workspace
 //!    path. This keeps M1 green even if config loading fails.
-//! 2. **Extended** (`build_tools_with_config`) — adds Construct integrations
+//! 2. **Extended** (`build_tools_with_config`) — adds Revka integrations
 //!    (Notion, Jira, Composio, Google Workspace, Microsoft 365, LinkedIn,
 //!    plus the three `skills_*` meta-tools) whenever a `Config` is available
 //!    with the matching credentials.
@@ -425,7 +425,7 @@ pub fn build_tools_with_runtime(
             .unwrap_or_else(|| crate::providers::ProviderRuntimeOptions {
                 auth_profile_override: None,
                 provider_api_url: config.api_url.clone(),
-                construct_dir: config.config_path.parent().map(std::path::PathBuf::from),
+                revka_dir: config.config_path.parent().map(std::path::PathBuf::from),
                 secrets_encrypt: config.secrets.encrypt,
                 reasoning_enabled: config.runtime.reasoning_enabled,
                 reasoning_effort: config.runtime.reasoning_effort.clone(),
@@ -486,7 +486,7 @@ pub fn build_tools_with_runtime(
     // These tools each keep their own `ChannelMapHandle`. We want the tool we
     // register here to *share* the same handle the gateway uses, so the
     // channel supervisor's `populate()` call updates both. We therefore
-    // construct them with `new()` and then `populate_handle` via the
+    // revka them with `new()` and then `populate_handle` via the
     // pre-built-tools path below if the gateway supplies them. Until then,
     // register a fresh tool keyed on the supplied handle.
     //

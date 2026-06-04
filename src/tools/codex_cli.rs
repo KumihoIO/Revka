@@ -15,7 +15,7 @@ const SAFE_ENV_VARS: &[&str] = &[
 
 /// Delegates coding tasks to the Codex CLI (`codex -q`).
 ///
-/// This creates a two-tier agent architecture: Construct orchestrates high-level
+/// This creates a two-tier agent architecture: Revka orchestrates high-level
 /// tasks and delegates complex coding work to Codex, which has its own
 /// agent loop with file editing and shell tools.
 ///

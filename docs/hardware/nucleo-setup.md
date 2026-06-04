@@ -1,12 +1,12 @@
-# Construct on Nucleo-F401RE — Step-by-Step Guide
+# Revka on Nucleo-F401RE — Step-by-Step Guide
 
-Run Construct on your Mac or Linux host. Connect a Nucleo-F401RE via USB. Control GPIO (LED, pins) via Telegram or CLI.
+Run Revka on your Mac or Linux host. Connect a Nucleo-F401RE via USB. Control GPIO (LED, pins) via Telegram or CLI.
 
 ---
 
 ## Get Board Info via Telegram (No Firmware Needed)
 
-Construct can read chip info from the Nucleo over USB **without flashing any firmware**. Message your Telegram bot:
+Revka can read chip info from the Nucleo over USB **without flashing any firmware**. Message your Telegram bot:
 
 - *"What board info do I have?"*
 - *"Board info"*
@@ -29,21 +29,21 @@ baud = 115200
 
 ```bash
 cargo build --features hardware,probe
-construct hardware info
-construct hardware discover
+revka hardware info
+revka hardware discover
 ```
 
 ---
 
 ## What's Included (No Code Changes Needed)
 
-Construct includes everything for Nucleo-F401RE:
+Revka includes everything for Nucleo-F401RE:
 
 | Component | Location | Purpose |
 |-----------|----------|---------|
 | Firmware | `firmware/nucleo/` | Embassy Rust — USART2 (115200), gpio_read, gpio_write |
 | Serial peripheral | `src/peripherals/serial.rs` | JSON-over-serial protocol (same as Arduino/ESP32) |
-| Flash command | `construct peripheral flash-nucleo` | Builds firmware, flashes via probe-rs |
+| Flash command | `revka peripheral flash-nucleo` | Builds firmware, flashes via probe-rs |
 
 Protocol: newline-delimited JSON. Request: `{"id":"1","cmd":"gpio_write","args":{"pin":13,"value":1}}`. Response: `{"id":"1","ok":true,"result":"done"}`.
 
@@ -67,12 +67,12 @@ Protocol: newline-delimited JSON. Request: `{"id":"1","cmd":"gpio_write","args":
 1. Connect Nucleo to your Mac/Linux via USB.
 2. The board appears as a USB device (ST-Link). No separate driver needed on modern systems.
 
-### 1.2 Flash via Construct
+### 1.2 Flash via Revka
 
-From the construct repo root:
+From the revka repo root:
 
 ```bash
-construct peripheral flash-nucleo
+revka peripheral flash-nucleo
 ```
 
 This builds `firmware/nucleo` and runs `probe-rs run --chip STM32F401RETx`. The firmware runs immediately after flashing.
@@ -99,9 +99,9 @@ USART2 (PA2/PA3) is bridged to the ST-Link's virtual COM port, so the host sees 
 
 ---
 
-## Phase 3: Configure Construct
+## Phase 3: Configure Revka
 
-Add to `~/.construct/config.toml`:
+Add to `~/.revka/config.toml`:
 
 ```toml
 [peripherals]
@@ -116,8 +116,8 @@ baud = 115200
 
 ---
 
-<!-- TODO screenshot: Telegram chat showing the Construct bot turning the Nucleo on-board LED on and off -->
-![Telegram chat showing the Construct bot turning the Nucleo on-board LED on and off](../assets/hardware/nucleo-setup-03-telegram-led-control.png)
+<!-- TODO screenshot: Telegram chat showing the Revka bot turning the Nucleo on-board LED on and off -->
+![Telegram chat showing the Revka bot turning the Nucleo on-board LED on and off](../assets/hardware/nucleo-setup-03-telegram-led-control.png)
 
 <!-- TODO screenshot: Nucleo-F401RE board with the on-board LED illuminated after a GPIO command -->
 ![Nucleo-F401RE board with the on-board LED illuminated after a GPIO command](../assets/hardware/nucleo-setup-04-led-lit.png)
@@ -125,13 +125,13 @@ baud = 115200
 ## Phase 4: Run and Test
 
 ```bash
-construct daemon --host 127.0.0.1 --port 42617
+revka daemon --host 127.0.0.1 --port 42617
 ```
 
 Or use the agent directly:
 
 ```bash
-construct agent --message "Turn on the LED on pin 13"
+revka agent --message "Turn on the LED on pin 13"
 ```
 
 Pin 13 = PA5 = User LED (LD2) on Nucleo-F401RE.
@@ -144,9 +144,9 @@ Pin 13 = PA5 = User LED (LD2) on Nucleo-F401RE.
 |------|---------|
 | 1 | Connect Nucleo via USB |
 | 2 | `cargo install probe-rs-tools --locked` |
-| 3 | `construct peripheral flash-nucleo` |
+| 3 | `revka peripheral flash-nucleo` |
 | 4 | Add Nucleo to config.toml (path = your serial port) |
-| 5 | `construct daemon` or `construct agent -m "Turn on LED"` |
+| 5 | `revka daemon` or `revka agent -m "Turn on LED"` |
 
 ---
 
@@ -156,4 +156,4 @@ Pin 13 = PA5 = User LED (LD2) on Nucleo-F401RE.
 - **probe-rs not found** — `cargo install probe-rs-tools --locked` (the `probe-rs` crate is a library; the CLI is in `probe-rs-tools`)
 - **No probe detected** — Ensure Nucleo is connected. Try another USB cable/port.
 - **Serial port not found** — On Linux, add user to `dialout`: `sudo usermod -a -G dialout $USER`, then log out/in.
-- **GPIO commands ignored** — Check `path` in config matches your serial port. Run `construct peripheral list` to verify.
+- **GPIO commands ignored** — Check `path` in config matches your serial port. Run `revka peripheral list` to verify.

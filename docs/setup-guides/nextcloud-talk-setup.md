@@ -1,6 +1,6 @@
 # Nextcloud Talk Setup
 
-This guide covers native Nextcloud Talk integration for Construct.
+This guide covers native Nextcloud Talk integration for Revka.
 
 ## 1. What this integration does
 
@@ -13,7 +13,7 @@ This guide covers native Nextcloud Talk integration for Construct.
 
 ## 2. Configuration
 
-Add this section in `~/.construct/config.toml`:
+Add this section in `~/.revka/config.toml`:
 
 ```toml
 [channels_config.nextcloud_talk]
@@ -21,9 +21,9 @@ base_url = "https://cloud.example.com"
 app_token = "nextcloud-talk-app-token"
 webhook_secret = "optional-webhook-secret"
 allowed_users = ["*"]
-# bot_name is the Nextcloud Talk display name of the bot (e.g. "construct").
+# bot_name is the Nextcloud Talk display name of the bot (e.g. "revka").
 # Used to ignore the bot's own messages and prevent feedback loops.
-# bot_name = "construct"
+# bot_name = "revka"
 ```
 
 Field reference:
@@ -36,16 +36,16 @@ Field reference:
 
 Environment override:
 
-- `CONSTRUCT_NEXTCLOUD_TALK_WEBHOOK_SECRET` overrides `webhook_secret` when set.
+- `REVKA_NEXTCLOUD_TALK_WEBHOOK_SECRET` overrides `webhook_secret` when set.
 
 ## 3. Gateway endpoint
 
 Run the daemon or gateway and expose the webhook endpoint:
 
 ```bash
-construct daemon
+revka daemon
 # or
-construct gateway --host 127.0.0.1 --port 3000
+revka gateway --host 127.0.0.1 --port 3000
 ```
 
 Configure your Nextcloud Talk bot webhook URL to:
@@ -54,7 +54,7 @@ Configure your Nextcloud Talk bot webhook URL to:
 
 ## 4. Signature verification contract
 
-When `webhook_secret` is configured, Construct verifies:
+When `webhook_secret` is configured, Revka verifies:
 
 - header `X-Nextcloud-Talk-Random`
 - header `X-Nextcloud-Talk-Signature`
@@ -65,20 +65,20 @@ Verification formula:
 
 If verification fails, the gateway returns `401 Unauthorized`.
 
-<!-- TODO screenshot: Nextcloud Talk room showing the Construct bot responding to a user message -->
-![Nextcloud Talk room showing the Construct bot responding to a user message](../assets/setup/nextcloud-talk-02-bot-message.png)
+<!-- TODO screenshot: Nextcloud Talk room showing the Revka bot responding to a user message -->
+![Nextcloud Talk room showing the Revka bot responding to a user message](../assets/setup/nextcloud-talk-02-bot-message.png)
 
 ## 5. Message routing behavior
 
-- Construct ignores bot-originated webhook events (`actorType = bots`).
-- Construct ignores non-message/system events.
+- Revka ignores bot-originated webhook events (`actorType = bots`).
+- Revka ignores non-message/system events.
 - Reply routing uses the Talk room token from the webhook payload.
 
 ## 6. Quick validation checklist
 
 1. Set `allowed_users = ["*"]` for first-time validation.
 2. Send a test message in the target Talk room.
-3. Confirm Construct receives and replies in the same room.
+3. Confirm Revka receives and replies in the same room.
 4. Tighten `allowed_users` to explicit actor IDs.
 
 ## 7. Troubleshooting

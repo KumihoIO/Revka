@@ -160,7 +160,7 @@ function buildUserMessage(text: string): Record<string, any> {
 }
 
 /**
- * Normalize Construct McpServerConfig to Claude SDK format.
+ * Normalize Revka McpServerConfig to Claude SDK format.
  */
 function normalizeMcpServers(
   servers: Record<string, McpServerConfig>,
@@ -186,7 +186,7 @@ function normalizeMcpServers(
 }
 
 /**
- * Build Claude SDK options from a Construct session config.
+ * Build Claude SDK options from a Revka session config.
  */
 function buildClaudeOptions(config: AgentSessionConfig, onStderr?: (data: string) => void): ClaudeOptions {
   const opts: ClaudeOptions = {

@@ -10,7 +10,7 @@ Use this with:
 
 ## Branching Model
 
-Construct uses a single default branch: `main`. All contributor PRs target `main` directly. There is no `dev` or promotion branch.
+Revka uses a single default branch: `main`. All contributor PRs target `main` directly. There is no `dev` or promotion branch.
 
 Current maintainers with PR approval authority: `kaveone`.
 

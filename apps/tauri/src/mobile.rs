@@ -1,6 +1,6 @@
-//! Mobile entry point for Construct Desktop (iOS/Android).
+//! Mobile entry point for Revka Desktop (iOS/Android).
 
 #[tauri::mobile_entry_point]
 fn main() {
-    construct_desktop::run();
+    revka_desktop::run();
 }

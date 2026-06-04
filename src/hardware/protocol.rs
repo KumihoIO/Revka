@@ -1,7 +1,7 @@
-//! Construct serial JSON protocol — the firmware contract.
+//! Revka serial JSON protocol — the firmware contract.
 //!
 //! These types define the newline-delimited JSON wire format shared between
-//! the Construct host and device firmware (Pico, Arduino, ESP32, Nucleo).
+//! the Revka host and device firmware (Pico, Arduino, ESP32, Nucleo).
 //!
 //! Wire format:
 //!   Host → Device:  `{"cmd":"gpio_write","params":{"pin":25,"value":1}}\n`

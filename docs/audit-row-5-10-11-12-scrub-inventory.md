@@ -23,7 +23,7 @@ Verified against the operator-mcp source and the Kumiho memory MCP tool list:
 | `memory_forget`  | **no**                 | `kumiho_deprecate_item` (closest) |
 | `memory_search`  | yes (`memory_search`)  | `kumiho_memory_engage`            |
 
-Operator MCP tools are dispatched as `construct-operator__<name>`; bare
+Operator MCP tools are dispatched as `revka-operator__<name>`; bare
 `memory_store` advertised in a system prompt does **not** resolve in the
 runtime registry (`tool_execution::find_tool` requires an exact match).
 This is why advertising the bare names was a bug.
@@ -38,7 +38,7 @@ on supported servers (see `tools/mcp_deferred.rs`).
 Reviewer round 1 raised a runtime-trust gap: the scrub replaced bare
 `memory_recall` / `memory_store` with `kumiho_memory_*` names, but the
 reviewer's spot-check against
-`~/.construct/kumiho/venv/lib/python3.11/site-packages/kumiho_memory/mcp_tools.py`
+`~/.revka/kumiho/venv/lib/python3.11/site-packages/kumiho_memory/mcp_tools.py`
 did not find `kumiho_memory_store` or `kumiho_memory_retrieve`. That check
 was incomplete: the Kumiho sidecar registers tools from **two** packages,
 not one.
@@ -65,7 +65,7 @@ map that the MCP server advertises to the agent.
 Live verification against the installed venv on this machine:
 
 ```text
-$ ~/.construct/kumiho/venv/bin/python -c \
+$ ~/.revka/kumiho/venv/bin/python -c \
     "from kumiho.mcp_server import TOOL_HANDLERS; \
      print('store?', 'kumiho_memory_store' in TOOL_HANDLERS, \
            'retrieve?', 'kumiho_memory_retrieve' in TOOL_HANDLERS); \
@@ -75,7 +75,7 @@ total tools: 57
 ```
 
 Source-level evidence in the bare `kumiho` package
-(`~/.construct/kumiho/venv/lib/python3.11/site-packages/kumiho/mcp_server.py`):
+(`~/.revka/kumiho/venv/lib/python3.11/site-packages/kumiho/mcp_server.py`):
 
 ```text
 mcp_server.py:2006     "name": "kumiho_memory_store",         # Tool() definition
@@ -125,9 +125,9 @@ in `agent::kumiho::registry_has_advanced_kumiho_tools`.
 
 | File:line                       | Reference                                                 | Cat | Action                                                                     |
 | ------------------------------- | --------------------------------------------------------- | --- | -------------------------------------------------------------------------- |
-| `src/agent/kumiho.rs:45`        | "Do NOT invoke the kumiho-memory skill"                   | B   | Delete — Paseo skill, no equivalent in Construct.                          |
-| `src/agent/kumiho.rs:46`        | "Do NOT call kumiho_get_revision_by_tag. Identity is already loaded." | B   | Delete — Construct has no identity-by-tag bootstrap; the directive is meaningless here. |
-| `src/agent/kumiho.rs:92`        | "Invoke the kumiho-memory:kumiho-memory skill."           | B   | Delete; rewrite the FIRST MESSAGE block to reflect Construct's actual flow (no skill invocation step). |
+| `src/agent/kumiho.rs:45`        | "Do NOT invoke the kumiho-memory skill"                   | B   | Delete — Paseo skill, no equivalent in Revka.                          |
+| `src/agent/kumiho.rs:46`        | "Do NOT call kumiho_get_revision_by_tag. Identity is already loaded." | B   | Delete — Revka has no identity-by-tag bootstrap; the directive is meaningless here. |
+| `src/agent/kumiho.rs:92`        | "Invoke the kumiho-memory:kumiho-memory skill."           | B   | Delete; rewrite the FIRST MESSAGE block to reflect Revka's actual flow (no skill invocation step). |
 
 ### Row 10 — install.sh + wizard scaffolding
 
@@ -203,7 +203,7 @@ parser/policy tests where the specific name is incidental.
 | `docs/reference/api/config-reference.md:173`    | `gated_actions` default lists `memory_forget` | B | Drop `memory_forget` from the example. |
 | `docs/contributing/label-registry.md:118`       | claims `memory_*.rs` files exist           | B   | Remove the row — the source files do not exist. |
 | `docs/assets/architecture-diagrams.md:416-418`  | diagram nodes for non-existent tools       | C/B | Replace with kumiho-memory tool nodes. |
-| `.claude/skills/construct/references/cli-reference.md:42` | tool list claim                  | C/B | Drop `memory_recall`, `memory_forget`; keep `memory_store` annotated as Operator MCP. |
+| `.claude/skills/revka/references/cli-reference.md:42` | tool list claim                  | C/B | Drop `memory_recall`, `memory_forget`; keep `memory_store` annotated as Operator MCP. |
 | `.github/labeler.yml:380-382`                   | path globs for non-existent files          | B   | Remove the three globs. |
 | `docs/i18n/zh-CN/maintainers/repo-map.zh-CN.md:104` | i18n mirror of repo-map                | C/B | Sync with English. |
 | `docs/i18n/zh-CN/reference/sop/cookbook.zh-CN.md:59, 91` | i18n mirror of cookbook            | C   | Sync with English. |
@@ -214,7 +214,7 @@ parser/policy tests where the specific name is incidental.
 
 | File:line                              | Reference                              | Cat | Action |
 | -------------------------------------- | -------------------------------------- | --- | ------ |
-| `src/security/iam_policy.rs:230, 236, 339` | role mapping test fixture          | A   | Keep — `memory_search` is a real Operator MCP tool. Add a comment clarifying that IAM tool names match the bare tool name and Operator MCP tools dispatch under `construct-operator__memory_search`. |
+| `src/security/iam_policy.rs:230, 236, 339` | role mapping test fixture          | A   | Keep — `memory_search` is a real Operator MCP tool. Add a comment clarifying that IAM tool names match the bare tool name and Operator MCP tools dispatch under `revka-operator__memory_search`. |
 | `src/channels/mod.rs:3767-3768`        | (audit pointer)                        | —   | False positive — no `memory_search` reference at this location after recent refactors. No action. |
 
 ## Backwards-compat decisions
@@ -262,7 +262,7 @@ In addition to A/B/C above:
 
 - **D — Intentional kumiho/operator-prefixed surface**: a docs / scaffold /
   prompt site that *names* a `kumiho_memory_*` or
-  `construct-operator__memory_*` tool. Reachability for every such name
+  `revka-operator__memory_*` tool. Reachability for every such name
   is established in *Reachability evidence* above.
 - **F — Parser / registry test fixture, opaque tool name**: tests where the
   tool name is just a string literal exercising parser / registry-filter
@@ -319,15 +319,15 @@ Kumiho or Operator MCP — see *Reachability evidence*.
 
 | File:line | Surface |
 | --- | --- |
-| `.claude/skills/construct/references/cli-reference.md:42` | CLI reference now points at `kumiho_memory_*` and `construct-operator__memory_*` |
+| `.claude/skills/revka/references/cli-reference.md:42` | CLI reference now points at `kumiho_memory_*` and `revka-operator__memory_*` |
 | `docs/assets/architecture-diagrams.md:418` | Mermaid node `kumiho_memory_store via Kumiho MCP` |
-| `docs/assets/architecture-diagrams.md:420-421` | Mermaid nodes `construct-operator__memory_store` / `__memory_search` |
+| `docs/assets/architecture-diagrams.md:420-421` | Mermaid nodes `revka-operator__memory_store` / `__memory_search` |
 | `docs/contributing/kumiho-memory-integration.md:208` | Pre-existing doc; already correct, not touched |
 | `docs/i18n/zh-CN/maintainers/repo-map.zh-CN.md:104` | i18n mirror of repo-map memory section |
 | `docs/i18n/zh-CN/reference/sop/cookbook.zh-CN.md:91` | i18n cookbook example uses `kumiho_memory_store` |
 | `docs/maintainers/repo-map.md:104` | Repo-map memory section now lists kumiho-memory + operator-MCP attribution |
 | `docs/reference/sop/cookbook.md:91` | Cookbook example uses `kumiho_memory_store` |
-| `scripts/rpi-config.toml:108-109` | RPi sample lists `construct-operator__memory_store` / `__memory_search` for the non-CLI excluded list |
+| `scripts/rpi-config.toml:108-109` | RPi sample lists `revka-operator__memory_store` / `__memory_search` for the non-CLI excluded list |
 | `src/agent/kumiho.rs:162` | Doc comment: lite-mode names ONLY the always-available pair |
 | `src/agent/kumiho.rs:174` | Lite prompt: "kumiho_memory_store — store a memory item to the graph" |
 | `src/agent/kumiho.rs:178` | Lite prompt: "use kumiho_memory_store with an absolute date" |
@@ -394,7 +394,7 @@ tools.
 | `src/config/schema.rs:5339` | LEGACY entry: `"memory_recall"` |
 | `src/config/schema.rs:5343` | LEGACY entry: `"memory_forget"` |
 | `src/config/schema.rs:5347` | LEGACY entry: `"memory_store"` |
-| `src/config/schema.rs:5348` | Replacement-hint string for `memory_store` (mentions `kumiho_memory_store` / `construct-operator__memory_store`) |
+| `src/config/schema.rs:5348` | Replacement-hint string for `memory_store` (mentions `kumiho_memory_store` / `revka-operator__memory_store`) |
 | `src/config/schema.rs:5351` | LEGACY entry: `"memory_search"` |
 | `src/config/schema.rs:5352` | Replacement-hint string for `memory_search` |
 

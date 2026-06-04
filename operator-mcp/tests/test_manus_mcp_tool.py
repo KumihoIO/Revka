@@ -123,8 +123,8 @@ _FAST_ARGS = {"timeout_seconds": 10, "poll_interval_seconds": 0}
 
 @pytest.mark.asyncio
 async def test_basic_task_runs(monkeypatch):
-    from operator_mcp import construct_config
-    monkeypatch.setattr(construct_config, "_cached_manus", None)
+    from operator_mcp import revka_config
+    monkeypatch.setattr(revka_config, "_cached_manus", None)
     fc = _FakeClient(
         create_response=_FakeResp(200, {
             "ok": True,
@@ -179,8 +179,8 @@ async def test_basic_task_runs(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_credentials_ref_path(monkeypatch):
-    from operator_mcp import construct_config
-    monkeypatch.setattr(construct_config, "_cached_manus", None)
+    from operator_mcp import revka_config
+    monkeypatch.setattr(revka_config, "_cached_manus", None)
     resolved_token = "resolved-from-profile-tool-1"
     env_value = "env-value-should-be-ignored-1"
 
@@ -245,8 +245,8 @@ async def test_credentials_ref_path(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_env_fallback_path(monkeypatch):
-    from operator_mcp import construct_config
-    monkeypatch.setattr(construct_config, "_cached_manus", None)
+    from operator_mcp import revka_config
+    monkeypatch.setattr(revka_config, "_cached_manus", None)
     env_key = "env-fallback-mcp-key-xyz"
 
     fc = _FakeClient(
@@ -293,8 +293,8 @@ async def test_env_fallback_path(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_missing_api_key_returns_error(monkeypatch):
-    from operator_mcp import construct_config
-    monkeypatch.setattr(construct_config, "_cached_manus", None)
+    from operator_mcp import revka_config
+    monkeypatch.setattr(revka_config, "_cached_manus", None)
     monkeypatch.delenv("MANUS_API_KEY", raising=False)
 
     # If httpx is touched at all, this test should fail — auth gate
@@ -318,8 +318,8 @@ async def test_missing_api_key_returns_error(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_timeout_returns_error_dict(monkeypatch):
-    from operator_mcp import construct_config
-    monkeypatch.setattr(construct_config, "_cached_manus", None)
+    from operator_mcp import revka_config
+    monkeypatch.setattr(revka_config, "_cached_manus", None)
     running_msg = _FakeResp(200, {"ok": True, "data": [
         {"id": "e1", "type": "status_update",
          "status_update": {"agent_status": "running"}},
@@ -368,7 +368,7 @@ async def test_timeout_returns_error_dict(monkeypatch):
 @pytest.mark.asyncio
 async def test_empty_prompt_returns_error():
     # No env-var / network setup needed — the prompt gate short-circuits
-    # before we touch construct_config or httpx.
+    # before we touch revka_config or httpx.
     result = await tool_manus_create_task({"prompt": ""})
     assert isinstance(result, dict)
     assert result.get("error")

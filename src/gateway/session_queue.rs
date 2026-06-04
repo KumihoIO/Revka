@@ -16,15 +16,15 @@ use tokio::time::Instant;
 /// Default per-session lock acquisition timeout in seconds. Set high (5 min)
 /// because Operator turns can run long — web search, sub-agent delegation,
 /// and workflow building routinely take minutes. Override via the
-/// `CONSTRUCT_GATEWAY_SESSION_LOCK_TIMEOUT_SECS` env var.
+/// `REVKA_GATEWAY_SESSION_LOCK_TIMEOUT_SECS` env var.
 pub const SESSION_LOCK_TIMEOUT_SECS_DEFAULT: u64 = 300;
 
 /// Read the per-session lock timeout from
-/// `CONSTRUCT_GATEWAY_SESSION_LOCK_TIMEOUT_SECS` at runtime, falling back to
+/// `REVKA_GATEWAY_SESSION_LOCK_TIMEOUT_SECS` at runtime, falling back to
 /// [`SESSION_LOCK_TIMEOUT_SECS_DEFAULT`]. Invalid (non-numeric or zero)
 /// values log a warning and use the default.
 pub fn session_lock_timeout_secs() -> u64 {
-    const VAR: &str = "CONSTRUCT_GATEWAY_SESSION_LOCK_TIMEOUT_SECS";
+    const VAR: &str = "REVKA_GATEWAY_SESSION_LOCK_TIMEOUT_SECS";
     match std::env::var(VAR) {
         Ok(raw) => match raw.parse::<u64>() {
             Ok(n) if n > 0 => n,
@@ -281,33 +281,30 @@ mod tests {
         // parallel cargo runs. Covers: unset → default, valid → parsed,
         // invalid string → default, zero → default.
         // SAFETY: test-only, env var is namespaced and used only here.
-        unsafe { std::env::remove_var("CONSTRUCT_GATEWAY_SESSION_LOCK_TIMEOUT_SECS") };
+        unsafe { std::env::remove_var("REVKA_GATEWAY_SESSION_LOCK_TIMEOUT_SECS") };
         assert_eq!(
             session_lock_timeout_secs(),
             SESSION_LOCK_TIMEOUT_SECS_DEFAULT
         );
 
-        unsafe { std::env::set_var("CONSTRUCT_GATEWAY_SESSION_LOCK_TIMEOUT_SECS", "120") };
+        unsafe { std::env::set_var("REVKA_GATEWAY_SESSION_LOCK_TIMEOUT_SECS", "120") };
         assert_eq!(session_lock_timeout_secs(), 120);
 
         unsafe {
-            std::env::set_var(
-                "CONSTRUCT_GATEWAY_SESSION_LOCK_TIMEOUT_SECS",
-                "not-a-number",
-            );
+            std::env::set_var("REVKA_GATEWAY_SESSION_LOCK_TIMEOUT_SECS", "not-a-number");
         };
         assert_eq!(
             session_lock_timeout_secs(),
             SESSION_LOCK_TIMEOUT_SECS_DEFAULT
         );
 
-        unsafe { std::env::set_var("CONSTRUCT_GATEWAY_SESSION_LOCK_TIMEOUT_SECS", "0") };
+        unsafe { std::env::set_var("REVKA_GATEWAY_SESSION_LOCK_TIMEOUT_SECS", "0") };
         assert_eq!(
             session_lock_timeout_secs(),
             SESSION_LOCK_TIMEOUT_SECS_DEFAULT
         );
 
-        unsafe { std::env::remove_var("CONSTRUCT_GATEWAY_SESSION_LOCK_TIMEOUT_SECS") };
+        unsafe { std::env::remove_var("REVKA_GATEWAY_SESSION_LOCK_TIMEOUT_SECS") };
     }
 
     #[tokio::test]

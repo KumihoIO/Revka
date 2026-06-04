@@ -1,33 +1,33 @@
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { useState, useEffect, createContext, useContext, Component, type ReactNode, type ErrorInfo } from 'react';
-import { ThemeProvider } from './construct/contexts/ThemeContext';
+import { ThemeProvider } from './revka/contexts/ThemeContext';
 import Landing from './pages/Landing';
-import Layout from './construct/components/layout/Layout';
-import Dashboard from './construct/pages/Dashboard';
-import Workflows from './construct/pages/Workflows';
-import WorkflowRuns from './construct/pages/WorkflowRuns';
-import Teams from './construct/pages/Teams';
-import Canvas from './construct/pages/Canvas';
-import Agents from './construct/pages/Agents';
-import Assets from './construct/pages/Assets';
-import Memory from './construct/pages/Memory';
-import Audit from './construct/pages/Audit';
-import Logs from './construct/pages/Logs';
-import Cost from './construct/pages/Cost';
-import Doctor from './construct/pages/Doctor';
-import Integrations from './construct/pages/Integrations';
-import Skills from './construct/pages/Skills';
-import Skins from './construct/pages/Skins';
-import Config from './construct/pages/Config';
-import Cron from './construct/pages/Cron';
-import Tools from './construct/pages/Tools';
-import Pairing from './construct/pages/Pairing';
+import Layout from './revka/components/layout/Layout';
+import Dashboard from './revka/pages/Dashboard';
+import Workflows from './revka/pages/Workflows';
+import WorkflowRuns from './revka/pages/WorkflowRuns';
+import Teams from './revka/pages/Teams';
+import Canvas from './revka/pages/Canvas';
+import Agents from './revka/pages/Agents';
+import Assets from './revka/pages/Assets';
+import Memory from './revka/pages/Memory';
+import Audit from './revka/pages/Audit';
+import Logs from './revka/pages/Logs';
+import Cost from './revka/pages/Cost';
+import Doctor from './revka/pages/Doctor';
+import Integrations from './revka/pages/Integrations';
+import Skills from './revka/pages/Skills';
+import Skins from './revka/pages/Skins';
+import Config from './revka/pages/Config';
+import Cron from './revka/pages/Cron';
+import Tools from './revka/pages/Tools';
+import Pairing from './revka/pages/Pairing';
 
 import { AuthProvider, useAuth } from './hooks/useAuth';
-import { DraftContext, useDraftStore } from './construct/hooks/useDraft';
+import { DraftContext, useDraftStore } from './revka/hooks/useDraft';
 import { AgentEventsProvider } from './contexts/AgentEventsContext';
 import { PendingApprovalsProvider } from './contexts/PendingApprovalsContext';
-import ApprovalToaster from './construct/components/approvals/ApprovalToaster';
+import ApprovalToaster from './revka/components/approvals/ApprovalToaster';
 import { setLocale, type Locale } from './lib/i18n';
 import { loadLocale, saveLocale } from './contexts/localeStorage';
 import { appAssetPath } from './lib/basePath';
@@ -69,7 +69,7 @@ export class ErrorBoundary extends Component<
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
-    console.error('[Construct] Render error:', error, info.componentStack);
+    console.error('[Revka] Render error:', error, info.componentStack);
   }
 
   render() {
@@ -147,11 +147,11 @@ function PairingDialog({ onPair }: { onPair: (code: string) => Promise<void> }) 
         <div className="text-center mb-8">
           <img
             src={appAssetPath('logo.png')}
-            alt="Construct"
+            alt="Revka"
             className="h-20 w-20 rounded-2xl object-contain mx-auto mb-4 animate-float"
             onError={(e) => { e.currentTarget.style.display = 'none'; }}
           />
-          <h1 className="text-2xl font-bold mb-2 text-gradient-blue">Construct</h1>
+          <h1 className="text-2xl font-bold mb-2 text-gradient-blue">Revka</h1>
           <p className="text-sm" style={{ color: 'var(--pc-text-muted)' }}>
             {displayCode ? 'Your pairing code' : 'Enter the pairing code from your terminal'}
           </p>
@@ -216,8 +216,8 @@ function AppContent() {
     const handler = () => {
       logout();
     };
-    window.addEventListener('construct-unauthorized', handler);
-    return () => window.removeEventListener('construct-unauthorized', handler);
+    window.addEventListener('revka-unauthorized', handler);
+    return () => window.removeEventListener('revka-unauthorized', handler);
   }, [logout]);
 
   // Landing page is always publicly accessible — skip auth checks

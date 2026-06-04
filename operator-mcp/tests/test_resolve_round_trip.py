@@ -204,20 +204,20 @@ class TestRoundTripNormalization:
         # Identical strings on both sides — baseline.
         result = await _publish_then_resolve(
             fake_sdk,
-            write_space="Construct/WorkflowOutputs/Github",
-            read_space="Construct/WorkflowOutputs/Github",
+            write_space="Revka/WorkflowOutputs/Github",
+            read_space="Revka/WorkflowOutputs/Github",
         )
         assert result is not None
         # And both sides hit Kumiho with the SAME canonical path.
-        assert fake_sdk.create_item_calls == ["Construct/WorkflowOutputs/Github"]
-        assert "Construct/WorkflowOutputs/Github" in fake_sdk.list_items_calls
+        assert fake_sdk.create_item_calls == ["Revka/WorkflowOutputs/Github"]
+        assert "Revka/WorkflowOutputs/Github" in fake_sdk.list_items_calls
 
     async def test_publish_attaches_output_artifact_before_tagging(self, fake_sdk):
         result = await publish_workflow_entity(
             entity_name="report",
             entity_kind="Report",
             entity_tag="ready",
-            entity_space="Construct/WorkflowOutputs",
+            entity_space="Revka/WorkflowOutputs",
             entity_metadata={"k": "v"},
             content="# report",
             content_format="markdown",
@@ -257,7 +257,7 @@ class TestRoundTripNormalization:
             entity_name="report",
             entity_kind="Report",
             entity_tag="ready",
-            entity_space="Construct/WorkflowOutputs",
+            entity_space="Revka/WorkflowOutputs",
             entity_metadata={"k": "v"},
             content="# report",
             content_format="markdown",
@@ -270,7 +270,7 @@ class TestRoundTripNormalization:
         assert result["item_kref"].startswith("kref://item/")
         assert result["artifact_attached"] is True
         assert result["tag_applied"] is True
-        assert fake_sdk.create_item_calls == ["Construct/WorkflowOutputs"]
+        assert fake_sdk.create_item_calls == ["Revka/WorkflowOutputs"]
 
     async def test_publish_reports_artifact_attach_failure_without_tagging(self, fake_sdk):
         async def fail_create_artifact(*_args: Any, **_kwargs: Any) -> Any:
@@ -282,7 +282,7 @@ class TestRoundTripNormalization:
             entity_name="report",
             entity_kind="Report",
             entity_tag="ready",
-            entity_space="Construct/WorkflowOutputs",
+            entity_space="Revka/WorkflowOutputs",
             entity_metadata={"k": "v"},
             content="# report",
             content_format="markdown",
@@ -308,7 +308,7 @@ class TestRoundTripNormalization:
             entity_name="report",
             entity_kind="Report",
             entity_tag="ready",
-            entity_space="Construct/WorkflowOutputs",
+            entity_space="Revka/WorkflowOutputs",
             entity_metadata={"k": "v"},
             content="# report",
             content_format="markdown",
@@ -334,7 +334,7 @@ class TestRoundTripNormalization:
             entity_name="report",
             entity_kind="Report",
             entity_tag="ready",
-            entity_space="Construct/WorkflowOutputs",
+            entity_space="Revka/WorkflowOutputs",
             entity_metadata={"k": "v"},
             content="# report",
             content_format="markdown",
@@ -362,7 +362,7 @@ class TestRoundTripNormalization:
             entity_name="report",
             entity_kind="Report",
             entity_tag="ready",
-            entity_space="Construct/WorkflowOutputs",
+            entity_space="Revka/WorkflowOutputs",
             entity_metadata={"k": "v"},
             content="# report",
             content_format="markdown",
@@ -384,8 +384,8 @@ class TestRoundTripNormalization:
         # Write without slash, read with leading slash — must still find.
         result = await _publish_then_resolve(
             fake_sdk,
-            write_space="Construct/WorkflowOutputs/Github",
-            read_space="/Construct/WorkflowOutputs/Github",
+            write_space="Revka/WorkflowOutputs/Github",
+            read_space="/Revka/WorkflowOutputs/Github",
         )
         assert result is not None
         assert fake_sdk.create_item_calls[-1] == fake_sdk.list_items_calls[-1]
@@ -394,8 +394,8 @@ class TestRoundTripNormalization:
         # Write with leading slash, read without — must still find.
         result = await _publish_then_resolve(
             fake_sdk,
-            write_space="/Construct/WorkflowOutputs/Github",
-            read_space="Construct/WorkflowOutputs/Github",
+            write_space="/Revka/WorkflowOutputs/Github",
+            read_space="Revka/WorkflowOutputs/Github",
         )
         assert result is not None
         assert fake_sdk.create_item_calls[-1] == fake_sdk.list_items_calls[-1]
@@ -404,8 +404,8 @@ class TestRoundTripNormalization:
         # Trailing slash on either side normalizes away.
         result = await _publish_then_resolve(
             fake_sdk,
-            write_space="Construct/WorkflowOutputs/Github/",
-            read_space="Construct/WorkflowOutputs/Github",
+            write_space="Revka/WorkflowOutputs/Github/",
+            read_space="Revka/WorkflowOutputs/Github",
         )
         assert result is not None
         assert fake_sdk.create_item_calls[-1] == fake_sdk.list_items_calls[-1]
@@ -414,18 +414,18 @@ class TestRoundTripNormalization:
         # Double / triple slashes collapse to single.
         result = await _publish_then_resolve(
             fake_sdk,
-            write_space="//Construct//WorkflowOutputs//Github",
-            read_space="Construct/WorkflowOutputs/Github",
+            write_space="//Revka//WorkflowOutputs//Github",
+            read_space="Revka/WorkflowOutputs/Github",
         )
         assert result is not None
-        assert fake_sdk.create_item_calls[-1] == "Construct/WorkflowOutputs/Github"
-        assert fake_sdk.list_items_calls[-1] == "Construct/WorkflowOutputs/Github"
+        assert fake_sdk.create_item_calls[-1] == "Revka/WorkflowOutputs/Github"
+        assert fake_sdk.list_items_calls[-1] == "Revka/WorkflowOutputs/Github"
 
     async def test_default_resolve_reads_revision_metadata_not_item_metadata(self, fake_sdk):
         result = await _publish_then_resolve(
             fake_sdk,
-            write_space="Construct/WorkflowOutputs/Github",
-            read_space="Construct/WorkflowOutputs/Github",
+            write_space="Revka/WorkflowOutputs/Github",
+            read_space="Revka/WorkflowOutputs/Github",
         )
 
         assert result is not None
@@ -439,8 +439,8 @@ class TestRoundTripNormalization:
     async def test_resolve_can_read_item_metadata(self, fake_sdk):
         result = await _publish_then_resolve(
             fake_sdk,
-            write_space="Construct/WorkflowOutputs/Github",
-            read_space="Construct/WorkflowOutputs/Github",
+            write_space="Revka/WorkflowOutputs/Github",
+            read_space="Revka/WorkflowOutputs/Github",
             metadata_source="item",
         )
 
@@ -452,8 +452,8 @@ class TestRoundTripNormalization:
     async def test_output_can_target_revision_metadata_for_default_resolve(self, fake_sdk):
         result = await _publish_then_resolve(
             fake_sdk,
-            write_space="Construct/WorkflowOutputs/Github",
-            read_space="Construct/WorkflowOutputs/Github",
+            write_space="Revka/WorkflowOutputs/Github",
+            read_space="Revka/WorkflowOutputs/Github",
             metadata_target="revision",
         )
 
@@ -466,8 +466,8 @@ class TestRoundTripNormalization:
     async def test_output_can_target_artifact_metadata(self, fake_sdk):
         result = await _publish_then_resolve(
             fake_sdk,
-            write_space="Construct/WorkflowOutputs/Github",
-            read_space="Construct/WorkflowOutputs/Github",
+            write_space="Revka/WorkflowOutputs/Github",
+            read_space="Revka/WorkflowOutputs/Github",
             metadata_target="artifact",
             metadata_source="artifact",
         )
@@ -491,7 +491,7 @@ class TestRoundTripNormalization:
             entity_name="report",
             entity_kind="Report",
             entity_tag="ready",
-            entity_space="Construct/WorkflowOutputs",
+            entity_space="Revka/WorkflowOutputs",
             entity_metadata={},
             content="# report",
             content_format="markdown",
@@ -511,7 +511,7 @@ class TestRoundTripNormalization:
         result = await resolve_entity(
             kind="Report",
             tag="ready",
-            space="Construct/WorkflowOutputs",
+            space="Revka/WorkflowOutputs",
             mode="latest",
             metadata_source="artifact",
             artifact_name="details.md",
@@ -528,7 +528,7 @@ class TestRoundTripNormalization:
             entity_name="report",
             entity_kind="Report",
             entity_tag="ready",
-            entity_space="Construct/WorkflowOutputs",
+            entity_space="Revka/WorkflowOutputs",
             entity_metadata={},
             content="# report",
             content_format="markdown",
@@ -541,7 +541,7 @@ class TestRoundTripNormalization:
         result = await resolve_entity(
             kind="Report",
             tag="ready",
-            space="Construct/WorkflowOutputs",
+            space="Revka/WorkflowOutputs",
             mode="latest",
             metadata_source="artifact",
             artifact_name="missing.md",
@@ -593,7 +593,7 @@ def _seed_item(
 
 @pytest.mark.asyncio
 class TestDeprecatedResolution:
-    SPACE = "Construct/WorkflowOutputs/Github"
+    SPACE = "Revka/WorkflowOutputs/Github"
 
     async def test_resolve_skips_deprecated_item(self, fake_sdk):
         _seed_item(
@@ -649,7 +649,7 @@ class TestDeprecatedResolution:
 
 @pytest.mark.asyncio
 class TestNamePatternBaseNameMatching:
-    SPACE = "Construct/WorkflowOutputs/Github"
+    SPACE = "Revka/WorkflowOutputs/Github"
 
     async def test_name_pattern_matches_base_name(self, fake_sdk):
         # Kumiho stores names as <base>.<kind>. User passes the bare base

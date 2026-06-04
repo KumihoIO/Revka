@@ -1,6 +1,6 @@
 # Android Setup
 
-Construct provides prebuilt binaries for Android devices.
+Revka provides prebuilt binaries for Android devices.
 
 ## Supported Architectures
 
@@ -11,7 +11,7 @@ Construct provides prebuilt binaries for Android devices.
 
 ## Installation via Termux
 
-The easiest way to run Construct on Android is via [Termux](https://termux.dev/).
+The easiest way to run Revka on Android is via [Termux](https://termux.dev/).
 
 <!-- TODO screenshot: Termux app listing on F-Droid ready to install -->
 ![Termux app listing on F-Droid ready to install](../assets/hardware/android-setup-01-termux-fdroid.png)
@@ -22,7 +22,7 @@ Download from [F-Droid](https://f-droid.org/packages/com.termux/) (recommended) 
 
 > ⚠️ **Note:** The Play Store version is outdated and unsupported.
 
-### 2. Download Construct
+### 2. Download Revka
 
 ```bash
 # Check your architecture
@@ -31,39 +31,39 @@ uname -m
 
 # Download the appropriate binary
 # For 64-bit (aarch64):
-curl -LO https://github.com/KumihoIO/construct-os/releases/latest/download/construct-aarch64-linux-android.tar.gz
-tar xzf construct-aarch64-linux-android.tar.gz
+curl -LO https://github.com/KumihoIO/Revka/releases/latest/download/revka-aarch64-linux-android.tar.gz
+tar xzf revka-aarch64-linux-android.tar.gz
 
 # For 32-bit (armv7):
-curl -LO https://github.com/KumihoIO/construct-os/releases/latest/download/construct-armv7-linux-androideabi.tar.gz
-tar xzf construct-armv7-linux-androideabi.tar.gz
+curl -LO https://github.com/KumihoIO/Revka/releases/latest/download/revka-armv7-linux-androideabi.tar.gz
+tar xzf revka-armv7-linux-androideabi.tar.gz
 ```
 
-<!-- TODO screenshot: Termux terminal on Android showing successful `construct --version` output -->
-![Termux terminal on Android showing successful construct --version output](../assets/hardware/android-setup-02-termux-construct-version.png)
+<!-- TODO screenshot: Termux terminal on Android showing successful `revka --version` output -->
+![Termux terminal on Android showing successful revka --version output](../assets/hardware/android-setup-02-termux-revka-version.png)
 
 ### 3. Install and Run
 
 ```bash
-chmod +x construct
-mv construct $PREFIX/bin/
+chmod +x revka
+mv revka $PREFIX/bin/
 
 # Verify installation
-construct --version
+revka --version
 
 # Run setup
-construct onboard
+revka onboard
 ```
 
 ## Direct Installation via ADB
 
-For advanced users who want to run Construct outside Termux:
+For advanced users who want to run Revka outside Termux:
 
 ```bash
 # From your computer with ADB
-adb push construct /data/local/tmp/
-adb shell chmod +x /data/local/tmp/construct
-adb shell /data/local/tmp/construct --version
+adb push revka /data/local/tmp/
+adb shell chmod +x /data/local/tmp/revka
+adb shell /data/local/tmp/revka --version
 ```
 
 > ⚠️ Running outside Termux requires a rooted device or specific permissions for full functionality.
@@ -99,7 +99,7 @@ cargo build --release --target aarch64-linux-android
 
 ### "Permission denied"
 ```bash
-chmod +x construct
+chmod +x revka
 ```
 
 ### "not found" or linker errors

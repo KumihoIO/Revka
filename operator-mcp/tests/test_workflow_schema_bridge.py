@@ -289,7 +289,7 @@ class TestUserBlogPostSnippet:
     """Reproduces the user's actual failing workflow shape — every gate
     uses flat `condition`/`on_true`/`on_false`."""
 
-    def test_construct_blog_post_loads(self) -> None:
+    def test_revka_blog_post_loads(self) -> None:
         steps = [
             {"id": "zeroclaw-resolve", "type": "agent",
              "agent": {"prompt": "resolve zeroclaw"}},
@@ -345,7 +345,7 @@ class TestUserBlogPostSnippet:
              "shell": {"command": "echo draft"}},
         ]
         wf = load_workflow_from_dict({
-            "name": "construct-blog-post",
+            "name": "revka-blog-post",
             "steps": steps,
         })
         # All four gates bridged.

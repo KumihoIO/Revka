@@ -16,7 +16,7 @@
 //!
 //! ```toml
 //! [channels_config.whatsapp]
-//! session_path = "~/.construct/whatsapp-session.db"  # Required for Web mode
+//! session_path = "~/.revka/whatsapp-session.db"  # Required for Web mode
 //! pair_phone = "15551234567"  # Optional: for pair code linking
 //! allowed_numbers = ["+1234567890", "*"]  # Same as Cloud API
 //! ```
@@ -45,7 +45,7 @@ use wa_rs_proto::whatsapp::device_props::PlatformType;
 ///
 /// ```toml
 /// [channels_config.whatsapp]
-/// session_path = "~/.construct/whatsapp-session.db"
+/// session_path = "~/.revka/whatsapp-session.db"
 /// pair_phone = "15551234567"  # Optional
 /// allowed_numbers = ["+1234567890", "*"]
 /// ```
@@ -704,7 +704,7 @@ impl Channel for WhatsAppWebChannel {
                 .with_transport_factory(transport_factory)
                 .with_http_client(http_client)
                 .with_device_props(
-                    Some("Construct".to_string()),
+                    Some("Revka".to_string()),
                     None,
                     Some(PlatformType::Desktop),
                 )

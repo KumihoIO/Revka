@@ -29,7 +29,7 @@ pub struct ClaudeCodeHookEvent {
 }
 
 /// Spawns Claude Code inside a tmux session with HTTP hooks that POST tool
-/// execution events back to Construct's gateway endpoint, enabling live Slack
+/// execution events back to Revka's gateway endpoint, enabling live Slack
 /// progress updates and SSH session handoff.
 ///
 /// Unlike [`ClaudeCodeTool`](super::claude_code::ClaudeCodeTool) which runs
@@ -42,7 +42,7 @@ pub struct ClaudeCodeHookEvent {
 pub struct ClaudeCodeRunnerTool {
     security: Arc<SecurityPolicy>,
     config: ClaudeCodeRunnerConfig,
-    /// Base URL of the Construct gateway (e.g. "http://localhost:3000").
+    /// Base URL of the Revka gateway (e.g. "http://localhost:3000").
     gateway_url: String,
 }
 

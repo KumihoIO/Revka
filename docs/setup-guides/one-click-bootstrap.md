@@ -1,20 +1,20 @@
 # One-Click Bootstrap
 
-This page defines the fastest supported path to install and initialize Construct.
+This page defines the fastest supported path to install and initialize Revka.
 
 Last verified: **April 21, 2026**.
 
 ## Option 0: Homebrew (macOS/Linuxbrew)
 
 ```bash
-brew install construct
+brew install revka
 ```
 
 ## Option A (Recommended): Clone + local script
 
 ```bash
-git clone https://github.com/KumihoIO/construct-os.git
-cd construct
+git clone https://github.com/KumihoIO/Revka.git
+cd revka
 ./install.sh
 ```
 
@@ -50,7 +50,7 @@ To bypass pre-built flow and force source compilation:
 
 ## Dual-mode bootstrap
 
-Default behavior is **app-only** (build/install Construct) and expects existing Rust toolchain.
+Default behavior is **app-only** (build/install Revka) and expects existing Rust toolchain.
 
 For fresh machines, enable environment bootstrap explicitly:
 
@@ -69,7 +69,7 @@ Notes:
 ## Option B: Remote one-liner
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/KumihoIO/construct-os/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/KumihoIO/Revka/main/install.sh | bash
 ```
 
 For high-security environments, prefer Option A so you can review the script before execution.
@@ -78,8 +78,8 @@ If you run Option B outside a repository checkout, the install script automatica
 
 ## Optional onboarding modes
 
-<!-- TODO screenshot: Docker container running Construct showing the onboarding UI in a browser -->
-![Docker container running Construct showing the onboarding UI in a browser](../assets/setup/one-click-bootstrap-02-docker-onboarding.png)
+<!-- TODO screenshot: Docker container running Revka showing the onboarding UI in a browser -->
+![Docker container running Revka showing the onboarding UI in a browser](../assets/setup/one-click-bootstrap-02-docker-onboarding.png)
 
 ### Containerized onboarding (Docker)
 
@@ -87,33 +87,33 @@ If you run Option B outside a repository checkout, the install script automatica
 ./install.sh --docker
 ```
 
-This builds a local Construct image and launches onboarding inside a container while
-persisting config/workspace to `./.construct-docker`.
+This builds a local Revka image and launches onboarding inside a container while
+persisting config/workspace to `./.revka-docker`.
 
 Container CLI defaults to `docker`. If Docker CLI is unavailable and `podman` exists,
-the installer auto-falls back to `podman`. You can also set `CONSTRUCT_CONTAINER_CLI`
-explicitly (for example: `CONSTRUCT_CONTAINER_CLI=podman ./install.sh --docker`).
+the installer auto-falls back to `podman`. You can also set `REVKA_CONTAINER_CLI`
+explicitly (for example: `REVKA_CONTAINER_CLI=podman ./install.sh --docker`).
 
 For Podman, the installer runs with `--userns keep-id` and `:Z` volume labels so
 workspace/config mounts remain writable inside the container.
 
 If you add `--skip-build`, the installer skips local image build. It first tries the local
-Docker tag (`CONSTRUCT_DOCKER_IMAGE`, default: `construct-bootstrap:local`); if missing,
-it pulls `ghcr.io/kumihoio/construct-os:latest` and tags it locally before running.
+Docker tag (`REVKA_DOCKER_IMAGE`, default: `revka-bootstrap:local`); if missing,
+it pulls `ghcr.io/kumihoio/revka:latest` and tags it locally before running.
 
 ### Stopping and restarting a Docker/Podman container
 
 After `./install.sh --docker` finishes, the container exits. Your config and workspace
-are persisted in the data directory (default: `./.construct-docker`, or `~/.construct-docker`
-when bootstrapping via `curl | bash`). You can override this path with `CONSTRUCT_DOCKER_DATA_DIR`.
+are persisted in the data directory (default: `./.revka-docker`, or `~/.revka-docker`
+when bootstrapping via `curl | bash`). You can override this path with `REVKA_DOCKER_DATA_DIR`.
 
 **Do not re-run `install.sh`** to restart -- it will rebuild the image and re-run onboarding.
 Instead, start a new container from the existing image and mount the persisted data directory.
 
 #### Using the repository docker-compose.yml
 
-The simplest way to run Construct long-term in Docker/Podman is with the provided
-`docker-compose.yml` at the repository root. It uses a named volume (`construct-data`)
+The simplest way to run Revka long-term in Docker/Podman is with the provided
+`docker-compose.yml` at the repository root. It uses a named volume (`revka-data`)
 and sets `restart: unless-stopped` so the container survives reboots.
 
 ```bash
@@ -131,32 +131,32 @@ Replace `docker` with `podman` if you use Podman.
 
 #### Manual container run (using install.sh data directory)
 
-If you installed via `./install.sh --docker` and want to reuse the `.construct-docker`
+If you installed via `./install.sh --docker` and want to reuse the `.revka-docker`
 data directory without compose:
 
 ```bash
 # Docker
-docker run -d --name construct \
+docker run -d --name revka \
   --restart unless-stopped \
-  -v "$PWD/.construct-docker/.construct:/construct-data/.construct" \
-  -v "$PWD/.construct-docker/workspace:/construct-data/workspace" \
-  -e HOME=/construct-data \
-  -e CONSTRUCT_WORKSPACE=/construct-data/workspace \
+  -v "$PWD/.revka-docker/.revka:/revka-data/.revka" \
+  -v "$PWD/.revka-docker/workspace:/revka-data/workspace" \
+  -e HOME=/revka-data \
+  -e REVKA_WORKSPACE=/revka-data/workspace \
   -p 42617:42617 \
-  construct-bootstrap:local \
+  revka-bootstrap:local \
   gateway
 
 # Podman (add --userns keep-id and :Z volume labels)
-podman run -d --name construct \
+podman run -d --name revka \
   --restart unless-stopped \
   --userns keep-id \
   --user "$(id -u):$(id -g)" \
-  -v "$PWD/.construct-docker/.construct:/construct-data/.construct:Z" \
-  -v "$PWD/.construct-docker/workspace:/construct-data/workspace:Z" \
-  -e HOME=/construct-data \
-  -e CONSTRUCT_WORKSPACE=/construct-data/workspace \
+  -v "$PWD/.revka-docker/.revka:/revka-data/.revka:Z" \
+  -v "$PWD/.revka-docker/workspace:/revka-data/workspace:Z" \
+  -e HOME=/revka-data \
+  -e REVKA_WORKSPACE=/revka-data/workspace \
   -p 42617:42617 \
-  construct-bootstrap:local \
+  revka-bootstrap:local \
   gateway
 ```
 
@@ -164,19 +164,19 @@ podman run -d --name construct \
 
 ```bash
 # Stop the container (preserves data)
-docker stop construct
+docker stop revka
 
 # Start a stopped container (config and workspace are intact)
-docker start construct
+docker start revka
 
 # View logs
-docker logs -f construct
+docker logs -f revka
 
-# Remove the container (data in volumes/.construct-docker is preserved)
-docker rm construct
+# Remove the container (data in volumes/.revka-docker is preserved)
+docker rm revka
 
 # Check health
-docker exec construct construct status
+docker exec revka revka status
 ```
 
 #### Environment variables
@@ -185,18 +185,18 @@ When running manually, pass provider configuration as environment variables
 or ensure they are already saved in the persisted `config.toml`:
 
 ```bash
-docker run -d --name construct \
+docker run -d --name revka \
   -e API_KEY="sk-..." \
   -e PROVIDER="openrouter" \
-  -v "$PWD/.construct-docker/.construct:/construct-data/.construct" \
-  -v "$PWD/.construct-docker/workspace:/construct-data/workspace" \
+  -v "$PWD/.revka-docker/.revka:/revka-data/.revka" \
+  -v "$PWD/.revka-docker/workspace:/revka-data/workspace" \
   -p 42617:42617 \
-  construct-bootstrap:local \
+  revka-bootstrap:local \
   gateway
 ```
 
 If you already ran `onboard` during the initial install, your API key and provider are
-saved in `.construct-docker/.construct/config.toml` and do not need to be passed again.
+saved in `.revka-docker/.revka/config.toml` and do not need to be passed again.
 
 ### Quick onboarding (non-interactive)
 
@@ -207,14 +207,14 @@ saved in `.construct-docker/.construct/config.toml` and do not need to be passed
 Or with environment variables:
 
 ```bash
-CONSTRUCT_API_KEY="sk-..." CONSTRUCT_PROVIDER="openrouter" ./install.sh
+REVKA_API_KEY="sk-..." REVKA_PROVIDER="openrouter" ./install.sh
 ```
 
 ## Useful flags
 
 - `--install-system-deps`
 - `--install-rust`
-- `--skip-build` (in `--docker` mode: use local image if present, otherwise pull `ghcr.io/kumihoio/construct-os:latest`)
+- `--skip-build` (in `--docker` mode: use local image if present, otherwise pull `ghcr.io/kumihoio/revka:latest`)
 - `--skip-install`
 - `--provider <id>`
 
@@ -224,19 +224,19 @@ See all options:
 ./install.sh --help
 ```
 
-<!-- TODO screenshot: Construct dashboard initial state after successful one-click bootstrap -->
-![Construct dashboard initial state after successful one-click bootstrap](../assets/setup/one-click-bootstrap-01-dashboard-initial.png)
+<!-- TODO screenshot: Revka dashboard initial state after successful one-click bootstrap -->
+![Revka dashboard initial state after successful one-click bootstrap](../assets/setup/one-click-bootstrap-01-dashboard-initial.png)
 
 ## After Bootstrap
 
-Once the installer finishes, the fastest path to a live Construct:
+Once the installer finishes, the fastest path to a live Revka:
 
 ```bash
 # Start the gateway (embedded React web dashboard + REST API + WebSocket)
-construct gateway
+revka gateway
 
 # Or run the full supervised runtime (gateway + channels + heartbeat + cron)
-construct daemon
+revka daemon
 ```
 
 The web dashboard is served at `http://127.0.0.1:42617/`. See the root
@@ -245,11 +245,11 @@ Operator workflows, ClawHub, A2A, trust scoring) and
 [dashboard-dev.md](dashboard-dev.md) if you plan to iterate on the frontend.
 
 Kumiho (FastAPI + Neo4j) and the Operator MCP are optional at runtime but
-enabled by default in `~/.construct/config.toml` under `[kumiho]` and
+enabled by default in `~/.revka/config.toml` under `[kumiho]` and
 `[operator]` — disable them there if you are not running those sidecars.
 
 `install.sh` (and `setup.bat`) now auto-install the **Kumiho** and **Operator**
-Python MCP sidecars under `~/.construct/` when a source checkout is present
+Python MCP sidecars under `~/.revka/` when a source checkout is present
 and the launchers are missing. See
 [kumiho-operator-setup.md](kumiho-operator-setup.md) for the full walkthrough,
 manual steps, and verification commands. Disable with `--skip-sidecars`.

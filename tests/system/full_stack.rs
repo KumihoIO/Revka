@@ -8,7 +8,7 @@
 
 use crate::support::helpers::{build_agent, text_response, tool_response};
 use crate::support::{CountingTool, EchoTool, MockProvider, RecordingTool};
-use construct::providers::ToolCall;
+use revka::providers::ToolCall;
 
 // ═════════════════════════════════════════════════════════════════════════════
 // Full-stack system tests

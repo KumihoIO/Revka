@@ -1,9 +1,9 @@
-# Construct — Raspberry Pi production configuration
+# Revka — Raspberry Pi production configuration
 #
-# Copy this to ~/.construct/config.toml on the Pi.
+# Copy this to ~/.revka/config.toml on the Pi.
 # deploy-rpi.sh does this automatically.
 #
-# API key is loaded from ~/.construct/.env (EnvironmentFile in systemd).
+# API key is loaded from ~/.revka/.env (EnvironmentFile in systemd).
 # Set it there as: ANTHROPIC_API_KEY=your-key-here
 # Or set api_key directly below (not recommended for version control).
 
@@ -104,9 +104,9 @@ non_cli_excluded_tools = [
     "delegate",
     "screenshot",
     "image_info",
-    # Operator MCP-routed memory tools (under construct-operator__ prefix).
-    "construct-operator__memory_store",
-    "construct-operator__memory_search",
+    # Operator MCP-routed memory tools (under revka-operator__ prefix).
+    "revka-operator__memory_store",
+    "revka-operator__memory_search",
 ]
 non_cli_approval_approvers = []
 non_cli_natural_language_approval_mode = "direct"
@@ -151,7 +151,7 @@ challenge_max_attempts = 3
 
 [security.estop]
 enabled = false
-state_file = "~/.construct/estop-state.json"
+state_file = "~/.revka/estop-state.json"
 require_otp_to_resume = true
 
 [security.syscall_anomaly]
@@ -405,7 +405,7 @@ auto_hydrate = true
 sqlite_journal_mode = "wal"
 
 [memory.qdrant]
-collection = "construct_memories"
+collection = "revka_memories"
 
 [storage.provider.config]
 provider = ""
@@ -465,7 +465,7 @@ enabled = false
 allowed_domains = []
 max_response_size = 1000000
 timeout_secs = 30
-user_agent = "Construct/1.0"
+user_agent = "Revka/1.0"
 
 [http_request.credential_profiles]
 
@@ -481,7 +481,7 @@ allowed_domains = ["*"]
 blocked_domains = []
 max_response_size = 500000
 timeout_secs = 30
-user_agent = "Construct/1.0"
+user_agent = "Revka/1.0"
 
 [web_search]
 enabled = false
@@ -496,12 +496,12 @@ exa_include_text = false
 jina_site_filters = []
 max_results = 5
 timeout_secs = 15
-user_agent = "Construct/1.0"
+user_agent = "Revka/1.0"
 
 [proxy]
 enabled = false
 no_proxy = []
-scope = "construct"
+scope = "revka"
 services = []
 
 [identity]
@@ -609,7 +609,7 @@ max_duration_secs = 120
 
 [agents_ipc]
 enabled = false
-db_path = "~/.construct/agents.db"
+db_path = "~/.revka/agents.db"
 staleness_secs = 300
 
 [mcp]

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .gateway_client import ConstructGatewayClient
+from .gateway_client import RevkaGatewayClient
 
 
 class BudgetGateError(RuntimeError):
@@ -15,10 +15,10 @@ class BudgetGateError(RuntimeError):
 
 
 async def check_agent_budget(
-    gateway: ConstructGatewayClient | None = None,
+    gateway: RevkaGatewayClient | None = None,
 ) -> dict[str, Any] | None:
     """Return a structured error if gateway budget policy blocks agent work."""
-    client = gateway or ConstructGatewayClient()
+    client = gateway or RevkaGatewayClient()
     try:
         summary = await client.get_cost_summary()
     except Exception as exc:
@@ -53,7 +53,7 @@ async def check_agent_budget(
 
 
 async def require_agent_budget(
-    gateway: ConstructGatewayClient | None = None,
+    gateway: RevkaGatewayClient | None = None,
 ) -> None:
     """Raise BudgetGateError if gateway budget policy blocks agent work."""
     error = await check_agent_budget(gateway)

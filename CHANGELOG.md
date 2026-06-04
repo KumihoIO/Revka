@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to Construct are recorded here. Dates are ISO 8601 (UTC).
+All notable changes to Revka are recorded here. Dates are ISO 8601 (UTC).
 Version numbers follow CalVer (`YYYY.M.D`).
 
 ## [Unreleased]
@@ -12,7 +12,7 @@ Version numbers follow CalVer (`YYYY.M.D`).
 ### Highlights
 
 - Promoted the Operator chat responsiveness release with reduced render churn
-  in the shared assistant panel and smoother typing across Construct.
+  in the shared assistant panel and smoother typing across Revka.
 
 ### Packaging
 
@@ -40,7 +40,7 @@ Version numbers follow CalVer (`YYYY.M.D`).
 
 - Promoted the UI Skin Phase 2 release with expanded asset slots, sample
   skin packaging, workflow/team/agent imagery, and polished dark-mode skin
-  coverage across Construct pages.
+  coverage across Revka pages.
 - Fixed large workflow editor saves by lifting the gateway body limit for
   workflow APIs while keeping artifact-backed YAML as the authoritative
   workflow definition source.
@@ -61,7 +61,7 @@ Version numbers follow CalVer (`YYYY.M.D`).
 - Promoted the 2026.5.13 release with Windows/Kumiho runtime fixes for
   fresh onboarding, asset browsing after local state resets, and skill
   artifact path normalization.
-- Fixed Kumiho MCP token precedence so Construct-launched sidecars prefer the
+- Fixed Kumiho MCP token precedence so Revka-launched sidecars prefer the
   onboarded `KUMIHO_SERVICE_TOKEN` instead of inheriting a stale shell-level
   `KUMIHO_AUTH_TOKEN` from another account.
 - Made the Asset Browser recover text and YAML artifact bodies from Kumiho
@@ -73,7 +73,7 @@ Version numbers follow CalVer (`YYYY.M.D`).
 - Added an authenticated `/api/artifact-body` fallback path that looks up an
   artifact by stored location, reads its revision metadata, and serves
   reconstructable text/YAML/base64 payloads with
-  `x-construct-artifact-source: revision-metadata`.
+  `x-revka-artifact-source: revision-metadata`.
 - Preserved correct 404 behavior for missing binary payloads such as images
   when Kumiho stores only prompts or summaries rather than the original bytes.
 - Normalized Windows skill markdown artifact paths so browser/editor reads do
@@ -81,7 +81,7 @@ Version numbers follow CalVer (`YYYY.M.D`).
 
 ### Kumiho Runtime
 
-- Reordered Kumiho MCP sidecar token selection to use the Construct onboarding
+- Reordered Kumiho MCP sidecar token selection to use the Revka onboarding
   service token first, then fall back to `KUMIHO_AUTH_TOKEN`, then the SDK's
   local Kumiho authentication file.
 - Added regression coverage for service-token precedence and artifact body
@@ -107,7 +107,7 @@ Version numbers follow CalVer (`YYYY.M.D`).
 - Added runtime support for token compression and budget authority so long
   Operator and agent runs can preserve useful context while staying inside
   configured limits.
-- Added Construct UI skins and theme plumbing, including the gateway API,
+- Added Revka UI skins and theme plumbing, including the gateway API,
   dashboard route, documentation, and front-end polish for the app chrome.
 
 ### Workflow Authoring & Runtime
@@ -170,7 +170,7 @@ Version numbers follow CalVer (`YYYY.M.D`).
 
 ### Rebranding & attribution
 
-- Swept legacy `constructlabs.ai` domain references (96 URLs across 33
+- Swept legacy `revkalabs.ai` domain references (96 URLs across 33
   files) to `kumiho.io`.
 - Swapped social handles in all 30 localized READMEs to `@KumihoHQ` (X),
   `@kumihohq` (Threads, newly added), `r/KumihoIO` (Reddit). Removed
@@ -191,7 +191,7 @@ Version numbers follow CalVer (`YYYY.M.D`).
 
 - Added `scripts/install-sidecars.sh` (POSIX, +x) and
   `scripts/install-sidecars.bat` (Windows) — idempotent installers for
-  the Kumiho and Operator Python MCP sidecars under `~/.construct/`.
+  the Kumiho and Operator Python MCP sidecars under `~/.revka/`.
   Both preserve existing user config, `.env`, and authored launchers.
 - Wired sidecar install into `install.sh` (new `--install-sidecars` /
   `--skip-sidecars` flags, auto-detect default) and `setup.bat` (new
@@ -206,23 +206,23 @@ Version numbers follow CalVer (`YYYY.M.D`).
 - Pinned the Kumiho MCP install to `kumiho[mcp]>=0.9.20`; the `[mcp]`
   extra pulls in `mcp>=1.0.0` + `httpx>=0.27.0`, required by
   `kumiho.mcp_server`.
-- Replaced the nonexistent `construct init` reference in `setup.bat`'s
-  Next Steps with `construct onboard` + `construct gateway`.
+- Replaced the nonexistent `revka init` reference in `setup.bat`'s
+  Next Steps with `revka onboard` + `revka gateway`.
 
 ### Packaging
 
-- Renamed the crates.io package from `construct` (and the half-
-  renamed `constructlabs`) to `kumiho-construct`. `[package].name`
-  only — binary and lib names remain `construct`, so `construct …`
-  still works at the CLI and in-repo `use construct::*` imports are
+- Renamed the crates.io package from `revka` (and the half-
+  renamed `revkalabs`) to `kumiho-revka`. `[package].name`
+  only — binary and lib names remain `revka`, so `revka …`
+  still works at the CLI and in-repo `use revka::*` imports are
   unchanged. Verified via `cargo metadata --no-deps`.
 - Updated `.github/workflows/publish-crates.yml`,
   `publish-crates-auto.yml`, and `tweet-release.yml` to reference the
   new package name and `x.com/KumihoHQ`.
 - Updated `Dockerfile` stale-artifact cleanup to cover the new
-  `kumiho-construct-*` fingerprint paths and
-  `kumihoio_construct-*` dep filenames in addition to legacy
-  `construct-*` paths.
+  `kumiho-revka-*` fingerprint paths and
+  `kumihoio_revka-*` dep filenames in addition to legacy
+  `revka-*` paths.
 
 ### Documentation refresh
 
@@ -235,9 +235,9 @@ Version numbers follow CalVer (`YYYY.M.D`).
   stale prereqs (Python 3.10+ → 3.11+), and honestly frame the
   Kumiho control plane requirement.
 - Rewrote Hardware & Peripherals with a tiered model — host targets
-  (x86_64/arm64 Linux/macOS/Windows, incl. Pi 3/4/5) run Construct;
+  (x86_64/arm64 Linux/macOS/Windows, incl. Pi 3/4/5) run Revka;
   embedded boards (STM32 Nucleo, Arduino, ESP32, Pico) are peripherals
-  driven over serial/USB from a host, not standalone Construct
+  driven over serial/USB from a host, not standalone Revka
   runtimes. Running the full daemon on bare MCUs remains an explicit
   non-goal.
 - Refreshed code-grounded docs: `commands-reference.md` (+ 6 missing
@@ -245,7 +245,7 @@ Version numbers follow CalVer (`YYYY.M.D`).
   `[clawhub]`, `[trust]`, `[verifiable_intent]` sections),
   `providers-reference.md` (+ 7 missing providers), `dashboard-dev.md`
   (fixed stale `web/src/` paths), `windows-setup.md`
-  (`construct init` → `onboard`), `operations-runbook.md` (+ health /
+  (`revka init` → `onboard`), `operations-runbook.md` (+ health /
   audit / Kumiho proxy / Operator checkpoint / RunLog signals),
   `ci-map.md` (canonical workflows table + warning the narrative
   below lists upstream filenames not present).

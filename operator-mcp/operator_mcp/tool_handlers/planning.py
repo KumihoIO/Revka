@@ -11,7 +11,7 @@ except ImportError:
     httpx = None  # type: ignore
 
 from .._log import _log
-from ..construct_config import harness_project
+from ..revka_config import harness_project
 from ..kumiho_clients import KumihoAgentPoolClient
 
 

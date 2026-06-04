@@ -18,14 +18,14 @@ use crate::tools::traits::{Tool, ToolSpec};
 
 /// A lightweight stub representing a known-but-not-yet-loaded MCP tool.
 /// Contains only the prefixed name, a human-readable description, and enough
-/// information to construct the full [`McpToolWrapper`] on activation.
+/// information to revka the full [`McpToolWrapper`] on activation.
 #[derive(Debug, Clone)]
 pub struct DeferredMcpToolStub {
     /// Prefixed name: `<server_name>__<tool_name>`.
     pub prefixed_name: String,
     /// Human-readable description (extracted from the MCP tool definition).
     pub description: String,
-    /// The full tool definition — stored so we can construct a wrapper later.
+    /// The full tool definition — stored so we can revka a wrapper later.
     def: McpToolDef,
 }
 
@@ -543,9 +543,7 @@ mod tests {
 
     #[test]
     fn operator_seat_eager_set_keeps_memory_reflexes_and_defers_bulk_tools() {
-        assert!(is_operator_seat_eager_tool(
-            "construct-operator__create_agent"
-        ));
+        assert!(is_operator_seat_eager_tool("revka-operator__create_agent"));
         assert!(is_operator_seat_eager_tool(
             "kumiho-memory__kumiho_memory_engage"
         ));
@@ -554,7 +552,7 @@ mod tests {
         ));
 
         assert!(!is_operator_seat_eager_tool(
-            "construct-operator__list_workflows"
+            "revka-operator__list_workflows"
         ));
         assert!(!is_operator_seat_eager_tool(
             "kumiho-memory__kumiho_memory_store"
@@ -756,8 +754,8 @@ mod tests {
     #[test]
     fn get_by_name_resolves_unique_suffix() {
         let stubs = vec![
-            make_stub("construct-operator__spawn_team", "Spawn a team"),
-            make_stub("construct-operator__create_agent", "Create an agent"),
+            make_stub("revka-operator__spawn_team", "Spawn a team"),
+            make_stub("revka-operator__create_agent", "Create an agent"),
             make_stub("kumiho-memory__kumiho_memory_engage", "Engage memory"),
         ];
         let set = DeferredMcpToolSet {
@@ -771,9 +769,9 @@ mod tests {
         };
         // Suffix match should resolve unambiguously
         let stub = set.get_by_name("spawn_team").unwrap();
-        assert_eq!(stub.prefixed_name, "construct-operator__spawn_team");
+        assert_eq!(stub.prefixed_name, "revka-operator__spawn_team");
         let stub = set.get_by_name("create_agent").unwrap();
-        assert_eq!(stub.prefixed_name, "construct-operator__create_agent");
+        assert_eq!(stub.prefixed_name, "revka-operator__create_agent");
         // Prefixed name already contains __ so should NOT suffix-match
         assert!(set.get_by_name("operator__spawn_team").is_none());
     }

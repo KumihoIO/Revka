@@ -251,7 +251,7 @@ fn compress_by_content(
     let saved = original_tokens.saturating_sub(compressed_tokens);
     let _ = writeln!(
         out,
-        "[Construct token compression: axis={axis}, type={content_type}, chars {}->{}, est_tokens {}->{}, saved~{}]",
+        "[Revka token compression: axis={axis}, type={content_type}, chars {}->{}, est_tokens {}->{}, saved~{}]",
         input.len(),
         compressed.len(),
         original_tokens,

@@ -1,4 +1,4 @@
-# Construct 프로바이더 참조
+# Revka 프로바이더 참조
 
 이 문서는 프로바이더 ID, 별칭, 자격 환경 변수의 매핑을 정리합니다.
 
@@ -7,7 +7,7 @@
 ## 프로바이더 목록 보기
 
 ```bash
-construct providers
+revka providers
 ```
 
 ## 자격 결정 순서
@@ -16,7 +16,7 @@ construct providers
 
 1. 설정/CLI에서 들어온 명시적 자격
 2. 프로바이더별 환경 변수
-3. 일반 폴백 환경 변수: `CONSTRUCT_API_KEY` → `API_KEY`
+3. 일반 폴백 환경 변수: `REVKA_API_KEY` → `API_KEY`
 
 탄력적 폴백 체인(`reliability.fallback_providers`)에서는 각 폴백 프로바이더가 자격을 독립적으로 결정합니다. 주 프로바이더의 명시적 자격은 폴백 프로바이더로 재사용되지 않습니다.
 
@@ -62,12 +62,12 @@ construct providers
 | `nvidia` | `nvidia-nim`, `build.nvidia.com` | 아니오 | `NVIDIA_API_KEY` |
 | `avian` | — | 아니오 | `AVIAN_API_KEY` |
 | `claude-code` | — | 아니오 | (로컬 Claude Code CLI 구독/세션 사용) |
-| `openai-codex` | `codex` | 아니오 | `construct auth login --provider openai-codex` OAuth (`~/.construct/auth/`에 캐시되거나 `~/.codex/auth.json`에서 가져옴) |
+| `openai-codex` | `codex` | 아니오 | `revka auth login --provider openai-codex` OAuth (`~/.revka/auth/`에 캐시되거나 `~/.codex/auth.json`에서 가져옴) |
 | `gemini-cli` | — | 아니오 | `~/.gemini/oauth_creds.json` 기반 OAuth, 또는 `GEMINI_API_KEY` 폴백 |
 | `copilot` | `github-copilot` | 아니오 | 설정/`API_KEY` 폴백을 통해 GitHub 토큰 |
 | `azure_openai` | `azure-openai`, `azure` | 아니오 | `AZURE_OPENAI_API_KEY` (엔드포인트/디플로이먼트 설정 필요) |
 | `telnyx` | — | 아니오 | `TELNYX_API_KEY` |
-| `kilocli` | — | 아니오 | (현재 엔드포인트는 `construct providers` 출력 참고) |
+| `kilocli` | — | 아니오 | (현재 엔드포인트는 `revka providers` 출력 참고) |
 
 ### Vercel AI Gateway 메모
 
@@ -89,14 +89,14 @@ construct providers
 
 - 프로바이더 ID: `ollama`
 - 비전 입력은 사용자 메시지의 이미지 마커 `[IMAGE:<source>]`로 지원됩니다.
-- 멀티모달 정규화 후, Construct는 이미지 페이로드를 Ollama 네이티브 `messages[].images` 필드로 보냅니다.
+- 멀티모달 정규화 후, Revka는 이미지 페이로드를 Ollama 네이티브 `messages[].images` 필드로 보냅니다.
 - 비전 비지원 프로바이더가 선택됐을 때는 이미지를 조용히 무시하지 않고 구조화된 capability 에러를 반환합니다.
 
 ### Ollama 클라우드 라우팅 메모
 
 - `:cloud` 모델 접미사는 원격 Ollama 엔드포인트에서만 사용하세요.
 - 원격 엔드포인트는 `api_url`에 설정해야 합니다 (예: `https://ollama.com`).
-- Construct는 `api_url` 끝의 `/api`를 자동 정규화합니다.
+- Revka는 `api_url` 끝의 `/api`를 자동 정규화합니다.
 - `default_model`이 `:cloud`로 끝나는데 `api_url`이 로컬이거나 비어 있으면, 설정 검증이 조기에 의미 있는 에러로 실패합니다.
 - 로컬 Ollama 모델 디스커버리는 의도적으로 `:cloud` 항목을 제외해, 로컬 모드에서 클라우드 전용 모델이 선택되는 것을 막습니다.
 
@@ -105,7 +105,7 @@ construct providers
 - 프로바이더 ID: `llamacpp` (별칭: `llama.cpp`)
 - 기본 엔드포인트: `http://localhost:8080/v1`
 - API 키는 기본적으로 선택 사항입니다. `llama-server`를 `--api-key`로 실행한 경우에만 `LLAMACPP_API_KEY`를 설정하세요.
-- 모델 디스커버리: `construct models refresh --provider llamacpp`
+- 모델 디스커버리: `revka models refresh --provider llamacpp`
 
 ### SGLang 서버 메모
 
@@ -113,21 +113,21 @@ construct providers
 - 기본 엔드포인트: `http://localhost:30000/v1`
 - API 키는 기본적으로 선택 사항입니다. 서버가 인증을 요구할 때만 `SGLANG_API_KEY`를 설정하세요.
 - 도구 호출은 SGLang을 `--tool-call-parser`(예: `hermes`, `llama3`, `qwen25`)로 실행해야 합니다.
-- 모델 디스커버리: `construct models refresh --provider sglang`
+- 모델 디스커버리: `revka models refresh --provider sglang`
 
 ### vLLM 서버 메모
 
 - 프로바이더 ID: `vllm`
 - 기본 엔드포인트: `http://localhost:8000/v1`
 - API 키는 기본적으로 선택 사항입니다. 서버가 인증을 요구할 때만 `VLLM_API_KEY`를 설정하세요.
-- 모델 디스커버리: `construct models refresh --provider vllm`
+- 모델 디스커버리: `revka models refresh --provider vllm`
 
 ### Osaurus 서버 메모
 
 - 프로바이더 ID: `osaurus`
 - 기본 엔드포인트: `http://localhost:1337/v1`
 - API 키 기본값은 `"osaurus"`이지만 선택 사항입니다. `OSAURUS_API_KEY`로 덮어쓰거나 비워 두면 키 없이 접근됩니다.
-- 모델 디스커버리: `construct models refresh --provider osaurus`
+- 모델 디스커버리: `revka models refresh --provider osaurus`
 - [Osaurus](https://github.com/dinoki-ai/osaurus)는 macOS(Apple Silicon) 통합 AI 엣지 런타임으로, 로컬 MLX 추론과 클라우드 프로바이더 프록싱을 한 엔드포인트에서 결합합니다.
 - 여러 API 포맷을 동시에 지원합니다: OpenAI 호환(`/v1/chat/completions`), Anthropic(`/messages`), Ollama(`/chat`), Open Responses(`/v1/responses`).
 - 빌트인 MCP(Model Context Protocol) 지원으로 도구·컨텍스트 서버 연결 가능.
@@ -171,7 +171,7 @@ reasoning_enabled = false
 - 정식 프로바이더 ID: `nvidia`
 - 별칭: `nvidia-nim`, `build.nvidia.com`
 - 베이스 API URL: `https://integrate.api.nvidia.com/v1`
-- 모델 디스커버리: `construct models refresh --provider nvidia`
+- 모델 디스커버리: `revka models refresh --provider nvidia`
 
 권장 시작 모델 ID (2026년 2월 18일 NVIDIA API 카탈로그 기준):
 
@@ -182,13 +182,13 @@ reasoning_enabled = false
 
 ### Claude Code / Codex / Gemini CLI 구독 프로바이더
 
-이 프로바이더들은 직접 API 키 대신 해당 벤더의 네이티브 CLI에서 인증된 구독을 Construct가 재사용하게 합니다.
+이 프로바이더들은 직접 API 키 대신 해당 벤더의 네이티브 CLI에서 인증된 구독을 Revka가 재사용하게 합니다.
 
 - `claude-code` — 로컬 Claude Code CLI 자격/세션 재사용.
-- `openai-codex` (별칭 `codex`) — `construct auth login --provider openai-codex [--device-code]`로 OAuth, 또는 `--import <path>`로 `~/.codex/auth.json` 재사용.
+- `openai-codex` (별칭 `codex`) — `revka auth login --provider openai-codex [--device-code]`로 OAuth, 또는 `--import <path>`로 `~/.codex/auth.json` 재사용.
 - `gemini-cli` — `~/.gemini/oauth_creds.json`에 캐시된 Gemini CLI OAuth 자격 사용.
 
-활성 프로필 관리는 `construct auth use --provider <id> --profile <name>`으로 합니다. `construct auth status`는 활성 프로필과 토큰 만료 정보를 출력합니다.
+활성 프로필 관리는 `revka auth use --provider <id> --profile <name>`으로 합니다. `revka auth status`는 활성 프로필과 토큰 만료 정보를 출력합니다.
 
 ## 커스텀 엔드포인트
 
@@ -319,8 +319,8 @@ api_key = "sk-route-specific"
 1. 호출 지점은 그대로 유지하세요 (`hint:reasoning`, `hint:semantic`).
 2. `[[model_routes]]` 또는 `[[embedding_routes]]` 아래 타깃 모델만 변경하세요.
 3. 다음을 실행합니다:
-   - `construct doctor`
-   - `construct status`
+   - `revka doctor`
+   - `revka status`
 4. 롤아웃 전에 대표 흐름 하나를 스모크 테스트하세요 (채팅 + 메모리 회상).
 
 이 방식은 모델 ID가 업그레이드돼도 통합과 프롬프트가 바뀌지 않아 깨지는 일이 적습니다.

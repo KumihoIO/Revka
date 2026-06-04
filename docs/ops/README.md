@@ -1,6 +1,6 @@
 # Operations & Deployment Docs
 
-For operators running Construct in persistent or production-like environments.
+For operators running Revka in persistent or production-like environments.
 
 ## Core Operations
 

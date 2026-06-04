@@ -24,7 +24,7 @@ description: |
       ]
 
   Required workflow-level config:
-    * SMTP credentials in `~/.construct/config.toml` under
+    * SMTP credentials in `~/.revka/config.toml` under
       `[channels_config.email]` (uses the same section the email
       channel reads).
     * `GATEWAY_URL` env var (or pass `track_base_url`) so click-tracker
@@ -33,7 +33,7 @@ description: |
       ref codes — optional for the demo.
 
   ## Click tracking
-  Each send mints a kref under `Construct/Outreach/Sends/{run_id}-{idx}`
+  Each send mints a kref under `Revka/Outreach/Sends/{run_id}-{idx}`
   and embeds it in every URL via the gateway redirect. When a recipient
   clicks, the gateway logs the click and 302s through. The same kref
   is the join key for downstream "warm lead" queries (sweeper workflow
@@ -169,7 +169,7 @@ steps:
           tied to their business or industry, ONE concrete value
           prop, ONE call to action.
         - Address recipient by first name only.
-        - Include exactly ONE link: https://construct.example.com/demo
+        - Include exactly ONE link: https://revka.example.com/demo
         - Do NOT use the words "AI", "automation", "personalize",
           "outreach", "synergy", or "reach out". The reader should
           NOT be able to tell this was machine-written.
@@ -198,7 +198,7 @@ steps:
       subject: ${personalize.output_data.subject}
       body: ${personalize.output_data.body}
       track_clicks: true
-      track_kref: "kref://Construct/Outreach/Sends/${run_id}-${for_each.idx}.send"
+      track_kref: "kref://Revka/Outreach/Sends/${run_id}-${for_each.idx}.send"
       track_base_url: ${inputs.track_base_url}
       dry_run: true
 

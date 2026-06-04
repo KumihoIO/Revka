@@ -17,11 +17,11 @@ def _write(path: Path, text: str) -> None:
     path.write_text(text, encoding="utf-8")
 
 
-def _manifest(service_url: str = "https://construct-agentops-a2a-abc-uc.a.run.app") -> dict:
+def _manifest(service_url: str = "https://revka-agentops-a2a-abc-uc.a.run.app") -> dict:
     return {
         "schema_version": 1,
         "scenario": {
-            "name": "Construct Enterprise AgentOps Control Plane",
+            "name": "Revka Enterprise AgentOps Control Plane",
             "b2b_persona": "Platform engineering leader",
             "business_workflow": "Governed production incident response",
             "measurable_outcome": "A2A incident plan returned from Cloud Run",
@@ -30,7 +30,7 @@ def _manifest(service_url: str = "https://construct-agentops-a2a-abc-uc.a.run.ap
             "google_cloud_deployment": {
                 "project_id": "demo-track3-project",
                 "region": "us-central1",
-                "service_name": "construct-agentops-a2a",
+                "service_name": "revka-agentops-a2a",
                 "service_url": service_url,
                 "evidence_files": [
                     "deploy/cloud-run-service.json",
@@ -57,13 +57,13 @@ def _manifest(service_url: str = "https://construct-agentops-a2a-abc-uc.a.run.ap
             "adk_orchestration": {
                 "framework": "Google ADK",
                 "source_files": [
-                    "examples/google-agents-track3/construct-agentops-a2a/agent.py",
-                    "examples/google-agents-track3/construct-agentops-a2a/main.py",
+                    "examples/google-agents-track3/revka-agentops-a2a/agent.py",
+                    "examples/google-agents-track3/revka-agentops-a2a/main.py",
                 ],
                 "evidence_files": ["runtime/source-manifest.json"],
             },
             "b2b_enterprise_package": {
-                "package_name": "Construct Enterprise AgentOps Control Plane",
+                "package_name": "Revka Enterprise AgentOps Control Plane",
                 "buyer": "Platform engineering or IT operations leader",
                 "workflow": "Production incident response",
                 "evidence_files": ["business/package.md"],
@@ -101,7 +101,7 @@ def _write_complete_evidence(evidence_dir: Path, service_url: str) -> None:
         json.dumps(
             {
                 "metadata": {
-                    "name": "construct-agentops-a2a",
+                    "name": "revka-agentops-a2a",
                     "labels": {"project": "demo-track3-project"},
                 },
                 "status": {"url": service_url},
@@ -112,7 +112,7 @@ def _write_complete_evidence(evidence_dir: Path, service_url: str) -> None:
     _write(
         evidence_dir / "deploy/deploy-output.txt",
         (
-            "Cloud Run service construct-agentops-a2a deployed in project "
+            "Cloud Run service revka-agentops-a2a deployed in project "
             "demo-track3-project region us-central1 at Cloud Run URL "
             f"{service_url}"
         ),
@@ -122,7 +122,7 @@ def _write_complete_evidence(evidence_dir: Path, service_url: str) -> None:
         json.dumps(
             {
                 "protocolVersion": "0.3",
-                "name": "Construct Enterprise AgentOps Control Plane",
+                "name": "Revka Enterprise AgentOps Control Plane",
                 "description": "B2B A2A agent",
                 "url": service_url,
                 "iconUrl": "data:image/svg+xml;base64,PHN2Zw==",
@@ -199,9 +199,9 @@ def _write_complete_evidence(evidence_dir: Path, service_url: str) -> None:
     _write(
         evidence_dir / "business/package.md",
         (
-            "Construct Enterprise AgentOps Control Plane is a B2B package for the buyer: "
+            "Revka Enterprise AgentOps Control Plane is a B2B package for the buyer: "
             "platform engineering or IT operations leader. The workflow is production "
-            "incident response using Construct Enterprise AgentOps."
+            "incident response using Revka Enterprise AgentOps."
         ),
     )
     _write(
@@ -218,7 +218,7 @@ def _write_complete_evidence(evidence_dir: Path, service_url: str) -> None:
     _write(
         evidence_dir / "deploy/cloudrun-production.yaml",
         (
-            "serviceAccountName: construct-agentops-a2a@demo-track3-project.iam.gserviceaccount.com\n"
+            "serviceAccountName: revka-agentops-a2a@demo-track3-project.iam.gserviceaccount.com\n"
             "containerConcurrency: 40\n"
             "timeoutSeconds: 60\n"
             "env:\n"
@@ -233,7 +233,7 @@ def _write_complete_evidence(evidence_dir: Path, service_url: str) -> None:
             "- name: A2A_BEARER_TOKEN\n"
             "  valueFrom:\n"
             "    secretKeyRef:\n"
-            "      name: construct-a2a-bearer-token\n"
+            "      name: revka-a2a-bearer-token\n"
         ),
     )
     _write(
@@ -257,7 +257,7 @@ def _write_complete_evidence(evidence_dir: Path, service_url: str) -> None:
 
 def test_track3_evidence_gate_passes_complete_bundle(tmp_path):
     evidence_dir = tmp_path / "evidence"
-    service_url = "https://construct-agentops-a2a-abc-uc.a.run.app"
+    service_url = "https://revka-agentops-a2a-abc-uc.a.run.app"
     _write_complete_evidence(evidence_dir, service_url)
     (evidence_dir / "manifest.json").write_text(
         json.dumps(_manifest(service_url)),
@@ -304,7 +304,7 @@ def test_track3_evidence_gate_rejects_non_cloud_run_url(tmp_path):
 
 def test_track3_evidence_gate_rejects_a2a_without_completed_task(tmp_path):
     evidence_dir = tmp_path / "evidence"
-    service_url = "https://construct-agentops-a2a-abc-uc.a.run.app"
+    service_url = "https://revka-agentops-a2a-abc-uc.a.run.app"
     _write_complete_evidence(evidence_dir, service_url)
     _write(
         evidence_dir / "a2a/message-send-response.json",
@@ -331,7 +331,7 @@ def test_track3_evidence_gate_rejects_a2a_without_completed_task(tmp_path):
 
 def test_track3_evidence_gate_rejects_incomplete_demo_story(tmp_path):
     evidence_dir = tmp_path / "evidence"
-    service_url = "https://construct-agentops-a2a-abc-uc.a.run.app"
+    service_url = "https://revka-agentops-a2a-abc-uc.a.run.app"
     _write_complete_evidence(evidence_dir, service_url)
     _write(
         evidence_dir / "a2a/message-send-response.json",
@@ -376,13 +376,13 @@ def test_track3_evidence_gate_rejects_incomplete_demo_story(tmp_path):
 
 def test_track3_evidence_gate_rejects_non_registration_ready_agent_card(tmp_path):
     evidence_dir = tmp_path / "evidence"
-    service_url = "https://construct-agentops-a2a-demo-uc.a.run.app"
+    service_url = "https://revka-agentops-a2a-demo-uc.a.run.app"
     _write_complete_evidence(evidence_dir, service_url)
     _write(
         evidence_dir / "a2a/agent-card.json",
         json.dumps(
             {
-                "name": "Construct Enterprise AgentOps Control Plane",
+                "name": "Revka Enterprise AgentOps Control Plane",
                 "description": "B2B A2A agent",
                 "url": service_url,
                 "skills": [{"id": "enterprise-agentops-incident-plan"}],
@@ -412,7 +412,7 @@ def test_track3_evidence_gate_rejects_non_registration_ready_agent_card(tmp_path
 
 def test_track3_evidence_gate_rejects_missing_enterprise_package(tmp_path):
     evidence_dir = tmp_path / "evidence"
-    service_url = "https://construct-agentops-a2a-abc-uc.a.run.app"
+    service_url = "https://revka-agentops-a2a-abc-uc.a.run.app"
     _write_complete_evidence(evidence_dir, service_url)
     _write(evidence_dir / "business/package.md", "generic dev tool")
     (evidence_dir / "manifest.json").write_text(

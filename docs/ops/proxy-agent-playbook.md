@@ -7,9 +7,9 @@ Use this document when you want the agent to switch proxy scope quickly and safe
 ## 0. Summary
 
 - **Purpose:** provide copy-ready agent tool calls for proxy scope management and rollback.
-- **Audience:** operators and maintainers running Construct in proxied networks.
+- **Audience:** operators and maintainers running Revka in proxied networks.
 - **Scope:** `proxy_config` actions, mode selection, verification flow, and troubleshooting.
-- **Non-goals:** generic network debugging outside Construct runtime behavior.
+- **Non-goals:** generic network debugging outside Revka runtime behavior.
 
 ---
 
@@ -17,15 +17,15 @@ Use this document when you want the agent to switch proxy scope quickly and safe
 
 Use this section for quick operational routing.
 
-### 1.1 Proxy only Construct internal traffic
+### 1.1 Proxy only Revka internal traffic
 
-1. Use scope `construct`.
+1. Use scope `revka`.
 2. Set `http_proxy`/`https_proxy` or `all_proxy`.
 3. Validate with `{"action":"get"}`.
 
 Go to:
 
-- [Section 4](#4-mode-a--proxy-only-for-construct-internals)
+- [Section 4](#4-mode-a--proxy-only-for-revka-internals)
 
 ### 1.2 Proxy only selected services
 
@@ -66,7 +66,7 @@ Go to:
 
 | Scope | Affects | Exports env vars | Typical use |
 |---|---|---|---|
-| `construct` | Construct internal HTTP clients | No | Normal runtime proxying without process-level side effects |
+| `revka` | Revka internal HTTP clients | No | Normal runtime proxying without process-level side effects |
 | `services` | Only selected service keys/selectors | No | Fine-grained routing for specific providers/tools/channels |
 | `environment` | Runtime + process environment proxy variables | Yes | Integrations that require `HTTP_PROXY`/`HTTPS_PROXY`/`ALL_PROXY` |
 
@@ -91,20 +91,20 @@ Tool calls:
 
 ---
 
-## 4. Mode A — Proxy Only for Construct Internals
+## 4. Mode A — Proxy Only for Revka Internals
 
-Use when Construct provider/channel/tool HTTP traffic should use proxy, without exporting process-level proxy env vars.
+Use when Revka provider/channel/tool HTTP traffic should use proxy, without exporting process-level proxy env vars.
 
 Tool calls:
 
 ```json
-{"action":"set","enabled":true,"scope":"construct","http_proxy":"http://127.0.0.1:7890","https_proxy":"http://127.0.0.1:7890","no_proxy":["localhost","127.0.0.1"]}
+{"action":"set","enabled":true,"scope":"revka","http_proxy":"http://127.0.0.1:7890","https_proxy":"http://127.0.0.1:7890","no_proxy":["localhost","127.0.0.1"]}
 {"action":"get"}
 ```
 
 Expected behavior:
 
-- Runtime proxy is active for Construct HTTP clients.
+- Runtime proxy is active for Revka HTTP clients.
 - `HTTP_PROXY` / `HTTPS_PROXY` process env exports are not required.
 
 ---

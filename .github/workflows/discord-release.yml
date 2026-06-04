@@ -117,15 +117,15 @@ jobs:
           body = os.environ['MSG_BODY']
 
           embed = {
-              'title': f'Construct {tag} Released',
+              'title': f'Revka {tag} Released',
               'description': body + '\n\nZero overhead. Zero compromise. 100% Rust.',
               'url': url,
               'color': 0xF97316,
-              'footer': {'text': 'Construct Release Bot'},
+              'footer': {'text': 'Revka Release Bot'},
           }
 
           payload = {
-              'username': 'Construct Releases',
+              'username': 'Revka Releases',
               'embeds': [embed],
           }
           print(json.dumps(payload))

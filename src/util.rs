@@ -1,4 +1,4 @@
-//! Utility functions for `Construct`.
+//! Utility functions for `Revka`.
 //!
 //! This module contains reusable helper functions used across the codebase.
 
@@ -37,7 +37,7 @@ pub fn is_serial_path_allowed(path: &str) -> bool {
 ///
 /// # Examples
 /// ```ignore
-/// use construct::util::truncate_with_ellipsis;
+/// use revka::util::truncate_with_ellipsis;
 ///
 /// // ASCII string - no truncation needed
 /// assert_eq!(truncate_with_ellipsis("hello", 10), "hello");

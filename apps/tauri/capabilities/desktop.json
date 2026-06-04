@@ -1,6 +1,6 @@
 {
   "identifier": "desktop",
-  "description": "Desktop-specific permissions for Construct",
+  "description": "Desktop-specific permissions for Revka",
   "windows": ["main"],
   "permissions": [
     "core:default",

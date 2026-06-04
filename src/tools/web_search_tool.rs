@@ -111,8 +111,8 @@ impl WebSearchTool {
 
         // Decrypt if necessary.
         if crate::security::SecretStore::is_encrypted(&raw_key) {
-            let construct_dir = self.config_path.parent().unwrap_or_else(|| Path::new("."));
-            let store = crate::security::SecretStore::new(construct_dir, self.secrets_encrypt);
+            let revka_dir = self.config_path.parent().unwrap_or_else(|| Path::new("."));
+            let store = crate::security::SecretStore::new(revka_dir, self.secrets_encrypt);
             let plaintext = store.decrypt(&raw_key)?;
             if plaintext.is_empty() {
                 anyhow::bail!("Brave API key not configured (decrypted value is empty)");
@@ -304,7 +304,7 @@ impl WebSearchTool {
 
         let builder = reqwest::Client::builder()
             .timeout(Duration::from_secs(self.timeout_secs))
-            .user_agent("Construct/1.0");
+            .user_agent("Revka/1.0");
         let builder = crate::config::apply_runtime_proxy_to_builder(builder, "tool.web_search");
         let client = builder.build()?;
 

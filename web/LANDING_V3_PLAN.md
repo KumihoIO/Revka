@@ -28,7 +28,7 @@
 
 **Theme: "Show, don't tell."**
 
-Evolve from a marketing-brochure feel to a product-forward landing page that lets visitors *experience* Construct in seconds. Add interactive/dynamic elements, social proof, and clearer information hierarchy while keeping the existing design system intact.
+Evolve from a marketing-brochure feel to a product-forward landing page that lets visitors *experience* Revka in seconds. Add interactive/dynamic elements, social proof, and clearer information hierarchy while keeping the existing design system intact.
 
 **Design principles:**
 - Reuse every existing CSS primitive (glass-card, shell-chip, btn-electric, orbs, reveal hooks).
@@ -53,7 +53,7 @@ Evolve from a marketing-brochure feel to a product-forward landing page that let
 | Change | Detail |
 |--------|--------|
 | Tagline variation | Change sub-headline to `"The agent runtime that remembers everything"` — benefit-led, not jargon-led |
-| CLI preview snippet | Below CTAs, add a `<code>` block: `construct agent -m "Plan the migration"` with a blinking cursor + copy button. Uses `shell-chip` styling. |
+| CLI preview snippet | Below CTAs, add a `<code>` block: `revka agent -m "Plan the migration"` with a blinking cursor + copy button. Uses `shell-chip` styling. |
 | CTA differentiation | Primary: "Launch Dashboard" → **"Open Dashboard"**. Secondary: "Explore Features" → **"View on GitHub"** (external link). Avoids 3× identical CTAs. |
 | Banner skeleton | While image loads, show a shimmer placeholder (CSS-only, 16:9 aspect-ratio box). |
 
@@ -75,9 +75,9 @@ Replace vague labels with quantifiable metrics (can be hardcoded initially, wire
 
 - Fake terminal component (`<div>` styled as a dark terminal window with title bar dots).
 - 3–4 pre-recorded command/response pairs that auto-type on scroll-reveal:
-  1. `construct agent -m "What did I work on yesterday?"` → memory recall response
-  2. `construct teams spawn --preset review-squad` → team spawn output
-  3. `construct hub search "code-review"` → ClawHub search results
+  1. `revka agent -m "What did I work on yesterday?"` → memory recall response
+  2. `revka teams spawn --preset review-squad` → team spawn output
+  3. `revka hub search "code-review"` → ClawHub search results
 - User can click tabs to switch between examples (no auto-advance).
 - All text is hardcoded strings — no API calls.
 - Typing animation: CSS `@keyframes` + `steps()` for the command, instant reveal for the response.
@@ -94,7 +94,7 @@ Replace vague labels with quantifiable metrics (can be hardcoded initially, wire
 
 | Change | Detail |
 |--------|--------|
-| Replace abstract text with concrete examples | Step 1: show `construct agent create` CLI snippet. Step 2: show a mini graph diagram (SVG inline, 3 nodes + 2 edges). Step 3: show a query example `construct memory query "trust > 0.8"`. |
+| Replace abstract text with concrete examples | Step 1: show `revka agent create` CLI snippet. Step 2: show a mini graph diagram (SVG inline, 3 nodes + 2 edges). Step 3: show a query example `revka memory query "trust > 0.8"`. |
 | Connector line upgrade | Animate a dot traveling along the connector (CSS `@keyframes`, 3s loop). |
 
 ### 3g. Architecture — Refine
@@ -109,7 +109,7 @@ Replace vague labels with quantifiable metrics (can be hardcoded initially, wire
 **Position:** Between Architecture and Final CTA.
 
 - Centered badge: `MIT OR Apache-2.0`
-- One-liner: "Construct is open source. Fork it, extend it, own it."
+- One-liner: "Revka is open source. Fork it, extend it, own it."
 - Two buttons: "View on GitHub" (external), "Read the Docs" (internal).
 - Minimal — 6 lines of JSX, reuse `shell-chip` + `btn-electric` + `glass-card`.
 
@@ -137,7 +137,7 @@ Replace vague labels with quantifiable metrics (can be hardcoded initially, wire
 | `src/index.css` | Edit | ~80–120 new lines: `.terminal-window`, `.terminal-titlebar`, `.terminal-typing`, `.typing-cursor`, `.feature-card:hover .feature-icon` glow, `.oss-callout`, `.footer-links`, `.nav-mobile-menu`, banner skeleton shimmer, animated connector dot |
 | `src/App.tsx` | No change | Landing route is already `/`, no new routes needed |
 | `web/package.json` | No change | No new dependencies |
-| `web/public/*` | No change | Existing `construct-banner.png` and `construct-trans.png` are sufficient |
+| `web/public/*` | No change | Existing `revka-banner.png` and `revka-trans.png` are sufficient |
 
 **Total files changed: 2** (`Landing.tsx`, `index.css`).
 

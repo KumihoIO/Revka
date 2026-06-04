@@ -390,7 +390,7 @@ pub fn handle_command(command: crate::SopCommands, config: &crate::config::Confi
             if sops.is_empty() {
                 println!("No SOPs found.");
                 println!();
-                println!("  Create one: mkdir -p ~/.construct/workspace/sops/my-sop");
+                println!("  Create one: mkdir -p ~/.revka/workspace/sops/my-sop");
                 println!("              # Add SOP.toml and SOP.md");
                 println!();
                 println!(
@@ -791,14 +791,14 @@ type = "manual"
 
     #[test]
     fn resolve_sops_dir_default() {
-        let ws = Path::new("/home/user/.construct/workspace");
+        let ws = Path::new("/home/user/.revka/workspace");
         let dir = resolve_sops_dir(ws, None);
         assert_eq!(dir, ws.join("sops"));
     }
 
     #[test]
     fn resolve_sops_dir_override() {
-        let ws = Path::new("/home/user/.construct/workspace");
+        let ws = Path::new("/home/user/.revka/workspace");
         let dir = resolve_sops_dir(ws, Some("/custom/sops"));
         assert_eq!(dir, PathBuf::from("/custom/sops"));
     }

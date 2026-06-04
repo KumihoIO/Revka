@@ -3,12 +3,12 @@
 ## Purpose
 
 This runbook is the recording checklist for the Track 3 pivot. It proves that
-Construct is not only invoking `agents-cli`; it is packaging an enterprise-ready
+Revka is not only invoking `agents-cli`; it is packaging an enterprise-ready
 B2B agent surface on Google Cloud with A2A interoperability.
 
 ## Target Story
 
-- **Product:** Construct Enterprise AgentOps Control Plane.
+- **Product:** Revka Enterprise AgentOps Control Plane.
 - **Buyer:** platform engineering or IT operations leader.
 - **Workflow:** governed production incident response.
 - **Google runtime:** Cloud Run.
@@ -21,7 +21,7 @@ B2B agent surface on Google Cloud with A2A interoperability.
 The tracked demo app is:
 
 ```text
-examples/google-agents-track3/construct-agentops-a2a
+examples/google-agents-track3/revka-agentops-a2a
 ```
 
 It exposes:
@@ -34,7 +34,7 @@ It exposes:
 
 ## Demo Outcome Matrix
 
-| Outcome to show | Expected Construct behavior | Evidence to check before recording |
+| Outcome to show | Expected Revka behavior | Evidence to check before recording |
 |---|---|---|
 | Cloud Run runtime readiness | Cloud Run service exposes health/runtime metadata that names Track 3, Google ADK orchestration, and Gemini through Vertex AI | `GET /runtime`; `runtime/healthz.json`; `track3_demo_probe` runtime surface |
 | Registration-ready A2A discovery | The service exposes `/.well-known/agent-card.json`, `/agent-card.json`, and JSON-RPC `agent/card` with Gemini Enterprise registration-ready A2A fields | `a2a/agent-card.json`; `track3_demo_probe` agent-card registration surface |
@@ -60,8 +60,8 @@ export REGION=us-central1
 gcloud config set project "$PROJECT_ID"
 gcloud config set run/region "$REGION"
 
-gcloud run deploy construct-agentops-a2a \
-  --source examples/google-agents-track3/construct-agentops-a2a \
+gcloud run deploy revka-agentops-a2a \
+  --source examples/google-agents-track3/revka-agentops-a2a \
   --project "$PROJECT_ID" \
   --region "$REGION" \
   --allow-unauthenticated \
@@ -72,7 +72,7 @@ For a production IAM-secured deployment, use the same command without
 `--allow-unauthenticated`, then grant invoker access explicitly:
 
 ```bash
-gcloud run services add-iam-policy-binding construct-agentops-a2a \
+gcloud run services add-iam-policy-binding revka-agentops-a2a \
   --project "$PROJECT_ID" \
   --region "$REGION" \
   --member "$APPROVED_CALLER" \
@@ -82,7 +82,7 @@ gcloud run services add-iam-policy-binding construct-agentops-a2a \
 The production manifest lives at:
 
 ```text
-examples/google-agents-track3/construct-agentops-a2a/cloudrun.production.yaml
+examples/google-agents-track3/revka-agentops-a2a/cloudrun.production.yaml
 ```
 
 It declares a dedicated Cloud Run service account, secret-backed
@@ -163,12 +163,12 @@ gemini_enterprise_readiness
 Helpful capture commands:
 
 ```bash
-SERVICE_URL="$(gcloud run services describe construct-agentops-a2a \
+SERVICE_URL="$(gcloud run services describe revka-agentops-a2a \
   --project "$PROJECT_ID" \
   --region "$REGION" \
   --format='value(status.url)')"
 
-gcloud run services describe construct-agentops-a2a \
+gcloud run services describe revka-agentops-a2a \
   --project "$PROJECT_ID" \
   --region "$REGION" \
   --format=json > .demo/google-agents-cli-track3/deploy/cloud-run-service.json
@@ -199,7 +199,7 @@ curl -fsS -X POST "$SERVICE_URL/" \
     }
   }' > .demo/google-agents-cli-track3/a2a/message-send-response.json
 
-cp examples/google-agents-track3/construct-agentops-a2a/cloudrun.production.yaml \
+cp examples/google-agents-track3/revka-agentops-a2a/cloudrun.production.yaml \
   .demo/google-agents-cli-track3/deploy/cloudrun-production.yaml
 ```
 
@@ -208,7 +208,7 @@ actually used or intend to use:
 
 ```text
 IAM: Cloud Run invocation is restricted with roles/run.invoker for approved callers.
-Service account: construct-agentops-a2a uses a dedicated least-privilege service account.
+Service account: revka-agentops-a2a uses a dedicated least-privilege service account.
 A2A_BEARER_TOKEN: JSON-RPC invocation requires bearer-token auth when the secret is set.
 Request limit: MAX_MESSAGE_CHARS bounds prompt size and containerConcurrency bounds concurrent requests.
 Timeout: ADK_RESPONSE_TIMEOUT_SECONDS and Cloud Run timeoutSeconds bound execution time.
@@ -271,7 +271,7 @@ For the demo service, rollback by redeploying the previous Cloud Run revision
 or deleting the service:
 
 ```bash
-gcloud run services delete construct-agentops-a2a \
+gcloud run services delete revka-agentops-a2a \
   --project "$PROJECT_ID" \
   --region "$REGION"
 ```

@@ -1,4 +1,4 @@
-"""Construct Gateway Client — queries cost, audit, and governance APIs."""
+"""Revka Gateway Client — queries cost, audit, and governance APIs."""
 from __future__ import annotations
 
 import os
@@ -16,17 +16,17 @@ except ImportError:
 def _read_service_token() -> str:
     """Read the gateway service token.
 
-    Order: ``CONSTRUCT_SERVICE_TOKEN`` env override →
-    ``~/.construct/service-token`` (written by the Rust gateway at startup).
+    Order: ``REVKA_SERVICE_TOKEN`` env override →
+    ``~/.revka/service-token`` (written by the Rust gateway at startup).
     Returns empty string when neither source is available; the caller logs and
     proceeds without auth (gateway will then 401, which is the correct signal).
 
     Mirrors ``operator_mcp.workflow.auth_resolver._service_token``.
     """
-    env_tok = os.environ.get("CONSTRUCT_SERVICE_TOKEN", "").strip()
+    env_tok = os.environ.get("REVKA_SERVICE_TOKEN", "").strip()
     if env_tok:
         return env_tok
-    path = os.path.expanduser("~/.construct/service-token")
+    path = os.path.expanduser("~/.revka/service-token")
     try:
         with open(path, "r", encoding="utf-8") as f:
             return f.read().strip()
@@ -37,23 +37,23 @@ def _read_service_token() -> str:
         return ""
 
 
-class ConstructGatewayClient:
-    """Queries the Construct gateway REST API for cost/audit/governance data."""
+class RevkaGatewayClient:
+    """Queries the Revka gateway REST API for cost/audit/governance data."""
 
     def __init__(self) -> None:
-        self.gateway_url = os.environ.get("CONSTRUCT_GATEWAY_URL", "").rstrip("/")
+        self.gateway_url = os.environ.get("REVKA_GATEWAY_URL", "").rstrip("/")
         self.service_token = _read_service_token()
         self._available = bool(self.gateway_url and _HAS_HTTPX)
         if self._available:
             auth_state = "service-token" if self.service_token else "no token (calls will 401)"
-            _log(f"Construct Gateway client enabled: {self.gateway_url} ({auth_state})")
+            _log(f"Revka Gateway client enabled: {self.gateway_url} ({auth_state})")
         else:
             missing = []
             if not _HAS_HTTPX:
                 missing.append("httpx not installed")
             if not self.gateway_url:
-                missing.append("CONSTRUCT_GATEWAY_URL not set")
-            _log(f"Construct Gateway client disabled: {', '.join(missing)}")
+                missing.append("REVKA_GATEWAY_URL not set")
+            _log(f"Revka Gateway client disabled: {', '.join(missing)}")
 
     def _headers(self) -> dict[str, str]:
         h: dict[str, str] = {"Accept": "application/json"}
@@ -61,7 +61,7 @@ class ConstructGatewayClient:
         if latest_token:
             self.service_token = latest_token
         if self.service_token:
-            h["X-Construct-Service-Token"] = self.service_token
+            h["X-Revka-Service-Token"] = self.service_token
         return h
 
     async def get_cost_summary(self) -> dict[str, Any] | None:
@@ -151,7 +151,7 @@ class ConstructGatewayClient:
         """Register a workflow definition with the gateway REST API.
 
         This syncs disk-saved workflows to Kumiho so the dashboard can see them.
-        Returns the workflow item kref on success (e.g. ``kref://Construct/Workflows/foo.workflow``)
+        Returns the workflow item kref on success (e.g. ``kref://Revka/Workflows/foo.workflow``)
         and ``None`` on any failure. Callers that only care about success/failure
         can use ``bool(kref)`` — ``None`` is falsy, a non-empty kref is truthy.
 

@@ -8,7 +8,7 @@ from .a2a_card import AgentCardBuilder
 
 
 class A2ARegistry:
-    """Registry of A2A agent cards — both local (Construct templates) and external."""
+    """Registry of A2A agent cards — both local (Revka templates) and external."""
 
     def __init__(self, *, base_url: str = "http://localhost:8000"):
         self._local_cards: dict[str, dict[str, Any]] = {}
@@ -18,7 +18,7 @@ class A2ARegistry:
     # -- Local template registration --
 
     def register_template(self, template: dict[str, Any]) -> None:
-        """Register a local Construct template as an A2A agent."""
+        """Register a local Revka template as an A2A agent."""
         name = template.get("name", "")
         if not name:
             return

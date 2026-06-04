@@ -2,7 +2,7 @@
 
 Use this skill when working with Kumiho Python SDK, REST API, MCP tools, krefs,
 projects, spaces, items, revisions, artifacts, edges, bundles, graph traversal,
-memory tools, or Construct/FoxClaw Kumiho integration.
+memory tools, or Revka/FoxClaw Kumiho integration.
 
 ## Operating Rule
 
@@ -13,7 +13,7 @@ Kumiho is a graph-native source of truth, not a fuzzy scratchpad.
 - Preserve provenance with source krefs, revision krefs, artifact krefs, and edges.
 - Keep revision metadata small. Store large content in artifacts.
 - For workflow/runtime behavior, verify the installed Operator MCP sidecar under
-  `~/.construct/operator_mcp`, not only the repository source.
+  `~/.revka/operator_mcp`, not only the repository source.
 
 ## Core Model
 
@@ -130,14 +130,14 @@ Prefer high-level memory tools for conversation memory. Use low-level graph
 tools only when exact entity loading, provenance, revision locking, or mutation
 is required.
 
-## Construct Workflow Runtime Note
+## Revka Workflow Runtime Note
 
-Construct workflow Kumiho steps run through the installed Operator MCP sidecar.
+Revka workflow Kumiho steps run through the installed Operator MCP sidecar.
 Check the installed path when validating local behavior:
 
 ```powershell
-$py = "$env:USERPROFILE\.construct\operator_mcp\venv\Scripts\python.exe"
-$env:PYTHONPATH = "$env:USERPROFILE\.construct"
+$py = "$env:USERPROFILE\.revka\operator_mcp\venv\Scripts\python.exe"
+$env:PYTHONPATH = "$env:USERPROFILE\.revka"
 @'
 from operator_mcp.operator_mcp import KUMIHO_SDK
 if hasattr(KUMIHO_SDK, "_lazy_init"):
@@ -188,5 +188,5 @@ For high-risk canon mutation:
 - Batch operations may be partial. Handle `not_found`.
 - Force delete may leave orphan graph nodes in some deployments. Prefer
   deprecation unless a hard delete is required.
-- Do not mix `CognitiveMemory/` user memories with `FoxClaw/` or Construct
+- Do not mix `CognitiveMemory/` user memories with `FoxClaw/` or Revka
   operational data.

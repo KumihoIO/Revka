@@ -142,15 +142,15 @@ class TestAgentUnusedDependsOn:
         synthesize/combine agent with correct depends_on whose prompt
         does not actually pull in any upstream output. Must reject."""
         wf = load_workflow_from_dict(_wf([
-            {"id": "research_construct_claude", "type": "agent",
-             "agent": {"prompt": "research construct"}},
+            {"id": "research_revka_claude", "type": "agent",
+             "agent": {"prompt": "research revka"}},
             {"id": "research_simai_codex", "type": "agent",
              "agent": {"prompt": "research simai"}},
             {
                 "id": "synthesize_report_claude",
                 "type": "agent",
                 "depends_on": [
-                    "research_construct_claude",
+                    "research_revka_claude",
                     "research_simai_codex",
                 ],
                 "agent": {
@@ -167,7 +167,7 @@ class TestAgentUnusedDependsOn:
         result = validate_workflow(wf)
         assert not result.valid
         assert _has_unused_dep_error(
-            result, "synthesize_report_claude", "research_construct_claude"
+            result, "synthesize_report_claude", "research_revka_claude"
         )
         assert _has_unused_dep_error(
             result, "synthesize_report_claude", "research_simai_codex"

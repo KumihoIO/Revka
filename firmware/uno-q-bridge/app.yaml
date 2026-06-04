@@ -1,5 +1,5 @@
-name: Construct Bridge
-description: "GPIO bridge for Construct — exposes digitalWrite/digitalRead via socket for agent control"
+name: Revka Bridge
+description: "GPIO bridge for Revka — exposes digitalWrite/digitalRead via socket for agent control"
 icon: 🦀
 version: "1.0.0"
 

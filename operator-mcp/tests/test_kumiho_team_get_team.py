@@ -25,15 +25,15 @@ from operator_mcp.kumiho_clients import (
 # Constants used across tests
 # ---------------------------------------------------------------------------
 
-ALICE_ITEM = "kref://Construct/AgentPool/Alice.agent"
-BOB_ITEM = "kref://Construct/AgentPool/Bob.agent"
-CAROL_ITEM = "kref://Construct/AgentPool/Carol.agent"
-EXTERNAL_ITEM = "kref://Construct/AgentPool/External.agent"
+ALICE_ITEM = "kref://Revka/AgentPool/Alice.agent"
+BOB_ITEM = "kref://Revka/AgentPool/Bob.agent"
+CAROL_ITEM = "kref://Revka/AgentPool/Carol.agent"
+EXTERNAL_ITEM = "kref://Revka/AgentPool/External.agent"
 
-ALICE_REV = "kref://Construct/AgentPool/Alice.agent?r=3"
-BOB_REV = "kref://Construct/AgentPool/Bob.agent?r=2"
-CAROL_REV = "kref://Construct/AgentPool/Carol.agent?r=1"
-EXTERNAL_REV = "kref://Construct/AgentPool/External.agent?r=5"
+ALICE_REV = "kref://Revka/AgentPool/Alice.agent?r=3"
+BOB_REV = "kref://Revka/AgentPool/Bob.agent?r=2"
+CAROL_REV = "kref://Revka/AgentPool/Carol.agent?r=1"
+EXTERNAL_REV = "kref://Revka/AgentPool/External.agent?r=5"
 
 MEMBER_ITEM_KREFS = {ALICE_ITEM, BOB_ITEM, CAROL_ITEM}
 
@@ -156,7 +156,7 @@ class TestDedupeAndSortEdges:
 def _make_mock_sdk():
     """Create a mock KumihoSDKClient with sensible defaults."""
     sdk = AsyncMock()
-    sdk.get_bundle_by_kref = AsyncMock(return_value={"kref": "kref://Construct/Teams/TestTeam.bundle", "name": "TestTeam"})
+    sdk.get_bundle_by_kref = AsyncMock(return_value={"kref": "kref://Revka/Teams/TestTeam.bundle", "name": "TestTeam"})
     sdk.get_bundle_members = AsyncMock(return_value=[
         {"item_kref": ALICE_ITEM},
         {"item_kref": BOB_ITEM},
@@ -192,7 +192,7 @@ class TestGetTeamSDK:
             {"source_kref": ALICE_REV, "target_kref": BOB_REV, "edge_type": "DEPENDS_ON"},
         ] if rev_kref == ALICE_REV else [])
 
-        result = await team_client._get_team_sdk(sdk, "kref://Construct/Teams/TestTeam.bundle")
+        result = await team_client._get_team_sdk(sdk, "kref://Revka/Teams/TestTeam.bundle")
         assert result is not None
         edges = result["edges"]
         assert len(edges) == 1
@@ -212,7 +212,7 @@ class TestGetTeamSDK:
 
         sdk.get_edges = AsyncMock(side_effect=_edge_side_effect)
 
-        result = await team_client._get_team_sdk(sdk, "kref://Construct/Teams/TestTeam.bundle")
+        result = await team_client._get_team_sdk(sdk, "kref://Revka/Teams/TestTeam.bundle")
         assert result is not None
         edges = result["edges"]
         # No self-edges should exist
@@ -226,7 +226,7 @@ class TestGetTeamSDK:
             {"source_kref": ALICE_REV, "target_kref": EXTERNAL_REV, "edge_type": "SUPPORTS"},
         ] if rev_kref == ALICE_REV else [])
 
-        result = await team_client._get_team_sdk(sdk, "kref://Construct/Teams/TestTeam.bundle")
+        result = await team_client._get_team_sdk(sdk, "kref://Revka/Teams/TestTeam.bundle")
         assert result is not None
         assert len(result["edges"]) == 0
 
@@ -238,7 +238,7 @@ class TestGetTeamSDK:
             {"source_kref": ALICE_REV, "target_kref": BOB_REV, "edge_type": "DEPENDS_ON"},
         ] if rev_kref == ALICE_REV else [])
 
-        result = await team_client._get_team_sdk(sdk, "kref://Construct/Teams/TestTeam.bundle")
+        result = await team_client._get_team_sdk(sdk, "kref://Revka/Teams/TestTeam.bundle")
         assert result is not None
         assert len(result["edges"]) == 1
 
@@ -267,7 +267,7 @@ class TestGetTeamSDK:
 
         sdk.get_edges = AsyncMock(side_effect=_edges)
 
-        result = await team_client._get_team_sdk(sdk, "kref://Construct/Teams/TestTeam.bundle")
+        result = await team_client._get_team_sdk(sdk, "kref://Revka/Teams/TestTeam.bundle")
         edges = result["edges"]
         assert len(edges) == 3
         # Sorted by from_kref first
@@ -280,7 +280,7 @@ class TestGetTeamSDK:
         sdk = _make_mock_sdk()
         sdk.get_edges = AsyncMock(return_value=[])
 
-        await team_client._get_team_sdk(sdk, "kref://Construct/Teams/TestTeam.bundle")
+        await team_client._get_team_sdk(sdk, "kref://Revka/Teams/TestTeam.bundle")
 
         for call in sdk.get_edges.call_args_list:
             assert call.kwargs.get("direction", call.args[1] if len(call.args) > 1 else None) == 1
@@ -290,7 +290,7 @@ class TestGetTeamSDK:
         sdk = _make_mock_sdk()
         sdk.get_edges = AsyncMock(return_value=[])
 
-        result = await team_client._get_team_sdk(sdk, "kref://Construct/Teams/TestTeam.bundle")
+        result = await team_client._get_team_sdk(sdk, "kref://Revka/Teams/TestTeam.bundle")
         for m in result["members"]:
             assert "rev_kref" not in m
 
@@ -314,7 +314,7 @@ class TestGetTeamHTTPParity:
         team_client.api_url = "http://localhost:9999"
         team_client._headers = MagicMock(return_value={})
 
-        bundle_resp = self._make_mock_response(json_data={"kref": "kref://Construct/Teams/T.bundle", "name": "T"})
+        bundle_resp = self._make_mock_response(json_data={"kref": "kref://Revka/Teams/T.bundle", "name": "T"})
         members_resp = self._make_mock_response(json_data={"members": [{"item_kref": ALICE_ITEM}, {"item_kref": BOB_ITEM}]})
         alice_rev_resp = self._make_mock_response(json_data={"kref": ALICE_REV, "metadata": {"role": "planner", "agent_type": "codex", "expertise": "", "identity": ""}})
         bob_rev_resp = self._make_mock_response(json_data={"kref": BOB_REV, "metadata": {"role": "coder", "agent_type": "codex", "expertise": "", "identity": ""}})
@@ -349,7 +349,7 @@ class TestGetTeamHTTPParity:
             MockHttpx.return_value.__aenter__ = AsyncMock(return_value=mock_client)
             MockHttpx.return_value.__aexit__ = AsyncMock(return_value=False)
 
-            result = await team_client._get_team_http("kref://Construct/Teams/T.bundle")
+            result = await team_client._get_team_http("kref://Revka/Teams/T.bundle")
 
         assert result is not None
         edges = result["edges"]
@@ -361,7 +361,7 @@ class TestGetTeamHTTPParity:
         team_client.api_url = "http://localhost:9999"
         team_client._headers = MagicMock(return_value={})
 
-        bundle_resp = self._make_mock_response(json_data={"kref": "kref://Construct/Teams/T.bundle", "name": "T"})
+        bundle_resp = self._make_mock_response(json_data={"kref": "kref://Revka/Teams/T.bundle", "name": "T"})
         members_resp = self._make_mock_response(json_data={"members": [{"item_kref": ALICE_ITEM}, {"item_kref": BOB_ITEM}]})
         alice_rev_resp = self._make_mock_response(json_data={"kref": ALICE_REV, "metadata": {"role": "planner", "agent_type": "codex", "expertise": "", "identity": ""}})
         bob_rev_resp = self._make_mock_response(json_data={"kref": BOB_REV, "metadata": {"role": "coder", "agent_type": "codex", "expertise": "", "identity": ""}})
@@ -397,7 +397,7 @@ class TestGetTeamHTTPParity:
             MockHttpx.return_value.__aenter__ = AsyncMock(return_value=mock_client)
             MockHttpx.return_value.__aexit__ = AsyncMock(return_value=False)
 
-            result = await team_client._get_team_http("kref://Construct/Teams/T.bundle")
+            result = await team_client._get_team_http("kref://Revka/Teams/T.bundle")
 
         assert result is not None
         assert len(result["edges"]) == 0
@@ -407,7 +407,7 @@ class TestGetTeamHTTPParity:
         team_client.api_url = "http://localhost:9999"
         team_client._headers = MagicMock(return_value={})
 
-        bundle_resp = self._make_mock_response(json_data={"kref": "kref://Construct/Teams/T.bundle", "name": "T"})
+        bundle_resp = self._make_mock_response(json_data={"kref": "kref://Revka/Teams/T.bundle", "name": "T"})
         members_resp = self._make_mock_response(json_data={"members": [{"item_kref": ALICE_ITEM}, {"item_kref": BOB_ITEM}]})
         alice_rev_resp = self._make_mock_response(json_data={"kref": ALICE_REV, "metadata": {"role": "planner", "agent_type": "codex", "expertise": "", "identity": ""}})
         bob_rev_resp = self._make_mock_response(json_data={"kref": BOB_REV, "metadata": {"role": "coder", "agent_type": "codex", "expertise": "", "identity": ""}})
@@ -444,7 +444,7 @@ class TestGetTeamHTTPParity:
             MockHttpx.return_value.__aenter__ = AsyncMock(return_value=mock_client)
             MockHttpx.return_value.__aexit__ = AsyncMock(return_value=False)
 
-            result = await team_client._get_team_http("kref://Construct/Teams/T.bundle")
+            result = await team_client._get_team_http("kref://Revka/Teams/T.bundle")
 
         assert result is not None
         assert len(result["edges"]) == 1
@@ -479,7 +479,7 @@ class TestRoundTripRegression:
 
         sdk.get_edges = AsyncMock(side_effect=_edges)
 
-        result = await team_client._get_team_sdk(sdk, "kref://Construct/Teams/TestTeam.bundle")
+        result = await team_client._get_team_sdk(sdk, "kref://Revka/Teams/TestTeam.bundle")
 
         assert result is not None
         edges = result["edges"]
@@ -502,6 +502,6 @@ class TestRoundTripRegression:
         sdk = _make_mock_sdk()
         sdk.get_edges = AsyncMock(return_value=[])
 
-        result = await team_client._get_team_sdk(sdk, "kref://Construct/Teams/TestTeam.bundle")
+        result = await team_client._get_team_sdk(sdk, "kref://Revka/Teams/TestTeam.bundle")
         assert result is not None
         assert result["edges"] == []

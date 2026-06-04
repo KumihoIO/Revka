@@ -8,7 +8,7 @@
 //!
 //! ## What `register_skill_with_kumiho` does
 //!
-//! Given a skill directory on disk (`~/.construct/workspace/skills/<slug>/`)
+//! Given a skill directory on disk (`~/.revka/workspace/skills/<slug>/`)
 //! and a Kumiho client + memory_project name from config:
 //!
 //! 1. **No-op if already registered** — when the skill's `SKILL.toml`
@@ -733,10 +733,10 @@ mod tests {
 
     #[test]
     fn format_file_uri_basic() {
-        let p = PathBuf::from("/Users/neo/.construct/workspace/skills/foo/contents/r1.md");
+        let p = PathBuf::from("/Users/neo/.revka/workspace/skills/foo/contents/r1.md");
         assert_eq!(
             format_file_uri(&p),
-            "file:///Users/neo/.construct/workspace/skills/foo/contents/r1.md"
+            "file:///Users/neo/.revka/workspace/skills/foo/contents/r1.md"
         );
     }
 
@@ -931,7 +931,7 @@ content_file = "contents/r1.md"
 
     #[test]
     fn file_uri_round_trips_through_parse() {
-        let original = PathBuf::from("/Users/neo/.construct/workspace/skills/foo/contents/r1.md");
+        let original = PathBuf::from("/Users/neo/.revka/workspace/skills/foo/contents/r1.md");
         let uri = format_file_uri(&original);
         let parsed = parse_file_uri(&uri).expect("round trip");
         assert_eq!(parsed, original);

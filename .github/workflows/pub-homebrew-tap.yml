@@ -73,9 +73,9 @@ jobs:
             printf '%s' "$sha"
           }
 
-          darwin_arm64="$(extract_sha construct-aarch64-apple-darwin.tar.gz)"
-          linux_arm64="$(extract_sha construct-aarch64-unknown-linux-gnu.tar.gz)"
-          linux_x86_64="$(extract_sha construct-x86_64-unknown-linux-gnu.tar.gz)"
+          darwin_arm64="$(extract_sha revka-aarch64-apple-darwin.tar.gz)"
+          linux_arm64="$(extract_sha revka-aarch64-unknown-linux-gnu.tar.gz)"
+          linux_x86_64="$(extract_sha revka-x86_64-unknown-linux-gnu.tar.gz)"
 
           {
             echo "version=$version"
@@ -108,7 +108,7 @@ jobs:
               -e "s|@@DARWIN_ARM64_SHA@@|${DARWIN_ARM64_SHA}|g" \
               -e "s|@@LINUX_ARM64_SHA@@|${LINUX_ARM64_SHA}|g" \
               -e "s|@@LINUX_X86_64_SHA@@|${LINUX_X86_64_SHA}|g" \
-              dist/homebrew/construct.rb > "$formula_file"
+              dist/homebrew/revka.rb > "$formula_file"
 
           echo "formula_file=$formula_file" >> "$GITHUB_OUTPUT"
 
@@ -130,7 +130,7 @@ jobs:
           set -euo pipefail
 
           if [[ -z "${HOMEBREW_TAP_REPO}" ]]; then
-            echo "::error::Repository variable HOMEBREW_TAP_REPO is required (e.g. KumihoIO/homebrew-construct)."
+            echo "::error::Repository variable HOMEBREW_TAP_REPO is required (e.g. KumihoIO/homebrew-revka)."
             exit 1
           fi
           if [[ -z "${GH_TOKEN}" ]]; then
@@ -142,13 +142,13 @@ jobs:
           gh repo clone "${HOMEBREW_TAP_REPO}" "$tmp_dir/tap" -- --depth=1
 
           mkdir -p "$tmp_dir/tap/Formula"
-          cp "$FORMULA_FILE" "$tmp_dir/tap/Formula/construct.rb"
+          cp "$FORMULA_FILE" "$tmp_dir/tap/Formula/revka.rb"
 
           cd "$tmp_dir/tap"
-          git config user.name "construct-bot"
-          git config user.email "bot@construct.dev"
-          git add Formula/construct.rb
-          git commit -m "construct ${VERSION}"
+          git config user.name "revka-bot"
+          git config user.email "bot@revka.dev"
+          git add Formula/revka.rb
+          git commit -m "revka ${VERSION}"
           gh auth setup-git
           git push origin HEAD
 

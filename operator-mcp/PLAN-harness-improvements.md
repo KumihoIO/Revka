@@ -1,7 +1,7 @@
-# Construct Harness Improvements — Adoption Plan
+# Revka Harness Improvements — Adoption Plan
 
 **Source:** Open Claude architecture study (2026-04-01)
-**Repo:** `~/construct/operator-mcp`
+**Repo:** `~/revka/operator-mcp`
 
 ---
 
@@ -97,7 +97,7 @@
 
 ### C3. File-Based Mailbox Fallback `P3`
 
-- Add `~/.construct/operator_mcp/mailbox/{agent_id}.json` as disk persistence
+- Add `~/.revka/operator_mcp/mailbox/{agent_id}.json` as disk persistence
 - Write on chat post, read on sidecar restart
 - Supplements in-memory chat rooms for durability
 

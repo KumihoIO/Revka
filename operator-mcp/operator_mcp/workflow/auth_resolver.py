@@ -2,14 +2,14 @@
 
 Calls the gateway's `/api/auth/profiles/{id}/resolve` endpoint to fetch the
 decrypted credential bound to a workflow step. Authenticates with the
-service token written to ``~/.construct/service-token`` at gateway startup.
+service token written to ``~/.revka/service-token`` at gateway startup.
 
 Failure modes are mapped to a structured ``auth_resolve_failed`` error so
 step executors can fail fast with a meaningful reason instead of leaking
 HTTP plumbing into workflow output.
 
 Configuration:
-    CONSTRUCT_AUTH_RESOLVE_TIMEOUT — float seconds for the urlopen call to
+    REVKA_AUTH_RESOLVE_TIMEOUT — float seconds for the urlopen call to
         the gateway resolve endpoint. Defaults to 10.0. Useful in slow CI
         environments or when running through a constrained loopback proxy.
 """
@@ -41,7 +41,7 @@ class AuthResolveError(Exception):
 
 def _resolve_timeout() -> float:
     """Return the urlopen timeout for the gateway resolve call (seconds)."""
-    raw = os.environ.get("CONSTRUCT_AUTH_RESOLVE_TIMEOUT", "")
+    raw = os.environ.get("REVKA_AUTH_RESOLVE_TIMEOUT", "")
     try:
         value = float(raw) if raw else 10.0
     except ValueError:
@@ -52,11 +52,11 @@ def _resolve_timeout() -> float:
 def _gateway_url() -> str:
     """Return the gateway base URL.
 
-    Order: explicit ``CONSTRUCT_GATEWAY_URL`` env override → the local
-    daemon at 127.0.0.1:60003 (Construct's default port).
+    Order: explicit ``REVKA_GATEWAY_URL`` env override → the local
+    daemon at 127.0.0.1:60003 (Revka's default port).
     """
     return (
-        os.environ.get("CONSTRUCT_GATEWAY_URL")
+        os.environ.get("REVKA_GATEWAY_URL")
         or os.environ.get("GATEWAY_URL")
         or "http://127.0.0.1:60003"
     ).rstrip("/")
@@ -70,10 +70,10 @@ def _service_token() -> str:
     than silently fall back to an unauthenticated call.
     """
     # Allow env override for tests / nonstandard deployments.
-    env_tok = os.environ.get("CONSTRUCT_SERVICE_TOKEN", "").strip()
+    env_tok = os.environ.get("REVKA_SERVICE_TOKEN", "").strip()
     if env_tok:
         return env_tok
-    path = os.path.expanduser("~/.construct/service-token")
+    path = os.path.expanduser("~/.revka/service-token")
     try:
         with open(path, "r", encoding="utf-8") as f:
             return f.read().strip()
@@ -89,7 +89,7 @@ def _do_resolve_blocking(profile_id: str) -> dict[str, Any]:
     if not token:
         raise AuthResolveError(
             "service token unavailable — gateway must be running and have written "
-            "~/.construct/service-token",
+            "~/.revka/service-token",
             code="service_token_unavailable",
         )
     url = f"{_gateway_url()}/api/auth/profiles/{quote(profile_id, safe=':')}/resolve"
@@ -98,7 +98,7 @@ def _do_resolve_blocking(profile_id: str) -> dict[str, Any]:
         method="POST",
         data=b"",
         headers={
-            "X-Construct-Service-Token": token,
+            "X-Revka-Service-Token": token,
             "Content-Length": "0",
         },
     )

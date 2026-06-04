@@ -4,8 +4,8 @@
 //! through the public Provider trait, ensuring the agent loop selects the
 //! right tool-calling strategy (prompt-guided, not native).
 
-use construct::providers::create_provider_with_url;
-use construct::providers::traits::Provider;
+use revka::providers::create_provider_with_url;
+use revka::providers::traits::Provider;
 
 fn gemini_provider() -> Box<dyn Provider> {
     create_provider_with_url("gemini", Some("test-key"), None)
@@ -54,8 +54,8 @@ fn gemini_supports_vision_returns_true() {
 
 #[test]
 fn gemini_convert_tools_returns_prompt_guided() {
-    use construct::providers::traits::ToolsPayload;
-    use construct::tools::traits::ToolSpec;
+    use revka::providers::traits::ToolsPayload;
+    use revka::tools::traits::ToolSpec;
 
     let provider = gemini_provider();
     let tools = vec![ToolSpec {

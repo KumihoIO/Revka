@@ -253,13 +253,13 @@ mod tests {
     ///
     /// ```bash
     /// python3 -c "import base64,hmac,hashlib
-    /// kref = b'kref://Construct/Outreach/contacts/acme.contact'
+    /// kref = b'kref://Revka/Outreach/contacts/acme.contact'
     /// print('no_secret:', base64.urlsafe_b64encode(kref).rstrip(b'=').decode())
     /// sig = hmac.new(b's3cret', kref, hashlib.sha256).digest()[:8]
     /// print('signed:    ', base64.urlsafe_b64encode(kref+b':'+sig).rstrip(b'=').decode())
     /// "
     /// ```
-    const KREF: &str = "kref://Construct/Outreach/contacts/acme.contact";
+    const KREF: &str = "kref://Revka/Outreach/contacts/acme.contact";
     const SECRET: &str = "s3cret";
 
     fn encode_token(kref: &str, secret: Option<&str>) -> String {

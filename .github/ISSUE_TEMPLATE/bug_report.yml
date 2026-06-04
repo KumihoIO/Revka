@@ -1,5 +1,5 @@
 name: Bug Report
-description: Report a reproducible defect in Construct
+description: Report a reproducible defect in Revka
 title: "[Bug]: "
 labels:
   - bug
@@ -63,8 +63,8 @@ body:
       label: Steps to reproduce
       description: Please provide exact commands/config.
       placeholder: |
-        1. construct onboard
-        2. construct daemon
+        1. revka onboard
+        2. revka daemon
         3. Observe crash in logs
       render: bash
     validations:
@@ -94,7 +94,7 @@ body:
   - type: input
     id: version
     attributes:
-      label: Construct version
+      label: Revka version
       placeholder: v0.1.0 / commit SHA
     validations:
       required: true

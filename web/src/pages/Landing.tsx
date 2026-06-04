@@ -21,7 +21,7 @@ import {
   Terminal,
 } from 'lucide-react';
 import { appAssetPath } from '@/lib/basePath';
-import { useT } from '@/construct/hooks/useT';
+import { useT } from '@/revka/hooks/useT';
 
 // ---------------------------------------------------------------------------
 // Scroll reveal hook — uses IntersectionObserver + CSS transitions.
@@ -149,14 +149,14 @@ type NamespaceDef = {
 };
 
 const NAMESPACES: NamespaceDef[] = [
-  { ns: 'Construct/AgentPool/', purposeKey: 'landing.arch.ns.agentpool', icon: Package },
-  { ns: 'Construct/Plans/', purposeKey: 'landing.arch.ns.plans', icon: Target },
-  { ns: 'Construct/Sessions/', purposeKey: 'landing.arch.ns.sessions', icon: BookOpen },
-  { ns: 'Construct/Goals/', purposeKey: 'landing.arch.ns.goals', icon: Globe },
-  { ns: 'Construct/ClawHub/', purposeKey: 'landing.arch.ns.clawhub', icon: ShoppingBag },
-  { ns: 'Construct/Teams/', purposeKey: 'landing.arch.ns.teams', icon: Network },
+  { ns: 'Revka/AgentPool/', purposeKey: 'landing.arch.ns.agentpool', icon: Package },
+  { ns: 'Revka/Plans/', purposeKey: 'landing.arch.ns.plans', icon: Target },
+  { ns: 'Revka/Sessions/', purposeKey: 'landing.arch.ns.sessions', icon: BookOpen },
+  { ns: 'Revka/Goals/', purposeKey: 'landing.arch.ns.goals', icon: Globe },
+  { ns: 'Revka/ClawHub/', purposeKey: 'landing.arch.ns.clawhub', icon: ShoppingBag },
+  { ns: 'Revka/Teams/', purposeKey: 'landing.arch.ns.teams', icon: Network },
   { ns: 'CognitiveMemory/Skills/', purposeKey: 'landing.arch.ns.skills', icon: Database },
-  { ns: 'Construct/AgentTrust/', purposeKey: 'landing.arch.ns.trust', icon: Shield },
+  { ns: 'Revka/AgentTrust/', purposeKey: 'landing.arch.ns.trust', icon: Shield },
 ];
 
 type StatDef = { value: string; labelKey: string };
@@ -204,16 +204,16 @@ const PILLARS: PillarDef[] = [
 type CliDef = { cmd: string; descKey: string };
 
 const CLI_COMMANDS: CliDef[] = [
-  { cmd: 'construct onboard', descKey: 'landing.cli.cmd.onboard' },
-  { cmd: 'construct onboard --reinit', descKey: 'landing.cli.cmd.reinit' },
-  { cmd: 'construct daemon', descKey: 'landing.cli.cmd.daemon' },
-  { cmd: 'construct doctor', descKey: 'landing.cli.cmd.doctor' },
-  { cmd: 'construct status', descKey: 'landing.cli.cmd.status' },
-  { cmd: 'construct channel list', descKey: 'landing.cli.cmd.channel_list' },
-  { cmd: 'construct channel add telegram \'{"bot_token":"..."}\'', descKey: 'landing.cli.cmd.channel_add' },
-  { cmd: 'construct providers', descKey: 'landing.cli.cmd.providers' },
-  { cmd: 'construct memory stats', descKey: 'landing.cli.cmd.memory_stats' },
-  { cmd: 'construct service install', descKey: 'landing.cli.cmd.service_install' },
+  { cmd: 'revka onboard', descKey: 'landing.cli.cmd.onboard' },
+  { cmd: 'revka onboard --reinit', descKey: 'landing.cli.cmd.reinit' },
+  { cmd: 'revka daemon', descKey: 'landing.cli.cmd.daemon' },
+  { cmd: 'revka doctor', descKey: 'landing.cli.cmd.doctor' },
+  { cmd: 'revka status', descKey: 'landing.cli.cmd.status' },
+  { cmd: 'revka channel list', descKey: 'landing.cli.cmd.channel_list' },
+  { cmd: 'revka channel add telegram \'{"bot_token":"..."}\'', descKey: 'landing.cli.cmd.channel_add' },
+  { cmd: 'revka providers', descKey: 'landing.cli.cmd.providers' },
+  { cmd: 'revka memory stats', descKey: 'landing.cli.cmd.memory_stats' },
+  { cmd: 'revka service install', descKey: 'landing.cli.cmd.service_install' },
 ];
 
 type TunnelDef = { id: string; nameKey: string; descKey: string };
@@ -528,7 +528,7 @@ export default function Landing() {
               e.currentTarget.style.display = 'none';
             }}
           />
-          <span className="font-bold text-base tracking-tight">Construct</span>
+          <span className="font-bold text-base tracking-tight">Revka</span>
         </div>
 
         <div className="flex items-center gap-3">
@@ -592,7 +592,7 @@ export default function Landing() {
           }}
         >
           <h1 className="text-5xl font-bold mb-4 tracking-tight sm:text-6xl lg:text-7xl xl:text-8xl">
-            <span className="text-gradient-fox text-gradient-fox--shimmer">Construct</span>
+            <span className="text-gradient-fox text-gradient-fox--shimmer">Revka</span>
           </h1>
           <p
             className="text-xl mb-3 max-w-xl mx-auto font-medium sm:text-2xl"
@@ -640,7 +640,7 @@ export default function Landing() {
           }}
         >
           <img
-            src={appAssetPath('construct-banner.png')}
+            src={appAssetPath('revka-banner.png')}
             alt={t('landing.hero.banner_alt')}
             className="hero-banner hero-banner--v2"
             onError={(e) => {
@@ -1072,7 +1072,7 @@ export default function Landing() {
             style={{ color: 'var(--pc-text-faint)' }}
           >
             {t('landing.tunnels.setup_hint_prefix')}
-            <span className="font-mono" style={{ color: 'var(--pc-accent-light)' }}>construct onboard --reinit</span>
+            <span className="font-mono" style={{ color: 'var(--pc-accent-light)' }}>revka onboard --reinit</span>
             {t('landing.tunnels.setup_hint_suffix')}
           </p>
         </div>
@@ -1148,7 +1148,7 @@ export default function Landing() {
               className="text-sm font-semibold"
               style={{ color: 'var(--pc-text-secondary)' }}
             >
-              Construct
+              Revka
             </span>
           </div>
 

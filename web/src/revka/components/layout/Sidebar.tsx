@@ -1,0 +1,186 @@
+import { useEffect, useState } from 'react';
+import { NavLink } from 'react-router-dom';
+import { Boxes, ChevronsLeft, ChevronsRight } from 'lucide-react';
+import { v2NavSections } from './revka-navigation';
+import { appAssetPath } from '@/lib/basePath';
+import { REVKA_VERSION } from '@/lib/version';
+import { useT } from '@/revka/hooks/useT';
+import { useTheme } from '@/revka/hooks/useTheme';
+
+const APP_ICON_SRC = appAssetPath('favicon-192.png');
+
+const COLLAPSE_STORAGE_KEY = 'revka-sidebar-collapsed';
+
+function readInitialCollapsed(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    return window.localStorage.getItem(COLLAPSE_STORAGE_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+interface SidebarProps {
+  mobileOpen?: boolean;
+  onCloseMobile?: () => void;
+}
+
+export default function Sidebar({ mobileOpen = false, onCloseMobile }: SidebarProps) {
+  const [collapsed, setCollapsed] = useState<boolean>(readInitialCollapsed);
+  const { t } = useT();
+  const { getSkinAsset } = useTheme();
+  const brandLogo = getSkinAsset('brandLogo') ?? APP_ICON_SRC;
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(COLLAPSE_STORAGE_KEY, collapsed ? '1' : '0');
+    } catch {
+      // ignore
+    }
+  }, [collapsed]);
+
+  const sidebarWidth = collapsed ? '4.5rem' : 'var(--revka-shell-width)';
+
+  return (
+    <>
+      {mobileOpen ? (
+        <div
+          className="fixed inset-0 z-40 lg:hidden"
+          style={{ background: 'rgba(0,0,0,0.55)' }}
+          onClick={onCloseMobile}
+          aria-hidden="true"
+        />
+      ) : null}
+      <aside
+        className={`revka-sidebar fixed inset-y-0 left-0 z-50 flex flex-col overflow-hidden border-r transition-transform duration-200 lg:static lg:z-auto lg:flex lg:h-screen lg:flex-shrink-0 lg:translate-x-0 ${mobileOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}
+        style={{
+          borderColor: 'var(--revka-border-soft)',
+          backgroundColor: 'var(--revka-bg-shell)',
+          width: sidebarWidth,
+          padding: collapsed ? '1rem 0.5rem' : '1rem 0.75rem',
+          transition: 'width 0.18s ease, padding 0.18s ease, transform 0.2s ease',
+        }}
+        data-collapsed={String(collapsed)}
+      >
+      {collapsed ? (
+        <div className="flex flex-col items-center gap-3">
+          <img
+            src={brandLogo}
+            alt="Revka"
+            title="Revka"
+            className="revka-brand-logo h-11 w-11 rounded-[14px] object-contain"
+            draggable={false}
+            onError={(event) => {
+              event.currentTarget.src = APP_ICON_SRC;
+            }}
+          />
+          <button
+            type="button"
+            className="revka-sidebar-collapse-btn"
+            onClick={() => setCollapsed(false)}
+            aria-label="Expand sidebar"
+            title="Expand sidebar"
+          >
+            <ChevronsRight className="h-4 w-4" />
+          </button>
+        </div>
+      ) : (
+        <div className="revka-panel p-4">
+          <div className="flex items-center gap-3">
+            <img
+              src={brandLogo}
+              alt="Revka"
+              className="revka-brand-logo h-11 w-11 rounded-[14px] object-contain"
+              draggable={false}
+              onError={(event) => {
+                event.currentTarget.src = APP_ICON_SRC;
+              }}
+            />
+            <div className="min-w-0 flex-1">
+              <div className="revka-kicker">Revka</div>
+              <div className="truncate text-sm font-semibold" style={{ color: 'var(--revka-text-primary)' }}>
+                {t('sidebar.brand_subtitle')}
+              </div>
+            </div>
+            <button
+              type="button"
+              className="revka-sidebar-collapse-btn"
+              onClick={() => setCollapsed(true)}
+              aria-label="Collapse sidebar"
+              title="Collapse sidebar"
+            >
+              <ChevronsLeft className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      <nav
+        className="revka-sidebar-scroll mt-5 min-h-0 flex-1 overflow-y-auto"
+        style={{ paddingRight: collapsed ? 0 : '0.25rem' }}
+      >
+        <div className={collapsed ? 'space-y-4' : 'space-y-5'}>
+          {v2NavSections.map((section) => (
+            <section key={section.id}>
+              {!collapsed ? (
+                <div className="mb-2 px-2 text-[11px] font-semibold uppercase tracking-[0.18em]" style={{ color: 'var(--revka-text-faint)' }}>
+                  {t(section.labelKey)}
+                </div>
+              ) : (
+                <div
+                  className="mx-auto mb-2 h-px w-6"
+                  style={{ background: 'var(--revka-border-soft)' }}
+                  aria-hidden="true"
+                />
+              )}
+              <div className="space-y-1.5">
+                {section.items.map((item) => {
+                  const Icon = item.icon;
+                  const label = t(item.labelKey);
+                  const blurb = t(item.blurbKey);
+                  return (
+                    <NavLink key={item.to} to={item.to} title={collapsed ? label : blurb}>
+                      {({ isActive }) => (
+                        <div
+                          className="revka-sidebar-link w-full"
+                          data-active={String(isActive)}
+                          data-collapsed={String(collapsed)}
+                        >
+                          <Icon className="h-4 w-4 shrink-0" />
+                          {!collapsed ? (
+                            <div className="min-w-0">
+                              <div className="text-sm font-medium">{label}</div>
+                              <div className="truncate text-xs" style={{ color: isActive ? 'var(--revka-text-secondary)' : 'var(--revka-text-faint)' }}>
+                                {blurb}
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
+                      )}
+                    </NavLink>
+                  );
+                })}
+              </div>
+            </section>
+          ))}
+        </div>
+      </nav>
+
+      {!collapsed ? (
+        <div className="revka-panel mt-5 p-4" data-variant="utility">
+          <div className="flex items-center gap-2">
+            <Boxes className="h-4 w-4" style={{ color: 'var(--revka-signal-network)' }} />
+            <span className="text-sm font-medium" style={{ color: 'var(--revka-text-primary)' }}>{t('sidebar.shell')}</span>
+          </div>
+          <p className="mt-2 text-xs leading-5" style={{ color: 'var(--revka-text-secondary)' }}>
+            {t('sidebar.shell_description')}
+          </p>
+          <div className="mt-3 text-[11px] font-medium" style={{ color: 'var(--revka-text-faint)' }}>
+            v{REVKA_VERSION}
+          </div>
+        </div>
+      ) : null}
+      </aside>
+    </>
+  );
+}

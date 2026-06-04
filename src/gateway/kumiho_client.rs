@@ -22,8 +22,8 @@ use std::time::{Duration, Instant};
 /// Build a `KumihoClient` from the top-level `Config`.
 ///
 /// Reads `kumiho.api_url` for the base URL and `KUMIHO_SERVICE_TOKEN` env var
-/// for the service token. Used by CLI commands (`construct memory`,
-/// `construct migrate openclaw`) that need a Kumiho client without an
+/// for the service token. Used by CLI commands (`revka memory`,
+/// `revka migrate openclaw`) that need a Kumiho client without an
 /// `AppState`.
 pub fn build_client_from_config(config: &Config) -> KumihoClient {
     build_cached_client(config.kumiho.api_url.clone())

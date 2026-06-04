@@ -1,1 +1,1 @@
-"""Construct orchestration patterns — reusable multi-agent coordination strategies."""
+"""Revka orchestration patterns — reusable multi-agent coordination strategies."""

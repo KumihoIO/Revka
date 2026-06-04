@@ -265,8 +265,8 @@ impl Channel for DiscordHistoryChannel {
                 "intents": 37377,
                 "properties": {
                     "os": "linux",
-                    "browser": "construct",
-                    "device": "construct"
+                    "browser": "revka",
+                    "device": "revka"
                 }
             }
         });

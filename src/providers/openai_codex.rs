@@ -13,10 +13,9 @@ use serde_json::Value;
 use std::path::PathBuf;
 
 const DEFAULT_CODEX_RESPONSES_URL: &str = "https://chatgpt.com/backend-api/codex/responses";
-const CODEX_RESPONSES_URL_ENV: &str = "CONSTRUCT_CODEX_RESPONSES_URL";
-const CODEX_BASE_URL_ENV: &str = "CONSTRUCT_CODEX_BASE_URL";
-const DEFAULT_CODEX_INSTRUCTIONS: &str =
-    "You are Construct, a concise and helpful coding assistant.";
+const CODEX_RESPONSES_URL_ENV: &str = "REVKA_CODEX_RESPONSES_URL";
+const CODEX_BASE_URL_ENV: &str = "REVKA_CODEX_BASE_URL";
+const DEFAULT_CODEX_INSTRUCTIONS: &str = "You are Revka, a concise and helpful coding assistant.";
 
 pub struct OpenAiCodexProvider {
     auth: AuthService,
@@ -120,10 +119,7 @@ impl OpenAiCodexProvider {
         options: &ProviderRuntimeOptions,
         gateway_api_key: Option<&str>,
     ) -> anyhow::Result<Self> {
-        let state_dir = options
-            .construct_dir
-            .clone()
-            .unwrap_or_else(default_construct_dir);
+        let state_dir = options.revka_dir.clone().unwrap_or_else(default_revka_dir);
         let auth = AuthService::new(&state_dir, options.secrets_encrypt);
         let responses_url = resolve_responses_url(options)?;
 
@@ -143,10 +139,10 @@ impl OpenAiCodexProvider {
     }
 }
 
-fn default_construct_dir() -> PathBuf {
+fn default_revka_dir() -> PathBuf {
     directories::UserDirs::new().map_or_else(
-        || PathBuf::from(".construct"),
-        |dirs| dirs.home_dir().join(".construct"),
+        || PathBuf::from(".revka"),
+        |dirs| dirs.home_dir().join(".revka"),
     )
 }
 
@@ -329,7 +325,7 @@ fn clamp_reasoning_effort(model: &str, effort: &str) -> String {
 fn resolve_reasoning_effort(model_id: &str, configured: Option<&str>) -> String {
     let raw = configured
         .map(ToString::to_string)
-        .or_else(|| std::env::var("CONSTRUCT_CODEX_REASONING_EFFORT").ok())
+        .or_else(|| std::env::var("REVKA_CODEX_REASONING_EFFORT").ok())
         .and_then(|value| first_nonempty(Some(&value)))
         .unwrap_or_else(|| "xhigh".to_string())
         .to_ascii_lowercase();
@@ -935,7 +931,7 @@ impl OpenAiCodexProvider {
         } else {
             Some(oauth_access_token.ok_or_else(|| {
                 anyhow::anyhow!(
-                    "OpenAI Codex auth profile not found. Run `construct auth login --provider openai-codex`."
+                    "OpenAI Codex auth profile not found. Run `revka auth login --provider openai-codex`."
                 )
             })?)
         };
@@ -944,7 +940,7 @@ impl OpenAiCodexProvider {
         } else {
             Some(account_id.ok_or_else(|| {
                 anyhow::anyhow!(
-                    "OpenAI Codex account id not found in auth profile/token. Run `construct auth login --provider openai-codex` again."
+                    "OpenAI Codex account id not found in auth profile/token. Run `revka auth login --provider openai-codex` again."
                 )
             })?)
         };
@@ -1401,7 +1397,7 @@ mod tests {
 
     #[test]
     fn default_state_dir_is_non_empty() {
-        let path = default_construct_dir();
+        let path = default_revka_dir();
         assert!(!path.as_os_str().is_empty());
     }
 
@@ -1544,7 +1540,7 @@ mod tests {
     #[test]
     fn resolve_reasoning_effort_prefers_configured_override() {
         let _lock = env_lock();
-        let _guard = EnvGuard::set("CONSTRUCT_CODEX_REASONING_EFFORT", Some("low"));
+        let _guard = EnvGuard::set("REVKA_CODEX_REASONING_EFFORT", Some("low"));
         assert_eq!(
             resolve_reasoning_effort("gpt-5-codex", Some("high")),
             "high".to_string()
@@ -1554,7 +1550,7 @@ mod tests {
     #[test]
     fn resolve_reasoning_effort_uses_legacy_env_when_unconfigured() {
         let _lock = env_lock();
-        let _guard = EnvGuard::set("CONSTRUCT_CODEX_REASONING_EFFORT", Some("minimal"));
+        let _guard = EnvGuard::set("REVKA_CODEX_REASONING_EFFORT", Some("minimal"));
         assert_eq!(
             resolve_reasoning_effort("gpt-5-codex", None),
             "low".to_string()
@@ -1764,7 +1760,7 @@ data: [DONE]
     fn capabilities_includes_vision() {
         let options = ProviderRuntimeOptions {
             provider_api_url: None,
-            construct_dir: None,
+            revka_dir: None,
             secrets_encrypt: false,
             auth_profile_override: None,
             reasoning_enabled: None,

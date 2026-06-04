@@ -5,7 +5,7 @@
 //! behavior through the public API surface: configuration defaults, autonomy
 //! config validation, and credential scrubbing patterns.
 
-use construct::config::{AutonomyConfig, Config};
+use revka::config::{AutonomyConfig, Config};
 
 // ═════════════════════════════════════════════════════════════════════════════
 // Autonomy configuration defaults and validation

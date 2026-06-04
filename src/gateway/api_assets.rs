@@ -707,7 +707,7 @@ pub async fn handle_create_artifact(
     if auto_location {
         metadata
             .entry("storage".to_string())
-            .or_insert_with(|| "construct-workspace".to_string());
+            .or_insert_with(|| "revka-workspace".to_string());
         metadata
             .entry("generated_location".to_string())
             .or_insert_with(|| "true".to_string());
@@ -1339,10 +1339,7 @@ pub async fn handle_update_artifact_content(
         source_revision.kref.clone(),
     );
     metadata.insert("edited_artifact".to_string(), source_artifact.name.clone());
-    metadata.insert(
-        "edited_by".to_string(),
-        "construct-asset-browser".to_string(),
-    );
+    metadata.insert("edited_by".to_string(), "revka-asset-browser".to_string());
 
     let new_revision = match client
         .create_revision(&source_revision.item_kref, metadata)
@@ -1474,8 +1471,8 @@ mod tests {
     }
 
     #[test]
-    fn default_artifact_path_uses_construct_workspace_layout() {
-        let workspace = Path::new("C:/Users/example/.construct/workspace");
+    fn default_artifact_path_uses_revka_workspace_layout() {
+        let workspace = Path::new("C:/Users/example/.revka/workspace");
         let path = default_artifact_path(
             workspace,
             "kref://StoryProject/Characters/protagonist.character-state?r=12",
@@ -1497,7 +1494,7 @@ mod tests {
 
     #[test]
     fn default_artifact_path_requires_exact_revision_selector() {
-        let workspace = Path::new("C:/Users/example/.construct/workspace");
+        let workspace = Path::new("C:/Users/example/.revka/workspace");
         let err = default_artifact_path(
             workspace,
             "kref://StoryProject/Characters/protagonist.character-state?t=current",

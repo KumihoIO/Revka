@@ -1,6 +1,6 @@
 # Nextcloud Talk 安装指南
 
-本指南介绍 Construct 的原生 Nextcloud Talk 集成。
+本指南介绍 Revka 的原生 Nextcloud Talk 集成。
 
 ## 1. 集成功能
 
@@ -10,7 +10,7 @@
 
 ## 2. 配置
 
-在 `~/.construct/config.toml` 中添加以下部分：
+在 `~/.revka/config.toml` 中添加以下部分：
 
 ```toml
 [channels_config.nextcloud_talk]
@@ -29,16 +29,16 @@ allowed_users = [\"*\"]
 
 环境变量覆盖：
 
-- 设置 `CONSTRUCT_NEXTCLOUD_TALK_WEBHOOK_SECRET` 时会覆盖 `webhook_secret`。
+- 设置 `REVKA_NEXTCLOUD_TALK_WEBHOOK_SECRET` 时会覆盖 `webhook_secret`。
 
 ## 3. 网关端点
 
 运行守护进程或网关并暴露 webhook 端点：
 
 ```bash
-construct daemon
+revka daemon
 # 或
-construct gateway --host 127.0.0.1 --port 3000
+revka gateway --host 127.0.0.1 --port 3000
 ```
 
 将你的 Nextcloud Talk 机器人 webhook URL 配置为：
@@ -47,7 +47,7 @@ construct gateway --host 127.0.0.1 --port 3000
 
 ## 4. 签名验证规则
 
-配置 `webhook_secret` 时，Construct 会验证：
+配置 `webhook_secret` 时，Revka 会验证：
 
 - 请求头 `X-Nextcloud-Talk-Random`
 - 请求头 `X-Nextcloud-Talk-Signature`
@@ -60,15 +60,15 @@ construct gateway --host 127.0.0.1 --port 3000
 
 ## 5. 消息路由行为
 
-- Construct 忽略来自机器人的 webhook 事件（`actorType = bots`）。
-- Construct 忽略非消息/系统事件。
+- Revka 忽略来自机器人的 webhook 事件（`actorType = bots`）。
+- Revka 忽略非消息/系统事件。
 - 回复路由使用 webhook 负载中的 Talk 房间令牌。
 
 ## 6. 快速验证清单
 
 1. 首次验证时设置 `allowed_users = [\"*\"]`。
 2. 在目标 Talk 房间发送测试消息。
-3. 确认 Construct 收到消息并在同一房间回复。
+3. 确认 Revka 收到消息并在同一房间回复。
 4. 将 `allowed_users` 收紧为明确的参与者 ID。
 
 ## 7. 故障排除

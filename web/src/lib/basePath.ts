@@ -7,14 +7,14 @@ import { isTauri, tauriGatewayUrl } from './tauri';
 
 declare global {
   interface Window {
-    __CONSTRUCT_BASE__?: string;
+    __REVKA_BASE__?: string;
   }
 }
 
-/** Gateway path prefix (e.g. "/construct"), or empty string when served at root. */
+/** Gateway path prefix (e.g. "/revka"), or empty string when served at root. */
 export const basePath: string = isTauri()
   ? ''
-  : (window.__CONSTRUCT_BASE__ ?? '').replace(/\/+$/, '');
+  : (window.__REVKA_BASE__ ?? '').replace(/\/+$/, '');
 
 /** Full origin for API requests. Empty when served by the gateway (same-origin). */
 export const apiOrigin: string = isTauri() ? tauriGatewayUrl() : '';

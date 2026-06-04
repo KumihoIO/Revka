@@ -1,4 +1,4 @@
-# Development Environment for Construct Agentic Testing
+# Development Environment for Revka Agentic Testing
 #
 # Use this for:
 # - Running the agent in a sandboxed environment
@@ -8,37 +8,37 @@
 # Usage:
 #   cd dev && ./cli.sh up
 #   or from root: ./dev/cli.sh up
-name: construct-dev
+name: revka-dev
 services:
   # ── The Agent (Development Image) ──
   # Builds from source using the 'dev' stage of the root Dockerfile
-  construct-dev:
+  revka-dev:
     build:
       context: ..
       dockerfile: Dockerfile
       target: dev
-    container_name: construct-dev
+    container_name: revka-dev
     restart: unless-stopped
     environment:
-      - CONSTRUCT_GATEWAY_PORT=42617
-      - SANDBOX_HOST=construct-sandbox
+      - REVKA_GATEWAY_PORT=42617
+      - SANDBOX_HOST=revka-sandbox
     secrets:
-      - source: construct_env
-        target: construct_env
+      - source: revka_env
+        target: revka_env
     entrypoint: ["/bin/bash", "-lc"]
     command:
       - |
-        if [ -f /run/secrets/construct_env ]; then
+        if [ -f /run/secrets/revka_env ]; then
           set -a
-          . /run/secrets/construct_env
+          . /run/secrets/revka_env
           set +a
         fi
-        exec construct gateway start --port "${CONSTRUCT_GATEWAY_PORT:-42617}" --host "[::]"
+        exec revka gateway start --port "${REVKA_GATEWAY_PORT:-42617}" --host "[::]"
     volumes:
-      # Mount single config file (avoids shadowing other files in .construct)
-      - ../target/.construct/config.toml:/construct-data/.construct/config.toml
+      # Mount single config file (avoids shadowing other files in .revka)
+      - ../target/.revka/config.toml:/revka-data/.revka/config.toml
       # Mount shared workspace
-      - ../playground:/construct-data/workspace
+      - ../playground:/revka-data/workspace
     ports:
       - "127.0.0.1:42617:42617"
     networks:
@@ -50,7 +50,7 @@ services:
     build:
       context: sandbox # Context relative to dev/
       dockerfile: Dockerfile
-    container_name: construct-sandbox
+    container_name: revka-sandbox
     hostname: dev-box
     command: ["tail", "-f", "/dev/null"]
     working_dir: /home/developer/workspace
@@ -68,5 +68,5 @@ networks:
     driver: bridge
 
 secrets:
-  construct_env:
+  revka_env:
     file: ../.env

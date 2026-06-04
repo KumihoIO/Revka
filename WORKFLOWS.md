@@ -1,8 +1,8 @@
-# Construct Declarative Workflows — HOW-TO Guide
+# Revka Declarative Workflows — HOW-TO Guide
 
 ## Overview
 
-Construct workflows are YAML files that define multi-step, multi-agent pipelines.
+Revka workflows are YAML files that define multi-step, multi-agent pipelines.
 The operator executes them deterministically: resolve data, spawn agents, branch
 on conditions, publish entities, and chain into downstream workflows — all without
 manual orchestration.
@@ -19,12 +19,12 @@ YAML definition → Operator validates → Executor runs steps → Entities publ
 
 | Priority | Path | Purpose |
 |----------|------|---------|
-| 3 (highest) | `.construct/workflows/` | Project-local overrides |
-| 2 | `~/.construct/workflows/` | User-global workflows |
+| 3 (highest) | `.revka/workflows/` | Project-local overrides |
+| 2 | `~/.revka/workflows/` | User-global workflows |
 | 1 (lowest) | `operator_mcp/workflow/builtins/` | Shipped defaults |
 
 Later sources override earlier ones. The operator also checks **Kumiho**
-(`Construct/Workflows` space) as a final fallback when a workflow isn't found on disk.
+(`Revka/Workflows` space) as a final fallback when a workflow isn't found on disk.
 
 ### 2. Minimal workflow
 
@@ -53,7 +53,7 @@ steps:
 
 - **Operator CLI**: Ask the AI assistant to run a workflow (e.g. "run quantum-soul-arc-room")
 - **API**: `POST /api/workflows/run/{name}` with optional `{"inputs": {...}, "cwd": "..."}`
-- **Cron**: Add a `triggers:` block — Construct auto-registers the schedule on save
+- **Cron**: Add a `triggers:` block — Revka auto-registers the schedule on save
 - **Event chain**: A previous workflow's output entity triggers this one automatically
 
 ### 4. Dashboard editor and run controls
@@ -82,7 +82,7 @@ triggers:                      # Optional — auto-launch conditions
   - on_kind: "report"         # Event-based (entity kind + tag)
     on_tag: "ready"
     on_name_pattern: "daily-*" # Optional glob on entity name
-    on_space: "Construct/Reports" # Optional space prefix filter
+    on_space: "Revka/Reports" # Optional space prefix filter
     input_map:
       report_kref: "${trigger.entity_kref}"
 
@@ -135,7 +135,7 @@ The `action` field provides shorthand: `action: research` auto-sets
 
 Agent steps can expose structured fields through `output_data`.
 
-When `agent.output_fields` is set, Construct treats it as a required structured
+When `agent.output_fields` is set, Revka treats it as a required structured
 output contract:
 
 1. The executor appends structured-output instructions to the agent prompt.
@@ -235,7 +235,7 @@ for short values because it inlines the upstream text into the next prompt.
   type: email
   email:
     to: "user@example.com"
-    subject: "Construct report"
+    subject: "Revka report"
     body: "${report.output}"
     dry_run: true
 ```
@@ -260,7 +260,7 @@ for short values because it inlines the upstream text into the next prompt.
     kind: "qs-episode-final"   # Entity kind (exact match)
     tag: "published"           # Revision tag (exact match)
     name_pattern: ""           # Optional glob filter on entity name
-    space: ""                  # Space path filter (default: Construct/WorkflowOutputs)
+    space: ""                  # Space path filter (default: Revka/WorkflowOutputs)
     mode: latest               # latest = single newest | all = list
     metadata_source: revision  # revision | item | artifact
     fields: [part, episode_number, arc_name]  # Metadata fields to extract (empty = all)
@@ -357,7 +357,7 @@ The run viewer records the matched branch on completed conditionals:
     entity_name: "analysis-${inputs.topic}"
     entity_kind: "analysis-report"
     entity_tag: "ready"
-    entity_space: "Construct/WorkflowOutputs"   # Default space
+    entity_space: "Revka/WorkflowOutputs"   # Default space
     metadata_target: item       # item | revision | artifact
     entity_metadata:
       topic: "${inputs.topic}"
@@ -450,7 +450,7 @@ resolve:
   kind: "report"
   tag: "${inputs.release_tag}"
   name_pattern: "daily-${{ lower(inputs.team) }}-*"
-  space: "Construct/${{ lower(inputs.team) }}/Reports"
+  space: "Revka/${{ lower(inputs.team) }}/Reports"
 
 compute:
   outputs:
@@ -493,7 +493,7 @@ steps. It can read the namespaces above without wrapping each lookup in
 ```yaml
 condition: "review.output_data.score >= 0.8"
 value: "approved:${{ format(review.output_data.score, '.2f') }}"
-space: "Construct/${{ lower(inputs.team) }}/WorkflowOutputs"
+space: "Revka/${{ lower(inputs.team) }}/WorkflowOutputs"
 ```
 
 Supported expression features:
@@ -532,7 +532,7 @@ triggers:
   - cron: "0 9 * * 1"           # Every Monday 9am
 ```
 
-When a workflow with a cron trigger is saved to Kumiho (via the UI), Construct
+When a workflow with a cron trigger is saved to Kumiho (via the UI), Revka
 auto-registers it as a scheduled job. The cron scheduler calls
 `POST /api/workflows/run/{name}` directly at the scheduled time.
 
@@ -546,7 +546,7 @@ triggers:
   - on_kind: "qs-arc-plan"      # Watch for this entity kind
     on_tag: "ready"             # When tagged with this
     on_name_pattern: "qs-*"     # Optional glob on entity name
-    on_space: "Construct/WorkflowOutputs/QuantumSoul" # Optional space prefix
+    on_space: "Revka/WorkflowOutputs/QuantumSoul" # Optional space prefix
     input_map:                  # Map trigger data → workflow inputs
       arc_kref: "${trigger.entity_kref}"
       arc_name: "${trigger.metadata.arc_name}"
@@ -563,7 +563,7 @@ Entity trigger filters are cumulative:
 | `on_kind` | Entity kind exact match. Required for entity triggers. |
 | `on_tag` | Revision tag exact match. Defaults to `ready` when omitted. |
 | `on_name_pattern` | Optional glob against entity name, for example `daily-*`. |
-| `on_space` | Optional space path prefix, for example `Construct/Reports`. |
+| `on_space` | Optional space path prefix, for example `Revka/Reports`. |
 
 **Auto-mapping**: If a trigger's entity metadata keys match required input
 names on the downstream workflow, they're mapped automatically — no explicit
@@ -664,7 +664,7 @@ When you save a workflow from the UI:
 
 1. **API receives** the YAML definition via `PUT /api/workflows/{kref}`
 2. **Kumiho revision** created with the definition in metadata
-3. **YAML written to disk** at `~/.construct/workflows/{slug}.r{N}.yaml`
+3. **YAML written to disk** at `~/.revka/workflows/{slug}.r{N}.yaml`
 4. **Kumiho artifact** registered pointing to the file: `file:///.../{slug}.r{N}.yaml`
 5. **Revision tagged** as `published` (after artifact is attached)
 6. **Cron jobs synced** if the workflow has cron triggers
@@ -784,7 +784,7 @@ Each prompt follows the dual-source pattern:
       entity_name: "qs-arc-${inputs.arc_name}"
       entity_kind: "qs-arc-plan"
       entity_tag: "ready"
-      entity_space: "Construct/WorkflowOutputs"
+      entity_space: "Revka/WorkflowOutputs"
       metadata_target: revision
       entity_metadata:
         part: "${resolve_cursor.output_data.part}"
@@ -847,7 +847,7 @@ Only retries on step failure. Completion and validation errors are not retried.
 checkpoint: true         # Default: true (set at workflow level)
 ```
 
-When enabled, the executor saves state to `~/.construct/workflow_checkpoints/{run_id}.json`
+When enabled, the executor saves state to `~/.revka/workflow_checkpoints/{run_id}.json`
 after each step completes and on workflow pause (human approval). Checkpoints
 support explicit user actions such as approval resume and failed-run retry.
 Operator startup does **not** automatically resume interrupted workflow runs:
@@ -1058,8 +1058,8 @@ steps:
 workflow_loader: 'my-workflow' not found in Kumiho
 ```
 
-Check: Is the YAML in `~/.construct/workflows/` or registered in Kumiho with an artifact?
-The operator checks disk first, then resolves via `kref://Construct/Workflows/my-workflow.workflow`.
+Check: Is the YAML in `~/.revka/workflows/` or registered in Kumiho with an artifact?
+The operator checks disk first, then resolves via `kref://Revka/Workflows/my-workflow.workflow`.
 
 ### Validation errors on load
 
@@ -1076,7 +1076,7 @@ harmless — they're filtered out by the loader.
 Check that:
 1. The `kind` in your resolve config matches the `entity_kind` in the producing output step
 2. The `tag` matches the `entity_tag`
-3. The entity was published to the expected space (default: `Construct/WorkflowOutputs`)
+3. The entity was published to the expected space (default: `Revka/WorkflowOutputs`)
 4. The producing workflow actually completed successfully
 
 ### Artifact not created (403 error)
@@ -1086,7 +1086,7 @@ Failed to create artifact: Revision not found or is published.
 ```
 
 This happens if the revision is tagged as `published` before the artifact is attached.
-Construct v2026.4.21+ fixes this by attaching artifacts before publishing.
+Revka v2026.4.21+ fixes this by attaching artifacts before publishing.
 
 ### Interpolation produces empty string
 

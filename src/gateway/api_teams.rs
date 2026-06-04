@@ -1,8 +1,8 @@
 //! REST API handlers for team management (`/api/teams`).
 //!
 //! Proxies to Kumiho FastAPI for persistent team storage.  Each team is a
-//! Kumiho bundle in the `Construct/Teams` space.  Team members are agents from
-//! `Construct/AgentPool` connected by directed edges (REPORTS_TO, SUPPORTS,
+//! Kumiho bundle in the `Revka/Teams` space.  Team members are agents from
+//! `Revka/AgentPool` connected by directed edges (REPORTS_TO, SUPPORTS,
 //! DEPENDS_ON) forming a DAG.
 
 use super::AppState;
@@ -82,7 +82,7 @@ fn team_project(state: &AppState) -> String {
     state.config.lock().kumiho.harness_project.clone()
 }
 
-/// Full space path for team bundles, e.g. "/Construct/Teams".
+/// Full space path for team bundles, e.g. "/Revka/Teams".
 fn team_space_path(state: &AppState) -> String {
     format!("/{}/{}", team_project(state), TEAM_SPACE_NAME)
 }
@@ -1199,7 +1199,7 @@ pub async fn handle_upload_team_avatar(
         Err(e) => return kumiho_err(e).into_response(),
     };
 
-    let project_segment = ascii_storage_segment(&team_project(&state), "construct");
+    let project_segment = ascii_storage_segment(&team_project(&state), "revka");
     let team_segment = ascii_storage_segment(&bundle.item_name, "team");
     let filename = format!("{}.{}", uuid::Uuid::new_v4(), kind.ext);
     let rel_path = PathBuf::from("artifacts")

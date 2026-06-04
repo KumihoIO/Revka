@@ -1,11 +1,11 @@
-# Construct Nucleo-F401RE firmware — JSON-over-serial peripheral.
+# Revka Nucleo-F401RE firmware — JSON-over-serial peripheral.
 #
 # Listens for newline-delimited JSON on USART2 (PA2/PA3, ST-Link VCP).
 # Protocol: same as Arduino/ESP32 — ping, capabilities, gpio_read, gpio_write.
 #
 # Build: cargo build --release
 # Flash: probe-rs run --chip STM32F401RETx target/thumbv7em-none-eabihf/release/nucleo
-# Or: construct peripheral flash-nucleo
+# Or: revka peripheral flash-nucleo
 
 [workspace]
 
@@ -14,7 +14,7 @@ name = "nucleo"
 version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
-description = "Construct Nucleo-F401RE peripheral firmware — GPIO over JSON serial"
+description = "Revka Nucleo-F401RE peripheral firmware — GPIO over JSON serial"
 
 [dependencies]
 embassy-executor = { version = "0.9", features = ["arch-cortex-m", "executor-thread", "defmt"] }

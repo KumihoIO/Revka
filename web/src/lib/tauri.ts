@@ -1,9 +1,9 @@
-// Tauri detection utilities for Construct Desktop.
+// Tauri detection utilities for Revka Desktop.
 
 declare global {
   interface Window {
     __TAURI__?: unknown;
-    __CONSTRUCT_GATEWAY__?: string;
+    __REVKA_GATEWAY__?: string;
   }
 }
 
@@ -12,4 +12,4 @@ export const isTauri = (): boolean => '__TAURI__' in window;
 
 /** Gateway base URL when running inside Tauri (defaults to localhost). */
 export const tauriGatewayUrl = (): string =>
-  window.__CONSTRUCT_GATEWAY__ ?? 'http://127.0.0.1:42617';
+  window.__REVKA_GATEWAY__ ?? 'http://127.0.0.1:42617';

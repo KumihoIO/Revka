@@ -12,7 +12,7 @@ RUN npm run build
 FROM rust:1.95-slim@sha256:81099830a1e1d244607b9a7a30f3ff6ecadc52134a933b4635faba24f52840c9 AS builder
 
 WORKDIR /app
-ARG CONSTRUCT_CARGO_FEATURES="channel-lark,whatsapp-web"
+ARG REVKA_CARGO_FEATURES="channel-lark,whatsapp-web"
 
 # Install build dependencies
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
@@ -38,11 +38,11 @@ RUN mkdir -p src benches apps/tauri/src \
     && echo "fn main() {}" > benches/agent_benchmarks.rs \
     && echo "fn main() {}" > apps/tauri/src/main.rs \
     && echo "fn main() {}" > apps/tauri/build.rs
-RUN --mount=type=cache,id=construct-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,id=construct-cargo-git,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,id=construct-target,target=/app/target,sharing=locked \
-    if [ -n "$CONSTRUCT_CARGO_FEATURES" ]; then \
-      cargo build --release --locked --features "$CONSTRUCT_CARGO_FEATURES"; \
+RUN --mount=type=cache,id=revka-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,id=revka-cargo-git,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,id=revka-target,target=/app/target,sharing=locked \
+    if [ -n "$REVKA_CARGO_FEATURES" ]; then \
+      cargo build --release --locked --features "$REVKA_CARGO_FEATURES"; \
     else \
       cargo build --release --locked; \
     fi
@@ -54,30 +54,30 @@ COPY benches/ benches/
 COPY --from=web-builder /web/dist web/dist
 COPY *.rs .
 RUN touch src/main.rs
-RUN --mount=type=cache,id=construct-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
-    --mount=type=cache,id=construct-cargo-git,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,id=construct-target,target=/app/target,sharing=locked \
-    rm -rf target/release/.fingerprint/kumiho-construct-* \
-           target/release/.fingerprint/construct-* \
-           target/release/deps/construct-* \
-           target/release/deps/kumihoio_construct-* \
-           target/release/incremental/construct-* \
-           target/release/incremental/kumihoio_construct-* && \
-    if [ -n "$CONSTRUCT_CARGO_FEATURES" ]; then \
-      cargo build --release --locked --features "$CONSTRUCT_CARGO_FEATURES"; \
+RUN --mount=type=cache,id=revka-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,id=revka-cargo-git,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,id=revka-target,target=/app/target,sharing=locked \
+    rm -rf target/release/.fingerprint/kumiho-revka-* \
+           target/release/.fingerprint/revka-* \
+           target/release/deps/revka-* \
+           target/release/deps/kumihoio_revka-* \
+           target/release/incremental/revka-* \
+           target/release/incremental/kumihoio_revka-* && \
+    if [ -n "$REVKA_CARGO_FEATURES" ]; then \
+      cargo build --release --locked --features "$REVKA_CARGO_FEATURES"; \
     else \
       cargo build --release --locked; \
     fi && \
-    cp target/release/construct /app/construct && \
-    strip /app/construct
-RUN size=$(stat -c%s /app/construct) && \
+    cp target/release/revka /app/revka && \
+    strip /app/revka
+RUN size=$(stat -c%s /app/revka) && \
     if [ "$size" -lt 1000000 ]; then echo "ERROR: binary too small (${size} bytes), likely dummy build artifact" && exit 1; fi
 
 # Prepare runtime directory structure and default config inline (no extra stage)
-RUN mkdir -p /construct-data/.construct /construct-data/workspace && \
+RUN mkdir -p /revka-data/.revka /revka-data/workspace && \
     printf '%s\n' \
-        'workspace_dir = "/construct-data/workspace"' \
-        'config_path = "/construct-data/.construct/config.toml"' \
+        'workspace_dir = "/revka-data/workspace"' \
+        'config_path = "/revka-data/.revka/config.toml"' \
         'api_key = ""' \
         'default_provider = "openrouter"' \
         'default_model = "anthropic/claude-sonnet-4-20250514"' \
@@ -92,8 +92,8 @@ RUN mkdir -p /construct-data/.construct /construct-data/workspace && \
         '[autonomy]' \
         'level = "supervised"' \
         'auto_approve = ["file_read", "file_write", "file_edit", "web_search_tool", "web_fetch", "calculator", "glob_search", "content_search", "image_info", "weather", "git_operations"]' \
-        > /construct-data/.construct/config.toml && \
-    chown -R 65534:65534 /construct-data
+        > /revka-data/.revka/config.toml && \
+    chown -R 65534:65534 /revka-data
 
 # ── Stage 2: Development Runtime (Debian) ────────────────────
 FROM debian:trixie-slim@sha256:f6e2cfac5cf956ea044b4bd75e6397b4372ad88fe00908045e9a0d21712ae3ba AS dev
@@ -104,57 +104,57 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /construct-data /construct-data
-COPY --from=builder /app/construct /usr/local/bin/construct
+COPY --from=builder /revka-data /revka-data
+COPY --from=builder /app/revka /usr/local/bin/revka
 
 # Overwrite minimal config with DEV template (Ollama defaults)
-COPY dev/config.template.toml /construct-data/.construct/config.toml
-RUN chown 65534:65534 /construct-data/.construct/config.toml
+COPY dev/config.template.toml /revka-data/.revka/config.toml
+RUN chown 65534:65534 /revka-data/.revka/config.toml
 
 # Environment setup
 # Ensure UTF-8 locale so CJK / multibyte input is handled correctly
 ENV LANG=C.UTF-8
 # Use consistent workspace path
-ENV CONSTRUCT_WORKSPACE=/construct-data/workspace
-ENV HOME=/construct-data
+ENV REVKA_WORKSPACE=/revka-data/workspace
+ENV HOME=/revka-data
 # Defaults for local dev (Ollama) - matches config.template.toml
 ENV PROVIDER="ollama"
-ENV CONSTRUCT_MODEL="llama3.2"
-ENV CONSTRUCT_GATEWAY_PORT=42617
+ENV REVKA_MODEL="llama3.2"
+ENV REVKA_GATEWAY_PORT=42617
 
 # Note: API_KEY is intentionally NOT set here to avoid confusion.
 # It is set in config.toml as the Ollama URL.
 
-WORKDIR /construct-data
+WORKDIR /revka-data
 USER 65534:65534
 EXPOSE 42617
 HEALTHCHECK --interval=60s --timeout=10s --retries=3 --start-period=10s \
-    CMD ["construct", "status", "--format=exit-code"]
-ENTRYPOINT ["construct"]
+    CMD ["revka", "status", "--format=exit-code"]
+ENTRYPOINT ["revka"]
 CMD ["daemon"]
 
 # ── Stage 3: Production Runtime (Distroless) ─────────────────
 FROM gcr.io/distroless/cc-debian13:nonroot@sha256:84fcd3c223b144b0cb6edc5ecc75641819842a9679a3a58fd6294bec47532bf7 AS release
 
-COPY --from=builder /app/construct /usr/local/bin/construct
-COPY --from=builder /construct-data /construct-data
+COPY --from=builder /app/revka /usr/local/bin/revka
+COPY --from=builder /revka-data /revka-data
 
 # Environment setup
 # Ensure UTF-8 locale so CJK / multibyte input is handled correctly
 ENV LANG=C.UTF-8
-ENV CONSTRUCT_WORKSPACE=/construct-data/workspace
-ENV HOME=/construct-data
+ENV REVKA_WORKSPACE=/revka-data/workspace
+ENV HOME=/revka-data
 # Default provider and model are set in config.toml, not here,
 # so config file edits are not silently overridden
 #ENV PROVIDER=
-ENV CONSTRUCT_GATEWAY_PORT=42617
+ENV REVKA_GATEWAY_PORT=42617
 
 # API_KEY must be provided at runtime!
 
-WORKDIR /construct-data
+WORKDIR /revka-data
 USER 65534:65534
 EXPOSE 42617
 HEALTHCHECK --interval=60s --timeout=10s --retries=3 --start-period=10s \
-    CMD ["construct", "status", "--format=exit-code"]
-ENTRYPOINT ["construct"]
+    CMD ["revka", "status", "--format=exit-code"]
+ENTRYPOINT ["revka"]
 CMD ["daemon"]

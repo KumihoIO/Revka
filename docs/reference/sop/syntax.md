@@ -64,7 +64,7 @@ Parser behavior:
 
 | Type | Fields | Notes |
 |---|---|---|
-| `manual` | none | Triggered by tool `sop_execute` (not a `construct sop run` CLI command). |
+| `manual` | none | Triggered by tool `sop_execute` (not a `revka sop run` CLI command). |
 | `webhook` | `path` | Exact match against request path (`/sop/...` or `/webhook`). |
 | `mqtt` | `topic`, optional `condition` | MQTT topic supports `+` and `#` wildcards. |
 | `cron` | `expression` | Supports 5, 6, or 7 fields (5-field gets seconds prepended internally). |
@@ -83,8 +83,8 @@ Parser behavior:
 Use:
 
 ```bash
-construct sop validate
-construct sop validate <name>
+revka sop validate
+revka sop validate <name>
 ```
 
 Validation warns on empty names/descriptions, missing triggers, missing steps, and step numbering gaps.

@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/assets/construct-banner.png" alt="Construct" width="600" />
+  <img src="docs/assets/revka-banner.png" alt="Revka" width="600" />
 </p>
 
-<h1 align="center">Construct</h1>
+<h1 align="center">Revka</h1>
 
 <p align="center">
   <strong>A memory-native agent runtime. Graph-backed orchestration, trust-scored agents, a full Web UI — and a complete record of everything your agents have ever done.</strong>
@@ -20,47 +20,47 @@
 
 ---
 
-## How Construct fits together
+## How Revka fits together
 
-Construct is **open source**. The persistent graph memory it depends on — Kumiho — is a managed service with open SDKs and an Enterprise self-host option. Three layers, plain language:
+Revka is **open source**. The persistent graph memory it depends on — Kumiho — is a managed service with open SDKs and an Enterprise self-host option. Three layers, plain language:
 
 | Layer | What it is | License |
 |---|---|---|
-| **Construct** (this repo) | Rust gateway + daemon + agent loop + channels + tools + peripherals + embedded React dashboard + Tauri desktop app + CLI + Operator Python MCP | MIT **or** Apache 2.0 — your choice |
-| **Kumiho SDKs** ([kumiho-SDKs](https://github.com/KumihoIO/kumiho-SDKs)) | Python clients: `kumiho` (the graph backend) and `kumiho-memory` (the AI cognitive memory layer Construct integrates with) | Open source |
+| **Revka** (this repo) | Rust gateway + daemon + agent loop + channels + tools + peripherals + embedded React dashboard + Tauri desktop app + CLI + Operator Python MCP | MIT **or** Apache 2.0 — your choice |
+| **Kumiho SDKs** ([kumiho-SDKs](https://github.com/KumihoIO/kumiho-SDKs)) | Python clients: `kumiho` (the graph backend) and `kumiho-memory` (the AI cognitive memory layer Revka integrates with) | Open source |
 | **Kumiho server** (control plane) | The version-controlled, schemaless, typed-edge graph engine — DreamState consolidation runs here, Neo4j is its store. Reached by clients over HTTP through the **kumiho-FastAPI BFF** at `api.kumiho.cloud`. | Managed service · Free 5k nodes → paid tiers from $40/mo · Self-host on Enterprise |
 
-LLM inference is **bring-your-own-provider**. We don't proxy or mark up tokens. You point Construct at Anthropic, OpenAI, OpenRouter, Ollama, GLM, or any of [14+ providers](docs/reference/api/providers-reference.md), and your keys stay yours.
+LLM inference is **bring-your-own-provider**. We don't proxy or mark up tokens. You point Revka at Anthropic, OpenAI, OpenRouter, Ollama, GLM, or any of [14+ providers](docs/reference/api/providers-reference.md), and your keys stay yours.
 
 **Operator** (the orchestration layer) needs a provider for its own LLM calls — supervisor decompose, map-reduce reduce, refinement critic, group-chat moderate. It defaults to an API key and also supports OAuth, configured under `[operator]`.
 
-**Agents that Operator spawns behave differently.** Each `agent` step invokes the **Claude Code** or **Codex CLI** as a subprocess — prompt piped over stdin to avoid `ARG_MAX` and shell-encoding issues — and the CLI's existing OAuth handles auth. Your Claude Pro / Codex CLI subscription becomes the spawned-agent runtime: no per-call API spend on the spawned agents themselves. Direct API keys still apply to one-shot `construct agent` calls and channel-routed conversations.
+**Agents that Operator spawns behave differently.** Each `agent` step invokes the **Claude Code** or **Codex CLI** as a subprocess — prompt piped over stdin to avoid `ARG_MAX` and shell-encoding issues — and the CLI's existing OAuth handles auth. Your Claude Pro / Codex CLI subscription becomes the spawned-agent runtime: no per-call API spend on the spawned agents themselves. Direct API keys still apply to one-shot `revka agent` calls and channel-routed conversations.
 
-Construct talks to Kumiho over HTTP via `[kumiho].api_url` in your config. Without a reachable Kumiho endpoint, Construct degrades to stateless single-agent operation — useful for demos and CI, but the cross-session memory, provenance edges, audit chain, and trust scoring all live in the graph. Pricing and self-host: [kumiho.io/pricing](https://kumiho.io/pricing).
+Revka talks to Kumiho over HTTP via `[kumiho].api_url` in your config. Without a reachable Kumiho endpoint, Revka degrades to stateless single-agent operation — useful for demos and CI, but the cross-session memory, provenance edges, audit chain, and trust scoring all live in the graph. Pricing and self-host: [kumiho.io/pricing](https://kumiho.io/pricing).
 
-> **Upstream.** Construct's core Rust runtime is a fork of [ZeroClaw](https://github.com/zeroclaw-labs/zeroclaw). The agent loop, provider/channel/tool architecture, hardware peripheral layer, and CLI scaffolding trace back to that upstream; full attribution in [`NOTICE`](NOTICE) and the consolidated overview at [`docs/upstream/zeroclaw-attribution.md`](docs/upstream/zeroclaw-attribution.md). "ZeroClaw" and the ZeroClaw logo are trademarks of ZeroClaw Labs; Construct is not affiliated with, endorsed by, or sponsored by ZeroClaw Labs.
+> **Upstream.** Revka's core Rust runtime is a fork of [ZeroClaw](https://github.com/zeroclaw-labs/zeroclaw). The agent loop, provider/channel/tool architecture, hardware peripheral layer, and CLI scaffolding trace back to that upstream; full attribution in [`NOTICE`](NOTICE) and the consolidated overview at [`docs/upstream/zeroclaw-attribution.md`](docs/upstream/zeroclaw-attribution.md). "ZeroClaw" and the ZeroClaw logo are trademarks of ZeroClaw Labs; Revka is not affiliated with, endorsed by, or sponsored by ZeroClaw Labs.
 
 ---
 
-## What is Construct?
+## What is Revka?
 
-Construct is a Rust-native AI agent runtime with persistent cognitive memory, multi-agent orchestration, and a shared skill/template marketplace. Every agent session, plan, skill, and trust score lives in a graph — if it happened, it's queryable. Built on Kumiho's graph-native memory system, Construct treats memory not as a feature but as the substrate every agent wakes up in.
+Revka is a Rust-native AI agent runtime with persistent cognitive memory, multi-agent orchestration, and a shared skill/template marketplace. Every agent session, plan, skill, and trust score lives in a graph — if it happened, it's queryable. Built on Kumiho's graph-native memory system, Revka treats memory not as a feature but as the substrate every agent wakes up in.
 
 At the core: a **Rust gateway** (Axum) serves a **React/TypeScript Web Dashboard**, a Python **Operator** drives multi-agent orchestration, and **Kumiho** (graph-native, Neo4j-backed) holds all persistent state. Define declarative YAML workflows, watch agents execute them in real time via a DAG-based live view, trace every tool call and output, and see trust scores evolve across runs — all from a browser.
 
 No hidden state. No forgotten runs. The only thing the system asks of you is that you notice.
 
-<!-- TODO screenshot: Construct dashboard at http://127.0.0.1:42617 showing live runtime posture — active sessions, channels, audit chain, cost metrics, and recent workflow runs -->
-![Construct dashboard at localhost:42617 showing live runtime posture — active sessions, channels, audit chain, cost metrics, and recent workflow runs](docs/assets/dashboard/readme-01-dashboard-hero.png)
+<!-- TODO screenshot: Revka dashboard at http://127.0.0.1:42617 showing live runtime posture — active sessions, channels, audit chain, cost metrics, and recent workflow runs -->
+![Revka dashboard at localhost:42617 showing live runtime posture — active sessions, channels, audit chain, cost metrics, and recent workflow runs](docs/assets/dashboard/readme-01-dashboard-hero.png)
 
 ---
 
 ## Free tier, Studio trial, and referrals
 
-Kumiho is the persistent backend; Construct is its reference runtime. Trying the whole stack costs nothing to start.
+Kumiho is the persistent backend; Revka is its reference runtime. Trying the whole stack costs nothing to start.
 
-- **Free tier — 5,000 nodes** (5× the previous limit, bumped for Construct GA). Matching ingest and retrieval limits. Real evaluation territory for solo use, not a demo cap.
-- **30-day Studio trial** — unlocks the moment Construct stores its first memory, no credit card. 500,000 nodes, cross-session recall, audit visibility. Whatever you build during the trial, you **keep** when you revert to free; we don't claw back data.
+- **Free tier — 5,000 nodes** (5× the previous limit, bumped for Revka GA). Matching ingest and retrieval limits. Real evaluation territory for solo use, not a demo cap.
+- **30-day Studio trial** — unlocks the moment Revka stores its first memory, no credit card. 500,000 nodes, cross-session recall, audit visibility. Whatever you build during the trial, you **keep** when you revert to free; we don't claw back data.
 - **Referrals** — each successful referral earns you another 30 days of Studio, stackable up to 3 (90 days). Beyond the cap, additional referrals convert to account credit. Friend signs up via your link and ingests their first memory; you both win.
 - **Inactivity** — accounts unused for 90 days move to **cold storage**, never deleted. Log back in and the graph re-indexes within minutes. The product promise is *we don't forget*; that includes your account.
 - **Self-host** — available on Enterprise (closed-source license). Email <enterprise@kumiho.io> or see [kumiho.io/pricing](https://kumiho.io/pricing).
@@ -73,7 +73,7 @@ Full tier matrix and per-feature limits at [kumiho.io/pricing](https://kumiho.io
 
 The embedded web frontend (`http://127.0.0.1:42617`) is a single pane over every layer of the stack — 18 app routes built with React, TypeScript, Tailwind CSS, and Vite, then baked into the Rust binary at compile time via `rust-embed`. The primary sidebar exposes 17 of them; `Workflow Runs` (`/runs`) is a routed page reached contextually from workflow and dashboard links rather than the sidebar itself. One binary. One entry point. The whole signal.
 
-The dashboard's primary navigation is organized into three sidebar sections (Orchestration, Operations, Inspection — see `web/src/construct/components/layout/construct-navigation.ts`).
+The dashboard's primary navigation is organized into three sidebar sections (Orchestration, Operations, Inspection — see `web/src/revka/components/layout/revka-navigation.ts`).
 
 ### Core Views — Orchestration
 
@@ -127,7 +127,7 @@ When a workflow runs, you watch the signal propagate:
 
 The **Operator** isn't only available through workflows — every page in the dashboard exposes a one-click chat dropdown from the header. Drop it down, ask a question, get an answer streamed back from the same Operator that drives your workflows. The chat tab and a terminal tab live side-by-side, so you can switch between asking and inspecting without leaving the page you're on.
 
-![Construct dashboard with the Operator chat dropdown open over the Workflows view, showing a streaming reply alongside the chat / terminal tabs](docs/assets/dashboard/readme-06-operator-chat.png)
+![Revka dashboard with the Operator chat dropdown open over the Workflows view, showing a streaming reply alongside the chat / terminal tabs](docs/assets/dashboard/readme-06-operator-chat.png)
 
 Backed by the same `/ws/chat` endpoint listed below, with auto-focus on open and per-route session memory so context carries across navigation.
 
@@ -145,12 +145,12 @@ Backed by the same `/ws/chat` endpoint listed below, with auto-focus on open and
 
 ## The Operator (Workflow Orchestration)
 
-The **Operator** is Construct's hand on the controls — a Python MCP server that drives declarative YAML workflows through 20 step types and several advanced orchestration patterns. Agents run inside the Construct; the Operator sees the whole board.
+The **Operator** is Revka's hand on the controls — a Python MCP server that drives declarative YAML workflows through 20 step types and several advanced orchestration patterns. Agents run inside the Revka; the Operator sees the whole board.
 
-Workflows are stored as YAML artifacts attached to Kumiho revisions — every save creates a new revision, giving you full history, version-to-version diffs, and promotion tagging (e.g., `published`) without an external version control system. The on-disk YAMLs under `~/.construct/workflows/` use a two-tier layout: the base file (`name.yaml`) is your editable working copy, discovered by the filesystem scan, while each save freezes a snapshot as `name.r{N}.yaml` bound to revision N as an immutable artifact via `file://` URI. The `.r{N}` files are skipped by directory scans and reachable only through kref resolution — so running an older revision is just `kref://...#rN` → Kumiho looks up the artifact URI → loader reads that exact frozen YAML from disk. The revision graph is the source of truth; the disk layout is just where the artifact bytes happen to live. Multi-agent patterns like `supervisor`, `group_chat`, `map_reduce`, `handoff`, and `human_approval` are first-class step types, so a multi-agent pipeline reads end-to-end in one file without a Python interpreter in the loop. See [WORKFLOWS.md](WORKFLOWS.md) for the full DSL reference.
+Workflows are stored as YAML artifacts attached to Kumiho revisions — every save creates a new revision, giving you full history, version-to-version diffs, and promotion tagging (e.g., `published`) without an external version control system. The on-disk YAMLs under `~/.revka/workflows/` use a two-tier layout: the base file (`name.yaml`) is your editable working copy, discovered by the filesystem scan, while each save freezes a snapshot as `name.r{N}.yaml` bound to revision N as an immutable artifact via `file://` URI. The `.r{N}` files are skipped by directory scans and reachable only through kref resolution — so running an older revision is just `kref://...#rN` → Kumiho looks up the artifact URI → loader reads that exact frozen YAML from disk. The revision graph is the source of truth; the disk layout is just where the artifact bytes happen to live. Multi-agent patterns like `supervisor`, `group_chat`, `map_reduce`, `handoff`, and `human_approval` are first-class step types, so a multi-agent pipeline reads end-to-end in one file without a Python interpreter in the loop. See [WORKFLOWS.md](WORKFLOWS.md) for the full DSL reference.
 
 <!-- TODO screenshot: embedded dashboard served by the Rust gateway, showing the current app shell and live operational surface -->
-![Construct dashboard gateway landing page showing the embedded web dashboard served by the local gateway](docs/assets/dashboard-dev-01-gateway-landing.png)
+![Revka dashboard gateway landing page showing the embedded web dashboard served by the local gateway](docs/assets/dashboard-dev-01-gateway-landing.png)
 
 ### Step Types
 
@@ -158,13 +158,13 @@ Canonical types from `StepType` in `operator-mcp/operator_mcp/workflow/schema.py
 
 | Step Type | Description |
 |-----------|-------------|
-| `agent` | Spawn a Construct coding agent (claude/codex) with prompt, role, model, tools, timeout |
+| `agent` | Spawn a Revka coding agent (claude/codex) with prompt, role, model, tools, timeout |
 | `shell` | Execute shell commands with timeout and failure handling |
 | `python` | Run a Python script or inline Python with JSON I/O |
 | `email` | Send outbound email via SMTP with optional click tracking and dry-run |
 | `conditional` | Branch based on expressions over prior step outputs |
 | `parallel` | Run sub-steps concurrently with join strategies (ALL, ANY, MAJORITY) |
-| `goto` | Loop construct with `max_iterations` guard |
+| `goto` | Loop revka with `max_iterations` guard |
 | `human_approval` | Pause for yes/no human confirmation (timeout configurable) |
 | `human_input` | Pause for freeform human response via dashboard/Slack/Discord |
 | `notify` | Push a fire-and-forget notification to one or more channels |
@@ -190,7 +190,7 @@ agent:
   output_fields: [verdict, production_ready]
 ```
 
-When `output_fields` is set, Construct appends final-output instructions to the
+When `output_fields` is set, Revka appends final-output instructions to the
 agent prompt, parses full JSON objects, final fenced `json` blocks, or
 `FINAL_OUTPUT:` YAML blocks, then fails the step with `structured_output_missing`
 if any declared field is absent. Downstream steps can route on fields such as
@@ -230,11 +230,11 @@ ${run_id}                — Workflow run ID
 
 - **Dependency ordering** — `depends_on` with topological sort and circular dependency detection
 - **Retry** — per-step retry (0-5) with configurable delay
-- **Checkpointing** — auto-save to `~/.construct/workflow_checkpoints/` for crash recovery and resume
+- **Checkpointing** — auto-save to `~/.revka/workflow_checkpoints/` for crash recovery and resume
 - **Dry run** — validate syntax and dependencies without execution
 - **Condition evaluation** — expression-based branching over step results
 - **Per-step timeout** — default 300s, configurable per step
-- **RunLog JSONL** — per-agent persistent audit trail at `~/.construct/operator_mcp/runlogs/`
+- **RunLog JSONL** — per-agent persistent audit trail at `~/.revka/operator_mcp/runlogs/`
 
 ### Reactive Graph — Tag-Triggered Workflows
 
@@ -255,7 +255,7 @@ This turns the graph into a reactive substrate: revising or tagging a Kumiho ite
 
 ## Agent Pool & Templates
 
-Reusable agent definitions stored in `~/.construct/operator_mcp/agent_pool.json` and synced to Kumiho under `Construct/AgentPool/`.
+Reusable agent definitions stored in `~/.revka/operator_mcp/agent_pool.json` and synced to Kumiho under `Revka/AgentPool/`.
 
 ### Template Fields
 
@@ -286,7 +286,7 @@ Reusable agent definitions stored in `~/.construct/operator_mcp/agent_pool.json`
 
 ## Trust & Reputation System
 
-Every agent execution is scored. Reputation is not assumed — it's earned, recorded, and queryable in Kumiho under `Construct/AgentTrust/`.
+Every agent execution is scored. Reputation is not assumed — it's earned, recorded, and queryable in Kumiho under `Revka/AgentTrust/`.
 
 <!-- TODO screenshot: AgentTrust view in the dashboard showing per-agent trust score, total runs, recent outcome chips (success/partial/failed), and template attribution -->
 ![AgentTrust view: per-agent trust score, total runs, recent outcomes, and template attribution](docs/assets/dashboard/readme-04-trust-scoring.png)
@@ -306,11 +306,11 @@ Trust scores inform the Supervisor pattern's agent selection — higher-trust ag
 
 ## A2A Protocol Support
 
-Construct implements the [Google Agent-to-Agent (A2A) protocol](https://google.github.io/A2A/) for interoperability with external agent systems.
+Revka implements the [Google Agent-to-Agent (A2A) protocol](https://google.github.io/A2A/) for interoperability with external agent systems.
 
 - **Discovery** — HTTP GET to `/.well-known/agent-card.json` returns agent capabilities, skills, and identity
 - **Task lifecycle** — JSON-RPC 2.0: `message/send` (create), `tasks/get` (poll), `tasks/cancel`
-- **Registry** — unified search across local Construct templates and external A2A agents
+- **Registry** — unified search across local Revka templates and external A2A agents
 - **Retry** — up to 2 retries with exponential backoff
 - **Workflow integration** — `type: a2a` workflow steps with explicit agent URL, message, and timeout
 
@@ -320,22 +320,22 @@ Construct implements the [Google Agent-to-Agent (A2A) protocol](https://google.g
 
 Kumiho is the sole persistent backend. Everything the system knows lives here, as graph-native items with full versioning, provenance tracking, and edge relationships. If it happened, there is a trace.
 
-<!-- TODO screenshot: Memory graph explorer at /memory — force-directed visualization of nodes, revisions, and provenance edges across Construct namespaces (AgentPool, Plans, Sessions, AgentTrust, etc.) -->
-![Kumiho memory graph explorer: force-directed visualization of nodes, revisions, and provenance edges across Construct namespaces](docs/assets/dashboard/readme-05-memory-graph.png)
+<!-- TODO screenshot: Memory graph explorer at /memory — force-directed visualization of nodes, revisions, and provenance edges across Revka namespaces (AgentPool, Plans, Sessions, AgentTrust, etc.) -->
+![Kumiho memory graph explorer: force-directed visualization of nodes, revisions, and provenance edges across Revka namespaces](docs/assets/dashboard/readme-05-memory-graph.png)
 
-The namespaces below are Operator/Construct **conventions** — normal Kumiho spaces under `space_prefix = "Construct"` (set in `config.toml`) and, for skills, under `KUMIHO_MEMORY_PROJECT` (default `CognitiveMemory`). They are not schema-enforced typed namespaces.
+The namespaces below are Operator/Revka **conventions** — normal Kumiho spaces under `space_prefix = "Revka"` (set in `config.toml`) and, for skills, under `KUMIHO_MEMORY_PROJECT` (default `CognitiveMemory`). They are not schema-enforced typed namespaces.
 
 | Namespace | Purpose |
 |-----------|---------|
-| `Construct/AgentPool/` | Agent templates (role, capabilities, model preferences) |
-| `Construct/Plans/` | Execution plans with steps, dependencies, and status |
-| `Construct/Sessions/` | Session summaries, handoff notes, cross-session continuity |
-| `Construct/Goals/` | Strategic, tactical, and task-level goal tracking |
-| `Construct/AgentTrust/` | Trust scores and interaction history |
-| `Construct/ClawHub/` | Published templates, skills, and team configurations |
-| `Construct/Teams/` | Team bundles (agent composition) |
-| `Construct/WorkflowRuns/` | Operator workflow run records and run history |
-| `Construct/Outcomes/` | Per-agent outcome records used by trust scoring |
+| `Revka/AgentPool/` | Agent templates (role, capabilities, model preferences) |
+| `Revka/Plans/` | Execution plans with steps, dependencies, and status |
+| `Revka/Sessions/` | Session summaries, handoff notes, cross-session continuity |
+| `Revka/Goals/` | Strategic, tactical, and task-level goal tracking |
+| `Revka/AgentTrust/` | Trust scores and interaction history |
+| `Revka/ClawHub/` | Published templates, skills, and team configurations |
+| `Revka/Teams/` | Team bundles (agent composition) |
+| `Revka/WorkflowRuns/` | Operator workflow run records and run history |
+| `Revka/Outcomes/` | Per-agent outcome records used by trust scoring |
 | `CognitiveMemory/Skills/` | Shared skill library accessible to all agents |
 
 For the integration patterns — engage/reflect, capture types, provenance edges, space organisation, skill discovery — see [`docs/contributing/kumiho-memory-integration.md`](docs/contributing/kumiho-memory-integration.md).
@@ -368,10 +368,10 @@ For the integration patterns — engage/reflect, capture types, provenance edges
 - **Runtime Sandboxing** (`src/runtime/`, `src/security/`) — native, Docker, and WASM runtimes; Seatbelt/Landlock/Firejail/Bubblewrap sandbox wrappers; Nevis secrets, domain matching, prompt guard
 - **Tunnels** (`src/tunnel/`) — Cloudflare, ngrok, Pinggy, Tailscale, OpenVPN, and custom tunnel providers to expose the gateway
 - **MCP Server** (`src/mcp_server/`) — in-process MCP server with session registry, progress wrapping, and skills-as-tools
-- **ACP Server** — JSON-RPC 2.0 over stdio for IDE integration (`construct acp`)
+- **ACP Server** — JSON-RPC 2.0 over stdio for IDE integration (`revka acp`)
 - **WASM Plugins** (`src/plugins/`, `--features plugins-wasm`) — load signed WASM tools and channels at runtime
 - **Onboard Wizard** (`src/onboard/`) — interactive and quick-mode first-run configuration
-- **OS Service Management** (`src/service/`) — launchd/systemd/OpenRC install for `construct daemon`
+- **OS Service Management** (`src/service/`) — launchd/systemd/OpenRC install for `revka daemon`
 - **Update Pipeline** (`src/commands/update.rs`) — 6-phase update with preflight, backup, validate, swap, smoke test, and auto-rollback
 - **Internationalization** (`src/i18n.rs`) — runtime locale; supported docs locales: `en`, `ko`, `vi`, `zh-CN`
 
@@ -379,9 +379,9 @@ For the integration patterns — engage/reflect, capture types, provenance edges
 
 ## Hardware & Peripherals
 
-Construct runs as a single Rust binary on x86_64 and arm64 Linux (including Raspberry Pi 3/4/5), macOS, and Windows — the release profile is tuned for low-memory targets (`codegen-units = 1`, `opt-level = "z"`, `panic = "abort"`). Full features — persistent memory, multi-agent workflows, the embedded dashboard — require an out-of-process Kumiho memory service and Python 3.11+ for the Operator MCP; without them, Construct degrades gracefully to a stateless single-agent runtime.
+Revka runs as a single Rust binary on x86_64 and arm64 Linux (including Raspberry Pi 3/4/5), macOS, and Windows — the release profile is tuned for low-memory targets (`codegen-units = 1`, `opt-level = "z"`, `panic = "abort"`). Full features — persistent memory, multi-agent workflows, the embedded dashboard — require an out-of-process Kumiho memory service and Python 3.11+ for the Operator MCP; without them, Revka degrades gracefully to a stateless single-agent runtime.
 
-Embedded boards are supported as **peripherals driven over serial/USB from a Construct host**, not as standalone Construct runtimes. Running the full daemon on bare microcontrollers is an explicit non-goal — the host does the thinking, the board does the I/O.
+Embedded boards are supported as **peripherals driven over serial/USB from a Revka host**, not as standalone Revka runtimes. Running the full daemon on bare microcontrollers is an explicit non-goal — the host does the thinking, the board does the I/O.
 
 | Surface | What's there |
 |---------|--------------|
@@ -441,8 +441,8 @@ The gateway exposes 90+ REST endpoints and 5 WebSocket routes grouped by domain.
 ### One-command install (auto-handles Rust, sidecars, onboard)
 
 ```bash
-git clone https://github.com/KumihoIO/construct-os
-cd construct-os
+git clone https://github.com/KumihoIO/Revka
+cd Revka
 
 ./install.sh          # macOS / Linux / WSL
 # or
@@ -451,16 +451,16 @@ cd construct-os
 
 > **PowerShell note.** PowerShell does not run scripts from the current directory unless you prefix with `.\`. If you see *"setup.bat is not recognized as a name of a cmdlet"*, use `.\setup.bat`. From `cmd.exe`, plain `setup.bat` works.
 
-The installer auto-installs Rust via rustup if missing, builds `construct`, installs the Kumiho + Operator Python MCP sidecars under `~/.construct/`, runs `construct onboard` for interactive provider + API-key setup, and opens the dashboard at `http://127.0.0.1:42617`.
+The installer auto-installs Rust via rustup if missing, builds `revka`, installs the Kumiho + Operator Python MCP sidecars under `~/.revka/`, runs `revka onboard` for interactive provider + API-key setup, and opens the dashboard at `http://127.0.0.1:42617`.
 
 Once installed:
 
 ```bash
-construct gateway                  # start the HTTP gateway + dashboard
-construct agent -m "Hello"         # one-shot message
-construct status                   # health check
-construct doctor                   # diagnose config / sidecar / channel issues
-construct daemon                   # long-running autonomous runtime (service-managed)
+revka gateway                  # start the HTTP gateway + dashboard
+revka agent -m "Hello"         # one-shot message
+revka status                   # health check
+revka doctor                   # diagnose config / sidecar / channel issues
+revka daemon                   # long-running autonomous runtime (service-managed)
 ```
 
 ### From source (developers)
@@ -468,8 +468,8 @@ construct daemon                   # long-running autonomous runtime (service-ma
 ```bash
 cargo build --release --locked
 ./scripts/install-sidecars.sh      # or scripts\install-sidecars.bat on Windows
-./target/release/construct onboard
-./target/release/construct gateway
+./target/release/revka onboard
+./target/release/revka gateway
 ```
 
 Add `--features channel-matrix,channel-lark,browser-native,hardware,rag-pdf,observability-otel` for the full build; see `Cargo.toml` for the full feature matrix.
@@ -479,19 +479,19 @@ Add `--features channel-matrix,channel-lark,browser-native,hardware,rag-pdf,obse
 - **Rust stable (1.87+)** — `install.sh` / `setup.bat` will install it via rustup if missing.
 - **Python 3.11+** — required for the Kumiho and Operator Python MCP sidecars.
 - **Node.js 20+** — optional, only needed to rebuild the embedded React dashboard from source (`cd web && npm install && npx vite build`). The dashboard is re-embedded into the Rust binary at compile time via `rust-embed`.
-- **Kumiho endpoint** — an HTTP endpoint discoverable via `[kumiho].api_url` in `~/.construct/config.toml`. Default points at the **kumiho-FastAPI BFF** (`https://api.kumiho.cloud`) that fronts the managed control plane; free tier is 5,000 nodes, sign up at [kumiho.io](https://kumiho.io). Self-host is available on Enterprise. Without a reachable Kumiho endpoint Construct runs statelessly. See [docs/setup-guides/kumiho-operator-setup.md](docs/setup-guides/kumiho-operator-setup.md).
+- **Kumiho endpoint** — an HTTP endpoint discoverable via `[kumiho].api_url` in `~/.revka/config.toml`. Default points at the **kumiho-FastAPI BFF** (`https://api.kumiho.cloud`) that fronts the managed control plane; free tier is 5,000 nodes, sign up at [kumiho.io](https://kumiho.io). Self-host is available on Enterprise. Without a reachable Kumiho endpoint Revka runs statelessly. See [docs/setup-guides/kumiho-operator-setup.md](docs/setup-guides/kumiho-operator-setup.md).
 - **Disk / RAM** — source build needs ~6 GB free disk and ~2 GB free RAM; prebuilt binary is ~200 MB.
 
 > **Sidecar re-install.** To re-run sidecar install independently of the main bootstrap:
 >
-> - `construct install --sidecars-only` — cross-platform; embedded in the `construct` binary, runs the right script for your OS. Use this once you have `construct` on PATH.
+> - `revka install --sidecars-only` — cross-platform; embedded in the `revka` binary, runs the right script for your OS. Use this once you have `revka` on PATH.
 > - `./scripts/install-sidecars.sh` / `scripts\install-sidecars.bat` — same logic, straight from a source checkout.
 >
 > Both paths are idempotent — they never overwrite an existing `config.toml`, `.env`, or user-authored launcher.
 
 ### CLI Commands
 
-Top-level `construct` subcommands (from `src/main.rs`). Full reference: [docs/reference/cli/commands-reference.md](docs/reference/cli/commands-reference.md).
+Top-level `revka` subcommands (from `src/main.rs`). Full reference: [docs/reference/cli/commands-reference.md](docs/reference/cli/commands-reference.md).
 
 | Command | Description |
 |---------|-------------|
@@ -538,7 +538,7 @@ See [docs/setup-guides/dashboard-dev.md](docs/setup-guides/dashboard-dev.md) for
 
 ## Configuration
 
-Construct uses TOML configuration at `~/.construct/config.toml`:
+Revka uses TOML configuration at `~/.revka/config.toml`:
 
 ```toml
 default_provider = "anthropic"
@@ -546,13 +546,13 @@ api_key = "sk-ant-..."
 
 [kumiho]
 enabled = true
-mcp_path = "~/.construct/kumiho/run_kumiho_mcp.py"
-space_prefix = "Construct"
+mcp_path = "~/.revka/kumiho/run_kumiho_mcp.py"
+space_prefix = "Revka"
 api_url = "https://api.kumiho.cloud"      # or your self-hosted URL on Enterprise
 
 [operator]
 enabled = true
-mcp_path = "~/.construct/operator_mcp/run_operator_mcp.py"
+mcp_path = "~/.revka/operator_mcp/run_operator_mcp.py"
 ```
 
 See [`docs/reference/api/config-reference.md`](docs/reference/api/config-reference.md) for the full reference covering providers, channels, tools, security, and gateway settings.
@@ -567,7 +567,7 @@ See [`docs/reference/api/config-reference.md`](docs/reference/api/config-referen
 | Web Dashboard | React 19, TypeScript, Tailwind CSS 4, Vite 6, ReactFlow + react-force-graph-2d |
 | Memory Backend | Kumiho — graph-native, schemaless, version-controlled, typed-edge graph (control plane fronted by kumiho-FastAPI BFF; managed service or Enterprise self-host); Python SDKs at [github.com/KumihoIO/kumiho-SDKs](https://github.com/KumihoIO/kumiho-SDKs) — `kumiho` (graph) + `kumiho-memory` (AI cognitive memory) |
 | Local Storage | SQLite via `rusqlite` for cron store, pairing, heartbeat, channel sessions, WhatsApp cache (not for primary memory) |
-| Desktop App | Tauri 2 companion under `apps/tauri` (system-tray / menu-bar) launched via `construct desktop` |
+| Desktop App | Tauri 2 companion under `apps/tauri` (system-tray / menu-bar) launched via `revka desktop` |
 | Real-time | WebSocket (`/ws/chat`, `/ws/canvas/{id}`, `/ws/nodes`, `/ws/terminal`, `/ws/mcp/events`), SSE (`/api/events`, `/api/daemon/logs`) |
 | Protocol | A2A (Google Agent-to-Agent, JSON-RPC 2.0), ACP (JSON-RPC 2.0 over stdio), MCP (server + clients) |
 | Observability | OpenTelemetry, Prometheus `/metrics`, DORA metrics, runtime tracing |
@@ -594,18 +594,18 @@ See [`docs/reference/api/config-reference.md`](docs/reference/api/config-referen
 ## Related projects
 
 - **Kumiho** — graph memory backend. SDKs at [github.com/KumihoIO/kumiho-SDKs](https://github.com/KumihoIO/kumiho-SDKs); pricing and self-host at [kumiho.io/pricing](https://kumiho.io/pricing).
-- **ZeroClaw** — upstream Rust agent runtime that Construct's core forks from. [github.com/zeroclaw-labs/zeroclaw](https://github.com/zeroclaw-labs/zeroclaw).
-- **OpenClaw** — separate TypeScript agent platform; Construct can import its data via `construct migrate`. [github.com/openclaw/openclaw](https://github.com/openclaw/openclaw).
+- **ZeroClaw** — upstream Rust agent runtime that Revka's core forks from. [github.com/zeroclaw-labs/zeroclaw](https://github.com/zeroclaw-labs/zeroclaw).
+- **OpenClaw** — separate TypeScript agent platform; Revka can import its data via `revka migrate`. [github.com/openclaw/openclaw](https://github.com/openclaw/openclaw).
 
 ## License
 
-**Construct** (this repository) is dual-licensed at your option under:
+**Revka** (this repository) is dual-licensed at your option under:
 
 - [MIT](LICENSE-MIT)
 - [Apache License 2.0](LICENSE-APACHE)
 
 Both licenses preserve the upstream `Copyright (c) 2025 ZeroClaw Labs` per fork-attribution requirements; see [`NOTICE`](NOTICE) and [`docs/upstream/zeroclaw-attribution.md`](docs/upstream/zeroclaw-attribution.md).
 
-The **Kumiho server** (the control plane where Construct's memory ultimately lives) is *not* covered by these licenses. It is reached over HTTP through the **kumiho-FastAPI BFF** at `api.kumiho.cloud`, and is offered as a managed service; the Kumiho **SDKs** are open source at [github.com/KumihoIO/kumiho-SDKs](https://github.com/KumihoIO/kumiho-SDKs). Self-hosting the Kumiho server is available on Enterprise (closed-source license) — see [kumiho.io/pricing](https://kumiho.io/pricing).
+The **Kumiho server** (the control plane where Revka's memory ultimately lives) is *not* covered by these licenses. It is reached over HTTP through the **kumiho-FastAPI BFF** at `api.kumiho.cloud`, and is offered as a managed service; the Kumiho **SDKs** are open source at [github.com/KumihoIO/kumiho-SDKs](https://github.com/KumihoIO/kumiho-SDKs). Self-hosting the Kumiho server is available on Enterprise (closed-source license) — see [kumiho.io/pricing](https://kumiho.io/pricing).
 
 Contributions to this repository are accepted under the dual license model; the Apache 2.0 patent grant protects all contributors. See [`docs/contributing/cla.md`](docs/contributing/cla.md).

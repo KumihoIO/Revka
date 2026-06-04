@@ -1,6 +1,6 @@
-# Construct Operator MCP
+# Revka Operator MCP
 
-The orchestration brain of Construct. A Python MCP server that manages agent
+The orchestration brain of Revka. A Python MCP server that manages agent
 lifecycles, executes declarative YAML workflows, and coordinates multi-agent
 patterns (refinement, map-reduce, supervisor, group-chat, handoff).
 
@@ -41,15 +41,15 @@ make build-ts
 make dev-install
 ```
 
-`make install` deploys everything to `~/.construct/operator_mcp/`:
+`make install` deploys everything to `~/.revka/operator_mcp/`:
 
 | Component | Install path | Purpose |
 |-----------|-------------|---------|
-| Python operator | `~/.construct/operator_mcp/*.py` | MCP server + tool handlers |
-| Session manager | `~/.construct/operator_mcp/session-manager/` | Agent process manager, WS event relay |
-| Skills | `~/.construct/skills/` | Orchestration skill definitions |
-| Bootstrap | `~/.construct/operator_mcp/run_operator_mcp.py` | Dep installer + MCP launcher |
-| requirements.txt | `~/.construct/operator_mcp/requirements.txt` | Python deps (copied by bootstrap) |
+| Python operator | `~/.revka/operator_mcp/*.py` | MCP server + tool handlers |
+| Session manager | `~/.revka/operator_mcp/session-manager/` | Agent process manager, WS event relay |
+| Skills | `~/.revka/skills/` | Orchestration skill definitions |
+| Bootstrap | `~/.revka/operator_mcp/run_operator_mcp.py` | Dep installer + MCP launcher |
+| requirements.txt | `~/.revka/operator_mcp/requirements.txt` | Python deps (copied by bootstrap) |
 
 ## Runtime Architecture
 
@@ -87,7 +87,7 @@ via direct subprocess and no events reach the WebSocket. The UI's live workflow
 DAG overlay depends on the sidecar relaying `agent.started`, `agent.tool_use`,
 `agent.completed` etc. events.
 
-**requirements.txt must be present at `~/.construct/operator_mcp/requirements.txt`.**
+**requirements.txt must be present at `~/.revka/operator_mcp/requirements.txt`.**
 The bootstrap script (`run_operator_mcp.py`) installs deps on first launch.
 Missing requirements = operator crashes on startup = 0 operator tools available
 to the agent.
@@ -97,11 +97,11 @@ to the agent.
 See [WORKFLOWS.md](../WORKFLOWS.md) for the full workflow authoring guide.
 
 Quick reference:
-- Workflow definitions: `~/.construct/workflows/*.yaml` (user), `operator/workflow/builtins/` (shipped)
+- Workflow definitions: `~/.revka/workflows/*.yaml` (user), `operator/workflow/builtins/` (shipped)
 - Executor: `operator/workflow/executor.py` — runs steps in topological order
 - Validator: `operator/workflow/validator.py` — 6-pass validation before execution
 - Loader: `operator/workflow/loader.py` — discovers YAML from builtin > user > project > Kumiho
-- Memory: `operator/workflow/memory.py` — persists runs to Kumiho `/Construct/WorkflowRuns`
+- Memory: `operator/workflow/memory.py` — persists runs to Kumiho `/Revka/WorkflowRuns`
 
 ## Development
 
@@ -113,5 +113,5 @@ make typecheck
 make clean
 
 # Run operator directly (for debugging)
-cd ~/.construct/operator_mcp && python3 run_operator_mcp.py
+cd ~/.revka/operator_mcp && python3 run_operator_mcp.py
 ```

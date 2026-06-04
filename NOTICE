@@ -1,4 +1,4 @@
-Construct
+Revka
 Copyright 2026 Kumiho Inc.
 
 This product includes software developed by Kumiho Inc.
@@ -7,10 +7,10 @@ This product includes software developed by Kumiho Inc.
 Official Repository
 ===================
 
-The canonical Construct repository is:
-https://github.com/KumihoIO/construct-os
+The canonical Revka repository is:
+https://github.com/KumihoIO/Revka
 
-Any other repository claiming to be the official Construct is not
+Any other repository claiming to be the official Revka is not
 affiliated with Kumiho Inc. unless explicitly noted in
 docs/maintainers/trademark.md.
 
@@ -28,23 +28,23 @@ See docs/contributing/cla.md for the contributor license agreement.
 Upstream Heritage
 =================
 
-Construct's core Rust runtime is a fork of ZeroClaw
+Revka's core Rust runtime is a fork of ZeroClaw
 (https://github.com/zeroclaw-labs/zeroclaw). The Rust agent loop, the
 provider / channel / tool trait architecture, the hardware peripheral
 layer, the CLI scaffolding, and the audit primitives all trace to that
 upstream work.
 
-Construct extends the runtime with the Kumiho graph-native memory
+Revka extends the runtime with the Kumiho graph-native memory
 substrate, the Operator Python MCP workflow engine, the embedded React
 dashboard, trust scoring, A2A interoperability, the ClawHub marketplace,
 multi-node distribution, Canvas, cost governance, cron scheduling, and
 device pairing.
 
-Gratitude to the ZeroClaw authors whose work made Construct possible.
+Gratitude to the ZeroClaw authors whose work made Revka possible.
 
-Construct also supports importing data from OpenClaw
+Revka also supports importing data from OpenClaw
 (https://github.com/openclaw/openclaw), a separate TypeScript agent
-platform, via the `construct migrate` command and the AIEOS / OpenClaw
+platform, via the `revka migrate` command and the AIEOS / OpenClaw
 identity format.
 
 Upstream Attribution Notices
@@ -63,20 +63,20 @@ Version 2.0:
   ----------------------------------------------------------------------
 
 "ZeroClaw" and the ZeroClaw logo are trademarks of ZeroClaw Labs.
-Construct is not affiliated with, endorsed by, or sponsored by
+Revka is not affiliated with, endorsed by, or sponsored by
 ZeroClaw Labs. References to ZeroClaw in this codebase identify the
-upstream project from which Construct's Rust runtime is derived.
+upstream project from which Revka's Rust runtime is derived.
 
 Modifications from Upstream
 ===========================
 
 In compliance with Section 4(b) of the Apache License, Version 2.0,
-this notice records that Construct is a modified derivative of the
+this notice records that Revka is a modified derivative of the
 ZeroClaw upstream Work. Modified files carry a record of changes
-through the Construct project's git history at
-https://github.com/KumihoIO/construct-os.
+through the Revka project's git history at
+https://github.com/KumihoIO/Revka.
 
-A high-level summary of Construct-specific additions and changes is
+A high-level summary of Revka-specific additions and changes is
 maintained at docs/upstream/zeroclaw-attribution.md.
 
 Contributors
@@ -84,7 +84,7 @@ Contributors
 
 This NOTICE file is maintained by repository automation.
 For the latest contributor list, see the repository contributors page:
-https://github.com/KumihoIO/construct-os/graphs/contributors
+https://github.com/KumihoIO/Revka/graphs/contributors
 
 All contributors retain copyright ownership of their contributions.
 Contributions are permanently attributed in the repository commit history.

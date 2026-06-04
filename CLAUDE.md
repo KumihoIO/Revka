@@ -1,4 +1,4 @@
-# CLAUDE.md — Construct (Claude Code)
+# CLAUDE.md — Revka (Claude Code)
 
 > **Shared instructions live in [`AGENTS.md`](./AGENTS.md).**
 > This file contains only Claude Code-specific directives.

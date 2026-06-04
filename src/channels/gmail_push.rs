@@ -525,7 +525,7 @@ impl Channel for GmailPushChannel {
             return Err(anyhow!("Gmail OAuth token is not configured for sending"));
         }
 
-        let subject = message.subject.as_deref().unwrap_or("Construct Message");
+        let subject = message.subject.as_deref().unwrap_or("Revka Message");
         // Sanitize headers to prevent CRLF injection attacks.
         let safe_recipient = sanitize_header_value(&message.recipient);
         let safe_subject = sanitize_header_value(subject);

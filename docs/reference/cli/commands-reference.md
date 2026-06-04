@@ -1,11 +1,11 @@
-# Construct Commands Reference
+# Revka Commands Reference
 
-This reference is derived from the current CLI surface (`construct --help`).
+This reference is derived from the current CLI surface (`revka --help`).
 
 Last verified: **May 8, 2026**.
 
-The `construct` binary also embeds the React/TypeScript web dashboard served by
-`construct gateway` / `construct daemon` at `http://127.0.0.1:42617`. Most
+The `revka` binary also embeds the React/TypeScript web dashboard served by
+`revka gateway` / `revka daemon` at `http://127.0.0.1:42617`. Most
 operational surface is available in both CLI and dashboard; this document
 covers the CLI surface only.
 
@@ -33,7 +33,7 @@ covers the CLI surface only.
 | `auth` | Manage provider subscription authentication profiles (OAuth, token-based) |
 | `memory` | Manage agent memory entries (list, get, stats, clear) |
 | `config` | Export machine-readable config schema |
-| `install` | Install Construct sidecars and related components |
+| `install` | Install Revka sidecars and related components |
 | `update` | Check for and apply updates (6-phase pipeline with rollback) |
 | `self-test` | Run diagnostic self-tests to verify the installation |
 | `completions` | Generate shell completion scripts to stdout |
@@ -46,13 +46,13 @@ covers the CLI surface only.
 
 ### `onboard`
 
-- `construct onboard`
-- `construct onboard --channels-only`
-- `construct onboard --force`
-- `construct onboard --reinit`
-- `construct onboard --api-key <KEY> --provider <ID> --memory <kumiho|none>`
-- `construct onboard --api-key <KEY> --provider <ID> --model <MODEL_ID> --memory <kumiho|none>`
-- `construct onboard --api-key <KEY> --provider <ID> --model <MODEL_ID> --memory <kumiho|none> --force`
+- `revka onboard`
+- `revka onboard --channels-only`
+- `revka onboard --force`
+- `revka onboard --reinit`
+- `revka onboard --api-key <KEY> --provider <ID> --memory <kumiho|none>`
+- `revka onboard --api-key <KEY> --provider <ID> --model <MODEL_ID> --memory <kumiho|none>`
+- `revka onboard --api-key <KEY> --provider <ID> --model <MODEL_ID> --memory <kumiho|none> --force`
 
 `onboard` safety behavior:
 
@@ -60,15 +60,15 @@ covers the CLI surface only.
   - Full onboarding (overwrite `config.toml`)
   - Provider-only update (update provider/model/API key while preserving existing channels, tunnel, memory, hooks, and other settings)
 - In non-interactive environments, existing `config.toml` causes a safe refusal unless `--force` is passed.
-- Use `construct onboard --channels-only` when you only need to rotate channel tokens/allowlists.
-- Use `construct onboard --reinit` to start fresh. This backs up your existing config directory with a timestamp suffix and creates a new configuration from scratch.
+- Use `revka onboard --channels-only` when you only need to rotate channel tokens/allowlists.
+- Use `revka onboard --reinit` to start fresh. This backs up your existing config directory with a timestamp suffix and creates a new configuration from scratch.
 
 ### `agent`
 
-- `construct agent`
-- `construct agent -m "Hello"`
-- `construct agent --provider <ID> --model <MODEL> --temperature <0.0-2.0>`
-- `construct agent --peripheral <board:path>`
+- `revka agent`
+- `revka agent -m "Hello"`
+- `revka agent --provider <ID> --model <MODEL> --temperature <0.0-2.0>`
+- `revka agent --peripheral <board:path>`
 
 Tip:
 
@@ -76,9 +76,9 @@ Tip:
 
 ### `acp`
 
-- `construct acp`
-- `construct acp --max-sessions <N>`
-- `construct acp --session-timeout <SECONDS>`
+- `revka acp`
+- `revka acp --max-sessions <N>`
+- `revka acp --session-timeout <SECONDS>`
 
 Start the ACP (Agent Control Protocol) server for IDE and tool integration.
 
@@ -90,10 +90,10 @@ Start the ACP (Agent Control Protocol) server for IDE and tool integration.
 
 ### `gateway` / `daemon`
 
-- `construct gateway` / `construct gateway start [--host <HOST>] [--port <PORT>]`
-- `construct gateway restart [--host <HOST>] [--port <PORT>]`
-- `construct gateway get-paircode [--new]`
-- `construct daemon [--host <HOST>] [--port <PORT>]`
+- `revka gateway` / `revka gateway start [--host <HOST>] [--port <PORT>]`
+- `revka gateway restart [--host <HOST>] [--port <PORT>]`
+- `revka gateway get-paircode [--new]`
+- `revka daemon [--host <HOST>] [--port <PORT>]`
 
 Notes:
 
@@ -104,23 +104,23 @@ Notes:
   `{"type":"steer","content":"..."}` while a turn is active, and
   `{"type":"stop"}` to cancel the active turn.
 - `daemon` runs gateway + all configured channels + heartbeat + cron scheduler
-  together. Use `construct service install` + `construct service start` to keep
+  together. Use `revka service install` + `revka service start` to keep
   it resident on boot.
-- Pairing: `construct gateway get-paircode` prints the current device pair code
+- Pairing: `revka gateway get-paircode` prints the current device pair code
   (or `--new` to rotate).
 
 ### `estop`
 
-- `construct estop` (engage `kill-all`)
-- `construct estop --level network-kill`
-- `construct estop --level domain-block --domain "*.chase.com" [--domain "*.paypal.com"]`
-- `construct estop --level tool-freeze --tool shell [--tool browser]`
-- `construct estop status`
-- `construct estop resume`
-- `construct estop resume --network`
-- `construct estop resume --domain "*.chase.com"`
-- `construct estop resume --tool shell`
-- `construct estop resume --otp <123456>`
+- `revka estop` (engage `kill-all`)
+- `revka estop --level network-kill`
+- `revka estop --level domain-block --domain "*.chase.com" [--domain "*.paypal.com"]`
+- `revka estop --level tool-freeze --tool shell [--tool browser]`
+- `revka estop status`
+- `revka estop resume`
+- `revka estop resume --network`
+- `revka estop resume --domain "*.chase.com"`
+- `revka estop resume --tool shell`
+- `revka estop resume --otp <123456>`
 
 Notes:
 
@@ -130,25 +130,25 @@ Notes:
 
 ### `service`
 
-- `construct service install`
-- `construct service start`
-- `construct service stop`
-- `construct service restart`
-- `construct service status`
-- `construct service logs [-n <LINES>] [--follow]`
-- `construct service uninstall`
+- `revka service install`
+- `revka service start`
+- `revka service stop`
+- `revka service restart`
+- `revka service status`
+- `revka service logs [-n <LINES>] [--follow]`
+- `revka service uninstall`
 
 ### `cron`
 
-- `construct cron list`
-- `construct cron add <expr> [--tz <IANA_TZ>] <command>`
-- `construct cron add-at <rfc3339_timestamp> <command>`
-- `construct cron add-every <every_ms> <command>`
-- `construct cron once <delay> <command>`
-- `construct cron remove <id>`
-- `construct cron pause <id>`
-- `construct cron resume <id>`
-- `construct cron update <id> [--expression <EXPR>] [--tz <IANA_TZ>] [--command <CMD>]`
+- `revka cron list`
+- `revka cron add <expr> [--tz <IANA_TZ>] <command>`
+- `revka cron add-at <rfc3339_timestamp> <command>`
+- `revka cron add-every <every_ms> <command>`
+- `revka cron once <delay> <command>`
+- `revka cron remove <id>`
+- `revka cron pause <id>`
+- `revka cron resume <id>`
+- `revka cron update <id> [--expression <EXPR>] [--tz <IANA_TZ>] [--command <CMD>]`
 
 Notes:
 
@@ -159,38 +159,38 @@ Notes:
 
 ### `models`
 
-- `construct models refresh`
-- `construct models refresh --provider <ID>`
-- `construct models refresh --all`
-- `construct models refresh --force`
-- `construct models list [--provider <ID>]`
-- `construct models set <MODEL_ID>`
-- `construct models status`
+- `revka models refresh`
+- `revka models refresh --provider <ID>`
+- `revka models refresh --all`
+- `revka models refresh --force`
+- `revka models list [--provider <ID>]`
+- `revka models set <MODEL_ID>`
+- `revka models status`
 
 `models refresh` currently supports live catalog refresh for provider IDs: `openrouter`, `openai`, `anthropic`, `groq`, `mistral`, `deepseek`, `xai`, `together-ai`, `gemini`, `ollama`, `llamacpp`, `sglang`, `vllm`, `astrai`, `venice`, `fireworks`, `cohere`, `moonshot`, `glm`, `zai`, `qwen`, and `nvidia`.
 
 - `models list` prints the currently cached model catalog for the resolved provider.
-- `models set` writes `default_model` to `~/.construct/config.toml`.
+- `models set` writes `default_model` to `~/.revka/config.toml`.
 - `models status` prints the active model configuration and cache freshness.
 
 ### `doctor`
 
-- `construct doctor`
-- `construct doctor models [--provider <ID>] [--use-cache]`
-- `construct doctor traces [--limit <N>] [--event <TYPE>] [--contains <TEXT>]`
-- `construct doctor traces --id <TRACE_ID>`
+- `revka doctor`
+- `revka doctor models [--provider <ID>] [--use-cache]`
+- `revka doctor traces [--limit <N>] [--event <TYPE>] [--contains <TEXT>]`
+- `revka doctor traces --id <TRACE_ID>`
 
 `doctor traces` reads runtime tool/model diagnostics from `observability.runtime_trace_path`.
 
 ### `channel`
 
-- `construct channel list`
-- `construct channel start`
-- `construct channel doctor`
-- `construct channel bind-telegram <IDENTITY>`
-- `construct channel add <type> <json>`
-- `construct channel remove <name>`
-- `construct channel send <message> --channel-id <NAME> --recipient <TARGET>`
+- `revka channel list`
+- `revka channel start`
+- `revka channel doctor`
+- `revka channel bind-telegram <IDENTITY>`
+- `revka channel add <type> <json>`
+- `revka channel remove <name>`
+- `revka channel send <message> --channel-id <NAME> --recipient <TARGET>`
 
 Runtime in-chat commands (Telegram/Discord while channel server is running):
 
@@ -211,15 +211,15 @@ Channel runtime also watches `config.toml` and hot-applies updates to:
 
 ### `integrations`
 
-- `construct integrations info <name>`
+- `revka integrations info <name>`
 
 ### `skills`
 
-- `construct skills list`
-- `construct skills audit <source_or_name>`
-- `construct skills install <source>`
-- `construct skills remove <name>`
-- `construct skills test [<name>] [--verbose]`
+- `revka skills list`
+- `revka skills audit <source_or_name>`
+- `revka skills install <source>`
+- `revka skills remove <name>`
+- `revka skills test [<name>] [--verbose]`
 
 `<source>` accepts git remotes (`https://...`, `http://...`, `ssh://...`, and `git@host:owner/repo.git`) or a local filesystem path.
 
@@ -235,30 +235,30 @@ Skill manifests (`SKILL.toml`) support `prompts` and `[[tools]]`; both are injec
 
 ### `workflows`
 
-- `construct workflows list`
-- `construct workflows sync [--force]`
+- `revka workflows list`
+- `revka workflows sync [--force]`
 
 `sync` seeds the bundled workflow YAMLs into the active workspace under
 `operator_mcp/workflow/builtins/`.
 
 ### `migrate`
 
-- `construct migrate openclaw [--source <path>] [--dry-run]`
+- `revka migrate openclaw [--source <path>] [--dry-run]`
 
 ### `auth`
 
 Manage provider subscription authentication profiles (OAuth for `openai-codex`,
 `gemini`, Anthropic subscription setup tokens, etc.).
 
-- `construct auth login --provider <openai-codex|gemini> [--profile <name>] [--device-code] [--import <PATH>]`
-- `construct auth paste-redirect --provider openai-codex [--profile <name>] [--input <URL_OR_CODE>]`
-- `construct auth paste-token --provider anthropic [--profile <name>] [--token <VALUE>] [--auth-kind <authorization|api-key>]`
-- `construct auth setup-token --provider anthropic [--profile <name>]` (interactive alias of `paste-token`)
-- `construct auth refresh --provider openai-codex [--profile <name>]`
-- `construct auth use --provider <ID> --profile <name>`
-- `construct auth logout --provider <ID> [--profile <name>]`
-- `construct auth list`
-- `construct auth status`
+- `revka auth login --provider <openai-codex|gemini> [--profile <name>] [--device-code] [--import <PATH>]`
+- `revka auth paste-redirect --provider openai-codex [--profile <name>] [--input <URL_OR_CODE>]`
+- `revka auth paste-token --provider anthropic [--profile <name>] [--token <VALUE>] [--auth-kind <authorization|api-key>]`
+- `revka auth setup-token --provider anthropic [--profile <name>]` (interactive alias of `paste-token`)
+- `revka auth refresh --provider openai-codex [--profile <name>]`
+- `revka auth use --provider <ID> --profile <name>`
+- `revka auth logout --provider <ID> [--profile <name>]`
+- `revka auth list`
+- `revka auth status`
 
 Notes:
 
@@ -272,10 +272,10 @@ Notes:
 
 Inspect and manage agent memory entries.
 
-- `construct memory stats`
-- `construct memory list [--category <name>] [--session <id>] [--limit <N>] [--offset <N>]`
-- `construct memory get <KEY>`
-- `construct memory clear [--key <KEY>] [--category <CATEGORY>] [--yes]`
+- `revka memory stats`
+- `revka memory list [--category <name>] [--session <id>] [--limit <N>] [--offset <N>]`
+- `revka memory get <KEY>`
+- `revka memory clear [--key <KEY>] [--category <CATEGORY>] [--yes]`
 
 Notes:
 
@@ -288,18 +288,18 @@ Notes:
 
 ### `config`
 
-- `construct config schema`
+- `revka config schema`
 
 `config schema` prints a JSON Schema (draft 2020-12) for the full `config.toml` contract to stdout.
 
 ### `install`
 
-- `construct install --sidecars-only`
-- `construct install --sidecars-only --skip-kumiho --skip-operator`
-- `construct install --sidecars-only --dry-run`
-- `construct install --sidecars-only --with-session-manager`
-- `construct install --sidecars-only --python <PYTHON>`
-- `construct install --sidecars-only --from-source <REPO_PATH>`
+- `revka install --sidecars-only`
+- `revka install --sidecars-only --skip-kumiho --skip-operator`
+- `revka install --sidecars-only --dry-run`
+- `revka install --sidecars-only --with-session-manager`
+- `revka install --sidecars-only --python <PYTHON>`
+- `revka install --sidecars-only --from-source <REPO_PATH>`
 
 Notes:
 
@@ -310,64 +310,64 @@ Notes:
 
 ### `completions`
 
-- `construct completions bash`
-- `construct completions fish`
-- `construct completions zsh`
-- `construct completions powershell`
-- `construct completions elvish`
+- `revka completions bash`
+- `revka completions fish`
+- `revka completions zsh`
+- `revka completions powershell`
+- `revka completions elvish`
 
 `completions` is stdout-only by design so scripts can be sourced directly without log/warning contamination.
 
 ### `hardware`
 
-- `construct hardware discover`
-- `construct hardware introspect <path>`
-- `construct hardware info [--chip <chip_name>]`
+- `revka hardware discover`
+- `revka hardware introspect <path>`
+- `revka hardware info [--chip <chip_name>]`
 
 ### `peripheral`
 
-- `construct peripheral list`
-- `construct peripheral add <board> <path>`
-- `construct peripheral flash [--port <serial_port>]`
-- `construct peripheral setup-uno-q [--host <ip_or_host>]`
-- `construct peripheral flash-nucleo`
+- `revka peripheral list`
+- `revka peripheral add <board> <path>`
+- `revka peripheral flash [--port <serial_port>]`
+- `revka peripheral setup-uno-q [--host <ip_or_host>]`
+- `revka peripheral flash-nucleo`
 
 ### `update`
 
-- `construct update` — download and install the latest release
-- `construct update --check` — only check for updates, do not install
-- `construct update --force` — install without confirmation prompt
-- `construct update --version <X.Y.Z>` — install a specific version
+- `revka update` — download and install the latest release
+- `revka update --check` — only check for updates, do not install
+- `revka update --force` — install without confirmation prompt
+- `revka update --version <X.Y.Z>` — install a specific version
 
 The updater runs a 6-phase pipeline: preflight, download, backup, validate,
 swap, and smoke test. Automatic rollback on failure.
 
 ### `self-test`
 
-- `construct self-test` — run the full suite (includes network: gateway health, memory round-trip)
-- `construct self-test --quick` — skip network checks for offline validation
+- `revka self-test` — run the full suite (includes network: gateway health, memory round-trip)
+- `revka self-test --quick` — skip network checks for offline validation
 
 ### `desktop`
 
-- `construct desktop` — launch the Construct companion desktop app (Tauri shell
+- `revka desktop` — launch the Revka companion desktop app (Tauri shell
   that points at the local gateway at `http://127.0.0.1:42617/_app/`)
-- `construct desktop --install` — download and install the pre-built companion
+- `revka desktop --install` — download and install the pre-built companion
   app for your platform
 
 ### `plugin`
 
 Only available when built with the `plugins-wasm` Cargo feature.
 
-- `construct plugin list`
-- `construct plugin install <source>` (directory or URL)
-- `construct plugin remove <name>`
-- `construct plugin info <name>`
+- `revka plugin list`
+- `revka plugin install <source>` (directory or URL)
+- `revka plugin remove <name>`
+- `revka plugin info <name>`
 
 ## Validation Tip
 
 To verify docs against your current binary quickly:
 
 ```bash
-construct --help
-construct <command> --help
+revka --help
+revka <command> --help
 ```

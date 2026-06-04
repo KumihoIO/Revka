@@ -171,7 +171,7 @@ class TestKumihoPersistence:
         finding = AgentFinding(agent_id="a1", title="Coder", status="completed")
         result = await ctx.persist_finding(finding)
         assert result is True
-        from operator_mcp.construct_config import harness_project
+        from operator_mcp.revka_config import harness_project
         mock_sdk.ensure_space.assert_awaited_once_with(harness_project(), "Workflows")
         mock_sdk.create_item.assert_awaited_once()
         mock_sdk.create_revision.assert_awaited_once()

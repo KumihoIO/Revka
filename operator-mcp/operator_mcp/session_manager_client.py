@@ -26,8 +26,8 @@ _TIMEOUT_STATUS = 5      # get_agent, list_agents, health
 _TIMEOUT_MUTATE = 15     # create_agent, send_query, interrupt, close
 _TIMEOUT_DEFAULT = 30    # fallback
 
-SOCKET_PATH = os.path.expanduser("~/.construct/operator_mcp/session-manager.sock")
-SIDECAR_DIR = os.path.expanduser("~/.construct/operator_mcp/session-manager")
+SOCKET_PATH = os.path.expanduser("~/.revka/operator_mcp/session-manager.sock")
+SIDECAR_DIR = os.path.expanduser("~/.revka/operator_mcp/session-manager")
 
 
 class SessionManagerClient:
@@ -57,7 +57,7 @@ class SessionManagerClient:
         if self._persistent is None or self._persistent.is_closed:
             self._persistent = httpx.AsyncClient(
                 transport=self._transport(),
-                base_url="http://construct-session-manager",
+                base_url="http://revka-session-manager",
                 timeout=30,
             )
         return self._persistent
@@ -145,7 +145,7 @@ class SessionManagerClient:
             # PIPE buffers are only 64 KB on macOS — if nobody drains them
             # the Node process deadlocks once the buffer fills (e.g. when
             # the Claude Agent SDK streams stderr from Claude Code).
-            log_dir = os.path.expanduser("~/.construct/logs")
+            log_dir = os.path.expanduser("~/.revka/logs")
             os.makedirs(log_dir, exist_ok=True)
             self._sm_stdout = open(os.path.join(log_dir, "session-manager.stdout.log"), "a")
             self._sm_stderr = open(os.path.join(log_dir, "session-manager.stderr.log"), "a")
@@ -395,7 +395,7 @@ class SessionManagerClient:
         try:
             stream_client = httpx.AsyncClient(
                 transport=self._transport(),
-                base_url="http://construct-session-manager",
+                base_url="http://revka-session-manager",
                 timeout=None,
             )
             async with stream_client:
@@ -425,7 +425,7 @@ class SessionManagerClient:
         try:
             stream_client = httpx.AsyncClient(
                 transport=self._transport(),
-                base_url="http://construct-session-manager",
+                base_url="http://revka-session-manager",
                 timeout=None,
             )
             async with stream_client:

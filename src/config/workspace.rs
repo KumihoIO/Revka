@@ -2,7 +2,7 @@
 //!
 //! Each workspace represents an isolated client engagement with its own
 //! memory namespace, audit trail, secrets scope, and tool restrictions.
-//! Profiles are stored under `~/.construct/workspaces/<client_name>/`.
+//! Profiles are stored under `~/.revka/workspaces/<client_name>/`.
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};

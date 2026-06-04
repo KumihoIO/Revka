@@ -24,7 +24,7 @@ class SessionJournal:
 
     def __init__(self, journal_path: str | None = None) -> None:
         self.path = journal_path or os.path.expanduser(
-            "~/.construct/operator_mcp/session_journal.jsonl"
+            "~/.revka/operator_mcp/session_journal.jsonl"
         )
         os.makedirs(os.path.dirname(self.path), exist_ok=True)
         self._session_id = str(uuid.uuid4())[:12]

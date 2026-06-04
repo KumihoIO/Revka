@@ -85,7 +85,7 @@ Drop(handle)
 
 **File:** `src/hardware/aardvark.rs`
 
-The rest of Construct speaks a single language: `ZcCommand` → `ZcResponse`.
+The rest of Revka speaks a single language: `ZcCommand` → `ZcResponse`.
 `AardvarkTransport` translates between that protocol and the aardvark-sys calls above.
 
 **Algorithm:**
@@ -174,7 +174,7 @@ GpioAardvarkTool.call(args)
 DatasheetTool.call(args)
   → action = args["action"]: "search" | "download" | "list" | "read"
   → "search":   return a Google/vendor search URL for the device
-  → "download": fetch PDF from args["url"] → save to ~/.construct/hardware/datasheets/
+  → "download": fetch PDF from args["url"] → save to ~/.revka/hardware/datasheets/
   → "list":     scan the datasheets directory → return filenames
   → "read":     open a saved PDF and return its text
 ```
@@ -263,7 +263,7 @@ Aardvark tools are appended.
 ## Full Flow Diagram
 
 ```
- SDK FILES          aardvark-sys            Construct core
+ SDK FILES          aardvark-sys            Revka core
  (vendor/)          (crates/)               (src/)
 ─────────────────────────────────────────────────────────────────
 

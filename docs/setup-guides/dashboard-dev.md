@@ -1,19 +1,19 @@
 # Dashboard Development
 
-Construct's dashboard is a React + TypeScript + Tailwind + Vite app in
+Revka's dashboard is a React + TypeScript + Tailwind + Vite app in
 [`web/`](../../web). The gateway and frontend are now developed independently
 by default:
 
 - `cargo build` is Rust-only and does not run `npm ci` or `npm run build`
 - Vite serves the frontend during local UI work
 - release binaries can still embed `web/dist/` as a dashboard fallback
-- the gateway can serve a filesystem build via `CONSTRUCT_WEB_ROOT` or
+- the gateway can serve a filesystem build via `REVKA_WEB_ROOT` or
   `gateway.web_root`
 
 The landing entry point lives at [`web/src/pages/Landing.tsx`](../../web/src/pages/Landing.tsx).
-Operational pages live under [`web/src/construct/pages/`](../../web/src/construct/pages/),
+Operational pages live under [`web/src/revka/pages/`](../../web/src/revka/pages/),
 with shell/layout/navigation under
-[`web/src/construct/components/layout/`](../../web/src/construct/components/layout/).
+[`web/src/revka/components/layout/`](../../web/src/revka/components/layout/).
 Routing is defined in [`web/src/App.tsx`](../../web/src/App.tsx).
 
 ## Local Rust Development
@@ -62,7 +62,7 @@ Vite proxies these gateway surfaces to `http://127.0.0.1:42617` by default:
 - `/health`
 - `/admin`
 
-Set `CONSTRUCT_GATEWAY_URL=http://host:port` before `npm run dev` if your
+Set `REVKA_GATEWAY_URL=http://host:port` before `npm run dev` if your
 gateway runs elsewhere.
 
 ## Filesystem Dashboard Build
@@ -76,7 +76,7 @@ npm ci
 npm run build
 
 cd ..
-$env:CONSTRUCT_WEB_ROOT = "$PWD/web/dist"
+$env:REVKA_WEB_ROOT = "$PWD/web/dist"
 cargo run -- gateway start
 ```
 
@@ -84,12 +84,12 @@ Equivalent config:
 
 ```toml
 [gateway]
-web_root = "/absolute/path/to/construct/web/dist"
+web_root = "/absolute/path/to/revka/web/dist"
 ```
 
 Resolution order for dashboard assets:
 
-1. `CONSTRUCT_WEB_ROOT`, when set and non-empty
+1. `REVKA_WEB_ROOT`, when set and non-empty
 2. `gateway.web_root`, when set
 3. embedded `web/dist` via `rust-embed`
 4. dashboard unavailable response
@@ -116,7 +116,7 @@ cargo build --release --locked
 old cargo-triggered flow, set:
 
 ```powershell
-$env:CONSTRUCT_BUILD_WEB = "1"
+$env:REVKA_BUILD_WEB = "1"
 cargo build
 ```
 
@@ -143,14 +143,14 @@ The practical loop is:
 
 If you are changing navigation, the main ownership points are:
 
-- [`web/src/construct/components/layout/Layout.tsx`](../../web/src/construct/components/layout/Layout.tsx): shell frame, content offset, mobile drawer state
-- [`web/src/construct/components/layout/Sidebar.tsx`](../../web/src/construct/components/layout/Sidebar.tsx): sidebar UI and nav rendering
-- [`web/src/construct/components/layout/Header.tsx`](../../web/src/construct/components/layout/Header.tsx): top bar actions and current-surface context
-- [`web/src/construct/components/layout/construct-navigation.ts`](../../web/src/construct/components/layout/construct-navigation.ts): canonical nav sections and route metadata
-- [`web/src/construct/pages/Dashboard.tsx`](../../web/src/construct/pages/Dashboard.tsx): dashboard workspace and skin hero surface
-- [`web/src/construct/pages/Skins.tsx`](../../web/src/construct/pages/Skins.tsx): skin ZIP import, preview, activation, and deletion
+- [`web/src/revka/components/layout/Layout.tsx`](../../web/src/revka/components/layout/Layout.tsx): shell frame, content offset, mobile drawer state
+- [`web/src/revka/components/layout/Sidebar.tsx`](../../web/src/revka/components/layout/Sidebar.tsx): sidebar UI and nav rendering
+- [`web/src/revka/components/layout/Header.tsx`](../../web/src/revka/components/layout/Header.tsx): top bar actions and current-surface context
+- [`web/src/revka/components/layout/revka-navigation.ts`](../../web/src/revka/components/layout/revka-navigation.ts): canonical nav sections and route metadata
+- [`web/src/revka/pages/Dashboard.tsx`](../../web/src/revka/pages/Dashboard.tsx): dashboard workspace and skin hero surface
+- [`web/src/revka/pages/Skins.tsx`](../../web/src/revka/pages/Skins.tsx): skin ZIP import, preview, activation, and deletion
 - [`web/src/index.css`](../../web/src/index.css): global frontend chrome
-- [`web/src/construct/styles/theme.css`](../../web/src/construct/styles/theme.css): Construct shell/theme tokens
+- [`web/src/revka/styles/theme.css`](../../web/src/revka/styles/theme.css): Revka shell/theme tokens
 
 Route declarations live in [`web/src/App.tsx`](../../web/src/App.tsx). The
 legacy `/memory-auditor` URL redirects to `/memory`.

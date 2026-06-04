@@ -4,11 +4,11 @@
 //! contract, covering: identity semantics, threading, default methods,
 //! capability declarations, cross-channel parity, and edge cases.
 //!
-//! This matrix ensures Construct channels are fully tested to maintain
+//! This matrix ensures Revka channels are fully tested to maintain
 //! competitive feature parity across all supported platforms.
 
 use async_trait::async_trait;
-use construct::channels::traits::{Channel, ChannelMessage, SendMessage};
+use revka::channels::traits::{Channel, ChannelMessage, SendMessage};
 use std::sync::{Arc, Mutex};
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -737,7 +737,7 @@ fn make_platform_message(platform: &str) -> ChannelMessage {
         "irc" => ChannelMessage {
             id: "irc_1".into(),
             sender: "coolnick".into(),
-            reply_target: "#construct".into(),
+            reply_target: "#revka".into(),
             content: "hi".into(),
             channel: "irc".into(),
             timestamp: 1700000000,

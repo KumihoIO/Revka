@@ -63,7 +63,7 @@ pub fn should_skip_autosave_content(content: &str) -> bool {
 
 /// Factory: create the right memory backend from config.
 ///
-/// Persistent memory in Construct is handled exclusively by Kumiho MCP (injected
+/// Persistent memory in Revka is handled exclusively by Kumiho MCP (injected
 /// at the agent level). The runtime `Memory` trait binding is therefore always
 /// `NoneMemory` — in-session, non-persistent. Any non-Kumiho backend name is
 /// rejected with an error directing users to Kumiho.
@@ -99,7 +99,7 @@ pub fn create_memory_with_storage_and_routes(
         MemoryBackendKind::Kumiho | MemoryBackendKind::None => Ok(Box::new(NoneMemory::new())),
         MemoryBackendKind::Unknown => {
             anyhow::bail!(
-                "Memory backend '{backend_name}' is not supported in Construct. \
+                "Memory backend '{backend_name}' is not supported in Revka. \
                  Use 'kumiho' (default) for persistent memory via Kumiho MCP, or 'none' \
                  to disable persistence."
             )
@@ -197,7 +197,7 @@ mod tests {
             };
             assert!(
                 create_memory(&cfg, tmp.path(), None).is_err(),
-                "backend '{name}' must be rejected in Construct"
+                "backend '{name}' must be rejected in Revka"
             );
         }
     }

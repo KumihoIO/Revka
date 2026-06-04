@@ -31,7 +31,7 @@
   --color-status-warning: #ffaa00;
   --color-status-error: #ff4466;
   --color-status-info: #0080ff;
-  /* Backgrounds (Construct matrix — aligned with tokens.css dark bridge) */
+  /* Backgrounds (Revka matrix — aligned with tokens.css dark bridge) */
   --pc-bg-base: #05080a;
   --pc-bg-surface: #0c1413;
   --pc-bg-elevated: #111a18;
@@ -49,7 +49,7 @@
   --pc-text-muted: #73877e;
   --pc-text-faint: #53645d;
 
-  /* Accent (construct matrix green) */
+  /* Accent (revka matrix green) */
   --pc-accent: #7dff9b;
   --pc-accent-light: #b8ffca;
   --pc-accent-dim: rgba(125, 255, 155, 0.28);
@@ -90,12 +90,12 @@ html {
 }
 
 body {
-  background-color: var(--construct-bg-base, var(--pc-bg-base));
+  background-color: var(--revka-bg-base, var(--pc-bg-base));
   background-image:
-    linear-gradient(var(--construct-grid-line, color-mix(in srgb, var(--pc-accent) 4%, transparent)) 1px, transparent 1px),
-    linear-gradient(90deg, var(--construct-grid-line, color-mix(in srgb, var(--pc-accent) 4%, transparent)) 1px, transparent 1px),
-    radial-gradient(circle at 20% 10%, color-mix(in srgb, var(--construct-signal-live, var(--pc-accent)) 10%, transparent), transparent 42%),
-    radial-gradient(circle at 80% 90%, color-mix(in srgb, var(--construct-signal-network, var(--pc-accent-light)) 8%, transparent), transparent 38%);
+    linear-gradient(var(--revka-grid-line, color-mix(in srgb, var(--pc-accent) 4%, transparent)) 1px, transparent 1px),
+    linear-gradient(90deg, var(--revka-grid-line, color-mix(in srgb, var(--pc-accent) 4%, transparent)) 1px, transparent 1px),
+    radial-gradient(circle at 20% 10%, color-mix(in srgb, var(--revka-signal-live, var(--pc-accent)) 10%, transparent), transparent 42%),
+    radial-gradient(circle at 80% 90%, color-mix(in srgb, var(--revka-signal-network, var(--pc-accent-light)) 8%, transparent), transparent 38%);
   background-size: 48px 48px, 48px 48px, 100% 100%, 100% 100%;
   background-attachment: fixed;
   color: var(--pc-text-primary);
@@ -117,7 +117,7 @@ body {
   isolation: isolate;
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 18%),
-    linear-gradient(120deg, color-mix(in srgb, var(--construct-signal-live, var(--pc-accent)) 5%, transparent), transparent 34%);
+    linear-gradient(120deg, color-mix(in srgb, var(--revka-signal-live, var(--pc-accent)) 5%, transparent), transparent 34%);
 }
 
 .shell-app::before,
@@ -136,7 +136,7 @@ body {
   right: -8rem;
   width: 22rem;
   height: 22rem;
-  background: radial-gradient(circle, color-mix(in srgb, var(--construct-signal-live, var(--pc-accent)) 20%, transparent), transparent 68%);
+  background: radial-gradient(circle, color-mix(in srgb, var(--revka-signal-live, var(--pc-accent)) 20%, transparent), transparent 68%);
 }
 
 .shell-app::after {
@@ -144,7 +144,7 @@ body {
   bottom: -5rem;
   width: 24rem;
   height: 24rem;
-  background: radial-gradient(circle, color-mix(in srgb, var(--construct-signal-network, var(--pc-accent-light)) 16%, transparent), transparent 70%);
+  background: radial-gradient(circle, color-mix(in srgb, var(--revka-signal-network, var(--pc-accent-light)) 16%, transparent), transparent 70%);
 }
 
 .shell-main {
@@ -183,12 +183,12 @@ select:focus-visible,
   outline: none;
 }
 
-/* Scrollbar — theme-aware via --construct-* tokens (see tokens.css).
-   Matches the sidebar's .construct-sidebar-scroll style for a consistent
+/* Scrollbar — theme-aware via --revka-* tokens (see tokens.css).
+   Matches the sidebar's .revka-sidebar-scroll style for a consistent
    look across dark / oled / light themes. */
 * {
   scrollbar-width: thin;
-  scrollbar-color: var(--construct-border-strong) transparent;
+  scrollbar-color: var(--revka-border-strong) transparent;
 }
 
 ::-webkit-scrollbar {
@@ -201,12 +201,12 @@ select:focus-visible,
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--construct-border-strong);
+  background: var(--revka-border-strong);
   border-radius: 9999px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--construct-signal-live-soft);
+  background: var(--revka-signal-live-soft);
 }
 
 textarea::-webkit-scrollbar {
@@ -219,12 +219,12 @@ textarea::-webkit-scrollbar:horizontal {
 }
 
 textarea::-webkit-scrollbar-thumb {
-  background: var(--construct-border-strong);
+  background: var(--revka-border-strong);
   border-radius: 9999px;
 }
 
 textarea::-webkit-scrollbar-thumb:hover {
-  background: var(--construct-signal-live-soft);
+  background: var(--revka-signal-live-soft);
 }
 
 textarea {
@@ -1370,7 +1370,7 @@ code, kbd, pre {
   border-radius: 0 0 1.5rem 1.5rem;
 }
 
-/* Gradient shimmer on Construct headline text */
+/* Gradient shimmer on Revka headline text */
 .text-gradient-fox--shimmer {
   background-size: 200% auto;
   animation: gradient-shimmer 4s linear infinite;

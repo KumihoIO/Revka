@@ -30,7 +30,7 @@ def _make_listener() -> WorkflowEventListener:
 @pytest.fixture(autouse=True)
 def _isolate_claimed_runs_persistence(tmp_path, monkeypatch):
     """`_handle_run_request` now writes to `_CLAIMED_RUNS_PATH` whenever
-    a run is claimed. That path defaults to `~/.construct/event_listener_claimed_runs.json`
+    a run is claimed. That path defaults to `~/.revka/event_listener_claimed_runs.json`
     — running the test suite would silently overwrite production dedup
     state. Redirect to tmp_path for every test, and reset the class-level
     in-memory state so tests don't bleed into each other."""
@@ -73,7 +73,7 @@ def test_handle_run_request_skips_when_loop_closed():
     listener._loop = closed_loop
 
     listener._handle_run_request(
-        item_kref="kref://Construct/WorkflowRunRequests/run-1",
+        item_kref="kref://Revka/WorkflowRunRequests/run-1",
         item_metadata={"run_id": "abc-123", "workflow_name": "wf"},
     )
 
@@ -145,7 +145,7 @@ def test_launch_workflow_skips_when_loop_closed():
 
 
 def test_process_event_matches_domain_specific_output_space(tmp_path, monkeypatch):
-    """Entity triggers must not be limited to Construct/WorkflowOutputs.
+    """Entity triggers must not be limited to Revka/WorkflowOutputs.
 
     Workflows can publish output entities to domain spaces such as
     CrossChronicle/ArcBlueprints, and trigger rules should match those spaces
@@ -169,7 +169,7 @@ def test_process_event_matches_domain_specific_output_space(tmp_path, monkeypatc
     )
 
     revision = types.SimpleNamespace(
-        item_kref="kref://Construct/CrossChronicle/ArcBlueprints/cc-vol-1-arc-3.arc-blueprint",
+        item_kref="kref://Revka/CrossChronicle/ArcBlueprints/cc-vol-1-arc-3.arc-blueprint",
     )
     item = types.SimpleNamespace(
         kind="arc-blueprint",
@@ -191,7 +191,7 @@ def test_process_event_matches_domain_specific_output_space(tmp_path, monkeypatc
     )
 
     event = types.SimpleNamespace(
-        kref="kref://Construct/CrossChronicle/ArcBlueprints/cc-vol-1-arc-3.arc-blueprint?r=9",
+        kref="kref://Revka/CrossChronicle/ArcBlueprints/cc-vol-1-arc-3.arc-blueprint?r=9",
         details={"tag": "ready"},
         cursor="cursor-1",
     )
@@ -377,7 +377,7 @@ async def test_async_run_request_skips_when_latest_status_is_completed(
     monkeypatch.setattr(executor, "execute_workflow", _explode_execute)
 
     await listener._async_run_request(
-        item_kref="kref://Construct/WorkflowRunRequests/run-x",
+        item_kref="kref://Revka/WorkflowRunRequests/run-x",
         metadata={
             "workflow_name": "blog-writer",
             "run_id": "ghost-run-1",
@@ -424,7 +424,7 @@ async def test_async_run_request_proceeds_when_latest_status_is_pending(
     monkeypatch.setattr(listener, "_tag_run_request", _noop_tag)
 
     await listener._async_run_request(
-        item_kref="kref://Construct/WorkflowRunRequests/run-y",
+        item_kref="kref://Revka/WorkflowRunRequests/run-y",
         metadata={
             "workflow_name": "blog-writer",
             "run_id": "live-run-1",
@@ -476,7 +476,7 @@ async def test_async_run_request_tags_failed_when_executor_returns_failed(
     monkeypatch.setattr(listener, "_tag_run_request", _capture_tag)
 
     await listener._async_run_request(
-        item_kref="kref://Construct/WorkflowRunRequests/run-failed",
+        item_kref="kref://Revka/WorkflowRunRequests/run-failed",
         metadata={
             "workflow_name": "budgeted-workflow",
             "run_id": "failed-run-1",

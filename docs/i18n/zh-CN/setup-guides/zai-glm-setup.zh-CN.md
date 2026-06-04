@@ -1,11 +1,11 @@
 # Z.AI GLM（智谱大模型）安装指南
 
-Construct 通过兼容 OpenAI 的端点支持 Z.AI 的 GLM 模型。
-本指南介绍与当前 Construct 提供商行为匹配的实用安装选项。
+Revka 通过兼容 OpenAI 的端点支持 Z.AI 的 GLM 模型。
+本指南介绍与当前 Revka 提供商行为匹配的实用安装选项。
 
 ## 概述
 
-Construct 开箱即用支持以下 Z.AI 别名和端点：
+Revka 开箱即用支持以下 Z.AI 别名和端点：
 
 | 别名 | 端点 | 说明 |
 |-------|----------|-------|
@@ -19,14 +19,14 @@ Construct 开箱即用支持以下 Z.AI 别名和端点：
 ### 快速开始
 
 ```bash
-construct onboard \
+revka onboard \
   --provider \"zai\" \
   --api-key \"YOUR_ZAI_API_KEY\"
 ```
 
 ### 手动配置
 
-编辑 `~/.construct/config.toml`：
+编辑 `~/.revka/config.toml`：
 
 ```toml
 api_key = \"YOUR_ZAI_API_KEY\"
@@ -73,14 +73,14 @@ curl -X POST \"https://api.z.ai/api/coding/paas/v4/chat/completions\" \
 }
 ```
 
-### 使用 Construct CLI 测试
+### 使用 Revka CLI 测试
 
 ```bash
 # 直接测试代理
-echo \"Hello\" | construct agent
+echo \"Hello\" | revka agent
 
 # 检查状态
-construct status
+revka status
 ```
 
 ## 环境变量
@@ -137,6 +137,6 @@ curl -s \"https://api.z.ai/api/coding/paas/v4/models\" \
 
 ## 相关文档
 
-- [Construct 说明文档](../../../README.zh-CN.md)
+- [Revka 说明文档](../../../README.zh-CN.md)
 - [自定义提供商端点](../contributing/custom-providers.zh-CN.md)
 - [贡献指南](../../../../CONTRIBUTING.md)

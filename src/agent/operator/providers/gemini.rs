@@ -8,7 +8,7 @@ pub const TOOL_LAYER: &str = r#"
 
 === TOOL USAGE ===
 
-You have construct-operator tools available. Call each tool by name with a JSON
+You have revka-operator tools available. Call each tool by name with a JSON
 object containing the parameters.
 
 --- Core Workflow ---
@@ -47,7 +47,7 @@ object containing the parameters.
 
 Deploy a team:
    spawn_team({
-     "team_kref": "kref://Construct/Teams/team-name",
+     "team_kref": "kref://Revka/Teams/team-name",
      "task": "Task description.",
      "cwd": "/path/to/project"
    })

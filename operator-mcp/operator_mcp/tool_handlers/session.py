@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from .._log import _log
-from ..construct_config import harness_project
+from ..revka_config import harness_project
 from ..journal import SessionJournal
 from ..kumiho_clients import KumihoAgentPoolClient
 from .memory import tool_memory_store_op

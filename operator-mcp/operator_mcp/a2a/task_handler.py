@@ -1,6 +1,6 @@
 """A2A Task Handler — handles incoming A2A JSON-RPC requests.
 
-Maps A2A protocol methods to Construct operator operations:
+Maps A2A protocol methods to Revka operator operations:
   message/send   → create_agent + wait (or immediate response)
   message/stream → create_agent + SSE stream
   tasks/get      → poll agent status
@@ -38,7 +38,7 @@ CONTENT_TYPE_ERROR = "ContentTypeNotSupportedError"
 class A2ATaskHandler:
     """Handles A2A JSON-RPC method dispatch.
 
-    Integrates with Construct operator to spawn agents for incoming
+    Integrates with Revka operator to spawn agents for incoming
     A2A tasks and map their lifecycle to A2A task states.
     """
 
@@ -93,7 +93,7 @@ class A2ATaskHandler:
     # -- Method handlers --
 
     async def _handle_message_send(self, params: dict[str, Any]) -> dict[str, Any]:
-        """Handle message/send — spawn a Construct agent for the task.
+        """Handle message/send — spawn a Revka agent for the task.
 
         Returns either a Task (long-running) or Message (immediate).
         """
@@ -121,7 +121,7 @@ class A2ATaskHandler:
         if "skill" in params:
             skill_id = params["skill"]
 
-        # Spawn a Construct agent
+        # Spawn a Revka agent
         from ..tool_handlers.agents import _try_sidecar_create, _event_consumer
         from ..agent_subprocess import compose_agent_prompt, spawn_agent
 
@@ -203,7 +203,7 @@ class A2ATaskHandler:
         if task.is_terminal:
             return _a2a_error("TaskNotCancelableError", "Task already in terminal state")
 
-        # Cancel the Construct agent
+        # Cancel the Revka agent
         from ..tool_handlers.agents import tool_cancel_agent
         await tool_cancel_agent({"agent_id": task.agent_id})
 
@@ -219,14 +219,14 @@ class A2ATaskHandler:
     # -- Helpers --
 
     def _select_agent_type(self, skill_id: str | None) -> str:
-        """Map A2A skill ID to Construct agent type."""
+        """Map A2A skill ID to Revka agent type."""
         if not skill_id:
             return "claude"  # default
 
         # Try to find template by skill ID
         from ..agent_state import POOL
         for tmpl in POOL.list_all():
-            if f"construct-{tmpl.name}" == skill_id:
+            if f"revka-{tmpl.name}" == skill_id:
                 return tmpl.agent_type
         return "claude"
 
