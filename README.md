@@ -48,6 +48,12 @@ Construct is a Rust-native AI agent runtime with persistent cognitive memory, mu
 
 At the core: a **Rust gateway** (Axum) serves a **React/TypeScript Web Dashboard**, a Python **Operator** drives multi-agent orchestration, and **Kumiho** (graph-native, Neo4j-backed) holds all persistent state. Define declarative YAML workflows, watch agents execute them in real time via a DAG-based live view, trace every tool call and output, and see trust scores evolve across runs — all from a browser.
 
+Construct is also built for enterprise AgentOps. Existing Claude/Codex workflow
+agents can use Google Agents CLI through a governed tool surface, coordinate
+with external systems over A2A, and package Gemini/ADK-backed agents for Google
+Cloud Run with IAM, service accounts, bearer-token invocation auth, logging,
+rollback, and evidence gates.
+
 No hidden state. No forgotten runs. The only thing the system asks of you is that you notice.
 
 <!-- TODO screenshot: Construct dashboard at http://127.0.0.1:42617 showing live runtime posture — active sessions, channels, audit chain, cost metrics, and recent workflow runs -->
@@ -195,6 +201,70 @@ agent prompt, parses full JSON objects, final fenced `json` blocks, or
 `FINAL_OUTPUT:` YAML blocks, then fails the step with `structured_output_missing`
 if any declared field is absent. Downstream steps can route on fields such as
 `${review.output_data.production_ready}`.
+
+### Google AgentOps & Enterprise A2A
+
+Construct integrates Google Agents CLI as a governed **tool capability** for
+existing workflow agents, not as a separate Construct agent provider. A
+`claude` or `codex` workflow step can request the reduced Google AgentOps tool
+surface and call `agents-cli` for ADK / Agent Platform lifecycle work while
+Construct still owns workflow state, approvals, logs, artifacts, and rollback
+evidence.
+
+```yaml
+- id: agentops-plan
+  type: agent
+  agent:
+    agent_type: codex
+    tools: google_agentops
+    required_tools: [google_agents_cli]
+    prompt: |
+      Use Google Agents CLI and A2A tooling to prepare an enterprise
+      incident-response agent deployment plan with approval and rollback.
+```
+
+When `google_agents_cli` is added in the workflow UI, Construct expands it to
+the companion A2A tools (`a2a_discover`, `a2a_send_task`,
+`a2a_get_remote_task`) and preflights the reduced MCP surface before the step
+runs. Use `agent.tools: all` only when the agent also needs the broader Operator
+MCP tool set.
+
+The Google Track 3 package under
+[`examples/google-agents-track3/construct-agentops-a2a`](examples/google-agents-track3/construct-agentops-a2a)
+shows the same capability as an enterprise-ready B2B deployment:
+
+- **Cloud-native runtime** — deployable to Google Cloud Run with production
+  controls for service account, IAM, request limits, task retention, timeout,
+  Cloud Logging, and secret-backed A2A bearer-token auth.
+- **Google-powered intelligence** — packaged for Gemini through Vertex AI and
+  Google ADK orchestration.
+- **A2A interoperability** — exposes `/.well-known/agent-card.json`,
+  `/agent-card.json`, JSON-RPC `agent/card`, `message/send`, `tasks/get`,
+  `tasks/list`, and `tasks/cancel`.
+- **Enterprise governance story** — returns incident plans with business
+  impact, specialist-agent handoff, Google Cloud evidence, approval boundary,
+  rollback path, and operator recommendation.
+- **Recording/evidence gates** — deterministic source probes and Track 3
+  evidence gates validate Cloud Run deployment, A2A invocation, Gemini/ADK
+  runtime metadata, B2B packaging, governance, and Gemini Enterprise
+  registration readiness.
+
+Enterprise readiness at a glance:
+
+| Readiness area | Construct proof |
+|----------------|-----------------|
+| Cloud deployment | Cloud Run packaging, deploy scripts, source probes, and recording runbook |
+| Identity and access | Dedicated service account, IAM boundary, bearer-token A2A invocation, and secret-backed config |
+| Interoperability | Public A2A agent card plus task send/get/list/cancel lifecycle |
+| Governance | Workflow approvals, rollback evidence, operator recommendation, and audit artifacts |
+| Observability | Construct run traces, captured evidence artifacts, and Cloud Logging integration |
+| B2B packaging | "Construct Enterprise AgentOps Control Plane" narrative for software and IT operations teams |
+
+See
+[`docs/ops/google-agents-track3-enterprise-readiness.md`](docs/ops/google-agents-track3-enterprise-readiness.md)
+for the Cloud Run recording runbook and
+[`docs/ops/google-agents-cli-demo-readiness.md`](docs/ops/google-agents-cli-demo-readiness.md)
+for the lower-level `google_agents_cli` safety and demo-readiness matrix.
 
 ### Orchestration Patterns
 
@@ -553,6 +623,10 @@ api_url = "https://api.kumiho.cloud"      # or your self-hosted URL on Enterpris
 [operator]
 enabled = true
 mcp_path = "~/.construct/operator_mcp/run_operator_mcp.py"
+
+[google_agents_cli]
+enabled = true
+timeout_secs = 600
 ```
 
 See [`docs/reference/api/config-reference.md`](docs/reference/api/config-reference.md) for the full reference covering providers, channels, tools, security, and gateway settings.
