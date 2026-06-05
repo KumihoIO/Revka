@@ -22,7 +22,7 @@ type GraphCanvasProps<TNode extends Node = Node> = {
   minimapColor?: (node: TNode) => string;
   /** Fixed height string (e.g. '30rem'). Ignored when `fill` is true. */
   height?: string;
-  /** When true, the canvas fills its flex parent (flex: 1 + min-h-0). */
+  /** When true, the canvas fills its parent; flex parents get flex growth, sized parents get height: 100%. */
   fill?: boolean;
   onlyRenderVisibleElements?: boolean;
   showMiniMap?: boolean;
@@ -44,7 +44,9 @@ function GraphCanvasInner<TNode extends Node = Node>({
   emptyState = 'No graph data available.',
   overlay,
 }: GraphCanvasProps<TNode>) {
-  const sizeStyle = fill ? { flex: '1 1 0%', minHeight: 0 } : { height };
+  const sizeStyle = fill
+    ? { flex: '1 1 auto', minHeight: 0, width: '100%', height: '100%' }
+    : { width: '100%', height };
 
   if (nodes.length === 0) {
     return (
