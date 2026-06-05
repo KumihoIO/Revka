@@ -152,7 +152,11 @@ export default function WorkflowRuns() {
   const [retrying, setRetrying] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [pathMode, setPathMode] = useState<'all' | 'failed' | 'blocked'>('all');
-  const [detailTab, setDetailTab] = useState<'summary' | 'output' | 'tools' | 'transcript'>('summary');
+  const [detailTab, setDetailTab] = useState<'summary' | 'output' | 'tools' | 'transcript' | 'jsonl'>('summary');
+  const [jsonlLog, setJsonlLog] = useState<any[]>([]);
+  const [jsonlLoading, setJsonlLoading] = useState(false);
+  const [jsonlViewMode, setJsonlMode] = useState<'formatted' | 'raw'>('formatted');
+  const [jsonlSearch, setJsonlFilter] = useState('');
   const [notice, setNotice] = useState<{ tone: 'success' | 'error' | 'info'; message: string } | null>(null);
   const [viewerArtifact, setViewerArtifact] = useState<KumihoArtifact | null>(null);
   const [shouldScrollToWorkspace, setShouldScrollToWorkspace] = useState(false);
@@ -444,6 +448,18 @@ export default function WorkflowRuns() {
     return selectedDefinitionTasks.map((task) => task.id).filter((taskId) => !visible.has(taskId));
   }, [blockedChainIds, failedChainIds, pathMode, selectedDefinitionTasks]);
 
+  const filteredJsonlLog = useMemo(() => {
+    if (!jsonlSearch) return jsonlLog;
+    const query = jsonlSearch.toLowerCase();
+    return jsonlLog.filter((entry) => {
+      try {
+        return JSON.stringify(entry).toLowerCase().includes(query);
+      } catch {
+        return false;
+      }
+    });
+  }, [jsonlLog, jsonlSearch]);
+
   /* ---- agent activity for selected step ---- */
 
   useEffect(() => {
@@ -459,6 +475,32 @@ export default function WorkflowRuns() {
       .catch(() => setSelectedActivity(null))
       .finally(() => setActivityLoading(false));
   }, [selectedStep?.agent_id]);
+
+  useEffect(() => {
+    const agentId = selectedStep?.agent_id;
+    if (!agentId || detailTab !== 'jsonl') {
+      setJsonlLog([]);
+      return;
+    }
+    let cancelled = false;
+    setJsonlLoading(true);
+    fetchAgentActivity(agentId, 'full', 150)
+      .then((activity) => {
+        if (!cancelled) {
+          setJsonlLog(activity.entries || []);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setJsonlLog([]);
+      })
+      .finally(() => {
+        if (!cancelled) setJsonlLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedStep?.agent_id, detailTab, selectedRun]);
 
   /* ---- keyboard nav ---- */
 
@@ -572,16 +614,17 @@ export default function WorkflowRuns() {
 
   /* ---- render ---- */
 
-  const tabLabels: Record<'summary' | 'output' | 'tools' | 'transcript', string> = {
+  const tabLabels: Record<'summary' | 'output' | 'tools' | 'transcript' | 'jsonl', string> = {
     summary: t('runs.tab.summary'),
     output: t('runs.tab.output'),
     tools: t('runs.tab.tools'),
     transcript: t('runs.tab.transcript'),
+    jsonl: t('runs.tab.jsonl'),
   };
 
   return (
     <>
-    <div className="flex h-[calc(100vh-6rem)] flex-col gap-3">
+    <div className="flex min-h-[calc(100vh-6rem)] flex-col gap-3 lg:h-[calc(100vh-6rem)]">
       {notice ? <Notice tone={notice.tone} message={notice.message} onDismiss={() => setNotice(null)} /> : null}
 
       {/* Row 1 — Header */}
@@ -596,9 +639,9 @@ export default function WorkflowRuns() {
       />
 
       {/* Row 2 — Three-column: run index | DAG canvas | step inspector */}
-      <div className="grid min-h-0 flex-1 gap-4" style={{ gridTemplateColumns: '16rem minmax(0,1fr) 24rem' }}>
+      <div className="grid gap-4 grid-cols-1 lg:min-h-0 lg:flex-1 lg:grid-cols-[16rem_minmax(0,1fr)_24rem]">
         {/* ---- LEFT: Run index ---- */}
-        <Panel className="flex flex-col overflow-hidden p-0" variant="secondary">
+        <Panel className="flex flex-col overflow-hidden p-0 h-[20rem] lg:h-auto" variant="secondary">
           <div className="shrink-0 border-b px-4 py-2.5" style={{ borderColor: 'var(--revka-border-soft)' }}>
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-semibold uppercase tracking-[0.14em]" style={{ color: 'var(--revka-text-faint)' }}>
@@ -656,7 +699,7 @@ export default function WorkflowRuns() {
         </Panel>
 
         {/* ---- CENTER: DAG workspace ---- */}
-        <div ref={workspaceRef} tabIndex={-1} className="flex min-h-0 flex-col gap-3 outline-none">
+        <div ref={workspaceRef} tabIndex={-1} className="flex min-h-0 flex-col gap-3 outline-none h-[36rem] lg:h-auto">
           {/* Workspace header bar */}
           {selectedRun ? (
             <div className="flex shrink-0 flex-wrap items-center justify-between gap-3">
@@ -786,7 +829,7 @@ export default function WorkflowRuns() {
         </div>
 
         {/* ---- RIGHT: Step inspector ---- */}
-        <div className="min-h-0 overflow-y-auto">
+        <div className="min-h-0 overflow-y-auto h-[40rem] lg:h-auto">
           {/* Run summary strip */}
           {selectedRun ? (
             <Panel className="mb-3 p-3" variant="utility">
@@ -832,7 +875,7 @@ export default function WorkflowRuns() {
                 {selectedTask ? selectedTask.name || selectedTask.id : t('runs.inspector.title')}
               </span>
               <div className="revka-tab-strip" role="tablist">
-                {(['summary', 'output', 'tools', 'transcript'] as const).map((id) => (
+                {(['summary', 'output', 'tools', 'transcript', 'jsonl'] as const).map((id) => (
                   <button
                     key={id}
                     type="button"
@@ -1011,6 +1054,209 @@ export default function WorkflowRuns() {
                   </div>
                 ) : (
                   <div className="text-sm" style={{ color: 'var(--revka-text-faint)' }}>{t('runs.detail.no_transcript')}</div>
+                )
+              ) : null}
+
+              {detailTab === 'jsonl' ? (
+                !selectedStep ? (
+                  <div className="text-sm" style={{ color: 'var(--revka-text-faint)' }}>{t('runs.detail.select_step')}</div>
+                ) : jsonlLoading && jsonlLog.length === 0 ? (
+                  <div className="text-sm" style={{ color: 'var(--revka-text-faint)' }}>{t('runs.detail.loading')}</div>
+                ) : (
+                  <div className="space-y-3">
+                    {/* Header Controls */}
+                    <div className="flex flex-col gap-2 rounded-[10px] border p-2.5" style={{ borderColor: 'var(--revka-border-soft)', background: 'color-mix(in srgb, var(--revka-bg-panel-strong) 40%, transparent)' }}>
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[10px] font-semibold uppercase tracking-[0.12em]" style={{ color: 'var(--revka-text-faint)' }}>
+                          JSONL Log Entries ({filteredJsonlLog.length})
+                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => setJsonlMode('formatted')}
+                            className="rounded-[6px] px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider transition"
+                            style={{
+                              background: jsonlViewMode === 'formatted' ? 'var(--revka-signal-selected-soft, color-mix(in srgb, var(--revka-signal-selected) 18%, transparent))' : 'transparent',
+                              color: jsonlViewMode === 'formatted' ? 'var(--revka-signal-selected)' : 'var(--revka-text-faint)',
+                              border: jsonlViewMode === 'formatted' ? '1px solid var(--revka-signal-selected)' : '1px solid transparent',
+                            }}
+                          >
+                            Formatted
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setJsonlMode('raw')}
+                            className="rounded-[6px] px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider transition"
+                            style={{
+                              background: jsonlViewMode === 'raw' ? 'var(--revka-signal-selected-soft, color-mix(in srgb, var(--revka-signal-selected) 18%, transparent))' : 'transparent',
+                              color: jsonlViewMode === 'raw' ? 'var(--revka-signal-selected)' : 'var(--revka-text-faint)',
+                              border: jsonlViewMode === 'raw' ? '1px solid var(--revka-signal-selected)' : '1px solid transparent',
+                            }}
+                          >
+                            Raw JSONL
+                          </button>
+                        </div>
+                      </div>
+                      <input
+                        type="text"
+                        value={jsonlSearch}
+                        onChange={(e) => setJsonlFilter(e.target.value)}
+                        placeholder="Filter log entries..."
+                        className="w-full rounded-[8px] border px-2.5 py-1.5 text-xs outline-none transition"
+                        style={{
+                          background: 'var(--revka-bg-input)',
+                          borderColor: 'var(--revka-border-soft)',
+                          color: 'var(--revka-text-primary)',
+                        }}
+                      />
+                    </div>
+
+                    {/* Entries list */}
+                    {filteredJsonlLog.length === 0 ? (
+                      <div className="text-center py-4 text-xs" style={{ color: 'var(--revka-text-faint)' }}>
+                        No entries match your filter.
+                      </div>
+                    ) : jsonlViewMode === 'raw' ? (
+                      <div className="rounded-[10px] border p-2 overflow-x-auto max-h-[28rem]" style={{ borderColor: 'var(--revka-border-soft)', background: 'var(--revka-bg-input)' }}>
+                        <pre className="text-[11px] leading-5" style={{ color: 'var(--revka-text-secondary)', fontFamily: 'var(--pc-font-mono)' }}>
+                          {filteredJsonlLog.map((entry, index) => (
+                            <div key={index} className="hover:bg-slate-800/10 dark:hover:bg-slate-200/5 py-0.5 px-1 rounded truncate whitespace-pre">
+                              <span className="select-none text-slate-500 mr-2 inline-block w-6 text-right">{(index + 1)}</span>
+                              {JSON.stringify(entry)}
+                            </div>
+                          ))}
+                        </pre>
+                      </div>
+                    ) : (
+                      <div className="space-y-2 max-h-[32rem] overflow-y-auto pr-1">
+                        {filteredJsonlLog.map((entry, index) => {
+                          const kind = entry.kind || 'unknown';
+                          const time = entry.ts ? new Date(entry.ts).toLocaleTimeString() : '';
+                          
+                          // Style based on entry kind
+                          let badgeBg = 'var(--revka-bg-elevated)';
+                          let badgeColor = 'var(--revka-text-muted)';
+                          let borderStyle = 'var(--revka-border-soft)';
+
+                          if (kind === 'tool_call') {
+                            badgeBg = 'color-mix(in srgb, var(--revka-signal-network) 12%, transparent)';
+                            badgeColor = 'var(--revka-signal-network)';
+                          } else if (kind === 'message' || kind === 'user_message') {
+                            badgeBg = 'color-mix(in srgb, var(--revka-signal-selected) 12%, transparent)';
+                            badgeColor = 'var(--revka-signal-selected)';
+                          } else if (kind === 'reasoning') {
+                            badgeBg = 'color-mix(in srgb, var(--revka-text-faint) 10%, transparent)';
+                            badgeColor = 'var(--revka-text-faint)';
+                          } else if (kind === 'error' || kind === 'turn_failed') {
+                            badgeBg = 'color-mix(in srgb, var(--revka-status-danger) 12%, transparent)';
+                            badgeColor = 'var(--revka-status-danger)';
+                            borderStyle = 'color-mix(in srgb, var(--revka-status-danger) 30%, transparent)';
+                          } else if (kind === 'turn_started' || kind === 'turn_completed') {
+                            badgeBg = 'color-mix(in srgb, var(--revka-status-success) 12%, transparent)';
+                            badgeColor = 'var(--revka-status-success)';
+                          }
+
+                          return (
+                            <div
+                              key={index}
+                              className="rounded-[10px] border p-2.5 transition-all text-xs"
+                              style={{
+                                borderColor: borderStyle,
+                                background: 'color-mix(in srgb, var(--revka-bg-panel-strong) 94%, transparent)',
+                              }}
+                            >
+                              {/* Entry Header */}
+                              <div className="flex items-center justify-between gap-2 mb-1.5">
+                                <div className="flex items-center gap-1.5">
+                                  <span
+                                    className="rounded-[6px] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider"
+                                    style={{ background: badgeBg, color: badgeColor }}
+                                  >
+                                    {kind}
+                                  </span>
+                                  {entry.name && (
+                                    <span className="font-semibold" style={{ color: 'var(--revka-text-primary)' }}>
+                                      {entry.name}
+                                    </span>
+                                  )}
+                                </div>
+                                <span className="text-[10px] font-mono" style={{ color: 'var(--revka-text-faint)' }}>
+                                  {time}
+                                </span>
+                              </div>
+
+                              {/* Entry Body */}
+                              <div className="pl-1 leading-5" style={{ color: 'var(--revka-text-secondary)' }}>
+                                {kind === 'message' || kind === 'user_message' ? (
+                                  <div className="whitespace-pre-wrap font-sans" style={{ color: 'var(--revka-text-secondary)' }}>{entry.text}</div>
+                                ) : kind === 'reasoning' ? (
+                                  <div className="italic font-serif pl-2 border-l-2" style={{ color: 'var(--revka-text-muted)', borderColor: 'var(--revka-border-soft)' }}>
+                                    {entry.text}
+                                  </div>
+                                ) : kind === 'tool_call' ? (
+                                  <div className="space-y-1 font-mono text-[11px]">
+                                    <div className="flex items-center gap-2">
+                                      <span style={{ color: 'var(--revka-text-faint)' }}>Status:</span>
+                                      <span
+                                        className="font-bold uppercase text-[9px]"
+                                        style={{
+                                          color: entry.status === 'completed'
+                                            ? 'var(--revka-status-success)'
+                                            : entry.status === 'failed'
+                                              ? 'var(--revka-status-danger)'
+                                              : 'var(--revka-status-warning)'
+                                        }}
+                                      >
+                                        {entry.status || 'running'}
+                                      </span>
+                                    </div>
+                                    {entry.args && (
+                                      <div className="mt-1">
+                                        <div className="text-[10px] uppercase tracking-wider mb-0.5" style={{ color: 'var(--revka-text-faint)' }}>Arguments:</div>
+                                        <pre className="p-1.5 rounded-[6px] overflow-x-auto whitespace-pre-wrap" style={{ background: 'var(--revka-bg-input)', borderColor: 'var(--revka-border-soft)', border: '1px solid' }}>{entry.args}</pre>
+                                      </div>
+                                    )}
+                                    {entry.result && (
+                                      <div className="mt-1">
+                                        <div className="text-[10px] uppercase tracking-wider mb-0.5" style={{ color: 'var(--revka-text-faint)' }}>Result:</div>
+                                        <pre className="p-1.5 rounded-[6px] overflow-x-auto whitespace-pre-wrap max-h-40" style={{ background: 'var(--revka-bg-input)', borderColor: 'var(--revka-border-soft)', border: '1px solid' }}>{entry.result}</pre>
+                                      </div>
+                                    )}
+                                    {entry.error && (
+                                      <div className="mt-1 p-1.5 rounded-[6px] border text-[11px]" style={{ borderColor: 'color-mix(in srgb, var(--revka-status-danger) 28%, transparent)', background: 'color-mix(in srgb, var(--revka-status-danger) 6%, transparent)', color: 'var(--revka-status-danger)' }}>
+                                        {entry.error}
+                                      </div>
+                                    )}
+                                  </div>
+                                ) : kind === 'error' ? (
+                                  <div className="font-mono text-xs text-red-500 whitespace-pre-wrap">{entry.message}</div>
+                                ) : kind === 'turn_started' ? (
+                                  <div className="font-mono text-[11px]" style={{ color: 'var(--revka-text-muted)' }}>
+                                    Started execution turn <span className="font-semibold">{entry.turn_id}</span>
+                                  </div>
+                                ) : kind === 'turn_completed' ? (
+                                  <div className="font-mono text-[11px] space-y-1" style={{ color: 'var(--revka-text-muted)' }}>
+                                    <div>Completed execution turn <span className="font-semibold">{entry.turn_id}</span></div>
+                                    {entry.usage && (
+                                      <div className="flex flex-wrap gap-2.5 text-[10px] mt-0.5" style={{ color: 'var(--revka-text-faint)' }}>
+                                        <span>In: {entry.usage.inputTokens || 0} t</span>
+                                        <span>Out: {entry.usage.outputTokens || 0} t</span>
+                                        <span>Cost: ${Number(entry.usage.totalCostUsd || 0).toFixed(5)}</span>
+                                      </div>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <pre className="font-mono text-[10px] p-1.5 rounded-[6px] overflow-x-auto" style={{ background: 'var(--revka-bg-input)', border: '1px solid var(--revka-border-soft)' }}>
+                                    {JSON.stringify(entry, null, 2)}
+                                  </pre>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
                 )
               ) : null}
             </div>
