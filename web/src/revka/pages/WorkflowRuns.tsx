@@ -645,7 +645,7 @@ export default function WorkflowRuns() {
 
   return (
     <>
-    <div className="flex min-h-[calc(100vh-6rem)] flex-col gap-3 lg:h-[calc(100vh-6rem)]">
+    <div className="flex min-h-[calc(100vh-6rem)] flex-col gap-4">
       {notice ? <Notice tone={notice.tone} message={notice.message} onDismiss={() => setNotice(null)} /> : null}
 
       {/* Row 1 — Header */}
@@ -660,73 +660,30 @@ export default function WorkflowRuns() {
       />
 
       {/* Row 2 — DAG-first workspace with a full-width detail dock */}
-      <div className="grid gap-4 grid-cols-1 lg:min-h-0 lg:flex-1 lg:grid-rows-[minmax(0,1fr)_auto]">
-        <div className="grid gap-4 grid-cols-1 lg:min-h-0 lg:grid-cols-[16rem_minmax(0,1fr)]">
-        {/* ---- LEFT: Run index ---- */}
-        <Panel className="flex flex-col overflow-hidden p-0 h-[20rem] lg:h-auto" variant="secondary">
-          <div className="shrink-0 border-b px-4 py-2.5" style={{ borderColor: 'var(--revka-border-soft)' }}>
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] font-semibold uppercase tracking-[0.14em]" style={{ color: 'var(--revka-text-faint)' }}>
-                {t('runs.index.title')}
-              </span>
-              <span className="text-[11px]" style={{ color: 'var(--revka-text-faint)' }}>
-                {displayedRuns.length}
-              </span>
-            </div>
-          </div>
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            {displayedRuns.length === 0 && !error ? (
-              <div className="p-3">
-                <StateMessage compact title={t('runs.empty.title')} description={t('runs.empty.desc')} />
-              </div>
-            ) : null}
-            {error ? (
-              <div className="p-3">
-                <StateMessage tone="error" compact title={t('runs.error.title')} description={error} />
-              </div>
-            ) : null}
-            {displayedRuns.map((run) => {
-              const isActive = run.run_id === selectedRunId;
-              return (
-                <button
-                  key={run.run_id}
-                  type="button"
-                  onClick={() => {
-                    setSelectedRunId(run.run_id);
-                    setSelectedTask(null);
-                    setShouldScrollToWorkspace(true);
-                  }}
-                  className="w-full border-b px-4 py-3 text-left transition"
-                  style={{
-                    borderColor: 'var(--revka-border-soft)',
-                    background: isActive
-                      ? 'color-mix(in srgb, var(--revka-signal-selected) 14%, var(--revka-bg-panel))'
-                      : 'transparent',
-                  }}
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="truncate text-sm font-medium" style={{ color: 'var(--revka-text-primary)' }}>
-                      {run.workflow_name}
-                    </span>
-                    <StatusPill status={run.status} />
-                  </div>
-                  <RunProgressMeta className="mt-1 flex flex-wrap items-center gap-3 text-xs" run={run} />
-                  <div className="mt-1 flex items-center gap-3 text-xs" style={{ color: 'var(--revka-text-faint)' }}>
-                    <span className="font-mono">{run.run_id.slice(0, 8)}</span>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        </Panel>
-
-        {/* ---- CENTER: DAG workspace ---- */}
-        <div ref={workspaceRef} tabIndex={-1} className="flex min-h-[42rem] flex-col gap-3 outline-none lg:min-h-0 lg:h-auto">
+      <div className="flex min-h-0 flex-1 flex-col gap-4">
+        {/* ---- DAG workspace ---- */}
+        <div ref={workspaceRef} tabIndex={-1} className="flex h-[62vh] min-h-[30rem] flex-col gap-3 outline-none lg:h-[calc(100vh-17rem)] lg:min-h-[44rem]">
           {/* Workspace header bar */}
           {selectedRun ? (
             <div className="flex shrink-0 flex-wrap items-center justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <span className="text-sm font-semibold" style={{ color: 'var(--revka-text-primary)' }}>
+              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-3">
+                <select
+                  className="revka-input min-h-[2.5rem] w-full max-w-full py-2 text-sm sm:w-[24rem]"
+                  value={selectedRunId ?? ''}
+                  aria-label={t('runs.index.title')}
+                  onChange={(event) => {
+                    setSelectedRunId(event.target.value || null);
+                    setSelectedTask(null);
+                    setShouldScrollToWorkspace(true);
+                  }}
+                >
+                  {displayedRuns.map((run) => (
+                    <option key={run.run_id} value={run.run_id}>
+                      {run.workflow_name} / {run.run_id.slice(0, 8)} · {run.status} · {run.steps_completed || 0}/{run.steps_total || '?'}
+                    </option>
+                  ))}
+                </select>
+                <span className="min-w-0 truncate text-sm font-semibold" style={{ color: 'var(--revka-text-primary)' }}>
                   {selectedRun.workflow_name} / {selectedRun.run_id.slice(0, 8)}
                 </span>
                 <StatusPill status={selectedRun.status} />
@@ -794,6 +751,7 @@ export default function WorkflowRuns() {
                 blockedTaskIds={blockedTaskIds}
                 failingTaskIds={failingSteps.map((step) => step.step_id)}
                 runningTaskIds={runningSteps.map((step) => step.step_id)}
+                fill
                 overlay={
                   <div className="space-y-2">
                     <OperatorSection title={t('runs.overlay.path_mode')}>
@@ -844,16 +802,19 @@ export default function WorkflowRuns() {
               />
             ) : (
               <Panel className="flex h-full items-center justify-center" variant="secondary">
-                <StateMessage title={t('runs.none_selected.title')} description={t('runs.none_selected.desc')} />
+                <StateMessage
+                  tone={error ? 'error' : displayedRuns.length === 0 ? 'empty' : undefined}
+                  title={error ? t('runs.error.title') : displayedRuns.length === 0 ? t('runs.empty.title') : t('runs.none_selected.title')}
+                  description={error ?? (displayedRuns.length === 0 ? t('runs.empty.desc') : t('runs.none_selected.desc'))}
+                />
               </Panel>
             )}
           </div>
         </div>
-        </div>
 
         {/* ---- Detail dock: run context | selected step modes ---- */}
-        <div className="grid gap-4 lg:grid-cols-[minmax(16rem,0.30fr)_minmax(0,1fr)]">
-          <div className="min-h-0 space-y-3 lg:max-h-[24rem] lg:overflow-y-auto">
+        <div className="grid gap-4 lg:grid-cols-[minmax(14rem,0.24fr)_minmax(0,1fr)]">
+          <div className="min-h-0 max-h-[18rem] space-y-3 overflow-y-auto lg:max-h-[24rem]">
           {/* Run summary strip */}
           {selectedRun ? (
             <Panel className="mb-3 p-3" variant="utility">
@@ -936,7 +897,7 @@ export default function WorkflowRuns() {
           </div>
 
           {/* Step detail tabs */}
-          <Panel className="min-h-[22rem] p-4" variant="secondary">
+          <Panel className="min-w-0 overflow-hidden p-4" variant="secondary">
             <div className="flex flex-col gap-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="min-w-0 truncate text-[11px] font-semibold uppercase tracking-[0.14em]" style={{ color: 'var(--revka-text-faint)' }}>
@@ -962,7 +923,7 @@ export default function WorkflowRuns() {
               </div>
             </div>
 
-            <div className="mt-3">
+            <div className="mt-3 min-w-0 overflow-visible pr-1 lg:max-h-[34rem] lg:overflow-y-auto">
               {detailTab === 'summary' ? (
                 !selectedTask ? (
                   <div className="text-sm" style={{ color: 'var(--revka-text-faint)' }}>{t('runs.detail.select_node')}</div>
@@ -986,7 +947,7 @@ export default function WorkflowRuns() {
                           <div className="text-xs" style={{ color: 'var(--revka-text-secondary)' }}>{tpl('runs.detail.skills', { list: selectedStep.skills.join(', ') })}</div>
                         ) : null}
                         {selectedStep.output_preview ? (
-                          <div className="rounded-[10px] border p-2 text-xs leading-6" style={{ borderColor: 'var(--revka-border-soft)', color: 'var(--revka-text-secondary)' }}>
+                          <div className="rounded-[10px] border p-2 text-xs leading-6 break-words" style={{ borderColor: 'var(--revka-border-soft)', color: 'var(--revka-text-secondary)' }}>
                             {selectedStep.output_preview}
                           </div>
                         ) : null}
@@ -1056,7 +1017,7 @@ export default function WorkflowRuns() {
                             </button>
                           ) : null}
                         </div>
-                        <pre className="whitespace-pre-wrap text-xs leading-6" style={{ color: 'var(--revka-text-secondary)', fontFamily: 'var(--pc-font-mono)' }}>{selectedStep.output_preview}</pre>
+                        <pre className="whitespace-pre-wrap break-words text-xs leading-6" style={{ color: 'var(--revka-text-secondary)', fontFamily: 'var(--pc-font-mono)' }}>{selectedStep.output_preview}</pre>
                       </div>
                     ) : null}
                     {selectedActivity?.last_message ? (
@@ -1064,7 +1025,7 @@ export default function WorkflowRuns() {
                         <div className="mb-2 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.12em]" style={{ color: 'var(--revka-text-faint)' }}>
                           <MessageSquareText className="h-3 w-3" /> {t('runs.detail.agent_output')}
                         </div>
-                        <pre className="whitespace-pre-wrap text-xs leading-6" style={{ color: 'var(--revka-text-secondary)', fontFamily: 'var(--pc-font-mono)' }}>{selectedActivity.last_message}</pre>
+                        <pre className="whitespace-pre-wrap break-words text-xs leading-6" style={{ color: 'var(--revka-text-secondary)', fontFamily: 'var(--pc-font-mono)' }}>{selectedActivity.last_message}</pre>
                       </div>
                     ) : null}
                     {!selectedStep.output_preview && !selectedActivity?.last_message && !hasStructuredData(selectedStep.input_data) && !hasStructuredData(selectedStep.output_data) ? (
@@ -1417,7 +1378,7 @@ function JsonDetailCard({ title, value }: { title: string; value: unknown }) {
       <div className="mb-2 text-[10px] font-semibold uppercase tracking-[0.12em]" style={{ color: 'var(--revka-text-faint)' }}>
         {title}
       </div>
-      <pre className="max-h-72 overflow-auto whitespace-pre-wrap text-xs leading-6" style={{ color: 'var(--revka-text-secondary)', fontFamily: 'var(--pc-font-mono)' }}>
+      <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words text-xs leading-6" style={{ color: 'var(--revka-text-secondary)', fontFamily: 'var(--pc-font-mono)' }}>
         {jsonPreview(value)}
       </pre>
     </div>
