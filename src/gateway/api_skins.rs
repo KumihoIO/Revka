@@ -1068,11 +1068,11 @@ mod tests {
         assert!(summary.builtin);
         assert_eq!(
             dark.tokens.get("--revka-bg-base"),
-            Some(&"#0b0d12".to_string())
+            Some(&"#0b0d10".to_string())
         );
         assert_eq!(
             light.tokens.get("--revka-signal-live"),
-            Some(&"#2f6fd7".to_string())
+            Some(&"#4f75a8".to_string())
         );
         assert_eq!(
             light.tokens.get("--revka-radius-md"),
