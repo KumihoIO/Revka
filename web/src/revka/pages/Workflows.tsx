@@ -1,29 +1,24 @@
-import { ChevronDown, Pause, Pencil, Play, Plus, Power, RefreshCw, RotateCcw, Trash2, Workflow } from 'lucide-react';
+import { ChevronDown, Pencil, Play, Plus, Power, RefreshCw, Trash2, Workflow } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useT } from '@/revka/hooks/useT';
 import { parseWorkflowYaml, type TaskDefinition } from '@/revka/components/workflows/yamlSync';
 import WorkflowEditor from '@/revka/components/workflows/WorkflowEditor';
-import type { WorkflowCreateRequest, WorkflowDefinition, WorkflowRunDetail, WorkflowRunSummary, WorkflowUpdateRequest } from '@/types/api';
-import { ApiError, cancelWorkflowRun, createWorkflow, deleteWorkflow, deleteWorkflowRun, fetchWorkflowByRevisionKref, fetchWorkflowRun, fetchWorkflowRuns, fetchWorkflows, retryWorkflowRun, runWorkflow, toggleWorkflowDeprecation, updateWorkflow } from '@/lib/api';
-import { SSEClient } from '@/lib/sse';
+import type { WorkflowCreateRequest, WorkflowDefinition, WorkflowRunSummary, WorkflowUpdateRequest } from '@/types/api';
+import { ApiError, createWorkflow, deleteWorkflow, fetchWorkflowByRevisionKref, fetchWorkflowRuns, fetchWorkflows, runWorkflow, toggleWorkflowDeprecation, updateWorkflow } from '@/lib/api';
 import {
-  RunSummaryCard,
   SelectedTaskCard,
   WorkflowMetadataCard,
 } from '../components/orchestration/InspectorCards';
-import ArtifactViewerModal from '../components/ui/ArtifactViewerModal';
 import Panel from '../components/ui/Panel';
 import Notice from '../components/ui/Notice';
 import PageHeader from '../components/ui/PageHeader';
 import StateMessage from '../components/ui/StateMessage';
-import StatusPill from '../components/ui/StatusPill';
 import WorkflowDagWorkspace from '../components/workflows/WorkflowDagWorkspace';
-import { deriveBlockedTaskIds, toStepRunInfo } from '../lib/orchestration';
-import type { KumihoArtifact, SSEEvent, WorkflowStepDetail } from '@/types/api';
 
 export default function Workflows() {
   const { t, tpl } = useT();
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [definitions, setDefinitions] = useState<WorkflowDefinition[]>([]);
   const [runs, setRuns] = useState<WorkflowRunSummary[]>([]);
@@ -32,62 +27,14 @@ export default function Workflows() {
   const [definitionLoading, setDefinitionLoading] = useState(false);
   const [definitionError, setDefinitionError] = useState<string | null>(null);
   const [selectedWorkflowKref, setSelectedWorkflowKref] = useState<string | null>(null);
-  const [workspaceTab, setWorkspaceTab] = useState<'definition' | 'runs'>('definition');
-  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
-  const [selectedRun, setSelectedRun] = useState<WorkflowRunDetail | null>(null);
-  const [pinnedRunDefinition, setPinnedRunDefinition] = useState<WorkflowDefinition | null>(null);
   const [selectedTask, setSelectedTask] = useState<TaskDefinition | null>(null);
   const [editorMode, setEditorMode] = useState<'create' | 'edit' | 'duplicate' | null>(null);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [running, setRunning] = useState(false);
-  const [cancellingRun, setCancellingRun] = useState(false);
-  const [deletingRun, setDeletingRun] = useState(false);
-  const [retryingRun, setRetryingRun] = useState(false);
   const [notice, setNotice] = useState<{ tone: 'success' | 'error' | 'info'; message: string } | null>(null);
   const [workflowDropdownOpen, setWorkflowDropdownOpen] = useState(false);
-  const [viewerArtifact, setViewerArtifact] = useState<KumihoArtifact | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
-
-  const upsertRunSummary = useCallback((run: WorkflowRunDetail | WorkflowRunSummary) => {
-    const summary: WorkflowRunSummary = {
-      kref: run.kref,
-      run_id: run.run_id,
-      workflow_name: run.workflow_name,
-      status: run.status,
-      started_at: run.started_at,
-      completed_at: run.completed_at,
-      steps_completed: run.steps_completed,
-      steps_total: run.steps_total,
-      expanded_steps_completed: run.expanded_steps_completed,
-      current_loop: run.current_loop,
-      current_iteration: run.current_iteration,
-      current_loop_total: run.current_loop_total,
-      current_step_instance: run.current_step_instance,
-      error: run.error,
-      workflow_item_kref: run.workflow_item_kref,
-      workflow_revision_kref: run.workflow_revision_kref,
-    };
-    setRuns((current) => {
-      const index = current.findIndex((entry) => entry.run_id === summary.run_id);
-      if (index === -1) return [summary, ...current].slice(0, 40);
-      const next = [...current];
-      next[index] = { ...next[index], ...summary };
-      return next;
-    });
-  }, []);
-
-  const openStepArtifact = (step: WorkflowStepDetail) => {
-    if (!step.artifact_path) return;
-    setViewerArtifact({
-      kref: `step:${step.step_id}`,
-      name: step.step_id,
-      location: step.artifact_path,
-      revision_kref: '',
-      item_kref: '',
-      deprecated: false,
-    });
-  };
 
   const load = async () => {
     setLoading(true);
@@ -144,6 +91,33 @@ export default function Workflows() {
     [definitions, selectedWorkflowKref],
   );
 
+  const buildRunWorkspaceHref = useCallback((runId?: string | null, nodeId?: string | null): string => {
+    const next = new URLSearchParams();
+    if (selectedWorkflow?.name) {
+      next.set('workflow', selectedWorkflow.name);
+    } else if (selectedWorkflow?.kref) {
+      next.set('workflow', selectedWorkflow.kref);
+    }
+    if (runId) next.set('run', runId);
+    if (nodeId) next.set('node', nodeId);
+
+    const requestedPathMode = searchParams.get('path');
+    if (requestedPathMode === 'all' || requestedPathMode === 'failed' || requestedPathMode === 'blocked') {
+      next.set('path', requestedPathMode);
+    }
+
+    const query = next.toString();
+    return query ? `/runs?${query}` : '/runs';
+  }, [searchParams, selectedWorkflow?.kref, selectedWorkflow?.name]);
+
+  useEffect(() => {
+    if (searchParams.get('tab') !== 'runs' || !selectedWorkflow) return;
+    navigate(buildRunWorkspaceHref(
+      searchParams.get('run'),
+      searchParams.get('node') ?? selectedTask?.id,
+    ), { replace: true });
+  }, [buildRunWorkspaceHref, navigate, searchParams, selectedTask?.id, selectedWorkflow]);
+
   useEffect(() => {
     if (!selectedWorkflow || selectedWorkflow.definition) {
       setDefinitionLoading(false);
@@ -183,21 +157,13 @@ export default function Workflows() {
     return runs.filter((run) => run.workflow_name.toLowerCase() === selectedWorkflow.name.toLowerCase()).slice(0, 20);
   }, [runs, selectedWorkflow]);
 
-  const displayedWorkflowDefinition = workspaceTab === 'runs' && pinnedRunDefinition
-    ? pinnedRunDefinition
-    : selectedWorkflow;
-
-  const activeWorkflowDefinition = displayedWorkflowDefinition?.definition ?? '';
-  const activeDefinitionLoading = definitionLoading || (
-    workspaceTab === 'runs'
-    && !!selectedRun
-    && !activeWorkflowDefinition
-  );
+  const activeWorkflowDefinition = selectedWorkflow?.definition ?? '';
+  const activeDefinitionLoading = definitionLoading;
 
   const selectedWorkflowTasks = useMemo(() => {
-    if (!displayedWorkflowDefinition) return [];
-    return displayedWorkflowDefinition.definition ? parseWorkflowYaml(displayedWorkflowDefinition.definition) : [];
-  }, [displayedWorkflowDefinition]);
+    if (!selectedWorkflow) return [];
+    return selectedWorkflow.definition ? parseWorkflowYaml(selectedWorkflow.definition) : [];
+  }, [selectedWorkflow]);
 
   useEffect(() => {
     const requestedNode = searchParams.get('node');
@@ -209,140 +175,13 @@ export default function Workflows() {
   }, [searchParams, selectedWorkflowTasks]);
 
   useEffect(() => {
-    const requestedTab = searchParams.get('tab');
-    if (requestedTab === 'runs' || requestedTab === 'definition') {
-      setWorkspaceTab(requestedTab);
-    } else {
-      setWorkspaceTab('definition');
-    }
-  }, [searchParams, selectedWorkflow?.kref]);
-
-  useEffect(() => {
-    const requestedRun = searchParams.get('run');
-    if (!selectedWorkflow) {
-      setSelectedRunId(null);
-      setSelectedRun(null);
-      return;
-    }
-    const matchingRuns = runs.filter((run) => run.workflow_name.toLowerCase() === selectedWorkflow.name.toLowerCase());
-    const nextRun = requestedRun
-      ? matchingRuns.find((run) => run.run_id === requestedRun)
-      : null;
-    setSelectedRunId(requestedRun ? (nextRun?.run_id ?? requestedRun) : (matchingRuns[0]?.run_id ?? null));
-  }, [runs, searchParams, selectedWorkflow]);
-
-  useEffect(() => {
-    if (!selectedRunId || workspaceTab !== 'runs') {
-      setSelectedRun(null);
-      setPinnedRunDefinition(null);
-      return;
-    }
-    setPinnedRunDefinition(null);
-    let cancelled = false;
-    let attempts = 0;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    let lastPinnedKref: string | null = null;
-    const TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled']);
-    const ACTIVE_STATUSES = new Set(['pending', 'running', 'paused']);
-    const POLL_INTERVAL_MS = 1000;
-    const scheduleNext = (delay: number) => {
-      timer = setTimeout(poll, delay);
-    };
-    const poll = () => {
-      fetchWorkflowRun(selectedRunId)
-        .then((run) => {
-          if (cancelled) return;
-          setSelectedRun(run);
-          upsertRunSummary(run);
-          if (run.workflow_revision_kref && run.workflow_revision_kref !== lastPinnedKref) {
-            lastPinnedKref = run.workflow_revision_kref;
-            fetchWorkflowByRevisionKref(run.workflow_revision_kref)
-              .then((definition) => {
-                if (!cancelled) setPinnedRunDefinition(definition);
-              })
-              .catch(() => {
-                if (!cancelled) setPinnedRunDefinition(null);
-              });
-          }
-          // Keep polling while the run is still in flight. Treat any
-          // unrecognized status as terminal so we don't loop forever.
-          if (ACTIVE_STATUSES.has(run.status)) {
-            scheduleNext(POLL_INTERVAL_MS);
-          } else if (!TERMINAL_STATUSES.has(run.status)) {
-            // Unknown status — stop polling defensively.
-            return;
-          }
-        })
-        .catch((err) => {
-          if (cancelled) return;
-          const msg = err instanceof Error ? err.message : String(err);
-          if (attempts < 6 && /not found|404/i.test(msg)) {
-            attempts += 1;
-            scheduleNext(1500);
-            return;
-          }
-          setError(msg);
-        });
-    };
-    poll();
-    return () => {
-      cancelled = true;
-      if (timer) clearTimeout(timer);
-    };
-  }, [selectedRunId, upsertRunSummary, workspaceTab]);
-
-  useEffect(() => {
-    if (!selectedRunId || workspaceTab !== 'runs') return undefined;
-    let cancelled = false;
-    const refreshRun = () => {
-      fetchWorkflowRun(selectedRunId)
-        .then((run) => {
-          if (cancelled) return;
-          setSelectedRun(run);
-          upsertRunSummary(run);
-        })
-        .catch(() => undefined);
-    };
-    const eventRunId = (event: SSEEvent): string | null => {
-      const direct = typeof event.run_id === 'string' ? event.run_id : null;
-      if (direct) return direct;
-      const payload = event.payload as { run_id?: unknown } | undefined;
-      return typeof payload?.run_id === 'string' ? payload.run_id : null;
-    };
-    const client = new SSEClient();
-    client.onEvent = (event) => {
-      const type = event.type;
-      if (
-        type === 'workflow_cancel' ||
-        type === 'workflow_retry' ||
-        type === 'human_approval_request' ||
-        type === 'human_approval_resolved' ||
-        type === 'channel_event'
-      ) {
-        if (eventRunId(event) === selectedRunId) {
-          refreshRun();
-          void load();
-        }
-      }
-    };
-    client.connect();
-    return () => {
-      cancelled = true;
-      client.disconnect();
-    };
-  }, [selectedRunId, upsertRunSummary, workspaceTab]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
     if (!selectedWorkflow?.kref) return;
+    if (searchParams.get('tab') === 'runs') return;
     setSearchParams((current) => {
       const next = new URLSearchParams(current);
       next.set('workflow', selectedWorkflow.kref);
-      next.set('tab', workspaceTab);
-      if (selectedRunId && workspaceTab === 'runs') {
-        next.set('run', selectedRunId);
-      } else {
-        next.delete('run');
-      }
+      next.delete('tab');
+      next.delete('run');
       if (selectedTask?.id) {
         next.set('node', selectedTask.id);
       } else {
@@ -350,27 +189,7 @@ export default function Workflows() {
       }
       return next;
     }, { replace: true });
-  }, [selectedRunId, selectedTask?.id, selectedWorkflow?.kref, setSearchParams, workspaceTab]);
-
-  const selectedRunStepResults = useMemo(() => {
-    if (!selectedRun) return {};
-    return Object.fromEntries(selectedRun.steps.map((step) => [step.step_id, toStepRunInfo(step)]));
-  }, [selectedRun]);
-
-  const selectedRunBlockedTaskIds = useMemo(
-    () => deriveBlockedTaskIds({ tasks: selectedWorkflowTasks, stepResults: selectedRunStepResults }),
-    [selectedRunStepResults, selectedWorkflowTasks],
-  );
-
-  const selectedRunFailingTaskIds = useMemo(
-    () => selectedRun?.steps.filter((step) => toStepRunInfo(step).status === 'failed').map((step) => step.step_id) ?? [],
-    [selectedRun],
-  );
-
-  const selectedRunRunningTaskIds = useMemo(
-    () => selectedRun?.steps.filter((step) => toStepRunInfo(step).status === 'running').map((step) => step.step_id) ?? [],
-    [selectedRun],
-  );
+  }, [searchParams, selectedTask?.id, selectedWorkflow?.kref, setSearchParams]);
 
   /* ---- Error formatting ---- */
 
@@ -478,21 +297,7 @@ export default function Workflows() {
           runId: response.run_id.slice(0, 8),
         }),
       });
-      setWorkspaceTab('runs');
-      setSelectedRunId(response.run_id);
-      upsertRunSummary({
-        kref: '',
-        run_id: response.run_id,
-        workflow_name: selectedWorkflow.name,
-        status: 'pending',
-        started_at: new Date().toISOString(),
-        completed_at: '',
-        steps_completed: '0',
-        steps_total: String(selectedWorkflow.steps ?? ''),
-        error: '',
-        workflow_item_kref: selectedWorkflow.kref,
-      });
-      await load();
+      navigate(buildRunWorkspaceHref(response.run_id, null));
     } catch (err) {
       const message = formatWorkflowError(err, t('workflows.run_failure'));
       setNotice({ tone: 'error', message });
@@ -518,63 +323,6 @@ export default function Workflows() {
       setDeleting(false);
     }
   };
-
-  const handleRetryRun = async () => {
-    if (!selectedRun || retryingRun) return;
-    setRetryingRun(true);
-    try {
-      const runLabel = selectedRun.run_id.slice(0, 8);
-      await retryWorkflowRun(selectedRun.run_id);
-      setNotice({ tone: 'success', message: tpl('runs.toast.retry_started', { id: runLabel }) });
-      const fresh = await fetchWorkflowRun(selectedRun.run_id).catch(() => null);
-      if (fresh) setSelectedRun(fresh);
-      await load();
-    } catch (err) {
-      setNotice({ tone: 'error', message: err instanceof Error ? err.message : t('runs.err.retry') });
-    } finally {
-      setRetryingRun(false);
-    }
-  };
-
-  const handleCancelRun = async () => {
-    if (!selectedRun || cancellingRun) return;
-    setCancellingRun(true);
-    try {
-      const runLabel = selectedRun.run_id.slice(0, 8);
-      await cancelWorkflowRun(selectedRun.run_id);
-      setNotice({ tone: 'success', message: tpl('runs.toast.stop_requested', { id: runLabel }) });
-      const fresh = await fetchWorkflowRun(selectedRun.run_id).catch(() => null);
-      if (fresh) setSelectedRun(fresh);
-      await load();
-    } catch (err) {
-      setNotice({ tone: 'error', message: err instanceof Error ? err.message : t('runs.err.stop') });
-    } finally {
-      setCancellingRun(false);
-    }
-  };
-
-  const handleDeleteRun = async () => {
-    if (!selectedRun || deletingRun) return;
-    setDeletingRun(true);
-    try {
-      const runLabel = selectedRun.run_id.slice(0, 8);
-      await deleteWorkflowRun(selectedRun.run_id);
-      setSelectedTask(null);
-      setSelectedRun(null);
-      setSelectedRunId(null);
-      await load();
-      setNotice({ tone: 'success', message: tpl('runs.toast.deleted', { id: runLabel }) });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : t('runs.err.delete'));
-      setNotice({ tone: 'error', message: err instanceof Error ? err.message : t('runs.err.delete') });
-    } finally {
-      setDeletingRun(false);
-    }
-  };
-
-  /* ---- Derived state for inspector visibility ---- */
-
-  const showInspector = workspaceTab === 'runs' || !!selectedTask;
 
   /* ---- render ---- */
 
@@ -682,11 +430,13 @@ export default function Workflows() {
                 key={id}
                 type="button"
                 className="revka-tab-button"
-                data-active={String(workspaceTab === id)}
-                aria-selected={workspaceTab === id}
+                data-active={String(id === 'definition')}
+                aria-selected={id === 'definition'}
                 onClick={() => {
-                  setWorkspaceTab(id);
-                  if (id === 'definition') setSelectedRun(null);
+                  if (id === 'runs') {
+                    navigate(buildRunWorkspaceHref(selectedRuns[0]?.run_id ?? null, selectedTask?.id));
+                    return;
+                  }
                 }}
               >
                 {id === 'definition' ? t('workflows.tab.definition') : t('workflows.tab.runs')}
@@ -694,103 +444,40 @@ export default function Workflows() {
             ))}
           </div>
 
-          {/* Run selector dropdown (runs tab only) */}
-          {workspaceTab === 'runs' && selectedRuns.length > 0 ? (
-            <div className="flex items-center gap-2">
-              <select
-                className="revka-input py-1 text-sm"
-                value={selectedRunId ?? ''}
-                onChange={(event) => {
-                  setSelectedRunId(event.target.value || null);
-                  setSelectedTask(null);
-                }}
-              >
-                {selectedRuns.map((run) => (
-                  <option key={run.run_id} value={run.run_id}>
-                    {tpl('workflows.run_option', {
-                      prefix: run.run_id.slice(0, 8),
-                      status: run.status,
-                      completed: run.steps_completed || 0,
-                      total: run.steps_total || '?',
-                    })}
-                  </option>
-                ))}
-              </select>
-              {selectedRun ? <StatusPill status={selectedRun.status} /> : null}
-            </div>
-          ) : null}
-
           {/* Actions */}
-          {workspaceTab === 'definition' ? (
-            <>
-              <button
-                className="revka-button"
-                data-variant="primary"
-                onClick={handleRunWorkflow}
-                disabled={running || selectedWorkflow.deprecated}
-                title={t('common.execute')}
-              >
-                {running ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
-                <span className="text-xs">{t('common.execute')}</span>
-              </button>
-              <button
-                className="revka-button"
-                onClick={() => selectedWorkflow && setEditorMode(selectedWorkflow.source === 'builtin' ? 'duplicate' : 'edit')}
-                title={selectedWorkflow.source === 'builtin' ? t('common.duplicate') : t('common.edit')}
-              >
-                <Pencil className="h-3.5 w-3.5" />
-              </button>
-              <button
-                className="revka-button"
-                onClick={handleToggleDeprecation}
-                disabled={selectedWorkflow.source === 'builtin'}
-                title={selectedWorkflow.deprecated ? t('common.reenable') : t('common.deprecate')}
-              >
-                <Power className="h-3.5 w-3.5" />
-              </button>
-              <button
-                className="revka-button"
-                onClick={handleDeleteWorkflow}
-                disabled={selectedWorkflow.source === 'builtin' || deleting}
-                title={t('common.delete')}
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </button>
-            </>
-          ) : (
-            <>
-              {selectedRun?.status === 'failed' ? (
-                <button
-                  className="revka-button"
-                  onClick={handleRetryRun}
-                  disabled={retryingRun}
-                  title={t('runs.action.retry_tooltip')}
-                >
-                  <RotateCcw className={`h-3.5 w-3.5 ${retryingRun ? 'animate-spin' : ''}`} />
-                  <span className="text-xs">{retryingRun ? t('runs.action.retrying') : t('runs.action.retry_failed')}</span>
-                </button>
-              ) : null}
-              {selectedRun && (selectedRun.status === 'running' || selectedRun.status === 'pending' || selectedRun.status === 'paused') ? (
-                <button
-                  className="revka-button"
-                  onClick={handleCancelRun}
-                  disabled={cancellingRun}
-                  title={t('runs.action.stop_tooltip')}
-                >
-                  {cancellingRun ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Pause className="h-3.5 w-3.5" />}
-                  <span className="text-xs">{cancellingRun ? t('runs.action.stopping') : t('runs.action.stop')}</span>
-                </button>
-              ) : null}
-              <button
-                className="revka-button"
-                onClick={handleDeleteRun}
-                disabled={!selectedRun || deletingRun}
-                title={t('runs.action.delete_tooltip')}
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </button>
-            </>
-          )}
+          <button
+            className="revka-button"
+            data-variant="primary"
+            onClick={handleRunWorkflow}
+            disabled={running || selectedWorkflow.deprecated}
+            title={t('common.execute')}
+          >
+            {running ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+            <span className="text-xs">{t('common.execute')}</span>
+          </button>
+          <button
+            className="revka-button"
+            onClick={() => selectedWorkflow && setEditorMode(selectedWorkflow.source === 'builtin' ? 'duplicate' : 'edit')}
+            title={selectedWorkflow.source === 'builtin' ? t('common.duplicate') : t('common.edit')}
+          >
+            <Pencil className="h-3.5 w-3.5" />
+          </button>
+          <button
+            className="revka-button"
+            onClick={handleToggleDeprecation}
+            disabled={selectedWorkflow.source === 'builtin'}
+            title={selectedWorkflow.deprecated ? t('common.reenable') : t('common.deprecate')}
+          >
+            <Power className="h-3.5 w-3.5" />
+          </button>
+          <button
+            className="revka-button"
+            onClick={handleDeleteWorkflow}
+            disabled={selectedWorkflow.source === 'builtin' || deleting}
+            title={t('common.delete')}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
         </div>
       ) : null}
 
@@ -815,75 +502,38 @@ export default function Workflows() {
                   description={definitionError ?? t('workflows.definition_unavailable_desc')}
                 />
               </Panel>
-            ) : workspaceTab === 'definition' ? (
+            ) : (
               <WorkflowDagWorkspace
                 definition={activeWorkflowDefinition}
                 onSelectTask={setSelectedTask}
                 selectedTaskId={selectedTask?.id}
                 fill
               />
-            ) : selectedRun && displayedWorkflowDefinition?.definition ? (
-              <WorkflowDagWorkspace
-                definition={displayedWorkflowDefinition.definition}
-                onSelectTask={setSelectedTask}
-                selectedTaskId={selectedTask?.id}
-                stepResults={selectedRunStepResults}
-                blockedTaskIds={selectedRunBlockedTaskIds}
-                failingTaskIds={selectedRunFailingTaskIds}
-                runningTaskIds={selectedRunRunningTaskIds}
-                fill
-              />
-            ) : (
-              <Panel className="flex flex-1 items-center justify-center" variant="secondary">
-                <StateMessage title={t('workflows.no_runs_title')} description={t('workflows.no_runs_desc')} />
-              </Panel>
             )}
           </div>
 
           {/* Inspector panel — contextual right sidebar (stacks below on mobile) */}
-          {showInspector ? (
+          {selectedTask ? (
             <div className="min-h-0 w-full shrink-0 space-y-3 overflow-y-auto lg:w-[22rem]">
-              {workspaceTab === 'definition' ? (
-                <>
-                  <WorkflowMetadataCard workflow={selectedWorkflow} />
-                  <SelectedTaskCard
-                    task={selectedTask}
-                    footer={selectedTask ? (
-                      <div className="flex flex-wrap gap-3 text-xs">
-                        <Link
-                          to={`/workflows?workflow=${encodeURIComponent(selectedWorkflow.kref)}&tab=runs${selectedRunId ? `&run=${encodeURIComponent(selectedRunId)}` : ''}&node=${encodeURIComponent(selectedTask.id)}`}
-                          style={{ color: 'var(--revka-signal-network)' }}
-                        >
-                          {t('workflows.open_node_in_runs')}
-                        </Link>
-                      </div>
-                    ) : undefined}
-                    emptyText={t('workflows.select_dag_node')}
-                  />
-                </>
-              ) : (
-                <>
-                  <RunSummaryCard
-                    run={selectedRun}
-                    workflowHref={`/workflows?workflow=${encodeURIComponent(selectedWorkflow.kref)}&tab=definition${selectedTask ? `&node=${encodeURIComponent(selectedTask.id)}` : ''}`}
-                  />
-                  <SelectedTaskCard
-                    title={t('workflows.run_step')}
-                    task={selectedTask}
-                    step={selectedRun?.steps.find((step) => step.step_id === selectedTask?.id) ?? null}
-                    emptyText={t('workflows.select_dag_node_step')}
-                    onViewArtifact={openStepArtifact}
-                  />
-                </>
-              )}
+              <WorkflowMetadataCard workflow={selectedWorkflow} />
+              <SelectedTaskCard
+                task={selectedTask}
+                footer={
+                  <div className="flex flex-wrap gap-3 text-xs">
+                    <Link
+                      to={buildRunWorkspaceHref(selectedRuns[0]?.run_id ?? null, selectedTask.id)}
+                      style={{ color: 'var(--revka-signal-network)' }}
+                    >
+                      {t('workflows.open_node_in_runs')}
+                    </Link>
+                  </div>
+                }
+                emptyText={t('workflows.select_dag_node')}
+              />
             </div>
           ) : null}
         </div>
       )}
-
-      {viewerArtifact ? (
-        <ArtifactViewerModal artifact={viewerArtifact} onClose={() => setViewerArtifact(null)} />
-      ) : null}
 
       {editorMode ? (
         <div

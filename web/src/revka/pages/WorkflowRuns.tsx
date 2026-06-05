@@ -1,4 +1,4 @@
-import { Eye, Pause, RefreshCw, Trash2, Wrench, MessageSquareText, RotateCcw } from 'lucide-react';
+import { Braces, Eye, FileCode2, FileText, Pause, RefreshCw, Trash2, Wrench, MessageSquareText, RotateCcw } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
@@ -31,6 +31,15 @@ import { useT } from '@/revka/hooks/useT';
 
 function isMissingRunError(err: unknown): boolean {
   return err instanceof Error && /\bAPI 404\b/.test(err.message);
+}
+
+function resolveWorkflowFilterName(requestedWorkflow: string | null, definitions: WorkflowDefinition[]): string | null {
+  if (!requestedWorkflow) return null;
+  const lower = requestedWorkflow.toLowerCase();
+  const matchedDefinition = definitions.find((definition) =>
+    definition.kref.toLowerCase() === lower || definition.name.toLowerCase() === lower
+  );
+  return matchedDefinition?.name ?? requestedWorkflow;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -208,8 +217,9 @@ export default function WorkflowRuns() {
         setRuns(mergedRuns);
         setDefinitions(workflowDefinitions);
 
-        const scopedRuns = requestedWorkflow
-          ? mergedRuns.filter((run) => run.workflow_name.toLowerCase() === requestedWorkflow.toLowerCase())
+        const requestedWorkflowName = resolveWorkflowFilterName(requestedWorkflow, workflowDefinitions);
+        const scopedRuns = requestedWorkflowName
+          ? mergedRuns.filter((run) => run.workflow_name.toLowerCase() === requestedWorkflowName.toLowerCase())
           : mergedRuns;
         // `?run=` is authoritative — always honor it on (re)load so clicking an
         // approval notification navigates to the correct run even when another
@@ -337,11 +347,11 @@ export default function WorkflowRuns() {
   }, [definitions, pinnedDefinition, selectedRun]);
 
   const displayedRuns = useMemo(() => {
-    const requestedWorkflow = searchParams.get('workflow');
-    if (!requestedWorkflow) return runs;
-    const lower = requestedWorkflow.toLowerCase();
+    const requestedWorkflowName = resolveWorkflowFilterName(searchParams.get('workflow'), definitions);
+    if (!requestedWorkflowName) return runs;
+    const lower = requestedWorkflowName.toLowerCase();
     return runs.filter((run) => run.workflow_name.toLowerCase() === lower);
-  }, [runs, searchParams]);
+  }, [definitions, runs, searchParams]);
 
   const selectedDefinitionTasks = useMemo(
     () => (selectedDefinition ? parseWorkflowYaml(selectedDefinition.definition) : []),
@@ -364,10 +374,6 @@ export default function WorkflowRuns() {
     }
   }, [searchParams]);
 
-  useEffect(() => {
-    setDetailTab('summary');
-  }, [selectedRunId, selectedTask?.id]);
-
   const stepResults = useMemo(() => {
     if (!selectedRun) return {};
     return Object.fromEntries(selectedRun.steps.map((step) => [step.step_id, toStepRunInfo(step)]));
@@ -377,6 +383,14 @@ export default function WorkflowRuns() {
     () => (selectedTask && selectedRun ? selectedRun.steps.find((step) => step.step_id === selectedTask.id) ?? null : null),
     [selectedRun, selectedTask],
   );
+
+  useEffect(() => {
+    if (!selectedTask) {
+      setDetailTab('summary');
+      return;
+    }
+    setDetailTab(selectedStep?.agent_id ? 'jsonl' : 'summary');
+  }, [selectedRunId, selectedTask?.id, selectedStep?.agent_id]);
   const selectedFailureReason = useMemo(() => stepFailureReason(selectedStep), [selectedStep]);
   const selectedConditionalResolution = useMemo(
     () => (selectedTask?.type === 'conditional' ? conditionalResolution(selectedStep) : null),
@@ -621,6 +635,13 @@ export default function WorkflowRuns() {
     transcript: t('runs.tab.transcript'),
     jsonl: t('runs.tab.jsonl'),
   };
+  const tabIcons: Record<'summary' | 'output' | 'tools' | 'transcript' | 'jsonl', ReactNode> = {
+    summary: <FileText className="h-4 w-4" />,
+    output: <FileCode2 className="h-4 w-4" />,
+    tools: <Wrench className="h-4 w-4" />,
+    transcript: <MessageSquareText className="h-4 w-4" />,
+    jsonl: <Braces className="h-4 w-4" />,
+  };
 
   return (
     <>
@@ -638,8 +659,9 @@ export default function WorkflowRuns() {
         }
       />
 
-      {/* Row 2 — Three-column: run index | DAG canvas | step inspector */}
-      <div className="grid gap-4 grid-cols-1 lg:min-h-0 lg:flex-1 lg:grid-cols-[16rem_minmax(0,1fr)_24rem]">
+      {/* Row 2 — DAG-first workspace with a full-width detail dock */}
+      <div className="grid gap-4 grid-cols-1 lg:min-h-0 lg:flex-1 lg:grid-rows-[minmax(0,1fr)_auto]">
+        <div className="grid gap-4 grid-cols-1 lg:min-h-0 lg:grid-cols-[16rem_minmax(0,1fr)]">
         {/* ---- LEFT: Run index ---- */}
         <Panel className="flex flex-col overflow-hidden p-0 h-[20rem] lg:h-auto" variant="secondary">
           <div className="shrink-0 border-b px-4 py-2.5" style={{ borderColor: 'var(--revka-border-soft)' }}>
@@ -699,7 +721,7 @@ export default function WorkflowRuns() {
         </Panel>
 
         {/* ---- CENTER: DAG workspace ---- */}
-        <div ref={workspaceRef} tabIndex={-1} className="flex min-h-0 flex-col gap-3 outline-none h-[36rem] lg:h-auto">
+        <div ref={workspaceRef} tabIndex={-1} className="flex min-h-[42rem] flex-col gap-3 outline-none lg:min-h-0 lg:h-auto">
           {/* Workspace header bar */}
           {selectedRun ? (
             <div className="flex shrink-0 flex-wrap items-center justify-between gap-3">
@@ -827,9 +849,11 @@ export default function WorkflowRuns() {
             )}
           </div>
         </div>
+        </div>
 
-        {/* ---- RIGHT: Step inspector ---- */}
-        <div className="min-h-0 overflow-y-auto h-[40rem] lg:h-auto">
+        {/* ---- Detail dock: run context | selected step modes ---- */}
+        <div className="grid gap-4 lg:grid-cols-[minmax(16rem,0.30fr)_minmax(0,1fr)]">
+          <div className="min-h-0 space-y-3 lg:max-h-[24rem] lg:overflow-y-auto">
           {/* Run summary strip */}
           {selectedRun ? (
             <Panel className="mb-3 p-3" variant="utility">
@@ -868,24 +892,71 @@ export default function WorkflowRuns() {
             </div>
           ) : null}
 
-          {/* Step detail tabs */}
-          <Panel className="p-3" variant="secondary">
-            <div className="flex items-center justify-between gap-2">
+          {/* Step timeline */}
+          {selectedRun ? (
+            <Panel className="p-3" variant="utility">
               <span className="text-[11px] font-semibold uppercase tracking-[0.14em]" style={{ color: 'var(--revka-text-faint)' }}>
-                {selectedTask ? selectedTask.name || selectedTask.id : t('runs.inspector.title')}
+                {tpl('runs.timeline', { count: selectedRun.steps.length })}
               </span>
-              <div className="revka-tab-strip" role="tablist">
+              <div className="mt-2 space-y-1">
+                {selectedRun.steps.map((step) => {
+                  const failureReason = stepFailureReason(step);
+                  const branch = selectedDefinitionTasks.find((task) => task.id === step.step_id)?.type === 'conditional'
+                    ? conditionalResolution(step)
+                    : null;
+                  return (
+                    <button
+                      key={step.step_id}
+                      type="button"
+                      onClick={() => setSelectedTask(selectedDefinitionTasks.find((task) => task.id === step.step_id) ?? null)}
+                      className="flex w-full items-center justify-between gap-2 rounded-[10px] px-3 py-2 text-left transition"
+                      style={{
+                        background: selectedTask?.id === step.step_id
+                          ? 'var(--revka-signal-selected-soft, color-mix(in srgb, var(--revka-signal-selected) 18%, transparent))'
+                          : 'transparent',
+                      }}
+                    >
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm" style={{ color: 'var(--revka-text-primary)' }}>{step.step_id}</span>
+                        {failureReason ? (
+                          <span className="mt-0.5 block truncate text-[11px]" style={{ color: 'var(--revka-status-danger)' }}>{failureReason}</span>
+                        ) : branch ? (
+                          <span className="mt-0.5 block truncate text-[11px]" style={{ color: 'var(--revka-text-secondary)' }}>
+                            {branch.label}{branch.goto ? ` -> ${branch.goto}` : ''}{branch.output ? ` · ${compactDetail(branch.output, 90)}` : ''}
+                          </span>
+                        ) : null}
+                      </span>
+                      <StatusPill status={step.status} />
+                    </button>
+                  );
+                })}
+              </div>
+            </Panel>
+          ) : null}
+          </div>
+
+          {/* Step detail tabs */}
+          <Panel className="min-h-[22rem] p-4" variant="secondary">
+            <div className="flex flex-col gap-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="min-w-0 truncate text-[11px] font-semibold uppercase tracking-[0.14em]" style={{ color: 'var(--revka-text-faint)' }}>
+                  {selectedTask ? selectedTask.name || selectedTask.id : t('runs.inspector.title')}
+                </span>
+                {selectedStep ? <StatusPill status={selectedStep.status} /> : null}
+              </div>
+              <div className="revka-run-tab-grid" role="tablist" aria-label={t('runs.inspector.title')}>
                 {(['summary', 'output', 'tools', 'transcript', 'jsonl'] as const).map((id) => (
                   <button
                     key={id}
                     type="button"
                     role="tab"
                     aria-selected={detailTab === id}
-                    className="revka-tab-button"
+                    className="revka-run-tab-button"
                     data-active={String(detailTab === id)}
                     onClick={() => setDetailTab(id)}
                   >
-                    {tabLabels[id]}
+                    {tabIcons[id]}
+                    <span>{tabLabels[id]}</span>
                   </button>
                 ))}
               </div>
@@ -936,16 +1007,11 @@ export default function WorkflowRuns() {
                         ) : null}
                       </>
                     ) : null}
-                    {selectedTask && selectedRun ? (
+                    {selectedTask && selectedDefinition ? (
                       <div className="flex flex-wrap gap-3 pt-1 text-xs">
-                        <Link to={`/dashboard?run=${encodeURIComponent(selectedRun.run_id)}&node=${encodeURIComponent(selectedTask.id)}`} style={{ color: 'var(--revka-signal-network)' }}>
-                          {t('runs.detail.dashboard_link')}
+                        <Link to={`/workflows?workflow=${encodeURIComponent(selectedDefinition.kref)}&node=${encodeURIComponent(selectedTask.id)}`} style={{ color: 'var(--revka-signal-network)' }}>
+                          {t('runs.detail.definition_link')}
                         </Link>
-                        {selectedDefinition ? (
-                          <Link to={`/workflows?workflow=${encodeURIComponent(selectedDefinition.kref)}&node=${encodeURIComponent(selectedTask.id)}`} style={{ color: 'var(--revka-signal-network)' }}>
-                            {t('runs.detail.definition_link')}
-                          </Link>
-                        ) : null}
                       </div>
                     ) : null}
                   </div>
@@ -1114,7 +1180,7 @@ export default function WorkflowRuns() {
                     {/* Entries list */}
                     {filteredJsonlLog.length === 0 ? (
                       <div className="text-center py-4 text-xs" style={{ color: 'var(--revka-text-faint)' }}>
-                        No entries match your filter.
+                        {jsonlSearch ? t('runs.detail.no_jsonl_filter') : t('runs.detail.no_jsonl')}
                       </div>
                     ) : jsonlViewMode === 'raw' ? (
                       <div className="rounded-[10px] border p-2 overflow-x-auto max-h-[28rem]" style={{ borderColor: 'var(--revka-border-soft)', background: 'var(--revka-bg-input)' }}>
@@ -1262,47 +1328,6 @@ export default function WorkflowRuns() {
             </div>
           </Panel>
 
-          {/* Step timeline */}
-          {selectedRun ? (
-            <Panel className="mt-3 p-3" variant="utility">
-              <span className="text-[11px] font-semibold uppercase tracking-[0.14em]" style={{ color: 'var(--revka-text-faint)' }}>
-                {tpl('runs.timeline', { count: selectedRun.steps.length })}
-              </span>
-              <div className="mt-2 space-y-1">
-                {selectedRun.steps.map((step) => {
-                  const failureReason = stepFailureReason(step);
-                  const branch = selectedDefinitionTasks.find((task) => task.id === step.step_id)?.type === 'conditional'
-                    ? conditionalResolution(step)
-                    : null;
-                  return (
-                  <button
-                    key={step.step_id}
-                    type="button"
-                    onClick={() => setSelectedTask(selectedDefinitionTasks.find((task) => task.id === step.step_id) ?? null)}
-                    className="flex w-full items-center justify-between gap-2 rounded-[10px] px-3 py-2 text-left transition"
-                    style={{
-                      background: selectedTask?.id === step.step_id
-                        ? 'var(--revka-signal-selected-soft, color-mix(in srgb, var(--revka-signal-selected) 18%, transparent))'
-                        : 'transparent',
-                    }}
-                  >
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm" style={{ color: 'var(--revka-text-primary)' }}>{step.step_id}</span>
-                      {failureReason ? (
-                        <span className="mt-0.5 block truncate text-[11px]" style={{ color: 'var(--revka-status-danger)' }}>{failureReason}</span>
-                      ) : branch ? (
-                        <span className="mt-0.5 block truncate text-[11px]" style={{ color: 'var(--revka-text-secondary)' }}>
-                          {branch.label}{branch.goto ? ` -> ${branch.goto}` : ''}{branch.output ? ` · ${compactDetail(branch.output, 90)}` : ''}
-                        </span>
-                      ) : null}
-                    </span>
-                    <StatusPill status={step.status} />
-                  </button>
-                  );
-                })}
-              </div>
-            </Panel>
-          ) : null}
         </div>
       </div>
     </div>
