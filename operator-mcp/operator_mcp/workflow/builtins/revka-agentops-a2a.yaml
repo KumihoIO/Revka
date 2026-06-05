@@ -1,0 +1,110 @@
+name: revka-agentops-a2a
+version: "1.0"
+description: "Google AI Startup Track 3 Reference: Governed IT incident response control plane workflow."
+tags: [google-agents, track3, b2b, SRE, incident-response]
+
+inputs:
+  - name: incident_id
+    type: string
+    required: true
+    description: "Production incident identifier (e.g. INC-98104)"
+  - name: alert_payload
+    type: string
+    required: true
+    description: "Alert description or payload text"
+  - name: cwd
+    type: string
+    required: true
+    description: "Working directory containing service configs"
+
+steps:
+  - id: triage
+    name: "Triage Incident Alert"
+    type: agent
+    agent:
+      agent_type: claude
+      role: researcher
+      prompt: |
+        Triage the following production alert.
+        Incident ID: ${inputs.incident_id}
+        Alert Payload: ${inputs.alert_payload}
+
+        Analyze current system state and describe the probable root cause, business impact, and blast radius.
+      timeout: 300
+
+  - id: security_audit
+    name: "Perform Security & Compliance Audit"
+    type: agent
+    depends_on: [triage]
+    agent:
+      agent_type: claude
+      role: reviewer
+      prompt: |
+        Perform an IAM and compliance audit for the proposed remediation of incident ${inputs.incident_id}.
+        Triage Analysis: ${triage.output}
+
+        Evaluate potential risk of privilege escalation, public exposure of secrets, or unsafe deployment flags.
+        Return APPROVED or NEEDS_CHANGES.
+      timeout: 300
+
+  - id: generate_fix
+    name: "Generate Patch & Rollback Plan"
+    type: agent
+    depends_on: [security_audit]
+    agent:
+      agent_type: codex
+      role: coder
+      prompt: |
+        Generate a minimal, surgical patch code and a detailed rollback strategy to remediate incident ${inputs.incident_id}.
+        Triage Report: ${triage.output}
+        Security Audit Feedback: ${security_audit.output}
+
+        Write the safe configuration adjustments and the exact gcloud rollback commands.
+      timeout: 300
+
+  - id: approval_boundary
+    name: "Human-in-the-Loop Approval Gate"
+    type: human_approval
+    depends_on: [generate_fix]
+    human_approval:
+      prompt: |
+        A mutating production fix deployment has been requested for incident ${inputs.incident_id}.
+        Remediation Patch & Rollback Strategy: ${generate_fix.output}
+        
+        Please approve to execute the deployment, or reject with feedback.
+
+  - id: deploy_fix
+    name: "Deploy Remediation Patch"
+    type: agent
+    depends_on: [approval_boundary]
+    agent:
+      agent_type: codex
+      role: coder
+      prompt: |
+        Deploy the approved remediation patch configuration to Cloud Run.
+        Remediation Plan: ${generate_fix.output}
+        Approval Payload: ${approval_boundary.output}
+
+        Verify that container concurrency limits, secret managers, and Cloud Logging parameters are correctly set.
+      timeout: 300
+
+  - id: verify_health
+    name: "Post-Deployment Verification"
+    type: agent
+    depends_on: [deploy_fix]
+    agent:
+      agent_type: codex
+      role: reviewer
+      prompt: |
+        Verify that the deployed fix resolved the incident.
+        Alert: ${inputs.alert_payload}
+        Deployment Output: ${deploy_fix.output}
+
+        Provide a final SRE recommendation and close the ticket if healthy.
+      timeout: 300
+
+outputs:
+  - name: remediation_status
+    source: "${verify_health.output}"
+  - name: audit_trail
+    source: "${security_audit.output}"
