@@ -4,7 +4,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-from typing import Any
 
 from google.adk.agents import Agent
 from google.adk.models import Gemini
