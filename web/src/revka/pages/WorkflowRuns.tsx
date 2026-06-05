@@ -1007,7 +1007,7 @@ export default function WorkflowRuns() {
                         ) : null}
                       </>
                     ) : null}
-                    {selectedTask && selectedDefinition ? (
+                    {selectedDefinition ? (
                       <div className="flex flex-wrap gap-3 pt-1 text-xs">
                         <Link to={`/workflows?workflow=${encodeURIComponent(selectedDefinition.kref)}&node=${encodeURIComponent(selectedTask.id)}`} style={{ color: 'var(--revka-signal-network)' }}>
                           {t('runs.detail.definition_link')}
