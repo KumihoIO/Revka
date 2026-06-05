@@ -24,6 +24,8 @@ _SKILL_FILES = {
     "operator-handoff": "operator-handoff.md",
     "operator-chat": "operator-chat.md",
     "kumiho-sdk": "kumiho-sdk.md",
+    "kapathy": "kapathy.md",
+    "construct-workflows": "construct-workflows.md",
 }
 
 _skill_cache: dict[str, str] = {}
