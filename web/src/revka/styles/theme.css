@@ -783,13 +783,22 @@
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
   border: 1px solid var(--revka-border-soft);
   border-radius: 9999px;
   background: color-mix(in srgb, var(--revka-bg-surface) 92%, transparent);
   padding: 0.25rem;
+  scrollbar-width: none;
+}
+
+.revka-tab-strip::-webkit-scrollbar {
+  display: none;
 }
 
 .revka-tab-button {
+  flex: 0 0 auto;
   border: 0;
   border-radius: 9999px;
   background: transparent;
@@ -797,6 +806,7 @@
   padding: 0.46rem 0.8rem;
   font-size: 0.76rem;
   font-weight: 600;
+  white-space: nowrap;
   transition: background 0.2s ease, color 0.2s ease;
 }
 
@@ -809,6 +819,59 @@
 
 .revka-tab-button:hover {
   color: var(--revka-text-primary);
+}
+
+.revka-run-tab-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(6.5rem, 1fr));
+  gap: 0.45rem;
+  width: 100%;
+}
+
+.revka-run-tab-button {
+  display: inline-flex;
+  min-height: 2.75rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border: 1px solid var(--revka-border-soft);
+  border-radius: var(--revka-radius-sm);
+  background: color-mix(in srgb, var(--revka-bg-surface) 86%, transparent);
+  color: var(--revka-text-secondary);
+  padding: 0.65rem 0.8rem;
+  font-size: 0.76rem;
+  font-weight: 650;
+  white-space: nowrap;
+  transition: border-color 0.18s ease, background 0.18s ease, color 0.18s ease;
+}
+
+.revka-run-tab-button[data-active='true'] {
+  border-color: color-mix(in srgb, var(--revka-signal-selected) 34%, var(--revka-border-strong));
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--revka-signal-selected) 10%, transparent), transparent 74%),
+    color-mix(in srgb, var(--revka-bg-panel-strong) 92%, transparent);
+  color: var(--revka-text-primary);
+}
+
+.revka-run-tab-button:hover {
+  border-color: color-mix(in srgb, var(--revka-signal-selected) 22%, var(--revka-border-strong));
+  color: var(--revka-text-primary);
+}
+
+@media (max-width: 1279px) {
+  .revka-run-tab-grid {
+    grid-template-columns: repeat(3, minmax(7rem, 1fr));
+  }
+}
+
+@media (max-width: 639px) {
+  .revka-run-tab-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .revka-run-tab-button {
+    justify-content: flex-start;
+  }
 }
 
 .revka-modal-shell {
