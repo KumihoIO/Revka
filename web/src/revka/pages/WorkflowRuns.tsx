@@ -662,7 +662,7 @@ export default function WorkflowRuns() {
       {/* Row 2 — DAG-first workspace with a full-width detail dock */}
       <div className="flex min-h-0 flex-1 flex-col gap-4">
         {/* ---- DAG workspace ---- */}
-        <div ref={workspaceRef} tabIndex={-1} className="flex h-[62vh] min-h-[30rem] flex-col gap-3 outline-none lg:h-[calc(100vh-17rem)] lg:min-h-[44rem]">
+        <div ref={workspaceRef} tabIndex={-1} className="flex min-h-0 flex-col gap-3 outline-none lg:h-[clamp(38rem,64vh,52rem)]">
           {/* Workspace header bar */}
           {selectedRun ? (
             <div className="flex shrink-0 flex-wrap items-center justify-between gap-3">
@@ -740,7 +740,7 @@ export default function WorkflowRuns() {
           <RunFocusBanner run={selectedRun} active={shouldScrollToWorkspace} label={t('runs.banner.label')} />
 
           {/* DAG canvas */}
-          <div className="min-h-0 flex-1">
+          <div className="flex h-[30rem] min-h-0 flex-col lg:h-auto lg:flex-1">
             {selectedRun && selectedDefinition ? (
               <WorkflowDagWorkspace
                 definition={selectedDefinition.definition}
