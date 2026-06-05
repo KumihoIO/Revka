@@ -71,9 +71,9 @@ export default function TeamTopologyPanel({
       onNodeClick={handleNodeClick}
       minimapColor={(node) => {
         const data = node.data as AgentNodeData;
-        if (data.role === 'reviewer') return '#c084fc';
-        if (data.role === 'coder') return '#3faf68';
-        return '#4da3d9';
+        if (data.role === 'reviewer') return '#6575d3';
+        if (data.role === 'coder') return '#2fbf75';
+        return '#4f75a8';
       }}
       emptyState="Select a team to inspect its topology."
     />

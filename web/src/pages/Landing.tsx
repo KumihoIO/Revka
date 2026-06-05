@@ -97,7 +97,7 @@ const FEATURES: FeatureDef[] = [
     icon: Brain,
     titleKey: 'landing.features.memory.title',
     descKey: 'landing.features.memory.desc',
-    color: '#7dff9b',
+    color: '#8fa8c8',
     featured: true,
   },
   {
@@ -105,7 +105,7 @@ const FEATURES: FeatureDef[] = [
     icon: Network,
     titleKey: 'landing.features.operator.title',
     descKey: 'landing.features.operator.desc',
-    color: '#22d3ee',
+    color: '#6f83d6',
     featured: false,
   },
   {
@@ -113,7 +113,7 @@ const FEATURES: FeatureDef[] = [
     icon: Package,
     titleKey: 'landing.features.pool.title',
     descKey: 'landing.features.pool.desc',
-    color: '#a855f7',
+    color: '#6575d3',
     featured: false,
   },
   {
@@ -129,7 +129,7 @@ const FEATURES: FeatureDef[] = [
     icon: Target,
     titleKey: 'landing.features.goals.title',
     descKey: 'landing.features.goals.desc',
-    color: '#00e68a',
+    color: '#2fbf75',
     featured: false,
   },
   {
@@ -183,21 +183,21 @@ const PILLARS: PillarDef[] = [
     icon: Bot,
     titleKey: 'landing.pillars.agents.title',
     descKey: 'landing.pillars.agents.desc',
-    color: '#22d3ee',
+    color: '#6f83d6',
   },
   {
     id: 'memory',
     icon: Brain,
     titleKey: 'landing.pillars.memory.title',
     descKey: 'landing.pillars.memory.desc',
-    color: '#7dff9b',
+    color: '#8fa8c8',
   },
   {
     id: 'channels',
     icon: Radio,
     titleKey: 'landing.pillars.channels.title',
     descKey: 'landing.pillars.channels.desc',
-    color: '#a855f7',
+    color: '#6575d3',
   },
 ];
 
@@ -255,21 +255,21 @@ const HOW_IT_WORKS: HowStepDef[] = [
     icon: Layers,
     titleKey: 'landing.how.step1.title',
     descKey: 'landing.how.step1.desc',
-    color: '#7dff9b',
+    color: '#8fa8c8',
   },
   {
     step: '02',
     icon: GitBranch,
     titleKey: 'landing.how.step2.title',
     descKey: 'landing.how.step2.desc',
-    color: '#22d3ee',
+    color: '#6f83d6',
   },
   {
     step: '03',
     icon: Search,
     titleKey: 'landing.how.step3.title',
     descKey: 'landing.how.step3.desc',
-    color: '#a855f7',
+    color: '#6575d3',
   },
 ];
 

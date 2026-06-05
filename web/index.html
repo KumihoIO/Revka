@@ -10,6 +10,62 @@
     <link rel="icon" type="image/png" sizes="512x512" href="/_app/favicon-512.png" />
     <link rel="apple-touch-icon" sizes="180x180" href="/_app/apple-touch-icon.png" />
     <title>Revka</title>
+    <script>
+      (function () {
+        var theme = 'dark';
+        var skin = 'revka';
+        try {
+          var raw = window.localStorage && window.localStorage.getItem('revka-theme');
+          var stored = raw ? JSON.parse(raw) : {};
+          var requested = stored && stored.theme ? stored.theme : 'dark';
+          skin = stored && stored.activeSkinId ? stored.activeSkinId : 'revka';
+          if (requested === 'system') {
+            theme = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+          } else if (requested === 'light') {
+            theme = 'light';
+          } else if (requested === 'oled') {
+            theme = 'oled';
+          }
+        } catch (_) {
+          theme = 'dark';
+          skin = 'revka';
+        }
+        document.documentElement.dataset.theme = theme;
+        document.documentElement.dataset.revkaSkin = skin;
+        document.documentElement.style.colorScheme = theme === 'light' ? 'light' : 'dark';
+      })();
+    </script>
+    <style>
+      :root {
+        background: #0b0d10;
+        color: #f7f8fc;
+      }
+
+      :root[data-theme='light'] {
+        background: #eef1f5;
+        color: #111827;
+      }
+
+      html,
+      body,
+      #root {
+        min-height: 100%;
+      }
+
+      body {
+        margin: 0;
+        background:
+          radial-gradient(circle at 18% 8%, rgba(143, 168, 200, 0.06), transparent 38%),
+          linear-gradient(180deg, #101318 0%, #0b0d10 52%, #0b0d10 100%);
+        color: inherit;
+      }
+
+      :root[data-theme='light'] body {
+        background:
+          radial-gradient(circle at 18% 8%, rgba(89, 108, 198, 0.06), transparent 38%),
+          linear-gradient(180deg, #e5eaf0 0%, #eef1f5 54%, #eef1f5 100%);
+      }
+    </style>
   </head>
   <body>
     <div id="root"></div>

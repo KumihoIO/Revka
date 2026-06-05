@@ -53,15 +53,15 @@ export const COLOR_SCHEMES: Record<ColorScheme, { label: string; colors: SchemeC
     },
   },
   cyan: {
-    label: 'Cyan',
+    label: 'Revka',
     colors: {
-      primary: '#72d8ff',
-      secondary: '#a78bfa',
+      primary: '#8fa8c8',
+      secondary: '#6f83d6',
       user: '#e6e6e6',
-      system: '#a78bfa',
-      glow: '0 0 6px rgba(114,216,255,0.25)',
-      glowSecondary: '0 0 6px rgba(167,139,250,0.25)',
-      cursorColor: '#72d8ff',
+      system: '#7c8ddd',
+      glow: '0 0 6px rgba(143,168,200,0.18)',
+      glowSecondary: '0 0 6px rgba(111,131,214,0.18)',
+      cursorColor: '#8fa8c8',
     },
   },
   minimal: {
@@ -85,7 +85,7 @@ export const SCHEME_KEYS = Object.keys(COLOR_SCHEMES) as ColorScheme[];
 const STORAGE_KEY = 'revka-assistant-config';
 
 const DEFAULT_CONFIG: AssistantConfig = {
-  colorScheme: 'matrix',
+  colorScheme: 'cyan',
   fontSize: 13,
   cursorBlink: true,
   panelHeightPercent: 60,

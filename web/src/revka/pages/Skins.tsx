@@ -21,10 +21,10 @@ function ModePreview({ skin, mode }: { skin: SkinSummary; mode: SkinModeName }) 
       : assets.dashboardHero
         ? skinAssetPath(skin.id, assets.dashboardHero)
         : null;
-  const bg = tokens['--revka-bg-base'] ?? (mode === 'light' ? '#f4f8f5' : '#05080a');
-  const surface = tokens['--revka-bg-surface'] ?? (mode === 'light' ? '#ffffff' : '#0c1413');
-  const text = tokens['--revka-text-primary'] ?? (mode === 'light' ? '#13201b' : '#e7f1eb');
-  const accent = tokens['--revka-signal-live'] ?? (mode === 'light' ? '#3faf68' : '#7dff9b');
+  const bg = tokens['--revka-bg-base'] ?? (mode === 'light' ? '#eef1f5' : '#0b0d10');
+  const surface = tokens['--revka-bg-surface'] ?? (mode === 'light' ? '#f7f9fb' : '#13161d');
+  const text = tokens['--revka-text-primary'] ?? (mode === 'light' ? '#111827' : '#f7f8fc');
+  const accent = tokens['--revka-signal-live'] ?? (mode === 'light' ? '#4f75a8' : '#8fa8c8');
 
   return (
     <div className="overflow-hidden rounded-[12px] border" style={{ borderColor: 'var(--revka-border-soft)', background: bg, color: text }}>

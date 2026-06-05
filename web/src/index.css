@@ -19,7 +19,7 @@
   --color-pc-accent-glow: var(--pc-accent-glow);
 
   /* Status colors (fixed across themes) */
-  --color-status-success: #00e68a;
+  --color-status-success: #2fbf75;
   --color-status-warning: #ffaa00;
   --color-status-error: #ff4466;
   --color-status-info: #0080ff;
@@ -27,35 +27,35 @@
 
 :root {
   /* Status colors for reference */
-  --color-status-success: #00e68a;
+  --color-status-success: #2fbf75;
   --color-status-warning: #ffaa00;
   --color-status-error: #ff4466;
   --color-status-info: #0080ff;
-  /* Backgrounds (Revka matrix — aligned with tokens.css dark bridge) */
-  --pc-bg-base: #05080a;
-  --pc-bg-surface: #0c1413;
-  --pc-bg-elevated: #111a18;
-  --pc-bg-input: #0f1716;
-  --pc-bg-code: #0f1716;
-  --pc-bg-sidebar: rgba(8, 16, 15, 0.94);
+  /* Backgrounds (Revka default fallback before the theme provider hydrates) */
+  --pc-bg-base: #0b0d10;
+  --pc-bg-surface: #13161d;
+  --pc-bg-elevated: #191f27;
+  --pc-bg-input: #10141a;
+  --pc-bg-code: #10141a;
+  --pc-bg-sidebar: rgba(16, 19, 24, 0.94);
 
   /* Borders */
-  --pc-border: rgba(125, 255, 155, 0.08);
-  --pc-border-strong: rgba(125, 255, 155, 0.14);
+  --pc-border: rgba(148, 163, 184, 0.13);
+  --pc-border-strong: rgba(148, 163, 184, 0.22);
 
   /* Text */
-  --pc-text-primary: #e7f1eb;
-  --pc-text-secondary: #afc0b7;
-  --pc-text-muted: #73877e;
-  --pc-text-faint: #53645d;
+  --pc-text-primary: #f7f8fc;
+  --pc-text-secondary: #c8ceda;
+  --pc-text-muted: #929bad;
+  --pc-text-faint: #687386;
 
-  /* Accent (revka matrix green) */
-  --pc-accent: #7dff9b;
-  --pc-accent-light: #b8ffca;
-  --pc-accent-dim: rgba(125, 255, 155, 0.28);
-  --pc-accent-glow: rgba(125, 255, 155, 0.10);
-  --pc-accent-glow-strong: rgba(125, 255, 155, 0.18);
-  --pc-accent-rgb: 125, 255, 155;
+  /* Accent */
+  --pc-accent: #6f83d6;
+  --pc-accent-light: #7c8ddd;
+  --pc-accent-dim: rgba(111, 131, 214, 0.20);
+  --pc-accent-glow: rgba(111, 131, 214, 0.07);
+  --pc-accent-glow-strong: rgba(111, 131, 214, 0.14);
+  --pc-accent-rgb: 111, 131, 214;
 
   /* Fox color scale */
   --fox-50: #fef4f2;
@@ -75,9 +75,9 @@
   --pc-separator: rgba(255, 255, 255, 0.05);
 
   /* Scrollbar */
-  --pc-scrollbar-thumb: #4d6b5a;
-  --pc-scrollbar-track: #0b1114;
-  --pc-scrollbar-thumb-hover: #7dff9b;
+  --pc-scrollbar-thumb: #687386;
+  --pc-scrollbar-track: #13161d;
+  --pc-scrollbar-thumb-hover: #929bad;
 
   /* Fonts */
   --pc-font-ui: 'Space Grotesk', 'Avenir Next', 'Segoe UI', system-ui, sans-serif;
@@ -1133,7 +1133,7 @@ code, kbd, pre {
 
 /* Gradient text — fox orange */
 .text-gradient-fox {
-  background: linear-gradient(135deg, #7dff9b 0%, #b8ffca 50%, #5fe87f 100%);
+  background: linear-gradient(135deg, #8fa8c8 0%, #7c8ddd 50%, #6f83d6 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -1166,7 +1166,7 @@ code, kbd, pre {
   right: 5%;
   width: clamp(200px, 38vw, 580px);
   height: clamp(200px, 38vw, 580px);
-  background: radial-gradient(circle, rgba(125, 255, 155, 0.16), transparent 68%);
+  background: radial-gradient(circle, rgba(111, 131, 214, 0.14), transparent 68%);
   filter: blur(60px);
   animation: orb-drift-1 18s ease-in-out infinite alternate;
 }
@@ -1187,7 +1187,7 @@ code, kbd, pre {
   transform: translate(-50%, -50%);
   width: clamp(300px, 55vw, 800px);
   height: clamp(300px, 55vw, 800px);
-  background: radial-gradient(circle, rgba(125, 255, 155, 0.05), transparent 55%);
+  background: radial-gradient(circle, rgba(143, 168, 200, 0.05), transparent 55%);
   filter: blur(80px);
 }
 
@@ -1347,13 +1347,13 @@ code, kbd, pre {
    Landing v2 — new components
    ========================================================================= */
 
-/* Hero banner v2: dominant, wide, bottom-anchored with matrix green glow */
+/* Hero banner v2: dominant, wide, bottom-anchored with restrained glow */
 .hero-banner--v2 {
   max-width: min(1100px, 94vw);
   width: 100%;
   height: auto;
   border-radius: 1.5rem 1.5rem 0 0;
-  filter: drop-shadow(0 0 80px rgba(125, 255, 155, 0.32)) drop-shadow(0 -16px 60px rgba(0, 0, 0, 0.5));
+  filter: drop-shadow(0 0 80px rgba(111, 131, 214, 0.24)) drop-shadow(0 -16px 60px rgba(0, 0, 0, 0.5));
   display: block;
   margin: 0 auto;
 }

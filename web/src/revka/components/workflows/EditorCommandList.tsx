@@ -86,6 +86,7 @@ export default function EditorCommandList({
           <img
             src={appAssetPath('logo.png')}
             alt="Revka"
+            className="revka-brand-logo"
             style={{
               height: 56,
               width: 56,

@@ -17,11 +17,11 @@ import { useAuth } from '@/hooks/useAuth';
 /** Accent-only overrides (applied on top of color theme when user picks a custom accent). */
 const accents: Record<AccentColor, Record<string, string>> = {
   cyan: {
-    '--pc-accent': '#22d3ee',
-    '--pc-accent-light': '#67e8f9',
-    '--pc-accent-dim': 'rgba(34,211,238,0.3)',
-    '--pc-accent-glow': 'rgba(34,211,238,0.1)',
-    '--pc-accent-rgb': '34,211,238',
+    '--pc-accent': '#8fa8c8',
+    '--pc-accent-light': '#a4bad6',
+    '--pc-accent-dim': 'rgba(143,168,200,0.22)',
+    '--pc-accent-glow': 'rgba(143,168,200,0.08)',
+    '--pc-accent-rgb': '143,168,200',
   },
   violet: {
     '--pc-accent': '#8b5cf6',
@@ -52,11 +52,11 @@ const accents: Record<AccentColor, Record<string, string>> = {
     '--pc-accent-rgb': '244,63,94',
   },
   blue: {
-    '--pc-accent': '#3b82f6',
-    '--pc-accent-light': '#60a5fa',
-    '--pc-accent-dim': 'rgba(59,130,246,0.3)',
-    '--pc-accent-glow': 'rgba(59,130,246,0.1)',
-    '--pc-accent-rgb': '59,130,246',
+    '--pc-accent': '#6f83d6',
+    '--pc-accent-light': '#7c8ddd',
+    '--pc-accent-dim': 'rgba(111,131,214,0.22)',
+    '--pc-accent-glow': 'rgba(111,131,214,0.08)',
+    '--pc-accent-rgb': '111,131,214',
   },
 };
 

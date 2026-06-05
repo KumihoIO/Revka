@@ -148,7 +148,7 @@ function PairingDialog({ onPair }: { onPair: (code: string) => Promise<void> }) 
           <img
             src={appAssetPath('logo.png')}
             alt="Revka"
-            className="h-20 w-20 rounded-2xl object-contain mx-auto mb-4 animate-float"
+            className="revka-brand-logo h-20 w-20 rounded-2xl object-contain mx-auto mb-4 animate-float"
             onError={(e) => { e.currentTarget.style.display = 'none'; }}
           />
           <h1 className="text-2xl font-bold mb-2 text-gradient-blue">Revka</h1>
