@@ -110,15 +110,15 @@ export const colorThemes: ColorThemeDef[] = [
   // ── Defaults ────────────────────────────────────────────────
   {
     id: 'default-dark', name: 'Default Dark', scheme: 'dark',
-    preview: ['#1e1e24', '#22d3ee', '#a78bfa', '#f59e0b', '#d4d4d8'],
-    vars: darkBase('#1e1e24', '#232329', '#27272a', '#1a1a20', '#1a1a20',
-      '#d4d4d8', '#a1a1aa', '#71717a', '#52525b', '#22d3ee', '#67e8f9'),
+    preview: ['#0b0d10', '#6f83d6', '#8fa8c8', '#f6b44b', '#f7f8fc'],
+    vars: darkBase('#0b0d10', '#13161d', '#191f27', '#10141a', '#10141a',
+      '#f7f8fc', '#c8ceda', '#929bad', '#687386', '#6f83d6', '#7c8ddd'),
   },
   {
     id: 'default-light', name: 'Default Light', scheme: 'light',
-    preview: ['#f4f4f5', '#22d3ee', '#8b5cf6', '#f59e0b', '#18181b'],
-    vars: lightBase('#f4f4f5', '#ffffff', '#e4e4e7', '#ffffff', '#f4f4f5',
-      '#18181b', '#3f3f46', '#71717a', '#a1a1aa', '#0891b2', '#06b6d4'),
+    preview: ['#eef1f5', '#596cc6', '#4f75a8', '#b86f00', '#111827'],
+    vars: lightBase('#eef1f5', '#f7f9fb', '#e9edf3', '#eef2f6', '#e5eaf0',
+      '#111827', '#334155', '#64748b', '#94a3b8', '#596cc6', '#6575d3'),
   },
   {
     id: 'oled-black', name: 'OLED Black', scheme: 'dark',

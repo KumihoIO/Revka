@@ -45,15 +45,15 @@ export function toStepRunInfo(step: WorkflowStepDetail): StepRunInfo {
 }
 
 /**
- * Per-action color map. All tones are drawn from the Matrix palette tokens
- * so theme switches (dark/oled/light) stay coherent.
+ * Per-action color map. All tones are drawn from Revka semantic tokens so
+ * theme switches stay coherent without returning to the old Matrix tint.
  *
  * Groupings:
- *   signal-live (green)    — execution/compute primitives
- *   signal-network (cyan)  — agents, comms, orchestration
- *   signal-selected        — review / inspection
- *   status-warning (amber) — human-in-the-loop / gated flows
- *   status-idle (slate)    — neutral flow-control
+ *   signal-live            - execution/compute primitives
+ *   signal-network         - agents, comms, orchestration
+ *   signal-selected        - review / inspection
+ *   status-warning         - human-in-the-loop / gated flows
+ *   status-idle            - neutral flow-control
  */
 const SIGNAL_LIVE = 'var(--revka-signal-live)';
 const SIGNAL_NETWORK = 'var(--revka-signal-network)';
@@ -119,7 +119,7 @@ export function workflowActionTone(action: string): string {
   for (const [key, color] of Object.entries(ACTION_TONES)) {
     if (normalized.includes(key)) return color;
   }
-  return 'var(--revka-signal-live)';
+  return 'var(--revka-status-idle)';
 }
 
 export function workflowStatusTone(status?: string): string {
@@ -164,7 +164,7 @@ export function buildWorkflowEdgeStyle({
   const sourceStatus = stepResults?.[edge.source]?.status;
   const targetStatus = stepResults?.[edge.target]?.status;
   const runTone = workflowStatusTone(targetStatus ?? sourceStatus);
-  const accent = stepResults ? runTone : 'var(--revka-signal-live)';
+  const accent = stepResults ? runTone : 'var(--revka-text-faint)';
   void tasksById;
   const isFocused = selectedTaskId && (edge.source === selectedTaskId || edge.target === selectedTaskId);
   const label = edge.sourceHandle === 'true'
@@ -187,12 +187,12 @@ export function buildWorkflowEdgeStyle({
       fontWeight: 700,
     } : undefined,
     style: {
-      stroke: isFocused ? accent : `color-mix(in srgb, ${accent} 72%, var(--revka-border-soft))`,
-      strokeWidth: targetStatus === 'failed' ? 2.8 : isFocused ? 2.6 : 1.8,
+      stroke: isFocused ? accent : `color-mix(in srgb, ${accent} ${stepResults ? '62%' : '42%'}, var(--revka-border-soft))`,
+      strokeWidth: targetStatus === 'failed' ? 2.6 : isFocused ? 2.4 : 1.55,
       strokeDasharray: targetStatus === 'skipped' ? '5 4' : undefined,
-      opacity: targetStatus === 'failed' ? 1 : isFocused ? 1 : 0.72,
+      opacity: targetStatus === 'failed' ? 1 : isFocused ? 0.96 : 0.68,
       filter: targetStatus === 'failed'
-        ? `drop-shadow(0 0 8px color-mix(in srgb, ${accent} 42%, transparent))`
+        ? `drop-shadow(0 0 6px color-mix(in srgb, ${accent} 28%, transparent))`
         : undefined,
     } satisfies CSSProperties,
   };

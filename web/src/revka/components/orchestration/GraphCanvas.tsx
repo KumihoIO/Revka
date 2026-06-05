@@ -49,7 +49,7 @@ function GraphCanvasInner<TNode extends Node = Node>({
   if (nodes.length === 0) {
     return (
       <div
-        className="flex items-center justify-center rounded-[16px] border border-dashed p-6 text-sm"
+        className="revka-graph revka-graph-empty flex items-center justify-center rounded-[8px] border border-dashed p-6 text-sm"
         style={{ ...sizeStyle, minHeight: fill ? 0 : height, borderColor: 'var(--revka-border-strong)', color: 'var(--revka-text-secondary)' }}
       >
         {emptyState}
@@ -59,7 +59,7 @@ function GraphCanvasInner<TNode extends Node = Node>({
 
   return (
     <div
-      className="revka-graph overflow-hidden rounded-[16px] border"
+      className="revka-graph overflow-hidden rounded-[8px] border"
       style={{ ...sizeStyle, borderColor: 'var(--revka-border-soft)' }}
     >
       {overlay ? (
@@ -91,7 +91,7 @@ function GraphCanvasInner<TNode extends Node = Node>({
           style={{
             background: 'var(--revka-bg-panel-strong)',
             borderColor: 'var(--revka-border-soft)',
-            borderRadius: '12px',
+            borderRadius: '8px',
           }}
         />
         {showMiniMap ? (
@@ -103,11 +103,11 @@ function GraphCanvasInner<TNode extends Node = Node>({
             style={{
               background: 'var(--revka-bg-panel-strong)',
               border: '1px solid var(--revka-border-soft)',
-              borderRadius: '12px',
+              borderRadius: '8px',
               width: 220,
               height: 150,
             }}
-            maskColor="rgba(0, 0, 0, 0.24)"
+            maskColor="color-mix(in srgb, var(--revka-bg-base) 54%, transparent)"
           />
         ) : null}
       </ReactFlow>

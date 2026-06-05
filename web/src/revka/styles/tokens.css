@@ -7,14 +7,14 @@
 
 :root[data-theme='dark'],
 :root[data-theme='oled'] {
-  --revka-bg-base: #0b0d12;
-  --revka-bg-shell: #0f1218;
-  --revka-bg-surface: #11151c;
-  --revka-bg-elevated: #1a202a;
-  --revka-bg-panel: rgba(17, 21, 28, 0.94);
-  --revka-bg-panel-strong: rgba(21, 26, 35, 0.98);
-  --revka-bg-input: #0f131a;
-  --revka-hover-surface: rgba(109, 125, 255, 0.06);
+  --revka-bg-base: #0b0d10;
+  --revka-bg-shell: #101318;
+  --revka-bg-surface: #13161d;
+  --revka-bg-elevated: #191f27;
+  --revka-bg-panel: rgba(19, 22, 29, 0.94);
+  --revka-bg-panel-strong: rgba(22, 27, 35, 0.98);
+  --revka-bg-input: #10141a;
+  --revka-hover-surface: rgba(100, 116, 139, 0.08);
 
   --revka-border-soft: rgba(148, 163, 184, 0.13);
   --revka-border-strong: rgba(148, 163, 184, 0.22);
@@ -25,17 +25,17 @@
   --revka-text-muted: #929bad;
   --revka-text-faint: #687386;
 
-  --revka-signal-live: #8ab4f8;
-  --revka-signal-live-soft: rgba(138, 180, 248, 0.10);
-  --revka-signal-network: #6d7dff;
-  --revka-signal-network-soft: rgba(109, 125, 255, 0.10);
-  --revka-signal-selected: #8b9cff;
-  --revka-signal-selected-soft: rgba(139, 156, 255, 0.12);
+  --revka-signal-live: #8fa8c8;
+  --revka-signal-live-soft: rgba(143, 168, 200, 0.10);
+  --revka-signal-network: #6f83d6;
+  --revka-signal-network-soft: rgba(111, 131, 214, 0.09);
+  --revka-signal-selected: #7c8ddd;
+  --revka-signal-selected-soft: rgba(124, 141, 221, 0.10);
   --revka-signal-warn: #f6b44b;
   --revka-signal-danger: #f87171;
 
-  --revka-status-success: #22c55e;
-  --revka-status-ok: #22c55e;
+  --revka-status-success: #2fbf75;
+  --revka-status-ok: #2fbf75;
   --revka-status-warning: #f6b44b;
   --revka-status-danger: #f87171;
   --revka-status-error: #f87171;
@@ -44,45 +44,45 @@
 
   --revka-shadow-panel: 0 14px 34px rgba(0, 0, 0, 0.28);
   --revka-shadow-overlay: 0 24px 60px rgba(0, 0, 0, 0.40);
-  --revka-grid-line: rgba(148, 163, 184, 0.035);
+  --revka-grid-line: rgba(148, 163, 184, 0.042);
 
-  --revka-node-accent-idle: 9%;
-  --revka-node-accent-selected: 22%;
+  --revka-node-accent-idle: 7%;
+  --revka-node-accent-selected: 18%;
 
   /* Bridge: remap legacy pc tokens so the shared workflow editor matches
      the Revka default dark palette. */
-  --pc-bg-base: #0b0d12;
-  --pc-bg-surface: #11151c;
-  --pc-bg-elevated: #1a202a;
-  --pc-bg-input: #0f131a;
-  --pc-bg-code: #0f131a;
-  --pc-bg-sidebar: rgba(15, 18, 24, 0.96);
+  --pc-bg-base: #0b0d10;
+  --pc-bg-surface: #13161d;
+  --pc-bg-elevated: #191f27;
+  --pc-bg-input: #10141a;
+  --pc-bg-code: #10141a;
+  --pc-bg-sidebar: rgba(16, 19, 24, 0.96);
   --pc-border: rgba(148, 163, 184, 0.13);
   --pc-border-strong: rgba(148, 163, 184, 0.22);
   --pc-text-primary: #f7f8fc;
   --pc-text-secondary: #c8ceda;
   --pc-text-muted: #929bad;
   --pc-text-faint: #687386;
-  --pc-accent: #6d7dff;
-  --pc-accent-light: #8b9cff;
-  --pc-accent-dim: rgba(109, 125, 255, 0.22);
-  --pc-accent-glow: rgba(109, 125, 255, 0.08);
-  --pc-accent-glow-strong: rgba(109, 125, 255, 0.16);
-  --pc-accent-rgb: 109, 125, 255;
-  --pc-hover: rgba(109, 125, 255, 0.05);
-  --pc-hover-strong: rgba(109, 125, 255, 0.09);
+  --pc-accent: #6f83d6;
+  --pc-accent-light: #7c8ddd;
+  --pc-accent-dim: rgba(111, 131, 214, 0.20);
+  --pc-accent-glow: rgba(111, 131, 214, 0.07);
+  --pc-accent-glow-strong: rgba(111, 131, 214, 0.14);
+  --pc-accent-rgb: 111, 131, 214;
+  --pc-hover: rgba(100, 116, 139, 0.07);
+  --pc-hover-strong: rgba(100, 116, 139, 0.10);
   --pc-separator: rgba(148, 163, 184, 0.10);
 }
 
 :root[data-theme='light'] {
-  --revka-bg-base: #f7f8fb;
-  --revka-bg-shell: #f1f4f8;
-  --revka-bg-surface: #ffffff;
-  --revka-bg-elevated: #eef2f6;
-  --revka-bg-panel: rgba(255, 255, 255, 0.92);
-  --revka-bg-panel-strong: rgba(255, 255, 255, 0.98);
-  --revka-bg-input: #f4f6fa;
-  --revka-hover-surface: rgba(79, 95, 213, 0.05);
+  --revka-bg-base: #eef1f5;
+  --revka-bg-shell: #e5eaf0;
+  --revka-bg-surface: #f7f9fb;
+  --revka-bg-elevated: #e9edf3;
+  --revka-bg-panel: rgba(247, 249, 251, 0.94);
+  --revka-bg-panel-strong: rgba(242, 245, 249, 0.98);
+  --revka-bg-input: #eef2f6;
+  --revka-hover-surface: rgba(73, 86, 141, 0.06);
 
   --revka-border-soft: rgba(45, 55, 72, 0.12);
   --revka-border-strong: rgba(71, 85, 105, 0.18);
@@ -93,17 +93,17 @@
   --revka-text-muted: #64748b;
   --revka-text-faint: #94a3b8;
 
-  --revka-signal-live: #2f6fd7;
-  --revka-signal-live-soft: rgba(47, 111, 215, 0.08);
-  --revka-signal-network: #4f5fd5;
-  --revka-signal-network-soft: rgba(79, 95, 213, 0.08);
-  --revka-signal-selected: #5f6ee8;
-  --revka-signal-selected-soft: rgba(95, 110, 232, 0.09);
+  --revka-signal-live: #4f75a8;
+  --revka-signal-live-soft: rgba(79, 117, 168, 0.08);
+  --revka-signal-network: #596cc6;
+  --revka-signal-network-soft: rgba(89, 108, 198, 0.08);
+  --revka-signal-selected: #6575d3;
+  --revka-signal-selected-soft: rgba(101, 117, 211, 0.08);
   --revka-signal-warn: #b86f00;
   --revka-signal-danger: #dc3f58;
 
-  --revka-status-success: #168a4a;
-  --revka-status-ok: #168a4a;
+  --revka-status-success: #1f9463;
+  --revka-status-ok: #1f9463;
   --revka-status-warning: #b86f00;
   --revka-status-danger: #dc3f58;
   --revka-status-error: #dc3f58;
@@ -114,30 +114,30 @@
   --revka-shadow-overlay: 0 18px 42px rgba(15, 23, 42, 0.14);
   --revka-grid-line: rgba(71, 85, 105, 0.04);
 
-  --revka-node-accent-idle: 18%;
-  --revka-node-accent-selected: 34%;
+  --revka-node-accent-idle: 12%;
+  --revka-node-accent-selected: 24%;
 
   /* Bridge: remap V1 tokens so legacy components rendered inside Revka pick up
      light values when light theme is active (workflow editor, etc.). */
-  --pc-bg-base: #f7f8fb;
-  --pc-bg-surface: #ffffff;
-  --pc-bg-elevated: #eef2f6;
-  --pc-bg-input: #f4f6fa;
-  --pc-bg-code: #f1f4f8;
-  --pc-bg-sidebar: rgba(241, 244, 248, 0.96);
+  --pc-bg-base: #eef1f5;
+  --pc-bg-surface: #f7f9fb;
+  --pc-bg-elevated: #e9edf3;
+  --pc-bg-input: #eef2f6;
+  --pc-bg-code: #e5eaf0;
+  --pc-bg-sidebar: rgba(229, 234, 240, 0.96);
   --pc-border: rgba(45, 55, 72, 0.12);
   --pc-border-strong: rgba(71, 85, 105, 0.18);
   --pc-text-primary: #111827;
   --pc-text-secondary: #334155;
   --pc-text-muted: #64748b;
   --pc-text-faint: #94a3b8;
-  --pc-accent: #4f5fd5;
-  --pc-accent-light: #5f6ee8;
-  --pc-accent-dim: rgba(79, 95, 213, 0.20);
-  --pc-accent-glow: rgba(79, 95, 213, 0.08);
-  --pc-accent-glow-strong: rgba(79, 95, 213, 0.14);
-  --pc-accent-rgb: 79, 95, 213;
-  --pc-hover: rgba(79, 95, 213, 0.05);
-  --pc-hover-strong: rgba(79, 95, 213, 0.09);
+  --pc-accent: #596cc6;
+  --pc-accent-light: #6575d3;
+  --pc-accent-dim: rgba(89, 108, 198, 0.18);
+  --pc-accent-glow: rgba(89, 108, 198, 0.07);
+  --pc-accent-glow-strong: rgba(89, 108, 198, 0.12);
+  --pc-accent-rgb: 89, 108, 198;
+  --pc-hover: rgba(73, 86, 141, 0.05);
+  --pc-hover-strong: rgba(73, 86, 141, 0.08);
   --pc-separator: rgba(45, 55, 72, 0.08);
 }
