@@ -1,4 +1,4 @@
-"""Cloud Run A2A wrapper around the Revka Track 3 ADK agent."""
+"""Cloud Run A2A wrapper around the Revka Track 3 Workflow Composer ADK agent."""
 from __future__ import annotations
 
 import asyncio
@@ -16,7 +16,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 
-APP_NAME = "revka-agentops-a2a"
+APP_NAME = "revka-workflow-composer"
 SERVICE_VERSION = "1.0.0"
 MAX_MESSAGE_CHARS = int(os.getenv("MAX_MESSAGE_CHARS", "12000"))
 MAX_TASKS = int(os.getenv("MAX_TASKS", "200"))
@@ -27,10 +27,10 @@ ICON_URL = (
     "data:image/svg+xml;base64,"
     "PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdC"
     "b3g9IjAgMCA2NCA2NCI+PHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiBy"
-    "eD0iMTIiIGZpbGw9IiMxMTE4MjciLz48cGF0aCBkPSJNMTYgMzZoMTBsNi0x"
-    "OCA2IDI4IDYtMTZoOCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjMzhiZGY4IiBz"
-    "dHJva2Utd2lkdGg9IjUiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tl"
-    "LWxpbmVqb2luPSJyb3VuZCIvPjwvc3ZnPg=="
+    "eD0iMTIiIGZpbGw9IiMxMTE4MjciLz48cGF0aCBkPSJNMjAgMjBoMjR2MjRI"
+    "MjB6IiBmaWxsPSJub25lIiBzdHJva2U9IiMxMGI5ODEiIHN0cm9rZS13aWR0"
+    "aD0iNCIvPjxjaXJjbGUgY3g9IjMyIiBjeT0iMzIiIHI9IjYiIGZpbGw9IiMx"
+    "MGI5ODEiLz48L3N2Zz4="
 )
 TASKS: dict[str, dict[str, Any]] = {}
 TASK_ORDER: deque[str] = deque()
@@ -52,7 +52,7 @@ def _configure_logging() -> None:
 
 _configure_logging()
 
-app = FastAPI(title="Revka AgentOps A2A", version=SERVICE_VERSION)
+app = FastAPI(title="Revka Workflow Composer A2A", version=SERVICE_VERSION)
 
 _runner: Any | None = None
 _session_service: Any | None = None
@@ -85,7 +85,7 @@ def _runtime_metadata() -> dict[str, Any]:
         "orchestration": "Google ADK",
         "intelligence": "Gemini via Vertex AI",
         "platform": "Google Cloud Run",
-        "b2bPackage": "Revka Enterprise AgentOps Control Plane",
+        "b2bPackage": "Revka Workflow Composer & Pipeline Architect",
         "auth_mode": AUTH_MODE,
         "max_message_chars": MAX_MESSAGE_CHARS,
         "max_tasks": MAX_TASKS,
@@ -151,10 +151,10 @@ def _safe_error(exc: Exception) -> str:
 def _agent_card(base_url: str) -> dict[str, Any]:
     return {
         "protocolVersion": "0.3",
-        "name": "Revka Enterprise AgentOps Control Plane",
+        "name": "Revka Workflow Composer & Pipeline Architect",
         "description": (
-            "B2B A2A agent that coordinates incident triage, governance, "
-            "deployment evidence, and rollback planning for enterprise software teams."
+            "B2B A2A agent that designs, audits, compiles, and registers secure, "
+            "governed production workflows and pipeline DAGs on Kumiho."
         ),
         "url": base_url,
         "iconUrl": ICON_URL,
@@ -200,26 +200,46 @@ def _agent_card(base_url: str) -> dict[str, Any]:
         },
         "skills": [
             {
-                "id": "enterprise-agentops-incident-plan",
-                "name": "Enterprise AgentOps Incident Plan",
+                "id": "revka-workflow-composition",
+                "name": "Revka Workflow Composition",
                 "description": (
-                    "Builds a governed incident plan with A2A handoff, Google Cloud "
-                    "evidence, rollback, and approval boundaries."
+                    "Designs and compiles governed pipeline DAGs with approval gates, "
+                    "specialized agent orchestration, and Kumiho persistence."
                 ),
                 "tags": [
                     "b2b",
-                    "agentops",
-                    "incident-response",
+                    "workflows",
+                    "composition",
                     "a2a",
-                    "google-cloud",
+                    "kumiho-sdk",
                     "adk",
                     "gemini",
                 ],
                 "examples": [
                     (
-                        "A payments deploy failed after a config change. Build an "
-                        "enterprise incident plan with owner, rollback, evidence, and A2A handoff."
+                        "Design a production incident response pipeline that has triage, "
+                        "risk audit, approval gate, and SRE rollback tasks."
                     )
+                ],
+                "inputModes": ["text/plain", "application/json"],
+                "outputModes": ["text/plain", "application/json"],
+            },
+            {
+                "id": "kapathy-style-compliance-audit",
+                "name": "Kapathy Style Compliance Audit",
+                "description": (
+                    "Audits software changes, infrastructure code, or workflow plans "
+                    "against Andrej Karpathy's simplicity and clean-room coding rules."
+                ),
+                "tags": [
+                    "kapathy",
+                    "simplicity",
+                    "code-audit",
+                    "compliance",
+                    "zero-speculative"
+                ],
+                "examples": [
+                    "Audit this SRE rollback script for over-engineering and dependency bloat."
                 ],
                 "inputModes": ["text/plain", "application/json"],
                 "outputModes": ["text/plain", "application/json"],
@@ -279,7 +299,7 @@ async def _adk_response(prompt: str, *, user_id: str, session_id: str) -> str:
         session_id=session_id,
         state={
             "track": "google-startups-ai-agents-track-3",
-            "business_context": "enterprise-agentops",
+            "business_context": "workflow-composer",
         },
     )
     content = types.Content(
@@ -313,8 +333,8 @@ def _task(
         artifacts.append(
             {
                 "artifactId": f"artifact-{task_id}",
-                "name": "enterprise-agentops-plan",
-                "description": "Gemini/ADK generated B2B incident response plan.",
+                "name": "revka-workflow-composition-plan",
+                "description": "Gemini/ADK generated pipeline DAG or compliance audit report.",
                 "parts": [{"type": "text", "text": response}],
             }
         )
@@ -323,7 +343,7 @@ def _task(
             {
                 "artifactId": f"artifact-{task_id}-error",
                 "name": "agent-error",
-                "description": "Runtime error captured for operator diagnosis.",
+                "description": "Runtime error captured for composer diagnosis.",
                 "parts": [{"type": "text", "text": error}],
             }
         )
@@ -347,7 +367,7 @@ def _task(
             "platform": "Google Cloud Run",
             "orchestration": "Google ADK",
             "intelligence": "Gemini via Vertex AI",
-            "b2bPackage": "Revka Enterprise AgentOps Control Plane",
+            "b2bPackage": "Revka Workflow Composer & Pipeline Architect",
         },
     }
 

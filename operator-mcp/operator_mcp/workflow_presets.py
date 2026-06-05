@@ -114,6 +114,28 @@ _BUILTIN_PRESETS: dict[str, WorkflowPreset] = {
         ],
         tags=["research", "parallel"],
     ),
+    "revka-agentops-a2a": WorkflowPreset(
+        name="revka-agentops-a2a",
+        description="Google AI Startup Track 3 Demo App: Governed IT Incident Response control plane workflow.",
+        steps=[
+            WorkflowStep(role="researcher", agent_type="claude", name_suffix="triage"),
+            WorkflowStep(role="reviewer", agent_type="claude", name_suffix="security-audit", depends_on=[0]),
+            WorkflowStep(role="coder", agent_type="codex", name_suffix="incident-remediation", depends_on=[1]),
+            WorkflowStep(role="reviewer", agent_type="codex", name_suffix="approval-gate", depends_on=[2], review_loop=True),
+        ],
+        tags=["google-agents", "track3", "b2b", "governed-ops"],
+    ),
+    "revka-workflow-composer": WorkflowPreset(
+        name="revka-workflow-composer",
+        description="Google AI Startup Track 3 Demo App: Automated workflow creation, pipeline composition, and compliance auditing.",
+        steps=[
+            WorkflowStep(role="architect", agent_type="claude", name_suffix="pipeline-composer"),
+            WorkflowStep(role="reviewer", agent_type="claude", name_suffix="kapathy-auditor", depends_on=[0]),
+            WorkflowStep(role="coder", agent_type="codex", name_suffix="pipeline-generator", depends_on=[1]),
+            WorkflowStep(role="reviewer", agent_type="codex", name_suffix="final-approval", depends_on=[2], review_loop=True),
+        ],
+        tags=["google-agents", "track3", "workflow-composer", "compliance"],
+    ),
 }
 
 

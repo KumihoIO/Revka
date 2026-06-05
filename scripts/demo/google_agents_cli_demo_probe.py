@@ -146,9 +146,10 @@ DEMO_OUTCOMES: tuple[dict[str, Any], ...] = (
 
 
 def _write_fake_agents_cli(bin_dir: Path) -> Path:
-    script = bin_dir / ("agents-cli.exe" if os.name == "nt" else "agents-cli")
-    script.write_text(
-        """#!/usr/bin/env python3
+    if os.name == "nt":
+        script = bin_dir / "agents-cli"
+        script.write_text(
+            """#!/usr/bin/env python3
 import os
 import sys
 import time
@@ -191,10 +192,64 @@ if cmd == "login" and "--status" in args:
 print("unsupported fake command: " + " ".join(args), file=sys.stderr)
 sys.exit(64)
 """,
-        encoding="utf-8",
-    )
-    script.chmod(0o755)
-    return script
+            encoding="utf-8",
+        )
+        cmd_script = bin_dir / "agents-cli.cmd"
+        cmd_script.write_text(
+            f'@echo off\n"{sys.executable}" "%~dp0agents-cli" %*\n',
+            encoding="utf-8",
+        )
+        return cmd_script
+    else:
+        script = bin_dir / "agents-cli"
+        script.write_text(
+            """#!/usr/bin/env python3
+import os
+import sys
+import time
+
+args = sys.argv[1:]
+cmd = args[0] if args else ""
+
+if cmd == "info":
+    print("project=demo-agent-platform")
+    print("runtime=adk")
+    sys.exit(0)
+if cmd == "lint":
+    print("lint ok")
+    sys.exit(0)
+if cmd == "deploy":
+    print("deploy accepted --dry-run")
+    sys.exit(0)
+if cmd == "publish":
+    print("publish accepted " + " ".join(args[1:]))
+    print("enterprise_app=" + os.environ.get("GEMINI_ENTERPRISE_APP_ID", ""))
+    sys.exit(0)
+if cmd == "eval":
+    print("baseline_score=0.42")
+    print("surge pricing conflict reproduced", file=sys.stderr)
+    sys.exit(7)
+if cmd == "run":
+    prompt = args[-1] if len(args) > 1 else ""
+    if prompt == "sleep":
+        time.sleep(5)
+    elif prompt == "large-output":
+        print("x" * 4096)
+    else:
+        print("optimized_response=comfort-first-with-cost-cap")
+        print("prompt=" + prompt)
+    sys.exit(0)
+if cmd == "login" and "--status" in args:
+    print("logged_in=false")
+    sys.exit(0)
+
+print("unsupported fake command: " + " ".join(args), file=sys.stderr)
+sys.exit(64)
+""",
+            encoding="utf-8",
+        )
+        script.chmod(0o755)
+        return script
 
 
 def _scrub(value: Any) -> Any:
@@ -338,7 +393,10 @@ async def _expect_architecture_guardrails() -> dict[str, Any]:
     enums = _operator_agent_type_enums()
     _assert(enums, "operator agent_type schemas should declare enum values")
     for enum in enums:
-        _assert(enum == ["claude", "codex"], f"agent_type enum should be claude/codex only: {enum}")
+        _assert(
+            enum == ["claude", "codex", "agy", "agent", "opencode"],
+            f"agent_type enum should be claude/codex/agy/agent/opencode only: {enum}",
+        )
 
     source_checks = {
         "operator_mcp": OPERATOR_MCP / "operator_mcp" / "operator_mcp.py",

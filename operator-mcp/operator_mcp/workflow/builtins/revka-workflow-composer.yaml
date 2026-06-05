@@ -1,0 +1,88 @@
+name: revka-workflow-composer
+version: "1.0"
+description: "Google AI Startup Track 3 Reference: Automated pipeline creation, DAG composition, and Kapathy-style compliance auditing."
+tags: [google-agents, track3, workflow-composer, compliance, kapathy]
+
+inputs:
+  - name: workflow_goal
+    type: string
+    required: true
+    description: "Goal/purpose of the pipeline we want to generate"
+  - name: target_environment
+    type: string
+    required: true
+    description: "Deployment environment (e.g. Cloud Run, GKE)"
+  - name: cwd
+    type: string
+    required: true
+    description: "Workspace working directory"
+
+steps:
+  - id: compose_dag
+    name: "Compose Pipeline DAG"
+    type: agent
+    agent:
+      agent_type: claude
+      role: architect
+      prompt: |
+        Design a structured pipeline DAG to achieve the following goal.
+        Goal: ${inputs.workflow_goal}
+        Target Environment: ${inputs.target_environment}
+
+        Define the precise sequence of steps, specialized agent roles, and data input/output contracts. Ensure mutating steps are isolated.
+      timeout: 300
+
+  - id: compliance_audit
+    name: "Audit Kapathy Style Compliance"
+    type: agent
+    depends_on: [compose_dag]
+    agent:
+      agent_type: claude
+      role: reviewer
+      prompt: |
+        Perform an architectural compliance audit of the compiled pipeline DAG against Andrej Karpathy's 'kapathy' style guidelines.
+        Compiled DAG: ${compose_dag.output}
+
+        Audit for:
+        1. Zero speculative dependencies (no heavy queues or unneeded middleware)
+        2. Flat procedural simplicity (procedural logic > inheritance)
+        3. Surgical change focus
+        4. Explicit error boundary handling with diagnostic context
+
+        Return compliance score and list any required simplifications or remediations.
+      timeout: 300
+
+  - id: generate_workflow_yaml
+    name: "Generate Executable YAML"
+    type: agent
+    depends_on: [compliance_audit]
+    agent:
+      agent_type: codex
+      role: coder
+      prompt: |
+        Generate a complete, executable Revka YAML workflow definition matching the audited and simplified DAG structure.
+        Compiled DAG: ${compose_dag.output}
+        Compliance Feedback: ${compliance_audit.output}
+
+        Generate pure YAML block with correct indentation. Include input schemas and step definitions.
+      timeout: 300
+
+  - id: register_workflow
+    name: "Register in Kumiho Control Plane"
+    type: agent
+    depends_on: [generate_workflow_yaml]
+    agent:
+      agent_type: codex
+      role: reviewer
+      prompt: |
+        Simulate registering this generated workflow in the Kumiho Control Plane space.
+        Generated YAML: ${generate_workflow_yaml.output}
+
+        Establish the kref identity and metadata, verifying that audit trails and provenance tracing are enabled.
+      timeout: 300
+
+outputs:
+  - name: compiled_workflow_yaml
+    source: "${generate_workflow_yaml.output}"
+  - name: compliance_report
+    source: "${compliance_audit.output}"
