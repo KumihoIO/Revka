@@ -121,8 +121,6 @@ def compile_pipeline_dag(workflow_name: str, steps: list[str]) -> str:
         
     # Virtual Kumiho SDK Integration and registration check
     # We attempt to dynamically check for Kumiho SDK connectivity
-    kumiho_connection_status = "unconfigured"
-    registered_kref = None
     try:
         from operator_mcp.operator_mcp import KUMIHO_SDK
         if KUMIHO_SDK._available:
