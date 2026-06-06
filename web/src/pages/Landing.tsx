@@ -521,9 +521,9 @@ export default function Landing() {
       >
         <div className="flex items-center gap-2.5">
           <img
-            src={appAssetPath('favicon-192.png')}
+            src={appAssetPath('revka-icon.png')}
             alt={t('landing.nav.logo_alt')}
-            className="h-8 w-8 rounded-xl object-cover"
+            className="revka-brand-logo h-8 w-8 rounded-xl object-contain"
             onError={(e) => {
               e.currentTarget.style.display = 'none';
             }}
@@ -1096,9 +1096,9 @@ export default function Landing() {
           }}
         >
           <img
-            src={appAssetPath('favicon-192.png')}
+            src={appAssetPath('revka-icon.png')}
             alt=""
-            className="h-20 w-20 rounded-2xl object-cover mx-auto mb-6 animate-float"
+            className="revka-brand-logo h-20 w-20 rounded-2xl object-contain mx-auto mb-6 animate-float"
             aria-hidden="true"
             onError={(e) => {
               e.currentTarget.style.display = 'none';
@@ -1138,9 +1138,9 @@ export default function Landing() {
         <div className="mx-auto max-w-5xl flex flex-col items-center gap-4 sm:flex-row sm:justify-between">
           <div className="flex items-center gap-2.5">
             <img
-              src={appAssetPath('favicon-192.png')}
+              src={appAssetPath('revka-icon.png')}
               alt=""
-              className="h-6 w-6 rounded-lg object-cover"
+              className="revka-brand-logo h-6 w-6 rounded-lg object-contain"
               aria-hidden="true"
               onError={(e) => { e.currentTarget.style.display = 'none'; }}
             />

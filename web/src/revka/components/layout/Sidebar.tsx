@@ -7,7 +7,7 @@ import { REVKA_VERSION } from '@/lib/version';
 import { useT } from '@/revka/hooks/useT';
 import { useTheme } from '@/revka/hooks/useTheme';
 
-const APP_ICON_SRC = appAssetPath('favicon-192.png');
+const APP_ICON_SRC = appAssetPath('revka-icon.png');
 
 const COLLAPSE_STORAGE_KEY = 'revka-sidebar-collapsed';
 

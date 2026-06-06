@@ -46,7 +46,7 @@
 }
 
 :root[data-revka-skin='revka'] .revka-brand-logo {
-  filter: hue-rotate(72deg) saturate(0.72) brightness(1.04);
+  filter: none;
 }
 
 .revka-shell::before {
