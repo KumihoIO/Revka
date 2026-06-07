@@ -739,6 +739,18 @@ export default function WorkflowRuns() {
 
           <RunFocusBanner run={selectedRun} active={shouldScrollToWorkspace} label={t('runs.banner.label')} />
 
+          {selectedRun && selectedDefinition ? (
+            <div className="md:hidden">
+              <OperatorSection title={t('runs.overlay.path_mode')}>
+                <div className="flex flex-wrap gap-2">
+                  <PathModeButton label={t('runs.overlay.path.all')} active={pathMode === 'all'} onClick={() => setPathMode('all')} />
+                  <PathModeButton label={t('runs.overlay.path.failed')} active={pathMode === 'failed'} onClick={() => setPathMode('failed')} />
+                  <PathModeButton label={t('runs.overlay.path.blocked')} active={pathMode === 'blocked'} onClick={() => setPathMode('blocked')} />
+                </div>
+              </OperatorSection>
+            </div>
+          ) : null}
+
           {/* DAG canvas */}
           <div className="flex h-[30rem] min-h-0 flex-col lg:h-auto lg:flex-1">
             {selectedRun && selectedDefinition ? (
@@ -753,7 +765,7 @@ export default function WorkflowRuns() {
                 runningTaskIds={runningSteps.map((step) => step.step_id)}
                 fill
                 overlay={
-                  <div className="space-y-2">
+                  <div className="hidden space-y-2 md:block">
                     <OperatorSection title={t('runs.overlay.path_mode')}>
                       <PathLegend />
                       <div className="flex flex-wrap gap-2">
@@ -1311,7 +1323,7 @@ function PathModeButton({ label, active, onClick }: { label: string; active: boo
     <button
       type="button"
       onClick={onClick}
-      className="rounded-[12px] border px-3 py-2 text-xs font-semibold transition-colors"
+      className="min-h-[2.75rem] rounded-[12px] border px-3 py-2 text-xs font-semibold transition-colors"
       style={{
         borderColor: active ? 'var(--revka-border-strong)' : 'var(--revka-border-soft)',
         background: active ? 'var(--revka-signal-selected-soft, color-mix(in srgb, var(--revka-signal-selected) 18%, transparent))' : 'color-mix(in srgb, var(--revka-bg-panel-strong) 92%, transparent)',

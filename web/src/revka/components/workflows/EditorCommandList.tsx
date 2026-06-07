@@ -84,7 +84,7 @@ export default function EditorCommandList({
       >
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
           <img
-            src={appAssetPath('logo.png')}
+            src={appAssetPath('revka-icon.png')}
             alt="Revka"
             className="revka-brand-logo"
             style={{
