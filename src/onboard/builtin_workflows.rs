@@ -144,6 +144,10 @@ mod tests {
             names.iter().any(|n| *n == "code-review.yaml"),
             "code-review.yaml should be embedded"
         );
+        assert!(
+            names.iter().any(|n| *n == "github-issue-resolver.yaml"),
+            "github-issue-resolver.yaml should be embedded"
+        );
     }
 
     #[tokio::test]

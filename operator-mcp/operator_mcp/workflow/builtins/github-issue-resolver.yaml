@@ -1,0 +1,168 @@
+name: github-issue-resolver
+version: "1.0"
+description: "Google AI Startup Track 3: Automated GitHub Issue Resolution & PR Automation with Human-in-the-Loop Governance"
+tags:
+  - google-agents
+  - track3
+  - github
+  - automation
+  - PR
+  - cicd
+
+inputs:
+  - name: github_payload
+    type: string
+    required: true
+    description: Incoming GitHub webhook JSON payload containing issue details.
+
+  - name: repo_name
+    type: string
+    required: true
+    description: GitHub repository identifier, e.g. KumihoIO/Revka.
+
+outputs: []
+
+steps:
+  - id: assess_issue
+    name: Assess GitHub Issue
+    type: agent
+    depends_on: []
+    position:
+      x: 156.84
+      y: -149.39
+    assign: revka-agentops-a2a-security-auditor
+    agent:
+      agent_type: agy
+      role: reviewer
+      output_fields:
+        - issue_number
+        - issue_title
+        - issue_body
+        - likely_files
+        - strategy
+        - risk_notes
+      prompt: |
+        Parse the following incoming GitHub issue payload:
+
+        Payload: ${inputs.github_payload}
+        Repository: ${inputs.repo_name}
+
+        Extract the issue number, title, body, labels, author, and files likely involved.
+        Formulate a clear design and implementation strategy to resolve the problem.
+      timeout: 300
+
+  - id: human_approval_gate_1
+    name: Approve Coder Deployment
+    type: human_approval
+    depends_on:
+      - assess_issue
+    position:
+      x: -125.14
+      y: 98.89
+    human_approval:
+      message: |
+        Workflow paused - approve coder deployment to continue.
+
+        Issue: #${assess_issue.output_data.issue_number} ${assess_issue.output_data.issue_title}
+        Strategy: ${assess_issue.output_data.strategy}
+        Risk notes: ${assess_issue.output_data.risk_notes}
+      timeout: 0
+      channel: dashboard
+      approve_keywords:
+        - approve
+        - approved
+        - lgtm
+      reject_keywords:
+        - reject
+        - rejected
+        - decline
+
+  - id: deploy_coder_agent
+    name: Deploy Autonomous Coder
+    type: agent
+    depends_on:
+      - human_approval_gate_1
+      - assess_issue
+    position:
+      x: 155.69
+      y: 321.94
+    assign: revka-agentops-a2a-patch-planner
+    agent:
+      agent_type: agy
+      role: coder
+      output_fields:
+        - branch_name
+        - commit_sha
+        - pr_url
+        - test_summary
+        - clippy_summary
+      prompt: |
+        Coder deployment was approved by the human gate: ${human_approval_gate_1.output}
+
+        Initialize the google_agents_cli workspace and deploy the coder agent.
+
+        Issue Number: ${assess_issue.output_data.issue_number}
+        Target Fix Strategy: ${assess_issue.output_data.strategy}
+        Repository: ${inputs.repo_name}
+
+        Implement the changes, run 'cargo test' and 'cargo clippy', commit, push a branch, and create a Pull Request linking to Issue #${assess_issue.output_data.issue_number}.
+      timeout: 600
+
+  - id: human_approval_gate_2
+    name: Approve Pull Request Merge
+    type: human_approval
+    depends_on:
+      - deploy_coder_agent
+    position:
+      x: -120.91
+      y: 553.38
+    human_approval:
+      message: |
+        Workflow paused - approve PR merge to continue.
+
+        PR URL: ${deploy_coder_agent.output_data.pr_url}
+        Branch: ${deploy_coder_agent.output_data.branch_name}
+        Commit: ${deploy_coder_agent.output_data.commit_sha}
+        Tests: ${deploy_coder_agent.output_data.test_summary}
+        Clippy: ${deploy_coder_agent.output_data.clippy_summary}
+      timeout: 0
+      channel: dashboard
+      approve_keywords:
+        - approve
+        - approved
+        - lgtm
+      reject_keywords:
+        - reject
+        - rejected
+        - decline
+
+  - id: merge_and_close
+    name: Merge PR & Close Issue
+    type: agent
+    depends_on:
+      - human_approval_gate_2
+      - assess_issue
+      - deploy_coder_agent
+    position:
+      x: 153.7
+      y: 795.87
+    assign: revka-agentops-a2a-health-verifier
+    agent:
+      agent_type: codex
+      role: reviewer
+      output_fields:
+        - merge_status
+        - issue_closed
+        - closing_comment_url
+      prompt: |
+        PR merge approved by human manager: ${human_approval_gate_2.output}
+
+        PR URL: ${deploy_coder_agent.output_data.pr_url}
+        Issue Number: ${assess_issue.output_data.issue_number}
+
+        Merge the pull request, write a summarizing comment on the original issue referencing the workflow run ID, and close the issue.
+      timeout: 300
+
+default_timeout: 300
+max_total_time: 3600
+checkpoint: true
