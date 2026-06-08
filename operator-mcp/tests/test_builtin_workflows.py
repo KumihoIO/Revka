@@ -224,23 +224,53 @@ def test_github_issue_resolver_matches_demo_trigger_contract() -> None:
     wf = load_workflow_from_yaml(_GITHUB_ISSUE_RESOLVER_PATH)
 
     assert wf.name == "github-issue-resolver"
-    assert [step.id for step in wf.steps] == ["fix_issue", "summarize"]
-    assert wf.step_by_id("fix_issue").agent.agent_type == "codex"
+    assert [step.id for step in wf.steps] == [
+        "assess_issue",
+        "human_approval_gate_1",
+        "deploy_coder_agent",
+        "human_approval_gate_2",
+        "merge_and_close",
+    ]
+
+    trigger = wf.triggers[0]
+    assert trigger.on_kind == "github-issue"
+    assert trigger.on_tag == "ready"
+    assert trigger.input_map == {
+        "github_payload": "${trigger.metadata.github_payload}",
+        "repo_name": "${trigger.metadata.repo_name}",
+    }
 
     input_names = {input_def.name for input_def in wf.inputs}
-    assert {
-        "repository",
-        "repository_url",
-        "clone_url",
-        "default_branch",
+    assert {"github_payload", "repo_name"} == input_names
+
+    assess = wf.step_by_id("assess_issue")
+    assert assess.agent.agent_type == "agy"
+    assert assess.agent.output_fields == [
         "issue_number",
         "issue_title",
         "issue_body",
-        "issue_url",
-        "demo_goal",
-        "expected_commands",
-        "target_files",
-    }.issubset(input_names)
+        "likely_files",
+        "strategy",
+        "risk_notes",
+    ]
+
+    deploy = wf.step_by_id("deploy_coder_agent")
+    assert deploy.agent.agent_type == "agy"
+    assert deploy.agent.output_fields == [
+        "branch_name",
+        "commit_sha",
+        "pr_url",
+        "test_summary",
+        "clippy_summary",
+    ]
+
+    merge = wf.step_by_id("merge_and_close")
+    assert merge.agent.agent_type == "codex"
+    assert merge.agent.output_fields == [
+        "merge_status",
+        "issue_closed",
+        "closing_comment_url",
+    ]
 
 
 def test_canonworks_episode_factory_preserves_generalized_example_contract() -> None:

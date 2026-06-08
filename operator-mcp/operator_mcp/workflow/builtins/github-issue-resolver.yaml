@@ -1,123 +1,175 @@
 name: github-issue-resolver
 version: "1.0"
-description: "Resolve a GitHub issue by fixing the demo Python repository and opening a pull request."
-tags: [github, issue, demo, python, revka]
+description: "Google AI Startup Track 3: Automated GitHub Issue Resolution & PR Automation with Human-in-the-Loop Governance"
+tags:
+  - google-agents
+  - track3
+  - github
+  - automation
+  - PR
+  - cicd
+
+triggers:
+  - on_kind: github-issue
+    on_tag: ready
+    input_map:
+      github_payload: ${trigger.metadata.github_payload}
+      repo_name: ${trigger.metadata.repo_name}
 
 inputs:
-  - name: repository
+  - name: github_payload
     type: string
     required: true
-    description: "GitHub repository, for example KumihoIO/google-agentops-demo."
-  - name: repository_url
+    description: Incoming GitHub webhook JSON payload containing issue details.
+
+  - name: repo_name
     type: string
     required: true
-    description: "Browser URL for the repository."
-  - name: clone_url
-    type: string
-    required: true
-    description: "HTTPS clone URL for the repository."
-  - name: default_branch
-    type: string
-    required: true
-    description: "Default branch to branch from."
-  - name: issue_number
-    type: number
-    required: true
-    description: "GitHub issue number."
-  - name: issue_title
-    type: string
-    required: true
-    description: "GitHub issue title."
-  - name: issue_body
-    type: string
-    required: true
-    description: "GitHub issue body."
-  - name: issue_url
-    type: string
-    required: true
-    description: "Browser URL for the issue."
-  - name: trigger_source
-    type: string
-    required: false
-    default: github_issue
-    description: "Source that requested the workflow run."
-  - name: demo_goal
-    type: string
-    required: true
-    description: "Plain-language goal for the demo run."
-  - name: expected_commands
-    type: list
-    required: true
-    description: "Commands the agent should run for validation."
-  - name: target_files
-    type: list
-    required: true
-    description: "Likely files that should change."
+    description: GitHub repository identifier, e.g. KumihoIO/Revka.
+
+outputs: []
 
 steps:
-  - id: fix_issue
-    name: "Fix GitHub Issue"
+  - id: assess_issue
+    name: Assess GitHub Issue
     type: agent
+    depends_on: []
+    position:
+      x: 156.84
+      y: -149.39
+    assign: revka-agentops-a2a-security-auditor
+    agent:
+      agent_type: agy
+      role: reviewer
+      output_fields:
+        - issue_number
+        - issue_title
+        - issue_body
+        - likely_files
+        - strategy
+        - risk_notes
+      prompt: |
+        Parse the following incoming GitHub issue payload:
+
+        Payload: ${inputs.github_payload}
+        Repository: ${inputs.repo_name}
+
+        Extract the issue number, title, body, labels, author, and files likely involved.
+        Formulate a clear design and implementation strategy to resolve the problem.
+      timeout: 300
+
+  - id: human_approval_gate_1
+    name: Approve Coder Deployment
+    type: human_approval
+    depends_on:
+      - assess_issue
+    position:
+      x: -125.14
+      y: 98.89
+    human_approval:
+      message: |
+        Workflow paused - approve coder deployment to continue.
+
+        Issue: #${assess_issue.output_data.issue_number} ${assess_issue.output_data.issue_title}
+        Strategy: ${assess_issue.output_data.strategy}
+        Risk notes: ${assess_issue.output_data.risk_notes}
+      timeout: 0
+      channel: dashboard
+      approve_keywords:
+        - approve
+        - approved
+        - lgtm
+      reject_keywords:
+        - reject
+        - rejected
+        - decline
+
+  - id: deploy_coder_agent
+    name: Deploy Autonomous Coder
+    type: agent
+    depends_on:
+      - human_approval_gate_1
+      - assess_issue
+    position:
+      x: 155.69
+      y: 321.94
+    assign: revka-agentops-a2a-patch-planner
+    agent:
+      agent_type: agy
+      role: coder
+      output_fields:
+        - branch_name
+        - commit_sha
+        - pr_url
+        - test_summary
+        - clippy_summary
+      prompt: |
+        Coder deployment was approved by the human gate: ${human_approval_gate_1.output}
+
+        Initialize the google_agents_cli workspace and deploy the coder agent.
+
+        Issue Number: ${assess_issue.output_data.issue_number}
+        Target Fix Strategy: ${assess_issue.output_data.strategy}
+        Repository: ${inputs.repo_name}
+
+        Implement the changes, run 'cargo test' and 'cargo clippy', commit, push a branch, and create a Pull Request linking to Issue #${assess_issue.output_data.issue_number}.
+      timeout: 600
+
+  - id: human_approval_gate_2
+    name: Approve Pull Request Merge
+    type: human_approval
+    depends_on:
+      - deploy_coder_agent
+    position:
+      x: -120.91
+      y: 553.38
+    human_approval:
+      message: |
+        Workflow paused - approve PR merge to continue.
+
+        PR URL: ${deploy_coder_agent.output_data.pr_url}
+        Branch: ${deploy_coder_agent.output_data.branch_name}
+        Commit: ${deploy_coder_agent.output_data.commit_sha}
+        Tests: ${deploy_coder_agent.output_data.test_summary}
+        Clippy: ${deploy_coder_agent.output_data.clippy_summary}
+      timeout: 0
+      channel: dashboard
+      approve_keywords:
+        - approve
+        - approved
+        - lgtm
+      reject_keywords:
+        - reject
+        - rejected
+        - decline
+
+  - id: merge_and_close
+    name: Merge PR & Close Issue
+    type: agent
+    depends_on:
+      - human_approval_gate_2
+      - assess_issue
+      - deploy_coder_agent
+    position:
+      x: 153.7
+      y: 795.87
+    assign: revka-agentops-a2a-health-verifier
     agent:
       agent_type: codex
-      role: coder
-      timeout: 1200
-      max_turns: 8
-      tools: none
+      role: reviewer
+      output_fields:
+        - merge_status
+        - issue_closed
+        - closing_comment_url
       prompt: |
-        You are resolving a GitHub issue for a public Revka demo.
+        PR merge approved by human manager: ${human_approval_gate_2.output}
 
-        Repository: ${inputs.repository}
-        Repository URL: ${inputs.repository_url}
-        Clone URL: ${inputs.clone_url}
-        Default branch: ${inputs.default_branch}
-        Issue: #${inputs.issue_number} ${inputs.issue_title}
-        Issue URL: ${inputs.issue_url}
-        Trigger source: ${inputs.trigger_source}
-        Issue body:
-        ${inputs.issue_body}
+        PR URL: ${deploy_coder_agent.output_data.pr_url}
+        Issue Number: ${assess_issue.output_data.issue_number}
 
-        Demo goal:
-        ${inputs.demo_goal}
+        Merge the pull request, write a summarizing comment on the original issue referencing the workflow run ID, and close the issue.
+      timeout: 300
 
-        Likely target files:
-        ${inputs.target_files}
-
-        Required validation commands:
-        ${inputs.expected_commands}
-
-        Work in a fresh directory. Clone the repository, create a branch named
-        revka/issue-${inputs.issue_number}-quantity-subtotal, reproduce the bug,
-        add the missing regression test, fix the implementation, and run the
-        validation commands.
-
-        Expected fix for this demo:
-        - Add a test proving quantity greater than 1 affects the subtotal.
-        - Update src/agentops_demo/cart.py so subtotal_cents multiplies
-          unit_price_cents by quantity.
-        - Keep the change narrow and do not refactor unrelated code.
-
-        Commit with a conventional commit title. Push the branch and open a
-        pull request that links to ${inputs.issue_url}. Do not merge or close
-        the issue.
-
-        If the Revka host cannot push or create a PR because GitHub CLI or git
-        credentials are unavailable, stop after local validation and report the
-        exact authentication blocker instead of guessing.
-
-  - id: summarize
-    name: "Summarize Result"
-    type: output
-    depends_on: [fix_issue]
-    output:
-      format: markdown
-      template: |
-        ## GitHub Issue Resolver Result
-
-        Issue: ${inputs.issue_url}
-
-        ${fix_issue.output}
-
-outputs:
-  - name: result
-    source: "${fix_issue.output}"
+default_timeout: 300
+max_total_time: 3600
+checkpoint: true
