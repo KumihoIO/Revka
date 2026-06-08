@@ -220,7 +220,7 @@ def test_builtin_workflow_validates(yaml_path: str) -> None:
     )
 
 
-def test_github_issue_resolver_matches_demo_trigger_contract() -> None:
+def test_github_issue_resolver_matches_demo_run_contract() -> None:
     wf = load_workflow_from_yaml(_GITHUB_ISSUE_RESOLVER_PATH)
 
     assert wf.name == "github-issue-resolver"
@@ -231,15 +231,7 @@ def test_github_issue_resolver_matches_demo_trigger_contract() -> None:
         "human_approval_gate_2",
         "merge_and_close",
     ]
-
-    trigger = wf.triggers[0]
-    assert trigger.on_kind == "github-issue"
-    assert trigger.on_tag == "ready"
-    assert trigger.on_space == "Revka/GitHubIssues"
-    assert trigger.input_map == {
-        "github_payload": "${trigger.metadata.github_payload}",
-        "repo_name": "${trigger.metadata.repo_name}",
-    }
+    assert wf.triggers == []
 
     input_names = {input_def.name for input_def in wf.inputs}
     assert {"github_payload", "repo_name"} == input_names

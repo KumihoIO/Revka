@@ -9,14 +9,6 @@ tags:
   - PR
   - cicd
 
-triggers:
-  - on_kind: github-issue
-    on_tag: ready
-    on_space: Revka/GitHubIssues
-    input_map:
-      github_payload: ${trigger.metadata.github_payload}
-      repo_name: ${trigger.metadata.repo_name}
-
 inputs:
   - name: github_payload
     type: string
