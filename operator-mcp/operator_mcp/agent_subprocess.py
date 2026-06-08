@@ -92,6 +92,29 @@ def _write_agent_home_configs(agent_id: str, agent_type: str, mcp_servers: dict[
         "XDG_CONFIG_HOME": os.path.join(agent_home, ".config"),
     }
 
+    # Symlink real gcloud config and .agents directory to the sandbox if they exist.
+    # This allows private Cloud Run identity-token minting and update checking within the isolated HOME.
+    real_home = os.path.expanduser("~")
+    real_gcloud_dir = os.path.join(real_home, ".config", "gcloud")
+    if os.path.exists(real_gcloud_dir):
+        sandbox_config_dir = os.path.join(agent_home, ".config")
+        os.makedirs(sandbox_config_dir, exist_ok=True)
+        sandbox_gcloud_dir = os.path.join(sandbox_config_dir, "gcloud")
+        if not os.path.exists(sandbox_gcloud_dir):
+            try:
+                os.symlink(real_gcloud_dir, sandbox_gcloud_dir)
+            except Exception as e:
+                _log(f"Warning: failed to symlink real gcloud config to sandbox: {e}")
+
+    real_agents_dir = os.path.join(real_home, ".agents")
+    if os.path.exists(real_agents_dir):
+        sandbox_agents_dir = os.path.join(agent_home, ".agents")
+        if not os.path.exists(sandbox_agents_dir):
+            try:
+                os.symlink(real_agents_dir, sandbox_agents_dir)
+            except Exception as e:
+                _log(f"Warning: failed to symlink real .agents directory: {e}")
+
     if agent_type == "opencode":
         # Write config at ~/.config/opencode/config.json and opencode.json
         # and translate to opencode local format
@@ -122,6 +145,19 @@ def _write_agent_home_configs(agent_id: str, agent_type: str, mcp_servers: dict[
         agy_dir = os.path.join(agent_home, ".gemini", "antigravity-cli")
         os.makedirs(agy_dir, exist_ok=True)
         
+        # Copy real credentials/settings if they exist to prevent auth prompt in sandbox
+        real_home = os.path.expanduser("~")
+        real_agy_dir = os.path.join(real_home, ".gemini", "antigravity-cli")
+        if os.path.exists(real_agy_dir):
+            import shutil
+            for name in ("antigravity-oauth-token", "settings.json", "installation_id"):
+                src = os.path.join(real_agy_dir, name)
+                if os.path.exists(src):
+                    try:
+                        shutil.copy2(src, os.path.join(agy_dir, name))
+                    except Exception as e:
+                        _log(f"Warning: failed to copy real agy credential file {name}: {e}")
+
         agy_mcp = {}
         for name, cfg in mcp_servers.items():
             agy_mcp[name] = {
