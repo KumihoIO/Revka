@@ -235,6 +235,7 @@ def test_github_issue_resolver_matches_demo_trigger_contract() -> None:
     trigger = wf.triggers[0]
     assert trigger.on_kind == "github-issue"
     assert trigger.on_tag == "ready"
+    assert trigger.on_space == "Revka/GitHubIssues"
     assert trigger.input_map == {
         "github_payload": "${trigger.metadata.github_payload}",
         "repo_name": "${trigger.metadata.repo_name}",
