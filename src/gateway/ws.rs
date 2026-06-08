@@ -1154,8 +1154,8 @@ mod tests {
     #[test]
     fn extract_ws_token_from_authorization_header() {
         let mut headers = HeaderMap::new();
-        headers.insert("authorization", "Bearer zc_test123".parse().unwrap());
-        assert_eq!(extract_ws_token(&headers, None), Some("zc_test123"));
+        headers.insert("authorization", "Bearer rk_test123".parse().unwrap());
+        assert_eq!(extract_ws_token(&headers, None), Some("rk_test123"));
     }
 
     #[test]
@@ -1163,36 +1163,36 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(
             "sec-websocket-protocol",
-            "revka.v1, bearer.zc_sub456".parse().unwrap(),
+            "revka.v1, bearer.rk_sub456".parse().unwrap(),
         );
-        assert_eq!(extract_ws_token(&headers, None), Some("zc_sub456"));
+        assert_eq!(extract_ws_token(&headers, None), Some("rk_sub456"));
     }
 
     #[test]
     fn extract_ws_token_from_query_param() {
         let headers = HeaderMap::new();
         assert_eq!(
-            extract_ws_token(&headers, Some("zc_query789")),
-            Some("zc_query789")
+            extract_ws_token(&headers, Some("rk_query789")),
+            Some("rk_query789")
         );
     }
 
     #[test]
     fn extract_ws_token_precedence_header_over_subprotocol() {
         let mut headers = HeaderMap::new();
-        headers.insert("authorization", "Bearer zc_header".parse().unwrap());
-        headers.insert("sec-websocket-protocol", "bearer.zc_sub".parse().unwrap());
+        headers.insert("authorization", "Bearer rk_header".parse().unwrap());
+        headers.insert("sec-websocket-protocol", "bearer.rk_sub".parse().unwrap());
         assert_eq!(
-            extract_ws_token(&headers, Some("zc_query")),
-            Some("zc_header")
+            extract_ws_token(&headers, Some("rk_query")),
+            Some("rk_header")
         );
     }
 
     #[test]
     fn extract_ws_token_precedence_subprotocol_over_query() {
         let mut headers = HeaderMap::new();
-        headers.insert("sec-websocket-protocol", "bearer.zc_sub".parse().unwrap());
-        assert_eq!(extract_ws_token(&headers, Some("zc_query")), Some("zc_sub"));
+        headers.insert("sec-websocket-protocol", "bearer.rk_sub".parse().unwrap());
+        assert_eq!(extract_ws_token(&headers, Some("rk_query")), Some("rk_sub"));
     }
 
     #[test]
@@ -1206,8 +1206,8 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert("authorization", "Bearer ".parse().unwrap());
         assert_eq!(
-            extract_ws_token(&headers, Some("zc_fallback")),
-            Some("zc_fallback")
+            extract_ws_token(&headers, Some("rk_fallback")),
+            Some("rk_fallback")
         );
     }
 
@@ -1242,9 +1242,9 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(
             "sec-websocket-protocol",
-            "revka.v1, bearer.zc_tok, other".parse().unwrap(),
+            "revka.v1, bearer.rk_tok, other".parse().unwrap(),
         );
-        assert_eq!(extract_ws_token(&headers, None), Some("zc_tok"));
+        assert_eq!(extract_ws_token(&headers, None), Some("rk_tok"));
     }
 
     #[test]

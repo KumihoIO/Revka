@@ -304,6 +304,23 @@ Examples:
         gateway_command: Option<revka::GatewayCommands>,
     },
 
+    /// Mint bearer tokens from gateway pairing codes
+    #[command(long_about = "\
+Mint gateway bearer tokens from pairing codes.
+
+Use this when a dashboard or operator gives you a one-time pairing code
+and you need a bearer token for CLI/API access. The plaintext token is
+printed once; Revka stores only its hash.
+
+Examples:
+  revka pair token --code 123456
+  revka pair token --code 123456 --name \"Field phone\" --device-type mobile --hardware \"Pixel 8 / Android\"
+  revka pair token --url http://revka.local:8080 --code 123456 --json")]
+    Pair {
+        #[command(subcommand)]
+        pair_command: PairCommands,
+    },
+
     /// Start ACP (Agent Control Protocol) server over stdio
     #[command(long_about = "\
 Start the ACP server (JSON-RPC 2.0 over stdio).
@@ -732,6 +749,37 @@ enum PluginCommands {
 enum ConfigCommands {
     /// Dump the full configuration JSON Schema to stdout
     Schema,
+}
+
+#[derive(Subcommand, Debug)]
+enum PairCommands {
+    /// Exchange a one-time pairing code for a bearer token
+    Token {
+        /// Pairing code shown by the gateway or dashboard
+        #[arg(long)]
+        code: String,
+        /// Gateway base URL, e.g. http://127.0.0.1:8080
+        #[arg(long)]
+        url: Option<String>,
+        /// Gateway host override when --url is omitted
+        #[arg(long)]
+        host: Option<String>,
+        /// Gateway port override when --url is omitted
+        #[arg(short, long)]
+        port: Option<u16>,
+        /// Device name recorded on the dashboard Pairing page
+        #[arg(long)]
+        name: Option<String>,
+        /// Device type recorded on the dashboard Pairing page
+        #[arg(long, default_value = "cli")]
+        device_type: String,
+        /// Hardware/platform label recorded on the dashboard Pairing page
+        #[arg(long)]
+        hardware: Option<String>,
+        /// Print machine-readable JSON
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -1312,6 +1360,8 @@ async fn main() -> Result<()> {
                 }
             }
         }
+
+        Commands::Pair { pair_command } => handle_pair_command(pair_command, &config).await,
 
         Commands::Daemon { port, host } => {
             if let Ok(exe) = std::env::current_exe() {
@@ -2127,6 +2177,177 @@ async fn fetch_paircode(host: &str, port: u16, new: bool) -> Result<Option<Strin
         .get("pairing_code")
         .and_then(|v| v.as_str())
         .map(String::from))
+}
+
+#[derive(Debug, Serialize)]
+struct PairTokenRequest {
+    code: String,
+    device_name: Option<String>,
+    device_type: Option<String>,
+    hardware: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PairTokenResponse {
+    token: Option<String>,
+    persisted: Option<bool>,
+    message: Option<String>,
+}
+
+async fn handle_pair_command(pair_command: PairCommands, config: &Config) -> Result<()> {
+    match pair_command {
+        PairCommands::Token {
+            code,
+            url,
+            host,
+            port,
+            name,
+            device_type,
+            hardware,
+            json,
+        } => {
+            let code = code.trim().to_string();
+            if code.is_empty() {
+                bail!("--code cannot be empty");
+            }
+
+            let request = PairTokenRequest {
+                code,
+                device_name: Some(
+                    clean_optional_cli_value(name).unwrap_or_else(default_pairing_cli_device_name),
+                ),
+                device_type: Some(
+                    clean_optional_cli_value(Some(device_type))
+                        .unwrap_or_else(|| "cli".to_string()),
+                ),
+                hardware: Some(
+                    clean_optional_cli_value(hardware).unwrap_or_else(default_pairing_cli_hardware),
+                ),
+            };
+
+            let base_url = gateway_pairing_base_url(config, url.as_deref(), host, port);
+            let endpoint = format!("{}/api/pair", base_url.trim_end_matches('/'));
+            let client = reqwest::Client::new();
+            let response = client
+                .post(&endpoint)
+                .header(
+                    reqwest::header::USER_AGENT,
+                    format!("revka-cli/{}", env!("CARGO_PKG_VERSION")),
+                )
+                .timeout(std::time::Duration::from_secs(10))
+                .json(&request)
+                .send()
+                .await
+                .with_context(|| format!("Failed to connect to gateway at {endpoint}"))?;
+
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            if !status.is_success() {
+                let detail = body.trim();
+                if detail.is_empty() {
+                    bail!("Pairing token mint failed ({status})");
+                }
+                bail!("Pairing token mint failed ({status}): {detail}");
+            }
+
+            let parsed: PairTokenResponse =
+                serde_json::from_str(&body).context("Failed to parse pairing response")?;
+            let token = parsed
+                .token
+                .context("Pairing response did not include a token")?;
+            let persisted = parsed.persisted.unwrap_or(false);
+
+            if json {
+                let authorization = format!("Bearer {token}");
+                let output = serde_json::json!({
+                    "token": token,
+                    "authorization": authorization,
+                    "persisted": persisted,
+                    "message": parsed.message,
+                    "device_name": request.device_name,
+                    "device_type": request.device_type,
+                    "hardware": request.hardware,
+                });
+                println!("{}", serde_json::to_string_pretty(&output)?);
+            } else {
+                println!("Bearer token minted.");
+                if let Some(device_name) = request.device_name.as_deref() {
+                    println!("Device: {device_name}");
+                }
+                if !persisted {
+                    println!("Warning: token is active for this process but was not persisted.");
+                }
+                println!();
+                println!("Token:");
+                println!("{token}");
+                println!();
+                println!("Authorization header:");
+                println!("Authorization: Bearer {token}");
+            }
+
+            Ok(())
+        }
+    }
+}
+
+fn gateway_pairing_base_url(
+    config: &Config,
+    url: Option<&str>,
+    host: Option<String>,
+    port: Option<u16>,
+) -> String {
+    if let Some(url) = url.and_then(|value| {
+        let trimmed = value.trim();
+        (!trimmed.is_empty()).then_some(trimmed)
+    }) {
+        return url.trim_end_matches('/').to_string();
+    }
+
+    let (port, host) = resolve_gateway_addr(config, port, host);
+    let host = gateway_connect_host(&host);
+    let host = http_host_literal(&host);
+    let mut base = format!("http://{host}:{port}");
+    if let Some(prefix) = config.gateway.path_prefix.as_deref() {
+        base.push_str(prefix);
+    }
+    base
+}
+
+fn gateway_connect_host(host: &str) -> String {
+    match host.trim() {
+        "0.0.0.0" | "::" | "[::]" => "127.0.0.1".to_string(),
+        other => other.to_string(),
+    }
+}
+
+fn http_host_literal(host: &str) -> String {
+    if host.contains(':') && !host.starts_with('[') {
+        format!("[{host}]")
+    } else {
+        host.to_string()
+    }
+}
+
+fn clean_optional_cli_value(value: Option<String>) -> Option<String> {
+    value.and_then(|value| {
+        let trimmed = value.trim();
+        (!trimmed.is_empty()).then(|| trimmed.to_string())
+    })
+}
+
+fn default_pairing_cli_device_name() -> String {
+    hostname::get()
+        .ok()
+        .and_then(|name| name.into_string().ok())
+        .and_then(|name| {
+            let trimmed = name.trim();
+            (!trimmed.is_empty()).then(|| format!("Revka CLI ({trimmed})"))
+        })
+        .unwrap_or_else(|| "Revka CLI".to_string())
+}
+
+fn default_pairing_cli_hardware() -> String {
+    format!("{} {}", std::env::consts::OS, std::env::consts::ARCH)
 }
 
 // ─── Generic Pending OAuth Login ────────────────────────────────────────────
@@ -3081,6 +3302,75 @@ mod tests {
             } => assert_eq!(domains, vec!["*.chase.com".to_string()]),
             other => panic!("expected estop resume command, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn pair_token_cli_accepts_device_metadata_flags() {
+        let cli = Cli::try_parse_from([
+            "revka",
+            "pair",
+            "token",
+            "--code",
+            "123456",
+            "--name",
+            "Field phone",
+            "--device-type",
+            "mobile",
+            "--hardware",
+            "Pixel 8 / Android",
+            "--json",
+        ])
+        .expect("pair token command should parse");
+
+        match cli.command {
+            Commands::Pair {
+                pair_command:
+                    PairCommands::Token {
+                        code,
+                        name,
+                        device_type,
+                        hardware,
+                        json,
+                        ..
+                    },
+            } => {
+                assert_eq!(code, "123456");
+                assert_eq!(name.as_deref(), Some("Field phone"));
+                assert_eq!(device_type, "mobile");
+                assert_eq!(hardware.as_deref(), Some("Pixel 8 / Android"));
+                assert!(json);
+            }
+            other => panic!("expected pair token command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn pairing_base_url_uses_loopback_for_public_bind_and_prefix() {
+        let mut config = Config::default();
+        config.gateway.host = "0.0.0.0".to_string();
+        config.gateway.port = 8080;
+        config.gateway.path_prefix = Some("/revka".to_string());
+
+        assert_eq!(
+            gateway_pairing_base_url(&config, None, None, None),
+            "http://127.0.0.1:8080/revka"
+        );
+    }
+
+    #[test]
+    fn pairing_base_url_uses_explicit_url_without_config_prefix() {
+        let mut config = Config::default();
+        config.gateway.path_prefix = Some("/revka".to_string());
+
+        assert_eq!(
+            gateway_pairing_base_url(
+                &config,
+                Some("http://example.test:9000/custom/"),
+                None,
+                None
+            ),
+            "http://example.test:9000/custom"
+        );
     }
 
     #[test]

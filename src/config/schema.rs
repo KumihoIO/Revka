@@ -13074,7 +13074,7 @@ channel_ids = ["C123", "D456"]
             host: "127.0.0.1".into(),
             require_pairing: true,
             allow_public_bind: false,
-            paired_tokens: vec!["zc_test_token".into()],
+            paired_tokens: vec!["rk_test_token".into()],
             pair_rate_limit_per_minute: 12,
             webhook_rate_limit_per_minute: 80,
             trust_forwarded_headers: true,
@@ -13094,7 +13094,7 @@ channel_ids = ["C123", "D456"]
         assert!(parsed.session_persistence);
         assert_eq!(parsed.session_ttl_hours, 0);
         assert!(!parsed.allow_public_bind);
-        assert_eq!(parsed.paired_tokens, vec!["zc_test_token"]);
+        assert_eq!(parsed.paired_tokens, vec!["rk_test_token"]);
         assert_eq!(parsed.pair_rate_limit_per_minute, 12);
         assert_eq!(parsed.webhook_rate_limit_per_minute, 80);
         assert!(parsed.trust_forwarded_headers);
