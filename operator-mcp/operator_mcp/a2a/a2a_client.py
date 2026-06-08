@@ -16,9 +16,12 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
+import shutil
 import uuid
 from typing import Any
+from urllib.parse import urlsplit
 
 from .._log import _log
 
@@ -34,6 +37,111 @@ except ImportError:
 # ---------------------------------------------------------------------------
 
 TERMINAL_STATES = {"completed", "failed", "canceled"}
+
+
+def _token(value: Any) -> str | None:
+    """Return a non-empty token string without accepting structured secrets."""
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
+def _auth_headers(
+    *,
+    auth_token: str | None = None,
+    cloud_run_identity_token: str | None = None,
+    content_type: str | None = None,
+) -> dict[str, str]:
+    """Build outbound auth headers for A2A and Cloud Run IAM.
+
+    Cloud Run IAM consumes ``X-Serverless-Authorization``. The A2A application
+    can independently consume ``Authorization`` for its bearer-token policy, so
+    keep the two tokens separate instead of overloading one header.
+    """
+    headers: dict[str, str] = {}
+    if content_type:
+        headers["Content-Type"] = content_type
+    if token := _token(cloud_run_identity_token):
+        headers["X-Serverless-Authorization"] = f"Bearer {token}"
+    if token := _token(auth_token):
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+
+def _origin_url(value: str) -> str:
+    parsed = urlsplit(value)
+    if not parsed.scheme or not parsed.netloc:
+        return value.rstrip("/")
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
+async def _gcloud_identity_token(audience: str | None, *, timeout: float = 20.0) -> str:
+    binary = shutil.which("gcloud")
+    if not binary:
+        raise A2ATransportError(
+            "gcloud is required for cloud_run_auth='gcloud' but was not found in PATH"
+        )
+
+    async def _run(command: list[str]) -> tuple[int | None, str, str]:
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *command,
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        except OSError as exc:
+            raise A2ATransportError(f"failed to execute gcloud for Cloud Run auth: {exc}") from exc
+        try:
+            stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        except asyncio.TimeoutError as exc:
+            proc.kill()
+            with contextlib.suppress(ProcessLookupError):
+                await proc.wait()
+            raise A2ATransportError(
+                f"gcloud identity-token mint timed out after {timeout:.0f}s"
+            ) from exc
+        return (
+            proc.returncode,
+            stdout_b.decode("utf-8", errors="replace").strip(),
+            stderr_b.decode("utf-8", errors="replace").strip(),
+        )
+
+    command = [binary, "auth", "print-identity-token"]
+    if audience:
+        command.append(f"--audiences={audience}")
+
+    returncode, token, stderr = await _run(command)
+    if returncode != 0 and audience and "Invalid account type for `--audiences`" in stderr:
+        returncode, token, stderr = await _run([binary, "auth", "print-identity-token"])
+
+    if returncode != 0:
+        raise A2ATransportError(
+            "gcloud identity-token mint failed: " + (stderr[-500:] or f"exit {returncode}")
+        )
+    if not token:
+        raise A2ATransportError("gcloud identity-token mint returned an empty token")
+    return token
+
+
+async def _resolve_cloud_run_identity_token(args: dict[str, Any], *, url: str) -> str | None:
+    explicit = _token(
+        args.get("cloud_run_identity_token")
+        or args.get("serverless_identity_token")
+        or args.get("identity_token")
+    )
+    if explicit:
+        return explicit
+
+    mode = args.get("cloud_run_auth")
+    enabled = mode is True or (isinstance(mode, str) and mode.strip().lower() in {"gcloud", "google", "auto"})
+    if not enabled:
+        return None
+
+    audience = _token(args.get("cloud_run_audience")) or _origin_url(url)
+    timeout = float(args.get("cloud_run_auth_timeout") or 20.0)
+    return await _gcloud_identity_token(audience, timeout=timeout)
 
 
 # ---------------------------------------------------------------------------
@@ -66,7 +174,13 @@ class A2AClient:
 
     # -- Discovery --
 
-    async def discover(self, base_url: str) -> dict[str, Any]:
+    async def discover(
+        self,
+        base_url: str,
+        *,
+        auth_token: str | None = None,
+        cloud_run_identity_token: str | None = None,
+    ) -> dict[str, Any]:
         """Fetch an agent card from a remote A2A endpoint.
 
         Tries /.well-known/agent-card.json first, then /agent-card.json.
@@ -92,7 +206,13 @@ class A2AClient:
         last_error = None
         for url in card_urls:
             try:
-                resp = await client.get(url)
+                resp = await client.get(
+                    url,
+                    headers=_auth_headers(
+                        auth_token=auth_token,
+                        cloud_run_identity_token=cloud_run_identity_token,
+                    ),
+                )
                 if resp.status_code == 200:
                     card = resp.json()
                     # Validate minimum required fields
@@ -124,6 +244,7 @@ class A2AClient:
         task_id: str | None = None,
         metadata: dict[str, Any] | None = None,
         auth_token: str | None = None,
+        cloud_run_identity_token: str | None = None,
     ) -> dict[str, Any]:
         """Send a task to a remote A2A agent via message/send.
 
@@ -163,10 +284,23 @@ class A2AClient:
             "params": params,
         }
 
-        resp = await self._jsonrpc_call(client, endpoint_url, request, auth_token=auth_token)
+        resp = await self._jsonrpc_call(
+            client,
+            endpoint_url,
+            request,
+            auth_token=auth_token,
+            cloud_run_identity_token=cloud_run_identity_token,
+        )
         return resp.get("result", resp)
 
-    async def get_task(self, endpoint_url: str, task_id: str) -> dict[str, Any]:
+    async def get_task(
+        self,
+        endpoint_url: str,
+        task_id: str,
+        *,
+        auth_token: str | None = None,
+        cloud_run_identity_token: str | None = None,
+    ) -> dict[str, Any]:
         """Poll task status from a remote A2A agent.
 
         Args:
@@ -183,10 +317,23 @@ class A2AClient:
             "id": str(uuid.uuid4()),
             "params": {"id": task_id},
         }
-        resp = await self._jsonrpc_call(client, endpoint_url, request)
+        resp = await self._jsonrpc_call(
+            client,
+            endpoint_url,
+            request,
+            auth_token=auth_token,
+            cloud_run_identity_token=cloud_run_identity_token,
+        )
         return resp.get("result", resp)
 
-    async def cancel_task(self, endpoint_url: str, task_id: str) -> dict[str, Any]:
+    async def cancel_task(
+        self,
+        endpoint_url: str,
+        task_id: str,
+        *,
+        auth_token: str | None = None,
+        cloud_run_identity_token: str | None = None,
+    ) -> dict[str, Any]:
         """Cancel a task on a remote A2A agent."""
         client = await self._get_client()
         request = {
@@ -195,7 +342,13 @@ class A2AClient:
             "id": str(uuid.uuid4()),
             "params": {"id": task_id},
         }
-        resp = await self._jsonrpc_call(client, endpoint_url, request)
+        resp = await self._jsonrpc_call(
+            client,
+            endpoint_url,
+            request,
+            auth_token=auth_token,
+            cloud_run_identity_token=cloud_run_identity_token,
+        )
         return resp.get("result", resp)
 
     async def poll_until_complete(
@@ -205,6 +358,8 @@ class A2AClient:
         *,
         poll_interval: float = 5.0,
         max_polls: int = 60,
+        auth_token: str | None = None,
+        cloud_run_identity_token: str | None = None,
     ) -> dict[str, Any]:
         """Poll a task until it reaches a terminal state.
 
@@ -218,7 +373,12 @@ class A2AClient:
             The final task dict.
         """
         for i in range(max_polls):
-            task = await self.get_task(endpoint_url, task_id)
+            task = await self.get_task(
+                endpoint_url,
+                task_id,
+                auth_token=auth_token,
+                cloud_run_identity_token=cloud_run_identity_token,
+            )
             status = task.get("status", {})
             state = status.get("state", "unknown")
 
@@ -228,7 +388,12 @@ class A2AClient:
             _log(f"a2a_client: poll {i+1}/{max_polls} task={task_id[:8]} state={state}")
             await asyncio.sleep(poll_interval)
 
-        return await self.get_task(endpoint_url, task_id)
+        return await self.get_task(
+            endpoint_url,
+            task_id,
+            auth_token=auth_token,
+            cloud_run_identity_token=cloud_run_identity_token,
+        )
 
     # -- JSON-RPC transport --
 
@@ -239,11 +404,14 @@ class A2AClient:
         request: dict[str, Any],
         *,
         auth_token: str | None = None,
+        cloud_run_identity_token: str | None = None,
     ) -> dict[str, Any]:
         """Make a JSON-RPC 2.0 call with retry."""
-        headers: dict[str, str] = {"Content-Type": "application/json"}
-        if auth_token:
-            headers["Authorization"] = f"Bearer {auth_token}"
+        headers = _auth_headers(
+            auth_token=auth_token,
+            cloud_run_identity_token=cloud_run_identity_token,
+            content_type="application/json",
+        )
         last_error = None
         for attempt in range(self._max_retries + 1):
             try:
@@ -326,9 +494,19 @@ async def tool_a2a_discover(args: dict[str, Any]) -> dict[str, Any]:
         return classified_error("url is required", code="missing_url", category=VALIDATION_ERROR)
 
     timeout = args.get("timeout", 30.0)
+    auth_token = _token(
+        args.get("auth_token")
+        or args.get("a2a_bearer_token")
+        or args.get("app_bearer_token")
+    )
     try:
+        cloud_run_identity_token = await _resolve_cloud_run_identity_token(args, url=url)
         client = get_client(timeout=timeout)
-        card = await client.discover(url)
+        card = await client.discover(
+            url,
+            auth_token=auth_token,
+            cloud_run_identity_token=cloud_run_identity_token,
+        )
         return {
             "discovered": True,
             "url": url,
@@ -362,6 +540,11 @@ async def tool_a2a_send_task(args: dict[str, Any]) -> dict[str, Any]:
     skill_id = args.get("skill_id")
     wait = args.get("wait", False)
     timeout = args.get("timeout", 60.0)
+    auth_token = _token(
+        args.get("auth_token")
+        or args.get("a2a_bearer_token")
+        or args.get("app_bearer_token")
+    )
 
     if not url:
         return classified_error("url is required", code="missing_url", category=VALIDATION_ERROR)
@@ -369,15 +552,27 @@ async def tool_a2a_send_task(args: dict[str, Any]) -> dict[str, Any]:
         return classified_error("message is required", code="missing_message", category=VALIDATION_ERROR)
 
     try:
+        cloud_run_identity_token = await _resolve_cloud_run_identity_token(args, url=url)
         client = get_client(timeout=timeout)
-        task = await client.send_task(url, message=message, skill_id=skill_id)
+        task = await client.send_task(
+            url,
+            message=message,
+            skill_id=skill_id,
+            auth_token=auth_token,
+            cloud_run_identity_token=cloud_run_identity_token,
+        )
 
         task_id = task.get("id", "")
         status = task.get("status", {})
         state = status.get("state", "unknown")
 
         if wait and state not in TERMINAL_STATES:
-            task = await client.poll_until_complete(url, task_id)
+            task = await client.poll_until_complete(
+                url,
+                task_id,
+                auth_token=auth_token,
+                cloud_run_identity_token=cloud_run_identity_token,
+            )
             status = task.get("status", {})
             state = status.get("state", "unknown")
 
@@ -414,6 +609,11 @@ async def tool_a2a_get_task(args: dict[str, Any]) -> dict[str, Any]:
 
     url = args.get("url", "")
     task_id = args.get("task_id", "")
+    auth_token = _token(
+        args.get("auth_token")
+        or args.get("a2a_bearer_token")
+        or args.get("app_bearer_token")
+    )
 
     if not url:
         return classified_error("url is required", code="missing_url", category=VALIDATION_ERROR)
@@ -421,8 +621,14 @@ async def tool_a2a_get_task(args: dict[str, Any]) -> dict[str, Any]:
         return classified_error("task_id is required", code="missing_task_id", category=VALIDATION_ERROR)
 
     try:
+        cloud_run_identity_token = await _resolve_cloud_run_identity_token(args, url=url)
         client = get_client()
-        task = await client.get_task(url, task_id)
+        task = await client.get_task(
+            url,
+            task_id,
+            auth_token=auth_token,
+            cloud_run_identity_token=cloud_run_identity_token,
+        )
         status = task.get("status", {})
 
         output_text = ""
