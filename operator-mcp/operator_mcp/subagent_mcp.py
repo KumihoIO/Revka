@@ -207,6 +207,33 @@ async def list_tools() -> list[Tool]:
                         "type": "string",
                         "description": "Base URL of the external agent.",
                     },
+                    "cloud_run_identity_token": {
+                        "type": "string",
+                        "description": (
+                            "Optional Google identity token for private Cloud Run services. "
+                            "Sent as X-Serverless-Authorization: Bearer <token>."
+                        ),
+                    },
+                    "cloud_run_auth": {
+                        "type": "string",
+                        "description": "Set to 'gcloud' to mint a Cloud Run identity token with gcloud.",
+                    },
+                    "cloud_run_audience": {
+                        "type": "string",
+                        "description": "Optional Cloud Run token audience. Defaults to the service origin URL.",
+                    },
+                    "cloud_run_auth_timeout": {
+                        "type": "number",
+                        "description": "Maximum seconds to wait for gcloud identity-token minting. Default 20.",
+                        "default": 20,
+                    },
+                    "auth_token": {
+                        "type": "string",
+                        "description": (
+                            "Optional A2A application bearer token. Sent as "
+                            "Authorization: Bearer <token>."
+                        ),
+                    },
                     "timeout": {
                         "type": "number",
                         "description": "Discovery timeout in seconds. Default 30.",
@@ -233,6 +260,33 @@ async def list_tools() -> list[Tool]:
                     "skill_id": {
                         "type": "string",
                         "description": "Optional skill ID to route to on the remote agent.",
+                    },
+                    "cloud_run_identity_token": {
+                        "type": "string",
+                        "description": (
+                            "Optional Google identity token for private Cloud Run services. "
+                            "Sent as X-Serverless-Authorization: Bearer <token>."
+                        ),
+                    },
+                    "cloud_run_auth": {
+                        "type": "string",
+                        "description": "Set to 'gcloud' to mint a Cloud Run identity token with gcloud.",
+                    },
+                    "cloud_run_audience": {
+                        "type": "string",
+                        "description": "Optional Cloud Run token audience. Defaults to the service origin URL.",
+                    },
+                    "cloud_run_auth_timeout": {
+                        "type": "number",
+                        "description": "Maximum seconds to wait for gcloud identity-token minting. Default 20.",
+                        "default": 20,
+                    },
+                    "auth_token": {
+                        "type": "string",
+                        "description": (
+                            "Optional A2A application bearer token. Sent as "
+                            "Authorization: Bearer <token>."
+                        ),
                     },
                     "wait": {
                         "type": "boolean",
@@ -261,6 +315,33 @@ async def list_tools() -> list[Tool]:
                     "task_id": {
                         "type": "string",
                         "description": "Task ID to check.",
+                    },
+                    "cloud_run_identity_token": {
+                        "type": "string",
+                        "description": (
+                            "Optional Google identity token for private Cloud Run services. "
+                            "Sent as X-Serverless-Authorization: Bearer <token>."
+                        ),
+                    },
+                    "cloud_run_auth": {
+                        "type": "string",
+                        "description": "Set to 'gcloud' to mint a Cloud Run identity token with gcloud.",
+                    },
+                    "cloud_run_audience": {
+                        "type": "string",
+                        "description": "Optional Cloud Run token audience. Defaults to the service origin URL.",
+                    },
+                    "cloud_run_auth_timeout": {
+                        "type": "number",
+                        "description": "Maximum seconds to wait for gcloud identity-token minting. Default 20.",
+                        "default": 20,
+                    },
+                    "auth_token": {
+                        "type": "string",
+                        "description": (
+                            "Optional A2A application bearer token. Sent as "
+                            "Authorization: Bearer <token>."
+                        ),
                     },
                 },
                 "required": ["url", "task_id"],
