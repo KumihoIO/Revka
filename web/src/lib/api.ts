@@ -127,10 +127,76 @@ function unwrapField<T>(value: T | Record<string, T>, key: string): T {
 // Pairing
 // ---------------------------------------------------------------------------
 
-export async function pair(code: string): Promise<{ token: string }> {
-  const response = await fetch(`${basePath}/pair`, {
+export interface PairingDeviceMetadata {
+  device_name?: string;
+  device_type?: string;
+  hardware?: string;
+}
+
+export interface PairTokenResponse {
+  token: string;
+  persisted?: boolean;
+  message?: string;
+}
+
+function cleanMetadataValue(value?: string | null): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed.slice(0, 120) : undefined;
+}
+
+function inferBrowserHardware(): string | undefined {
+  if (typeof navigator === 'undefined') return undefined;
+  const nav = navigator as Navigator & { userAgentData?: { platform?: string } };
+  const platform = cleanMetadataValue(nav.userAgentData?.platform || nav.platform);
+  if (platform) return platform;
+
+  const ua = navigator.userAgent;
+  if (/android/i.test(ua)) return 'Android';
+  if (/iphone|ipad/i.test(ua)) return 'iOS';
+  if (/windows/i.test(ua)) return 'Windows';
+  if (/macintosh|mac os/i.test(ua)) return 'macOS';
+  if (/linux/i.test(ua)) return 'Linux';
+  return undefined;
+}
+
+export function defaultPairingDeviceMetadata(deviceType?: string): PairingDeviceMetadata {
+  if (typeof navigator === 'undefined') {
+    return {
+      device_name: 'Dashboard browser',
+      device_type: deviceType ?? 'browser',
+    };
+  }
+
+  const ua = navigator.userAgent;
+  const isMobile = /android|iphone|ipad|mobile/i.test(ua);
+  const resolvedType = deviceType ?? (isMobile ? 'mobile' : 'browser');
+  return {
+    device_name: isMobile ? 'Dashboard mobile' : 'Dashboard browser',
+    device_type: resolvedType,
+    hardware: inferBrowserHardware(),
+  };
+}
+
+function pairingMetadataHeaders(metadata?: PairingDeviceMetadata): Record<string, string> {
+  const headers: Record<string, string> = {};
+  const name = cleanMetadataValue(metadata?.device_name);
+  const deviceType = cleanMetadataValue(metadata?.device_type);
+  const hardware = cleanMetadataValue(metadata?.hardware);
+
+  if (name) headers['X-Revka-Device-Name'] = name;
+  if (deviceType) headers['X-Revka-Device-Type'] = deviceType;
+  if (hardware) headers['X-Revka-Device-Hardware'] = hardware;
+
+  return headers;
+}
+
+export async function pair(
+  code: string,
+  metadata: PairingDeviceMetadata = defaultPairingDeviceMetadata(),
+): Promise<{ token: string }> {
+  const response = await fetch(`${apiOrigin}${basePath}/pair`, {
     method: 'POST',
-    headers: { 'X-Pairing-Code': code },
+    headers: { 'X-Pairing-Code': code, ...pairingMetadataHeaders(metadata) },
   });
 
   if (!response.ok) {
@@ -141,6 +207,30 @@ export async function pair(code: string): Promise<{ token: string }> {
   const data = (await response.json()) as { token: string };
   setToken(data.token);
   return data;
+}
+
+export async function mintBearerTokenFromPairingCode(
+  code: string,
+  metadata: PairingDeviceMetadata,
+): Promise<PairTokenResponse> {
+  const response = await fetch(`${apiOrigin}${basePath}/api/pair`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      code,
+      device_name: cleanMetadataValue(metadata.device_name),
+      device_type: cleanMetadataValue(metadata.device_type),
+      hardware: cleanMetadataValue(metadata.hardware),
+    }),
+  });
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    const contentType = response.headers.get('content-type');
+    throw _buildApiError(response.status, response.statusText, text, contentType);
+  }
+
+  return response.json() as Promise<PairTokenResponse>;
 }
 
 export async function getAdminPairCode(): Promise<{ pairing_code: string | null; pairing_required: boolean }> {

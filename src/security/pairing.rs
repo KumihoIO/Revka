@@ -24,6 +24,8 @@ const MAX_TRACKED_CLIENTS: usize = 10_000;
 const FAILED_ATTEMPT_RETENTION_SECS: u64 = 900; // 15 min
 /// Minimum interval between full sweeps of the failed-attempt map.
 const FAILED_ATTEMPT_SWEEP_INTERVAL_SECS: u64 = 300; // 5 min
+/// Prefix for newly minted Revka gateway bearer tokens.
+const BEARER_TOKEN_PREFIX: &str = "rk_";
 
 /// Per-client failed attempt state with optional absolute lockout deadline.
 #[derive(Debug, Clone, Copy)]
@@ -60,7 +62,7 @@ impl PairingGuard {
     /// `generate_new_pairing_code()` or the CLI to create one on demand.
     ///
     /// Existing tokens are accepted in both forms:
-    /// - Plaintext (`zc_...`): hashed on load for backward compatibility
+    /// - Plaintext (`rk_...`, or legacy `zc_...`): hashed on load for backward compatibility
     /// - Already hashed (64-char hex): stored as-is
     pub fn new(require_pairing: bool, existing_tokens: &[String]) -> Self {
         let tokens: HashSet<String> = existing_tokens
@@ -324,10 +326,10 @@ fn generate_code() -> String {
 /// Uses `rand::rng()` which is backed by the OS CSPRNG
 /// (/dev/urandom on Linux, BCryptGenRandom on Windows, SecRandomCopyBytes
 /// on macOS). The 32 random bytes (256 bits) are hex-encoded for a
-/// 64-character token, providing 256 bits of entropy.
+/// 64-character token payload, providing 256 bits of entropy.
 fn generate_token() -> String {
     let bytes: [u8; 32] = rand::random();
-    format!("zc_{}", hex::encode(bytes))
+    format!("{}{}", BEARER_TOKEN_PREFIX, hex::encode(bytes))
 }
 
 /// SHA-256 hash a bearer token for storage. Returns lowercase hex.
@@ -403,7 +405,7 @@ mod tests {
 
     #[test]
     async fn new_guard_no_code_when_tokens_exist() {
-        let guard = PairingGuard::new(true, &["zc_existing".into()]);
+        let guard = PairingGuard::new(true, &["rk_existing".into()]);
         assert!(guard.pairing_code().is_none());
         assert!(guard.is_paired());
     }
@@ -420,7 +422,7 @@ mod tests {
         let code = guard.pairing_code().unwrap().to_string();
         let token = guard.try_pair(&code, "test_client").await.unwrap();
         assert!(token.is_some());
-        assert!(token.unwrap().starts_with("zc_"));
+        assert!(token.unwrap().starts_with(BEARER_TOKEN_PREFIX));
         assert!(guard.is_paired());
     }
 
@@ -442,6 +444,12 @@ mod tests {
     #[test]
     async fn is_authenticated_with_valid_token() {
         // Pass plaintext token — PairingGuard hashes it on load
+        let guard = PairingGuard::new(true, &["rk_valid".into()]);
+        assert!(guard.is_authenticated("rk_valid"));
+    }
+
+    #[test]
+    async fn is_authenticated_with_legacy_zc_plaintext_token() {
         let guard = PairingGuard::new(true, &["zc_valid".into()]);
         assert!(guard.is_authenticated("zc_valid"));
     }
@@ -449,15 +457,15 @@ mod tests {
     #[test]
     async fn is_authenticated_with_prehashed_token() {
         // Pass an already-hashed token (64 hex chars)
-        let hashed = hash_token("zc_valid");
+        let hashed = hash_token("rk_valid");
         let guard = PairingGuard::new(true, &[hashed]);
-        assert!(guard.is_authenticated("zc_valid"));
+        assert!(guard.is_authenticated("rk_valid"));
     }
 
     #[test]
     async fn is_authenticated_with_invalid_token() {
-        let guard = PairingGuard::new(true, &["zc_valid".into()]);
-        assert!(!guard.is_authenticated("zc_invalid"));
+        let guard = PairingGuard::new(true, &["rk_valid".into()]);
+        assert!(!guard.is_authenticated("rk_invalid"));
     }
 
     #[test]
@@ -469,14 +477,17 @@ mod tests {
 
     #[test]
     async fn tokens_returns_hashes() {
-        let guard = PairingGuard::new(true, &["zc_a".into(), "zc_b".into()]);
+        let guard = PairingGuard::new(true, &["rk_a".into(), "rk_b".into()]);
         let tokens = guard.tokens();
         assert_eq!(tokens.len(), 2);
         // Tokens should be stored as 64-char hex hashes, not plaintext
         for t in &tokens {
             assert_eq!(t.len(), 64, "Token should be a SHA-256 hash");
             assert!(t.chars().all(|c| c.is_ascii_hexdigit()));
-            assert!(!t.starts_with("zc_"), "Token should not be plaintext");
+            assert!(
+                !t.starts_with(BEARER_TOKEN_PREFIX),
+                "Token should not be plaintext"
+            );
         }
     }
 
@@ -493,25 +504,25 @@ mod tests {
 
     #[test]
     async fn hash_token_produces_64_hex_chars() {
-        let hash = hash_token("zc_test_token");
+        let hash = hash_token("rk_test_token");
         assert_eq!(hash.len(), 64);
         assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
     }
 
     #[test]
     async fn hash_token_is_deterministic() {
-        assert_eq!(hash_token("zc_abc"), hash_token("zc_abc"));
+        assert_eq!(hash_token("rk_abc"), hash_token("rk_abc"));
     }
 
     #[test]
     async fn hash_token_differs_for_different_inputs() {
-        assert_ne!(hash_token("zc_a"), hash_token("zc_b"));
+        assert_ne!(hash_token("rk_a"), hash_token("rk_b"));
     }
 
     #[test]
     async fn is_token_hash_detects_hash_vs_plaintext() {
-        assert!(is_token_hash(&hash_token("zc_test")));
-        assert!(!is_token_hash("zc_test_token"));
+        assert!(is_token_hash(&hash_token("rk_test")));
+        assert!(!is_token_hash("rk_test_token"));
         assert!(!is_token_hash("too_short"));
         assert!(!is_token_hash(""));
     }
@@ -578,8 +589,8 @@ mod tests {
     async fn generate_token_has_prefix_and_hex_payload() {
         let token = generate_token();
         let payload = token
-            .strip_prefix("zc_")
-            .expect("Generated token should include zc_ prefix");
+            .strip_prefix(BEARER_TOKEN_PREFIX)
+            .expect("Generated token should include rk_ prefix");
 
         assert_eq!(payload.len(), 64, "Token payload should be 32 bytes in hex");
         assert!(

@@ -2286,10 +2286,12 @@ async fn handle_pair(
             if let Some(ref registry) = state.device_registry {
                 use chrono::Utc;
                 let now = Utc::now();
+                let metadata = api_pairing::DeviceMetadata::from_headers_or_user_agent(&headers);
                 let info = api_pairing::DeviceInfo {
                     id: uuid::Uuid::new_v4().to_string(),
-                    name: None,
-                    device_type: Some("legacy-pair".to_string()),
+                    name: metadata.name,
+                    device_type: metadata.device_type,
+                    hardware: metadata.hardware,
                     paired_at: now,
                     last_seen: now,
                     ip_address: Some(peer_addr.ip().to_string()),

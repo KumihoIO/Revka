@@ -19,7 +19,7 @@
 //!
 //! - Keeps all external traffic funneled through the gateway — single auth
 //!   surface, no CORS friction, consistent with `/ws/terminal`.
-//! - The gateway independently verifies its own bearer (`?token=<zc_…>` /
+//! - The gateway independently verifies its own bearer (`?token=<rk_…>` /
 //!   `Authorization:`) using `PairingGuard`; the MCP session token
 //!   (`?mcp_token=<…>`) is used only to talk to the in-process MCP server.
 

@@ -15,15 +15,162 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use tracing::{debug, error, info, warn};
 
+const DEVICE_METADATA_MAX_CHARS: usize = 120;
+const DEVICE_NAME_HEADERS: &[&str] = &["X-Revka-Device-Name", "X-Device-Name"];
+const DEVICE_TYPE_HEADERS: &[&str] = &["X-Revka-Device-Type", "X-Device-Type"];
+const DEVICE_HARDWARE_HEADERS: &[&str] = &["X-Revka-Device-Hardware", "X-Device-Hardware"];
+
 /// Metadata about a paired device.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeviceInfo {
     pub id: String,
     pub name: Option<String>,
     pub device_type: Option<String>,
+    pub hardware: Option<String>,
     pub paired_at: DateTime<Utc>,
     pub last_seen: DateTime<Utc>,
     pub ip_address: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub(crate) struct DeviceMetadata {
+    pub name: Option<String>,
+    pub device_type: Option<String>,
+    pub hardware: Option<String>,
+}
+
+impl DeviceMetadata {
+    pub(crate) fn from_headers_or_user_agent(headers: &HeaderMap) -> Self {
+        let inferred = infer_device_metadata(headers);
+        Self {
+            name: first_metadata_header(headers, DEVICE_NAME_HEADERS)
+                .or(inferred.name)
+                .or_else(|| Some("API client".to_string())),
+            device_type: first_metadata_header(headers, DEVICE_TYPE_HEADERS)
+                .or(inferred.device_type)
+                .or_else(|| Some("api-client".to_string())),
+            hardware: first_metadata_header(headers, DEVICE_HARDWARE_HEADERS).or(inferred.hardware),
+        }
+    }
+
+    fn from_submit_request(body: &SubmitPairingRequest, headers: &HeaderMap) -> Self {
+        let fallback = Self::from_headers_or_user_agent(headers);
+        Self {
+            name: body
+                .device_name
+                .as_deref()
+                .and_then(sanitize_metadata_value)
+                .or(fallback.name),
+            device_type: body
+                .device_type
+                .as_deref()
+                .and_then(sanitize_metadata_value)
+                .or(fallback.device_type),
+            hardware: body
+                .hardware
+                .as_deref()
+                .and_then(sanitize_metadata_value)
+                .or(fallback.hardware),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SubmitPairingRequest {
+    code: String,
+    device_name: Option<String>,
+    device_type: Option<String>,
+    hardware: Option<String>,
+}
+
+fn first_metadata_header(headers: &HeaderMap, names: &[&str]) -> Option<String> {
+    names.iter().find_map(|name| {
+        headers
+            .get(*name)
+            .and_then(|value| value.to_str().ok())
+            .and_then(sanitize_metadata_value)
+    })
+}
+
+fn sanitize_metadata_value(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    Some(trimmed.chars().take(DEVICE_METADATA_MAX_CHARS).collect())
+}
+
+fn infer_device_metadata(headers: &HeaderMap) -> DeviceMetadata {
+    let Some(user_agent) = headers
+        .get(header::USER_AGENT)
+        .and_then(|v| v.to_str().ok())
+    else {
+        return DeviceMetadata::default();
+    };
+    let lower = user_agent.to_ascii_lowercase();
+
+    if lower.contains("revka-cli") || lower.starts_with("revka/") {
+        return DeviceMetadata {
+            name: Some("Revka CLI".to_string()),
+            device_type: Some("cli".to_string()),
+            hardware: None,
+        };
+    }
+
+    if lower.contains("iphone") {
+        return DeviceMetadata {
+            name: Some("iPhone".to_string()),
+            device_type: Some("mobile".to_string()),
+            hardware: Some("iOS".to_string()),
+        };
+    }
+
+    if lower.contains("ipad") {
+        return DeviceMetadata {
+            name: Some("iPad".to_string()),
+            device_type: Some("tablet".to_string()),
+            hardware: Some("iPadOS".to_string()),
+        };
+    }
+
+    if lower.contains("android") {
+        return DeviceMetadata {
+            name: Some("Android device".to_string()),
+            device_type: Some("mobile".to_string()),
+            hardware: Some("Android".to_string()),
+        };
+    }
+
+    if lower.contains("windows") {
+        return DeviceMetadata {
+            name: Some("Windows browser".to_string()),
+            device_type: Some("browser".to_string()),
+            hardware: Some("Windows".to_string()),
+        };
+    }
+
+    if lower.contains("mac os") || lower.contains("macintosh") {
+        return DeviceMetadata {
+            name: Some("macOS browser".to_string()),
+            device_type: Some("browser".to_string()),
+            hardware: Some("macOS".to_string()),
+        };
+    }
+
+    if lower.contains("linux") {
+        return DeviceMetadata {
+            name: Some("Linux browser".to_string()),
+            device_type: Some("browser".to_string()),
+            hardware: Some("Linux".to_string()),
+        };
+    }
+
+    DeviceMetadata {
+        name: Some("Browser client".to_string()),
+        device_type: Some("browser".to_string()),
+        hardware: None,
+    }
 }
 
 /// Registry of paired devices backed by SQLite.
@@ -50,16 +197,18 @@ impl DeviceRegistry {
                 id TEXT NOT NULL,
                 name TEXT,
                 device_type TEXT,
+                hardware TEXT,
                 paired_at TEXT NOT NULL,
                 last_seen TEXT NOT NULL,
                 ip_address TEXT
             )",
         )
         .context("create devices table")?;
+        ensure_device_registry_columns(&conn)?;
 
         let mut cache = HashMap::new();
         let mut stmt = conn
-            .prepare("SELECT token_hash, id, name, device_type, paired_at, last_seen, ip_address FROM devices")
+            .prepare("SELECT token_hash, id, name, device_type, hardware, paired_at, last_seen, ip_address FROM devices")
             .context("prepare device select")?;
         let rows = stmt
             .query_map([], |row| {
@@ -67,9 +216,10 @@ impl DeviceRegistry {
                 let id: String = row.get(1)?;
                 let name: Option<String> = row.get(2)?;
                 let device_type: Option<String> = row.get(3)?;
-                let paired_at_str: String = row.get(4)?;
-                let last_seen_str: String = row.get(5)?;
-                let ip_address: Option<String> = row.get(6)?;
+                let hardware: Option<String> = row.get(4)?;
+                let paired_at_str: String = row.get(5)?;
+                let last_seen_str: String = row.get(6)?;
+                let ip_address: Option<String> = row.get(7)?;
                 let paired_at = DateTime::parse_from_rfc3339(&paired_at_str)
                     .map(|dt| dt.with_timezone(&Utc))
                     .unwrap_or_else(|_| Utc::now());
@@ -82,6 +232,7 @@ impl DeviceRegistry {
                         id,
                         name,
                         device_type,
+                        hardware,
                         paired_at,
                         last_seen,
                         ip_address,
@@ -110,12 +261,13 @@ impl DeviceRegistry {
         let conn = self.open_db()?;
         let device_id = info.id.clone();
         conn.execute(
-            "INSERT OR REPLACE INTO devices (token_hash, id, name, device_type, paired_at, last_seen, ip_address) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT OR REPLACE INTO devices (token_hash, id, name, device_type, hardware, paired_at, last_seen, ip_address) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             rusqlite::params![
                 token_hash,
                 info.id,
                 info.name,
                 info.device_type,
+                info.hardware,
                 info.paired_at.to_rfc3339(),
                 info.last_seen.to_rfc3339(),
                 info.ip_address,
@@ -139,7 +291,7 @@ impl DeviceRegistry {
             }
         };
         let mut stmt = match conn.prepare(
-            "SELECT token_hash, id, name, device_type, paired_at, last_seen, ip_address FROM devices",
+            "SELECT token_hash, id, name, device_type, hardware, paired_at, last_seen, ip_address FROM devices",
         ) {
             Ok(s) => s,
             Err(e) => {
@@ -151,9 +303,10 @@ impl DeviceRegistry {
             let id: String = row.get(1)?;
             let name: Option<String> = row.get(2)?;
             let device_type: Option<String> = row.get(3)?;
-            let paired_at_str: String = row.get(4)?;
-            let last_seen_str: String = row.get(5)?;
-            let ip_address: Option<String> = row.get(6)?;
+            let hardware: Option<String> = row.get(4)?;
+            let paired_at_str: String = row.get(5)?;
+            let last_seen_str: String = row.get(6)?;
+            let ip_address: Option<String> = row.get(7)?;
             let paired_at = DateTime::parse_from_rfc3339(&paired_at_str)
                 .map(|dt| dt.with_timezone(&Utc))
                 .unwrap_or_else(|_| Utc::now());
@@ -164,6 +317,7 @@ impl DeviceRegistry {
                 id,
                 name,
                 device_type,
+                hardware,
                 paired_at,
                 last_seen,
                 ip_address,
@@ -232,6 +386,32 @@ impl DeviceRegistry {
     pub fn token_hashes(&self) -> Vec<String> {
         self.cache.lock().keys().cloned().collect()
     }
+}
+
+fn ensure_device_registry_columns(conn: &Connection) -> anyhow::Result<()> {
+    use anyhow::Context;
+
+    let mut stmt = conn
+        .prepare("PRAGMA table_info(devices)")
+        .context("prepare devices table info")?;
+    let columns = stmt
+        .query_map([], |row| row.get::<_, String>(1))
+        .context("query devices table info")?;
+
+    let mut has_hardware = false;
+    for column in columns {
+        if column.context("read devices column")? == "hardware" {
+            has_hardware = true;
+            break;
+        }
+    }
+
+    if !has_hardware {
+        conn.execute("ALTER TABLE devices ADD COLUMN hardware TEXT", [])
+            .context("add devices.hardware column")?;
+    }
+
+    Ok(())
 }
 
 /// Store for pending pairing requests.
@@ -319,11 +499,10 @@ pub async fn submit_pairing_enhanced(
     State(state): State<AppState>,
     ConnectInfo(peer_addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
-    Json(body): Json<serde_json::Value>,
+    Json(body): Json<SubmitPairingRequest>,
 ) -> impl IntoResponse {
-    let code = body["code"].as_str().unwrap_or("");
-    let device_name = body["device_name"].as_str().map(String::from);
-    let device_type = body["device_type"].as_str().map(String::from);
+    let code = body.code.trim();
+    let metadata = DeviceMetadata::from_submit_request(&body, &headers);
 
     // Use the shared client-key helper. This ignores unsolicited
     // `X-Forwarded-For` values unless `trust_forwarded_headers` is set, so
@@ -334,8 +513,9 @@ pub async fn submit_pairing_enhanced(
     info!(
         client_id = %client_id,
         code_len = code.len(),
-        device_name = ?device_name,
-        device_type = ?device_type,
+        device_name = ?metadata.name,
+        device_type = ?metadata.device_type,
+        hardware = ?metadata.hardware,
         "submit_pairing_enhanced: received pair request"
     );
 
@@ -358,8 +538,9 @@ pub async fn submit_pairing_enhanced(
                     token_hash,
                     DeviceInfo {
                         id: uuid::Uuid::new_v4().to_string(),
-                        name: device_name,
-                        device_type,
+                        name: metadata.name,
+                        device_type: metadata.device_type,
+                        hardware: metadata.hardware,
                         paired_at: Utc::now(),
                         last_seen: Utc::now(),
                         ip_address: Some(client_id.clone()),
@@ -494,5 +675,114 @@ pub async fn rotate_token(
             "Cannot generate new pairing code",
         )
             .into_response(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::{HeaderMap, HeaderValue};
+    use tempfile::tempdir;
+
+    #[test]
+    fn metadata_headers_override_user_agent_inference() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "X-Revka-Device-Name",
+            HeaderValue::from_static("Pixel field kit"),
+        );
+        headers.insert("X-Revka-Device-Type", HeaderValue::from_static("mobile"));
+        headers.insert(
+            "X-Revka-Device-Hardware",
+            HeaderValue::from_static("Pixel 8 / Android"),
+        );
+        headers.insert(
+            header::USER_AGENT,
+            HeaderValue::from_static("Mozilla/5.0 (Windows NT 10.0; Win64; x64)"),
+        );
+
+        let metadata = DeviceMetadata::from_headers_or_user_agent(&headers);
+
+        assert_eq!(metadata.name.as_deref(), Some("Pixel field kit"));
+        assert_eq!(metadata.device_type.as_deref(), Some("mobile"));
+        assert_eq!(metadata.hardware.as_deref(), Some("Pixel 8 / Android"));
+    }
+
+    #[test]
+    fn metadata_infers_mobile_from_user_agent() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::USER_AGENT,
+            HeaderValue::from_static("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)"),
+        );
+
+        let metadata = DeviceMetadata::from_headers_or_user_agent(&headers);
+
+        assert_eq!(metadata.name.as_deref(), Some("iPhone"));
+        assert_eq!(metadata.device_type.as_deref(), Some("mobile"));
+        assert_eq!(metadata.hardware.as_deref(), Some("iOS"));
+    }
+
+    #[test]
+    fn registry_migrates_legacy_device_table_and_persists_hardware() {
+        let dir = tempdir().expect("tempdir");
+        let db_path = dir.path().join("devices.db");
+        let conn = Connection::open(&db_path).expect("open legacy db");
+        conn.execute_batch(
+            "CREATE TABLE devices (
+                token_hash TEXT PRIMARY KEY,
+                id TEXT NOT NULL,
+                name TEXT,
+                device_type TEXT,
+                paired_at TEXT NOT NULL,
+                last_seen TEXT NOT NULL,
+                ip_address TEXT
+            );",
+        )
+        .expect("create legacy devices table");
+
+        let now = Utc::now().to_rfc3339();
+        conn.execute(
+            "INSERT INTO devices (token_hash, id, name, device_type, paired_at, last_seen, ip_address)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            rusqlite::params![
+                "hash-a",
+                "device-a",
+                "Old client",
+                "legacy-pair",
+                now,
+                now,
+                "127.0.0.1",
+            ],
+        )
+        .expect("insert legacy row");
+        drop(conn);
+
+        let registry = DeviceRegistry::new(dir.path()).expect("open migrated registry");
+        let legacy = registry.list();
+        assert_eq!(legacy.len(), 1);
+        assert_eq!(legacy[0].hardware, None);
+
+        registry
+            .register(
+                "hash-b".to_string(),
+                DeviceInfo {
+                    id: "device-b".to_string(),
+                    name: Some("Field phone".to_string()),
+                    device_type: Some("mobile".to_string()),
+                    hardware: Some("Pixel 8 / Android".to_string()),
+                    paired_at: Utc::now(),
+                    last_seen: Utc::now(),
+                    ip_address: Some("127.0.0.1".to_string()),
+                },
+            )
+            .expect("register device with hardware");
+
+        let devices = registry.list();
+        let registered = devices
+            .iter()
+            .find(|device| device.id == "device-b")
+            .expect("registered device");
+        assert_eq!(registered.hardware.as_deref(), Some("Pixel 8 / Android"));
     }
 }
