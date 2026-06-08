@@ -70,6 +70,40 @@ steps:
   assert.equal(hasPersistedTaskPositions(tasks), false);
 });
 
+test('A2A Cloud Run IAM fields round-trip through editor YAML', () => {
+  const yaml = `
+steps:
+  - id: call-private-agent
+    type: a2a
+    a2a:
+      url: "\${inputs.track3_a2a_url}"
+      skill_id: incident-triage
+      message: "Triage \${inputs.issue}"
+      timeout: 120
+      auth: "a2a:prod"
+      cloud_run_auth: gcloud
+      cloud_run_audience: "\${inputs.track3_a2a_url}"
+      cloud_run_auth_timeout: 15
+`;
+
+  const tasks = parseWorkflowYaml(yaml);
+  const task = tasks[0]!;
+  assert.equal(task.a2a_cloud_run_auth, 'gcloud');
+  assert.equal(task.a2a_cloud_run_audience, '${inputs.track3_a2a_url}');
+  assert.equal(task.a2a_cloud_run_auth_timeout, 15);
+
+  const { nodes, edges } = tasksToFlow(tasks);
+  assert.equal(nodes[0]!.data.a2aCloudRunAuth, 'gcloud');
+  assert.equal(nodes[0]!.data.a2aCloudRunAudience, '${inputs.track3_a2a_url}');
+  assert.equal(nodes[0]!.data.a2aCloudRunAuthTimeout, 15);
+
+  const emitted = tasksToYaml(flowToTasks(nodes, edges));
+  assert.match(emitted, /cloud_run_auth: gcloud/);
+  assert.match(emitted, /cloud_run_audience: "\$\{inputs\.track3_a2a_url\}"/);
+  assert.match(emitted, /cloud_run_auth_timeout: 15/);
+  assert.equal(parseWorkflowYaml(emitted)[0]!.a2a_cloud_run_auth, 'gcloud');
+});
+
 test('workflow inputs with blank names are omitted from emitted and parsed metadata', () => {
   const tasks: TaskDefinition[] = [{
     id: 'a',

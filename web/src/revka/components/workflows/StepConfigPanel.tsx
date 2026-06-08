@@ -3132,12 +3132,15 @@ export default function StepConfigPanel({
               <div style={{ ...sectionTitleStyle, color: 'var(--revka-signal-network)' }}>A2A Config</div>
               <div>
                 <label style={labelStyle}>Endpoint URL</label>
-                <input
-                  type="text"
+                <ExpressionTextarea
                   value={data.a2aUrl}
-                  onChange={(e) => onUpdate(node.id, { a2aUrl: e.target.value })}
+                  onChange={(next) => onUpdate(node.id, { a2aUrl: next })}
                   placeholder="https://agent.example.com/a2a"
+                  rows={1}
                   style={monoInputStyle}
+                  stepIds={dagStepIds}
+                  workflowInputs={dagInputs}
+                  triggerFields={dagTriggerFields}
                 />
               </div>
               <div>
@@ -3187,6 +3190,45 @@ export default function StepConfigPanel({
                   style={inputStyle}
                 />
               </div>
+              <div>
+                <label style={labelStyle}>Cloud Run IAM</label>
+                <select
+                  value={data.a2aCloudRunAuth || ''}
+                  onChange={(e) => onUpdate(node.id, { a2aCloudRunAuth: e.target.value as '' | 'gcloud' })}
+                  style={inputStyle}
+                >
+                  <option value="">none</option>
+                  <option value="gcloud">gcloud</option>
+                </select>
+              </div>
+              {data.a2aCloudRunAuth === 'gcloud' && (
+                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 112px', gap: 8 }}>
+                  <div>
+                    <label style={labelStyle}>Cloud Run Audience</label>
+                    <ExpressionTextarea
+                      value={data.a2aCloudRunAudience || ''}
+                      onChange={(next) => onUpdate(node.id, { a2aCloudRunAudience: next })}
+                      placeholder="Defaults to endpoint origin"
+                      rows={1}
+                      style={monoInputStyle}
+                      stepIds={dagStepIds}
+                      workflowInputs={dagInputs}
+                      triggerFields={dagTriggerFields}
+                    />
+                  </div>
+                  <div>
+                    <label style={labelStyle}>Auth Timeout</label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={120}
+                      value={data.a2aCloudRunAuthTimeout || 20}
+                      onChange={(e) => onUpdate(node.id, { a2aCloudRunAuthTimeout: parseInt(e.target.value) || 20 })}
+                      style={inputStyle}
+                    />
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

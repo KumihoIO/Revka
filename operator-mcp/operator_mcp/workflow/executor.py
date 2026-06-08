@@ -3482,7 +3482,14 @@ async def _exec_for_each(
 async def _exec_a2a(step: StepDef, state: WorkflowState) -> StepResult:
     """Execute an A2A step — send task to external A2A agent via outbound client."""
     cfg: A2AStepConfig = step.a2a  # type: ignore
+    url = interpolate(cfg.url, state)
+    skill_id = interpolate(cfg.skill_id, state) if cfg.skill_id else None
     message = interpolate(cfg.message, state)
+    cloud_run_audience = (
+        interpolate(cfg.cloud_run_audience, state)
+        if cfg.cloud_run_audience
+        else None
+    )
 
     auth_resolved, auth_err = await _resolve_step_auth(step, cfg.auth)
     if auth_err is not None:
@@ -3490,14 +3497,26 @@ async def _exec_a2a(step: StepDef, state: WorkflowState) -> StepResult:
     auth_token = auth_resolved["token"] if auth_resolved else None
 
     try:
-        from ..a2a.a2a_client import get_client, A2AClientError
+        from ..a2a.a2a_client import (
+            A2AClientError,
+            _gcloud_identity_token,
+            _origin_url,
+            get_client,
+        )
         client = get_client(timeout=cfg.timeout)
+        cloud_run_identity_token = None
+        if cfg.cloud_run_auth == "gcloud":
+            cloud_run_identity_token = await _gcloud_identity_token(
+                cloud_run_audience or _origin_url(url),
+                timeout=cfg.cloud_run_auth_timeout,
+            )
 
         task = await client.send_task(
-            cfg.url,
+            url,
             message=message,
-            skill_id=cfg.skill_id,
+            skill_id=skill_id,
             auth_token=auth_token,
+            cloud_run_identity_token=cloud_run_identity_token,
         )
 
         task_id = task.get("id", "")
@@ -3507,9 +3526,11 @@ async def _exec_a2a(step: StepDef, state: WorkflowState) -> StepResult:
         # Poll until complete if not already terminal
         if state_val not in ("completed", "failed", "canceled"):
             task = await client.poll_until_complete(
-                cfg.url, task_id,
+                url, task_id,
                 poll_interval=5.0,
                 max_polls=int(cfg.timeout / 5),
+                auth_token=auth_token,
+                cloud_run_identity_token=cloud_run_identity_token,
             )
             status = task.get("status", {})
             state_val = status.get("state", "unknown")

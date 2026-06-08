@@ -797,6 +797,13 @@ class A2AStepConfig(BaseModel):
     # outbound A2A request as `Authorization: Bearer <token>`. Format:
     # "<provider>:<profile_name>".
     auth: str | None = None
+    # Private Cloud Run IAM auth. When set to "gcloud", the executor mints a
+    # short-lived identity token via the runtime's configured gcloud profile
+    # and sends it as X-Serverless-Authorization. Never persist token bytes in
+    # workflow YAML; this stores only the auth mode/audience knobs.
+    cloud_run_auth: Literal["gcloud"] | None = None
+    cloud_run_audience: str | None = None
+    cloud_run_auth_timeout: float = Field(default=20.0, gt=0)
 
 
 # -- Orchestration pattern configs -----------------------------------------
