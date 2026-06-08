@@ -1,0 +1,123 @@
+name: github-issue-resolver
+version: "1.0"
+description: "Resolve a GitHub issue by fixing the demo Python repository and opening a pull request."
+tags: [github, issue, demo, python, revka]
+
+inputs:
+  - name: repository
+    type: string
+    required: true
+    description: "GitHub repository, for example KumihoIO/google-agentops-demo."
+  - name: repository_url
+    type: string
+    required: true
+    description: "Browser URL for the repository."
+  - name: clone_url
+    type: string
+    required: true
+    description: "HTTPS clone URL for the repository."
+  - name: default_branch
+    type: string
+    required: true
+    description: "Default branch to branch from."
+  - name: issue_number
+    type: number
+    required: true
+    description: "GitHub issue number."
+  - name: issue_title
+    type: string
+    required: true
+    description: "GitHub issue title."
+  - name: issue_body
+    type: string
+    required: true
+    description: "GitHub issue body."
+  - name: issue_url
+    type: string
+    required: true
+    description: "Browser URL for the issue."
+  - name: trigger_source
+    type: string
+    required: false
+    default: github_issue
+    description: "Source that requested the workflow run."
+  - name: demo_goal
+    type: string
+    required: true
+    description: "Plain-language goal for the demo run."
+  - name: expected_commands
+    type: list
+    required: true
+    description: "Commands the agent should run for validation."
+  - name: target_files
+    type: list
+    required: true
+    description: "Likely files that should change."
+
+steps:
+  - id: fix_issue
+    name: "Fix GitHub Issue"
+    type: agent
+    agent:
+      agent_type: codex
+      role: coder
+      timeout: 1200
+      max_turns: 8
+      tools: none
+      prompt: |
+        You are resolving a GitHub issue for a public Revka demo.
+
+        Repository: ${inputs.repository}
+        Repository URL: ${inputs.repository_url}
+        Clone URL: ${inputs.clone_url}
+        Default branch: ${inputs.default_branch}
+        Issue: #${inputs.issue_number} ${inputs.issue_title}
+        Issue URL: ${inputs.issue_url}
+        Trigger source: ${inputs.trigger_source}
+        Issue body:
+        ${inputs.issue_body}
+
+        Demo goal:
+        ${inputs.demo_goal}
+
+        Likely target files:
+        ${inputs.target_files}
+
+        Required validation commands:
+        ${inputs.expected_commands}
+
+        Work in a fresh directory. Clone the repository, create a branch named
+        revka/issue-${inputs.issue_number}-quantity-subtotal, reproduce the bug,
+        add the missing regression test, fix the implementation, and run the
+        validation commands.
+
+        Expected fix for this demo:
+        - Add a test proving quantity greater than 1 affects the subtotal.
+        - Update src/agentops_demo/cart.py so subtotal_cents multiplies
+          unit_price_cents by quantity.
+        - Keep the change narrow and do not refactor unrelated code.
+
+        Commit with a conventional commit title. Push the branch and open a
+        pull request that links to ${inputs.issue_url}. Do not merge or close
+        the issue.
+
+        If the Revka host cannot push or create a PR because GitHub CLI or git
+        credentials are unavailable, stop after local validation and report the
+        exact authentication blocker instead of guessing.
+
+  - id: summarize
+    name: "Summarize Result"
+    type: output
+    depends_on: [fix_issue]
+    output:
+      format: markdown
+      template: |
+        ## GitHub Issue Resolver Result
+
+        Issue: ${inputs.issue_url}
+
+        ${fix_issue.output}
+
+outputs:
+  - name: result
+    source: "${fix_issue.output}"

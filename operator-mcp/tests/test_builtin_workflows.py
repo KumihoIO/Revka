@@ -31,6 +31,7 @@ _BUILTINS_DIR = os.path.join(
 # ---------------------------------------------------------------------------
 
 _SMOKE_TEST_PATH = os.path.join(_BUILTINS_DIR, "smoke-test-all-steps.yaml")
+_GITHUB_ISSUE_RESOLVER_PATH = os.path.join(_BUILTINS_DIR, "github-issue-resolver.yaml")
 
 
 @pytest.fixture(scope="module")
@@ -217,6 +218,29 @@ def test_builtin_workflow_validates(yaml_path: str) -> None:
         f"{os.path.basename(yaml_path)} failed validation: "
         f"errors={result.errors} warnings={result.warnings}"
     )
+
+
+def test_github_issue_resolver_matches_demo_trigger_contract() -> None:
+    wf = load_workflow_from_yaml(_GITHUB_ISSUE_RESOLVER_PATH)
+
+    assert wf.name == "github-issue-resolver"
+    assert [step.id for step in wf.steps] == ["fix_issue", "summarize"]
+    assert wf.step_by_id("fix_issue").agent.agent_type == "codex"
+
+    input_names = {input_def.name for input_def in wf.inputs}
+    assert {
+        "repository",
+        "repository_url",
+        "clone_url",
+        "default_branch",
+        "issue_number",
+        "issue_title",
+        "issue_body",
+        "issue_url",
+        "demo_goal",
+        "expected_commands",
+        "target_files",
+    }.issubset(input_names)
 
 
 def test_canonworks_episode_factory_preserves_generalized_example_contract() -> None:
