@@ -97,9 +97,10 @@ async def test_send_task_sends_cloud_run_and_a2a_auth_headers():
 async def test_tool_discover_can_mint_cloud_run_token_with_gcloud(monkeypatch):
     captured = {}
 
-    async def fake_gcloud_identity_token(audience, *, timeout=20.0):
+    async def fake_gcloud_identity_token(audience, *, timeout=20.0, configuration=None):
         captured["audience"] = audience
         captured["timeout"] = timeout
+        captured["configuration"] = configuration
         return "minted-token"
 
     class FakeA2AClient:
@@ -116,6 +117,7 @@ async def test_tool_discover_can_mint_cloud_run_token_with_gcloud(monkeypatch):
         {
             "url": "https://agent.example.run.app",
             "cloud_run_auth": "gcloud",
+            "cloud_run_config": "revka-track3",
             "auth_token": "app-token",
             "timeout": 3,
         }
@@ -125,6 +127,7 @@ async def test_tool_discover_can_mint_cloud_run_token_with_gcloud(monkeypatch):
     assert captured == {
         "audience": "https://agent.example.run.app",
         "timeout": 20.0,
+        "configuration": "revka-track3",
         "url": "https://agent.example.run.app",
         "auth_token": "app-token",
         "cloud_run_identity_token": "minted-token",

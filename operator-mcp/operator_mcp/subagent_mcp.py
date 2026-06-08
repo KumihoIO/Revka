@@ -218,6 +218,10 @@ async def list_tools() -> list[Tool]:
                         "type": "string",
                         "description": "Set to 'gcloud' to mint a Cloud Run identity token with gcloud.",
                     },
+                    "cloud_run_config": {
+                        "type": "string",
+                        "description": "Optional gcloud configuration name to use when minting the Cloud Run identity token.",
+                    },
                     "cloud_run_audience": {
                         "type": "string",
                         "description": "Optional Cloud Run token audience. Defaults to the service origin URL.",
@@ -271,6 +275,10 @@ async def list_tools() -> list[Tool]:
                     "cloud_run_auth": {
                         "type": "string",
                         "description": "Set to 'gcloud' to mint a Cloud Run identity token with gcloud.",
+                    },
+                    "cloud_run_config": {
+                        "type": "string",
+                        "description": "Optional gcloud configuration name to use when minting the Cloud Run identity token.",
                     },
                     "cloud_run_audience": {
                         "type": "string",
@@ -326,6 +334,10 @@ async def list_tools() -> list[Tool]:
                     "cloud_run_auth": {
                         "type": "string",
                         "description": "Set to 'gcloud' to mint a Cloud Run identity token with gcloud.",
+                    },
+                    "cloud_run_config": {
+                        "type": "string",
+                        "description": "Optional gcloud configuration name to use when minting the Cloud Run identity token.",
                     },
                     "cloud_run_audience": {
                         "type": "string",

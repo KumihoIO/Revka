@@ -82,6 +82,7 @@ steps:
       timeout: 120
       auth: "a2a:prod"
       cloud_run_auth: gcloud
+      cloud_run_config: revka-track3
       cloud_run_audience: "\${inputs.track3_a2a_url}"
       cloud_run_auth_timeout: 15
 `;
@@ -89,16 +90,19 @@ steps:
   const tasks = parseWorkflowYaml(yaml);
   const task = tasks[0]!;
   assert.equal(task.a2a_cloud_run_auth, 'gcloud');
+  assert.equal(task.a2a_cloud_run_config, 'revka-track3');
   assert.equal(task.a2a_cloud_run_audience, '${inputs.track3_a2a_url}');
   assert.equal(task.a2a_cloud_run_auth_timeout, 15);
 
   const { nodes, edges } = tasksToFlow(tasks);
   assert.equal(nodes[0]!.data.a2aCloudRunAuth, 'gcloud');
+  assert.equal(nodes[0]!.data.a2aCloudRunConfig, 'revka-track3');
   assert.equal(nodes[0]!.data.a2aCloudRunAudience, '${inputs.track3_a2a_url}');
   assert.equal(nodes[0]!.data.a2aCloudRunAuthTimeout, 15);
 
   const emitted = tasksToYaml(flowToTasks(nodes, edges));
   assert.match(emitted, /cloud_run_auth: gcloud/);
+  assert.match(emitted, /cloud_run_config: revka-track3/);
   assert.match(emitted, /cloud_run_audience: "\$\{inputs\.track3_a2a_url\}"/);
   assert.match(emitted, /cloud_run_auth_timeout: 15/);
   assert.equal(parseWorkflowYaml(emitted)[0]!.a2a_cloud_run_auth, 'gcloud');

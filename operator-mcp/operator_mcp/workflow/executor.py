@@ -3490,6 +3490,11 @@ async def _exec_a2a(step: StepDef, state: WorkflowState) -> StepResult:
         if cfg.cloud_run_audience
         else None
     )
+    cloud_run_config = (
+        interpolate(cfg.cloud_run_config, state)
+        if cfg.cloud_run_config
+        else None
+    )
 
     auth_resolved, auth_err = await _resolve_step_auth(step, cfg.auth)
     if auth_err is not None:
@@ -3509,6 +3514,7 @@ async def _exec_a2a(step: StepDef, state: WorkflowState) -> StepResult:
             cloud_run_identity_token = await _gcloud_identity_token(
                 cloud_run_audience or _origin_url(url),
                 timeout=cfg.cloud_run_auth_timeout,
+                configuration=cloud_run_config,
             )
 
         task = await client.send_task(

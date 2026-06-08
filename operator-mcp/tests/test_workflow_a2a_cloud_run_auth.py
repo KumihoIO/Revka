@@ -13,9 +13,10 @@ async def test_workflow_a2a_step_uses_cloud_run_gcloud_auth(monkeypatch):
         captured["auth_profile"] = auth
         return {"token": "app-token"}, None
 
-    async def fake_gcloud_identity_token(audience, *, timeout=20.0):
+    async def fake_gcloud_identity_token(audience, *, timeout=20.0, configuration=None):
         captured["audience"] = audience
         captured["gcloud_timeout"] = timeout
+        captured["gcloud_config"] = configuration
         return "identity-token"
 
     class FakeA2AClient:
@@ -76,6 +77,7 @@ async def test_workflow_a2a_step_uses_cloud_run_gcloud_auth(monkeypatch):
                 "timeout": 30,
                 "auth": "a2a:prod",
                 "cloud_run_auth": "gcloud",
+                "cloud_run_config": "${inputs.gcloud_config}",
                 "cloud_run_audience": "${inputs.track3_a2a_url}",
                 "cloud_run_auth_timeout": 15,
             },
@@ -88,6 +90,7 @@ async def test_workflow_a2a_step_uses_cloud_run_gcloud_auth(monkeypatch):
             "track3_a2a_url": "https://private-agent.run.app",
             "skill_id": "incident-triage",
             "issue": "sev1 latency",
+            "gcloud_config": "revka-track3",
         },
     )
 
@@ -98,6 +101,7 @@ async def test_workflow_a2a_step_uses_cloud_run_gcloud_auth(monkeypatch):
     assert captured["auth_profile"] == "a2a:prod"
     assert captured["audience"] == "https://private-agent.run.app"
     assert captured["gcloud_timeout"] == 15
+    assert captured["gcloud_config"] == "revka-track3"
     assert captured["send"] == {
         "endpoint_url": "https://private-agent.run.app",
         "message": "Triage sev1 latency",

@@ -32,6 +32,8 @@ import type {
   WorkflowDashboard,
   MemoryGraphResponse,
   AuthProfileSummary,
+  GcloudConfigSummary,
+  GcloudConfigsResponse,
   RevisionOperation,
   ReviseWorkflowResponse,
   RevisionListResponse,
@@ -637,6 +639,35 @@ export async function deleteAuthProfile(id: string): Promise<void> {
   return apiFetch<void>(`/api/auth/profiles/${encodeURIComponent(id)}`, {
     method: 'DELETE',
   });
+}
+
+// ---------------------------------------------------------------------------
+// Gcloud config profiles (workflow Cloud Run IAM selector)
+// ---------------------------------------------------------------------------
+
+export async function fetchGcloudConfigs(): Promise<GcloudConfigsResponse> {
+  return apiFetch<GcloudConfigsResponse>('/api/gcloud/configs');
+}
+
+export interface CreateGcloudConfigRequest {
+  name: string;
+  project: string;
+  account?: string;
+  run_region?: string;
+  compute_region?: string;
+}
+
+/** Create a local Cloud SDK configuration. Returns metadata only. */
+export async function createGcloudConfig(
+  body: CreateGcloudConfigRequest,
+): Promise<GcloudConfigSummary> {
+  return apiFetch<GcloudConfigSummary | { config: GcloudConfigSummary }>(
+    '/api/gcloud/configs',
+    {
+      method: 'POST',
+      body: JSON.stringify(body),
+    },
+  ).then((data) => unwrapField(data, 'config'));
 }
 
 // ---------------------------------------------------------------------------

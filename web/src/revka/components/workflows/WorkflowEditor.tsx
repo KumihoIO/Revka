@@ -199,7 +199,10 @@ const TASK_INTERPOLATION_FIELDS: ReadonlyArray<keyof TaskNodeData> = [
   'notifyTitle',
   'groupChatTopic',
   'supervisorTask',
+  'a2aUrl',
   'a2aMessage',
+  'a2aCloudRunConfig',
+  'a2aCloudRunAudience',
   'mapReduceTask',
   'handoffReason',
 ];
@@ -514,6 +517,7 @@ function defaultNodeData(id: string, overrides?: Partial<TaskNodeData>): TaskNod
     a2aMessage: '',
     a2aTimeout: 300,
     a2aCloudRunAuth: '',
+    a2aCloudRunConfig: '',
     a2aCloudRunAudience: '',
     a2aCloudRunAuthTimeout: 20,
     resolveKind: '',

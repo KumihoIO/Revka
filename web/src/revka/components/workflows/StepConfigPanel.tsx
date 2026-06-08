@@ -7,7 +7,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Crosshair, Link2, Link2Off, Loader2, Lock, Search, Sparkles, Trash2, X } from 'lucide-react';
+import { Crosshair, Link2, Link2Off, Loader2, Lock, Plus, Search, Sparkles, Trash2, X } from 'lucide-react';
 import type { Node } from '@xyflow/react';
 import { type ConditionalBranchDefinition, type TaskNodeData } from '@/revka/components/workflows/yamlSync';
 import type { SkillDefinition } from '@/types/api';
@@ -15,10 +15,12 @@ import { fetchSkills, getChannels } from '@/lib/api';
 import Panel from '@/revka/components/ui/Panel';
 import { STEP_TYPES_BY_TYPE } from './stepRegistry';
 import AuthProfilePicker from './AuthProfilePicker';
+import NewGcloudConfigModal from './NewGcloudConfigModal';
 import { providerLabel } from './providerLabels';
 import ExpressionTextarea from './ExpressionTextarea';
 import { emitOpenAgentPicker } from './stepEvents';
 import { useAuthProfiles } from './useAuthProfiles';
+import { useGcloudConfigs } from './useGcloudConfigs';
 import { slugify as slugifyShared, uniqueSlug } from './slugify';
 import {
   GOOGLE_AGENTOPS_REQUIRED_TOOLS,
@@ -409,8 +411,16 @@ export default function StepConfigPanel({
 
   // Auth-profile picker — bound encrypted credential for external API calls.
   const { profiles: authProfiles } = useAuthProfiles();
+  const {
+    configs: gcloudConfigs,
+    loading: gcloudConfigsLoading,
+    available: gcloudConfigsAvailable,
+    error: gcloudConfigsError,
+    refresh: refreshGcloudConfigs,
+  } = useGcloudConfigs();
   const [authPickerOpen, setAuthPickerOpen] = useState(false);
   const [authAnchorRect, setAuthAnchorRect] = useState<DOMRect | null>(null);
+  const [gcloudConfigCreateOpen, setGcloudConfigCreateOpen] = useState(false);
 
   // Separate picker for the Manus step's ``credentials_ref`` field. Manus
   // doesn't go through the generic ``data.auth`` channel — it has its own
@@ -428,6 +438,7 @@ export default function StepConfigPanel({
     setAuthAnchorRect(null);
     setManusPickerOpen(false);
     setManusAnchorRect(null);
+    setGcloudConfigCreateOpen(false);
   }, [node.id]);
   const showAuthField = AUTH_ELIGIBLE_STEP_TYPES.has(stepType);
   const selectedAuthProfile = useMemo(
@@ -437,6 +448,14 @@ export default function StepConfigPanel({
   const selectedManusProfile = useMemo(
     () => authProfiles.find((p) => p.id === data.manusCredentialsRef) ?? null,
     [authProfiles, data.manusCredentialsRef],
+  );
+  const selectedGcloudConfig = useMemo(
+    () => gcloudConfigs.find((config) => config.name === data.a2aCloudRunConfig) ?? null,
+    [gcloudConfigs, data.a2aCloudRunConfig],
+  );
+  const defaultGcloudConfig = useMemo(
+    () => selectedGcloudConfig ?? gcloudConfigs.find((config) => config.is_active) ?? gcloudConfigs[0] ?? null,
+    [gcloudConfigs, selectedGcloudConfig],
   );
 
   // Channels: load for human / notify steps
@@ -3202,31 +3221,98 @@ export default function StepConfigPanel({
                 </select>
               </div>
               {data.a2aCloudRunAuth === 'gcloud' && (
-                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 112px', gap: 8 }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                   <div>
-                    <label style={labelStyle}>Cloud Run Audience</label>
-                    <ExpressionTextarea
-                      value={data.a2aCloudRunAudience || ''}
-                      onChange={(next) => onUpdate(node.id, { a2aCloudRunAudience: next })}
-                      placeholder="Defaults to endpoint origin"
-                      rows={1}
-                      style={monoInputStyle}
-                      stepIds={dagStepIds}
-                      workflowInputs={dagInputs}
-                      triggerFields={dagTriggerFields}
-                    />
+                    <label style={labelStyle}>Gcloud Config</label>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <select
+                        value={data.a2aCloudRunConfig || ''}
+                        onChange={(e) => onUpdate(node.id, { a2aCloudRunConfig: e.target.value })}
+                        style={{ ...inputStyle, flex: 1 }}
+                        disabled={!gcloudConfigsAvailable}
+                      >
+                        <option value="">
+                          {gcloudConfigsLoading ? 'loading...' : 'active gcloud config'}
+                        </option>
+                        {gcloudConfigs.map((config) => (
+                          <option key={config.name} value={config.name}>
+                            {config.name}
+                            {config.project ? ` - ${config.project}` : ''}
+                            {config.is_active ? ' (active)' : ''}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => setGcloudConfigCreateOpen(true)}
+                        title="Create gcloud config"
+                        style={{
+                          padding: '6px 8px',
+                          borderRadius: 8,
+                          border: '1px solid var(--pc-accent-dim)',
+                          background: 'var(--pc-accent-glow)',
+                          color: 'var(--pc-accent-light)',
+                          fontSize: 11,
+                          cursor: 'pointer',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 5,
+                        }}
+                      >
+                        <Plus size={12} />
+                        New
+                      </button>
+                    </div>
+                    <p style={helperStyle()}>
+                      {gcloudConfigsError
+                        ? gcloudConfigsError
+                        : selectedGcloudConfig
+                          ? `${selectedGcloudConfig.account || 'account unset'} / ${selectedGcloudConfig.project || 'project unset'}`
+                          : 'Uses the active Cloud SDK config unless a profile is selected.'}
+                    </p>
                   </div>
-                  <div>
-                    <label style={labelStyle}>Auth Timeout</label>
-                    <input
-                      type="number"
-                      min={1}
-                      max={120}
-                      value={data.a2aCloudRunAuthTimeout || 20}
-                      onChange={(e) => onUpdate(node.id, { a2aCloudRunAuthTimeout: parseInt(e.target.value) || 20 })}
-                      style={inputStyle}
-                    />
+                  <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 112px', gap: 8 }}>
+                    <div>
+                      <label style={labelStyle}>Cloud Run Audience</label>
+                      <ExpressionTextarea
+                        value={data.a2aCloudRunAudience || ''}
+                        onChange={(next) => onUpdate(node.id, { a2aCloudRunAudience: next })}
+                        placeholder="Defaults to endpoint origin"
+                        rows={1}
+                        style={monoInputStyle}
+                        stepIds={dagStepIds}
+                        workflowInputs={dagInputs}
+                        triggerFields={dagTriggerFields}
+                      />
+                    </div>
+                    <div>
+                      <label style={labelStyle}>Auth Timeout</label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={120}
+                        value={data.a2aCloudRunAuthTimeout || 20}
+                        onChange={(e) => onUpdate(node.id, { a2aCloudRunAuthTimeout: parseInt(e.target.value) || 20 })}
+                        style={inputStyle}
+                      />
+                    </div>
                   </div>
+                  <NewGcloudConfigModal
+                    open={gcloudConfigCreateOpen}
+                    onClose={() => setGcloudConfigCreateOpen(false)}
+                    defaultAccount={defaultGcloudConfig?.account}
+                    defaultProject={defaultGcloudConfig?.project}
+                    defaultRunRegion={defaultGcloudConfig?.run_region}
+                    defaultComputeRegion={defaultGcloudConfig?.compute_region}
+                    onCreated={async (name) => {
+                      await refreshGcloudConfigs();
+                      setGcloudConfigCreateOpen(false);
+                      onUpdate(node.id, {
+                        a2aCloudRunAuth: 'gcloud',
+                        a2aCloudRunConfig: name,
+                      });
+                    }}
+                  />
                 </div>
               )}
             </div>

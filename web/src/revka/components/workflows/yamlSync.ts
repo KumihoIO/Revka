@@ -168,6 +168,7 @@ export interface TaskDefinition {
   a2a_message?: string;
   a2a_timeout?: number;
   a2a_cloud_run_auth?: 'gcloud';
+  a2a_cloud_run_config?: string;
   a2a_cloud_run_audience?: string;
   a2a_cloud_run_auth_timeout?: number;
   // --- MapReduce: full config ---
@@ -519,6 +520,7 @@ export interface TaskNodeData {
   a2aMessage: string;
   a2aTimeout: number;
   a2aCloudRunAuth: '' | 'gcloud';
+  a2aCloudRunConfig: string;
   a2aCloudRunAudience: string;
   a2aCloudRunAuthTimeout: number;
   // MapReduce
@@ -1266,6 +1268,7 @@ function parseStep(s: YAMLObj): TaskDefinition | null {
     if (asStr(a2a.cloud_run_auth) === 'gcloud') {
       t.a2a_cloud_run_auth = 'gcloud';
     }
+    t.a2a_cloud_run_config = asStr(a2a.cloud_run_config);
     t.a2a_cloud_run_audience = asStr(a2a.cloud_run_audience);
     t.a2a_cloud_run_auth_timeout = asNum(a2a.cloud_run_auth_timeout);
     if (asStr(a2a.auth)) t.auth = asStr(a2a.auth);
@@ -1861,6 +1864,7 @@ export function tasksToFlow(tasks: TaskDefinition[]): { nodes: Node<TaskNodeData
       a2aMessage: task.a2a_message || '',
       a2aTimeout: task.a2a_timeout || 300,
       a2aCloudRunAuth: task.a2a_cloud_run_auth || '',
+      a2aCloudRunConfig: task.a2a_cloud_run_config || '',
       a2aCloudRunAudience: task.a2a_cloud_run_audience || '',
       a2aCloudRunAuthTimeout: task.a2a_cloud_run_auth_timeout || 20,
       mapReduceTask: task.map_reduce_task || '',
@@ -2372,6 +2376,7 @@ const INTERPOLATION_TEXT_FIELDS: ReadonlyArray<keyof TaskDefinition> = [
   'supervisor_task',
   'a2a_url',
   'a2a_message',
+  'a2a_cloud_run_config',
   'a2a_cloud_run_audience',
   'map_reduce_task',
   'handoff_reason',
@@ -2923,6 +2928,7 @@ export function flowToTasks(nodes: Node<TaskNodeData>[], edges: Edge[]): TaskDef
       if (d.a2aMessage) base.a2a_message = d.a2aMessage;
       if (d.a2aTimeout && d.a2aTimeout !== 300) base.a2a_timeout = d.a2aTimeout;
       if (d.a2aCloudRunAuth === 'gcloud') base.a2a_cloud_run_auth = 'gcloud';
+      if (d.a2aCloudRunConfig) base.a2a_cloud_run_config = d.a2aCloudRunConfig;
       if (d.a2aCloudRunAudience) base.a2a_cloud_run_audience = d.a2aCloudRunAudience;
       if (d.a2aCloudRunAuthTimeout && d.a2aCloudRunAuthTimeout !== 20) {
         base.a2a_cloud_run_auth_timeout = d.a2aCloudRunAuthTimeout;
@@ -3581,6 +3587,9 @@ export function tasksToYaml(tasks: TaskDefinition[], meta?: Partial<WorkflowMeta
       if (task.a2a_timeout && task.a2a_timeout !== 300) lines.push(`      timeout: ${task.a2a_timeout}`);
       if (task.auth) lines.push(`      auth: ${yamlEscape(task.auth)}`);
       if (task.a2a_cloud_run_auth) lines.push(`      cloud_run_auth: ${task.a2a_cloud_run_auth}`);
+      if (task.a2a_cloud_run_config) {
+        lines.push(`      cloud_run_config: ${yamlEscape(task.a2a_cloud_run_config)}`);
+      }
       if (task.a2a_cloud_run_audience) {
         lines.push(`      cloud_run_audience: ${yamlEscape(task.a2a_cloud_run_audience)}`);
       }

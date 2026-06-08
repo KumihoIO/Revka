@@ -815,6 +815,28 @@ export interface AuthProfileSummary {
   updated_at: string;
 }
 
+/**
+ * Metadata-only summary of a local Cloud SDK configuration.
+ *
+ * Returned from `GET /api/gcloud/configs`. Identity tokens are minted at
+ * runtime via `gcloud --configuration=<name>` and are never serialized into
+ * this response or into workflow YAML.
+ */
+export interface GcloudConfigSummary {
+  name: string;
+  is_active: boolean;
+  account: string | null;
+  project: string | null;
+  run_region: string | null;
+  compute_region: string | null;
+}
+
+export interface GcloudConfigsResponse {
+  available: boolean;
+  configs: GcloudConfigSummary[];
+  error: string | null;
+}
+
 /** POST /api/workflows/run/{name} body. Mirrors `RunWorkflowBody` in
  *  `src/gateway/api_workflows.rs`. The gateway forwards `target_step_id`
  *  to operator-mcp's `run_workflow` tool so the executor can run the
