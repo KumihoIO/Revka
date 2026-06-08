@@ -76,7 +76,12 @@ def _origin_url(value: str) -> str:
     return f"{parsed.scheme}://{parsed.netloc}"
 
 
-async def _gcloud_identity_token(audience: str | None, *, timeout: float = 20.0) -> str:
+async def _gcloud_identity_token(
+    audience: str | None,
+    *,
+    timeout: float = 20.0,
+    configuration: str | None = None,
+) -> str:
     binary = shutil.which("gcloud")
     if not binary:
         raise A2ATransportError(
@@ -108,13 +113,21 @@ async def _gcloud_identity_token(audience: str | None, *, timeout: float = 20.0)
             stderr_b.decode("utf-8", errors="replace").strip(),
         )
 
-    command = [binary, "auth", "print-identity-token"]
+    command = [binary]
+    config_name = _token(configuration)
+    if config_name:
+        command.append(f"--configuration={config_name}")
+    command.extend(["auth", "print-identity-token"])
     if audience:
         command.append(f"--audiences={audience}")
 
     returncode, token, stderr = await _run(command)
     if returncode != 0 and audience and "Invalid account type for `--audiences`" in stderr:
-        returncode, token, stderr = await _run([binary, "auth", "print-identity-token"])
+        fallback = [binary]
+        if config_name:
+            fallback.append(f"--configuration={config_name}")
+        fallback.extend(["auth", "print-identity-token"])
+        returncode, token, stderr = await _run(fallback)
 
     if returncode != 0:
         raise A2ATransportError(
@@ -141,7 +154,12 @@ async def _resolve_cloud_run_identity_token(args: dict[str, Any], *, url: str) -
 
     audience = _token(args.get("cloud_run_audience")) or _origin_url(url)
     timeout = float(args.get("cloud_run_auth_timeout") or 20.0)
-    return await _gcloud_identity_token(audience, timeout=timeout)
+    configuration = _token(args.get("cloud_run_config") or args.get("gcloud_config"))
+    return await _gcloud_identity_token(
+        audience,
+        timeout=timeout,
+        configuration=configuration,
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -167,6 +167,10 @@ export interface TaskDefinition {
   a2a_skill_id?: string;
   a2a_message?: string;
   a2a_timeout?: number;
+  a2a_cloud_run_auth?: 'gcloud';
+  a2a_cloud_run_config?: string;
+  a2a_cloud_run_audience?: string;
+  a2a_cloud_run_auth_timeout?: number;
   // --- MapReduce: full config ---
   map_reduce_task?: string;
   map_reduce_splits?: string[];
@@ -515,6 +519,10 @@ export interface TaskNodeData {
   a2aSkillId: string;
   a2aMessage: string;
   a2aTimeout: number;
+  a2aCloudRunAuth: '' | 'gcloud';
+  a2aCloudRunConfig: string;
+  a2aCloudRunAudience: string;
+  a2aCloudRunAuthTimeout: number;
   // MapReduce
   mapReduceTask: string;
   mapReduceSplits: string[];
@@ -1257,6 +1265,12 @@ function parseStep(s: YAMLObj): TaskDefinition | null {
     t.a2a_skill_id = asStr(a2a.skill_id);
     t.a2a_message = asStr(a2a.message);
     t.a2a_timeout = asNum(a2a.timeout);
+    if (asStr(a2a.cloud_run_auth) === 'gcloud') {
+      t.a2a_cloud_run_auth = 'gcloud';
+    }
+    t.a2a_cloud_run_config = asStr(a2a.cloud_run_config);
+    t.a2a_cloud_run_audience = asStr(a2a.cloud_run_audience);
+    t.a2a_cloud_run_auth_timeout = asNum(a2a.cloud_run_auth_timeout);
     if (asStr(a2a.auth)) t.auth = asStr(a2a.auth);
   }
 
@@ -1849,6 +1863,10 @@ export function tasksToFlow(tasks: TaskDefinition[]): { nodes: Node<TaskNodeData
       a2aSkillId: task.a2a_skill_id || '',
       a2aMessage: task.a2a_message || '',
       a2aTimeout: task.a2a_timeout || 300,
+      a2aCloudRunAuth: task.a2a_cloud_run_auth || '',
+      a2aCloudRunConfig: task.a2a_cloud_run_config || '',
+      a2aCloudRunAudience: task.a2a_cloud_run_audience || '',
+      a2aCloudRunAuthTimeout: task.a2a_cloud_run_auth_timeout || 20,
       mapReduceTask: task.map_reduce_task || '',
       mapReduceSplits: task.map_reduce_splits || [],
       mapReduceMapper: task.map_reduce_mapper || 'claude',
@@ -2356,7 +2374,10 @@ const INTERPOLATION_TEXT_FIELDS: ReadonlyArray<keyof TaskDefinition> = [
   'notify_title',
   'group_chat_topic',
   'supervisor_task',
+  'a2a_url',
   'a2a_message',
+  'a2a_cloud_run_config',
+  'a2a_cloud_run_audience',
   'map_reduce_task',
   'handoff_reason',
   'manus_prompt',
@@ -2906,6 +2927,12 @@ export function flowToTasks(nodes: Node<TaskNodeData>[], edges: Edge[]): TaskDef
       if (d.a2aSkillId) base.a2a_skill_id = d.a2aSkillId;
       if (d.a2aMessage) base.a2a_message = d.a2aMessage;
       if (d.a2aTimeout && d.a2aTimeout !== 300) base.a2a_timeout = d.a2aTimeout;
+      if (d.a2aCloudRunAuth === 'gcloud') base.a2a_cloud_run_auth = 'gcloud';
+      if (d.a2aCloudRunConfig) base.a2a_cloud_run_config = d.a2aCloudRunConfig;
+      if (d.a2aCloudRunAudience) base.a2a_cloud_run_audience = d.a2aCloudRunAudience;
+      if (d.a2aCloudRunAuthTimeout && d.a2aCloudRunAuthTimeout !== 20) {
+        base.a2a_cloud_run_auth_timeout = d.a2aCloudRunAuthTimeout;
+      }
     }
     if (st === 'map_reduce') {
       if (d.mapReduceTask) base.map_reduce_task = d.mapReduceTask;
@@ -3559,6 +3586,16 @@ export function tasksToYaml(tasks: TaskDefinition[], meta?: Partial<WorkflowMeta
       if (task.a2a_message) lines.push(`      message: ${yamlEscape(task.a2a_message)}`);
       if (task.a2a_timeout && task.a2a_timeout !== 300) lines.push(`      timeout: ${task.a2a_timeout}`);
       if (task.auth) lines.push(`      auth: ${yamlEscape(task.auth)}`);
+      if (task.a2a_cloud_run_auth) lines.push(`      cloud_run_auth: ${task.a2a_cloud_run_auth}`);
+      if (task.a2a_cloud_run_config) {
+        lines.push(`      cloud_run_config: ${yamlEscape(task.a2a_cloud_run_config)}`);
+      }
+      if (task.a2a_cloud_run_audience) {
+        lines.push(`      cloud_run_audience: ${yamlEscape(task.a2a_cloud_run_audience)}`);
+      }
+      if (task.a2a_cloud_run_auth_timeout && task.a2a_cloud_run_auth_timeout !== 20) {
+        lines.push(`      cloud_run_auth_timeout: ${task.a2a_cloud_run_auth_timeout}`);
+      }
     }
     if (stepType === 'map_reduce') {
       lines.push(`    map_reduce:`);

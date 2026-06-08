@@ -15,6 +15,7 @@ pub mod api_assets;
 pub mod api_attachments;
 pub mod api_auth_profiles;
 pub mod api_clawhub;
+pub mod api_gcloud_configs;
 pub mod api_kumiho_proxy;
 pub mod api_mcp;
 pub mod api_memory_graph;
@@ -1897,6 +1898,14 @@ pub async fn run_gateway_with_mcp_registry(
         )
         .route("/api/auth/profiles/{id}/resolve", post(api_auth_profiles::handle_resolve_auth_profile))
         .route("/api/auth/profiles/{id}", delete(api_auth_profiles::handle_delete_auth_profile))
+        // ── Local gcloud config profiles (workflow Cloud Run IAM selector) ──
+        // Metadata only. The API never returns credential/token material; the
+        // workflow stores only the selected gcloud configuration name.
+        .route(
+            "/api/gcloud/configs",
+            get(api_gcloud_configs::handle_list_gcloud_configs)
+                .post(api_gcloud_configs::handle_create_gcloud_config),
+        )
         // ── Skill management API (proxied to Kumiho FastAPI) ──
         .route("/api/skills", get(api_skills::handle_list_skills).post(api_skills::handle_create_skill))
         .route("/api/skills/deprecate", post(api_skills::handle_deprecate_skill))
