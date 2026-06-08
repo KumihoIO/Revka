@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import QRCode from 'qrcode';
-import { QrCode, RefreshCw, Smartphone, Trash2 } from 'lucide-react';
-import { apiFetch, getAdminPairCode } from '@/lib/api';
+import { Copy, KeyRound, QrCode, RefreshCw, Smartphone, Trash2 } from 'lucide-react';
+import { apiFetch, defaultPairingDeviceMetadata, getAdminPairCode, mintBearerTokenFromPairingCode } from '@/lib/api';
 import { apiOrigin, basePath } from '@/lib/basePath';
 import { useT } from '@/revka/hooks/useT';
 import Panel from '../components/ui/Panel';
@@ -14,6 +14,7 @@ interface Device {
   id: string;
   name: string | null;
   device_type: string | null;
+  hardware: string | null;
   paired_at: string;
   last_seen: string;
   ip_address: string | null;
@@ -45,6 +46,10 @@ export default function Pairing() {
   const [pairingCode, setPairingCode] = useState<string | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const [initiating, setInitiating] = useState(false);
+  const [mintingToken, setMintingToken] = useState(false);
+  const [mintedToken, setMintedToken] = useState<string | null>(null);
+  const [cliDeviceName, setCliDeviceName] = useState('Revka CLI');
+  const [cliHardware, setCliHardware] = useState(() => defaultPairingDeviceMetadata('cli').hardware ?? '');
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ tone: 'success' | 'error' | 'info'; message: string } | null>(null);
 
@@ -95,12 +100,52 @@ export default function Pairing() {
     try {
       const res = await apiFetch<InitiateResponse>('/api/pairing/initiate', { method: 'POST' });
       setPairingCode(res.pairing_code);
+      setMintedToken(null);
       setNotice({ tone: 'success', message: t('pairing.toast.code_generated') });
     } catch (err) {
       setNotice({ tone: 'error', message: err instanceof Error ? err.message : t('pairing.err.gen_code') });
     } finally {
       setInitiating(false);
     }
+  };
+
+  const handleMintCliToken = async () => {
+    if (!pairingCode) return;
+    setMintingToken(true);
+    setMintedToken(null);
+    try {
+      const res = await mintBearerTokenFromPairingCode(pairingCode, {
+        device_name: cliDeviceName.trim() || 'Revka CLI',
+        device_type: 'cli',
+        hardware: cliHardware.trim() || undefined,
+      });
+      setMintedToken(res.token);
+      setPairingCode(null);
+      await fetchDevices();
+      setNotice({ tone: 'success', message: t('pairing.toast.token_minted') });
+    } catch (err) {
+      setNotice({ tone: 'error', message: err instanceof Error ? err.message : t('pairing.err.mint_token') });
+    } finally {
+      setMintingToken(false);
+    }
+  };
+
+  const formatDeviceType = (deviceType: string | null) => {
+    if (!deviceType) return t('pairing.unknown');
+    const labels: Record<string, string> = {
+      'legacy-pair': t('pairing.device_type.api_client'),
+      'api-client': t('pairing.device_type.api_client'),
+      browser: t('pairing.device_type.browser'),
+      cli: t('pairing.device_type.cli'),
+      mobile: t('pairing.device_type.mobile'),
+      tablet: t('pairing.device_type.tablet'),
+    };
+    if (labels[deviceType]) return labels[deviceType];
+    return deviceType
+      .split(/[-_]/)
+      .filter(Boolean)
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(' ');
   };
 
   const handleRevoke = async (id: string) => {
@@ -172,6 +217,25 @@ export default function Pairing() {
                     {t('pairing.code_hint')}
                   </p>
                 </div>
+                <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                  <label className="min-w-0 text-xs font-medium" style={{ color: 'var(--revka-text-secondary)' }}>
+                    {t('pairing.cli_device_name')}
+                    <input
+                      className="revka-input mt-1 h-9 w-full"
+                      value={cliDeviceName}
+                      onChange={(event) => setCliDeviceName(event.target.value)}
+                    />
+                  </label>
+                  <label className="min-w-0 text-xs font-medium" style={{ color: 'var(--revka-text-secondary)' }}>
+                    {t('pairing.cli_hardware')}
+                    <input
+                      className="revka-input mt-1 h-9 w-full"
+                      value={cliHardware}
+                      onChange={(event) => setCliHardware(event.target.value)}
+                      placeholder={t('pairing.cli_hardware_placeholder')}
+                    />
+                  </label>
+                </div>
                 <div className="mt-4 flex flex-wrap gap-2">
                   <button
                     className="revka-button"
@@ -189,6 +253,10 @@ export default function Pairing() {
                   <button className="revka-button" onClick={handleInitiate} disabled={initiating}>
                     <RefreshCw className={`h-4 w-4 ${initiating ? 'animate-spin' : ''}`} />
                     {t('pairing.rotate')}
+                  </button>
+                  <button className="revka-button" data-variant="primary" onClick={handleMintCliToken} disabled={mintingToken}>
+                    <KeyRound className="h-4 w-4" />
+                    {mintingToken ? t('pairing.minting_token') : t('pairing.mint_cli_token')}
                   </button>
                 </div>
               </div>
@@ -223,6 +291,36 @@ export default function Pairing() {
         ) : null}
       </div>
 
+      {mintedToken ? (
+        <Panel className="p-4" variant="utility">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <KeyRound className="h-4 w-4" style={{ color: 'var(--revka-signal-network)' }} />
+                <div className="revka-kicker">{t('pairing.minted_token')}</div>
+              </div>
+              <div className="mt-2 max-w-full break-all rounded-[8px] border px-3 py-2 font-mono text-xs" style={{ borderColor: 'var(--revka-border-soft)', color: 'var(--revka-text-primary)' }}>
+                {mintedToken}
+              </div>
+            </div>
+            <button
+              className="revka-button"
+              onClick={async () => {
+                const ok = await copyToClipboard(mintedToken);
+                setNotice(
+                  ok
+                    ? { tone: 'success', message: t('pairing.toast.token_copied') }
+                    : { tone: 'error', message: t('pairing.toast.copy_failed') },
+                );
+              }}
+            >
+              <Copy className="h-4 w-4" />
+              {t('pairing.copy_token')}
+            </button>
+          </div>
+        </Panel>
+      ) : null}
+
       <Panel className="min-h-0 flex-1 overflow-hidden p-0">
         <div className="flex items-center justify-between border-b px-4 py-3" style={{ borderColor: 'var(--revka-border-soft)' }}>
           <div className="revka-kicker">{tpl('pairing.paired_devices', { count: devices.length })}</div>
@@ -242,6 +340,7 @@ export default function Pairing() {
                 <tr>
                   <th>{t('pairing.col.name')}</th>
                   <th>{t('pairing.col.type')}</th>
+                  <th>{t('pairing.col.hardware')}</th>
                   <th>{t('pairing.col.paired')}</th>
                   <th>{t('pairing.col.last_seen')}</th>
                   <th>{t('pairing.col.ip')}</th>
@@ -254,7 +353,10 @@ export default function Pairing() {
                     <td className="text-sm font-medium" style={{ color: 'var(--revka-text-primary)' }}>
                       {device.name || t('pairing.unnamed')}
                     </td>
-                    <td style={{ color: 'var(--revka-text-secondary)' }}>{device.device_type || t('pairing.unknown')}</td>
+                    <td style={{ color: 'var(--revka-text-secondary)' }}>{formatDeviceType(device.device_type)}</td>
+                    <td className="text-xs" style={{ color: 'var(--revka-text-secondary)' }}>
+                      {device.hardware || '—'}
+                    </td>
                     <td className="text-xs" style={{ color: 'var(--revka-text-faint)' }}>
                       {new Date(device.paired_at).toLocaleDateString()}
                     </td>

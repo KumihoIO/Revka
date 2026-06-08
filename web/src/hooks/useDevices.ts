@@ -5,6 +5,7 @@ interface Device {
   id: string;
   name: string | null;
   device_type: string | null;
+  hardware: string | null;
   paired_at: string;
   last_seen: string;
   ip_address: string | null;
