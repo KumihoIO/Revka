@@ -9,18 +9,44 @@ tags:
   - PR
   - cicd
 
+triggers:
+  - on_kind: github-issue
+    on_tag: ready
+    input_map:
+      github_payload: ${entity.metadata.github_payload}
+      repo_name: ${entity.metadata.repo_name}
+
 inputs:
   - name: github_payload
     type: string
     required: true
-    description: Incoming GitHub webhook JSON payload containing issue details.
-
+    description: Incoming GitHub Webhook JSON payload containing issue details.
   - name: repo_name
     type: string
     required: true
     description: GitHub repository identifier, e.g. KumihoIO/Revka.
+  - name: track3_a2a_url
+    type: string
+    required: false
+    default: "https://construct-agentops-a2a-1091585228963.us-central1.run.app"
+    description: Optional deployed Revka Track 3 A2A endpoint to discover during the Google AgentOps preflight.
 
-outputs: []
+outputs:
+  - name: issue_number
+    source: ${assess_issue.output_data.issue_number}
+    description: GitHub issue number handled by this run.
+  - name: google_agentops_evidence
+    source: ${google_agentops_preflight.output_data.evidence_summary}
+    description: Evidence that google_agents_cli and the reduced Google AgentOps MCP surface were exercised.
+  - name: pr_url
+    source: ${deploy_coder_agent.output_data.pr_url}
+    description: Pull request opened for the issue.
+  - name: review_status
+    source: ${review_pr.output_data.review_status}
+    description: PR review verdict before the merge gate.
+  - name: merge_status
+    source: ${merge_and_close.output_data.merge_status}
+    description: Final merge result.
 
 steps:
   - id: assess_issue
@@ -34,13 +60,6 @@ steps:
     agent:
       agent_type: agy
       role: reviewer
-      output_fields:
-        - issue_number
-        - issue_title
-        - issue_body
-        - likely_files
-        - strategy
-        - risk_notes
       prompt: |
         Parse the following incoming GitHub issue payload:
 
@@ -49,13 +68,88 @@ steps:
 
         Extract the issue number, title, body, labels, author, and files likely involved.
         Formulate a clear design and implementation strategy to resolve the problem.
+
+        Return strict JSON with these fields:
+        - issue_number: number or string
+        - issue_title: string
+        - issue_body: concise string
+        - likely_files: array of repository paths or globs
+        - strategy: concise implementation plan
+        - risk_notes: security, migration, test, and blast-radius notes
       timeout: 300
+      output_fields: [issue_number, issue_title, issue_body, likely_files, strategy, risk_notes]
+
+  - id: google_agentops_preflight
+    name: Google AgentOps CLI & A2A Preflight
+    type: agent
+    depends_on:
+      - assess_issue
+    position:
+      x: 517.37
+      y: 91.21
+    assign: revka-agentops-a2a-health-verifier
+    agent:
+      agent_type: agy
+      role: verifier
+      tools: google_agentops
+      required_tools: [google_agents_cli, a2a_discover, a2a_send_task, a2a_get_remote_task]
+      prompt: |
+        Demonstrate the Revka Google AgentOps integration before any repository mutation.
+
+        Context:
+        - Repository: ${inputs.repo_name}
+        - Issue: #${assess_issue.output_data.issue_number} ${assess_issue.output_data.issue_title}
+        - Strategy: ${assess_issue.output_data.strategy}
+        - Optional Track 3 A2A endpoint: ${inputs.track3_a2a_url}
+
+        You must use the `google_agents_cli` MCP tool, not shell, for Google lifecycle inspection.
+
+        Required non-mutating tool calls:
+        1. Call `google_agents_cli` with command `["info"]`, timeout `30`, and
+           max_output_bytes `12000`.
+        2. Call `google_agents_cli` with command `["login", "--status"]`,
+           timeout `30`, and max_output_bytes `12000`.
+        3. If the CLI appears usable, call `google_agents_cli` with command `["run"]`,
+           timeout `90`, max_output_bytes `24000`, and a short prompt asking for an
+           ADK/A2A lifecycle plan for resolving this GitHub issue under Revka
+           governance. This is a planning call only.
+
+        A2A visibility:
+        - If `${inputs.track3_a2a_url}` is non-empty, call `a2a_discover` for that URL
+          with `cloud_run_auth` set to `"gcloud"`, `cloud_run_audience` set to
+          `${inputs.track3_a2a_url}`, timeout `30`, and `cloud_run_auth_timeout` `20`.
+        - If it is empty, do not invent a URL; mark A2A discovery as `skipped_no_url`.
+        - If identity-token minting fails, mark A2A discovery as
+          `cloud_run_auth_unavailable` and report the non-secret error.
+        - If discovery still returns HTTP 403 after `cloud_run_auth: "gcloud"`, mark
+          A2A discovery as `cloud_run_invoker_denied`, explain that the endpoint is
+          deployed but the logged-in Google principal likely lacks `roles/run.invoker`,
+          and recommend granting Cloud Run invoker access or using the recording
+          deploy path with unauthenticated discovery.
+        - Do not call `a2a_send_task` unless a real URL is provided and discovery succeeds.
+
+        Hard safety rules:
+        - Do not call `deploy`, `publish`, `infra`, or any mutating Google Cloud command.
+        - Do not paste secrets or full environment values into output.
+        - Report failures as evidence; do not hide missing CLI/auth/runtime issues.
+
+        Return strict JSON with:
+        - agents_cli_info_status
+        - agents_cli_login_status
+        - agents_cli_run_status
+        - agentops_plan_summary
+        - a2a_tooling_status
+        - evidence_summary
+        - risk_notes
+      timeout: 900
+      output_fields: [agents_cli_info_status, agents_cli_login_status, agents_cli_run_status, agentops_plan_summary, a2a_tooling_status, evidence_summary, risk_notes]
 
   - id: human_approval_gate_1
     name: Approve Coder Deployment
     type: human_approval
     depends_on:
       - assess_issue
+      - google_agentops_preflight
     position:
       x: -125.14
       y: 98.89
@@ -66,16 +160,25 @@ steps:
         Issue: #${assess_issue.output_data.issue_number} ${assess_issue.output_data.issue_title}
         Strategy: ${assess_issue.output_data.strategy}
         Risk notes: ${assess_issue.output_data.risk_notes}
+
+        Google AgentOps preflight:
+        - info: ${google_agentops_preflight.output_data.agents_cli_info_status}
+        - login: ${google_agentops_preflight.output_data.agents_cli_login_status}
+        - run: ${google_agentops_preflight.output_data.agents_cli_run_status}
+        - A2A: ${google_agentops_preflight.output_data.a2a_tooling_status}
+        - evidence: ${google_agentops_preflight.output_data.evidence_summary}
+
+        Approve only if the issue strategy and Google AgentOps evidence are acceptable.
       timeout: 0
       channel: dashboard
       approve_keywords:
-        - approve
-        - approved
-        - lgtm
+        - "approve"
+        - "approved"
+        - "lgtm"
       reject_keywords:
-        - reject
-        - rejected
-        - decline
+        - "reject"
+        - "rejected"
+        - "decline"
 
   - id: deploy_coder_agent
     name: Deploy Autonomous Coder
@@ -83,6 +186,7 @@ steps:
     depends_on:
       - human_approval_gate_1
       - assess_issue
+      - google_agentops_preflight
     position:
       x: 155.69
       y: 321.94
@@ -90,29 +194,126 @@ steps:
     agent:
       agent_type: agy
       role: coder
-      output_fields:
+      prompt: |
+        Human approval gate result: ${human_approval_gate_1.output_data.artifact_path}
+
+        Resolve the GitHub issue in the target repository. The Google AgentOps
+        preflight has already demonstrated `google_agents_cli` and the reduced
+        A2A tool surface; treat this as evidence to include in the PR notes.
+
+        Issue Number: ${assess_issue.output_data.issue_number}
+        Issue Title: ${assess_issue.output_data.issue_title}
+        Likely Files: ${assess_issue.output_data.likely_files}
+        Target Fix Strategy: ${assess_issue.output_data.strategy}
+        Google AgentOps Evidence: ${google_agentops_preflight.output_data.evidence_summary}
+        Repository: ${inputs.repo_name}
+
+        Implement the smallest safe fix, run the relevant tests, commit, push a
+        branch, and create a Pull Request linking to Issue #${assess_issue.output_data.issue_number}.
+        Do not merge. Leave any high-risk or credential-dependent operation behind
+        a human approval boundary.
+
+        Return strict JSON with:
         - branch_name
         - commit_sha
         - pr_url
+        - files_changed
         - test_summary
         - clippy_summary
-      prompt: |
-        Coder deployment was approved by the human gate: ${human_approval_gate_1.output}
-
-        Initialize the google_agents_cli workspace and deploy the coder agent.
-
-        Issue Number: ${assess_issue.output_data.issue_number}
-        Target Fix Strategy: ${assess_issue.output_data.strategy}
-        Repository: ${inputs.repo_name}
-
-        Implement the changes, run 'cargo test' and 'cargo clippy', commit, push a branch, and create a Pull Request linking to Issue #${assess_issue.output_data.issue_number}.
+        - google_agentops_evidence
+        - residual_risks
       timeout: 600
+      output_fields: [branch_name, commit_sha, pr_url, files_changed, test_summary, clippy_summary, google_agentops_evidence, residual_risks]
+
+  - id: review_pr
+    name: Review Pull Request & Evidence
+    type: agent
+    depends_on:
+      - deploy_coder_agent
+      - google_agentops_preflight
+      - assess_issue
+    position:
+      x: 507.34
+      y: 552.28
+    assign: revka-agentops-a2a-security-auditor
+    agent:
+      agent_type: agy
+      role: reviewer
+      prompt: |
+        Review the Pull Request and the Google AgentOps evidence before merge approval.
+
+        Repository: ${inputs.repo_name}
+        Issue: #${assess_issue.output_data.issue_number} ${assess_issue.output_data.issue_title}
+        PR URL: ${deploy_coder_agent.output_data.pr_url}
+        Branch: ${deploy_coder_agent.output_data.branch_name}
+        Commit: ${deploy_coder_agent.output_data.commit_sha}
+        Files changed: ${deploy_coder_agent.output_data.files_changed}
+        Test summary: ${deploy_coder_agent.output_data.test_summary}
+        Clippy summary: ${deploy_coder_agent.output_data.clippy_summary}
+        Google AgentOps evidence: ${google_agentops_preflight.output_data.evidence_summary}
+
+        Validate:
+        - The PR addresses the issue and links it.
+        - The implementation is scoped and does not bypass security policy.
+        - Tests and clippy evidence are sufficient for the touched files.
+        - The PR notes mention the Revka Google AgentOps preflight evidence.
+        - Any review findings are concrete and actionable.
+
+        Return strict JSON with:
+        - review_status: APPROVED or NEEDS_CHANGES
+        - review_findings
+        - tests_verified
+        - evidence_verified
+        - required_followups
+        - merge_recommendation
+      timeout: 600
+      output_fields: [review_status, review_findings, tests_verified, evidence_verified, required_followups, merge_recommendation]
+
+  - id: address_review_findings
+    name: Address Review Findings
+    type: agent
+    depends_on:
+      - review_pr
+      - deploy_coder_agent
+    position:
+      x: 503.9
+      y: 706.77
+    assign: revka-agentops-a2a-patch-planner
+    agent:
+      agent_type: agy
+      role: coder
+      prompt: |
+        Apply review findings before the final merge gate.
+
+        PR URL: ${deploy_coder_agent.output_data.pr_url}
+        Review status: ${review_pr.output_data.review_status}
+        Review findings: ${review_pr.output_data.review_findings}
+        Required followups: ${review_pr.output_data.required_followups}
+
+        If the review status is APPROVED and no followups are required, do not
+        make code changes; only verify the PR state and summarize why no changes
+        were needed. If NEEDS_CHANGES, make the smallest safe follow-up commit,
+        push it to the same branch, rerun relevant checks, and summarize exactly
+        what changed.
+
+        Return strict JSON with:
+        - followup_status
+        - changes_pushed
+        - final_commit_sha
+        - final_test_summary
+        - findings_addressed
+        - remaining_risks
+      timeout: 600
+      output_fields: [followup_status, changes_pushed, final_commit_sha, final_test_summary, findings_addressed, remaining_risks]
 
   - id: human_approval_gate_2
     name: Approve Pull Request Merge
     type: human_approval
     depends_on:
+      - address_review_findings
       - deploy_coder_agent
+      - review_pr
+      - google_agentops_preflight
     position:
       x: -120.91
       y: 553.38
@@ -122,19 +323,25 @@ steps:
 
         PR URL: ${deploy_coder_agent.output_data.pr_url}
         Branch: ${deploy_coder_agent.output_data.branch_name}
-        Commit: ${deploy_coder_agent.output_data.commit_sha}
-        Tests: ${deploy_coder_agent.output_data.test_summary}
-        Clippy: ${deploy_coder_agent.output_data.clippy_summary}
+        Initial commit: ${deploy_coder_agent.output_data.commit_sha}
+        Final commit: ${address_review_findings.output_data.final_commit_sha}
+        Tests: ${address_review_findings.output_data.final_test_summary}
+        Review status: ${review_pr.output_data.review_status}
+        Review findings: ${review_pr.output_data.review_findings}
+        Findings addressed: ${address_review_findings.output_data.findings_addressed}
+        Google AgentOps evidence: ${google_agentops_preflight.output_data.evidence_summary}
+
+        Approve only when review findings are addressed and the PR is safe to merge.
       timeout: 0
       channel: dashboard
       approve_keywords:
-        - approve
-        - approved
-        - lgtm
+        - "approve"
+        - "approved"
+        - "lgtm"
       reject_keywords:
-        - reject
-        - rejected
-        - decline
+        - "reject"
+        - "rejected"
+        - "decline"
 
   - id: merge_and_close
     name: Merge PR & Close Issue
@@ -143,25 +350,39 @@ steps:
       - human_approval_gate_2
       - assess_issue
       - deploy_coder_agent
+      - review_pr
+      - address_review_findings
+      - google_agentops_preflight
     position:
       x: 153.7
       y: 795.87
     assign: revka-agentops-a2a-health-verifier
     agent:
-      agent_type: codex
+      agent_type: agy
       role: reviewer
-      output_fields:
-        - merge_status
-        - issue_closed
-        - closing_comment_url
       prompt: |
-        PR merge approved by human manager: ${human_approval_gate_2.output}
+        PR merge approved by human manager: ${human_approval_gate_2.output_data.artifact_path}
 
         PR URL: ${deploy_coder_agent.output_data.pr_url}
         Issue Number: ${assess_issue.output_data.issue_number}
+        Review status: ${review_pr.output_data.review_status}
+        Findings addressed: ${address_review_findings.output_data.findings_addressed}
+        Google AgentOps evidence: ${google_agentops_preflight.output_data.evidence_summary}
 
-        Merge the pull request, write a summarizing comment on the original issue referencing the workflow run ID, and close the issue.
+        Merge the pull request only if the human approval is present, the review
+        status is APPROVED or all findings are addressed, and the final test
+        summary is acceptable. Write a summarizing comment on the original issue
+        referencing the workflow run ID and the Google AgentOps preflight evidence,
+        then close the issue.
+
+        Return strict JSON with:
+        - merge_status
+        - issue_closed
+        - closing_comment_url
+        - merged_pr_url
+        - audit_summary
       timeout: 300
+      output_fields: [merge_status, issue_closed, closing_comment_url, merged_pr_url, audit_summary]
 
 default_timeout: 300
 max_total_time: 3600
