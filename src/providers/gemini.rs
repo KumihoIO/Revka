@@ -1,6 +1,7 @@
 //! Google Gemini provider with support for:
 //! - Direct API key (`GEMINI_API_KEY` env var or config)
 //! - Gemini CLI OAuth tokens (reuse existing ~/.gemini/ authentication)
+//! - Antigravity CLI OAuth tokens (reuse existing ~/.gemini/antigravity-cli/ authentication)
 //! - Revka auth-profiles OAuth tokens
 //! - Google Cloud ADC (`GOOGLE_APPLICATION_CREDENTIALS`)
 
@@ -597,8 +598,8 @@ impl GeminiProvider {
     }
 
     /// Discover all OAuth credential files from known Gemini CLI installations.
-    ///
-    /// Looks in `~/.gemini/oauth_creds.json` (default) plus any
+    /// Looks in `~/.gemini/antigravity-cli/antigravity-oauth-token` (Antigravity CLI),
+    /// `~/.gemini/oauth_creds.json` (default) plus any
     /// `~/.gemini-*-home/.gemini/oauth_creds.json` siblings.
     fn discover_oauth_cred_paths() -> Vec<PathBuf> {
         let home = match UserDirs::new() {
@@ -607,6 +608,14 @@ impl GeminiProvider {
         };
 
         let mut paths = Vec::new();
+
+        let agy_path = home
+            .join(".gemini")
+            .join("antigravity-cli")
+            .join("antigravity-oauth-token");
+        if agy_path.exists() {
+            paths.push(agy_path);
+        }
 
         let primary = home.join(".gemini").join("oauth_creds.json");
         if primary.exists() {
@@ -634,53 +643,104 @@ impl GeminiProvider {
         paths
     }
 
-    /// Try to load OAuth credentials from Gemini CLI's cached credentials.
-    /// Location: `~/.gemini/oauth_creds.json`
+    /// Try to load OAuth credentials from Gemini CLI or Antigravity CLI's cached credentials.
+    /// Location: `~/.gemini/oauth_creds.json` or `~/.gemini/antigravity-cli/antigravity-oauth-token`
     ///
     /// Returns the full `OAuthTokenState` so the provider can refresh at runtime.
     fn try_load_gemini_cli_token(path: Option<&PathBuf>) -> Option<OAuthTokenState> {
-        let creds = Self::load_gemini_cli_creds(path?)?;
+        let path = path?;
+        if !path.exists() {
+            return None;
+        }
 
-        // Determine expiry in millis: prefer expiry_date over expiry (RFC 3339)
-        let expiry_millis = creds.expiry_date.or_else(|| {
-            creds.expiry.as_deref().and_then(|expiry| {
+        let is_agy = path
+            .file_name()
+            .map_or(false, |name| name == "antigravity-oauth-token");
+
+        if is_agy {
+            let content = std::fs::read_to_string(path).ok()?;
+            #[derive(Debug, Deserialize)]
+            struct AntigravityOAuthFile {
+                #[allow(dead_code)]
+                auth_method: Option<String>,
+                token: Option<AntigravityTokenInner>,
+            }
+            #[derive(Debug, Deserialize)]
+            struct AntigravityTokenInner {
+                access_token: Option<String>,
+                expiry: Option<String>,
+                refresh_token: Option<String>,
+                #[allow(dead_code)]
+                token_type: Option<String>,
+            }
+
+            let file: AntigravityOAuthFile = serde_json::from_str(&content).ok()?;
+            let inner = file.token?;
+
+            let access_token = inner
+                .access_token
+                .and_then(|t| Self::normalize_non_empty(&t))?;
+            let expiry_millis = inner.expiry.as_deref().and_then(|expiry| {
                 chrono::DateTime::parse_from_rfc3339(expiry)
                     .ok()
                     .map(|dt| dt.timestamp_millis())
+            });
+
+            let client_id = Self::load_non_empty_env("GEMINI_OAUTH_CLIENT_ID");
+            let client_secret = Self::load_non_empty_env("GEMINI_OAUTH_CLIENT_SECRET");
+
+            Some(OAuthTokenState {
+                access_token,
+                refresh_token: inner.refresh_token,
+                client_id,
+                client_secret,
+                expiry_millis,
             })
-        });
+        } else {
+            let creds = Self::load_gemini_cli_creds(path)?;
 
-        let access_token = creds
-            .access_token
-            .and_then(|token| Self::normalize_non_empty(&token))?;
+            // Determine expiry in millis: prefer expiry_date over expiry (RFC 3339)
+            let expiry_millis = creds.expiry_date.or_else(|| {
+                creds.expiry.as_deref().and_then(|expiry| {
+                    chrono::DateTime::parse_from_rfc3339(expiry)
+                        .ok()
+                        .map(|dt| dt.timestamp_millis())
+                })
+            });
 
-        let id_token_client_id = creds
-            .id_token
-            .as_deref()
-            .and_then(extract_client_id_from_id_token);
+            let access_token = creds
+                .access_token
+                .and_then(|token| Self::normalize_non_empty(&token))?;
 
-        let client_id = Self::load_non_empty_env("GEMINI_OAUTH_CLIENT_ID")
-            .or_else(|| {
-                creds
-                    .client_id
-                    .as_deref()
-                    .and_then(Self::normalize_non_empty)
-            })
-            .or(id_token_client_id);
-        let client_secret = Self::load_non_empty_env("GEMINI_OAUTH_CLIENT_SECRET").or_else(|| {
-            creds
-                .client_secret
+            let id_token_client_id = creds
+                .id_token
                 .as_deref()
-                .and_then(Self::normalize_non_empty)
-        });
+                .and_then(extract_client_id_from_id_token);
 
-        Some(OAuthTokenState {
-            access_token,
-            refresh_token: creds.refresh_token,
-            client_id,
-            client_secret,
-            expiry_millis,
-        })
+            let client_id = Self::load_non_empty_env("GEMINI_OAUTH_CLIENT_ID")
+                .or_else(|| {
+                    creds
+                        .client_id
+                        .as_deref()
+                        .and_then(Self::normalize_non_empty)
+                })
+                .or(id_token_client_id);
+            let client_secret =
+                Self::load_non_empty_env("GEMINI_OAUTH_CLIENT_SECRET").or_else(|| {
+                    creds
+                        .client_secret
+                        .as_deref()
+                        .and_then(Self::normalize_non_empty)
+                });
+
+            Some(OAuthTokenState {
+                access_token,
+                refresh_token: creds.refresh_token,
+                client_id,
+                client_secret,
+                expiry_millis,
+            })
+        }
     }
 
     /// Get the Gemini CLI config directory (~/.gemini)
@@ -691,14 +751,35 @@ impl GeminiProvider {
     /// Check if Gemini CLI is configured and has valid credentials
     pub fn has_cli_credentials() -> bool {
         Self::discover_oauth_cred_paths().iter().any(|path| {
-            Self::load_gemini_cli_creds(path)
-                .and_then(|creds| {
-                    creds
-                        .access_token
-                        .as_deref()
-                        .and_then(Self::normalize_non_empty)
-                })
-                .is_some()
+            if path
+                .file_name()
+                .map_or(false, |name| name == "antigravity-oauth-token")
+            {
+                let content = std::fs::read_to_string(path).ok();
+                if let Some(content_str) = content {
+                    #[derive(Debug, Deserialize)]
+                    struct AntigravityOAuthFile {
+                        token: Option<AntigravityTokenInner>,
+                    }
+                    #[derive(Debug, Deserialize)]
+                    struct AntigravityTokenInner {
+                        access_token: Option<String>,
+                    }
+                    if let Ok(file) = serde_json::from_str::<AntigravityOAuthFile>(&content_str) {
+                        return file.token.and_then(|t| t.access_token).is_some();
+                    }
+                }
+                false
+            } else {
+                Self::load_gemini_cli_creds(path)
+                    .and_then(|creds| {
+                        creds
+                            .access_token
+                            .as_deref()
+                            .and_then(Self::normalize_non_empty)
+                    })
+                    .is_some()
+            }
         })
     }
 
@@ -803,15 +884,22 @@ impl GeminiProvider {
     }
 
     fn format_model_name(model: &str) -> String {
-        if model.starts_with("models/") {
-            model.to_string()
-        } else {
-            format!("models/{model}")
-        }
+        let bare = model.strip_prefix("models/").unwrap_or(model);
+        let mapped = match bare {
+            "gemini-3.5-flash" => "gemini-2.5-flash",
+            "gemini-3.5-pro" => "gemini-2.5-pro",
+            other => other,
+        };
+        format!("models/{mapped}")
     }
 
     fn format_internal_model_name(model: &str) -> String {
-        model.strip_prefix("models/").unwrap_or(model).to_string()
+        let bare = model.strip_prefix("models/").unwrap_or(model);
+        match bare {
+            "gemini-3.5-flash" => "gemini-2.5-flash".to_string(),
+            "gemini-3.5-pro" => "gemini-2.5-pro".to_string(),
+            other => other.to_string(),
+        }
     }
 
     /// Build the API URL based on auth type.
@@ -851,7 +939,17 @@ impl GeminiProvider {
     /// Caches the result for subsequent calls.
     async fn resolve_oauth_project(&self, token: &str) -> anyhow::Result<String> {
         let project_seed = Self::load_non_empty_env("GOOGLE_CLOUD_PROJECT")
-            .or_else(|| Self::load_non_empty_env("GOOGLE_CLOUD_PROJECT_ID"));
+            .or_else(|| Self::load_non_empty_env("GOOGLE_CLOUD_PROJECT_ID"))
+            .or_else(|| {
+                let home = UserDirs::new()?.home_dir().to_path_buf();
+                let settings_path = home
+                    .join(".gemini")
+                    .join("antigravity-cli")
+                    .join("settings.json");
+                let content = std::fs::read_to_string(settings_path).ok()?;
+                let json: serde_json::Value = serde_json::from_str(&content).ok()?;
+                json.pointer("/gcp/project")?.as_str().map(str::to_string)
+            });
         let project_seed_for_request = project_seed.clone();
         let duet_project_for_request = project_seed.clone();
 

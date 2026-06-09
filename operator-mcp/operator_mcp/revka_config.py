@@ -299,9 +299,23 @@ def workspace_dir(*, force_reload: bool = False) -> str:
     if _cached_workspace_dir is not None and not force_reload:
         return _cached_workspace_dir
 
+    def _get_real_home() -> str:
+        home = os.environ.get("HOME") or os.path.expanduser("~")
+        sandbox_marker = "/.revka/tmp/agent_prompts/homes/"
+        if sandbox_marker in home:
+            parts = home.split(sandbox_marker, 1)
+            return parts[0]
+        return home
+
+    def _expand_path_with_real_home(path: str) -> str:
+        if path.startswith("~"):
+            real_home = _get_real_home()
+            path = real_home + path[1:]
+        return os.path.expanduser(path)
+
     env_value = os.environ.get("REVKA_WORKSPACE")
     if isinstance(env_value, str) and env_value.strip():
-        path = os.path.expanduser(env_value.strip())
+        path = _expand_path_with_real_home(env_value.strip())
         # When REVKA_WORKSPACE points at a profile/config directory, Rust
         # uses its nested workspace/ directory. If it already points at a data
         # directory without config.toml, use it directly.
@@ -310,5 +324,5 @@ def workspace_dir(*, force_reload: bool = False) -> str:
         _cached_workspace_dir = os.path.abspath(path)
         return _cached_workspace_dir
 
-    _cached_workspace_dir = os.path.abspath(os.path.expanduser(_DEFAULT_WORKSPACE_DIR))
+    _cached_workspace_dir = os.path.abspath(_expand_path_with_real_home(_DEFAULT_WORKSPACE_DIR))
     return _cached_workspace_dir

@@ -228,14 +228,12 @@ export function createCodexSession(
       if (config.model) {
         args.push("--model", config.model);
       }
-      args.push(effectivePrompt);
     } else if (config.agentType === "cursor") {
       binary = "agent";
       args.push("--print", "--dangerously-skip-permissions");
       if (config.model) {
         args.push("--model", config.model);
       }
-      args.push(effectivePrompt);
     } else if (config.agentType === "opencode") {
       binary = "opencode";
       args.push("run", effectivePrompt);
@@ -244,14 +242,21 @@ export function createCodexSession(
       args.push(effectivePrompt);
     }
 
+    const isStdinPrompt = config.agentType === "agy" || config.agentType === "cursor";
+
     log(`Spawning ${binary}: ${args.slice(0, 7).join(" ")}... (${effectivePrompt.length} chars)`);
 
     const proc = spawn(binary, args, {
       cwd: config.cwd,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: [isStdinPrompt ? "pipe" : "ignore", "pipe", "pipe"],
       env: { ...process.env, ...(config.env ?? {}) },
     });
     handle.process = proc;
+
+    if (isStdinPrompt && proc.stdin) {
+      proc.stdin.write(effectivePrompt);
+      proc.stdin.end();
+    }
 
     proc.stdout?.on("data", (chunk: Buffer) => {
       const text = chunk.toString("utf-8");
