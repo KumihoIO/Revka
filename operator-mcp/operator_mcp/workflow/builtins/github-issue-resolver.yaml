@@ -104,6 +104,8 @@ steps:
 
         You must use the `google_agents_cli` MCP tool, not shell, for Google lifecycle inspection.
 
+        CRITICAL INSTRUCTION: Do NOT search for the `agents-cli` binary or python script in the shell. Do NOT attempt to run python scripts or import Python files to verify tools. The `google_agents_cli` and `a2a_discover` tools are fully registered MCP tools in your environment and can be invoked directly as standard tool calls via your tool-calling API.
+
         Required non-mutating tool calls:
         1. Call `google_agents_cli` with command `["info"]`, timeout `30`, and
            max_output_bytes `12000`.

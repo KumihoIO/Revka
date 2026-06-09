@@ -226,15 +226,19 @@ def test_github_issue_resolver_matches_demo_run_contract() -> None:
     assert wf.name == "github-issue-resolver"
     assert [step.id for step in wf.steps] == [
         "assess_issue",
+        "google_agentops_preflight",
         "human_approval_gate_1",
         "deploy_coder_agent",
+        "review_pr",
+        "address_review_findings",
         "human_approval_gate_2",
         "merge_and_close",
     ]
-    assert wf.triggers == []
+    assert len(wf.triggers) == 1
+    assert wf.triggers[0].on_kind == "github-issue"
 
     input_names = {input_def.name for input_def in wf.inputs}
-    assert {"github_payload", "repo_name"} == input_names
+    assert {"github_payload", "repo_name", "track3_a2a_url"} == input_names
 
     assess = wf.step_by_id("assess_issue")
     assert assess.agent.agent_type == "agy"
@@ -253,16 +257,21 @@ def test_github_issue_resolver_matches_demo_run_contract() -> None:
         "branch_name",
         "commit_sha",
         "pr_url",
+        "files_changed",
         "test_summary",
         "clippy_summary",
+        "google_agentops_evidence",
+        "residual_risks",
     ]
 
     merge = wf.step_by_id("merge_and_close")
-    assert merge.agent.agent_type == "codex"
+    assert merge.agent.agent_type == "agy"
     assert merge.agent.output_fields == [
         "merge_status",
         "issue_closed",
         "closing_comment_url",
+        "merged_pr_url",
+        "audit_summary",
     ]
 
 

@@ -1,77 +1,123 @@
 //! Tool layer for Google Gemini models.
 //!
-//! Gemini uses a function-calling format similar to OpenAI.  This layer
-//! provides JSON examples adapted for Gemini's conventions.
+//! Gemini uses prompt-guided XML tool-calling format when native tool calling
+//! is not enabled. This layer provides precise guidance and examples using
+//! the required <tool_call> tags and JSON structures.
 
 /// Tool-calling guidance for Gemini models.
 pub const TOOL_LAYER: &str = r#"
 
 === TOOL USAGE ===
 
-You have revka-operator tools available. Call each tool by name with a JSON
-object containing the parameters.
+You have revka-operator tools available. Because you are using text-guided tool calling, you MUST follow this protocol exactly.
 
---- Core Workflow ---
+To execute a tool, write a single `<tool_call>` block containing a JSON payload with "name" and "arguments" fields. Follow this pattern:
+
+```xml
+<tool_call>
+{"name": "revka-operator__tool_name", "arguments": {"param": "value"}}
+</tool_call>
+```
+
+CRITICAL INSTRUCTIONS:
+1. ALWAYS wrap your tool calls in `<tool_call>` and `</tool_call>` tags.
+2. NEVER use python-like syntax (e.g. `tool_name()`), plain markdown code blocks without XML tags, or raw text.
+3. NEVER hallucinate tool results or output tags like `<tool_output>`. Once you output `<tool_call>`, STOP writing and wait for the system to execute the tool and provide the real output.
+
+--- Core Workflow Examples ---
 
 1. Search the agent pool:
-   search_agent_pool({"query": "what you need"})
+```xml
+<tool_call>
+{"name": "revka-operator__search_agent_pool", "arguments": {"query": "rust developer"}}
+</tool_call>
+```
 
 2. Spawn an agent:
-   create_agent({
-     "cwd": "/path/to/project",
-     "title": "Task title",
-     "template": "template-name",
-     "initial_prompt": "Detailed instructions."
-   })
-   Or without template:
-   create_agent({
-     "cwd": "/path/to/project",
-     "title": "Task title",
-     "agent_type": "codex",
-     "initial_prompt": "Detailed instructions."
-   })
-   For Google ADK lifecycle work, spawn claude/codex and instruct it to call
-   `google_agents_cli`; agents-cli is a tool for coding agents, not a provider.
+```xml
+<tool_call>
+{
+  "name": "revka-operator__create_agent",
+  "arguments": {
+    "cwd": "/path/to/project",
+    "title": "Database Refactoring",
+    "agent_type": "codex",
+    "initial_prompt": "Refactor src/db.rs to use connection pooling. Run tests."
+  }
+}
+</tool_call>
+```
 
 3. Wait for completion:
-   wait_for_agent({"agent_id": "<id>"})
-   If status is "running", call wait_for_agent again.
+```xml
+<tool_call>
+{"name": "revka-operator__wait_for_agent", "arguments": {"agent_id": "agent-1234"}}
+</tool_call>
+```
 
 4. Get results:
-   get_agent_activity({"agent_id": "<id>"})
+```xml
+<tool_call>
+{"name": "revka-operator__get_agent_activity", "arguments": {"agent_id": "agent-1234"}}
+</tool_call>
+```
 
-5. Send follow-up (only when agent is idle):
-   send_agent_prompt({"agent_id": "<id>", "prompt": "Next steps."})
+5. Send follow-up:
+```xml
+<tool_call>
+{"name": "revka-operator__send_agent_prompt", "arguments": {"agent_id": "agent-1234", "prompt": "Please add integration tests."}}
+</tool_call>
+```
 
---- Teams ---
+--- Complete Tool List (Use with `revka-operator__` prefix) ---
 
-Deploy a team:
-   spawn_team({
-     "team_kref": "kref://Revka/Teams/team-name",
-     "task": "Task description.",
-     "cwd": "/path/to/project"
-   })
+Agent lifecycle:
+  - `revka-operator__create_agent`
+  - `revka-operator__wait_for_agent`
+  - `revka-operator__send_agent_prompt`
+  - `revka-operator__get_agent_activity`
+  - `revka-operator__list_agents`
 
---- All Tools ---
+Agent pool:
+  - `revka-operator__search_agent_pool`
+  - `revka-operator__save_agent_template`
+  - `revka-operator__list_agent_templates`
 
-Agent lifecycle: create_agent, wait_for_agent, send_agent_prompt,
-  get_agent_activity, list_agents
-Agent pool: search_agent_pool, save_agent_template, list_agent_templates
-Teams: spawn_team, search_teams, list_teams, get_team, create_team
-Goals: create_goal, get_goals, update_goal
-Skills: capture_skill
-Trust: record_agent_outcome, get_agent_trust
-Budget: get_budget_status
-Google Agents CLI: google_agents_cli
-ClawHub: search_clawhub, browse_clawhub, install_from_clawhub
-Nodes: list_nodes, invoke_node
-Session: get_session_history, archive_session
+Teams:
+  - `revka-operator__spawn_team`
+  - `revka-operator__search_teams`
+  - `revka-operator__list_teams`
+  - `revka-operator__get_team`
+  - `revka-operator__create_team`
 
---- Error Handling ---
+Goals:
+  - `revka-operator__create_goal`
+  - `revka-operator__get_goals`
+  - `revka-operator__update_goal`
 
-If a tool returns an error, read the message carefully:
-  - "Agent not found" — wrong agent_id
-  - "Agent is still running" — wait first, then send follow-up
-  - "Agent limit reached" — wait for existing agents to finish
-  - "Template not found" — check the name with search_agent_pool
+Skills:
+  - `revka-operator__capture_skill`
+
+Trust:
+  - `revka-operator__record_agent_outcome`
+  - `revka-operator__get_agent_trust`
+
+Budget:
+  - `revka-operator__get_budget_status`
+
+Google Agents CLI:
+  - `revka-operator__google_agents_cli`
+
+ClawHub:
+  - `revka-operator__search_clawhub`
+  - `revka-operator__browse_clawhub`
+  - `revka-operator__install_from_clawhub`
+
+Nodes:
+  - `revka-operator__list_nodes`
+  - `revka-operator__invoke_node`
+
+Session:
+  - `revka-operator__get_session_history`
+  - `revka-operator__archive_session`
 "#;
