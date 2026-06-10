@@ -129,6 +129,88 @@ def write_file(path: str, content: str) -> str:
         return f"ERROR: {exc}"
 
 
+def github_merge_pr(repo_name: str, pr_number: int, commit_title: str = "", merge_method: str = "squash") -> str:
+    """Merge a GitHub pull request via the REST API using GITHUB_TOKEN.
+
+    Args:
+        repo_name: "owner/repo".
+        pr_number: Pull request number to merge.
+        commit_title: Optional merge commit title.
+        merge_method: "squash" (default), "merge", or "rebase".
+
+    Returns:
+        JSON string: {"merged": bool, "sha": str} or {"error": str}.
+    """
+    token = os.getenv("GITHUB_TOKEN", "")
+    if not token:
+        return json.dumps({"error": "GITHUB_TOKEN is not set"})
+    try:
+        body: dict[str, str] = {"merge_method": merge_method}
+        if commit_title:
+            body["commit_title"] = commit_title
+        resp = httpx.put(
+            f"{GITHUB_API}/repos/{repo_name}/pulls/{pr_number}/merge",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+            json=body,
+            timeout=30,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            return json.dumps({"merged": bool(data.get("merged")), "sha": data.get("sha", "")})
+        return json.dumps({"error": _redact(f"HTTP {resp.status_code}: {resp.text[:500]}")})
+    except Exception as exc:  # noqa: BLE001 - surface tool failure to the model
+        return json.dumps({"error": _redact(str(exc))})
+
+
+def github_comment_and_close_issue(repo_name: str, issue_number: int, comment: str) -> str:
+    """Comment on a GitHub issue and close it via the REST API using GITHUB_TOKEN.
+
+    Args:
+        repo_name: "owner/repo".
+        issue_number: Issue number to comment on and close.
+        comment: Markdown comment body to post before closing.
+
+    Returns:
+        JSON string: {"comment_url": str, "closed": bool} or {"error": str}.
+    """
+    token = os.getenv("GITHUB_TOKEN", "")
+    if not token:
+        return json.dumps({"error": "GITHUB_TOKEN is not set"})
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    try:
+        comment_url = ""
+        if comment:
+            c_resp = httpx.post(
+                f"{GITHUB_API}/repos/{repo_name}/issues/{issue_number}/comments",
+                headers=headers,
+                json={"body": comment},
+                timeout=30,
+            )
+            if c_resp.status_code in (200, 201):
+                comment_url = c_resp.json().get("html_url", "")
+            else:
+                return json.dumps({"error": _redact(f"comment HTTP {c_resp.status_code}: {c_resp.text[:500]}")})
+        x_resp = httpx.patch(
+            f"{GITHUB_API}/repos/{repo_name}/issues/{issue_number}",
+            headers=headers,
+            json={"state": "closed"},
+            timeout=30,
+        )
+        if x_resp.status_code == 200:
+            return json.dumps({"comment_url": comment_url, "closed": x_resp.json().get("state") == "closed"})
+        return json.dumps({"error": _redact(f"close HTTP {x_resp.status_code}: {x_resp.text[:500]}")})
+    except Exception as exc:  # noqa: BLE001 - surface tool failure to the model
+        return json.dumps({"error": _redact(str(exc))})
+
+
 def github_open_pr(repo_name: str, head_branch: str, base_branch: str, title: str, body: str) -> str:
     """Open a GitHub pull request via the REST API using GITHUB_TOKEN.
 
@@ -165,7 +247,23 @@ def github_open_pr(repo_name: str, head_branch: str, base_branch: str, title: st
 
 
 INSTRUCTION = """\
-You are an autonomous coding agent. Each task message is a JSON object:
+You are an autonomous coding agent. Each task message is a JSON object.
+
+If the JSON has "action": "merge", you are in MERGE mode:
+{"action": "merge", "repo_name": "owner/repo", "pr_number": 7,
+ "issue_number": 123, "run_id": "..."}
+In MERGE mode do exactly this and nothing else:
+1. Call github_merge_pr(repo_name, pr_number, "<short title>", "squash").
+2. If the merge succeeded, call github_comment_and_close_issue(repo_name,
+   issue_number, "Resolved by Revka cloud workflow run <run_id>. Merged PR
+   #<pr_number>. Reviewed and merged by the Google Cloud A2A executors.").
+3. Respond with ONLY this JSON (no markdown, no prose):
+   {"merge_status": "merged|failed", "issue_closed": true|false,
+    "merged_pr_url": "https://github.com/<repo_name>/pull/<pr_number>",
+    "audit_summary": "<one line>"}
+Do NOT clone, edit, or open a PR in MERGE mode.
+
+Otherwise you are in FIX mode. The task JSON is:
 {"repo_name": "owner/repo", "issue_number": 123, "issue_title": "...",
  "issue_body": "...", "strategy": "how to implement the fix"}
 
@@ -200,5 +298,5 @@ root_agent = Agent(
     model=Gemini(model=MODEL_NAME),
     description="Implements GitHub issue fixes and opens pull requests.",
     instruction=INSTRUCTION,
-    tools=[run_shell, read_file, write_file, github_open_pr],
+    tools=[run_shell, read_file, write_file, github_open_pr, github_merge_pr, github_comment_and_close_issue],
 )
