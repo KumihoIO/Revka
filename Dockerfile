@@ -31,6 +31,9 @@ COPY crates/aardvark-sys/ crates/aardvark-sys/
 # Include tauri workspace member manifest (desktop app, but needed for workspace resolution).
 # .dockerignore whitelists only Cargo.toml; src and build.rs are stubbed below.
 COPY apps/tauri/Cargo.toml apps/tauri/Cargo.toml
+# Vendored security patches referenced by [patch] entries in Cargo.toml —
+# required even for the dependency-caching build.
+COPY vendor/ vendor/
 # Create dummy targets declared in Cargo.toml so manifest parsing succeeds.
 RUN mkdir -p src benches apps/tauri/src \
     && echo "fn main() {}" > src/main.rs \
