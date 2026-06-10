@@ -54,6 +54,14 @@ RUN rm -rf src benches
 # 2. Copy only build-relevant source paths (avoid cache-busting on docs/tests/scripts)
 COPY src/ src/
 COPY benches/ benches/
+# Directories embedded into the binary via include_str!/include_bytes!:
+# sidecar launchers, fluent i18n bundles, firmware images.
+COPY resources/ resources/
+COPY i18n/ i18n/
+COPY firmware/ firmware/
+# include_dir! embeds the whole operator-mcp tree (sidecar source, workflow
+# builtins, session-manager) into the binary.
+COPY operator-mcp/ operator-mcp/
 COPY --from=web-builder /web/dist web/dist
 COPY *.rs .
 RUN touch src/main.rs
