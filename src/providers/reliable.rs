@@ -236,12 +236,17 @@ fn parse_retry_after_ms(err: &anyhow::Error) -> Option<u64> {
     let msg = err.to_string();
     let lower = msg.to_lowercase();
 
-    // Look for "retry-after: <number>" or "retry_after: <number>"
+    // Look for "retry-after: <number>" or "retry_after: <number>", plus the
+    // phrasings Gemini uses in 429 bodies: cloudcode-pa says "Your quota
+    // will reset after 32s." and generativelanguage says "Please retry in
+    // 26.3s." (the digit parse below stops at the trailing "s").
     for prefix in &[
         "retry-after:",
         "retry_after:",
         "retry-after ",
         "retry_after ",
+        "reset after ",
+        "retry in ",
     ] {
         if let Some(pos) = lower.find(prefix) {
             let after = &msg[pos + prefix.len()..];
@@ -1956,6 +1961,23 @@ mod tests {
             Some(7000),
             "Retry-After with space separator must be parsed"
         );
+    }
+
+    #[test]
+    fn parse_retry_after_gemini_quota_reset_phrasing() {
+        // cloudcode-pa (OAuth path) 429 body
+        let err = anyhow::anyhow!(
+            "Gemini API error (429 Too Many Requests): You have exhausted your capacity \
+             on this model. Your quota will reset after 32s."
+        );
+        assert_eq!(parse_retry_after_ms(&err), Some(32_000));
+    }
+
+    #[test]
+    fn parse_retry_after_gemini_retry_in_phrasing() {
+        // generativelanguage (API-key path) 429 body
+        let err = anyhow::anyhow!("Resource has been exhausted. Please retry in 26.3s.");
+        assert_eq!(parse_retry_after_ms(&err), Some(26_300));
     }
 
     #[test]
