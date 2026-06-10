@@ -77,3 +77,6 @@ apps/tauri/tauri.conf.json
 apps/tauri/build.rs
 !apps/tauri/Cargo.toml
 scripts/
+
+# Cloud Run stage needs the sidecar installer
+!scripts/install-sidecars.sh
