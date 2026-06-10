@@ -187,6 +187,20 @@ async def _try_sidecar_create(
             clean_build=clean_build, node_env=node_env,
         )
 
+    # agy cannot receive MCP servers through the sidecar spawn args — the
+    # session-manager only translates mcpServers for codex (config flags)
+    # and claude (SDK). Build the same sandboxed HOME the subprocess path
+    # uses (mcp_config.json + copied Antigravity credentials + gcloud and
+    # .agents symlinks) and ship the HOME override through the spawn env,
+    # which the session-manager merges into the child process environment.
+    if mcp_servers and agent_type == "agy":
+        from ..agent_subprocess import _write_agent_home_configs
+        try:
+            _, home_env = _write_agent_home_configs(agent_id, agent_type, mcp_servers)
+            env_extra = {**(env_extra or {}), **home_env}
+        except Exception as exc:  # noqa: BLE001
+            _log(f"Sidecar create_agent: failed to prepare agy home configs: {exc}")
+
     # Layer in extra env vars (e.g. REVKA_AUTH_PROFILE_ID for workflow
     # auth-profile bindings) on top of any existing env config.
     if env_extra:

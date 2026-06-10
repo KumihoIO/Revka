@@ -225,6 +225,11 @@ export function createCodexSession(
     } else if (config.agentType === "agy") {
       binary = "agy";
       args.push("--print", "--dangerously-skip-permissions");
+      // Antigravity's print mode defaults to a 5-minute wait, then prints
+      // "Error: timed out waiting for response" as its entire output and
+      // exits 0 — failing any longer-running workflow step. Give it
+      // headroom beyond the longest step budget instead.
+      args.push("--print-timeout", "30m");
       if (config.model) {
         args.push("--model", config.model);
       }
@@ -318,6 +323,18 @@ export function createCodexSession(
           }
         }
         handle.jsonBuffer = "";
+        // Stdin-prompt agents (agy, cursor) print plain text, so the
+        // per-line timeline events above fragment a multi-line answer —
+        // and downstream consumers read only the last message, losing all
+        // but the final line of e.g. a FINAL_OUTPUT YAML block. Emit one
+        // consolidated message with the full stdout so the complete
+        // answer is what consumers see last.
+        if (isStdinPrompt) {
+          const fullOutput = handle.stdout.trim();
+          if (fullOutput) {
+            onEvent({ type: "timeline", item: { type: "assistant_message", text: fullOutput } });
+          }
+        }
         onEvent({
           type: "turn_completed",
           turnId,

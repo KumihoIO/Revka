@@ -72,12 +72,16 @@ class TestBuildCommand:
         assert cmd[0] == "agy"
         assert "--print" in cmd
         assert "--dangerously-skip-permissions" in cmd
+        # Antigravity defaults --print-timeout to 5m, which silently kills
+        # long workflow steps; the spawner must extend it.
+        assert cmd[cmd.index("--print-timeout") + 1] == "30m"
 
     def test_agent_command(self):
         cmd = _build_command("agent")
         assert cmd[0] == "agent"
         assert "--print" in cmd
         assert "--dangerously-skip-permissions" in cmd
+        assert "--print-timeout" not in cmd
 
     def test_opencode_command(self):
         cmd = _build_command("opencode")

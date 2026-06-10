@@ -257,6 +257,12 @@ def _build_command(
         # Prompt is piped via stdin — no -p flag, no ARG_MAX issues,
         # no shell encoding problems with Korean/Unicode text.
         cmd = [_resolve_cli(binary_name), "--print", "--dangerously-skip-permissions"]
+        if binary_name == "agy":
+            # Antigravity's print mode defaults to a 5-minute wait and then
+            # emits "Error: timed out waiting for response" as its entire
+            # output (exit 0), failing any longer-running workflow step.
+            # Give it headroom beyond the longest step budget instead.
+            cmd.extend(["--print-timeout", "30m"])
         if model:
             cmd.extend(["--model", model])
         if mcp_config_path and agent_type == "claude":
