@@ -84,6 +84,7 @@ jobs:
             --no-cpu-throttling \
             --timeout=3600 \
             --allow-unauthenticated \
+            --set-env-vars="GOOGLE_GENAI_USE_VERTEXAI=true,GOOGLE_CLOUD_PROJECT=construct-498201,GOOGLE_CLOUD_LOCATION=us-central1" \
             --set-secrets="KUMIHO_SERVICE_TOKEN=revka-KUMIHO_SERVICE_TOKEN:latest,GEMINI_OAUTH_CLIENT_ID=revka-GEMINI_OAUTH_CLIENT_ID:latest,GEMINI_OAUTH_CLIENT_SECRET=revka-GEMINI_OAUTH_CLIENT_SECRET:latest"
 
       - name: Smoke check
