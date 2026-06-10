@@ -4,6 +4,8 @@
 //! - Antigravity CLI OAuth tokens (reuse existing ~/.gemini/antigravity-cli/ authentication)
 //! - Revka auth-profiles OAuth tokens
 //! - Google Cloud ADC (`GOOGLE_APPLICATION_CREDENTIALS`)
+//! - Vertex AI via the GCP metadata server (`GOOGLE_GENAI_USE_VERTEXAI` +
+//!   `GOOGLE_CLOUD_PROJECT`) — keyless auth on Cloud Run/GCE runtimes
 
 use crate::auth::AuthService;
 use crate::providers::traits::{ChatMessage, Provider, TokenUsage};
@@ -25,6 +27,8 @@ pub struct GeminiProvider {
     auth_service: Option<AuthService>,
     /// Override profile name for managed auth.
     auth_profile_override: Option<String>,
+    /// Cached Vertex ADC access token from the GCP metadata server.
+    vertex_token: Arc<tokio::sync::Mutex<VertexTokenState>>,
 }
 
 /// Mutable OAuth token state — supports runtime refresh for long-lived processes.
@@ -34,6 +38,14 @@ struct OAuthTokenState {
     client_id: Option<String>,
     client_secret: Option<String>,
     /// Expiry as unix millis. `None` means unknown (treat as potentially expired).
+    expiry_millis: Option<i64>,
+}
+
+/// Cached Vertex ADC token state — fetched from the GCP metadata server.
+#[derive(Default)]
+struct VertexTokenState {
+    access_token: Option<String>,
+    /// Expiry as unix millis. `None` means unknown (treat as expired).
     expiry_millis: Option<i64>,
 }
 
@@ -52,6 +64,10 @@ enum GeminiAuth {
     /// OAuth token managed by AuthService (auth-profiles.json).
     /// Token refresh is handled by AuthService, not here.
     ManagedOAuth,
+    /// Vertex AI with Application Default Credentials from the GCP metadata
+    /// server (Cloud Run/GCE runtime service account): sent as
+    /// `Authorization: Bearer` against the `aiplatform.googleapis.com` API.
+    VertexAdc { project: String, location: String },
 }
 
 impl GeminiAuth {
@@ -74,7 +90,9 @@ impl GeminiAuth {
             GeminiAuth::ExplicitKey(s)
             | GeminiAuth::EnvGeminiKey(s)
             | GeminiAuth::EnvGoogleKey(s) => s,
-            GeminiAuth::OAuthToken(_) | GeminiAuth::ManagedOAuth => "",
+            GeminiAuth::OAuthToken(_) | GeminiAuth::ManagedOAuth | GeminiAuth::VertexAdc { .. } => {
+                ""
+            }
         }
     }
 }
@@ -333,6 +351,13 @@ const LOAD_CODE_ASSIST_ENDPOINT: &str =
 /// Public API endpoint for API key users.
 const PUBLIC_API_ENDPOINT: &str = "https://generativelanguage.googleapis.com/v1beta";
 
+/// GCP metadata server token endpoint (Cloud Run/GCE runtime service account).
+const GCP_METADATA_TOKEN_URL: &str =
+    "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token";
+
+/// Default Vertex AI location when `GOOGLE_CLOUD_LOCATION` is unset.
+const VERTEX_DEFAULT_LOCATION: &str = "us-central1";
+
 // ══════════════════════════════════════════════════════════════════════════════
 // TOKEN REFRESH
 // ══════════════════════════════════════════════════════════════════════════════
@@ -342,6 +367,85 @@ struct RefreshedToken {
     access_token: String,
     /// Expiry as unix millis (computed from `expires_in` seconds in the response).
     expiry_millis: Option<i64>,
+}
+
+/// Whether a cached bearer token must be refreshed.
+///
+/// Refresh when expiry is unknown, already past, or within 60 seconds of
+/// expiring (skew buffer against clock drift and in-flight request latency).
+fn token_needs_refresh(expiry_millis: Option<i64>, now_millis: i64) -> bool {
+    expiry_millis.map_or(true, |exp| exp <= now_millis.saturating_add(60_000))
+}
+
+/// Current unix time in milliseconds (saturating to `i64::MAX` on failure).
+fn now_unix_millis() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|d| i64::try_from(d.as_millis()).ok())
+        .unwrap_or(i64::MAX)
+}
+
+/// Fetch an access token for the runtime service account from the GCP
+/// metadata server. Only available on GCP runtimes (Cloud Run, GCE, GKE).
+async fn fetch_metadata_server_token() -> anyhow::Result<RefreshedToken> {
+    // The metadata server is link-local: keep timeouts short and never proxy.
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .connect_timeout(std::time::Duration::from_secs(3))
+        .no_proxy()
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
+
+    let response = client
+        .get(GCP_METADATA_TOKEN_URL)
+        .header("Metadata-Flavor", "Google")
+        .send()
+        .await
+        .map_err(|error| {
+            anyhow::anyhow!(
+                "GCP metadata server unreachable ({error}). Vertex mode requires a GCP runtime \
+                 with metadata server, or unset GOOGLE_GENAI_USE_VERTEXAI"
+            )
+        })?;
+
+    let status = response.status();
+    let body = response
+        .text()
+        .await
+        .unwrap_or_else(|_| "<failed to read response body>".to_string());
+
+    if !status.is_success() {
+        anyhow::bail!(
+            "GCP metadata server token request failed (HTTP {status}): {body}. Vertex mode \
+             requires a GCP runtime with metadata server, or unset GOOGLE_GENAI_USE_VERTEXAI"
+        );
+    }
+
+    #[derive(Deserialize)]
+    struct MetadataTokenResponse {
+        access_token: Option<String>,
+        expires_in: Option<i64>,
+    }
+
+    let parsed: MetadataTokenResponse = serde_json::from_str(&body)
+        .map_err(|_| anyhow::anyhow!("GCP metadata server token response is not valid JSON"))?;
+
+    let access_token = parsed
+        .access_token
+        .filter(|t| !t.trim().is_empty())
+        .ok_or_else(|| {
+            anyhow::anyhow!("GCP metadata server token response missing access_token")
+        })?;
+
+    let expiry_millis = parsed
+        .expires_in
+        .and_then(|secs| now_unix_millis().checked_add(secs.checked_mul(1000)?));
+
+    Ok(RefreshedToken {
+        access_token,
+        expiry_millis,
+    })
 }
 
 /// Refresh an expired Gemini CLI OAuth token using the refresh_token grant.
@@ -475,15 +579,19 @@ impl GeminiProvider {
     /// Create a new Gemini provider.
     ///
     /// Authentication priority:
-    /// 1. Explicit API key passed in
-    /// 2. `GEMINI_API_KEY` environment variable
-    /// 3. `GOOGLE_API_KEY` environment variable
-    /// 4. Gemini CLI OAuth tokens (`~/.gemini/oauth_creds.json`)
+    /// 1. Vertex AI ADC (`GOOGLE_GENAI_USE_VERTEXAI` + `GOOGLE_CLOUD_PROJECT`)
+    /// 2. Explicit API key passed in
+    /// 3. `GEMINI_API_KEY` environment variable
+    /// 4. `GOOGLE_API_KEY` environment variable
+    /// 5. Gemini CLI OAuth tokens (`~/.gemini/oauth_creds.json`)
     pub fn new(api_key: Option<&str>) -> Self {
         let oauth_cred_paths = Self::discover_oauth_cred_paths();
-        let resolved_auth = api_key
-            .and_then(Self::normalize_non_empty)
-            .map(GeminiAuth::ExplicitKey)
+        let resolved_auth = Self::vertex_adc_from_env()
+            .or_else(|| {
+                api_key
+                    .and_then(Self::normalize_non_empty)
+                    .map(GeminiAuth::ExplicitKey)
+            })
             .or_else(|| Self::load_non_empty_env("GEMINI_API_KEY").map(GeminiAuth::EnvGeminiKey))
             .or_else(|| Self::load_non_empty_env("GOOGLE_API_KEY").map(GeminiAuth::EnvGoogleKey))
             .or_else(|| {
@@ -498,17 +606,19 @@ impl GeminiProvider {
             oauth_index: Arc::new(tokio::sync::Mutex::new(0)),
             auth_service: None,
             auth_profile_override: None,
+            vertex_token: Arc::new(tokio::sync::Mutex::new(VertexTokenState::default())),
         }
     }
 
     /// Create a new Gemini provider with managed OAuth from auth-profiles.json.
     ///
     /// Authentication priority:
-    /// 1. Explicit API key passed in
-    /// 2. `GEMINI_API_KEY` environment variable
-    /// 3. `GOOGLE_API_KEY` environment variable
-    /// 4. Managed OAuth from auth-profiles.json (if auth_service provided)
-    /// 5. Gemini CLI OAuth tokens (`~/.gemini/oauth_creds.json`)
+    /// 1. Vertex AI ADC (`GOOGLE_GENAI_USE_VERTEXAI` + `GOOGLE_CLOUD_PROJECT`)
+    /// 2. Explicit API key passed in
+    /// 3. `GEMINI_API_KEY` environment variable
+    /// 4. `GOOGLE_API_KEY` environment variable
+    /// 5. Managed OAuth from auth-profiles.json (if auth_service provided)
+    /// 6. Gemini CLI OAuth tokens (`~/.gemini/oauth_creds.json`)
     pub fn new_with_auth(
         api_key: Option<&str>,
         auth_service: AuthService,
@@ -516,10 +626,13 @@ impl GeminiProvider {
     ) -> Self {
         let oauth_cred_paths = Self::discover_oauth_cred_paths();
 
-        // First check API keys
-        let resolved_auth = api_key
-            .and_then(Self::normalize_non_empty)
-            .map(GeminiAuth::ExplicitKey)
+        // First check Vertex ADC activation, then API keys
+        let resolved_auth = Self::vertex_adc_from_env()
+            .or_else(|| {
+                api_key
+                    .and_then(Self::normalize_non_empty)
+                    .map(GeminiAuth::ExplicitKey)
+            })
             .or_else(|| Self::load_non_empty_env("GEMINI_API_KEY").map(GeminiAuth::EnvGeminiKey))
             .or_else(|| Self::load_non_empty_env("GOOGLE_API_KEY").map(GeminiAuth::EnvGoogleKey));
 
@@ -571,7 +684,24 @@ impl GeminiProvider {
                 None
             },
             auth_profile_override: profile_override,
+            vertex_token: Arc::new(tokio::sync::Mutex::new(VertexTokenState::default())),
         }
+    }
+
+    /// Resolve Vertex AI ADC activation from the environment.
+    ///
+    /// Active when `GOOGLE_GENAI_USE_VERTEXAI` is "true" or "1" AND
+    /// `GOOGLE_CLOUD_PROJECT` is set. `GOOGLE_CLOUD_LOCATION` is optional
+    /// (defaults to `us-central1`).
+    fn vertex_adc_from_env() -> Option<GeminiAuth> {
+        let flag = Self::load_non_empty_env("GOOGLE_GENAI_USE_VERTEXAI")?;
+        if !matches!(flag.to_ascii_lowercase().as_str(), "true" | "1") {
+            return None;
+        }
+        let project = Self::load_non_empty_env("GOOGLE_CLOUD_PROJECT")?;
+        let location = Self::load_non_empty_env("GOOGLE_CLOUD_LOCATION")
+            .unwrap_or_else(|| VERTEX_DEFAULT_LOCATION.to_string());
+        Some(GeminiAuth::VertexAdc { project, location })
     }
 
     fn normalize_non_empty(value: &str) -> Option<String> {
@@ -785,7 +915,8 @@ impl GeminiProvider {
 
     /// Check if any Gemini authentication is available
     pub fn has_any_auth() -> bool {
-        Self::load_non_empty_env("GEMINI_API_KEY").is_some()
+        Self::vertex_adc_from_env().is_some()
+            || Self::load_non_empty_env("GEMINI_API_KEY").is_some()
             || Self::load_non_empty_env("GOOGLE_API_KEY").is_some()
             || Self::has_cli_credentials()
     }
@@ -799,6 +930,7 @@ impl GeminiProvider {
             Some(GeminiAuth::EnvGoogleKey(_)) => "GOOGLE_API_KEY env var",
             Some(GeminiAuth::OAuthToken(_)) => "Gemini CLI OAuth",
             Some(GeminiAuth::ManagedOAuth) => "auth-profiles",
+            Some(GeminiAuth::VertexAdc { .. }) => "vertex-adc",
             None => "none",
         }
     }
@@ -810,18 +942,8 @@ impl GeminiProvider {
     ) -> anyhow::Result<String> {
         let mut guard = state.lock().await;
 
-        let now_millis = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .ok()
-            .and_then(|d| i64::try_from(d.as_millis()).ok())
-            .unwrap_or(i64::MAX);
-
         // Refresh if expiry is unknown, already expired, or within 60s of expiry.
-        let needs_refresh = guard
-            .expiry_millis
-            .map_or(true, |exp| exp <= now_millis.saturating_add(60_000));
-
-        if needs_refresh {
+        if token_needs_refresh(guard.expiry_millis, now_unix_millis()) {
             if let Some(ref refresh_token) = guard.refresh_token {
                 let refreshed = refresh_gemini_cli_token_async(
                     refresh_token,
@@ -840,6 +962,27 @@ impl GeminiProvider {
         }
 
         Ok(guard.access_token.clone())
+    }
+
+    /// Get a valid Vertex ADC access token, fetching from the GCP metadata
+    /// server when the cached token is missing or within 60s of expiry.
+    /// Mirrors `get_valid_oauth_token`'s refresh-under-lock pattern.
+    async fn get_valid_vertex_token(&self) -> anyhow::Result<String> {
+        let mut guard = self.vertex_token.lock().await;
+
+        if guard.access_token.is_none()
+            || token_needs_refresh(guard.expiry_millis, now_unix_millis())
+        {
+            let fetched = fetch_metadata_server_token().await?;
+            tracing::info!("Vertex ADC token fetched from GCP metadata server");
+            guard.access_token = Some(fetched.access_token);
+            guard.expiry_millis = fetched.expiry_millis;
+        }
+
+        guard
+            .access_token
+            .clone()
+            .ok_or_else(|| anyhow::anyhow!("Vertex ADC token unavailable after refresh"))
     }
 
     /// Rotate to the next available OAuth credentials file and swap state.
@@ -906,6 +1049,7 @@ impl GeminiProvider {
     ///
     /// - API key users → public `generativelanguage.googleapis.com/v1beta`
     /// - OAuth users → internal `cloudcode-pa.googleapis.com/v1internal`
+    /// - Vertex ADC users → regional `{location}-aiplatform.googleapis.com/v1`
     ///
     /// The Gemini CLI OAuth tokens are scoped for the internal Code Assist API,
     /// not the public API. Sending them to the public endpoint results in
@@ -917,6 +1061,14 @@ impl GeminiProvider {
                 // OAuth tokens are scoped for the internal Code Assist API.
                 // The model is passed in the request body, not the URL path.
                 format!("{CLOUDCODE_PA_ENDPOINT}:generateContent")
+            }
+            GeminiAuth::VertexAdc { project, location } => {
+                // Vertex AI publisher-model endpoint. Same request/response
+                // shapes as the public API; only URL and Bearer auth differ.
+                let model_name = Self::format_internal_model_name(model);
+                format!(
+                    "https://{location}-aiplatform.googleapis.com/v1/projects/{project}/locations/{location}/publishers/google/models/{model_name}:generateContent"
+                )
             }
             _ => {
                 let model_name = Self::format_model_name(model);
@@ -1051,6 +1203,11 @@ impl GeminiProvider {
                     .json(&internal_request)
                     .bearer_auth(token)
             }
+            GeminiAuth::VertexAdc { .. } => {
+                // Vertex uses the standard GenerateContentRequest body; only
+                // the Bearer token (from the metadata server) is added.
+                req.bearer_auth(oauth_token.unwrap_or_default())
+            }
             _ => req,
         }
     }
@@ -1122,6 +1279,12 @@ impl GeminiProvider {
                     })?;
                 let proj = self.resolve_oauth_project(&token).await?;
                 (Some(token), Some(proj))
+            }
+            GeminiAuth::VertexAdc { .. } => {
+                // Vertex bills the project named in the URL; no cloudcode-pa
+                // project resolution (loadCodeAssist) is involved.
+                let token = self.get_valid_vertex_token().await?;
+                (Some(token), None)
             }
             _ => (None, None),
         };
@@ -1395,6 +1558,11 @@ impl Provider for GeminiProvider {
                     // CLI OAuth — cloudcode-pa does not expose a lightweight model-list probe.
                     // Token will be validated on first real request.
                 }
+                GeminiAuth::VertexAdc { .. } => {
+                    // Vertex ADC — like the CLI-OAuth arm, skip validation here.
+                    // The metadata-server token is fetched lazily on the first
+                    // real request, keeping warmup fast and network-free.
+                }
                 _ => {
                     // API key path — verify with public API models endpoint.
                     let url = if auth.is_api_key() {
@@ -1442,6 +1610,53 @@ mod tests {
             oauth_index: Arc::new(tokio::sync::Mutex::new(0)),
             auth_service: None,
             auth_profile_override: None,
+            vertex_token: Arc::new(tokio::sync::Mutex::new(VertexTokenState::default())),
+        }
+    }
+
+    fn test_vertex_auth() -> GeminiAuth {
+        GeminiAuth::VertexAdc {
+            project: "my-project".into(),
+            location: "us-central1".into(),
+        }
+    }
+
+    /// Serializes tests that mutate process environment variables, so they
+    /// cannot race other env-reading tests in this module.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// RAII guard for env var mutation in tests (mirrors the pattern in
+    /// `src/auth/gemini_oauth.rs` tests).
+    struct EnvVarRestore {
+        key: &'static str,
+        original: Option<String>,
+    }
+
+    impl EnvVarRestore {
+        fn set(key: &'static str, value: &str) -> Self {
+            let original = std::env::var(key).ok();
+            // SAFETY: test-only, guarded by ENV_LOCK.
+            unsafe { std::env::set_var(key, value) };
+            Self { key, original }
+        }
+
+        fn unset(key: &'static str) -> Self {
+            let original = std::env::var(key).ok();
+            // SAFETY: test-only, guarded by ENV_LOCK.
+            unsafe { std::env::remove_var(key) };
+            Self { key, original }
+        }
+    }
+
+    impl Drop for EnvVarRestore {
+        fn drop(&mut self) {
+            if let Some(ref original) = self.original {
+                // SAFETY: test-only, guarded by ENV_LOCK.
+                unsafe { std::env::set_var(self.key, original) };
+            } else {
+                // SAFETY: test-only, guarded by ENV_LOCK.
+                unsafe { std::env::remove_var(self.key) };
+            }
         }
     }
 
@@ -1542,6 +1757,8 @@ mod tests {
 
     #[test]
     fn provider_creates_with_key() {
+        let _env_guard = ENV_LOCK.lock().unwrap();
+        let _vertex_off = EnvVarRestore::unset("GOOGLE_GENAI_USE_VERTEXAI");
         let provider = GeminiProvider::new(Some("test-api-key"));
         assert!(matches!(
             provider.auth,
@@ -1581,6 +1798,158 @@ mod tests {
     fn auth_source_oauth() {
         let provider = test_provider(Some(test_oauth_auth("ya29.mock")));
         assert_eq!(provider.auth_source(), "Gemini CLI OAuth");
+    }
+
+    #[test]
+    fn auth_source_vertex_adc() {
+        let provider = test_provider(Some(test_vertex_auth()));
+        assert_eq!(provider.auth_source(), "vertex-adc");
+    }
+
+    // ── Vertex AI ADC tests ──────────────────────────────────────────────
+
+    #[test]
+    fn vertex_url_uses_regional_aiplatform_endpoint() {
+        let auth = test_vertex_auth();
+        let url = GeminiProvider::build_generate_content_url("gemini-2.0-flash", &auth);
+        assert_eq!(
+            url,
+            "https://us-central1-aiplatform.googleapis.com/v1/projects/my-project/locations/us-central1/publishers/google/models/gemini-2.0-flash:generateContent"
+        );
+        assert!(!url.contains("?key="));
+    }
+
+    #[test]
+    fn vertex_url_strips_models_prefix_and_respects_location() {
+        let auth = GeminiAuth::VertexAdc {
+            project: "proj-x".into(),
+            location: "europe-west4".into(),
+        };
+        let url = GeminiProvider::build_generate_content_url("models/gemini-2.5-flash", &auth);
+        assert_eq!(
+            url,
+            "https://europe-west4-aiplatform.googleapis.com/v1/projects/proj-x/locations/europe-west4/publishers/google/models/gemini-2.5-flash:generateContent"
+        );
+    }
+
+    #[test]
+    fn vertex_request_uses_bearer_auth_and_standard_body() {
+        let provider = test_provider(Some(test_vertex_auth()));
+        let auth = test_vertex_auth();
+        let url = GeminiProvider::build_generate_content_url("gemini-2.0-flash", &auth);
+        let body = GenerateContentRequest {
+            contents: vec![Content {
+                role: Some("user".into()),
+                parts: vec![Part::text("hello")],
+            }],
+            system_instruction: None,
+            generation_config: GenerationConfig {
+                temperature: 0.7,
+                max_output_tokens: 8192,
+            },
+        };
+
+        let request = provider
+            .build_generate_content_request(
+                &auth,
+                &url,
+                &body,
+                "gemini-2.0-flash",
+                true,
+                None,
+                Some("ya29.vertex-token"),
+            )
+            .build()
+            .unwrap();
+
+        assert_eq!(
+            request
+                .headers()
+                .get(AUTHORIZATION)
+                .and_then(|h| h.to_str().ok()),
+            Some("Bearer ya29.vertex-token")
+        );
+
+        // Vertex uses the standard (unwrapped) GenerateContentRequest shape.
+        let payload = request
+            .body()
+            .and_then(|b| b.as_bytes())
+            .expect("json request body should be bytes");
+        let json: serde_json::Value = serde_json::from_slice(payload).unwrap();
+        assert!(json.get("contents").is_some());
+        assert!(json.get("generationConfig").is_some());
+        assert!(json.get("request").is_none());
+        assert!(json.get("model").is_none());
+    }
+
+    #[test]
+    fn vertex_env_activation_wins_over_api_keys() {
+        let _env_guard = ENV_LOCK.lock().unwrap();
+        let _flag = EnvVarRestore::set("GOOGLE_GENAI_USE_VERTEXAI", "true");
+        let _project = EnvVarRestore::set("GOOGLE_CLOUD_PROJECT", "env-project");
+        let _location = EnvVarRestore::unset("GOOGLE_CLOUD_LOCATION");
+        let _api_key = EnvVarRestore::set("GEMINI_API_KEY", "should-lose");
+
+        // Vertex ADC outranks even an explicit API key.
+        let provider = GeminiProvider::new(Some("explicit-key-should-lose"));
+        assert!(matches!(
+            provider.auth,
+            Some(GeminiAuth::VertexAdc { ref project, ref location })
+                if project == "env-project" && location == "us-central1"
+        ));
+        assert_eq!(provider.auth_source(), "vertex-adc");
+        assert!(GeminiProvider::has_any_auth());
+    }
+
+    #[test]
+    fn vertex_env_inactive_without_project_or_flag() {
+        let _env_guard = ENV_LOCK.lock().unwrap();
+        {
+            let _flag = EnvVarRestore::set("GOOGLE_GENAI_USE_VERTEXAI", "true");
+            let _project = EnvVarRestore::unset("GOOGLE_CLOUD_PROJECT");
+            assert!(GeminiProvider::vertex_adc_from_env().is_none());
+        }
+        {
+            let _flag = EnvVarRestore::set("GOOGLE_GENAI_USE_VERTEXAI", "false");
+            let _project = EnvVarRestore::set("GOOGLE_CLOUD_PROJECT", "env-project");
+            assert!(GeminiProvider::vertex_adc_from_env().is_none());
+        }
+    }
+
+    #[test]
+    fn vertex_env_accepts_1_and_respects_location_override() {
+        let _env_guard = ENV_LOCK.lock().unwrap();
+        let _flag = EnvVarRestore::set("GOOGLE_GENAI_USE_VERTEXAI", "1");
+        let _project = EnvVarRestore::set("GOOGLE_CLOUD_PROJECT", "env-project");
+        let _location = EnvVarRestore::set("GOOGLE_CLOUD_LOCATION", "asia-northeast3");
+
+        assert!(matches!(
+            GeminiProvider::vertex_adc_from_env(),
+            Some(GeminiAuth::VertexAdc { ref project, ref location })
+                if project == "env-project" && location == "asia-northeast3"
+        ));
+    }
+
+    #[test]
+    fn token_refresh_check_handles_expiry_skew() {
+        let now = 1_750_000_000_000_i64;
+        // Unknown expiry → refresh.
+        assert!(token_needs_refresh(None, now));
+        // Already expired → refresh.
+        assert!(token_needs_refresh(Some(now - 1), now));
+        // Within the 60s skew window → refresh.
+        assert!(token_needs_refresh(Some(now + 59_999), now));
+        assert!(token_needs_refresh(Some(now + 60_000), now));
+        // Comfortably valid → no refresh.
+        assert!(!token_needs_refresh(Some(now + 60_001), now));
+        assert!(!token_needs_refresh(Some(now + 3_600_000), now));
+    }
+
+    #[tokio::test]
+    async fn warmup_vertex_adc_is_noop() {
+        let provider = test_provider(Some(test_vertex_auth()));
+        let result = provider.warmup().await;
+        assert!(result.is_ok());
     }
 
     #[test]
@@ -2199,6 +2568,7 @@ mod tests {
             oauth_index: Arc::new(tokio::sync::Mutex::new(0)),
             auth_service: None, // Missing auth_service
             auth_profile_override: None,
+            vertex_token: Arc::new(tokio::sync::Mutex::new(VertexTokenState::default())),
         };
 
         let result = provider.warmup().await;
