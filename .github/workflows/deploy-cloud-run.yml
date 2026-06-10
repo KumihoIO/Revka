@@ -1,0 +1,100 @@
+name: Deploy to Cloud Run
+
+# Builds the `cloudrun` Dockerfile stage (daemon + MCP sidecars + session
+# manager, Gemini-powered) and deploys it as the revka-orchestrator service.
+# Auth is keyless via Workload Identity Federation — no SA keys in secrets.
+# One-time GCP setup: scripts/setup-gcp-deploy.sh
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Image tag (defaults to short SHA)
+        required: false
+  push:
+    branches: [main]
+    paths:
+      - Dockerfile
+      - dev/config.cloudrun.toml
+      - src/**
+      - operator-mcp/**
+      - .github/workflows/deploy-cloud-run.yml
+
+concurrency:
+  group: deploy-cloud-run
+  cancel-in-progress: false
+
+env:
+  PROJECT_ID: construct-498201
+  REGION: us-central1
+  IMAGE: us-central1-docker.pkg.dev/construct-498201/cloud-run-source-deploy/revka-orchestrator
+  SERVICE: revka-orchestrator
+  RUNTIME_SA: revka-orchestrator@construct-498201.iam.gserviceaccount.com
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/1091585228963/locations/global/workloadIdentityPools/github-actions/providers/github-oidc
+          service_account: revka-deployer@construct-498201.iam.gserviceaccount.com
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure docker for Artifact Registry
+        run: gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+
+      - name: Resolve tag
+        id: tag
+        run: echo "tag=${{ github.event.inputs.tag || github.sha }}" | cut -c1-44 >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: cloudrun
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:${{ steps.tag.outputs.tag }}
+            ${{ env.IMAGE }}:latest
+          cache-from: type=registry,ref=${{ env.IMAGE }}:buildcache
+          cache-to: type=registry,ref=${{ env.IMAGE }}:buildcache,mode=max
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy "$SERVICE" \
+            --project="$PROJECT_ID" \
+            --region="$REGION" \
+            --image="$IMAGE:${{ steps.tag.outputs.tag }}" \
+            --service-account="$RUNTIME_SA" \
+            --min-instances=1 \
+            --max-instances=2 \
+            --cpu=2 --memory=2Gi \
+            --no-cpu-throttling \
+            --timeout=3600 \
+            --allow-unauthenticated \
+            --set-secrets="KUMIHO_SERVICE_TOKEN=revka-KUMIHO_SERVICE_TOKEN:latest,GEMINI_OAUTH_CLIENT_ID=revka-GEMINI_OAUTH_CLIENT_ID:latest,GEMINI_OAUTH_CLIENT_SECRET=revka-GEMINI_OAUTH_CLIENT_SECRET:latest"
+
+      - name: Smoke check
+        run: |
+          URL=$(gcloud run services describe "$SERVICE" --project="$PROJECT_ID" --region="$REGION" --format='value(status.url)')
+          echo "Service URL: $URL"
+          for i in $(seq 1 20); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "$URL/api/health" || true)
+            echo "health: $code"
+            [ "$code" = "401" ] || [ "$code" = "200" ] && exit 0
+            sleep 10
+          done
+          echo "service did not become healthy" >&2
+          exit 1

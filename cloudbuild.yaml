@@ -1,0 +1,27 @@
+# Cloud Build: build the Cloud Run runtime image and push to Artifact Registry.
+# Used by the deploy GitHub Action and manually via:
+#   gcloud builds submit --config cloudbuild.yaml .
+substitutions:
+  _IMAGE: us-central1-docker.pkg.dev/${PROJECT_ID}/cloud-run-source-deploy/revka-orchestrator
+  _TAG: manual
+
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --target
+      - cloudrun
+      - -t
+      - ${_IMAGE}:${_TAG}
+      - -t
+      - ${_IMAGE}:latest
+      - .
+
+images:
+  - ${_IMAGE}:${_TAG}
+  - ${_IMAGE}:latest
+
+options:
+  machineType: E2_HIGHCPU_32
+
+timeout: 3600s

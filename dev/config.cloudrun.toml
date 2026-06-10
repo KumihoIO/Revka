@@ -1,0 +1,50 @@
+# Revka Cloud Run runtime config (Google for Startups AI Agents Challenge — Track 3)
+#
+# Reasoning: Gemini (GEMINI_API_KEY injected via Secret Manager; Vertex ADC
+# planned). Gateway binds all interfaces — Cloud Run terminates TLS and
+# enforces ingress; the PORT env var Cloud Run sets overrides gateway.port.
+
+workspace_dir = "/revka-data/workspace"
+config_path = "/revka-data/.revka/config.toml"
+
+default_provider = "gemini"
+default_model = "gemini-2.5-pro"
+default_temperature = 0.7
+
+[gateway]
+port = 42617
+host = "[::]"
+allow_public_bind = true
+# Pairing stays on: dashboard/API clients exchange one-time codes for bearer
+# tokens; service-to-service callers use the service token.
+require_pairing = true
+
+[skills]
+open_skills_enabled = false
+prompt_injection_mode = "compact"
+
+[agent.context_compression]
+enabled = true
+
+[memory]
+backend = "kumiho"
+auto_save = true
+
+[heartbeat]
+enabled = true
+interval_minutes = 30
+
+[cron]
+enabled = true
+
+[channels_config]
+cli = false
+session_persistence = true
+session_backend = "sqlite"
+
+[cost]
+enabled = true
+daily_limit_usd = 25.0
+monthly_limit_usd = 200.0
+warn_at_percent = 80
+allow_override = false
