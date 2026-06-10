@@ -314,7 +314,55 @@ pub async fn handle_api_config_put(
         let _ = logger.log_config_change("dashboard", "Configuration updated via REST API");
     }
 
-    Json(serde_json::json!({"status": "ok", "mcp_registry": mcp_registry})).into_response()
+    // The in-memory swap above only reaches agents created after this point;
+    // daemon components (gateway server, channels, provider stack) capture
+    // config at startup. When a service supervisor will revive us, schedule a
+    // graceful self-restart so the saved config is fully applied.
+    let restart = schedule_supervised_restart();
+
+    Json(serde_json::json!({"status": "ok", "mcp_registry": mcp_registry, "restart": restart}))
+        .into_response()
+}
+
+/// Whether a service supervisor configured to auto-restart this process is
+/// present: launchd (KeepAlive) sets `XPC_SERVICE_NAME`, systemd
+/// (Restart=always) sets `INVOCATION_ID` — both written by
+/// `revka service install`.
+fn supervisor_detected(xpc_service_name: bool, invocation_id: bool) -> bool {
+    xpc_service_name || invocation_id
+}
+
+/// After a successful full-config save, restart the daemon by sending
+/// ourselves SIGTERM (the daemon's graceful shutdown path); the service
+/// supervisor revives it with the new config. Without a supervisor the
+/// process would just die, so fall back to the in-memory hot-apply.
+fn schedule_supervised_restart() -> &'static str {
+    if !supervisor_detected(
+        std::env::var_os("XPC_SERVICE_NAME").is_some(),
+        std::env::var_os("INVOCATION_ID").is_some(),
+    ) {
+        return "skipped — not running under a service manager; run `revka service restart` to fully apply";
+    }
+    #[cfg(unix)]
+    {
+        tokio::spawn(async {
+            // Let the HTTP response reach the client before going down.
+            tokio::time::sleep(std::time::Duration::from_millis(750)).await;
+            tracing::info!(
+                "Config saved via REST API — restarting daemon to apply it (supervisor will revive)"
+            );
+            // SAFETY: signalling our own pid; SIGTERM is handled by the
+            // daemon's graceful shutdown listener.
+            unsafe {
+                libc::kill(libc::getpid(), libc::SIGTERM);
+            }
+        });
+        "scheduled"
+    }
+    #[cfg(not(unix))]
+    {
+        "skipped — automatic restart is not supported on this platform"
+    }
 }
 
 /// GET /api/tools — list registered tool specs
@@ -3330,6 +3378,14 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(SERVICE_TOKEN_HEADER, "SERVICE-TOKEN".parse().unwrap());
         assert!(require_auth(&state, &headers).is_ok());
+    }
+
+    #[test]
+    fn supervisor_detected_requires_launchd_or_systemd_marker() {
+        assert!(supervisor_detected(true, false)); // launchd: XPC_SERVICE_NAME
+        assert!(supervisor_detected(false, true)); // systemd: INVOCATION_ID
+        assert!(supervisor_detected(true, true));
+        assert!(!supervisor_detected(false, false)); // foreground `revka daemon`
     }
 
     #[tokio::test]

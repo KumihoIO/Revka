@@ -189,7 +189,10 @@ pub(crate) fn context_window_for_model(model: &str) -> usize {
         128_000
     } else if bare.starts_with("o1") || bare.starts_with("o3") {
         200_000
-    } else if bare.starts_with("gemini-2") || bare.starts_with("gemini-1.5") {
+    } else if bare.starts_with("gemini-3")
+        || bare.starts_with("gemini-2")
+        || bare.starts_with("gemini-1.5")
+    {
         1_000_000
     } else {
         // Conservative default — better to over-compress than blow up the request.
@@ -234,6 +237,47 @@ pub(crate) fn context_window_for_model_with_overrides(
     }
 
     context_window_for_model(model)
+}
+
+/// Character budget for the system prompt: half the model's context window,
+/// converted to chars using the same ~4 chars/token + 1.2 safety margin as
+/// `estimate_tokens` (i.e. ~3.33 chars per estimated token). Leaves the other
+/// half of the window for conversation history and the model's output.
+fn system_prompt_budget_chars(window: usize) -> usize {
+    window / 2 * 10 / 3
+}
+
+/// Build the error for a request that exceeds the context hard cap.
+///
+/// Distinguishes two situations that need different user action:
+/// - the per-turn baseline (system prompt) alone exceeds the cap — starting
+///   a new chat cannot help; the configuration or model must change;
+/// - the conversation history outgrew the cap — a fresh chat fixes it.
+fn context_overflow_error(
+    messages: &[crate::providers::ChatMessage],
+    est: usize,
+    hard_cap: usize,
+    model: &str,
+) -> anyhow::Error {
+    let system_tokens: usize = messages
+        .iter()
+        .filter(|m| m.role == "system")
+        .map(|m| crate::agent::context_compressor::estimate_tokens(std::slice::from_ref(m)))
+        .sum();
+    if system_tokens >= hard_cap {
+        anyhow::anyhow!(
+            "System prompt alone ({system_tokens} tokens) exceeds the {hard_cap}-token cap \
+             for model {model} — no conversation can fit. Switch to a larger-context model, \
+             disable unused skills/MCP integrations, or set [agent.model_context_windows] \
+             if this model's window is larger than assumed."
+        )
+    } else {
+        anyhow::anyhow!(
+            "Conversation too long even after compression \
+             ({est} tokens > {hard_cap} cap for model {model}). \
+             Start a new chat tab to continue."
+        )
+    }
 }
 
 fn context_window_hard_cap(window: usize, safety_ratio: f64) -> usize {
@@ -1276,7 +1320,7 @@ impl Agent {
 
     fn build_system_prompt(&self) -> Result<String> {
         let instructions = self.tool_dispatcher.prompt_instructions(&self.tools);
-        let ctx = PromptContext {
+        let mut ctx = PromptContext {
             workspace_dir: &self.workspace_dir,
             model_name: &self.model_name,
             tools: crate::agent::prompt::PromptTools::Full(&self.tools),
@@ -1299,6 +1343,36 @@ impl Agent {
             mode: crate::agent::prompt::BuilderMode::Daemon,
         };
         let mut prompt = self.prompt_builder.build(&ctx)?;
+
+        // Full-mode skill injection inlines entire SKILL.md files; with a
+        // large skill library (e.g. the open-skills repo) the system prompt
+        // alone can exceed a small model's context window — a state the
+        // history compressor can never recover from because system messages
+        // are protected. When that happens, degrade to Compact injection
+        // (name/description only, full instructions loaded on demand via
+        // `read_skill`) and rebuild.
+        if matches!(
+            ctx.skills_prompt_mode,
+            crate::config::SkillsPromptInjectionMode::Full
+        ) {
+            let window = context_window_for_model_with_overrides(
+                &self.model_name,
+                &self.config.model_context_windows,
+            );
+            let budget_chars = system_prompt_budget_chars(window);
+            if budget_chars > 0 && prompt.len() > budget_chars {
+                tracing::warn!(
+                    prompt_chars = prompt.len(),
+                    budget_chars,
+                    context_window = window,
+                    model = %self.model_name,
+                    "System prompt with full skill instructions exceeds the model's context budget; \
+                     falling back to compact skill injection (skills load on demand via read_skill)"
+                );
+                ctx.skills_prompt_mode = crate::config::SkillsPromptInjectionMode::Compact;
+                prompt = self.prompt_builder.build(&ctx)?;
+            }
+        }
         // Append the deferred-tools section listing MCP tools the agent
         // can `tool_search` for. Without this the dashboard agent never
         // sees that user-added MCP servers (e.g. OpenCrab) exist or what
@@ -1517,11 +1591,12 @@ impl Agent {
                 let hard_cap =
                     context_window_hard_cap(window, self.config.context_window_safety_ratio);
                 if window > 0 && est > hard_cap {
-                    anyhow::bail!(
-                        "Conversation too long even after compression \
-                         ({est} tokens > {hard_cap} cap for model {effective_model}). \
-                         Start a new chat tab to continue."
-                    );
+                    return Err(context_overflow_error(
+                        &messages,
+                        est,
+                        hard_cap,
+                        &effective_model,
+                    ));
                 }
             }
 
@@ -1784,11 +1859,12 @@ impl Agent {
                 let hard_cap =
                     context_window_hard_cap(window, self.config.context_window_safety_ratio);
                 if window > 0 && est > hard_cap {
-                    anyhow::bail!(
-                        "Conversation too long even after compression \
-                         ({est} tokens > {hard_cap} cap for model {effective_model}). \
-                         Start a new chat tab to continue."
-                    );
+                    return Err(context_overflow_error(
+                        &messages,
+                        est,
+                        hard_cap,
+                        &effective_model,
+                    ));
                 }
             }
 
@@ -2514,6 +2590,45 @@ mod tests {
         assert_eq!(context_window_hard_cap(1_050_000, 0.0), 997_500);
     }
 
+    #[test]
+    fn context_window_knows_gemini_3_family() {
+        assert_eq!(context_window_for_model("gemini-3.5-flash"), 1_000_000);
+        assert_eq!(context_window_for_model("gemini-3-pro-preview"), 1_000_000);
+    }
+
+    #[test]
+    fn system_prompt_budget_is_half_window_in_chars() {
+        // 128k window → ~213k chars (half the window at ~3.33 chars per
+        // estimated token).
+        assert_eq!(system_prompt_budget_chars(128_000), 213_333);
+        assert_eq!(system_prompt_budget_chars(0), 0);
+    }
+
+    #[test]
+    fn context_overflow_error_blames_system_prompt_when_it_alone_exceeds_cap() {
+        // ~500k chars of system prompt → ~150k estimated tokens, over a
+        // 121,600 cap on its own.
+        let messages = vec![
+            ChatMessage::system("x".repeat(500_000)),
+            ChatMessage::user("hi"),
+        ];
+        let err = context_overflow_error(&messages, 150_000, 121_600, "gpt-5.3-codex-spark");
+        let msg = err.to_string();
+        assert!(msg.contains("System prompt alone"), "got: {msg}");
+        assert!(!msg.contains("Start a new chat tab"), "got: {msg}");
+    }
+
+    #[test]
+    fn context_overflow_error_suggests_new_chat_when_history_is_the_bulk() {
+        let messages = vec![
+            ChatMessage::system("short system prompt"),
+            ChatMessage::user("x".repeat(500_000)),
+        ];
+        let err = context_overflow_error(&messages, 150_000, 121_600, "gpt-5.3-codex-spark");
+        let msg = err.to_string();
+        assert!(msg.contains("Start a new chat tab"), "got: {msg}");
+    }
+
     struct MockProvider {
         responses: Mutex<Vec<crate::providers::ChatResponse>>,
     }
@@ -2869,6 +2984,67 @@ mod tests {
 
         assert_eq!(agent.tool_specs.len(), 1);
         assert_eq!(agent.tool_specs[0].name, "echo");
+    }
+
+    #[test]
+    fn build_system_prompt_degrades_oversized_full_skills_to_compact() {
+        let provider = Box::new(MockProvider {
+            responses: Mutex::new(vec![]),
+        });
+
+        let memory_cfg = crate::config::MemoryConfig {
+            backend: "none".into(),
+            ..crate::config::MemoryConfig::default()
+        };
+        let mem: Arc<dyn Memory> = Arc::from(
+            crate::memory::create_memory(&memory_cfg, std::path::Path::new("/tmp"), None)
+                .expect("memory creation should succeed with valid config"),
+        );
+
+        // One skill whose inlined instructions alone blow the 128k-window
+        // budget (~213k chars) for gpt-5.3-codex-spark.
+        let giant_instruction = "skill instruction body ".repeat(15_000); // ~345k chars
+        let skill = crate::skills::Skill {
+            name: "giant".into(),
+            description: "a skill with huge instructions".into(),
+            version: "1.0.0".into(),
+            author: None,
+            tags: vec![],
+            tools: vec![],
+            prompts: vec![giant_instruction.clone()],
+            location: Some(std::path::PathBuf::from("/tmp/skills/giant/SKILL.md")),
+        };
+
+        let observer: Arc<dyn Observer> = Arc::from(crate::observability::NoopObserver {});
+        let agent = Agent::builder()
+            .provider(provider)
+            .tools(vec![Box::new(MockTool)])
+            .memory(mem)
+            .observer(observer)
+            .tool_dispatcher(Box::new(NativeToolDispatcher))
+            .workspace_dir(std::path::PathBuf::from("/tmp"))
+            .model_name("gpt-5.3-codex-spark".to_string())
+            .skills(vec![skill])
+            .skills_prompt_mode(crate::config::SkillsPromptInjectionMode::Full)
+            .build()
+            .expect("agent builder should succeed with valid config");
+
+        let prompt = agent
+            .build_system_prompt()
+            .expect("system prompt should build");
+        assert!(
+            !prompt.contains(&giant_instruction),
+            "oversized full-mode skill instructions should be dropped"
+        );
+        assert!(
+            prompt.contains("read_skill"),
+            "compact fallback should advertise on-demand skill loading"
+        );
+        assert!(
+            prompt.len() < system_prompt_budget_chars(128_000),
+            "degraded prompt should fit the budget (got {} chars)",
+            prompt.len()
+        );
     }
 
     #[test]
