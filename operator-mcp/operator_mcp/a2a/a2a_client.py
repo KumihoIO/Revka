@@ -112,10 +112,22 @@ async def _gcloud_identity_token(
     timeout: float = 20.0,
     configuration: str | None = None,
 ) -> str:
+    # On a GCP runtime (Cloud Run / GCE) the metadata server can mint an
+    # audience-scoped identity token without the gcloud CLI being installed in
+    # the image. Prefer it; only fall back to the gcloud binary for local dev.
+    # A non-default `configuration` is a gcloud-CLI concept, so skip the
+    # metadata path when one is requested.
+    if not _token(configuration):
+        metadata_token = await _metadata_identity_token(audience, timeout=timeout)
+        if metadata_token:
+            return metadata_token
+
     binary = shutil.which("gcloud")
     if not binary:
         raise A2ATransportError(
-            "gcloud is required for cloud_run_auth='gcloud' but was not found in PATH"
+            "Cloud Run auth requires either the GCP metadata server (Cloud Run / "
+            "GCE) or the gcloud CLI; neither was available (metadata mint "
+            "returned no token and gcloud was not found in PATH)"
         )
 
     async def _run(command: list[str]) -> tuple[int | None, str, str]:
