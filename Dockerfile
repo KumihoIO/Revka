@@ -59,6 +59,9 @@ COPY benches/ benches/
 COPY resources/ resources/
 COPY i18n/ i18n/
 COPY firmware/ firmware/
+# include_dir! embeds the whole operator-mcp tree (sidecar source, workflow
+# builtins, session-manager) into the binary.
+COPY operator-mcp/ operator-mcp/
 COPY --from=web-builder /web/dist web/dist
 COPY *.rs .
 RUN touch src/main.rs
