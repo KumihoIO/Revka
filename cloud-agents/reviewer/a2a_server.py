@@ -201,18 +201,21 @@ async def _run_adk(prompt: str, *, session_id: str) -> str:
         from google.adk.runners import Runner
         from google.adk.sessions import InMemorySessionService
 
-        from agent import APP_NAME, root_agent
+        import agent as agent_module
 
         _session_service = InMemorySessionService()
-        _runner = Runner(agent=root_agent, app_name=APP_NAME, session_service=_session_service)
+        _runner = Runner(
+            agent=agent_module.root_agent,
+            app_name=agent_module.APP_NAME,
+            session_service=_session_service,
+        )
 
     from google.genai import types
-
-    from agent import APP_NAME
+    import agent as agent_module
 
     user_id = "revka-a2a"
     await _session_service.create_session(
-        app_name=APP_NAME, user_id=user_id, session_id=session_id
+        app_name=agent_module.APP_NAME, user_id=user_id, session_id=session_id
     )
     content = types.Content(role="user", parts=[types.Part.from_text(text=prompt)])
     chunks: list[str] = []
