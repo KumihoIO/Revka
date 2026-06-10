@@ -1,0 +1,81 @@
+name: Deploy Cloud Agents
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'cloud-agents/**'
+      - '.github/workflows/deploy-cloud-agents.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-cloud-agents
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  PROJECT_ID: construct-498201
+  REGION: us-central1
+  REPOSITORY: us-central1-docker.pkg.dev/construct-498201/cloud-run-source-deploy
+
+jobs:
+  deploy:
+    name: Deploy ${{ matrix.agent }}-agent
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        agent: [coder, reviewer]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Authenticate to Google Cloud (WIF)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/1091585228963/locations/global/workloadIdentityPools/github-actions/providers/github-oidc
+          service_account: revka-deployer@construct-498201.iam.gserviceaccount.com
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+
+      - name: Build image
+        run: |
+          docker build \
+            -t "${REPOSITORY}/${{ matrix.agent }}-agent:${GITHUB_SHA}" \
+            -t "${REPOSITORY}/${{ matrix.agent }}-agent:latest" \
+            cloud-agents/${{ matrix.agent }}
+
+      - name: Push image
+        run: |
+          docker push "${REPOSITORY}/${{ matrix.agent }}-agent:${GITHUB_SHA}"
+          docker push "${REPOSITORY}/${{ matrix.agent }}-agent:latest"
+
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy ${{ matrix.agent }}-agent \
+            --project "${PROJECT_ID}" \
+            --region "${REGION}" \
+            --image "${REPOSITORY}/${{ matrix.agent }}-agent:${GITHUB_SHA}" \
+            --no-allow-unauthenticated \
+            --service-account "${{ matrix.agent }}-agent@construct-498201.iam.gserviceaccount.com" \
+            --set-secrets "GITHUB_TOKEN=revka-GITHUB_TOKEN:latest" \
+            --set-env-vars "GOOGLE_CLOUD_PROJECT=${PROJECT_ID},GOOGLE_CLOUD_LOCATION=${REGION},GOOGLE_GENAI_USE_VERTEXAI=True" \
+            --memory 1Gi \
+            --cpu 1 \
+            --timeout 900 \
+            --concurrency 10 \
+            --max-instances 1 \
+            --no-cpu-throttling
+
+      - name: Show service URL
+        run: |
+          gcloud run services describe ${{ matrix.agent }}-agent \
+            --project "${PROJECT_ID}" --region "${REGION}" \
+            --format 'value(status.url)'
