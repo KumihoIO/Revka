@@ -632,11 +632,12 @@ async def test_wait_for_agent_dead_health_fails_running_agent(tmp_path, monkeypa
 
 
 @pytest.mark.asyncio
-async def test_wait_for_agent_ignores_dead_health_below_min_silence(tmp_path, monkeypatch) -> None:
-    """A dead-while-running verdict with less silence than max(300s, 40% of
-    the step timeout) must be ignored — print-mode agents (agy) emit nothing
-    for the whole task and were being executed at the monitor's global 300s
-    threshold despite a much larger step budget."""
+async def test_wait_for_agent_never_kills_print_mode_agents_on_silence(tmp_path, monkeypatch) -> None:
+    """Print-mode agents (agy, cursor) emit nothing — no events, no stdout —
+    until their final answer, so silence-based kill paths (dead-health,
+    zombie detection) must never fire for them, no matter how long the
+    monitor reports them stale. They stay bounded by --print-timeout and
+    the step deadline instead."""
     import operator_mcp.patterns.refinement as refinement
     import operator_mcp.tool_handlers.agents as agents
     from operator_mcp.agent_state import AGENTS, ManagedAgent
@@ -659,13 +660,13 @@ async def test_wait_for_agent_ignores_dead_health_below_min_silence(tmp_path, mo
 
     class QuietButWorkingMonitor:
         def get_health(self, _agent_id):
-            # Classified dead by the monitor's global 300s threshold, but
-            # silent for far less than this step's min window (960s).
+            # Arbitrarily long silence — for a print-mode agent this must
+            # still never be treated as death.
             return {
                 "health": "dead",
                 "status": "running",
                 "alive": False,
-                "stale_seconds": 301.0,
+                "stale_seconds": 9_999_999.0,
             }
 
     class FakeLog:

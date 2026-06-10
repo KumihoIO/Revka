@@ -312,6 +312,14 @@ async def _wait_for_agent(
 
     zombie_window = max(_ZOMBIE_MIN, timeout * _ZOMBIE_RATIO)
 
+    # Print-mode agents (agy, cursor) emit no events and no stdout until
+    # their final answer drips out at the end of the task — event silence
+    # is their normal working state, so silence-based kills (dead-health,
+    # zombie detection) are disabled for them. They remain bounded by their
+    # own --print-timeout and the step deadline, and genuine process death
+    # still surfaces through sidecar status transitions.
+    silence_is_death = agent.agent_type not in ("agy", "cursor")
+
     sidecar_id = getattr(agent, "_sidecar_id", None)
 
     if sidecar_id:
@@ -350,9 +358,13 @@ async def _wait_for_agent(
                     now = loop_time()
                     # Demand at least the zombie window of silence (never
                     # less than the monitor's own 300s threshold) before
-                    # trusting a dead-while-running verdict — print-mode
-                    # agents are silent for the whole task.
-                    health = _dead_health(agent, max(300.0, zombie_window))
+                    # trusting a dead-while-running verdict; for print-mode
+                    # agents silence is never death.
+                    health = (
+                        _dead_health(agent, max(300.0, zombie_window))
+                        if silence_is_death
+                        else None
+                    )
                     if health:
                         message = "Agent health is dead while sidecar status is running"
                         _log(f"refinement: agent {agent.id[:8]} {message}; marking failed")
@@ -434,7 +446,7 @@ async def _wait_for_agent(
 
                             if event_count == 0:
                                 consecutive_empty += 1
-                                if consecutive_empty >= 8:  # ~4 min of 0 events
+                                if silence_is_death and consecutive_empty >= 8:  # ~4 min of 0 events
                                     # Cross-verify: is the runlog growing?
                                     if _runlog_is_growing(sidecar_id, last_runlog_size, _RUNLOG_DIR):
                                         _log(f"refinement: agent {agent.id[:8]} sidecar shows 0 events "
@@ -457,7 +469,7 @@ async def _wait_for_agent(
                                 last_event_count = event_count
                                 last_progress_time = now
                                 consecutive_empty = 0
-                            elif now - last_progress_time >= zombie_window:
+                            elif silence_is_death and now - last_progress_time >= zombie_window:
                                 # Cross-verify via runlog before killing
                                 if _runlog_is_growing(sidecar_id, last_runlog_size, _RUNLOG_DIR):
                                     _log(f"refinement: agent {agent.id[:8]} sidecar events frozen at "
