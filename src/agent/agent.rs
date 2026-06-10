@@ -3634,5 +3634,4 @@ mod tests {
             "expected steering note in second provider call, got {captured}"
         );
     }
-
 }
