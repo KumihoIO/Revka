@@ -76,6 +76,36 @@ def _origin_url(value: str) -> str:
     return f"{parsed.scheme}://{parsed.netloc}"
 
 
+_METADATA_IDENTITY_URL = (
+    "http://metadata.google.internal/computeMetadata/v1/instance/"
+    "service-accounts/default/identity"
+)
+
+
+async def _metadata_identity_token(audience: str | None, *, timeout: float) -> str | None:
+    """Mint an identity token from the GCP metadata server (Cloud Run / GCE).
+
+    Returns None when not on a GCP runtime so callers can fall back to the
+    gcloud CLI for local development.
+    """
+    if not audience:
+        return None
+    try:
+        import httpx
+
+        async with httpx.AsyncClient(timeout=min(timeout, 5.0), trust_env=False) as client:
+            resp = await client.get(
+                _METADATA_IDENTITY_URL,
+                params={"audience": audience, "format": "full"},
+                headers={"Metadata-Flavor": "Google"},
+            )
+        if resp.status_code == 200 and resp.text.strip():
+            return resp.text.strip()
+    except Exception:  # noqa: BLE001 — metadata server absent off-GCP
+        return None
+    return None
+
+
 async def _gcloud_identity_token(
     audience: str | None,
     *,
@@ -155,6 +185,12 @@ async def _resolve_cloud_run_identity_token(args: dict[str, Any], *, url: str) -
     audience = _token(args.get("cloud_run_audience")) or _origin_url(url)
     timeout = float(args.get("cloud_run_auth_timeout") or 20.0)
     configuration = _token(args.get("cloud_run_config") or args.get("gcloud_config"))
+    # On GCP runtimes (Cloud Run, GCE) the metadata server is the native
+    # token source and no gcloud CLI exists in the image; off-GCP it is
+    # unreachable and we fall back to gcloud for local development.
+    metadata_token = await _metadata_identity_token(audience, timeout=timeout)
+    if metadata_token:
+        return metadata_token
     return await _gcloud_identity_token(
         audience,
         timeout=timeout,
