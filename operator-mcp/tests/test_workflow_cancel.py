@@ -588,7 +588,14 @@ async def test_wait_for_agent_dead_health_fails_running_agent(tmp_path, monkeypa
 
     class DeadMonitor:
         def get_health(self, _agent_id):
-            return {"health": "dead", "status": "running", "alive": False}
+            # stale_seconds must exceed the caller's min_dead_seconds
+            # (max(300, 40% of step timeout)) for the verdict to be trusted.
+            return {
+                "health": "dead",
+                "status": "running",
+                "alive": False,
+                "stale_seconds": 9_999.0,
+            }
 
     class FakeLog:
         def get_summary(self):
@@ -622,6 +629,83 @@ async def test_wait_for_agent_dead_health_fails_running_agent(tmp_path, monkeypa
 
     assert "DEAD AGENT" in output
     assert agent.status == "error"
+
+
+@pytest.mark.asyncio
+async def test_wait_for_agent_ignores_dead_health_below_min_silence(tmp_path, monkeypatch) -> None:
+    """A dead-while-running verdict with less silence than max(300s, 40% of
+    the step timeout) must be ignored — print-mode agents (agy) emit nothing
+    for the whole task and were being executed at the monitor's global 300s
+    threshold despite a much larger step budget."""
+    import operator_mcp.patterns.refinement as refinement
+    import operator_mcp.tool_handlers.agents as agents
+    from operator_mcp.agent_state import AGENTS, ManagedAgent
+
+    class EventuallyIdleSidecar:
+        """Reports running for two polls, then idle — exits the wait loop."""
+
+        def __init__(self) -> None:
+            self.polls = 0
+
+        async def get_agent(self, _agent_id):
+            self.polls += 1
+            return {"status": "running" if self.polls <= 2 else "idle"}
+
+        async def interrupt_agent(self, _agent_id):
+            return {"ok": True}
+
+        async def close_agent(self, _agent_id):
+            return {"closed": True}
+
+    class QuietButWorkingMonitor:
+        def get_health(self, _agent_id):
+            # Classified dead by the monitor's global 300s threshold, but
+            # silent for far less than this step's min window (960s).
+            return {
+                "health": "dead",
+                "status": "running",
+                "alive": False,
+                "stale_seconds": 301.0,
+            }
+
+    class FakeLog:
+        def get_summary(self):
+            return {}
+
+        def get_last_message(self):
+            return "done"
+
+        def record_lifecycle_error(self, *_args, **_kwargs):
+            return None
+
+    monkeypatch.setattr(agents, "_sidecar_client", EventuallyIdleSidecar())
+    monkeypatch.setattr(agents, "_event_consumer", None)
+    monkeypatch.setattr(refinement, "get_log", lambda _agent_id: FakeLog())
+    monkeypatch.setattr(
+        "operator_mcp.heartbeat.get_heartbeat_monitor",
+        lambda: QuietButWorkingMonitor(),
+    )
+
+    agent = ManagedAgent(
+        id="quiet-agy-agent",
+        agent_type="agy",
+        title="Quiet",
+        cwd=str(tmp_path),
+        status="running",
+    )
+    agent._sidecar_id = "sidecar-quiet-agy-agent"
+    AGENTS[agent.id] = agent
+
+    try:
+        # Step budget 2400s → min silence max(300, 0.4*2400) = 960s; the
+        # 301s-stale dead verdict must be ignored and the agent allowed to
+        # finish (sidecar goes idle on the third poll).
+        output = await refinement._wait_for_agent(agent, timeout=2400.0)
+    finally:
+        AGENTS.pop(agent.id, None)
+
+    assert "DEAD AGENT" not in output
+    assert agent.status == "completed"
 
 
 @pytest.mark.asyncio

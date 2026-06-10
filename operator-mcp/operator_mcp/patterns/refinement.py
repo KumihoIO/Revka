@@ -241,7 +241,14 @@ def _record_lifecycle_failure(
         _log(f"refinement: failed to record lifecycle error for {agent.id[:8]}: {exc}")
 
 
-def _dead_health(agent: ManagedAgent) -> dict[str, Any] | None:
+def _dead_health(agent: ManagedAgent, min_dead_seconds: float = 0.0) -> dict[str, Any] | None:
+    """Return health when the monitor classifies the agent dead-while-running.
+
+    `min_dead_seconds` lets callers with a known step budget demand a longer
+    silence than the monitor's global 300s threshold. Print-mode agents
+    (agy) legitimately emit nothing for many minutes while working, so a
+    long-budget step must not execute them at the global default.
+    """
     try:
         from ..heartbeat import get_heartbeat_monitor
         monitor = get_heartbeat_monitor()
@@ -253,6 +260,7 @@ def _dead_health(agent: ManagedAgent) -> dict[str, Any] | None:
                 health
                 and health.get("health") == "dead"
                 and health.get("status") == "running"
+                and float(health.get("stale_seconds") or 0.0) >= min_dead_seconds
             ):
                 return health
     except Exception:
@@ -340,7 +348,11 @@ async def _wait_for_agent(
                     status = info.get("status", "")
                     last_seen_status = status
                     now = loop_time()
-                    health = _dead_health(agent)
+                    # Demand at least the zombie window of silence (never
+                    # less than the monitor's own 300s threshold) before
+                    # trusting a dead-while-running verdict — print-mode
+                    # agents are silent for the whole task.
+                    health = _dead_health(agent, max(300.0, zombie_window))
                     if health:
                         message = "Agent health is dead while sidecar status is running"
                         _log(f"refinement: agent {agent.id[:8]} {message}; marking failed")
