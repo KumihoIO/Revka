@@ -31,6 +31,9 @@ COPY crates/aardvark-sys/ crates/aardvark-sys/
 # Include tauri workspace member manifest (desktop app, but needed for workspace resolution).
 # .dockerignore whitelists only Cargo.toml; src and build.rs are stubbed below.
 COPY apps/tauri/Cargo.toml apps/tauri/Cargo.toml
+# Vendored security patches referenced by [patch] entries in Cargo.toml —
+# required even for the dependency-caching build.
+COPY vendor/ vendor/
 # Create dummy targets declared in Cargo.toml so manifest parsing succeeds.
 RUN mkdir -p src benches apps/tauri/src \
     && echo "fn main() {}" > src/main.rs \
@@ -156,5 +159,55 @@ USER 65534:65534
 EXPOSE 42617
 HEALTHCHECK --interval=60s --timeout=10s --retries=3 --start-period=10s \
     CMD ["revka", "status", "--format=exit-code"]
+ENTRYPOINT ["revka"]
+CMD ["daemon"]
+
+# ── Stage 4: Cloud Run Runtime ────────────────────────────────
+# Full agentic runtime for Google Cloud Run: daemon + Operator MCP and
+# Kumiho memory sidecars (Python venvs) + session-manager (Node). Reasoning
+# runs on Gemini; no CLI-agent logins exist in this image by design —
+# workflow executors are reached over A2A.
+FROM debian:trixie-slim AS cloudrun
+
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    curl \
+    git \
+    python3 \
+    python3-venv \
+    rsync \
+    nodejs \
+    npm \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /app/revka /usr/local/bin/revka
+COPY --from=builder /revka-data /revka-data
+
+# Sidecars: install Operator MCP + Kumiho memory venvs under /revka-data/.revka
+# using the same installer `revka install --sidecars-only` wraps locally.
+COPY operator-mcp/ /opt/revka-src/operator-mcp/
+COPY scripts/install-sidecars.sh /opt/revka-src/scripts/install-sidecars.sh
+RUN HOME=/revka-data bash /opt/revka-src/scripts/install-sidecars.sh
+
+# Session manager (Node sidecar): committed dist + production deps.
+RUN mkdir -p /revka-data/.revka/operator_mcp/session-manager
+COPY operator-mcp/session-manager/dist/ /revka-data/.revka/operator_mcp/session-manager/dist/
+COPY operator-mcp/session-manager/package.json /revka-data/.revka/operator_mcp/session-manager/package.json
+RUN cd /revka-data/.revka/operator_mcp/session-manager \
+    && npm install --omit=dev --no-audit --no-fund
+
+# Cloud Run config: Gemini provider, public bind (Cloud Run fronts TLS/ingress),
+# PORT env from Cloud Run overrides gateway.port at load time.
+COPY dev/config.cloudrun.toml /revka-data/.revka/config.toml
+
+RUN chown -R 65534:65534 /revka-data
+
+ENV LANG=C.UTF-8
+ENV REVKA_WORKSPACE=/revka-data/workspace
+ENV HOME=/revka-data
+
+WORKDIR /revka-data
+USER 65534:65534
+EXPOSE 42617
 ENTRYPOINT ["revka"]
 CMD ["daemon"]

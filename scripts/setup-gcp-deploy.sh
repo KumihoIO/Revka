@@ -1,76 +1,80 @@
 #!/usr/bin/env bash
-# setup-gcp-deploy.sh — one-time GCP setup for Revka deploy targets
-# (project construct-498201). Safe to re-run: every step is idempotent.
+# One-time GCP setup for the Cloud Run deploy pipeline (run as a human with
+# owner/editor on the project — Claude is intentionally not allowed to grant IAM).
+#
+#   bash scripts/setup-gcp-deploy.sh
+#
+# Creates:
+#   - revka-deployer SA (used by GitHub Actions via Workload Identity Federation)
+#   - revka-orchestrator SA (Cloud Run runtime identity)
+#   - WIF pool/provider trusted for this GitHub repo
+#   - Secret Manager secrets from your local ~/.revka/workspace/.env
 set -euo pipefail
 
-PROJECT_ID="${PROJECT_ID:-construct-498201}"
-REGION="${REGION:-us-central1}"
-ORCHESTRATOR_SA="revka-orchestrator@${PROJECT_ID}.iam.gserviceaccount.com"
+PROJECT=construct-498201
+REGION=us-central1
+REPO=KumihoIO/Revka
+DEPLOY_SA=revka-deployer
+RUNTIME_SA=revka-orchestrator
+POOL=github-actions
+PROVIDER=github-oidc
 
-echo "==> Project: ${PROJECT_ID} (region ${REGION})"
+PROJECT_NUMBER=$(gcloud projects describe "$PROJECT" --format='value(projectNumber)')
 
-# ---------------------------------------------------------------------------
-# Cloud agents (Track 3): coder-agent + reviewer-agent A2A executors
-# ---------------------------------------------------------------------------
+echo "==> Service accounts"
+gcloud iam service-accounts create "$DEPLOY_SA" --project="$PROJECT" \
+  --display-name="Revka CI deployer (GitHub Actions)" 2>/dev/null || true
+gcloud iam service-accounts create "$RUNTIME_SA" --project="$PROJECT" \
+  --display-name="Revka orchestrator runtime (Cloud Run)" 2>/dev/null || true
 
-for AGENT in coder-agent reviewer-agent; do
-  SA_EMAIL="${AGENT}@${PROJECT_ID}.iam.gserviceaccount.com"
+echo "==> Deployer roles (push images, deploy Cloud Run, act-as runtime SA)"
+for role in roles/artifactregistry.writer roles/run.admin; do
+  gcloud projects add-iam-policy-binding "$PROJECT" \
+    --member="serviceAccount:${DEPLOY_SA}@${PROJECT}.iam.gserviceaccount.com" \
+    --role="$role" --condition=None >/dev/null
+done
+gcloud iam service-accounts add-iam-policy-binding \
+  "${RUNTIME_SA}@${PROJECT}.iam.gserviceaccount.com" \
+  --member="serviceAccount:${DEPLOY_SA}@${PROJECT}.iam.gserviceaccount.com" \
+  --role=roles/iam.serviceAccountUser >/dev/null
 
-  if ! gcloud iam service-accounts describe "${SA_EMAIL}" --project "${PROJECT_ID}" >/dev/null 2>&1; then
-    echo "==> Creating service account ${SA_EMAIL}"
-    gcloud iam service-accounts create "${AGENT}" \
-      --project "${PROJECT_ID}" \
-      --display-name "Revka ${AGENT} (ADK A2A executor)"
+echo "==> Runtime roles (Vertex reasoning + secrets)"
+for role in roles/aiplatform.user roles/secretmanager.secretAccessor roles/run.invoker; do
+  gcloud projects add-iam-policy-binding "$PROJECT" \
+    --member="serviceAccount:${RUNTIME_SA}@${PROJECT}.iam.gserviceaccount.com" \
+    --role="$role" --condition=None >/dev/null
+done
+
+echo "==> Workload Identity Federation for GitHub Actions (keyless)"
+gcloud iam workload-identity-pools create "$POOL" --project="$PROJECT" \
+  --location=global --display-name="GitHub Actions" 2>/dev/null || true
+gcloud iam workload-identity-pools providers create-oidc "$PROVIDER" \
+  --project="$PROJECT" --location=global --workload-identity-pool="$POOL" \
+  --display-name="GitHub OIDC" \
+  --issuer-uri="https://token.actions.githubusercontent.com" \
+  --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository" \
+  --attribute-condition="assertion.repository=='${REPO}'" 2>/dev/null || true
+gcloud iam service-accounts add-iam-policy-binding \
+  "${DEPLOY_SA}@${PROJECT}.iam.gserviceaccount.com" \
+  --member="principalSet://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL}/attribute.repository/${REPO}" \
+  --role=roles/iam.workloadIdentityUser >/dev/null
+
+echo "==> Secret Manager secrets from ~/.revka/workspace/.env"
+ENVFILE="$HOME/.revka/workspace/.env"
+for key in KUMIHO_SERVICE_TOKEN GEMINI_OAUTH_CLIENT_ID GEMINI_OAUTH_CLIENT_SECRET GEMINI_API_KEY; do
+  val=$(grep -E "^${key}=" "$ENVFILE" | head -1 | cut -d= -f2- || true)
+  if [ -n "${val:-}" ]; then
+    printf '%s' "$val" | gcloud secrets create "revka-${key}" --project="$PROJECT" \
+      --data-file=- 2>/dev/null \
+      || printf '%s' "$val" | gcloud secrets versions add "revka-${key}" \
+           --project="$PROJECT" --data-file=- >/dev/null
+    echo "    revka-${key}: ok"
   else
-    echo "==> Service account ${SA_EMAIL} already exists"
-  fi
-
-  echo "==> Granting roles/aiplatform.user to ${SA_EMAIL} (Vertex AI / Gemini via ADC)"
-  gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
-    --member "serviceAccount:${SA_EMAIL}" \
-    --role roles/aiplatform.user \
-    --condition None \
-    --quiet >/dev/null
-
-  echo "==> Granting roles/run.invoker on service ${AGENT} to ${ORCHESTRATOR_SA}"
-  if ! gcloud run services add-iam-policy-binding "${AGENT}" \
-    --project "${PROJECT_ID}" \
-    --region "${REGION}" \
-    --member "serviceAccount:${ORCHESTRATOR_SA}" \
-    --role roles/run.invoker \
-    --quiet >/dev/null 2>&1; then
-    echo "    (service ${AGENT} not deployed yet — re-run this script after the first deploy)"
+    echo "    revka-${key}: SKIPPED (not in .env)"
   fi
 done
 
-# Secret used by both agents for GitHub clone/PR operations.
-if gcloud secrets describe revka-GITHUB_TOKEN --project "${PROJECT_ID}" >/dev/null 2>&1; then
-  echo "==> Secret revka-GITHUB_TOKEN already exists"
-elif [ -n "${GITHUB_PAT:-}" ]; then
-  echo "==> Creating secret revka-GITHUB_TOKEN from \$GITHUB_PAT"
-  printf '%s' "${GITHUB_PAT}" | gcloud secrets create revka-GITHUB_TOKEN \
-    --project "${PROJECT_ID}" \
-    --replication-policy automatic \
-    --data-file -
-else
-  cat <<'EOF'
-==> Secret revka-GITHUB_TOKEN not created (set GITHUB_PAT and re-run, or run):
-    printf '%s' "$YOUR_GITHUB_PAT" | gcloud secrets create revka-GITHUB_TOKEN \
-      --project construct-498201 --replication-policy automatic --data-file -
-EOF
-fi
-
-# Allow the agent runtime SAs to read the GitHub token secret.
-if gcloud secrets describe revka-GITHUB_TOKEN --project "${PROJECT_ID}" >/dev/null 2>&1; then
-  for AGENT in coder-agent reviewer-agent; do
-    SA_EMAIL="${AGENT}@${PROJECT_ID}.iam.gserviceaccount.com"
-    echo "==> Granting roles/secretmanager.secretAccessor on revka-GITHUB_TOKEN to ${SA_EMAIL}"
-    gcloud secrets add-iam-policy-binding revka-GITHUB_TOKEN \
-      --project "${PROJECT_ID}" \
-      --member "serviceAccount:${SA_EMAIL}" \
-      --role roles/secretmanager.secretAccessor \
-      --quiet >/dev/null
-  done
-fi
-
-echo "==> Done."
+echo
+echo "Done. GitHub workflow values:"
+echo "  workload_identity_provider: projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL}/providers/${PROVIDER}"
+echo "  service_account: ${DEPLOY_SA}@${PROJECT}.iam.gserviceaccount.com"
