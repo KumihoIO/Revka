@@ -12,25 +12,37 @@ own Google service account (no API keys). Each agent — orchestrator, coder,
 reviewer, AgentOps control plane — has its own cryptographic service
 identity, with least-privilege IAM between them.
 
-## Get access in one command
+## Get access
 
-The dashboard requires a bearer token. Pairing codes are minted on the
-server and read from its logs (the admin endpoint is loopback-only by
-design, so codes can't be fetched over the public URL). This script does
-the whole exchange and prints a durable token:
+The dashboard and API require a **bearer token**. The simplest hand-off: the
+team runs the pairing script once and sends you the printed token — it's
+durable and reusable, and can be revoked independently after judging. You do
+not need any Google Cloud access for that.
+
+`scripts/cloud-paircode.sh` has two modes:
+
+**Admin mode (repeatable, preferred)** — if you already hold a valid token,
+mint additional device tokens with no Cloud access at all. It calls the
+authenticated `/api/pairing/initiate` endpoint to generate a fresh one-time
+code and exchanges it:
 
 ```bash
-DEVICE=judges bash scripts/cloud-paircode.sh
+REVKA_ADMIN_TOKEN=rk_xxx DEVICE=judges bash scripts/cloud-paircode.sh
 ```
 
-It prints the **Service URL** and a **Bearer token**. The token is durable
-(the one-time code is consumed during pairing); reuse the token for every
-request.
+**Bootstrap mode (first device only)** — with no token yet, the one-time code
+is read from the service's startup logs (requires `gcloud` with Logs Viewer;
+the admin code endpoints are loopback-only by design):
 
-> Requires the Google Cloud SDK (`gcloud`) authenticated against the project
-> with at least Logs Viewer. If you don't have project access, ask the team
-> to run the script and send you the printed token directly — that's the
-> intended hand-off and it can be revoked independently after judging.
+```bash
+DEVICE=first-device bash scripts/cloud-paircode.sh
+```
+
+Either way it prints the **Service URL** and a **Bearer token**. A one-time
+code is consumed on first successful pair; the token is what you keep.
+
+> Note: the `/pair` endpoint has brute-force rate limiting. If you see
+> "Too many failed attempts", wait the stated seconds and retry.
 
 ## Use it
 
