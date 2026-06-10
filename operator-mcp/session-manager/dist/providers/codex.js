@@ -279,6 +279,18 @@ export function createCodexSession(config, onEvent) {
                     }
                 }
                 handle.jsonBuffer = "";
+                // Stdin-prompt agents (agy, cursor) print plain text, so the
+                // per-line timeline events above fragment a multi-line answer —
+                // and downstream consumers read only the last message, losing all
+                // but the final line of e.g. a FINAL_OUTPUT YAML block. Emit one
+                // consolidated message with the full stdout so the complete
+                // answer is what consumers see last.
+                if (isStdinPrompt) {
+                    const fullOutput = handle.stdout.trim();
+                    if (fullOutput) {
+                        onEvent({ type: "timeline", item: { type: "assistant_message", text: fullOutput } });
+                    }
+                }
                 onEvent({
                     type: "turn_completed",
                     turnId,
