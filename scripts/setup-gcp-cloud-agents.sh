@@ -32,6 +32,12 @@ for AGENT in coder-agent reviewer-agent; do
     --condition None \
     --quiet >/dev/null
 
+  echo "==> Granting deployer act-as on ${SA_EMAIL} (required for gcloud run deploy)"
+  gcloud iam service-accounts add-iam-policy-binding "${SA_EMAIL}" \
+    --member "serviceAccount:revka-deployer@${PROJECT_ID}.iam.gserviceaccount.com" \
+    --role roles/iam.serviceAccountUser \
+    --quiet >/dev/null
+
   echo "==> Granting roles/run.invoker on service ${AGENT} to ${ORCHESTRATOR_SA}"
   if ! gcloud run services add-iam-policy-binding "${AGENT}" \
     --project "${PROJECT_ID}" \
