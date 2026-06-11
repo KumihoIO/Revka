@@ -50,7 +50,7 @@ auto-approved gates (no clicking dead air), and time-lapsing the coder segment.
   work lands."
 
 ### 0:12 – 0:26 · New issue → auto-trigger (live)
-- **[GH]** open the fresh feature issue, then add the **`revka-demo`** label.
+- **[GH]** open the fresh feature issue, then add the **`revka`** label.
   The repo's `revka-issue-trigger.yml` GitHub Action fires automatically and
   POSTs to the Cloud Run orchestrator (bearer token in repo secrets) — no manual
   command.
@@ -102,7 +102,7 @@ auto-approved gates (no clicking dead air), and time-lapsing the coder segment.
 ## Automatic trigger (headline flow)
 
 The demo repo's `revka-issue-trigger.yml` Action posts to Cloud Run when an issue
-is labeled `revka-demo`. Repo secrets (set once):
+is labeled `revka`. Repo secrets (set once):
 
 - `REVKA_GATEWAY_URL` = `https://revka-orchestrator-n22ujw2j2a-uc.a.run.app`
 - `REVKA_BEARER_TOKEN` = the stable admin token (`revka-GATEWAY_ADMIN_TOKEN`)
@@ -113,7 +113,7 @@ On camera, just open the issue and add the label:
 gh issue create -R KumihoIO/google-agentops-demo \
   --title "Feature: percentage discount on cart subtotal" \
   --body "Add apply_percentage_discount(items, percent_off) to src/agentops_demo/cart.py returning the discounted subtotal in cents (round to nearest cent), with a regression test." \
-  --label revka-demo
+  --label revka
 ```
 
 ## Manual trigger (fallback)
