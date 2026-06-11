@@ -72,14 +72,16 @@ def main() -> None:
 
     app = reasoning_engines.AdkApp(agent=root_agent, enable_tracing=True)
 
-    # Note: the v1 Agent Engine API runs the engine as the project's default
-    # Reasoning Engine Service Agent (custom service_account is not honored in v1),
-    # which must hold roles/discoveryengine.viewer for live Vertex AI Search
-    # grounding (the bundled CONVENTIONS.md corpus is the graceful fallback).
+    # Run the engine as the reviewer SA (it already holds aiplatform.user +
+    # discoveryengine.viewer), so Vertex AI Search grounding is live rather than
+    # falling back to the bundled CONVENTIONS.md corpus. Requires the Agent
+    # Engine service agent to have roles/iam.serviceAccountTokenCreator on this
+    # SA. Set via the SDK's spec.service_account (honored on create and update).
     common = dict(
         requirements=REQUIREMENTS,
         extra_packages=EXTRA_PACKAGES,
         env_vars=ENV_VARS,
+        service_account=RUNTIME_SA,
         display_name=DISPLAY_NAME,
         description=(
             "Revka reviewer agent (ADK/Gemini via Vertex AI) — reviews GitHub "
