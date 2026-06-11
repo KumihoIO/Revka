@@ -152,46 +152,44 @@ done
 Continuous narration for the 2:00 cut — ~300 words, ~150 wpm. Read at a measured
 demo pace; pause briefly at each `‖`. Timestamps are cut points, not hard cues.
 
-> **[0:00]** This is Revka. It resolves GitHub issues autonomously — with human
-> approval gates — using a multi-agent system that runs entirely on Google
-> Cloud. ‖ On the left is the orchestrator dashboard; on the right, live Cloud
-> Run logs and the GitHub repository.
+> **[0:00]** This is Revka — a platform for building autonomous, auditable
+> workflows for real enterprise work. You define them visually, as steps on a
+> canvas; agents execute them; and a human governs the decisions that matter. ‖
+> It all runs on Google Cloud.
 >
-> **[0:12]** Everything here runs on Cloud Run — four services, each with its own
-> identity, deployed keylessly from GitHub Actions. The reasoning is Gemini,
-> through Vertex AI. No API keys anywhere.
+> **[0:14]** What you're about to see is *one* workflow — resolving a software
+> issue, end to end. But the same engine runs security audits, data pipelines,
+> research, operations — any multi-step process you can define. ‖ Every agent
+> here is a Cloud Run service with its own identity, reasoning on Gemini through
+> Vertex AI. No API keys.
 >
-> **[0:24]** I open a feature request, and label it "revka." ‖ That's the only
-> human action to start it — a GitHub Action fires and triggers the pipeline on
-> Cloud Run. The run appears in the dashboard on its own.
+> **[0:36]** I start this workflow by labeling an issue — a GitHub Action triggers
+> it, and it appears in the dashboard, running on its own. ‖ It assesses the
+> work, verifies a partner agent over the A2A protocol, and then pauses for human
+> approval before anything changes. I approve.
 >
-> **[0:40]** First it assesses the issue, then proves the Google AgentOps
-> integration by discovering the control plane over the A2A protocol — with a
-> Cloud Run identity token. ‖ Then it pauses for human approval, before any code
-> is touched. I approve.
+> **[0:58]** Now the coder agent — built with the Agent Development Kit, reasoning
+> on Gemini — takes the task over A2A, does the work on Cloud Run, and opens a
+> pull request. ‖ No human wrote that code.
 >
-> **[0:52]** Now watch the logs. The coder agent — built with the Agent
-> Development Kit, reasoning on Gemini via Vertex — takes the task over A2A. It
-> clones the repo, writes the fix and a test, runs the tests, and opens this pull
-> request. ‖ No human wrote that code.
+> **[1:18]** Then an independent reviewer agent checks it — grounded in our coding
+> standards, retrieved from Vertex AI Search — and cites the exact rule it
+> applies. ‖ A second human gate, before merge. I approve.
 >
-> **[1:16]** A second, independent agent reviews the diff — grounded in the
-> repository's coding conventions, retrieved from Vertex AI Search. Here it cites
-> the specific rule the change violates. ‖ Then the second human gate, before
-> merge. I approve.
+> **[1:38]** The agents merge the change and close the issue — agent to agent,
+> entirely on Google Cloud. The work was done autonomously, ‖ but every step was
+> governed and recorded — a complete, auditable trail.
 >
-> **[1:38]** The coder agent merges the pull request and closes the issue —
-> through agent-to-agent calls, entirely on Google Cloud. ‖ The loop is closed:
-> an issue became a reviewed, merged change — autonomously, but governed by a
-> human at every gate.
->
-> **[1:54]** Cloud-native runtime. Gemini intelligence. Agent-to-agent
-> interoperability. Per-agent identity. This is Revka — Track 3, end to end.
+> **[1:52]** That's one workflow. Revka is the platform behind it — visual,
+> governed, auditable, multi-agent — turning everyday enterprise problems into
+> autonomous workflows on Google Cloud.
 
-**Pacing notes:** if you run long, the trimmable lines are the second sentence of
-[0:12] and the "No human wrote that code" aside. If you run short, hold on the
-PR diff (0:52–1:16) and the merged/closed GitHub state (1:38–1:54). The two "I
-approve" beats should land exactly as you click (or as the auto-approver fires).
+**Pacing notes:** the framing bookends ([0:00] and [1:52]) carry the message —
+*Revka is the platform; issue resolution is one example.* If you run long, trim
+the partner-agent clause in [0:36] and the "No human wrote that code" aside. If
+short, hold on the PR diff (0:58–1:18) and the merged/closed GitHub state
+(1:38–1:52). The two "I approve" beats land as you click (or as the auto-approver
+fires).
 
 ## On-screen captions (lower-thirds)
 
@@ -200,8 +198,9 @@ third, ~3s on screen. They carry the mandate keywords even with the sound off.
 
 | In → Out | Caption |
 | --- | --- |
-| 0:00 → 0:05 | **Revka — autonomous issue resolution** |
-| 0:06 → 0:11 | *Multi-agent · Google Cloud · human-gated* |
+| 0:00 → 0:06 | **Revka — autonomous workflow platform** |
+| 0:07 → 0:13 | *Visual · governed · auditable · on Google Cloud* |
+| 0:16 → 0:22 | *One workflow of many — issue resolution* |
 | 0:13 → 0:18 | **New GitHub issue → triggered** |
 | 0:27 → 0:33 | **Plans the fix on Gemini (Vertex AI)** |
 | 0:34 → 0:40 | **A2A preflight: control plane discovered** |
@@ -221,21 +220,28 @@ which: `DASHBOARD` / `CLOUD RUN LOGS` / `GITHUB`.
 ## Pinned description (paste under the video)
 
 > **Revka — Google for Startups AI Agents Challenge, Track 3.**
-> A GitHub issue is resolved end-to-end by a multi-agent system running entirely
-> on Google Cloud. A Gemini-powered orchestrator on Cloud Run plans the fix and
-> verifies the Google AgentOps control plane over the A2A protocol; after a human
-> approval gate, an **ADK coder agent** (Gemini via Vertex AI, on Cloud Run)
-> clones the repo, implements the feature, runs the tests, and opens a pull
-> request; an **ADK reviewer agent** reviews it over A2A; and after a second human
-> gate, the PR is merged and the issue closed — no human touches the code.
+> Revka is a platform for building **autonomous, auditable, visually-defined
+> workflows** that run on Google Cloud — for software, security, data, research,
+> operations, and more. Workflows are multi-agent and human-governed: agents
+> reason on Gemini, coordinate over A2A, and pause at approval gates a human
+> controls, with every step recorded as an audit trail.
 >
-> **Left:** the Revka dashboard (orchestration + human gates). **Top-right:**
-> live Cloud Run logs (the agents executing on GCP). **Bottom-right:** GitHub
-> (the issue → PR → merge → close).
+> This video shows **one example workflow** — resolving a software issue end to
+> end. Labeling the issue triggers it; an orchestrator on Cloud Run assesses the
+> work and verifies the Google AgentOps control plane over A2A; after a human
+> gate, an **ADK coder agent** (Gemini via Vertex AI, on Cloud Run) does the work
+> and opens a pull request; an **ADK reviewer agent**, grounded in Vertex AI
+> Search, reviews it; and after a second human gate, the change is merged and the
+> issue closed — no human touches the code.
+>
+> **Left:** the Revka dashboard (visual workflow + human gates). **Top-right:**
+> live Cloud Run logs (the agents executing on GCP). **Bottom-right:** the work
+> target on GitHub.
 >
 > Stack: Cloud Run · Vertex AI (Gemini 2.5 Pro) · Agent Development Kit · A2A
-> protocol · Workload Identity Federation (keyless) · per-agent service
-> identities. No API keys; reasoning authenticated by each service's own account.
+> protocol · Vertex AI Search grounding · Workload Identity Federation (keyless) ·
+> per-agent service identities. No API keys; reasoning authenticated by each
+> service's own account.
 
 ## Window layout suggestion
 - **Dashboard** large on the left (≈55% width).
