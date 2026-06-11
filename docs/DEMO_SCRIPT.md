@@ -1,134 +1,113 @@
-# Demo Recording Script — Revka Track 3 (≈ 4–5 min)
+# Demo Recording Script — Revka Track 3 (2:00)
 
-A screen-recording timeline that runs the **same cloud-native pipeline on a
-fresh issue**, live. Total agent runtime is ~5–8 min; the script below shows
-which parts to record live and which to time-lapse so the final cut is ~4–5 min.
+A tight 2-minute cut of the cloud-native pipeline resolving a **fresh issue**.
+The real run takes ~6 min; the final video is 2:00 by keeping narration
+continuous, auto-approving the gates (no clicking dead air), and time-lapsing
+the one slow step (the coder). Capture everything, then cut to the beats below.
 
 ## Before you hit record (prep, off-camera)
 
-1. **Pair / get a token** (durable; reuse for the whole demo):
+1. **Token + env** (durable; reuse across takes):
    ```bash
    REVKA_ADMIN_TOKEN=<existing token> DEVICE=demo bash scripts/cloud-paircode.sh
-   # or first-time: DEVICE=demo bash scripts/cloud-paircode.sh
+   export BT=rk_...   URL=https://revka-orchestrator-n22ujw2j2a-uc.a.run.app
    ```
-   Export it: `export BT=rk_...` and `export URL=https://revka-orchestrator-n22ujw2j2a-uc.a.run.app`
-2. **Open three browser tabs:** (a) the demo repo Issues page, (b) the Revka
-   dashboard at `$URL/` (token pasted, on the Workflow Runs view), (c) the
-   Google Cloud console → Cloud Run services list (shows the 4 services green).
-3. **Pick the fresh issue.** Suggested new feature (additive, testable, distinct
-   from the tax one): *"Add a `apply_percentage_discount(items, percent_off)`
-   helper to `cart.py` that returns the discounted subtotal in cents."*
-4. Have `scripts/cloud-paircode.sh` and `docs/TRACK3_SUBMISSION.md` handy to
-   show on screen.
+2. **Three tabs ready:** (a) demo repo Issues, (b) Revka dashboard `$URL/`
+   (token pasted, Workflow Runs view), (c) Cloud Run console (4 services green).
+3. **Pre-write the fresh issue** (additive, testable, distinct from prior takes),
+   e.g. *"Add `apply_percentage_discount(items, percent_off)` to `cart.py`."*
+4. **Start the auto-approver** in a hidden terminal right after you trigger
+   (script at the bottom) so both gates clear instantly while you talk.
+
+> Editing tip: record the full ~6-min session once, then in your editor speed
+> the coder segment to fit 0:50→1:20. Narration runs continuously over the cut.
 
 ---
 
-## Timeline
+## Final-cut timeline (2:00)
 
-### 0:00 – 0:30 — Hook + architecture
-- **Show:** `docs/TRACK3_SUBMISSION.md` mermaid diagram (rendered on GitHub).
-- **Say:** "Revka resolves GitHub issues autonomously — but with human approval
-  gates — using a multi-agent system running entirely on Google Cloud. Reasoning
-  is Gemini on Vertex AI, the agents are ADK on Cloud Run, and they coordinate
-  over the A2A protocol."
+### 0:00 – 0:12 · Hook + architecture
+- **Screen:** the `TRACK3_SUBMISSION.md` mermaid diagram.
+- **VO:** "Revka resolves GitHub issues autonomously — with human approval gates
+  — using a multi-agent system running entirely on Google Cloud: Gemini on
+  Vertex AI, ADK agents on Cloud Run, coordinating over A2A."
 
-### 0:30 – 0:50 — It's really on Google Cloud
-- **Show:** Cloud Run console — `revka-orchestrator`, `coder-agent`,
-  `reviewer-agent`, `construct-agentops-a2a`, all green; click one to show it
-  runs as its own service account with no keys.
-- **Say:** "Four services, four service identities, deployed keylessly from
-  GitHub Actions via Workload Identity Federation."
+### 0:12 – 0:24 · It's really on Google Cloud
+- **Screen:** Cloud Run console — `revka-orchestrator`, `coder-agent`,
+  `reviewer-agent`, `construct-agentops-a2a`, all green.
+- **VO:** "Four services, four service identities, deployed keylessly from
+  GitHub Actions."
 
-### 0:50 – 1:20 — Create the issue (live)
-- **Show:** the demo repo Issues page. Create the new discount-feature issue
-  (paste a prepared title/body).
-  ```bash
-  gh issue create -R KumihoIO/google-agentops-demo \
-    --title "Feature: percentage discount on cart subtotal" \
-    --body "Add apply_percentage_discount(items, percent_off) to src/agentops_demo/cart.py returning the discounted subtotal in cents (round to nearest cent), with a regression test."
-  ```
-- **Say:** "Here's a brand-new feature request. No human will touch the code."
+### 0:24 – 0:40 · New issue → trigger (live)
+- **Screen:** create the issue, then the trigger command; cut to the dashboard
+  as the run appears.
+- **VO:** "A brand-new feature request. I trigger the pipeline — and no human
+  will touch the code."
 
-### 1:20 – 1:40 — Trigger the pipeline (live)
-- **Show:** terminal.
-  ```bash
-  ISSUE_JSON=$(curl -s https://api.github.com/repos/KumihoIO/google-agentops-demo/issues/<N>)
-  curl -s -X POST "$URL/api/workflows/run/github-issue-resolver" \
-    -H "Authorization: Bearer $BT" -H "Content-Type: application/json" \
-    -d "$(python3 -c 'import json,sys; print(json.dumps({"inputs":{"repo_name":"KumihoIO/google-agentops-demo","github_payload":sys.argv[1],"track3_a2a_url":"https://construct-agentops-a2a-1091585228963.us-central1.run.app"}}))' "$ISSUE_JSON")"
-  ```
-- **Cut to:** the dashboard Workflow Runs view — the run appears, steps light up.
+### 0:40 – 0:52 · Assess + AgentOps preflight + Gate 1
+- **Screen:** `assess_issue` ✓ → `agentops_preflight` ✓ (flash
+  `a2a_discovery_status: discovered`) → gate 1 auto-approves.
+- **VO:** "It plans the fix on Gemini, proves the Google AgentOps integration by
+  discovering the control plane over A2A, then pauses for human approval."
 
-### 1:40 – 2:10 — Assess + AgentOps preflight
-- **Show:** dashboard step list: `assess_issue` ✓ then `agentops_preflight` ✓.
-  Click the preflight step to show `a2a_discovery_status: discovered`.
-- **Say:** "It plans the fix on Gemini, then proves the Google AgentOps
-  integration by discovering the control plane over A2A — using a Cloud Run
-  identity token minted from the metadata server."
+### 0:52 – 1:20 · Coder agent works → PR (TIME-LAPSE)
+- **Screen:** `deploy_coder_agent` running (sped up), then cut to the demo repo —
+  the new PR with the diff (`apply_percentage_discount` + a test).
+- **VO:** "The ADK coder agent on Cloud Run — reasoning on Gemini — clones the
+  repo, writes the code and a test, and opens this pull request. One A2A call."
 
-### 2:10 – 2:30 — Gate 1 (the governance moment)
-- **Show:** the run pauses at `human_approval_gate_1`; the dashboard shows the
-  approval prompt. Click **Approve**.
-- **Say:** "Before any code changes, a human approves — this is the governance
-  layer enterprises actually need."
+### 1:20 – 1:38 · Review + Gate 2
+- **Screen:** `review_pr` ✓ (flash the verdict) → gate 2 auto-approves.
+- **VO:** "A separate reviewer agent, its own identity, reviews the diff over
+  A2A — then the second human gate before merge."
 
-### 2:30 – 3:30 — Coder agent works (time-lapse this part)
-- **Show:** `deploy_coder_agent` running. Switch to the demo repo PRs tab; the
-  new PR appears (branch `fix/issue-<N>`). Open it, scroll the diff —
-  `apply_percentage_discount` plus a test.
-- **Say:** "The ADK coder agent on Cloud Run — reasoning on Gemini — cloned the
-  repo, implemented the feature, ran the tests, and opened this PR. All via a
-  single A2A task call."
+### 1:38 – 1:54 · Merge + close (payoff)
+- **Screen:** `merge_and_close` ✓, run **completed**; cut to GitHub: PR
+  **Merged**, issue **Closed**, new function on `main`.
+- **VO:** "The coder merges and closes the issue. A real feature, shipped
+  autonomously, governed by humans — entirely on Google Cloud."
 
-### 3:30 – 3:55 — Review + Gate 2
-- **Show:** `review_pr` ✓ (click to show the verdict), then the pause at
-  `human_approval_gate_2`. Click **Approve**.
-- **Say:** "A separate reviewer agent — its own identity — reviews the diff over
-  A2A. Then the second human gate before merge."
-
-### 3:55 – 4:25 — Merge + close (the payoff)
-- **Show:** `merge_and_close` ✓, run status **completed**. Switch to GitHub:
-  PR shows **Merged**, issue shows **Closed**, and `cart.py` on `main` now has
-  the new function.
-- **Say:** "The coder merges the PR and closes the issue. A real feature,
-  shipped autonomously, governed by humans, entirely on Google Cloud."
-
-### 4:25 – 4:45 — Close
-- **Show:** the mermaid diagram again, or the four-green-services Cloud Run view.
-- **Say:** "Cloud-native runtime, Gemini intelligence, A2A interoperability,
-  per-agent identity — Track 3, end to end."
+### 1:54 – 2:00 · Tagline
+- **Screen:** the mermaid diagram (or 4 green services).
+- **VO:** "Cloud-native runtime, Gemini intelligence, A2A interoperability.
+  Track 3, end to end."
 
 ---
 
-## Auto-approve option (if you don't want to click gates on camera)
-
-Run this in a side terminal after triggering; it approves both gates the moment
-they appear, so the run flows continuously while you narrate:
+## Commands (paste-ready)
 
 ```bash
-RUN=<run_id>
+# create the fresh issue
+gh issue create -R KumihoIO/google-agentops-demo \
+  --title "Feature: percentage discount on cart subtotal" \
+  --body "Add apply_percentage_discount(items, percent_off) to src/agentops_demo/cart.py returning the discounted subtotal in cents (round to nearest cent), with a regression test."
+
+# trigger (replace <N> with the new issue number)
+ISSUE=$(curl -s https://api.github.com/repos/KumihoIO/google-agentops-demo/issues/<N>)
+RUN=$(curl -s -X POST "$URL/api/workflows/run/github-issue-resolver" \
+  -H "Authorization: Bearer $BT" -H "Content-Type: application/json" \
+  -d "$(python3 -c 'import json,sys;print(json.dumps({"inputs":{"repo_name":"KumihoIO/google-agentops-demo","github_payload":sys.argv[1],"track3_a2a_url":"https://construct-agentops-a2a-1091585228963.us-central1.run.app"}}))' "$ISSUE")" \
+  | python3 -c 'import json,sys;print(json.load(sys.stdin)["run_id"])')
+echo "run: $RUN"
+```
+
+```bash
+# hands-free gate approver (run in a hidden terminal right after triggering)
 while true; do
   S=$(curl -s -H "Authorization: Bearer $BT" "$URL/api/workflows/runs/$RUN" \
-       | python3 -c 'import json,sys; r=json.load(sys.stdin).get("run",{}); print(r.get("status"))')
-  if [ "$S" = "paused" ]; then
-    curl -s -X POST -H "Authorization: Bearer $BT" -H "Content-Type: application/json" \
-      -d '{"approved":true,"feedback":"demo"}' "$URL/api/workflows/runs/$RUN/approve" >/dev/null
-  fi
+       | python3 -c 'import json,sys;print(json.load(sys.stdin).get("run",{}).get("status"))')
+  [ "$S" = "paused" ] && curl -s -X POST -H "Authorization: Bearer $BT" \
+    -H "Content-Type: application/json" -d '{"approved":true,"feedback":"demo"}' \
+    "$URL/api/workflows/runs/$RUN/approve" >/dev/null
   case "$S" in completed|failed|cancelled) break;; esac
-  sleep 10
+  sleep 8
 done
 ```
 
-## Reset between takes
-- Close/recreate the issue, or pick a different fresh feature each take.
-- If the coder finds the feature already implemented (from a prior take), use a
-  new feature name so there's a genuine diff to show.
-- Tokens are durable across takes; only re-pair if you redeploy the orchestrator.
-
-## Gotchas seen in testing
-- After **any orchestrator redeploy**, paired tokens reset — re-pair via
-  `scripts/cloud-paircode.sh` (bootstrap mode reads the fresh code from logs).
-- The coder runs one heavyweight task at a time (single instance) — don't fire
-  two runs at once on camera.
-- `gcloud` auth can expire; run `gcloud auth login` before recording if the
-  pairing script's log-read step fails.
+## Notes
+- Use a **different feature each take** so the coder always has a real diff.
+- After any **orchestrator redeploy**, re-pair (`scripts/cloud-paircode.sh`); run
+  `gcloud auth login` first if the log-read step fails.
+- The coder runs one task at a time — don't fire two runs at once.
+- For a fully scripted alternative, want the gates approved *on camera* instead?
+  Skip the auto-approver and click **Approve** in the dashboard at 0:40 and 1:20.
