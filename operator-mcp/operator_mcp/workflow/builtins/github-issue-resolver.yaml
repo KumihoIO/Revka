@@ -24,7 +24,11 @@ inputs:
   - name: reviewer_agent_url
     required: false
     default: "https://reviewer-agent-n22ujw2j2a-uc.a.run.app"
-    description: Cloud Run A2A reviewer executor (ADK/Gemini via Vertex).
+    description: Legacy Cloud Run A2A reviewer executor (kept for fallback; the reviewer now runs on Vertex AI Agent Engine).
+  - name: reviewer_agent_engine
+    required: false
+    default: "projects/1091585228963/locations/us-central1/reasoningEngines/3625053003137941504"
+    description: Vertex AI Agent Engine resource for the ADK/Gemini reviewer (reasoning + Vertex AI Search grounding).
   - name: fix_strategy
     required: false
     default: "Analyze the issue and implement the smallest correct fix. Add or adjust tests to cover the change. Run pytest. Keep the change minimal and well-scoped."
@@ -303,23 +307,78 @@ steps:
         issue_number: "${assess_issue.output_data.issue_number}"
 
   # -------------------------------------------------------------------------
-  # 6. Review the PR — A2A call to the Cloud Run ADK/Gemini reviewer. Threaded
-  #    pr_number comes from the extract step above.
+  # 6. Review the PR — query the ADK/Gemini reviewer running on Vertex AI Agent
+  #    Engine (reasoning + Vertex AI Search grounding). The orchestrator mints an
+  #    OAuth access token from its metadata server (its SA holds aiplatform.user)
+  #    and calls the engine's :streamQuery endpoint, then parses the reviewer's
+  #    JSON verdict out of the streamed events. Threaded pr_number comes from the
+  #    extract step above.
   # -------------------------------------------------------------------------
   - id: review_pr
-    name: "Review Pull Request (A2A / Cloud Run)"
-    type: a2a
+    name: "Review Pull Request (Vertex AI Agent Engine)"
+    type: python
     position:
       x: 513.52
       y: 600.0
     depends_on: [extract_pr_number]
-    a2a:
-      url: "${inputs.reviewer_agent_url}"
-      cloud_run_auth: gcloud
-      cloud_run_audience: "${inputs.reviewer_agent_url}"
+    python:
       timeout: 900
-      message: |
-        {"repo_name": "${inputs.repo_name}", "pr_number": ${extract_pr_number.output_data.pr_number}}
+      code: |
+        import json, sys, re, urllib.request, urllib.parse
+        ctx = json.load(sys.stdin)
+        engine = (ctx["args"].get("reviewer_agent_engine") or "").strip()
+        repo = ctx["args"].get("repo_name") or ""
+        pr = ctx["args"].get("pr_number")
+        out = {"review_status": "needs_changes", "findings": [],
+               "standards_checked": [], "summary": ""}
+        def metadata_access_token():
+            url = ("http://metadata.google.internal/computeMetadata/v1/instance/"
+                   "service-accounts/default/token")
+            req = urllib.request.Request(url, headers={"Metadata-Flavor": "Google"})
+            with urllib.request.urlopen(req, timeout=5) as r:
+                return json.loads(r.read().decode("utf-8"))["access_token"]
+        try:
+            loc = engine.split("/locations/")[1].split("/")[0]
+            token = metadata_access_token()
+            api = ("https://" + loc + "-aiplatform.googleapis.com/v1/" + engine +
+                   ":streamQuery?alt=sse")
+            message = json.dumps({"repo_name": repo, "pr_number": pr})
+            body = json.dumps({"class_method": "stream_query",
+                               "input": {"user_id": "revka", "message": message}})
+            req = urllib.request.Request(
+                api, data=body.encode("utf-8"),
+                headers={"Authorization": "Bearer " + token,
+                         "Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=870) as r:
+                raw = r.read().decode("utf-8", "replace")
+            final = ""
+            for line in raw.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                if line.startswith("data:"):
+                    line = line[5:].strip()
+                try:
+                    ev = json.loads(line)
+                except Exception:
+                    continue
+                for p in (ev.get("content", {}) or {}).get("parts", []) or []:
+                    if p.get("text"):
+                        final = p["text"]
+            m = re.search(r"\{.*\}", final, re.S)
+            if m:
+                out = json.loads(m.group(0))
+            else:
+                out["summary"] = ("Reviewer returned no parseable verdict: " +
+                                  final[:500])
+        except Exception as exc:
+            out["summary"] = ("Agent Engine review call failed: " +
+                              type(exc).__name__ + ": " + str(exc)[:300])
+        json.dump(out, sys.stdout)
+      args:
+        reviewer_agent_engine: "${inputs.reviewer_agent_engine}"
+        repo_name: "${inputs.repo_name}"
+        pr_number: "${extract_pr_number.output_data.pr_number}"
 
   # -------------------------------------------------------------------------
   # 7. Human gate — approve the merge.
