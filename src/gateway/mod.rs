@@ -900,6 +900,20 @@ pub async fn run_gateway_with_mcp_registry(
             }
         }
     }
+    // Pre-shared admin bearer token (e.g. Secret Manager → env on Cloud Run).
+    // Seeded as a paired token so it is accepted as a bearer everywhere
+    // `is_authenticated` runs (REST API + WebSocket) and — unlike runtime
+    // pairing — survives redeploys / fresh containers. Plaintext or already
+    // hashed; PairingGuard::new hashes plaintext entries.
+    if let Ok(admin_token) = std::env::var("REVKA_GATEWAY_ADMIN_TOKEN") {
+        let admin_token = admin_token.trim();
+        if !admin_token.is_empty() && !pairing_tokens.iter().any(|t| t == admin_token) {
+            pairing_tokens.push(admin_token.to_string());
+            tracing::info!(
+                "Gateway: pre-shared admin bearer token registered from REVKA_GATEWAY_ADMIN_TOKEN"
+            );
+        }
+    }
     let pairing = Arc::new(PairingGuard::new(
         config.gateway.require_pairing,
         &pairing_tokens,
