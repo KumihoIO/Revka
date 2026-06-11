@@ -239,9 +239,11 @@ steps:
     python:
       timeout: 30
       code: |
-        import json, sys, re
+        import json, sys, re, urllib.request
         ctx = json.load(sys.stdin)
         raw = ctx["args"].get("coder_output", "") or ""
+        repo = ctx["args"].get("repo_name", "") or ""
+        issue_number = ctx["args"].get("issue_number", "")
         data = {}
         # The coder prints a bare JSON object; tolerate surrounding prose by
         # extracting the first {...} block if a direct parse fails.
@@ -259,22 +261,46 @@ steps:
         pr_url = data.get("pr_url", "") or ""
         m = re.search(r"/pull/(\d+)", pr_url)
         pr_number = int(m.group(1)) if m else None
+        branch = data.get("branch", "") or (("fix/issue-%s" % issue_number) if issue_number else "")
+        # Fallback: the coder sometimes opens the PR via tools but emits no
+        # final JSON. Look it up by its deterministic branch (public repo,
+        # unauthenticated API) so a quiet coder doesn't stall the pipeline.
+        if pr_number is None and repo and issue_number:
+            try:
+                owner = repo.split("/")[0]
+                br = "fix/issue-%s" % issue_number
+                url = ("https://api.github.com/repos/%s/pulls?state=open&head=%s:%s&per_page=5"
+                       % (repo, owner, br))
+                req = urllib.request.Request(url, headers={
+                    "User-Agent": "revka-workflow",
+                    "Accept": "application/vnd.github+json",
+                })
+                with urllib.request.urlopen(req, timeout=20) as resp:
+                    prs = json.load(resp)
+                if prs:
+                    pr_number = int(prs[0]["number"])
+                    pr_url = prs[0].get("html_url", pr_url)
+                    branch = prs[0].get("head", {}).get("ref", branch)
+            except Exception as exc:
+                sys.stderr.write("PR branch-lookup fallback failed: %s\n" % exc)
         out = {
             "pr_number": pr_number,
             "pr_url": pr_url,
-            "branch": data.get("branch", ""),
+            "branch": branch,
             "summary": data.get("summary", ""),
             "test_status": data.get("test_status", ""),
         }
         if pr_number is None:
             # Surface a clear failure so the run stops here rather than calling
             # the reviewer with an empty pr_number.
-            sys.stderr.write("could not extract pr_number from coder pr_url: " + repr(pr_url))
+            sys.stderr.write("could not extract pr_number from coder output or branch lookup\n")
             json.dump(out, sys.stdout)
             sys.exit(1)
         json.dump(out, sys.stdout)
       args:
         coder_output: "${deploy_coder_agent.output}"
+        repo_name: "${inputs.repo_name}"
+        issue_number: "${assess_issue.output_data.issue_number}"
 
   # -------------------------------------------------------------------------
   # 6. Review the PR — A2A call to the Cloud Run ADK/Gemini reviewer. Threaded
