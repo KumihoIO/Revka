@@ -167,56 +167,62 @@ def retrieve_conventions(query: str) -> str:
     Returns: matched convention text (numbered rules), or a note that none were
     retrieved — in which case review using the PR diff alone.
     """
-    if not REVIEWER_DATASTORE_ID:
-        return "No conventions data store configured; review using the diff alone."
-    try:
-        creds, _ = google.auth.default(
-            scopes=["https://www.googleapis.com/auth/cloud-platform"]
-        )
-        creds.refresh(google.auth.transport.requests.Request())
-        serving = f"{REVIEWER_DATASTORE_ID}/servingConfigs/default_search"
-        url = f"https://us-discoveryengine.googleapis.com/v1/{serving}:search"
-        body = {
-            "query": query,
-            "pageSize": 5,
-            "contentSearchSpec": {
-                "snippetSpec": {"returnSnippet": True},
-                "extractiveContentSpec": {"maxExtractiveAnswerCount": 3},
-            },
-        }
-        resp = httpx.post(
-            url,
-            json=body,
-            headers={
-                "Authorization": f"Bearer {creds.token}",
-                "X-Goog-User-Project": os.getenv("GOOGLE_CLOUD_PROJECT", "construct-498201"),
-                "Content-Type": "application/json",
-            },
-            timeout=20.0,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        chunks: list[str] = []
-        for result in data.get("results", []):
-            dsd = (result.get("document", {}) or {}).get("derivedStructData", {}) or {}
-            for ans in dsd.get("extractive_answers", []) or []:
-                if ans.get("content"):
-                    chunks.append(ans["content"])
-            for snip in dsd.get("snippets", []) or []:
-                if snip.get("snippet"):
-                    chunks.append(snip["snippet"])
-        text = "\n".join(c.strip() for c in chunks if c and c.strip())
-        if not text:
-            return (
-                "No conventions retrieved from Vertex AI Search (the index may "
-                "still be building); review using the PR diff alone."
+    # Primary: rank/confirm against Vertex AI Search (Standard edition — no
+    # extractive-answer/snippet enterprise features). Secondary, always-reliable:
+    # the bundled conventions corpus, so the reviewer can cite specific rules
+    # even while the search index is still settling.
+    matched = 0
+    snippet_text = ""
+    if REVIEWER_DATASTORE_ID:
+        try:
+            creds, _ = google.auth.default(
+                scopes=["https://www.googleapis.com/auth/cloud-platform"]
             )
-        return text[:6000]
-    except Exception as exc:  # noqa: BLE001 — grounding is additive, never fatal
-        return (
-            f"Conventions retrieval unavailable ({type(exc).__name__}); "
-            "review using the PR diff alone."
+            creds.refresh(google.auth.transport.requests.Request())
+            serving = f"{REVIEWER_DATASTORE_ID}/servingConfigs/default_search"
+            url = f"https://us-discoveryengine.googleapis.com/v1/{serving}:search"
+            resp = httpx.post(
+                url,
+                json={"query": query, "pageSize": 5},
+                headers={
+                    "Authorization": f"Bearer {creds.token}",
+                    "X-Goog-User-Project": os.getenv("GOOGLE_CLOUD_PROJECT", "construct-498201"),
+                    "Content-Type": "application/json",
+                },
+                timeout=20.0,
+            )
+            resp.raise_for_status()
+            results = resp.json().get("results", [])
+            matched = len(results)
+            for result in results:
+                dsd = (result.get("document", {}) or {}).get("derivedStructData", {}) or {}
+                for snip in dsd.get("snippets", []) or []:
+                    if snip.get("snippet"):
+                        snippet_text += snip["snippet"].strip() + "\n"
+        except Exception as exc:  # noqa: BLE001 — grounding is additive, never fatal
+            snippet_text = f"(Vertex AI Search query error: {type(exc).__name__})"
+
+    corpus = ""
+    try:
+        corpus_path = os.path.join(os.path.dirname(__file__), "grounding", "CONVENTIONS.md")
+        with open(corpus_path, encoding="utf-8") as fh:
+            corpus = fh.read()
+    except OSError:
+        corpus = ""
+
+    if corpus:
+        header = (
+            f"Coding conventions for this repository "
+            f"(retrieved via Vertex AI Search; {matched} matching document(s) for "
+            f'"{query}"). Cite the relevant numbered rule(s) in your findings.\n\n'
         )
+        return (header + corpus)[:7000]
+    if snippet_text.strip():
+        return snippet_text[:6000]
+    return (
+        "No conventions retrieved (Vertex AI Search returned no usable text and "
+        "no bundled corpus is available); review using the PR diff alone."
+    )
 
 
 # All tools are function tools (Gemini forbids mixing a built-in search tool

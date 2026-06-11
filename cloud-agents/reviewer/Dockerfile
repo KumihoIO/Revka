@@ -6,6 +6,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY agent.py a2a_server.py ./
+COPY grounding/ ./grounding/
 
 ENV PYTHONUNBUFFERED=1
 ENV PORT=8080
