@@ -60,7 +60,7 @@ def run_shell(command: str) -> str:
     """Run a shell command inside the task workspace and return its output.
 
     The GITHUB_TOKEN environment variable is available, e.g. for
-    `git clone https://x-access-token:${GITHUB_TOKEN}@github.com/owner/repo.git repo`.
+    `git clone https://x-access-token:$GITHUB_TOKEN@github.com/owner/repo.git repo`.
 
     Args:
         command: The shell command to execute (bash).
@@ -270,7 +270,7 @@ Otherwise you are in FIX mode. The task JSON is:
 Work entirely inside your workspace using your tools. Steps:
 
 1. Clone the repository into a subdirectory named "repo":
-   run_shell('git clone --depth 50 "https://x-access-token:${GITHUB_TOKEN}@github.com/<repo_name>.git" repo')
+   run_shell('git clone --depth 50 "https://x-access-token:$GITHUB_TOKEN@github.com/<repo_name>.git" repo')
 2. Configure git identity:
    run_shell('cd repo && git config user.name "revka-coder-agent" && git config user.email "coder-agent@construct-498201.iam.gserviceaccount.com"')
 3. Detect the default branch (run_shell('cd repo && git rev-parse --abbrev-ref HEAD')).
