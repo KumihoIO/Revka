@@ -74,6 +74,22 @@ for key in KUMIHO_SERVICE_TOKEN GEMINI_OAUTH_CLIENT_ID GEMINI_OAUTH_CLIENT_SECRE
   fi
 done
 
+# Stable pre-shared admin bearer token for the dashboard/API. Survives
+# redeploys (unlike runtime-paired tokens). Generated once; reused thereafter.
+if gcloud secrets describe revka-GATEWAY_ADMIN_TOKEN --project="$PROJECT" >/dev/null 2>&1; then
+  echo "    revka-GATEWAY_ADMIN_TOKEN: exists (keeping)"
+else
+  ADMIN_TOKEN="rk_$(head -c 32 /dev/urandom | xxd -p -c 64)"
+  printf '%s' "$ADMIN_TOKEN" | gcloud secrets create revka-GATEWAY_ADMIN_TOKEN \
+    --project="$PROJECT" --data-file=- >/dev/null
+  echo "    revka-GATEWAY_ADMIN_TOKEN: created"
+  echo "    >>> SAVE THIS DASHBOARD TOKEN (shown once): $ADMIN_TOKEN"
+fi
+echo "    (grant the runtime SA access:)"
+gcloud secrets add-iam-policy-binding revka-GATEWAY_ADMIN_TOKEN --project="$PROJECT" \
+  --member="serviceAccount:${RUNTIME_SA}@${PROJECT}.iam.gserviceaccount.com" \
+  --role=roles/secretmanager.secretAccessor >/dev/null 2>&1 || true
+
 echo
 echo "Done. GitHub workflow values:"
 echo "  workload_identity_provider: projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL}/providers/${PROVIDER}"

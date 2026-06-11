@@ -66,3 +66,4 @@ operator-mcp/dist/
 
 # Local demo evidence may include project IDs, trace IDs, or screenshots.
 .demo/
+.e2e_bearer_token

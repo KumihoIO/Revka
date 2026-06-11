@@ -12,12 +12,32 @@ own Google service account (no API keys). Each agent — orchestrator, coder,
 reviewer, AgentOps control plane — has its own cryptographic service
 identity, with least-privilege IAM between them.
 
-## Get access
+## Get access — the simple way (stable token)
 
-The dashboard and API require a **bearer token**. The simplest hand-off: the
-team runs the pairing script once and sends you the printed token — it's
-durable and reusable, and can be revoked independently after judging. You do
-not need any Google Cloud access for that.
+The dashboard and API authenticate with a **bearer token**. A stable admin
+token is provisioned in Secret Manager (`revka-GATEWAY_ADMIN_TOKEN`) and injected
+into the service, so it is **always valid and survives redeploys** — no pairing
+dance needed. The team shares this one token; revoke/rotate it after judging by
+adding a new secret version and redeploying.
+
+**Dashboard:** open the service URL, then in the browser console:
+
+```js
+localStorage.setItem('revka_token', '<TOKEN>'); location.reload();
+```
+
+**API:**
+
+```bash
+curl -s -H "Authorization: Bearer <TOKEN>" "<SERVICE_URL>/api/health"
+```
+
+That's it. The sections below are only needed if you want to mint *additional*
+per-device tokens.
+
+---
+
+## Minting extra device tokens (optional)
 
 `scripts/cloud-paircode.sh` has two modes:
 
