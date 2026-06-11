@@ -32,6 +32,15 @@ for AGENT in coder-agent reviewer-agent; do
     --condition None \
     --quiet >/dev/null
 
+  if [ "${AGENT}" = "reviewer-agent" ]; then
+    echo "==> Granting roles/discoveryengine.viewer to ${SA_EMAIL} (Vertex AI Search grounding)"
+    gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+      --member "serviceAccount:${SA_EMAIL}" \
+      --role roles/discoveryengine.viewer \
+      --condition None \
+      --quiet >/dev/null
+  fi
+
   echo "==> Granting deployer act-as on ${SA_EMAIL} (required for gcloud run deploy)"
   gcloud iam service-accounts add-iam-policy-binding "${SA_EMAIL}" \
     --member "serviceAccount:revka-deployer@${PROJECT_ID}.iam.gserviceaccount.com" \
