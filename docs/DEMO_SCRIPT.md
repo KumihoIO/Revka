@@ -147,7 +147,88 @@ while true; do
 done
 ```
 
-## Voice-over transcript (read this)
+## Presenter narration (full pitch — recommended)
+
+This is the **presenter's script**, not a voice-over. You're making a case:
+*here's the problem enterprises have with autonomous agents, here's how Revka
+solves it, here's why it's different, and here it is doing it for real.* The
+demo is your evidence, not your subject. ~620 words, ~4:00 at a measured keynote
+pace. Section headers are beats, not on-screen text. (For a tight 2:00 cut, use
+the compressed voice-over below instead.)
+
+### The problem — why enterprises can't ship autonomous agents *(~0:00–0:40)*
+
+> Every enterprise wants the same thing from AI: take the multi-step work that
+> consumes engineering, security, and operations teams — and let it run itself.
+> Almost none of them have. And it isn't because the agents aren't capable.
+>
+> It's because a raw autonomous agent is a black box. It acts without oversight.
+> It forgets everything the moment a task ends. And it leaves no trail you could
+> ever show an auditor. You cannot put that in front of production — not in
+> finance, not in security, not anywhere a wrong move is expensive and
+> irreversible. The capability arrived years ago. The *trust* didn't.
+
+### What Revka is *(~0:40–1:15)*
+
+> Revka closes that gap. It's a platform for building autonomous workflows an
+> enterprise can actually turn on.
+>
+> You define the work **visually** — as a graph of steps, not a hidden prompt.
+> Agents execute it. And at every decision that matters, a human approves. There
+> is no black box: you see the workflow, you govern it, and every single step is
+> recorded. It runs on your own cloud — here, entirely on Google Cloud — where
+> each agent holds its own cryptographic identity and reasons on Gemini through
+> Vertex AI, with no API keys anywhere in the system.
+
+### Why Revka is different — memory and the record *(~1:15–2:05)*
+
+> But governance isn't what sets Revka apart. Two things do.
+>
+> The first is **memory**. Most agents are amnesiac — or they bolt on a flat pile
+> of vectors and call it memory. Revka's memory is **graph-native**: every
+> workflow's outputs, decisions, and context are stored as a connected knowledge
+> graph. The system doesn't just *act* — it remembers what was done, why, and how
+> it relates to everything before it, and it grounds the next run in that
+> accumulated understanding of your organization. Every workflow makes the next
+> one smarter.
+>
+> The second is the **record**. Revka's infrastructure captures every workflow
+> output — every agent action, every approval, every result — as a durable,
+> attributable audit trail. Graph-native memory plus a complete record of every
+> run: *that* is what turns "autonomous" from a liability your compliance team
+> vetoes into an asset you can defend to a regulator.
+
+### See it run — one workflow of many *(~2:05–3:35)*
+
+> Let me show you one. This workflow resolves a software issue, end to end.
+>
+> I trigger it by labeling the issue — and it appears in the dashboard, running
+> on its own. It assesses the work, verifies a partner agent over the A2A
+> protocol, and then stops at a human gate before touching anything. I approve. ‖
+> Now the coder agent — built with the Agent Development Kit, reasoning on Gemini
+> — takes the task over A2A, does the work on Cloud Run, and opens this pull
+> request. No human wrote that code. ‖ An independent reviewer agent checks it,
+> grounded in our coding standards retrieved from Vertex AI Search, and cites the
+> exact rule it applies. A second human gate. I approve. ‖ The agents merge the
+> change and close the issue — agent to agent, on Google Cloud. And everything
+> you just watched is now in the graph and in the audit trail.
+
+### Close — the platform behind it *(~3:35–4:00)*
+
+> That was one workflow. The same engine runs a security audit, a data pipeline,
+> a compliance review, a research task — anything you can define as steps. Revka
+> is the platform underneath: visual, governed, auditable, and grounded in memory
+> that compounds. That's the difference between an agent that's impressive in a
+> demo — and one an enterprise can actually deploy.
+
+**Delivery notes:** the first two beats (*problem* and *what Revka is*) can run
+over a slow pan of the dashboard or a title card — you don't need live action
+until "See it run." Let the *differentiation* beat breathe; it's the argument
+the judges remember. The four `‖` marks in the demo beat are your approval/cut
+points. If you must trim to ~3:00, cut the close to one sentence and tighten the
+problem to its first and last lines — never cut the memory/record beat.
+
+## Voice-over transcript — tight 2:00 cut (alternative)
 
 Continuous narration for the 2:00 cut — ~300 words, ~150 wpm. Read at a measured
 demo pace; pause briefly at each `‖`. Timestamps are cut points, not hard cues.
