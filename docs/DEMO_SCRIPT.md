@@ -49,12 +49,19 @@ auto-approved gates (no clicking dead air), and time-lapsing the coder segment.
   orchestrator, the logs are the agents on Cloud Run, and GitHub is where the
   work lands."
 
-### 0:12 – 0:26 · New issue → trigger (live)
-- **[GH]** the fresh feature issue (create it or show it pre-made).
-- **[DASH]** run the trigger command; the new run appears in Workflow Runs.
+### 0:12 – 0:26 · New issue → auto-trigger (live)
+- **[GH]** open the fresh feature issue, then add the **`revka-demo`** label.
+  The repo's `revka-issue-trigger.yml` GitHub Action fires automatically and
+  POSTs to the Cloud Run orchestrator (bearer token in repo secrets) — no manual
+  command.
+- **[DASH]** the new run appears in Workflow Runs on its own.
 - **[LOGS]** first orchestrator lines scroll in.
-- **VO:** "A brand-new feature request. I trigger the pipeline — no human will
-  touch the code."
+- **VO:** "I open a feature request and label it for Revka. A GitHub Action
+  triggers the pipeline on Cloud Run automatically — no human touches the code."
+
+> The label trigger is the headline flow (issue → GitHub Action → Cloud Run). A
+> manual `POST /api/workflows/run/...` (commands below) is the fallback if you'd
+> rather not depend on the Action timing on camera.
 
 ### 0:26 – 0:42 · Assess + AgentOps preflight + Gate 1
 - **[DASH]** `assess_issue` ✓ → `agentops_preflight` ✓ (click it: flash
@@ -92,10 +99,27 @@ auto-approved gates (no clicking dead air), and time-lapsing the coder segment.
 
 ---
 
-## Commands (paste-ready)
+## Automatic trigger (headline flow)
+
+The demo repo's `revka-issue-trigger.yml` Action posts to Cloud Run when an issue
+is labeled `revka-demo`. Repo secrets (set once):
+
+- `REVKA_GATEWAY_URL` = `https://revka-orchestrator-n22ujw2j2a-uc.a.run.app`
+- `REVKA_BEARER_TOKEN` = the stable admin token (`revka-GATEWAY_ADMIN_TOKEN`)
+
+On camera, just open the issue and add the label:
 
 ```bash
-# [GH] create the fresh issue
+gh issue create -R KumihoIO/google-agentops-demo \
+  --title "Feature: percentage discount on cart subtotal" \
+  --body "Add apply_percentage_discount(items, percent_off) to src/agentops_demo/cart.py returning the discounted subtotal in cents (round to nearest cent), with a regression test." \
+  --label revka-demo
+```
+
+## Manual trigger (fallback)
+
+```bash
+# [GH] create the fresh issue (no label)
 gh issue create -R KumihoIO/google-agentops-demo \
   --title "Feature: percentage discount on cart subtotal" \
   --body "Add apply_percentage_discount(items, percent_off) to src/agentops_demo/cart.py returning the discounted subtotal in cents (round to nearest cent), with a regression test."
