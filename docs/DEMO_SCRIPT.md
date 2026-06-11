@@ -147,6 +147,52 @@ while true; do
 done
 ```
 
+## Voice-over transcript (read this)
+
+Continuous narration for the 2:00 cut — ~300 words, ~150 wpm. Read at a measured
+demo pace; pause briefly at each `‖`. Timestamps are cut points, not hard cues.
+
+> **[0:00]** This is Revka. It resolves GitHub issues autonomously — with human
+> approval gates — using a multi-agent system that runs entirely on Google
+> Cloud. ‖ On the left is the orchestrator dashboard; on the right, live Cloud
+> Run logs and the GitHub repository.
+>
+> **[0:12]** Everything here runs on Cloud Run — four services, each with its own
+> identity, deployed keylessly from GitHub Actions. The reasoning is Gemini,
+> through Vertex AI. No API keys anywhere.
+>
+> **[0:24]** I open a feature request, and label it "revka." ‖ That's the only
+> human action to start it — a GitHub Action fires and triggers the pipeline on
+> Cloud Run. The run appears in the dashboard on its own.
+>
+> **[0:40]** First it assesses the issue, then proves the Google AgentOps
+> integration by discovering the control plane over the A2A protocol — with a
+> Cloud Run identity token. ‖ Then it pauses for human approval, before any code
+> is touched. I approve.
+>
+> **[0:52]** Now watch the logs. The coder agent — built with the Agent
+> Development Kit, reasoning on Gemini via Vertex — takes the task over A2A. It
+> clones the repo, writes the fix and a test, runs the tests, and opens this pull
+> request. ‖ No human wrote that code.
+>
+> **[1:16]** A second, independent agent reviews the diff — grounded in the
+> repository's coding conventions, retrieved from Vertex AI Search. Here it cites
+> the specific rule the change violates. ‖ Then the second human gate, before
+> merge. I approve.
+>
+> **[1:38]** The coder agent merges the pull request and closes the issue —
+> through agent-to-agent calls, entirely on Google Cloud. ‖ The loop is closed:
+> an issue became a reviewed, merged change — autonomously, but governed by a
+> human at every gate.
+>
+> **[1:54]** Cloud-native runtime. Gemini intelligence. Agent-to-agent
+> interoperability. Per-agent identity. This is Revka — Track 3, end to end.
+
+**Pacing notes:** if you run long, the trimmable lines are the second sentence of
+[0:12] and the "No human wrote that code" aside. If you run short, hold on the
+PR diff (0:52–1:16) and the merged/closed GitHub state (1:38–1:54). The two "I
+approve" beats should land exactly as you click (or as the auto-approver fires).
+
 ## On-screen captions (lower-thirds)
 
 Short overlays synced to the beats — keep each ≤ 6 words, sans-serif, lower
