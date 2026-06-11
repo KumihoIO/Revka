@@ -2,10 +2,14 @@
 
 Revka runs natively on **Google Cloud Run** (project `construct-498201`,
 region `us-central1`) as the service `revka-orchestrator`. It is the
-governance + orchestration brain of the Track 3 multi-agent system: it
-receives GitHub issues, runs the Google AgentOps preflight, enforces
-human-in-the-loop approval gates, and coordinates the **ADK / Gemini coder
-and reviewer agents** (also on Cloud Run) over the **A2A protocol**.
+governance + orchestration brain of a general multi-agent **workflow
+platform**; the Track 3 demo runs one workflow (`github-issue-resolver`) end to
+end. The orchestrator receives the trigger, runs the Google AgentOps preflight,
+enforces human-in-the-loop approval gates, and coordinates two **ADK / Gemini**
+agents — a **coder on Cloud Run** (it needs a git/shell sandbox) and a
+**reviewer on Vertex AI Agent Engine** (pure reasoning + Vertex AI Search
+grounding). Every run is stored and versioned in **Kumiho**, Revka's
+graph-native memory.
 
 Reasoning runs on **Gemini via Vertex AI**, authenticated by the service's
 own Google service account (no API keys). Each agent — orchestrator, coder,
@@ -98,7 +102,9 @@ GitHub issue ──webhook──▶ Revka orchestrator (Cloud Run)
                               │  governance · gates · audit
                               ├──A2A (identity token)──▶ AgentOps control plane (Cloud Run)
                               ├──A2A (identity token)──▶ coder agent  (ADK · Gemini/Vertex · Cloud Run)
-                              └──A2A (identity token)──▶ reviewer agent (ADK · Gemini/Vertex · Cloud Run)
+                              ├──query (identity token)─▶ reviewer agent (ADK · Gemini/Vertex · Agent Engine)
+                              │                                   └─ grounded in Vertex AI Search
+                              └──store + version every run──▶ Kumiho (graph-native memory)
                                                               │
                                                               ▼
                                                    PR opened → reviewed → merged

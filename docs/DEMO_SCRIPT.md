@@ -185,9 +185,10 @@ the compressed voice-over below instead.)
 > But governance isn't what sets Revka apart. Two things do.
 >
 > The first is **memory**. Most agents are amnesiac — or they bolt on a flat pile
-> of vectors and call it memory. Revka's memory is **graph-native**: every
-> workflow's outputs, decisions, and context are stored as a connected knowledge
-> graph. The system doesn't just *act* — it remembers what was done, why, and how
+> of vectors and call it memory. Revka's memory — we call it Kumiho — is
+> **graph-native**: every workflow's outputs, decisions, and context are stored
+> and versioned as a connected knowledge graph. The system doesn't just *act* —
+> it remembers what was done, why, and how
 > it relates to everything before it, and it grounds the next run in that
 > accumulated understanding of your organization. Every workflow makes the next
 > one smarter.
@@ -207,11 +208,12 @@ the compressed voice-over below instead.)
 > protocol, and then stops at a human gate before touching anything. I approve. ‖
 > Now the coder agent — built with the Agent Development Kit, reasoning on Gemini
 > — takes the task over A2A, does the work on Cloud Run, and opens this pull
-> request. No human wrote that code. ‖ An independent reviewer agent checks it,
-> grounded in our coding standards retrieved from Vertex AI Search, and cites the
-> exact rule it applies. A second human gate. I approve. ‖ The agents merge the
-> change and close the issue — agent to agent, on Google Cloud. And everything
-> you just watched is now in the graph and in the audit trail.
+> request. No human wrote that code. ‖ Then an independent reviewer agent — running
+> on Vertex AI Agent Engine — checks it, grounded in our coding standards
+> retrieved from Vertex AI Search, and cites the exact rule it applies. A second
+> human gate. I approve. ‖ The agents merge the change and close the issue — agent
+> to agent, on Google Cloud. And everything you just watched is now versioned in
+> Kumiho and in the audit trail.
 
 ### Close — the platform behind it *(~3:35–4:00)*
 
@@ -253,13 +255,13 @@ demo pace; pause briefly at each `‖`. Timestamps are cut points, not hard cues
 > on Gemini — takes the task over A2A, does the work on Cloud Run, and opens a
 > pull request. ‖ No human wrote that code.
 >
-> **[1:18]** Then an independent reviewer agent checks it — grounded in our coding
-> standards, retrieved from Vertex AI Search — and cites the exact rule it
-> applies. ‖ A second human gate, before merge. I approve.
+> **[1:18]** Then an independent reviewer agent — on Vertex AI Agent Engine —
+> checks it, grounded in our coding standards retrieved from Vertex AI Search, and
+> cites the exact rule it applies. ‖ A second human gate, before merge. I approve.
 >
 > **[1:38]** The agents merge the change and close the issue — agent to agent,
-> entirely on Google Cloud. The work was done autonomously, ‖ but every step was
-> governed and recorded — a complete, auditable trail.
+> entirely on Google Cloud. The work was done autonomously, ‖ but every step is
+> versioned in Kumiho, our graph memory — a complete, auditable trail.
 >
 > **[1:52]** That's one workflow. Revka is the platform behind it — visual,
 > governed, auditable, multi-agent — turning everyday enterprise problems into
