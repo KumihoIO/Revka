@@ -208,7 +208,7 @@ verification against grounded standards, under human governance**.
 | --- | --- |
 | Orchestrator | Cloud Run · `https://revka-orchestrator-n22ujw2j2a-uc.a.run.app` |
 | Coder agent | Cloud Run · `https://coder-agent-n22ujw2j2a-uc.a.run.app` |
-| Reviewer agent | **Vertex AI Agent Engine** · `reasoningEngines/<id>` (project `construct-498201`, `us-central1`) |
+| Reviewer agent | **Vertex AI Agent Engine** · `projects/1091585228963/locations/us-central1/reasoningEngines/3625053003137941504` |
 | AgentOps control plane | Cloud Run · `https://construct-agentops-a2a-1091585228963.us-central1.run.app` |
 
 Access for judges: see [`docs/JUDGES.md`](./JUDGES.md).
