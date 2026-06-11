@@ -324,7 +324,7 @@ steps:
     python:
       timeout: 900
       code: |
-        import json, sys, re, urllib.request, urllib.parse
+        import json, sys, re, time, urllib.request, urllib.parse
         ctx = json.load(sys.stdin)
         engine = (ctx["args"].get("reviewer_agent_engine") or "").strip()
         repo = ctx["args"].get("repo_name") or ""
@@ -337,7 +337,7 @@ steps:
             req = urllib.request.Request(url, headers={"Metadata-Flavor": "Google"})
             with urllib.request.urlopen(req, timeout=5) as r:
                 return json.loads(r.read().decode("utf-8"))["access_token"]
-        try:
+        def query_reviewer():
             loc = engine.split("/locations/")[1].split("/")[0]
             token = metadata_access_token()
             api = ("https://" + loc + "-aiplatform.googleapis.com/v1/" + engine +
@@ -349,7 +349,7 @@ steps:
                 api, data=body.encode("utf-8"),
                 headers={"Authorization": "Bearer " + token,
                          "Content-Type": "application/json"})
-            with urllib.request.urlopen(req, timeout=870) as r:
+            with urllib.request.urlopen(req, timeout=280) as r:
                 raw = r.read().decode("utf-8", "replace")
             final = ""
             for line in raw.splitlines():
@@ -365,15 +365,26 @@ steps:
                 for p in (ev.get("content", {}) or {}).get("parts", []) or []:
                     if p.get("text"):
                         final = p["text"]
-            m = re.search(r"\{.*\}", final, re.S)
-            if m:
-                out = json.loads(m.group(0))
-            else:
-                out["summary"] = ("Reviewer returned no parseable verdict: " +
-                                  final[:500])
-        except Exception as exc:
-            out["summary"] = ("Agent Engine review call failed: " +
-                              type(exc).__name__ + ": " + str(exc)[:300])
+            return final
+        # The ADK/Gemini agent can transiently fail (empty stream); retry so a
+        # single hiccup doesn't drop the verdict. Grounding stays additive.
+        final, last_err = "", ""
+        for attempt in range(3):
+            try:
+                final = query_reviewer()
+                if final.strip():
+                    break
+            except Exception as exc:
+                last_err = type(exc).__name__ + ": " + str(exc)[:200]
+            time.sleep(8 * (attempt + 1))
+        m = re.search(r"\{.*\}", final, re.S)
+        if m:
+            out = json.loads(m.group(0))
+        elif last_err:
+            out["summary"] = "Agent Engine review call failed: " + last_err
+        else:
+            out["summary"] = ("Reviewer returned no parseable verdict: " +
+                              final[:500])
         json.dump(out, sys.stdout)
       args:
         reviewer_agent_engine: "${inputs.reviewer_agent_engine}"
