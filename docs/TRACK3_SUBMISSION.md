@@ -14,53 +14,58 @@ the **A2A protocol** with per-service cryptographic identity.
 
 ## Architecture
 
+The architecture centers on **Revka running on Google Cloud** and its
+integration with Google Cloud services. Triggers are pluggable — a GitHub
+webhook/Action, the REST API, or the scheduler; the demo uses the GitHub-label
+trigger as one example. The GitHub repository is the *work target*, not the core.
+
 ```mermaid
 flowchart TB
-    subgraph GH["GitHub — KumihoIO/google-agentops-demo"]
-        ISSUE["Issue opened"]
-        PR["Pull Request"]
+    subgraph TRIG["Triggers (pluggable — GitHub label is the demo example)"]
+        T1["GitHub webhook / Action"]
+        T2["REST API"]
+        T3["Scheduler / cron"]
     end
 
-    subgraph GCP["Google Cloud — project construct-498201 / us-central1"]
+    subgraph GCP["Google Cloud — Revka deployment (Cloud Run · us-central1)"]
         direction TB
-
         subgraph ORCH["revka-orchestrator  ·  Cloud Run"]
             direction TB
-            WF["github-issue-resolver workflow (r19)\nassess → preflight → GATE → code → review → GATE → merge"]
-            GATE["Human-in-the-loop\napproval gates"]
-            REASON["Operator reasoning\nGemini 2.5 Pro via Vertex AI"]
+            WF["Workflow engine\nassess → preflight → GATE → code → review → GATE → merge"]
+            GATE["Human-in-the-loop gates"]
+            REASON["Operator reasoning\nGemini 2.5 Pro · Vertex AI"]
         end
-
-        subgraph EXEC["A2A Executors  ·  Cloud Run"]
+        subgraph EXEC["A2A agent tier  ·  Cloud Run"]
             direction TB
-            CODER["coder-agent\nADK · Gemini/Vertex\nclone · fix · test · open PR · merge"]
-            REVIEWER["reviewer-agent\nADK · Gemini/Vertex\nfetch diff · review · verdict"]
+            CODER["coder-agent\nADK · Gemini/Vertex"]
+            REVIEWER["reviewer-agent\nADK · Gemini/Vertex"]
         end
-
-        CP["construct-agentops-a2a\nAgentOps Control Plane (A2A)"]
+        CP["AgentOps control plane\n(A2A)"]
         VERTEX["Vertex AI\nGemini 2.5 Pro"]
-        SM["Secret Manager\nGITHUB_TOKEN · service token"]
-        AR["Artifact Registry\ncontainer images"]
+        VSEARCH["Vertex AI Search\nconventions grounding"]
+        SM["Secret Manager\ntokens · keys"]
+        AR["Artifact Registry\nimages (keyless CI / WIF)"]
     end
 
-    subgraph CI["GitHub Actions"]
-        WIF["Workload Identity\nFederation (keyless)"]
-    end
+    KUM["Kumiho memory\nworkflows · runs · previews\n(external; GCP migration on roadmap)"]
+    GHREPO["GitHub repository\nwork target: issue → PR → merge → close"]
 
-    ISSUE -- "webhook / API trigger" --> WF
+    TRIG --> WF
     WF --> GATE
-    WF -. "A2A discover (identity token)" .-> CP
-    WF -- "A2A send_task (identity token)" --> CODER
-    WF -- "A2A send_task (identity token)" --> REVIEWER
-    CODER -- "open / merge" --> PR
-    CODER -. "close" .-> ISSUE
+    WF -. "A2A discover · identity token" .-> CP
+    WF -- "A2A send_task · identity token" --> CODER
+    WF -- "A2A send_task · identity token" --> REVIEWER
     REASON --> VERTEX
     CODER --> VERTEX
     REVIEWER --> VERTEX
+    REVIEWER -- "ground review" --> VSEARCH
+    ORCH --> SM
     CODER --> SM
-    WIF -- "deploy (no keys)" --> AR
-    AR --> ORCH
-    AR --> EXEC
+    ORCH -. "state · artifacts" .-> KUM
+    AR -. images .-> ORCH
+    AR -. images .-> EXEC
+    CODER -- "open PR · merge · close" --> GHREPO
+    GHREPO -. "issue payload" .-> TRIG
 ```
 
 ### Identity & trust mesh (Agent Identity)

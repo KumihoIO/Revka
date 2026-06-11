@@ -27,27 +27,37 @@ demo surfaced:
 
 ```mermaid
 flowchart TB
+    TRIG["Triggers\nwebhook · API · schedule"] --> ORCH
     subgraph GKE["GKE cluster"]
         ORCH["Revka orchestrator\n(StatefulSet)\ngovernance · gates · audit · scheduler"]
         FS["Filestore / PV\ndurable artifacts + audit trail"]
         ORCH --- FS
     end
-    subgraph AGENTS["Managed agent tier"]
+    subgraph ENT["Enterprise agent tier — API-key only (hard rule)"]
         AE["Agent Engine / Cloud Run\nADK · Gemini/Vertex"]
-        SM["session-manager\nnative agent SDKs (API-key)"]
+        SM["session-manager\nnative agent SDKs"]
     end
-    GH["GitHub"] -->|webhook| ORCH
+    subgraph BYO["BYO / cost-sensitive tier — customer-supplied auth"]
+        BYOCLI["Subscription CLI agents\n(claude · codex · agy)"]
+        BYOKEY["Customer API keys\n(Anthropic · OpenAI · Gemini)"]
+    end
     ORCH -->|A2A · identity token| AE
     ORCH --> SM
+    ORCH -. "opt-in, customer accepts ToS" .-> BYO
     AE --> VTX["Vertex AI · Gemini"]
     SM --> VTX
     SM --> ANT["Anthropic API"]
     SM --> OAI["OpenAI API"]
+    BYOCLI -. "customer subscription / login" .-> EXT["External provider"]
+    BYOKEY -. "customer key" .-> EXT
 ```
 
 - **GKE** hosts the stateful orchestrator + Filestore-backed durable artifacts.
-- **Managed agents** (Agent Engine / Cloud Run via A2A, or the session-manager
-  via native SDKs) do the reasoning — scaling independently of the orchestrator.
+- **Enterprise agent tier** (default): Agent Engine / Cloud Run via A2A, or the
+  session-manager via native agent SDKs — **metered API / Vertex auth only**.
+- **BYO / cost-sensitive tier** (opt-in): subscription CLI agents or
+  customer-supplied keys, where the *customer* owns the credential and the ToS
+  liability — never a consumer subscription the platform carries itself.
 
 ---
 
