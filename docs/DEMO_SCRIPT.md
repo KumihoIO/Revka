@@ -123,6 +123,50 @@ while true; do
 done
 ```
 
+## On-screen captions (lower-thirds)
+
+Short overlays synced to the beats — keep each ≤ 6 words, sans-serif, lower
+third, ~3s on screen. They carry the mandate keywords even with the sound off.
+
+| In → Out | Caption |
+| --- | --- |
+| 0:00 → 0:05 | **Revka — autonomous issue resolution** |
+| 0:06 → 0:11 | *Multi-agent · Google Cloud · human-gated* |
+| 0:13 → 0:18 | **New GitHub issue → triggered** |
+| 0:27 → 0:33 | **Plans the fix on Gemini (Vertex AI)** |
+| 0:34 → 0:40 | **A2A preflight: control plane discovered** |
+| 0:40 → 0:44 | **⏸ Human approval gate 1** |
+| 0:45 → 0:52 | **ADK coder agent · Cloud Run** |
+| 0:53 → 1:00 | *clone → Gemini → test → open PR* |
+| 1:05 → 1:12 | **Pull request opened — by the agent** |
+| 1:17 → 1:24 | **ADK reviewer agent · A2A** |
+| 1:25 → 1:30 | **⏸ Human approval gate 2** |
+| 1:35 → 1:42 | **Merged ✓ · Issue closed ✓** |
+| 1:43 → 1:50 | *Shipped autonomously, governed by humans* |
+| 1:53 → 2:00 | **Cloud Run · Gemini · A2A — Track 3** |
+
+Persistent corner tags (tiny, top-left, whole video) reinforce which window is
+which: `DASHBOARD` / `CLOUD RUN LOGS` / `GITHUB`.
+
+## Pinned description (paste under the video)
+
+> **Revka — Google for Startups AI Agents Challenge, Track 3.**
+> A GitHub issue is resolved end-to-end by a multi-agent system running entirely
+> on Google Cloud. A Gemini-powered orchestrator on Cloud Run plans the fix and
+> verifies the Google AgentOps control plane over the A2A protocol; after a human
+> approval gate, an **ADK coder agent** (Gemini via Vertex AI, on Cloud Run)
+> clones the repo, implements the feature, runs the tests, and opens a pull
+> request; an **ADK reviewer agent** reviews it over A2A; and after a second human
+> gate, the PR is merged and the issue closed — no human touches the code.
+>
+> **Left:** the Revka dashboard (orchestration + human gates). **Top-right:**
+> live Cloud Run logs (the agents executing on GCP). **Bottom-right:** GitHub
+> (the issue → PR → merge → close).
+>
+> Stack: Cloud Run · Vertex AI (Gemini 2.5 Pro) · Agent Development Kit · A2A
+> protocol · Workload Identity Federation (keyless) · per-agent service
+> identities. No API keys; reasoning authenticated by each service's own account.
+
 ## Window layout suggestion
 - **Dashboard** large on the left (≈55% width).
 - **Cloud Run logs** top-right; **GitHub** bottom-right (≈45% width, stacked).
