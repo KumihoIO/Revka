@@ -17,12 +17,22 @@ os.environ.setdefault("GOOGLE_GENAI_USE_VERTEXAI", "True")
 import httpx
 from google.adk.agents import Agent
 from google.adk.models import Gemini
+from google.adk.tools import VertexAiSearchTool
 
 APP_NAME = "reviewer-agent"
 MODEL_NAME = os.getenv("MODEL_NAME", "gemini-2.5-pro")
 GITHUB_API = "https://api.github.com"
 
 MAX_DIFF_CHARS = 60_000
+
+# Vertex AI Search (Discovery Engine) data store holding the repo's coding
+# conventions (CONVENTIONS.md). Used to ground the review in named standards.
+# Configurable via env so the data store can be swapped without a code change.
+DEFAULT_DATASTORE_ID = (
+    "projects/construct-498201/locations/us/collections/"
+    "default_collection/dataStores/reviewer-conventions"
+)
+REVIEWER_DATASTORE_ID = os.getenv("REVIEWER_DATASTORE_ID", DEFAULT_DATASTORE_ID)
 
 
 def _headers(accept: str = "application/vnd.github+json") -> dict[str, str]:
@@ -104,29 +114,54 @@ You are a rigorous code review agent. Each task message is a JSON object:
 Steps:
 1. Call github_get_pr(repo_name, pr_number) for context (title, description, size).
 2. Call github_get_pr_diff(repo_name, pr_number) and read the full diff.
-3. Review the change for:
+3. Ground the review in the repository's coding conventions. Use the Vertex AI
+   Search tool to retrieve the relevant CONVENTIONS rules for what the diff
+   touches (e.g. search for "money cents", "frozen dataclass validation",
+   "docstring", "regression test", "Iterable LineItem pure function"). The
+   conventions are numbered rules (Rule 1 .. Rule 10).
+4. Check the PR diff against the retrieved standards. For every violation, cite
+   the rule number and a short quote of its text in the finding (e.g.
+   "violates Rule 1: monetary values must be integer cents — adds a float
+   discount in cart.py").
+5. Also review for general quality not covered by a rule:
    - Correctness: logic errors, edge cases, broken behavior, API misuse.
    - Safety: security issues (injection, secrets in code, unsafe shell/file
      operations), data loss risks, missing input validation.
    - Test coverage: are the changes covered by new or existing tests?
 
-Decide "approved" only when there are no correctness or safety problems and
-test coverage is acceptable for the size of the change; otherwise "needs_changes".
+IMPORTANT — grounding is additive, never required. If the Vertex AI Search tool
+returns nothing, errors, or is unavailable, DO NOT fail. Review the diff on its
+own merits using your general code-review judgment and the rules you remember,
+and set standards_checked to an empty list. Always produce a verdict.
+
+Decide "approved" only when there are no convention violations, no correctness
+or safety problems, and test coverage is acceptable for the size of the change;
+otherwise "needs_changes".
 
 When finished, respond with ONLY a JSON object (no markdown fences, no prose):
 {"review_status": "approved" or "needs_changes",
  "findings": ["<finding 1>", "<finding 2>", ...],
+ "standards_checked": ["Rule 1: monetary values are integer cents", ...],
  "summary": "<one-paragraph review summary>"}
 
-Each finding should name the file/area and the concrete problem or risk.
-If the PR cannot be fetched, return review_status "needs_changes" with a
-finding explaining the fetch failure.
+Each finding should name the file/area and the concrete problem or risk, and
+cite the violated rule number where one applies. standards_checked lists the
+conventions you retrieved and checked against (empty if grounding was
+unavailable). If the PR cannot be fetched, return review_status "needs_changes"
+with a finding explaining the fetch failure.
 """
+
+# Tools: GitHub fetchers always; add Vertex AI Search grounding when a data
+# store is configured. Grounding is additive — if the tool fails at runtime the
+# instruction tells the model to fall back to diff-only review.
+_tools = [github_get_pr, github_get_pr_diff]
+if REVIEWER_DATASTORE_ID:
+    _tools.append(VertexAiSearchTool(data_store_id=REVIEWER_DATASTORE_ID))
 
 root_agent = Agent(
     name="reviewer_agent",
     model=Gemini(model=MODEL_NAME),
-    description="Reviews GitHub pull requests for correctness, safety, and test coverage.",
+    description="Reviews GitHub pull requests for correctness, safety, and test coverage, grounded in the repo's coding conventions via Vertex AI Search.",
     instruction=INSTRUCTION,
-    tools=[github_get_pr, github_get_pr_diff],
+    tools=_tools,
 )
