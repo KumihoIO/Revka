@@ -153,16 +153,23 @@ Multiple complete cloud-only runs, verified on GitHub:
   fires a GitHub Action that POSTs to the Cloud Run orchestrator (stable bearer
   token in repo secrets) — no manual command. Issue → Action → Cloud Run →
   PR → merge → close.
+- **Run `b5ee9d9d` — reviewer on Vertex AI Agent Engine** (issue
+  [#12](https://github.com/KumihoIO/google-agentops-demo/issues/12) → PR
+  [#13](https://github.com/KumihoIO/google-agentops-demo/pull/13), **MERGED /
+  CLOSED**): the coder (Cloud Run) opened the PR; the reviewer **on Agent Engine**
+  returned a grounded verdict citing **Rules 1, 5, 6, 7, 9, 10** and flagging a
+  missing negative-input guard (Rule 7) and missing test (Rule 9); a human
+  approved both gates. The reviewer's **Vertex AI Search** (`reviewer-conventions`
+  data store) query returned **HTTP 200** — confirmed in the engine logs — i.e.
+  *live* grounding, not the bundled fallback.
 - **Run `89bb9e5a`** (issue [#8](https://github.com/KumihoIO/google-agentops-demo/issues/8) → PR [#9](https://github.com/KumihoIO/google-agentops-demo/pull/9), **MERGED / CLOSED**):
   the **grounded reviewer cited a specific rule** — *"violates Rule 1: 'Money is
   integer cents, never floats'"* — retrieved from the **Vertex AI Search**
   conventions data store.
-- **Run `57b1b6b8`** (issue [#6](https://github.com/KumihoIO/google-agentops-demo/issues/6) → PR [#7](https://github.com/KumihoIO/google-agentops-demo/pull/7), **MERGED / CLOSED**)
-  and earlier run on issue #3 → PR #4.
 - **AgentOps preflight:** `a2a_discovery_status: discovered` against the Cloud
   Run control plane (identity token minted from the metadata server).
 - **Reasoning:** Gemini 2.5 Pro via Vertex AI throughout; coder & reviewer are
-  ADK agents; grounding via Vertex AI Search.
+  ADK agents (reviewer on **Agent Engine**); grounding via **live Vertex AI Search**.
 
 ### Grounding & RAG — two layers
 
