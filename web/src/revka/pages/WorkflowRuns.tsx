@@ -283,6 +283,14 @@ export default function WorkflowRuns() {
         .then((run) => {
           if (cancelled) return;
           setSelectedRun(run);
+          // Fold the fresh detail back into the runs list so the run-selector
+          // labels (status, step counts) don't freeze at their load-time values.
+          const { steps: _steps, ...summary } = run;
+          setRuns((prev) =>
+            prev.map((entry) =>
+              entry.run_id === run.run_id ? { ...entry, ...(summary as WorkflowRunSummary) } : entry,
+            ),
+          );
           // The pinned-definition kref is stable for a given run, so only
           // fetch it once (or when it actually changes between polls).
           if (run.workflow_revision_kref && run.workflow_revision_kref !== lastPinnedKref) {
@@ -680,9 +688,18 @@ export default function WorkflowRuns() {
                   value={selectedRunId ?? ''}
                   aria-label={t('runs.index.title')}
                   onChange={(event) => {
-                    setSelectedRunId(event.target.value || null);
+                    const nextRunId = event.target.value || null;
+                    setSelectedRunId(nextRunId);
                     setSelectedTask(null);
                     setShouldScrollToWorkspace(true);
+                    // Keep `?run=` in sync — the URL-sync effect treats it as
+                    // authoritative and would otherwise snap the selection back.
+                    setSearchParams((current) => {
+                      const next = new URLSearchParams(current);
+                      if (nextRunId) next.set('run', nextRunId);
+                      else next.delete('run');
+                      return next;
+                    }, { replace: true });
                   }}
                 >
                   {displayedRuns.map((run) => (

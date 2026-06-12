@@ -70,7 +70,10 @@ export default function Dashboard() {
   const loadDashboard = () => {
     setRefreshing(true);
     return Promise.all([
-      fetchWorkflowDashboard(false),
+      // include_definition=true: the DAG falls back to the name-matched
+      // definition when the run's pinned revision artifact can't be fetched
+      // (e.g. wiped by a redeploy) — without the YAML the canvas renders blank.
+      fetchWorkflowDashboard(true),
       getStatus(),
       getCost(),
       verifyAuditChain(),
