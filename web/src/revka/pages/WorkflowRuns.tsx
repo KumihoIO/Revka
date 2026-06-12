@@ -859,6 +859,11 @@ export default function WorkflowRuns() {
           {selectedRun && pendingApprovalStep ? (
             <div className="mb-3">
               <ApprovalPanel
+                // Key by step so a new gate (e.g. the 2nd approval) remounts the
+                // panel fresh instead of reusing the prior gate's local state,
+                // which would otherwise keep showing "Approved" until a manual
+                // browser refresh.
+                key={pendingApprovalStep.step_id}
                 runId={selectedRun.run_id}
                 stepId={pendingApprovalStep.step_id}
                 stepName={pendingApprovalStep.step_id}
