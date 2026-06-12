@@ -295,9 +295,17 @@ export default function WorkflowRuns() {
                 if (!cancelled) setPinnedDefinition(null);
               });
           }
-          // Keep polling while the run is still in flight. Treat any
-          // unrecognized status as terminal so we don't loop forever.
-          if (run.status === 'running' || run.status === 'pending') {
+          // Keep polling while the run is still in flight. 'paused' is
+          // in-flight too: a run pauses at a human-approval gate and, once
+          // approved, advances to the next step — which may be another gate.
+          // Without polling 'paused', the second approval never surfaces until
+          // a manual browser refresh. Treat any unrecognized status as terminal
+          // so we don't loop forever.
+          if (
+            run.status === 'running' ||
+            run.status === 'pending' ||
+            run.status === 'paused'
+          ) {
             scheduleNext(POLL_INTERVAL_MS);
           } else if (!TERMINAL_STATUSES.has(run.status)) {
             return;

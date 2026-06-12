@@ -18,6 +18,7 @@ on:
       - dev/config.cloudrun.toml
       - src/**
       - operator-mcp/**
+      - web/**
       - .github/workflows/deploy-cloud-run.yml
 
 concurrency:
