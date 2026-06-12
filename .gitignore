@@ -67,3 +67,8 @@ operator-mcp/dist/
 # Local demo evidence may include project IDs, trace IDs, or screenshots.
 .demo/
 .e2e_bearer_token
+
+# Local dev trigger scripts (contain secrets) and test scratch output
+scripts/register_workflow.py
+scripts/trigger_workflow.py
+test_*_std*.txt
