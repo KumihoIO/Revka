@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckCircle2, PauseCircle, PlayCircle, XCircle } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, History, PauseCircle, PlayCircle, XCircle } from 'lucide-react';
 import { useTheme } from '@/revka/hooks/useTheme';
 import type { SkinAssetSlot } from '@/types/api';
 
@@ -38,6 +38,16 @@ export default function StatusPill({ status }: { status: string }) {
           icon: PauseCircle,
           color: 'var(--revka-status-idle)',
           bg: 'color-mix(in srgb, var(--revka-status-idle) 12%, transparent)',
+          assetSlot: 'statusSkippedBadge' as SkinAssetSlot,
+        };
+      case 'stale':
+        // Live progress is unknown (e.g. checkpoint wiped by a redeploy);
+        // distinct from the generic unknown fallback so operators can tell
+        // "cold cache — open the run for its real status" at a glance.
+        return {
+          icon: History,
+          color: 'var(--revka-status-idle)',
+          bg: 'color-mix(in srgb, var(--revka-status-idle) 14%, transparent)',
           assetSlot: 'statusSkippedBadge' as SkinAssetSlot,
         };
       default:
