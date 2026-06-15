@@ -918,7 +918,14 @@ fn to_run_summary(item: &ItemResponse, rev: Option<&RevisionResponse>) -> Workfl
 
 fn to_run_summary_fast(item: &ItemResponse) -> WorkflowRunSummary {
     let mut summary = to_run_summary(item, None);
-    apply_local_checkpoint_progress(&mut summary);
+    // The list path has only the run item's creation-time metadata (frozen at
+    // `running 0/N`) plus the local checkpoint overlay. When the checkpoint is
+    // absent — e.g. wiped by a Cloud Run redeploy — report `stale` instead of
+    // that misleading frozen progress, unless a workflow process proves the run
+    // is still live.
+    if !apply_local_checkpoint_progress(&mut summary) {
+        mark_stale_if_orphaned(&mut summary);
+    }
     summary
 }
 
@@ -1083,17 +1090,101 @@ fn apply_checkpoint_value_to_summary(
     );
 }
 
-fn apply_local_checkpoint_progress(summary: &mut WorkflowRunSummary) {
-    let Some(path) = workflow_checkpoint_path(&summary.run_id) else {
-        return;
+/// Overlay the local checkpoint file onto the summary. Returns `true` when a
+/// checkpoint was found and applied, `false` when it was absent or unreadable
+/// (the caller can then decide whether to treat the run as `stale`).
+fn apply_local_checkpoint_progress(summary: &mut WorkflowRunSummary) -> bool {
+    let checkpoint = workflow_checkpoint_path(&summary.run_id)
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok());
+    match checkpoint {
+        Some(checkpoint) => {
+            apply_checkpoint_value_to_summary(summary, &checkpoint);
+            true
+        }
+        None => false,
+    }
+}
+
+/// Run-level statuses that are already final — never reclassify these as stale.
+fn is_terminal_run_status(status: &str) -> bool {
+    matches!(status, "completed" | "failed" | "cancelled")
+}
+
+/// Decide the replacement status for a run whose local checkpoint is absent.
+/// Returns `Some("stale")` only when the summary carries the frozen,
+/// non-terminal creation-time status *and* no workflow process is proving the
+/// run live. A terminal run (its real status survives in Kumiho revisions) or a
+/// run whose lock is still held (freshly triggered, no checkpoint flushed yet)
+/// is left untouched.
+fn stale_status_for_missing_checkpoint(status: &str, lock_held: bool) -> Option<&'static str> {
+    if is_terminal_run_status(status) || lock_held {
+        None
+    } else {
+        Some("stale")
+    }
+}
+
+/// When the list path has no checkpoint to overlay, mark the run `stale` if it
+/// is an orphan (non-terminal frozen metadata, no live lock holder).
+fn mark_stale_if_orphaned(summary: &mut WorkflowRunSummary) {
+    let lock_held = run_lock_is_held(&summary.run_id);
+    if let Some(stale) = stale_status_for_missing_checkpoint(&summary.status, lock_held) {
+        summary.status = stale.to_string();
+    }
+}
+
+/// Path of the per-run advisory lock the operator-mcp executor holds while a
+/// run is executing. Mirrors operator-mcp `recovery.py`:
+/// `~/.revka/workflow_locks/{run_id[:12]}.lock`.
+#[cfg(unix)]
+fn run_lock_path(run_id: &str) -> Option<std::path::PathBuf> {
+    if !is_safe_checkpoint_run_id(run_id) {
+        return None;
+    }
+    let short = &run_id[..run_id.len().min(12)];
+    directories::UserDirs::new().map(|dirs| {
+        dirs.home_dir()
+            .join(".revka")
+            .join("workflow_locks")
+            .join(format!("{short}.lock"))
+    })
+}
+
+/// True when a workflow process currently holds the run's advisory lock, which
+/// proves the run is genuinely executing in another process (e.g. a freshly
+/// triggered run that has not yet flushed its first checkpoint). A non-blocking
+/// `flock` that succeeds means nobody held it; `EWOULDBLOCK` means the executor
+/// does. A missing lock file (wiped by a Cloud Run redeploy) means no holder.
+#[cfg(unix)]
+fn run_lock_is_held(run_id: &str) -> bool {
+    use std::os::unix::io::AsRawFd;
+
+    let Some(path) = run_lock_path(run_id) else {
+        return false;
     };
-    let Ok(content) = std::fs::read_to_string(path) else {
-        return;
+    let Ok(file) = std::fs::File::open(&path) else {
+        return false;
     };
-    let Ok(checkpoint) = serde_json::from_str::<serde_json::Value>(&content) else {
-        return;
-    };
-    apply_checkpoint_value_to_summary(summary, &checkpoint);
+    let fd = file.as_raw_fd();
+    // SAFETY: `fd` is a valid descriptor owned by `file` for the duration of
+    // the call; flock takes no ownership and `file` closes it on drop.
+    let rc = unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) };
+    if rc == 0 {
+        unsafe {
+            libc::flock(fd, libc::LOCK_UN);
+        }
+        false
+    } else {
+        true
+    }
+}
+
+/// Non-unix fallback: there is no advisory-lock equivalent, so preserve the
+/// prior behavior (never reclassify a run as stale) rather than guess.
+#[cfg(not(unix))]
+fn run_lock_is_held(_run_id: &str) -> bool {
+    true
 }
 
 fn normalize_run_status(
@@ -1263,7 +1354,10 @@ fn extract_steps_from_metadata(meta: &HashMap<String, String>) -> Vec<WorkflowSt
 
 fn to_run_detail(item: &ItemResponse, rev: Option<&RevisionResponse>) -> WorkflowRunDetail {
     let mut summary = to_run_summary(item, rev);
-    apply_local_checkpoint_progress(&mut summary);
+    // Detail builds from the live status / latest Kumiho revision, which is the
+    // durable source of truth — never downgrade it to `stale`, so ignore the
+    // checkpoint-applied flag here.
+    let _ = apply_local_checkpoint_progress(&mut summary);
     let steps = rev
         .map(|r| extract_steps_from_metadata(&r.metadata))
         .unwrap_or_default();
@@ -3493,7 +3587,8 @@ mod cancel_tests {
 mod workflow_run_status_tests {
     use super::{
         ItemResponse, RevisionResponse, WorkflowRunSummary, apply_checkpoint_value_to_summary,
-        normalize_run_status, to_run_summary,
+        is_terminal_run_status, normalize_run_status, stale_status_for_missing_checkpoint,
+        to_run_summary,
     };
     use serde_json::json;
     use std::collections::HashMap;
@@ -3551,6 +3646,43 @@ mod workflow_run_status_tests {
     fn completed_steps_without_completion_time_stay_running() {
         assert_eq!(normalize_run_status("running", "46", "46", ""), "running");
         assert_eq!(normalize_run_status("running", "47", "46", ""), "running");
+    }
+
+    #[test]
+    fn missing_checkpoint_orphan_running_run_becomes_stale() {
+        // Frozen creation-time metadata (running), no checkpoint, no live lock:
+        // the run is an orphan (e.g. checkpoint wiped by a redeploy).
+        assert_eq!(
+            stale_status_for_missing_checkpoint("running", false),
+            Some("stale")
+        );
+        assert_eq!(
+            stale_status_for_missing_checkpoint("pending", false),
+            Some("stale")
+        );
+        assert_eq!(
+            stale_status_for_missing_checkpoint("paused", false),
+            Some("stale")
+        );
+    }
+
+    #[test]
+    fn missing_checkpoint_live_run_is_not_stale() {
+        // A freshly triggered run still holds its lock before the first
+        // checkpoint flush — never flag it stale.
+        assert_eq!(stale_status_for_missing_checkpoint("running", true), None);
+        assert_eq!(stale_status_for_missing_checkpoint("paused", true), None);
+    }
+
+    #[test]
+    fn missing_checkpoint_terminal_run_keeps_status() {
+        // Terminal runs keep their real status (it survives in Kumiho
+        // revisions) regardless of checkpoint/lock state.
+        for status in ["completed", "failed", "cancelled"] {
+            assert!(is_terminal_run_status(status));
+            assert_eq!(stale_status_for_missing_checkpoint(status, false), None);
+            assert_eq!(stale_status_for_missing_checkpoint(status, true), None);
+        }
     }
 
     #[test]
