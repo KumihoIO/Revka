@@ -5,21 +5,17 @@ name: Deploy to Cloud Run
 # Auth is keyless via Workload Identity Federation — no SA keys in secrets.
 # One-time GCP setup: scripts/setup-gcp-deploy.sh
 
+# Manual-only: every push to main used to redeploy Cloud Run, which wiped the
+# ephemeral checkpoints/registered workflow and forced a re-registration ritual
+# — wasteful for version-string bumps, and the hosted instance is deprecated
+# after judging. Trigger deploys deliberately via the Actions "Run workflow"
+# button (or `gh workflow run deploy-cloud-run.yml`).
 on:
   workflow_dispatch:
     inputs:
       tag:
         description: Image tag (defaults to short SHA)
         required: false
-  push:
-    branches: [main]
-    paths:
-      - Dockerfile
-      - dev/config.cloudrun.toml
-      - src/**
-      - operator-mcp/**
-      - web/**
-      - .github/workflows/deploy-cloud-run.yml
 
 concurrency:
   group: deploy-cloud-run
