@@ -236,25 +236,28 @@ export default function WorkflowRuns() {
     load();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // React to `?run=` changing after the initial load (e.g. clicking the
-  // approval notification while already on this page).
+  // React to EXTERNAL `?run=` changes (e.g. clicking an approval notification
+  // while already on this page). Keyed ONLY on the param value — never on
+  // selectedRunId — so an internal dropdown selection (which sets both
+  // selectedRunId and `?run=`) can't be snapped back by this effect re-firing
+  // against a momentarily-lagging URL.
+  const runParam = searchParams.get('run');
   useEffect(() => {
-    const requestedRun = searchParams.get('run');
-    if (!requestedRun || requestedRun === selectedRunId) return;
-    setSelectedRunId(requestedRun);
-    if (!runs.some((run) => run.run_id === requestedRun)) {
-      void fetchWorkflowRun(requestedRun)
+    if (!runParam || runParam === selectedRunId) return;
+    setSelectedRunId(runParam);
+    if (!runs.some((run) => run.run_id === runParam)) {
+      void fetchWorkflowRun(runParam)
         .then((detail) => {
           const { steps: _steps, ...summary } = detail;
           setRuns((prev) =>
-            prev.some((run) => run.run_id === requestedRun)
+            prev.some((run) => run.run_id === runParam)
               ? prev
               : [summary as WorkflowRunSummary, ...prev],
           );
         })
         .catch((err: unknown) => {
           if (isMissingRunError(err)) {
-            dismissPendingApproval(requestedRun);
+            dismissPendingApproval(runParam);
             setSearchParams((current) => {
               const next = new URLSearchParams(current);
               next.delete('run');
@@ -264,7 +267,8 @@ export default function WorkflowRuns() {
           /* other errors handled by the detail fetch effect */
         });
     }
-  }, [searchParams, runs, selectedRunId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runParam]);
 
   useEffect(() => {
     if (!selectedRunId) return;
@@ -560,7 +564,11 @@ export default function WorkflowRuns() {
     if (!selectedRun) return;
     setSearchParams((current) => {
       const next = new URLSearchParams(current);
-      next.set('run', selectedRun.run_id);
+      // Use the immediate selection (selectedRunId), NOT selectedRun.run_id:
+      // the detail object lags a poll behind the dropdown, and echoing its
+      // stale id back into `?run=` is what snapped the selection to the
+      // previously-selected run.
+      next.set('run', selectedRunId ?? selectedRun.run_id);
       next.set('workflow', selectedRun.workflow_name);
       next.set('path', pathMode);
       if (selectedTask?.id) {
@@ -570,7 +578,7 @@ export default function WorkflowRuns() {
       }
       return next;
     }, { replace: true });
-  }, [pathMode, selectedRun?.run_id, selectedRun?.workflow_name, selectedTask?.id, setSearchParams]);
+  }, [pathMode, selectedRunId, selectedRun?.run_id, selectedRun?.workflow_name, selectedTask?.id, setSearchParams]);
 
   /* ---- handlers ---- */
 
