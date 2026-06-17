@@ -438,20 +438,21 @@ The gateway exposes 90+ REST endpoints and 5 WebSocket routes grouped by domain.
 
 ## Quick Start
 
-### One-command install (auto-handles Rust, sidecars, onboard)
+### Install (one command)
 
 ```bash
-git clone https://github.com/KumihoIO/Revka
-cd Revka
-
-./install.sh          # macOS / Linux / WSL
-# or
-.\setup.bat           # Windows (PowerShell — note the leading .\)
+# macOS / Linux / WSL
+curl -fsSL https://revka.ai/install.sh | bash
 ```
 
-> **PowerShell note.** PowerShell does not run scripts from the current directory unless you prefix with `.\`. If you see *"setup.bat is not recognized as a name of a cmdlet"*, use `.\setup.bat`. From `cmd.exe`, plain `setup.bat` works.
+```powershell
+# Windows (PowerShell)
+irm https://revka.ai/install.ps1 | iex
+```
 
-The installer auto-installs Rust via rustup if missing, builds `revka`, installs the Kumiho + Operator Python MCP sidecars under `~/.revka/`, runs `revka onboard` for interactive provider + API-key setup, and opens the dashboard at `http://127.0.0.1:42617`.
+On macOS / Linux / WSL the installer sets up `revka` (building from source, installing Rust via rustup if missing, or fetching a prebuilt binary when available) plus the Kumiho + Operator Python MCP sidecars under `~/.revka/`; on Windows it installs the prebuilt `revka.exe` (sidecars provision on first agent run). Both then run `revka onboard` for interactive provider + API-key setup and open the dashboard at `http://127.0.0.1:42617`.
+
+> The installers are [`install.sh`](install.sh) and [`install.ps1`](install.ps1) — inspect them first if you like (`curl -fsSL https://revka.ai/install.sh | less`). To build from source, see [From source](#from-source-developers) below.
 
 Once installed:
 
