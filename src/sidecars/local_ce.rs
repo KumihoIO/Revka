@@ -255,12 +255,36 @@ fn wait_for_health(endpoint: &str, attempts: u32, interval: Duration) -> Option<
     None
 }
 
+/// Whether PowerShell 7+ (`pwsh`) is available on PATH. Preferred over the
+/// built-in Windows PowerShell, which on some hosts is an older build missing
+/// cmdlets the installer relies on.
+fn powershell7_available() -> bool {
+    Command::new("pwsh")
+        .args(["-NoProfile", "-NoLogo", "-Command", "exit 0"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
 /// Run the official CE one-liner installer interactively (inherits stdio so the
 /// user can complete `kumiho_server onboard` — Neo4j creds, ports, embeddings,
-/// and EULA acceptance — directly). Uses PowerShell on Windows, `sh` elsewhere.
+/// and EULA acceptance — directly). Prefers `pwsh` (PowerShell 7+) on Windows,
+/// falling back to `powershell`; uses `sh` elsewhere.
 fn run_official_installer() -> Result<()> {
     let status = if cfg!(windows) {
-        Command::new("powershell")
+        // Prefer PowerShell 7+ (`pwsh`) when present. The built-in Windows
+        // PowerShell (`powershell.exe`) can be an older build (e.g. 3.0/4.0)
+        // that lacks cmdlets the CE installer uses (`Get-FileHash`,
+        // `Expand-Archive`); `pwsh` always has them. Fall back to
+        // `powershell` only when `pwsh` is not installed.
+        let shell = if powershell7_available() {
+            "pwsh"
+        } else {
+            "powershell"
+        };
+        Command::new(shell)
             .args([
                 "-NoProfile",
                 "-Command",
