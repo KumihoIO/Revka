@@ -68,13 +68,24 @@ if (-not $expectedLine) {
     throw "No checksum entry for $($asset.name) in SHA256SUMS; refusing to install unverified binary"
 }
 $expected = ($expectedLine -split "\s+")[0].ToLowerInvariant()
-$actual = (Get-FileHash -Algorithm SHA256 $archive).Hash.ToLowerInvariant()
+# Get-FileHash is PowerShell 4.0+; compute SHA-256 via the .NET API so the
+# installer also works on Windows PowerShell 3.0 (Windows 8 / Server 2012).
+$sha256 = [System.Security.Cryptography.SHA256]::Create()
+$fileStream = [System.IO.File]::OpenRead($archive)
+try {
+    $actual = ([System.BitConverter]::ToString($sha256.ComputeHash($fileStream)) -replace "-", "").ToLowerInvariant()
+} finally {
+    $fileStream.Close()
+    $sha256.Dispose()
+}
 if ($expected -ne $actual) {
     throw "SHA256 mismatch for $($asset.name): expected $expected, got $actual"
 }
 
 $extract = Join-Path $tmp "extract"
-Expand-Archive -Path $archive -DestinationPath $extract
+# Expand-Archive is PowerShell 5.0+; use the .NET ZipFile API (PS 3.0 + .NET 4.5).
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+[System.IO.Compression.ZipFile]::ExtractToDirectory($archive, $extract)
 $binary = Get-ChildItem -Path $extract -Recurse -Filter "revka.exe" | Select-Object -First 1
 if (-not $binary) {
     throw "revka.exe not found in release archive"
