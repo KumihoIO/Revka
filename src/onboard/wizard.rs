@@ -237,6 +237,7 @@ pub async fn run_wizard(force: bool) -> Result<Config> {
             if let Some(ref url) = memory_result.kumiho_api_url {
                 kc.api_url = url.clone();
             }
+            kc.mode = memory_result.kumiho_mode;
             if is_kumiho_backend {
                 kc.enabled = true;
             }
@@ -3786,6 +3787,8 @@ pub struct MemorySetupResult {
     pub memory_config: MemoryConfig,
     pub kumiho_api_url: Option<String>,
     pub kumiho_service_token: Option<String>,
+    /// Which Kumiho backend the user selected (hosted cloud vs local CE).
+    pub kumiho_mode: crate::config::KumihoBackendMode,
 }
 
 fn setup_memory() -> Result<MemorySetupResult> {
@@ -3808,35 +3811,83 @@ fn setup_memory() -> Result<MemorySetupResult> {
     let backend = backend_key_from_choice(choice);
     let profile = memory_backend_profile(backend);
 
-    let kumiho_api_url: Option<String> = None;
+    let mut kumiho_api_url: Option<String> = None;
     let mut kumiho_service_token: Option<String> = None;
+    let mut kumiho_mode = crate::config::KumihoBackendMode::Cloud;
 
-    // If Kumiho selected, collect connection details.
+    // If Kumiho selected, choose the backend (hosted cloud vs local CE) and
+    // collect connection details.
     if backend == "kumiho" {
         println!();
-        print_bullet(&t!("memory-kumiho-managed-default"));
-        print_bullet(&t!("memory-kumiho-no-endpoint"));
-        println!();
+        let backend_items = [
+            t!("memory-kumiho-backend-cloud"),
+            t!("memory-kumiho-backend-localce"),
+        ];
+        let backend_choice = Select::new()
+            .with_prompt(format!("  {}", t!("memory-kumiho-backend-select")))
+            .items(&backend_items)
+            .default(0)
+            .interact()?;
 
-        kumiho_service_token = setup_kumiho_service_token()?;
-
-        println!(
-            "  {} Kumiho API: {}",
-            style("✓").green().bold(),
-            style(t!("memory-kumiho-api-managed")).green()
-        );
-        if kumiho_service_token.is_some() {
-            println!(
-                "  {} Service token: {}",
-                style("✓").green().bold(),
-                style(t!("memory-kumiho-token-configured")).green()
-            );
+        if backend_choice == 1 {
+            // ── Local self-hosted Community Edition ──────────────────
+            kumiho_mode = crate::config::KumihoBackendMode::LocalCe;
+            match crate::sidecars::local_ce::setup_local_ce() {
+                Ok(outcome) => {
+                    kumiho_api_url = Some(outcome.api_url.clone());
+                    if outcome.healthy {
+                        println!(
+                            "  {} Kumiho CE: {}",
+                            style("✓").green().bold(),
+                            style(t!("memory-kumiho-ce-ready", url = &outcome.api_url)).green()
+                        );
+                    } else {
+                        println!(
+                            "  {} Kumiho CE: {}",
+                            style("!").yellow().bold(),
+                            style(t!("memory-kumiho-ce-configured", url = &outcome.api_url))
+                                .yellow()
+                        );
+                    }
+                }
+                Err(error) => {
+                    println!(
+                        "  {} {}",
+                        style("!").yellow().bold(),
+                        t!("memory-kumiho-ce-failed", err = error.to_string())
+                    );
+                    // The user chose Local CE; keep the mode + loopback endpoint
+                    // so config is consistent and `revka doctor` can guide them.
+                    kumiho_api_url = Some(crate::config::KUMIHO_LOCAL_CE_API_URL.to_string());
+                }
+            }
         } else {
+            // ── Hosted Kumiho Cloud (default) ────────────────────────
+            println!();
+            print_bullet(&t!("memory-kumiho-managed-default"));
+            print_bullet(&t!("memory-kumiho-no-endpoint"));
+            println!();
+
+            kumiho_service_token = setup_kumiho_service_token()?;
+
             println!(
-                "  {} Service token: {}",
-                style("!").yellow().bold(),
-                style(t!("memory-kumiho-token-not-configured")).yellow()
+                "  {} Kumiho API: {}",
+                style("✓").green().bold(),
+                style(t!("memory-kumiho-api-managed")).green()
             );
+            if kumiho_service_token.is_some() {
+                println!(
+                    "  {} Service token: {}",
+                    style("✓").green().bold(),
+                    style(t!("memory-kumiho-token-configured")).green()
+                );
+            } else {
+                println!(
+                    "  {} Service token: {}",
+                    style("!").yellow().bold(),
+                    style(t!("memory-kumiho-token-not-configured")).yellow()
+                );
+            }
         }
     }
 
@@ -3859,6 +3910,7 @@ fn setup_memory() -> Result<MemorySetupResult> {
         memory_config: config,
         kumiho_api_url,
         kumiho_service_token,
+        kumiho_mode,
     })
 }
 

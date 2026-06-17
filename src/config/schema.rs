@@ -994,6 +994,28 @@ impl Default for McpConfig {
 
 // ── Kumiho ───────────────────────────────────────────────────────
 
+/// Loopback REST/gRPC endpoint of a self-hosted Kumiho Community Edition
+/// server. Must match the CE server default and the `kumiho` Python SDK's
+/// `_DEFAULT_LOCAL_CE_PORT` (`9190`) so the memory MCP can auto-detect it.
+pub const KUMIHO_LOCAL_CE_API_URL: &str = "http://127.0.0.1:9190";
+
+/// Which Kumiho backend Revka talks to.
+///
+/// `Cloud` is the hosted, token/account-based backend (`https://api.kumiho.cloud`).
+/// `LocalCe` is a self-hosted Community Edition server: tokenless, loopback-only,
+/// single-user. The two differ in auth (token vs none), URL (https vs loopback
+/// http), and how the memory MCP resolves its endpoint (control-plane discovery
+/// vs `/api/_live` CE probe).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum KumihoBackendMode {
+    /// Hosted Kumiho Cloud (default).
+    #[default]
+    Cloud,
+    /// Local self-hosted Community Edition (tokenless, loopback-only).
+    LocalCe,
+}
+
 /// Kumiho graph-memory integration (`[kumiho]` section).
 ///
 /// Controls automatic injection of the Kumiho MCP server and session-bootstrap
@@ -1004,6 +1026,15 @@ pub struct KumihoConfig {
     /// Enable Kumiho memory injection for non-internal agents. Default: `true`.
     #[serde(default = "default_true")]
     pub enabled: bool,
+
+    /// Which Kumiho backend this config targets: hosted `cloud` (default) or
+    /// local self-hosted `local_ce` (Community Edition).
+    ///
+    /// `local_ce` selects a tokenless, loopback-only backend; onboarding points
+    /// `api_url` at `http://127.0.0.1:9190` and the memory MCP auto-detects the
+    /// CE server (requires `kumiho[mcp] >= 0.10.0`).
+    #[serde(default)]
+    pub mode: KumihoBackendMode,
 
     /// Absolute path to the `run_kumiho_mcp.py` script.
     ///
@@ -1019,10 +1050,12 @@ pub struct KumihoConfig {
     #[serde(default = "default_kumiho_space_prefix")]
     pub space_prefix: String,
 
-    /// Base URL for the Kumiho FastAPI REST API.
+    /// Base URL for the Kumiho REST API.
     ///
     /// Used by the agent management proxy to call Kumiho endpoints directly.
-    /// Defaults to `"http://localhost:8000"`.
+    /// Defaults to the hosted cloud endpoint `"https://api.kumiho.cloud"`; a
+    /// `local_ce` backend points this at the loopback CE server
+    /// (`"http://127.0.0.1:9190"`).
     #[serde(default = "default_kumiho_api_url")]
     pub api_url: String,
 
@@ -1063,10 +1096,55 @@ fn default_kumiho_memory_retrieval_limit() -> usize {
     3
 }
 
+impl KumihoConfig {
+    /// True when this config targets a local self-hosted CE backend.
+    pub fn is_local_ce(&self) -> bool {
+        matches!(self.mode, KumihoBackendMode::LocalCe)
+    }
+
+    /// The loopback `host:port` of the CE server, derived from `api_url`
+    /// (falling back to the CE default `127.0.0.1:9190`). Used to point the
+    /// memory MCP / SDK at the local server via `KUMIHO_LOCAL_SERVER_ENDPOINT`.
+    pub fn local_ce_endpoint(&self) -> String {
+        local_ce_host_port(&self.api_url)
+    }
+}
+
+/// Strip the scheme/path from a CE `api_url` to yield a `host:port` target,
+/// defaulting the port to the CE default (`9190`) when absent.
+fn local_ce_host_port(api_url: &str) -> String {
+    let trimmed = api_url.trim();
+    let without_scheme = trimmed
+        .split_once("://")
+        .map(|(_, rest)| rest)
+        .unwrap_or(trimmed);
+    let host_port = without_scheme
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or(without_scheme)
+        .trim_end_matches('/');
+    if host_port.is_empty() {
+        return "127.0.0.1:9190".to_string();
+    }
+    // Bracketed IPv6 (e.g. [::1]:9190) already carries its own port delimiter;
+    // for the common host:port and bare-host cases, append the default port.
+    let has_port = if host_port.starts_with('[') {
+        host_port.rsplit_once("]:").is_some()
+    } else {
+        host_port.contains(':')
+    };
+    if has_port {
+        host_port.to_string()
+    } else {
+        format!("{host_port}:9190")
+    }
+}
+
 impl Default for KumihoConfig {
     fn default() -> Self {
         Self {
             enabled: true,
+            mode: KumihoBackendMode::default(),
             mcp_path: default_kumiho_mcp_path(),
             space_prefix: default_kumiho_space_prefix(),
             api_url: default_kumiho_api_url(),
@@ -11106,6 +11184,52 @@ mod tests {
     use tokio::test;
     use tokio_stream::StreamExt;
     use tokio_stream::wrappers::ReadDirStream;
+
+    // ── Kumiho backend mode (cloud vs local CE) ───────────────────
+
+    #[test]
+    async fn kumiho_backend_mode_defaults_to_cloud_and_serdes_snake_case() {
+        let cfg = KumihoConfig::default();
+        assert_eq!(cfg.mode, KumihoBackendMode::Cloud);
+        assert!(!cfg.is_local_ce());
+
+        // snake_case wire form
+        let serialized = toml::to_string(&cfg).expect("serialize KumihoConfig");
+        assert!(
+            serialized.contains("mode = \"cloud\""),
+            "expected snake_case mode in: {serialized}"
+        );
+
+        // round-trip local_ce
+        let parsed: KumihoConfig =
+            toml::from_str("mode = \"local_ce\"\napi_url = \"http://127.0.0.1:9190\"")
+                .expect("parse local_ce config");
+        assert_eq!(parsed.mode, KumihoBackendMode::LocalCe);
+        assert!(parsed.is_local_ce());
+
+        // missing mode falls back to cloud (back-compat with existing configs)
+        let legacy: KumihoConfig = toml::from_str("enabled = true").expect("parse legacy config");
+        assert_eq!(legacy.mode, KumihoBackendMode::Cloud);
+    }
+
+    #[test]
+    async fn local_ce_endpoint_strips_scheme_and_defaults_port() {
+        assert_eq!(
+            local_ce_host_port("http://127.0.0.1:9190"),
+            "127.0.0.1:9190"
+        );
+        assert_eq!(
+            local_ce_host_port("http://127.0.0.1:9190/"),
+            "127.0.0.1:9190"
+        );
+        assert_eq!(local_ce_host_port("127.0.0.1"), "127.0.0.1:9190");
+        assert_eq!(
+            local_ce_host_port("http://localhost:8080"),
+            "localhost:8080"
+        );
+        assert_eq!(local_ce_host_port("https://[::1]:9190"), "[::1]:9190");
+        assert_eq!(local_ce_host_port(""), "127.0.0.1:9190");
+    }
 
     // ── Audit row 11/12: legacy memory_* tool name deprecation ────
 

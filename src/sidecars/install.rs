@@ -34,7 +34,12 @@ static SESSION_MANAGER_SRC: Dir<'_> =
 
 /// The PyPI version pin for the Kumiho package. Must match
 /// `operator-mcp/requirements.txt`.
-const KUMIHO_PIN: &str = "kumiho[mcp]>=0.9.20";
+///
+/// `>= 0.10.0` is required for self-hosted Community Edition support: that
+/// release adds the tokenless loopback CE probe (`KUMIHO_LOCAL_SERVER_ENDPOINT`
+/// → `/api/_live` → gRPC) the `local_ce` backend mode relies on. It remains
+/// cloud-compatible, so a single pin serves both backends.
+const KUMIHO_PIN: &str = "kumiho[mcp]>=0.10.0";
 
 #[derive(Debug, Default, Clone)]
 pub struct SidecarInstallOptions {
