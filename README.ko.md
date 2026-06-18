@@ -410,18 +410,21 @@ Revka는 x86_64 및 arm64 Linux(Raspberry Pi 3/4/5 포함), macOS, Windows에서
 
 ## 빠른 시작
 
-### 원커맨드 설치 (Rust, 사이드카, 온보드 자동 처리)
+### 한 줄 설치
 
 ```bash
-git clone https://github.com/KumihoIO/Revka
-cd Revka
-
-./install.sh          # macOS / Linux / WSL
-# 또는
-setup.bat             # Windows
+# macOS / Linux / WSL
+curl -fsSL https://revka.ai/install.sh | bash
 ```
 
-설치 프로그램은 rustup을 통해 Rust를 자동 설치하고(없는 경우), `revka`를 빌드하고, `~/.revka/` 하위에 Kumiho + Operator Python MCP 사이드카를 설치하고, 인터랙티브 프로바이더 + API 키 설정을 위해 `revka onboard`를 실행하고, `http://127.0.0.1:42617`에서 대시보드를 엽니다.
+```powershell
+# Windows (PowerShell)
+irm https://revka.ai/install.ps1 | iex
+```
+
+macOS / Linux / WSL에서는 설치 프로그램이 `revka`를 준비하고(소스에서 빌드하며, 없으면 rustup으로 Rust를 자동 설치하거나, 가능한 경우 사전 빌드된 바이너리를 받습니다) `~/.revka/` 하위에 Kumiho + Operator Python MCP 사이드카를 설치합니다. Windows에서는 사전 빌드된 `revka.exe`를 설치합니다(사이드카는 첫 에이전트 실행 시 설치). 이후 두 경우 모두 인터랙티브 프로바이더 + API 키 설정을 위해 `revka onboard`를 실행하고 `http://127.0.0.1:42617`에서 대시보드를 엽니다.
+
+> 설치 스크립트는 [`install.sh`](install.sh)와 [`install.ps1`](install.ps1)입니다 — 실행 전에 확인하려면 `curl -fsSL https://revka.ai/install.sh | less`. 소스에서 빌드하려면 아래 [소스로부터](#소스로부터-개발자용)를 참고하세요.
 
 설치 후:
 

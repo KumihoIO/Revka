@@ -340,6 +340,10 @@ impl PromptSection for IdentitySection {
             }
         }
 
+        // Brand voice: Revka is a kumiho (nine-tailed fox). When signing off a
+        // reply with an emoji, use 🦊 — never 🦀 (a leftover from the ZeroClaw era).
+        prompt.push_str("\nWhen you sign off with an emoji, use 🦊 (the kumiho fox), never 🦀.\n");
+
         Ok(prompt)
     }
 }

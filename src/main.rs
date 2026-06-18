@@ -1105,12 +1105,29 @@ async fn main() -> Result<()> {
                 }
                 println!();
 
-                // Rename existing directory as backup
-                tokio::fs::rename(&revka_dir, &backup_dir)
+                // Back up configuration/data but preserve the installed binary.
+                // `--reinit` resets *configuration*, not the Revka install: the
+                // binary lives at `<revka_dir>/bin` and is on PATH, so renaming
+                // the whole directory into the backup would break the `revka`
+                // command (and yank the running executable out from under it).
+                // Move every entry except `bin/` into the backup instead.
+                tokio::fs::create_dir_all(&backup_dir)
                     .await
-                    .with_context(|| {
-                        format!("Failed to backup existing config to {}", backup_dir)
+                    .with_context(|| format!("Failed to create backup directory {}", backup_dir))?;
+                let backup_path = std::path::Path::new(&backup_dir);
+                let mut entries = tokio::fs::read_dir(&revka_dir)
+                    .await
+                    .with_context(|| format!("Failed to read {}", revka_dir.display()))?;
+                while let Some(entry) = entries.next_entry().await? {
+                    if entry.file_name().to_str() == Some("bin") {
+                        continue; // keep the installed binary in place
+                    }
+                    let from = entry.path();
+                    let to = backup_path.join(entry.file_name());
+                    tokio::fs::rename(&from, &to).await.with_context(|| {
+                        format!("Failed to back up {} to {}", from.display(), to.display())
                     })?;
+                }
 
                 println!("   {}", revka::t!("reinit-backup-ok"));
                 println!("   {}\n", revka::t!("reinit-fresh-start"));
@@ -1442,7 +1459,7 @@ async fn main() -> Result<()> {
                     }
                 }
             }
-            println!("🦀 Revka Status");
+            println!("🦊 Revka Status");
             println!();
             println!("Version:     {}", env!("CARGO_PKG_VERSION"));
             println!("Workspace:   {}", config.workspace_dir.display());

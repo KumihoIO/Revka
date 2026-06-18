@@ -127,7 +127,7 @@ jobs:
             fi
 
             # Build tweet — feature-focused style
-            TWEET=$(printf "🦀 Revka %s\n\n%s\n\nZero overhead. Zero compromise. 100%% Rust.\n\n#revka #rust #ai #opensource" \
+            TWEET=$(printf "🦊 Revka %s\n\n%s\n\nZero overhead. Zero compromise. 100%% Rust.\n\n#revka #rust #ai #opensource" \
               "$RELEASE_TAG" "$FEAT_LIST")
           fi
 
