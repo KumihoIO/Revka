@@ -376,11 +376,7 @@ pub async fn run_wizard(force: bool) -> Result<Config> {
     // `ensure_sidecars_ready(true)`; a declined prompt (or install failure)
     // is non-fatal — onboarding still completes.
     if let Err(e) = crate::sidecars::ensure_sidecars_ready(true).await {
-        println!(
-            "  {} Sidecar install skipped: {}",
-            style("•").yellow(),
-            e
-        );
+        println!("  {} Sidecar install skipped: {}", style("•").yellow(), e);
         println!(
             "    Install later with: {}",
             style("revka install --sidecars-only").cyan()
