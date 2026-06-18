@@ -6,6 +6,7 @@
 //! Python on PATH at runtime.
 
 mod install;
+pub mod local_ce;
 pub mod python;
 
 pub use install::{SidecarInstallOptions, install_sidecars};

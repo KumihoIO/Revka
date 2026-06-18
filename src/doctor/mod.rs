@@ -84,6 +84,7 @@ pub fn diagnose(config: &Config) -> Vec<DiagResult> {
     check_daemon_state(config, &mut items);
     check_environment(&mut items);
     check_sidecars(config, &mut items);
+    check_kumiho_backend(config, &mut items);
     check_cli_tools(&mut items);
 
     items.into_iter().map(DiagItem::into_result).collect()
@@ -1025,6 +1026,86 @@ fn check_sidecars(config: &Config, items: &mut Vec<DiagItem>) {
             items.push(DiagItem::error(
                 cat,
                 format!("could not check kumiho_memory: {e}"),
+            ));
+        }
+    }
+}
+
+/// Verify the Kumiho backend the config points at.
+///
+/// For a hosted-cloud backend this is a static note (a live probe would need a
+/// service token). For a self-hosted Community Edition backend it probes the
+/// loopback server: `GET /api/_live` (asserting `deployment_mode=self_hosted_ce`)
+/// and `GET /api/_health` (Neo4j / Redis event-stream / embedding readiness).
+fn check_kumiho_backend(config: &Config, items: &mut Vec<DiagItem>) {
+    let cat = "kumiho";
+
+    if !config.kumiho.enabled {
+        return;
+    }
+
+    if !config.kumiho.is_local_ce() {
+        items.push(DiagItem::ok(
+            cat,
+            format!("backend: cloud ({})", config.kumiho.api_url),
+        ));
+        return;
+    }
+
+    let endpoint = config.kumiho.local_ce_endpoint();
+    match crate::sidecars::local_ce::probe_live(&endpoint, std::time::Duration::from_millis(1500)) {
+        Ok(health) if health.is_ce() => {
+            let version = health
+                .version
+                .map(|v| format!(", v{v}"))
+                .unwrap_or_default();
+            items.push(DiagItem::ok(
+                cat,
+                format!("Community Edition reachable at {endpoint} (self_hosted_ce{version})"),
+            ));
+            // Best-effort component readiness from /api/_health.
+            if let Ok(h) = crate::sidecars::local_ce::probe_health(
+                &endpoint,
+                std::time::Duration::from_millis(1500),
+            ) {
+                for (key, label) in [
+                    ("neo4j", "Neo4j"),
+                    ("event_stream", "Redis event-stream"),
+                    ("embedding", "embeddings"),
+                ] {
+                    let status = h
+                        .get(key)
+                        .and_then(|c| c.get("status"))
+                        .and_then(|s| s.as_str())
+                        .unwrap_or("unknown");
+                    if status.eq_ignore_ascii_case("ok") {
+                        items.push(DiagItem::ok(cat, format!("{label}: ok")));
+                    } else {
+                        items.push(DiagItem::warn(
+                            cat,
+                            format!(
+                                "{label}: {status} (see ~/.kumiho config / `kumiho_server onboard`)"
+                            ),
+                        ));
+                    }
+                }
+            }
+        }
+        Ok(health) => {
+            let mode = health.deployment_mode.as_deref().unwrap_or("unknown");
+            items.push(DiagItem::warn(
+                cat,
+                format!(
+                    "server at {endpoint} reports deployment_mode='{mode}', expected 'self_hosted_ce'. Is this actually a local CE server?"
+                ),
+            ));
+        }
+        Err(e) => {
+            items.push(DiagItem::warn(
+                cat,
+                format!(
+                    "Community Edition not reachable at {endpoint}: {e}. Finish `kumiho_server onboard` (accept the EULA, start the server) and ensure local Neo4j is running, then re-run `revka doctor`."
+                ),
             ));
         }
     }

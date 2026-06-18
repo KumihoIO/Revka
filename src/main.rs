@@ -1105,12 +1105,29 @@ async fn main() -> Result<()> {
                 }
                 println!();
 
-                // Rename existing directory as backup
-                tokio::fs::rename(&revka_dir, &backup_dir)
+                // Back up configuration/data but preserve the installed binary.
+                // `--reinit` resets *configuration*, not the Revka install: the
+                // binary lives at `<revka_dir>/bin` and is on PATH, so renaming
+                // the whole directory into the backup would break the `revka`
+                // command (and yank the running executable out from under it).
+                // Move every entry except `bin/` into the backup instead.
+                tokio::fs::create_dir_all(&backup_dir)
                     .await
-                    .with_context(|| {
-                        format!("Failed to backup existing config to {}", backup_dir)
+                    .with_context(|| format!("Failed to create backup directory {}", backup_dir))?;
+                let backup_path = std::path::Path::new(&backup_dir);
+                let mut entries = tokio::fs::read_dir(&revka_dir)
+                    .await
+                    .with_context(|| format!("Failed to read {}", revka_dir.display()))?;
+                while let Some(entry) = entries.next_entry().await? {
+                    if entry.file_name().to_str() == Some("bin") {
+                        continue; // keep the installed binary in place
+                    }
+                    let from = entry.path();
+                    let to = backup_path.join(entry.file_name());
+                    tokio::fs::rename(&from, &to).await.with_context(|| {
+                        format!("Failed to back up {} to {}", from.display(), to.display())
                     })?;
+                }
 
                 println!("   {}", revka::t!("reinit-backup-ok"));
                 println!("   {}\n", revka::t!("reinit-fresh-start"));
@@ -1199,6 +1216,40 @@ async fn main() -> Result<()> {
     inject_kumiho_service_token_from_auth_file();
 
     config.apply_env_overrides();
+
+    // Local self-hosted CE is tokenless and loopback-only. Export the CE
+    // endpoint into this process's environment so the gateway's Kumiho SDK
+    // bridge — and any SDK subprocess that inherits this env — connects to the
+    // local server over gRPC instead of the SDK's default target (CE serves
+    // gRPC, not JSON REST, so the raw `/api/v1` FastAPI path cannot work).
+    // Shadow any inherited cloud credentials to empty so the SDK takes the CE
+    // probe path rather than cloud discovery. Mirrors src/agent/kumiho.rs.
+    if config.kumiho.is_local_ce() {
+        // SAFETY: called once early in main before worker threads are spawned.
+        unsafe {
+            std::env::set_var(
+                "KUMIHO_LOCAL_SERVER_ENDPOINT",
+                config.kumiho.local_ce_endpoint(),
+            );
+            // High-level memory (kumiho_memory) buffers sessions in Redis. Cloud
+            // discovers an Upstash URL via the control plane; CE has none, so
+            // point it at the local loopback Redis (honoring an explicit
+            // user-provided URL). Without this, writes (reflect) hit the cloud
+            // memory proxy and fail with "Run 'kumiho-auth login'".
+            std::env::set_var(
+                "KUMIHO_UPSTASH_REDIS_URL",
+                revka::config::local_ce_redis_url(),
+            );
+            for var in [
+                "KUMIHO_AUTH_TOKEN",
+                "KUMIHO_SERVICE_TOKEN",
+                "KUMIHO_CONTROL_PLANE_URL",
+            ] {
+                std::env::set_var(var, "");
+            }
+        }
+    }
+
     observability::runtime_trace::init_from_config(&config.observability, &config.workspace_dir);
     if config.security.otp.enabled {
         let config_dir = config
@@ -1408,7 +1459,7 @@ async fn main() -> Result<()> {
                     }
                 }
             }
-            println!("🦀 Revka Status");
+            println!("🦊 Revka Status");
             println!();
             println!("Version:     {}", env!("CARGO_PKG_VERSION"));
             println!("Workspace:   {}", config.workspace_dir.display());

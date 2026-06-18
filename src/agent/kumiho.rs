@@ -294,8 +294,8 @@ pub fn warn_if_kumiho_advanced_missing(config: &Config, advanced_available: bool
         "Kumiho high-level memory tools were not registered after MCP startup. \
         Bootstrap prompt is using the lite variant. Check ~/.revka/logs/ \
         for MCP startup errors. To re-install: \
-        `~/.revka/kumiho/venv/bin/pip install 'kumiho_memory>=0.5.0'` \
-        (or re-run scripts/install-sidecars.sh)."
+        `~/.revka/kumiho/venv/bin/pip install 'kumiho_memory>=0.5.2'` \
+        (or re-run `revka install --sidecars-only`)."
     );
 }
 
@@ -324,34 +324,69 @@ pub fn kumiho_mcp_server_config(kumiho_cfg: &KumihoConfig) -> McpServerConfig {
         "KUMIHO_MEMORY_RETRIEVAL_LIMIT".to_string(),
         kumiho_cfg.memory_retrieval_limit.max(1).to_string(),
     );
-    // Forward the bearer token to the spawned Python MCP. KUMIHO_AUTH_TOKEN
-    // (what the SDK reads) and KUMIHO_SERVICE_TOKEN (what Revka's own
-    // gateway code reads) carry the same dashboard-issued service_token —
-    // the discovery endpoint at control.kumiho.cloud accepts service_tokens
-    // via verifyControlPlaneToken and returns the tenant gRPC routing.
-    //
-    // Priority: KUMIHO_SERVICE_TOKEN > KUMIHO_AUTH_TOKEN. The service token is
-    // the value written by Revka onboarding and should not be shadowed by a
-    // stale shell-level KUMIHO_AUTH_TOKEN from another account.
-    //
-    // When neither is set, leave KUMIHO_AUTH_TOKEN unset and let the Python
-    // SDK's _token_loader read ~/.kumiho/kumiho_authentication.json directly
-    // (path used by `kumiho login`).
-    let auth_token = std::env::var("KUMIHO_SERVICE_TOKEN")
-        .ok()
-        .filter(|t| !t.trim().is_empty())
-        .or_else(|| {
-            std::env::var("KUMIHO_AUTH_TOKEN")
-                .ok()
-                .filter(|t| !t.trim().is_empty())
-        });
-    if let Some(token) = auth_token {
-        env.insert("KUMIHO_AUTH_TOKEN".to_string(), token);
-    }
-    // Also forward the control plane URL if set.
-    if let Ok(url) = std::env::var("KUMIHO_CONTROL_PLANE_URL") {
-        if !url.trim().is_empty() {
-            env.insert("KUMIHO_CONTROL_PLANE_URL".to_string(), url);
+    if kumiho_cfg.is_local_ce() {
+        // Local self-hosted Community Edition: tokenless, loopback-only.
+        // Point the Python SDK (kumiho[mcp] >= 0.10.0) at the local server.
+        // It probes `http://<endpoint>/api/_live`, sees
+        // `deployment_mode == "self_hosted_ce"`, and connects tokenless over
+        // gRPC (discovery + auto-login disabled).
+        env.insert(
+            "KUMIHO_LOCAL_SERVER_ENDPOINT".to_string(),
+            kumiho_cfg.local_ce_endpoint(),
+        );
+        // The high-level memory tools (kumiho_memory) buffer sessions in Redis.
+        // CE has no control plane to discover an Upstash URL, so point the layer
+        // at the local loopback Redis (the kumiho-redis container CE onboarding
+        // provisions). Without this, `reflect`/write hits the cloud memory proxy
+        // and fails with "No credentials available for memory proxy".
+        env.insert(
+            "KUMIHO_UPSTASH_REDIS_URL".to_string(),
+            crate::config::local_ce_redis_url(),
+        );
+        // The MCP child inherits the daemon's environment, which may carry a
+        // cloud token (workspace `.env`, a shell export, or the auth-file
+        // injection in main.rs). A non-empty KUMIHO_AUTH_TOKEN would make the
+        // SDK take the cloud discovery path instead of the CE probe, so
+        // explicitly shadow the cloud credentials to empty for CE mode. Empty
+        // values read as "no token" by the SDK and override the inherited ones.
+        for var in [
+            "KUMIHO_AUTH_TOKEN",
+            "KUMIHO_SERVICE_TOKEN",
+            "KUMIHO_CONTROL_PLANE_URL",
+        ] {
+            env.insert(var.to_string(), String::new());
+        }
+    } else {
+        // Cloud: forward the bearer token to the spawned Python MCP.
+        // KUMIHO_AUTH_TOKEN (what the SDK reads) and KUMIHO_SERVICE_TOKEN
+        // (what Revka's own gateway code reads) carry the same
+        // dashboard-issued service_token — the discovery endpoint at
+        // control.kumiho.cloud accepts service_tokens via
+        // verifyControlPlaneToken and returns the tenant gRPC routing.
+        //
+        // Priority: KUMIHO_SERVICE_TOKEN > KUMIHO_AUTH_TOKEN. The service token
+        // is the value written by Revka onboarding and should not be shadowed
+        // by a stale shell-level KUMIHO_AUTH_TOKEN from another account.
+        //
+        // When neither is set, leave KUMIHO_AUTH_TOKEN unset and let the Python
+        // SDK's _token_loader read ~/.kumiho/kumiho_authentication.json directly
+        // (path used by `kumiho login`).
+        let auth_token = std::env::var("KUMIHO_SERVICE_TOKEN")
+            .ok()
+            .filter(|t| !t.trim().is_empty())
+            .or_else(|| {
+                std::env::var("KUMIHO_AUTH_TOKEN")
+                    .ok()
+                    .filter(|t| !t.trim().is_empty())
+            });
+        if let Some(token) = auth_token {
+            env.insert("KUMIHO_AUTH_TOKEN".to_string(), token);
+        }
+        // Also forward the control plane URL if set.
+        if let Ok(url) = std::env::var("KUMIHO_CONTROL_PLANE_URL") {
+            if !url.trim().is_empty() {
+                env.insert("KUMIHO_CONTROL_PLANE_URL".to_string(), url);
+            }
         }
     }
     // Do not force auto-configure before the MCP handshake. Endpoint discovery
@@ -776,6 +811,7 @@ mod tests {
     fn kumiho_mcp_server_config_uses_custom_path() {
         let kc = KumihoConfig {
             enabled: true,
+            mode: crate::config::KumihoBackendMode::Cloud,
             mcp_path: "/opt/kumiho/run_kumiho_mcp.py".to_string(),
             space_prefix: "MyProject".to_string(),
             api_url: "http://localhost:8000".to_string(),
@@ -828,6 +864,85 @@ mod tests {
             match previous_service {
                 Some(value) => std::env::set_var("KUMIHO_SERVICE_TOKEN", value),
                 None => std::env::remove_var("KUMIHO_SERVICE_TOKEN"),
+            }
+        }
+    }
+
+    #[test]
+    fn kumiho_mcp_server_config_local_ce_is_tokenless_and_points_at_loopback() {
+        let _guard = ENV_LOCK.lock().expect("env lock poisoned");
+        let previous_auth = std::env::var("KUMIHO_AUTH_TOKEN").ok();
+        let previous_service = std::env::var("KUMIHO_SERVICE_TOKEN").ok();
+        let previous_redis = std::env::var("KUMIHO_UPSTASH_REDIS_URL").ok();
+        let previous_upstash = std::env::var("UPSTASH_REDIS_URL").ok();
+
+        // Even with a stale cloud token in the environment, CE mode must NOT
+        // forward it (a token would push the SDK onto the cloud discovery path
+        // instead of the loopback CE probe).
+        unsafe {
+            std::env::set_var("KUMIHO_SERVICE_TOKEN", "stale-cloud-token");
+            std::env::set_var("KUMIHO_AUTH_TOKEN", "stale-cloud-token");
+            // Clear any Redis override so the loopback default is deterministic.
+            std::env::remove_var("KUMIHO_UPSTASH_REDIS_URL");
+            std::env::remove_var("UPSTASH_REDIS_URL");
+        }
+
+        let kc = KumihoConfig {
+            mode: crate::config::KumihoBackendMode::LocalCe,
+            api_url: "http://127.0.0.1:9190".to_string(),
+            ..KumihoConfig::default()
+        };
+        let server = kumiho_mcp_server_config(&kc);
+
+        assert_eq!(
+            server
+                .env
+                .get("KUMIHO_LOCAL_SERVER_ENDPOINT")
+                .map(String::as_str),
+            Some("127.0.0.1:9190"),
+            "CE mode must point the SDK at the loopback server"
+        );
+        // The MCP child inherits the daemon env, so absence is not enough — the
+        // cloud credentials must be explicitly shadowed to empty so an inherited
+        // KUMIHO_AUTH_TOKEN cannot push the SDK onto the cloud discovery path.
+        for var in [
+            "KUMIHO_AUTH_TOKEN",
+            "KUMIHO_SERVICE_TOKEN",
+            "KUMIHO_CONTROL_PLANE_URL",
+        ] {
+            assert_eq!(
+                server.env.get(var).map(String::as_str),
+                Some(""),
+                "CE mode must shadow {var} to empty to defeat inherited cloud creds"
+            );
+        }
+        // High-level memory writes need a Redis URL; CE points it at the local
+        // loopback Redis so `reflect` doesn't fall back to the cloud memory proxy.
+        assert_eq!(
+            server
+                .env
+                .get("KUMIHO_UPSTASH_REDIS_URL")
+                .map(String::as_str),
+            Some("redis://127.0.0.1:6379"),
+            "CE mode must point kumiho_memory at the local loopback Redis"
+        );
+
+        unsafe {
+            match previous_auth {
+                Some(value) => std::env::set_var("KUMIHO_AUTH_TOKEN", value),
+                None => std::env::remove_var("KUMIHO_AUTH_TOKEN"),
+            }
+            match previous_service {
+                Some(value) => std::env::set_var("KUMIHO_SERVICE_TOKEN", value),
+                None => std::env::remove_var("KUMIHO_SERVICE_TOKEN"),
+            }
+            match previous_redis {
+                Some(value) => std::env::set_var("KUMIHO_UPSTASH_REDIS_URL", value),
+                None => std::env::remove_var("KUMIHO_UPSTASH_REDIS_URL"),
+            }
+            match previous_upstash {
+                Some(value) => std::env::set_var("UPSTASH_REDIS_URL", value),
+                None => std::env::remove_var("UPSTASH_REDIS_URL"),
             }
         }
     }

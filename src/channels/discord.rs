@@ -586,7 +586,7 @@ const BASE64_ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstu
 ///
 /// Discord rejects longer payloads with `50035 Invalid Form Body`.
 const DISCORD_MAX_MESSAGE_LENGTH: usize = 2000;
-const DISCORD_ACK_REACTIONS: &[&str] = &["⚡️", "🦀", "🙌", "💪", "👌", "👀", "👣"];
+const DISCORD_ACK_REACTIONS: &[&str] = &["⚡️", "🦊", "🙌", "💪", "👌", "👀", "👣"];
 
 /// Split a message into chunks that respect Discord's 2000-character limit.
 /// Tries to split at word boundaries when possible.

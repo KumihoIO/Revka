@@ -164,6 +164,33 @@ pub fn inject_operator(mut config: Config, is_internal: bool) -> Config {
                 .env
                 .insert("KUMIHO_API_URL".to_string(), config.kumiho.api_url.clone());
         }
+        // Local self-hosted CE is tokenless and loopback-only. Point the operator
+        // (and the kumiho-memory MCP it spawns) at the local server and shadow any
+        // inherited cloud credentials to empty, mirroring
+        // src/agent/kumiho.rs::kumiho_mcp_server_config. Without the endpoint the
+        // external kumiho SDK falls back to its default gRPC target (127.0.0.1:8080)
+        // and the memory backend is unreachable ("connection refused").
+        if config.kumiho.is_local_ce() {
+            server.env.insert(
+                "KUMIHO_LOCAL_SERVER_ENDPOINT".to_string(),
+                config.kumiho.local_ce_endpoint(),
+            );
+            // High-level memory (kumiho_memory) buffers sessions in Redis; CE has
+            // no control plane, so point it at the local loopback Redis. Without
+            // it, `reflect`/write hits the cloud memory proxy and fails with
+            // "No credentials available for memory proxy".
+            server.env.insert(
+                "KUMIHO_UPSTASH_REDIS_URL".to_string(),
+                crate::config::local_ce_redis_url(),
+            );
+            for var in [
+                "KUMIHO_AUTH_TOKEN",
+                "KUMIHO_SERVICE_TOKEN",
+                "KUMIHO_CONTROL_PLANE_URL",
+            ] {
+                server.env.insert(var.to_string(), String::new());
+            }
+        }
         // Pass project names so operator tools use the configured projects.
         server.env.insert(
             "KUMIHO_MEMORY_PROJECT".to_string(),
@@ -462,5 +489,73 @@ mod tests {
         assert_ne!(claude_prompt, openai_prompt);
         // Claude layer is shorter (MCP-native, less verbose)
         assert!(claude_prompt.len() < openai_prompt.len());
+    }
+
+    #[test]
+    fn inject_operator_local_ce_is_tokenless_and_points_at_loopback() {
+        // CE mode must point the operator (and the kumiho-memory MCP it spawns)
+        // at the loopback CE server and shadow any inherited cloud credentials,
+        // mirroring src/agent/kumiho.rs::kumiho_mcp_server_config. Without this
+        // the external kumiho SDK falls back to its default gRPC target
+        // (127.0.0.1:8080) and the memory backend is unreachable.
+        let mut cfg = Config::default();
+        cfg.kumiho.mode = crate::config::KumihoBackendMode::LocalCe;
+        cfg.kumiho.api_url = "http://127.0.0.1:9190".to_string();
+        let injected = inject_operator(cfg, false);
+        let entry = injected
+            .mcp
+            .servers
+            .iter()
+            .find(|s| s.name == OPERATOR_SERVER_NAME)
+            .expect("operator server injected");
+        assert_eq!(
+            entry
+                .env
+                .get("KUMIHO_LOCAL_SERVER_ENDPOINT")
+                .map(String::as_str),
+            Some("127.0.0.1:9190"),
+            "CE mode must point the operator at the loopback server"
+        );
+        for var in [
+            "KUMIHO_AUTH_TOKEN",
+            "KUMIHO_SERVICE_TOKEN",
+            "KUMIHO_CONTROL_PLANE_URL",
+        ] {
+            assert_eq!(
+                entry.env.get(var).map(String::as_str),
+                Some(""),
+                "CE mode must shadow {var} to empty to defeat inherited cloud creds"
+            );
+        }
+        // High-level memory (kumiho_memory) needs a direct Redis URL in CE so
+        // `reflect` doesn't fall back to the cloud memory proxy. The exact value
+        // honors KUMIHO_UPSTASH_REDIS_URL/UPSTASH_REDIS_URL overrides (asserted
+        // precisely in kumiho.rs's CE test), so here just assert it's a Redis URL.
+        let redis = entry
+            .env
+            .get("KUMIHO_UPSTASH_REDIS_URL")
+            .map(String::as_str)
+            .unwrap_or("");
+        assert!(
+            redis.starts_with("redis://"),
+            "CE mode must set KUMIHO_UPSTASH_REDIS_URL to a Redis URL, got {redis:?}"
+        );
+    }
+
+    #[test]
+    fn inject_operator_cloud_mode_has_no_local_ce_endpoint() {
+        // Default (cloud) config must NOT set the CE loopback endpoint, so the
+        // SDK takes the normal cloud discovery path.
+        let injected = inject_operator(Config::default(), false);
+        let entry = injected
+            .mcp
+            .servers
+            .iter()
+            .find(|s| s.name == OPERATOR_SERVER_NAME)
+            .expect("operator server injected");
+        assert!(
+            !entry.env.contains_key("KUMIHO_LOCAL_SERVER_ENDPOINT"),
+            "cloud mode must not set the CE loopback endpoint"
+        );
     }
 }

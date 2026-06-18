@@ -24,9 +24,12 @@ const DEFAULT_ANTHROPIC_MAX_TOKENS: u32 = 4096;
 /// patch releases (e.g. opus-4-7-20260601) are also covered.
 fn model_supports_temperature(model: &str) -> bool {
     let model = model.rsplit('/').next().unwrap_or(model);
-    // Anthropic deprecated `temperature` starting with the Claude 4.7 series.
-    // Update this list as Anthropic rolls deprecation across model lines.
-    let no_temp_prefixes = ["claude-opus-4-7"];
+    // Anthropic removed `temperature` starting with the Claude Opus 4.7 series;
+    // Opus 4.8 and Fable 5 reject it too. Opus 4.6 / Sonnet 4.6 / Haiku 4.5 and
+    // older still accept it, so keep these prefixes specific (NOT `claude-opus-4`,
+    // which would wrongly match 4.5/4.6). Update as Anthropic rolls deprecation
+    // across model lines.
+    let no_temp_prefixes = ["claude-opus-4-7", "claude-opus-4-8", "claude-fable-5"];
     !no_temp_prefixes.iter().any(|p| model.starts_with(p))
 }
 
@@ -1422,9 +1425,16 @@ mod tests {
         assert!(!model_supports_temperature("claude-opus-4-7"));
         assert!(!model_supports_temperature("claude-opus-4-7-20260101"));
         assert!(!model_supports_temperature("anthropic/claude-opus-4-7"));
+        assert!(!model_supports_temperature("claude-opus-4-8"));
+        assert!(!model_supports_temperature("claude-opus-4-8-20260101"));
+        assert!(!model_supports_temperature("anthropic/claude-opus-4-8"));
+        assert!(!model_supports_temperature("claude-fable-5"));
+        assert!(!model_supports_temperature("anthropic/claude-fable-5"));
         // Older models still accept temperature
+        assert!(model_supports_temperature("claude-opus-4-5"));
         assert!(model_supports_temperature("claude-opus-4-6"));
         assert!(model_supports_temperature("claude-sonnet-4-6"));
+        assert!(model_supports_temperature("claude-haiku-4-5"));
     }
 
     #[test]

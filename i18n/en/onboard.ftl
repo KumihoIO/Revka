@@ -98,6 +98,12 @@ memory-kumiho-token-retry = Paste a Kumiho service token generated from Kumiho C
 memory-kumiho-api-managed = managed default
 memory-kumiho-token-configured = configured
 memory-kumiho-token-not-configured = not configured
+memory-kumiho-backend-select = Kumiho backend
+memory-kumiho-backend-cloud = Hosted Kumiho Cloud (recommended) — managed, multi-device
+memory-kumiho-backend-localce = Local Community Edition — self-hosted on this machine (free, single-user)
+memory-kumiho-ce-ready = local, ready ({$url})
+memory-kumiho-ce-configured = configured at {$url} — finish CE setup, then run `revka doctor`
+memory-kumiho-ce-failed = Local CE setup did not complete: {$err}
 memory-kumiho-account-email = Kumiho account email
 memory-kumiho-account-password = Kumiho account password
 memory-kumiho-existing-tenant = Existing Kumiho tenant: {$tenant}
@@ -659,3 +665,40 @@ nostr-allowlist-info-2 = Use '*' to allow anyone (not recommended for production
 nostr-allowlist-prompt = Allowed pubkeys (comma-separated, or * for all)
 nostr-allowlist-warn = No pubkeys allowlisted — inbound messages will be denied until you add pubkeys or '*'.
 nostr-configured = Nostr configured with {$relay_count} relay(s)
+
+## ── Local CE backend (self-hosted Kumiho Community Edition) ───────
+
+ce-title = Local Kumiho — Community Edition
+ce-intro-1 = Free, single-user, self-hosted. Tokenless and loopback-only
+ce-intro-2 = (127.0.0.1). Governed by the Kumiho CE EULA — its installer
+ce-intro-3 = asks you to review and type "accept" before the server runs.
+ce-intro-4 = Requires a local Neo4j (Redis optional).
+ce-neo4j-start-prompt = Start a local Neo4j with {$runtime} now?
+ce-neo4j-password = Neo4j password to set (you'll re-enter it in the setup wizard)
+ce-confirm-password = Confirm password
+ce-password-mismatch = Passwords don't match
+ce-redis-start-prompt = Also start Redis (enables event streams)?
+ce-neo4j-starting = Neo4j starting via {$runtime} (bolt 127.0.0.1:7687)
+ce-neo4j-ready = Neo4j is accepting connections on 7687
+ce-neo4j-not-ready = Neo4j port 7687 not ready yet — it may still be starting.
+ce-neo4j-reused = Reused the existing 'kumiho-neo4j' container — its ORIGINAL password still applies (the one you just typed was NOT applied). Use the original password in the setup wizard, or recreate it with `docker rm -f kumiho-neo4j` and re-run to set a new one.
+ce-neo4j-failed = Could not start Neo4j: {$err}
+ce-redis-starting = Redis starting via container (127.0.0.1:6379)
+ce-redis-failed = Could not start Redis: {$err}
+ce-wizard-hint-header = When the Kumiho wizard asks, use:
+ce-pw-hint-existing = (the existing container's original password)
+ce-pw-hint-new = (the one you just set)
+ce-neo4j-creds = Neo4j port: 7687   user: neo4j   password: {$hint}
+ce-redis-port = Redis port: 6379
+ce-no-docker = No Docker/Podman found. Kumiho CE needs a local Neo4j 5.x. Start one (e.g. `docker run -d -p 127.0.0.1:7687:7687 -p 127.0.0.1:7474:7474 -e NEO4J_AUTH=neo4j/<pw> neo4j:5`) before completing the Kumiho setup wizard.
+ce-no-prebuilt-macos = Prebuilt Kumiho CE is not published for Intel macOS. Run CE from a Linux container or build it from source, bind it to 127.0.0.1:9190, then re-run `revka doctor` to verify. Continuing with the Local CE configuration.
+ce-install-prompt = Download & set up Kumiho CE now (runs the official installer)?
+ce-install-skipped = Skipped CE install. Install it later with:
+ce-handoff = Handing off to the Kumiho CE installer…
+ce-installer-failed = CE installer did not complete cleanly: {$err}
+ce-installer-rerun-hint = You can re-run it any time:
+ce-endpoint-prompt = Kumiho CE endpoint
+ce-non-loopback = {$endpoint} is not a loopback address. Kumiho CE is loopback-only (127.0.0.1/::1) and tokenless — pointing at a remote host is outside the CE scope and would be unencrypted.
+ce-checking = Checking the CE server…
+ce-reachable = Kumiho CE reachable (deployment_mode=self_hosted_ce{$suffix})
+ce-unreachable = Could not confirm a running CE server at {$endpoint}. If you didn't start it in the wizard, run the launch script in ~/.kumiho, then `revka doctor`.
