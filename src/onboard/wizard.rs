@@ -369,6 +369,24 @@ pub async fn run_wizard(force: bool) -> Result<Config> {
     // ── Final summary ────────────────────────────────────────────
     print_summary(&config);
 
+    // ── Ensure MCP sidecars are installed ────────────────────────
+    // Mirrors the check the agent/daemon/gateway perform at startup (see
+    // `needs_sidecars` in main.rs) so onboarding leaves a fully-ready setup
+    // instead of deferring the one-time install to first run. Prompts via
+    // `ensure_sidecars_ready(true)`; a declined prompt (or install failure)
+    // is non-fatal — onboarding still completes.
+    if let Err(e) = crate::sidecars::ensure_sidecars_ready(true).await {
+        println!(
+            "  {} Sidecar install skipped: {}",
+            style("•").yellow(),
+            e
+        );
+        println!(
+            "    Install later with: {}",
+            style("revka install --sidecars-only").cyan()
+        );
+    }
+
     // ── Offer to launch channels immediately ─────────────────────
     let has_channels = has_launchable_channels(&config.channels_config);
 
