@@ -384,29 +384,47 @@ pub async fn run_wizard(force: bool) -> Result<Config> {
     // ── Final summary ────────────────────────────────────────────
     print_summary(&config);
 
-    // ── Offer to launch channels immediately ─────────────────────
-    let has_channels = has_launchable_channels(&config.channels_config);
-
-    if has_channels && config.api_key.is_some() {
-        let launch: bool = Confirm::new()
+    // ── Offer to start Revka immediately ─────────────────────────
+    // The daemon runs the gateway (web dashboard), channels, scheduler and
+    // heartbeat, so the dashboard URL printed above becomes reachable. Offer to
+    // start it so a beginner doesn't have to know `revka daemon`. Run it in the
+    // foreground (as a child of onboarding) so the user sees the gateway's
+    // one-time pairing code and dashboard URL. Sidecars were installed earlier,
+    // so the daemon's startup check is a no-op (no re-prompt). Kept here rather
+    // than via a main.rs autostart flag to avoid touching command dispatch.
+    if config.api_key.is_some() {
+        let start: bool = Confirm::new()
             .with_prompt(format!(
-                "  {} Launch channels now? (connected channels → AI → reply)",
+                "  {} Start Revka now? (web dashboard + channels)",
                 style("🚀").cyan()
             ))
             .default(true)
             .interact()?;
 
-        if launch {
+        if start {
             println!();
             println!(
-                "  {} {}",
+                "  {} Starting Revka — open the dashboard at {} (Ctrl+C to stop)",
                 style("⚡").cyan(),
-                style("Starting channel server...").white().bold()
+                style(format!(
+                    "http://{}:{}",
+                    config.gateway.host, config.gateway.port
+                ))
+                .cyan()
             );
             println!();
-            // Signal to main.rs to call start_channels after wizard returns
-            // SAFETY: called during single-threaded onboarding wizard before async runtime.
-            unsafe { std::env::set_var("REVKA_AUTOSTART_CHANNELS", "1") };
+            match std::env::current_exe() {
+                Ok(exe) => {
+                    let _ = tokio::process::Command::new(exe)
+                        .arg("daemon")
+                        .status()
+                        .await;
+                }
+                Err(e) => {
+                    eprintln!("  Could not find the revka executable: {e}");
+                    eprintln!("  Start it manually: revka daemon");
+                }
+            }
         }
     }
 
@@ -6941,6 +6959,27 @@ fn print_summary(config: &Config) {
         println!();
         step += 1;
     }
+
+    // Starting the daemon runs the gateway (web dashboard), channels, scheduler
+    // and heartbeat — the primary way to run Revka, and what makes the dashboard
+    // reachable. Show it as a prominent next step so beginners know the dashboard
+    // URL below is only live once the daemon is running.
+    println!(
+        "    {} Start Revka (web dashboard + channels + scheduler):",
+        style(format!("{step}.")).cyan().bold()
+    );
+    println!("       {}", style("revka daemon").yellow());
+    println!(
+        "       {} {}",
+        style("dashboard →").dim(),
+        style(format!(
+            "http://{}:{}",
+            config.gateway.host, config.gateway.port
+        ))
+        .cyan()
+    );
+    println!();
+    step += 1;
 
     // If channels are configured, show channel start as the primary next step
     if has_channels {
