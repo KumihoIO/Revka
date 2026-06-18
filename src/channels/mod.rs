@@ -5811,7 +5811,7 @@ pub async fn start_channels_with_mcp_registry(
         return Ok(());
     }
 
-    println!("🦀 Revka Channel Server");
+    println!("🦊 Revka Channel Server");
     println!("  🤖 Model:    {model}");
     let effective_backend = memory::effective_memory_backend_name(
         &config.memory.backend,

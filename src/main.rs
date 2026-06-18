@@ -1408,7 +1408,7 @@ async fn main() -> Result<()> {
                     }
                 }
             }
-            println!("🦀 Revka Status");
+            println!("🦊 Revka Status");
             println!();
             println!("Version:     {}", env!("CARGO_PKG_VERSION"));
             println!("Workspace:   {}", config.workspace_dir.display());
