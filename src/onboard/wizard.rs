@@ -237,6 +237,7 @@ pub async fn run_wizard(force: bool) -> Result<Config> {
             if let Some(ref url) = memory_result.kumiho_api_url {
                 kc.api_url = url.clone();
             }
+            kc.mode = memory_result.kumiho_mode;
             if is_kumiho_backend {
                 kc.enabled = true;
             }
@@ -365,32 +366,65 @@ pub async fn run_wizard(force: bool) -> Result<Config> {
         );
     }
 
+    // ── Ensure MCP sidecars are installed ────────────────────────
+    // Mirrors the check the agent/daemon/gateway perform at startup (see
+    // `needs_sidecars` in main.rs) so onboarding leaves a fully-ready setup
+    // instead of deferring the one-time install to first run. Run BEFORE the
+    // final summary so the (~60s) install isn't stranded after the
+    // "Happy hacking!" sign-off. Prompts via `ensure_sidecars_ready(true)`; a
+    // declined prompt (or install failure) is non-fatal — onboarding completes.
+    if let Err(e) = crate::sidecars::ensure_sidecars_ready(true).await {
+        println!("  {} Sidecar install skipped: {}", style("•").yellow(), e);
+        println!(
+            "    Install later with: {}",
+            style("revka install --sidecars-only").cyan()
+        );
+    }
+
     // ── Final summary ────────────────────────────────────────────
     print_summary(&config);
 
-    // ── Offer to launch channels immediately ─────────────────────
-    let has_channels = has_launchable_channels(&config.channels_config);
-
-    if has_channels && config.api_key.is_some() {
-        let launch: bool = Confirm::new()
+    // ── Offer to start Revka immediately ─────────────────────────
+    // The daemon runs the gateway (web dashboard), channels, scheduler and
+    // heartbeat, so the dashboard URL printed above becomes reachable. Offer to
+    // start it so a beginner doesn't have to know `revka daemon`. Run it in the
+    // foreground (as a child of onboarding) so the user sees the gateway's
+    // one-time pairing code and dashboard URL. Sidecars were installed earlier,
+    // so the daemon's startup check is a no-op (no re-prompt). Kept here rather
+    // than via a main.rs autostart flag to avoid touching command dispatch.
+    if config.api_key.is_some() {
+        let start: bool = Confirm::new()
             .with_prompt(format!(
-                "  {} Launch channels now? (connected channels → AI → reply)",
+                "  {} Start Revka now? (web dashboard + channels)",
                 style("🚀").cyan()
             ))
             .default(true)
             .interact()?;
 
-        if launch {
+        if start {
             println!();
             println!(
-                "  {} {}",
+                "  {} Starting Revka — open the dashboard at {} (Ctrl+C to stop)",
                 style("⚡").cyan(),
-                style("Starting channel server...").white().bold()
+                style(format!(
+                    "http://{}:{}",
+                    config.gateway.host, config.gateway.port
+                ))
+                .cyan()
             );
             println!();
-            // Signal to main.rs to call start_channels after wizard returns
-            // SAFETY: called during single-threaded onboarding wizard before async runtime.
-            unsafe { std::env::set_var("REVKA_AUTOSTART_CHANNELS", "1") };
+            match std::env::current_exe() {
+                Ok(exe) => {
+                    let _ = tokio::process::Command::new(exe)
+                        .arg("daemon")
+                        .status()
+                        .await;
+                }
+                Err(e) => {
+                    eprintln!("  Could not find the revka executable: {e}");
+                    eprintln!("  Start it manually: revka daemon");
+                }
+            }
         }
     }
 
@@ -3786,6 +3820,8 @@ pub struct MemorySetupResult {
     pub memory_config: MemoryConfig,
     pub kumiho_api_url: Option<String>,
     pub kumiho_service_token: Option<String>,
+    /// Which Kumiho backend the user selected (hosted cloud vs local CE).
+    pub kumiho_mode: crate::config::KumihoBackendMode,
 }
 
 fn setup_memory() -> Result<MemorySetupResult> {
@@ -3808,35 +3844,83 @@ fn setup_memory() -> Result<MemorySetupResult> {
     let backend = backend_key_from_choice(choice);
     let profile = memory_backend_profile(backend);
 
-    let kumiho_api_url: Option<String> = None;
+    let mut kumiho_api_url: Option<String> = None;
     let mut kumiho_service_token: Option<String> = None;
+    let mut kumiho_mode = crate::config::KumihoBackendMode::Cloud;
 
-    // If Kumiho selected, collect connection details.
+    // If Kumiho selected, choose the backend (hosted cloud vs local CE) and
+    // collect connection details.
     if backend == "kumiho" {
         println!();
-        print_bullet(&t!("memory-kumiho-managed-default"));
-        print_bullet(&t!("memory-kumiho-no-endpoint"));
-        println!();
+        let backend_items = [
+            t!("memory-kumiho-backend-cloud"),
+            t!("memory-kumiho-backend-localce"),
+        ];
+        let backend_choice = Select::new()
+            .with_prompt(format!("  {}", t!("memory-kumiho-backend-select")))
+            .items(&backend_items)
+            .default(0)
+            .interact()?;
 
-        kumiho_service_token = setup_kumiho_service_token()?;
-
-        println!(
-            "  {} Kumiho API: {}",
-            style("✓").green().bold(),
-            style(t!("memory-kumiho-api-managed")).green()
-        );
-        if kumiho_service_token.is_some() {
-            println!(
-                "  {} Service token: {}",
-                style("✓").green().bold(),
-                style(t!("memory-kumiho-token-configured")).green()
-            );
+        if backend_choice == 1 {
+            // ── Local self-hosted Community Edition ──────────────────
+            kumiho_mode = crate::config::KumihoBackendMode::LocalCe;
+            match crate::sidecars::local_ce::setup_local_ce() {
+                Ok(outcome) => {
+                    kumiho_api_url = Some(outcome.api_url.clone());
+                    if outcome.healthy {
+                        println!(
+                            "  {} Kumiho CE: {}",
+                            style("✓").green().bold(),
+                            style(t!("memory-kumiho-ce-ready", url = &outcome.api_url)).green()
+                        );
+                    } else {
+                        println!(
+                            "  {} Kumiho CE: {}",
+                            style("!").yellow().bold(),
+                            style(t!("memory-kumiho-ce-configured", url = &outcome.api_url))
+                                .yellow()
+                        );
+                    }
+                }
+                Err(error) => {
+                    println!(
+                        "  {} {}",
+                        style("!").yellow().bold(),
+                        t!("memory-kumiho-ce-failed", err = error.to_string())
+                    );
+                    // The user chose Local CE; keep the mode + loopback endpoint
+                    // so config is consistent and `revka doctor` can guide them.
+                    kumiho_api_url = Some(crate::config::KUMIHO_LOCAL_CE_API_URL.to_string());
+                }
+            }
         } else {
+            // ── Hosted Kumiho Cloud (default) ────────────────────────
+            println!();
+            print_bullet(&t!("memory-kumiho-managed-default"));
+            print_bullet(&t!("memory-kumiho-no-endpoint"));
+            println!();
+
+            kumiho_service_token = setup_kumiho_service_token()?;
+
             println!(
-                "  {} Service token: {}",
-                style("!").yellow().bold(),
-                style(t!("memory-kumiho-token-not-configured")).yellow()
+                "  {} Kumiho API: {}",
+                style("✓").green().bold(),
+                style(t!("memory-kumiho-api-managed")).green()
             );
+            if kumiho_service_token.is_some() {
+                println!(
+                    "  {} Service token: {}",
+                    style("✓").green().bold(),
+                    style(t!("memory-kumiho-token-configured")).green()
+                );
+            } else {
+                println!(
+                    "  {} Service token: {}",
+                    style("!").yellow().bold(),
+                    style(t!("memory-kumiho-token-not-configured")).yellow()
+                );
+            }
         }
     }
 
@@ -3859,6 +3943,7 @@ fn setup_memory() -> Result<MemorySetupResult> {
         memory_config: config,
         kumiho_api_url,
         kumiho_service_token,
+        kumiho_mode,
     })
 }
 
@@ -6874,6 +6959,27 @@ fn print_summary(config: &Config) {
         println!();
         step += 1;
     }
+
+    // Starting the daemon runs the gateway (web dashboard), channels, scheduler
+    // and heartbeat — the primary way to run Revka, and what makes the dashboard
+    // reachable. Show it as a prominent next step so beginners know the dashboard
+    // URL below is only live once the daemon is running.
+    println!(
+        "    {} Start Revka (web dashboard + channels + scheduler):",
+        style(format!("{step}.")).cyan().bold()
+    );
+    println!("       {}", style("revka daemon").yellow());
+    println!(
+        "       {} {}",
+        style("dashboard →").dim(),
+        style(format!(
+            "http://{}:{}",
+            config.gateway.host, config.gateway.port
+        ))
+        .cyan()
+    );
+    println!();
+    step += 1;
 
     // If channels are configured, show channel start as the primary next step
     if has_channels {

@@ -5,7 +5,8 @@
 //! - The `operator-mcp/` Python package source (via `include_dir!`).
 //!
 //! At install time we detect Python, create per-sidecar venvs, pip-install
-//! `kumiho[mcp]` into the Kumiho venv, extract the embedded operator-mcp
+//! `kumiho[mcp]` + `kumiho_memory` into the Kumiho venv, extract the embedded
+//! operator-mcp
 //! source into a temp dir, pip-install it into the Operator venv, sync the
 //! flat Operator package tree used by dashboard/scheduler readers, and
 //! materialize the launchers. No shell scripts involved.
@@ -34,7 +35,38 @@ static SESSION_MANAGER_SRC: Dir<'_> =
 
 /// The PyPI version pin for the Kumiho package. Must match
 /// `operator-mcp/requirements.txt`.
-const KUMIHO_PIN: &str = "kumiho[mcp]>=0.9.20";
+///
+/// `>= 0.10.0` is required for self-hosted Community Edition support: that
+/// release adds the tokenless loopback CE probe (`KUMIHO_LOCAL_SERVER_ENDPOINT`
+/// → `/api/_live` → gRPC) the `local_ce` backend mode relies on. It remains
+/// cloud-compatible, so a single pin serves both backends.
+const KUMIHO_PIN: &str = "kumiho[mcp]>=0.10.0";
+
+/// The PyPI version pin for the high-level Kumiho memory layer. Must match
+/// `operator-mcp/requirements.txt`.
+///
+/// `kumiho_memory` is a **separate distribution** from `kumiho[mcp]`: it ships
+/// the high-level memory tools the Revka session-bootstrap prompt relies on
+/// (`kumiho_memory_engage` / `reflect` / `recall` / `consolidate` /
+/// `dream_state`). `kumiho.mcp_server` auto-discovers and merges its tools at
+/// startup. Without it only the bare store/retrieve pair registers and the
+/// agent silently falls back to the "lite" bootstrap — see
+/// `src/agent/kumiho.rs::registry_has_advanced_kumiho_tools`.
+const KUMIHO_MEMORY_PIN: &str = "kumiho_memory>=0.5.2";
+
+/// `pip install` arguments for the Kumiho sidecar venv. Installs the MCP
+/// transport (`kumiho[mcp]`) **and** the high-level memory layer
+/// (`kumiho_memory`) in a single resolve so they always land together.
+fn kumiho_pip_install_args() -> [&'static str; 6] {
+    [
+        "-m",
+        "pip",
+        "install",
+        "--quiet",
+        KUMIHO_PIN,
+        KUMIHO_MEMORY_PIN,
+    ]
+}
 
 #[derive(Debug, Default, Clone)]
 pub struct SidecarInstallOptions {
@@ -123,7 +155,7 @@ fn install_kumiho(python: &Path, dry_run: bool) -> Result<()> {
     eprintln!("==> Installing Kumiho MCP → {}", dir.display());
     if dry_run {
         eprintln!("    + create {}", venv.display());
-        eprintln!("    + pip install {KUMIHO_PIN}");
+        eprintln!("    + pip install {KUMIHO_PIN} {KUMIHO_MEMORY_PIN}");
         eprintln!("    + write {}", launcher.display());
         eprintln!("    + write {}", bridge.display());
         return Ok(());
@@ -137,8 +169,8 @@ fn install_kumiho(python: &Path, dry_run: bool) -> Result<()> {
         &venv_py,
         &["-m", "pip", "install", "--quiet", "--upgrade", "pip"],
     )?;
-    run(&venv_py, &["-m", "pip", "install", "--quiet", KUMIHO_PIN])?;
-    eprintln!("    [ok] kumiho[mcp] installed");
+    run(&venv_py, &kumiho_pip_install_args())?;
+    eprintln!("    [ok] kumiho[mcp] + kumiho_memory installed");
 
     write_launcher(&launcher, KUMIHO_LAUNCHER_SRC)?;
     eprintln!("    [ok] launcher: {}", launcher.display());
@@ -760,5 +792,30 @@ mod tests {
         );
         assert!(!dest.join("dist").join("stale.js").exists());
         Ok(())
+    }
+
+    #[test]
+    fn kumiho_install_includes_high_level_memory_package() {
+        // The Rust installer (`revka install --sidecars-only`, also run at the
+        // end of `revka onboard`) is what actually provisions the Kumiho venv
+        // on user machines. It MUST install `kumiho_memory` alongside
+        // `kumiho[mcp]` — otherwise the high-level memory tools
+        // (engage/reflect/recall/consolidate/dream_state) never register and
+        // the agent silently falls back to the lite memory bootstrap. Regression
+        // guard for the installer drift where only `kumiho[mcp]` was installed.
+        let args = kumiho_pip_install_args();
+        assert!(
+            args.contains(&"install"),
+            "must be a pip install invocation: {args:?}"
+        );
+        assert!(
+            args.iter()
+                .any(|a| a.contains("kumiho_memory") || a.contains("kumiho-memory")),
+            "Kumiho sidecar install must include kumiho_memory: {args:?}"
+        );
+        assert!(
+            args.iter().any(|a| a.starts_with("kumiho[mcp]")),
+            "Kumiho sidecar install must still include kumiho[mcp]: {args:?}"
+        );
     }
 }

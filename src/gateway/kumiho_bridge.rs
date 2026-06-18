@@ -229,7 +229,15 @@ pub async fn send_raw(
     body: Option<Value>,
 ) -> Option<std::result::Result<BridgeResponse, KumihoError>> {
     let token = token.trim();
-    if token.is_empty() {
+    // Cloud requires a token to use the bridge. Local self-hosted CE is
+    // tokenless: when a CE endpoint is configured, still route through the bridge
+    // — CE serves gRPC (not JSON REST), so the hosted FastAPI `/api/v1` fallback
+    // would receive an undecodable gRPC body. The bridge shim builds a tokenless
+    // CE client from KUMIHO_LOCAL_SERVER_ENDPOINT.
+    let ce_configured = std::env::var("KUMIHO_LOCAL_SERVER_ENDPOINT")
+        .map(|v| !v.trim().is_empty())
+        .unwrap_or(false);
+    if token.is_empty() && !ce_configured {
         return None;
     }
 

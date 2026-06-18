@@ -71,6 +71,9 @@ def _kumiho_forward_env() -> dict[str, str]:
         "KUMIHO_SERVICE_TOKEN",
         "KUMIHO_API_URL",
         "KUMIHO_CONTROL_PLANE_URL",
+        "KUMIHO_LOCAL_SERVER_ENDPOINT",
+        "KUMIHO_UPSTASH_REDIS_URL",
+        "UPSTASH_REDIS_URL",
         "KUMIHO_SPACE_PREFIX",
         "KUMIHO_MEMORY_PROJECT",
         "KUMIHO_HARNESS_PROJECT",
@@ -99,6 +102,21 @@ def _kumiho_forward_env() -> dict[str, str]:
     for env_key, config_key in fallback_map.items():
         if env_key not in env and config.get(config_key):
             env[env_key] = config[config_key]
+    # Local self-hosted CE is tokenless: when an endpoint is configured, shadow
+    # any inherited cloud credentials to empty so the kumiho SDK takes the
+    # loopback CE probe (`/api/_live` -> gRPC) instead of cloud discovery (which
+    # falls back to its default gRPC target 127.0.0.1:8080). Mirrors the Rust
+    # daemon's CE wiring in src/agent/kumiho.rs::kumiho_mcp_server_config.
+    if env.get("KUMIHO_LOCAL_SERVER_ENDPOINT"):
+        for tok in ("KUMIHO_AUTH_TOKEN", "KUMIHO_SERVICE_TOKEN", "KUMIHO_CONTROL_PLANE_URL"):
+            env[tok] = ""
+        # kumiho_memory buffers sessions in Redis; CE has no control plane to
+        # discover an Upstash URL, so default to the local loopback Redis the CE
+        # onboarding provisions (unless the user already supplied one). Without
+        # it, reflect/write falls back to the cloud memory proxy and fails with
+        # "No credentials available for memory proxy".
+        if not env.get("KUMIHO_UPSTASH_REDIS_URL") and not env.get("UPSTASH_REDIS_URL"):
+            env["KUMIHO_UPSTASH_REDIS_URL"] = "redis://127.0.0.1:6379"
     return env
 
 

@@ -108,7 +108,21 @@ def _client_for(token: str) -> Any:
         raise RuntimeError(f"kumiho SDK unavailable: {IMPORT_ERROR}")
     token = token.strip()
     if not token:
-        raise PermissionError("missing Kumiho token")
+        # Tokenless local Community Edition. The Rust gateway routes CE traffic
+        # here because CE serves gRPC (not JSON REST), so the hosted FastAPI
+        # fallback cannot decode it. The kumiho SDK reads
+        # KUMIHO_LOCAL_SERVER_ENDPOINT, probes http://<endpoint>/api/_live, sees
+        # deployment_mode=self_hosted_ce, and connects tokenless over gRPC.
+        ce_endpoint = os.environ.get("KUMIHO_LOCAL_SERVER_ENDPOINT", "").strip()
+        if not ce_endpoint:
+            raise PermissionError("missing Kumiho token")
+        key = f"local-ce:{ce_endpoint}"
+        with _CLIENT_LOCK:
+            client = _CLIENTS.get(key)
+            if client is None:
+                client = kumiho.connect(enable_auto_login=False)
+                _CLIENTS[key] = client
+            return client
     tenant_hint = os.environ.get("KUMIHO_TENANT_HINT", "").strip()
     key = f"{_token_hash(token)}:{tenant_hint}:{_routing_env_key()}"
     with _CLIENT_LOCK:
