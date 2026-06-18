@@ -61,10 +61,10 @@ else
   BLUE='' BOLD_BLUE='' GREEN='' YELLOW='' RED='' BOLD='' DIM='' RESET=''
 fi
 
-CRAB="🦀"
+FOX="🦊"
 
 info() {
-  echo -e "${BLUE}${CRAB}${RESET} ${BOLD}$*${RESET}"
+  echo -e "${BLUE}${FOX}${RESET} ${BOLD}$*${RESET}"
 }
 
 step_ok() {
@@ -923,7 +923,7 @@ run_guided_installer() {
   fi
 
   echo
-  echo -e "  ${BOLD_BLUE}${CRAB} Revka Guided Installer${RESET}"
+  echo -e "  ${BOLD_BLUE}${FOX} Revka Guided Installer${RESET}"
   echo -e "  ${DIM}Answer a few questions, then the installer will handle everything.${RESET}"
   echo
 
@@ -1569,7 +1569,7 @@ if [[ ! -f "$WORK_DIR/Cargo.toml" ]]; then
 fi
 
 echo
-echo -e "  ${BOLD_BLUE}${CRAB} Revka Installer${RESET}"
+echo -e "  ${BOLD_BLUE}${FOX} Revka Installer${RESET}"
 echo -e "  ${DIM}Build it, run it, trust it.${RESET}"
 echo
 step_ok "Detected: ${BOLD}$(echo "$OS_NAME" | tr '[:upper:]' '[:lower:]')${RESET}"
@@ -1629,7 +1629,7 @@ if [[ "$DOCKER_MODE" == true ]]; then
   ensure_docker_ready
   run_docker_bootstrap
   echo
-  echo -e "${BOLD_BLUE}${CRAB} Docker bootstrap complete!${RESET}"
+  echo -e "${BOLD_BLUE}${FOX} Docker bootstrap complete!${RESET}"
   echo
   echo -e "${BOLD}Your containerized Revka data is persisted under:${RESET}"
   echo -e "  ${DIM}$DOCKER_DATA_DIR${RESET}"
@@ -1978,9 +1978,9 @@ fi
 # --- Success banner ---
 echo
 if [[ -n "$INSTALLED_VERSION" ]]; then
-  echo -e "${BOLD_BLUE}${CRAB} Revka installed successfully (Revka ${INSTALLED_VERSION})!${RESET}"
+  echo -e "${BOLD_BLUE}${FOX} Revka installed successfully (Revka ${INSTALLED_VERSION})!${RESET}"
 else
-  echo -e "${BOLD_BLUE}${CRAB} Revka installed successfully!${RESET}"
+  echo -e "${BOLD_BLUE}${FOX} Revka installed successfully!${RESET}"
 fi
 
 if [[ -x "$HOME/.cargo/bin/revka" ]] && ! have_cmd revka; then

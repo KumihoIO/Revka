@@ -1,6 +1,6 @@
 name: Revka Bridge
 description: "GPIO bridge for Revka — exposes digitalWrite/digitalRead via socket for agent control"
-icon: 🦀
+icon: 🦊
 version: "1.0.0"
 
 ports:

@@ -962,7 +962,7 @@ pub async fn run_gateway_with_mcp_registry(
     }
 
     let pfx = path_prefix.unwrap_or("");
-    println!("🦀 Revka Gateway listening on http://{display_addr}{pfx}");
+    println!("🦊 Revka Gateway listening on http://{display_addr}{pfx}");
     if let Some(ref url) = tunnel_url {
         println!("  🌐 Public URL: {url}");
     }
@@ -2148,7 +2148,7 @@ pub async fn run_gateway_with_mcp_registry(
                     });
                 }
                 _ = shutdown_signal.changed() => {
-                    tracing::info!("🦀 Revka Gateway shutting down...");
+                    tracing::info!("🦊 Revka Gateway shutting down...");
                     break;
                 }
             }
@@ -2161,7 +2161,7 @@ pub async fn run_gateway_with_mcp_registry(
         )
         .with_graceful_shutdown(async move {
             let _ = shutdown_rx.changed().await;
-            tracing::info!("🦀 Revka Gateway shutting down...");
+            tracing::info!("🦊 Revka Gateway shutting down...");
         })
         .await?;
     }

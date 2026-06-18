@@ -6916,7 +6916,7 @@ fn print_summary(config: &Config) {
     println!(
         "  {} {}",
         style("⚡").cyan(),
-        style("Happy hacking! 🦀").white().bold()
+        style("Happy hacking! 🦊").white().bold()
     );
     println!();
 }
