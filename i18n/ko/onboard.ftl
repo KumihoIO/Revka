@@ -666,3 +666,40 @@ nostr-allowlist-info-2 = '*'는 모두 허용 (운영 환경에는 권장하지 
 nostr-allowlist-prompt = 허용 pubkey (쉼표 구분, 모두 허용은 *)
 nostr-allowlist-warn = 허용 목록이 비어 있어 수신 메시지가 거부됩니다. pubkey를 추가하거나 '*'를 입력하세요.
 nostr-configured = Nostr 설정 완료 ({$relay_count}개 릴레이)
+
+## ── 로컬 CE 백엔드 (자체 호스팅 Kumiho 커뮤니티 에디션) ──────────
+
+ce-title = 로컬 Kumiho — 커뮤니티 에디션
+ce-intro-1 = 무료, 단일 사용자, 자체 호스팅. 토큰이 필요 없는 루프백 전용
+ce-intro-2 = (127.0.0.1)입니다. Kumiho CE EULA의 적용을 받으며, 설치 프로그램이
+ce-intro-3 = 서버를 실행하기 전에 약관 검토 후 "accept" 입력을 요청합니다.
+ce-intro-4 = 로컬 Neo4j가 필요합니다 (Redis는 선택 사항).
+ce-neo4j-start-prompt = 지금 {$runtime}(으)로 로컬 Neo4j를 시작할까요?
+ce-neo4j-password = 설정할 Neo4j 비밀번호 (설정 마법사에서 다시 입력하게 됩니다)
+ce-confirm-password = 비밀번호 확인
+ce-password-mismatch = 비밀번호가 일치하지 않습니다
+ce-redis-start-prompt = Redis도 시작할까요? (이벤트 스트림 활성화)
+ce-neo4j-starting = {$runtime}(으)로 Neo4j 시작 중 (bolt 127.0.0.1:7687)
+ce-neo4j-ready = Neo4j가 7687 포트에서 연결을 수신하고 있습니다
+ce-neo4j-not-ready = Neo4j 7687 포트가 아직 준비되지 않았습니다 — 아직 시작 중일 수 있습니다.
+ce-neo4j-reused = 기존 'kumiho-neo4j' 컨테이너를 재사용했습니다 — 원래 비밀번호가 그대로 적용됩니다(방금 입력한 비밀번호는 적용되지 않았습니다). 설정 마법사에서는 원래 비밀번호를 사용하거나, `docker rm -f kumiho-neo4j`로 컨테이너를 제거한 뒤 다시 실행하여 새 비밀번호를 설정하세요.
+ce-neo4j-failed = Neo4j를 시작할 수 없습니다: {$err}
+ce-redis-starting = 컨테이너로 Redis 시작 중 (127.0.0.1:6379)
+ce-redis-failed = Redis를 시작할 수 없습니다: {$err}
+ce-wizard-hint-header = Kumiho 마법사가 물어보면 다음을 사용하세요:
+ce-pw-hint-existing = (기존 컨테이너의 원래 비밀번호)
+ce-pw-hint-new = (방금 설정한 비밀번호)
+ce-neo4j-creds = Neo4j 포트: 7687   사용자: neo4j   비밀번호: {$hint}
+ce-redis-port = Redis 포트: 6379
+ce-no-docker = Docker/Podman을 찾을 수 없습니다. Kumiho CE에는 로컬 Neo4j 5.x가 필요합니다. Kumiho 설정 마법사를 완료하기 전에 하나를 시작하세요 (예: `docker run -d -p 127.0.0.1:7687:7687 -p 127.0.0.1:7474:7474 -e NEO4J_AUTH=neo4j/<pw> neo4j:5`).
+ce-no-prebuilt-macos = Intel macOS용 사전 빌드된 Kumiho CE는 제공되지 않습니다. Linux 컨테이너에서 CE를 실행하거나 소스에서 빌드한 뒤 127.0.0.1:9190에 바인딩하고, `revka doctor`를 다시 실행하여 확인하세요. 로컬 CE 구성으로 계속합니다.
+ce-install-prompt = 지금 Kumiho CE를 다운로드하고 설정할까요? (공식 설치 프로그램 실행)
+ce-install-skipped = CE 설치를 건너뛰었습니다. 나중에 다음으로 설치하세요:
+ce-handoff = Kumiho CE 설치 프로그램으로 넘깁니다…
+ce-installer-failed = CE 설치 프로그램이 정상적으로 완료되지 않았습니다: {$err}
+ce-installer-rerun-hint = 언제든지 다시 실행할 수 있습니다:
+ce-endpoint-prompt = Kumiho CE 엔드포인트
+ce-non-loopback = {$endpoint}은(는) 루프백 주소가 아닙니다. Kumiho CE는 루프백 전용(127.0.0.1/::1)이며 토큰을 사용하지 않습니다 — 원격 호스트를 가리키는 것은 CE 범위를 벗어나며 암호화되지 않습니다.
+ce-checking = CE 서버 확인 중…
+ce-reachable = Kumiho CE에 연결됨 (deployment_mode=self_hosted_ce{$suffix})
+ce-unreachable = {$endpoint}에서 실행 중인 CE 서버를 확인할 수 없습니다. 마법사에서 시작하지 않았다면 ~/.kumiho의 실행 스크립트를 실행한 뒤 `revka doctor`를 실행하세요.

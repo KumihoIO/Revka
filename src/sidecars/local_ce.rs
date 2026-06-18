@@ -21,6 +21,8 @@ use anyhow::{Result, anyhow};
 use console::style;
 use dialoguer::{Confirm, Input, Password};
 
+use crate::t;
+
 /// Official CE installer (POSIX): downloads + verifies the binary, then onboards.
 const CE_INSTALL_SH_URL: &str =
     "https://github.com/KumihoIO/kumiho-server-community/releases/latest/download/install.sh";
@@ -320,27 +322,33 @@ pub fn setup_local_ce() -> Result<LocalCeOutcome> {
     println!(
         "  {} {}",
         style("◆").cyan().bold(),
-        style("Local Kumiho — Community Edition").cyan().bold()
+        style(t!("ce-title")).cyan().bold()
     );
-    println!("    Free, single-user, self-hosted. Tokenless and loopback-only");
-    println!("    (127.0.0.1). Governed by the Kumiho CE EULA — its installer");
-    println!("    asks you to review and type \"accept\" before the server runs.");
-    println!("    Requires a local Neo4j (Redis optional).");
+    println!("    {}", t!("ce-intro-1"));
+    println!("    {}", t!("ce-intro-2"));
+    println!("    {}", t!("ce-intro-3"));
+    println!("    {}", t!("ce-intro-4"));
     println!();
 
     // ── Optional: bootstrap Neo4j (+ Redis) via Docker ────────────────
     if let Some(runtime) = detect_container_runtime() {
         let want_db = Confirm::new()
-            .with_prompt(format!("  Start a local Neo4j with {runtime} now?"))
+            .with_prompt(format!(
+                "  {}",
+                t!("ce-neo4j-start-prompt", runtime = runtime)
+            ))
             .default(true)
             .interact()?;
         if want_db {
             let password: String = Password::new()
-                .with_prompt("  Neo4j password to set (you'll re-enter it in the setup wizard)")
-                .with_confirmation("  Confirm password", "  Passwords don't match")
+                .with_prompt(format!("  {}", t!("ce-neo4j-password")))
+                .with_confirmation(
+                    format!("  {}", t!("ce-confirm-password")),
+                    format!("  {}", t!("ce-password-mismatch")),
+                )
                 .interact()?;
             let with_redis = Confirm::new()
-                .with_prompt("  Also start Redis (enables event streams)?")
+                .with_prompt(format!("  {}", t!("ce-redis-start-prompt")))
                 .default(true)
                 .interact()?;
 
@@ -352,64 +360,48 @@ pub fn setup_local_ce() -> Result<LocalCeOutcome> {
                 &[("NEO4J_AUTH", format!("neo4j/{password}"))],
             ) {
                 Ok(ContainerAction::Created) => {
-                    print_ok(&format!(
-                        "Neo4j starting via {runtime} (bolt 127.0.0.1:7687)"
-                    ));
+                    print_ok(&t!("ce-neo4j-starting", runtime = runtime));
                     if wait_tcp("127.0.0.1:7687", 30, Duration::from_secs(2)) {
-                        print_ok("Neo4j is accepting connections on 7687");
+                        print_ok(&t!("ce-neo4j-ready"));
                     } else {
-                        print_warn("Neo4j port 7687 not ready yet — it may still be starting.");
+                        print_warn(&t!("ce-neo4j-not-ready"));
                     }
                 }
                 Ok(ContainerAction::StartedExisting) => {
                     reused_neo4j = true;
-                    print_warn(
-                        "Reused the existing 'kumiho-neo4j' container — its ORIGINAL password \
-                         still applies (the one you just typed was NOT applied). Use the original \
-                         password in the setup wizard, or recreate it with \
-                         `docker rm -f kumiho-neo4j` and re-run to set a new one.",
-                    );
+                    print_warn(&t!("ce-neo4j-reused"));
                 }
-                Err(e) => print_warn(&format!("Could not start Neo4j: {e}")),
+                Err(e) => print_warn(&t!("ce-neo4j-failed", err = e.to_string())),
             }
 
             if with_redis {
                 match run_or_start_container(runtime, "kumiho-redis", &redis_run_args(), &[]) {
-                    Ok(_) => print_ok("Redis starting via container (127.0.0.1:6379)"),
-                    Err(e) => print_warn(&format!("Could not start Redis: {e}")),
+                    Ok(_) => print_ok(&t!("ce-redis-starting")),
+                    Err(e) => print_warn(&t!("ce-redis-failed", err = e.to_string())),
                 }
             }
 
             println!();
-            println!("  {} When the Kumiho wizard asks, use:", style("→").cyan());
+            println!("  {} {}", style("→").cyan(), t!("ce-wizard-hint-header"));
             let pw_hint = if reused_neo4j {
-                "(the existing container's original password)"
+                t!("ce-pw-hint-existing")
             } else {
-                "(the one you just set)"
+                t!("ce-pw-hint-new")
             };
-            println!("      Neo4j port: 7687   user: neo4j   password: {pw_hint}");
+            println!("      {}", t!("ce-neo4j-creds", hint = pw_hint));
             if with_redis {
-                println!("      Redis port: 6379");
+                println!("      {}", t!("ce-redis-port"));
             }
             println!();
         }
     } else {
-        print_warn(
-            "No Docker/Podman found. Kumiho CE needs a local Neo4j 5.x. Start one \
-             (e.g. `docker run -d -p 127.0.0.1:7687:7687 -p 127.0.0.1:7474:7474 \
-             -e NEO4J_AUTH=neo4j/<pw> neo4j:5`) before completing the Kumiho setup wizard.",
-        );
+        print_warn(&t!("ce-no-docker"));
         println!();
     }
 
     // ── Install + onboard the CE server ───────────────────────────────
     if !platform_supports_prebuilt_ce() {
-        print_warn(
-            "Prebuilt Kumiho CE is not published for Intel macOS. Run CE from a \
-             Linux container or build it from source, bind it to 127.0.0.1:9190, \
-             then re-run `revka doctor` to verify. Continuing with the Local CE \
-             configuration.",
-        );
+        print_warn(&t!("ce-no-prebuilt-macos"));
         return Ok(LocalCeOutcome {
             api_url: format!("http://{CE_DEFAULT_ENDPOINT}"),
             healthy: false,
@@ -417,15 +409,15 @@ pub fn setup_local_ce() -> Result<LocalCeOutcome> {
     }
 
     let run_now = Confirm::new()
-        .with_prompt("  Download & set up Kumiho CE now (runs the official installer)?")
+        .with_prompt(format!("  {}", t!("ce-install-prompt")))
         .default(true)
         .interact()?;
 
     if !run_now {
-        print_warn(
-            "Skipped CE install. Install it later with:\n      \
-             curl -fsSL https://github.com/KumihoIO/kumiho-server-community/releases/latest/download/install.sh | sh",
-        );
+        print_warn(&format!(
+            "{}\n      curl -fsSL {CE_INSTALL_SH_URL} | sh",
+            t!("ce-install-skipped")
+        ));
         return Ok(LocalCeOutcome {
             api_url: format!("http://{CE_DEFAULT_ENDPOINT}"),
             healthy: false,
@@ -433,16 +425,14 @@ pub fn setup_local_ce() -> Result<LocalCeOutcome> {
     }
 
     println!();
-    println!(
-        "  {} Handing off to the Kumiho CE installer…",
-        style("▶").cyan().bold()
-    );
+    println!("  {} {}", style("▶").cyan().bold(), t!("ce-handoff"));
     println!();
 
     if let Err(e) = run_official_installer() {
         print_warn(&format!(
-            "CE installer did not complete cleanly: {e}\n      \
-             You can re-run it any time:  curl -fsSL {CE_INSTALL_SH_URL} | sh"
+            "{}\n      {}  curl -fsSL {CE_INSTALL_SH_URL} | sh",
+            t!("ce-installer-failed", err = e.to_string()),
+            t!("ce-installer-rerun-hint")
         ));
     }
 
@@ -450,37 +440,27 @@ pub fn setup_local_ce() -> Result<LocalCeOutcome> {
     // their CE server listens elsewhere. CE is loopback-only, so warn (but do
     // not hard-block) on a non-loopback host.
     let endpoint: String = Input::new()
-        .with_prompt("  Kumiho CE endpoint")
+        .with_prompt(format!("  {}", t!("ce-endpoint-prompt")))
         .default(CE_DEFAULT_ENDPOINT.to_string())
         .interact_text()?;
     let endpoint = endpoint.trim().to_string();
     if !is_loopback_endpoint(&endpoint) {
-        print_warn(&format!(
-            "{endpoint} is not a loopback address. Kumiho CE is loopback-only \
-             (127.0.0.1/::1) and tokenless — pointing at a remote host is outside \
-             the CE scope and would be unencrypted.",
-        ));
+        print_warn(&t!("ce-non-loopback", endpoint = &endpoint));
     }
 
     println!();
-    println!("  {} Checking the CE server…", style("…").cyan());
+    println!("  {} {}", style("…").cyan(), t!("ce-checking"));
     let healthy = match wait_for_health(&endpoint, 20, Duration::from_secs(1)) {
         Some(health) => {
-            print_ok(&format!(
-                "Kumiho CE reachable (deployment_mode=self_hosted_ce{})",
-                health
-                    .version
-                    .map(|v| format!(", v{v}"))
-                    .unwrap_or_default()
-            ));
+            let suffix = health
+                .version
+                .map(|v| format!(", v{v}"))
+                .unwrap_or_default();
+            print_ok(&t!("ce-reachable", suffix = suffix));
             true
         }
         None => {
-            print_warn(&format!(
-                "Could not confirm a running CE server at {endpoint}. If you didn't \
-                 start it in the wizard, run the launch script in ~/.kumiho, then \
-                 `revka doctor`.",
-            ));
+            print_warn(&t!("ce-unreachable", endpoint = &endpoint));
             false
         }
     };
