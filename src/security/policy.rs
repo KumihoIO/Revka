@@ -1906,18 +1906,25 @@ mod tests {
 
     #[test]
     fn absolute_path_in_allowed_root_permitted_when_workspace_only() {
+        // Use temp_dir-based roots so paths are absolute on every platform: a
+        // "/home/user/..." literal is NOT absolute on Windows, which made
+        // is_path_allowed treat it as workspace-relative. No dirs are created —
+        // is_path_allowed does pure component matching, no canonicalization.
+        let base = std::env::temp_dir().join("revka_test_allowed_root_ws_only");
+        let workspace = base.join("workspace");
+        let shared = base.join("shared");
         let p = SecurityPolicy {
-            workspace_dir: PathBuf::from("/home/user/.revka/workspace"),
+            workspace_dir: workspace.clone(),
             workspace_only: true,
-            allowed_roots: vec![PathBuf::from("/home/user/.revka/shared")],
+            allowed_roots: vec![shared.clone()],
             ..SecurityPolicy::default()
         };
         // Path in allowed root should be permitted
-        assert!(p.is_path_allowed("/home/user/.revka/shared/data.txt"));
+        assert!(p.is_path_allowed(shared.join("data.txt").to_str().unwrap()));
         // Path in workspace should still be permitted
-        assert!(p.is_path_allowed("/home/user/.revka/workspace/file.txt"));
+        assert!(p.is_path_allowed(workspace.join("file.txt").to_str().unwrap()));
         // Path outside both should still be blocked
-        assert!(!p.is_path_allowed("/home/user/other/file.txt"));
+        assert!(!p.is_path_allowed(base.join("other").join("file.txt").to_str().unwrap()));
     }
 
     #[test]
@@ -1995,11 +2002,13 @@ mod tests {
         let workspace = PathBuf::from("/tmp/test-workspace");
         let policy = SecurityPolicy::from_config(&autonomy_config, &workspace);
 
-        let expected_home_root = if let Some(home) = std::env::var_os("HOME") {
-            PathBuf::from(home).join("Desktop")
-        } else {
-            PathBuf::from("~/Desktop")
-        };
+        // Mirror the code's home resolution: expand_user_path uses home_dir(),
+        // which reads $USERPROFILE on Windows and $HOME elsewhere. The old
+        // $HOME-only expectation failed on Windows (HOME unset) even though the
+        // code correctly expanded the tilde via USERPROFILE.
+        let expected_home_root = home_dir()
+            .map(|home| home.join("Desktop"))
+            .unwrap_or_else(|| PathBuf::from("~/Desktop"));
 
         assert_eq!(policy.allowed_roots[0], expected_home_root);
         assert_eq!(policy.allowed_roots[1], workspace.join("shared-data"));
@@ -2924,15 +2933,24 @@ mod tests {
 
     #[test]
     fn is_under_allowed_root_matches_allowed_roots() {
+        // temp_dir-based roots so inputs are absolute on every platform:
+        // is_under_allowed_root returns false for non-absolute paths, and a
+        // "/projects" literal is not absolute on Windows.
+        let base = std::env::temp_dir().join("revka_test_under_allowed_root");
+        let projects = base.join("projects");
+        let data = base.join("data");
         let p = SecurityPolicy {
-            workspace_dir: PathBuf::from("/workspace"),
+            workspace_dir: base.join("workspace"),
             workspace_only: true,
-            allowed_roots: vec![PathBuf::from("/projects"), PathBuf::from("/data")],
+            allowed_roots: vec![projects.clone(), data.clone()],
             ..SecurityPolicy::default()
         };
-        assert!(p.is_under_allowed_root("/projects/myapp/src/main.rs"));
-        assert!(p.is_under_allowed_root("/data/file.csv"));
-        assert!(!p.is_under_allowed_root("/etc/passwd"));
+        let nested = projects.join("myapp").join("src").join("main.rs");
+        assert!(p.is_under_allowed_root(nested.to_str().unwrap()));
+        assert!(p.is_under_allowed_root(data.join("file.csv").to_str().unwrap()));
+        // Absolute path outside any allowed root
+        assert!(!p.is_under_allowed_root(base.join("etc").join("passwd").to_str().unwrap()));
+        // Relative paths are never under an allowed root
         assert!(!p.is_under_allowed_root("relative/path"));
     }
 
