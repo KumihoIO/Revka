@@ -132,6 +132,30 @@ class TestKumihoMemoryConfig:
             assert env["KUMIHO_SERVICE_TOKEN"] == "workspace-token"
             assert env["KUMIHO_API_URL"] == "https://kumiho.example.test"
 
+    def test_local_ce_endpoint_forwarded_and_cloud_tokens_shadowed(self, tmp_path):
+        # In CE mode the Rust daemon sets KUMIHO_LOCAL_SERVER_ENDPOINT in the
+        # operator's env. The forwarded env must carry it through to the
+        # kumiho-memory child AND shadow any inherited cloud credentials to empty,
+        # so the SDK takes the loopback CE probe instead of falling back to its
+        # default gRPC target (127.0.0.1:8080). Mirrors the Rust CE wiring.
+        cfg = tmp_path / "config.toml"
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        cfg.write_text("[kumiho]\n", encoding="utf-8")
+        with patch("operator_mcp.revka_config._CONFIG_PATH", str(cfg)), \
+             patch("operator_mcp.revka_config._cached_workspace_dir", None), \
+             patch.dict("os.environ", {
+                 "REVKA_WORKSPACE": str(workspace),
+                 "KUMIHO_LOCAL_SERVER_ENDPOINT": "127.0.0.1:9190",
+                 "KUMIHO_AUTH_TOKEN": "stale-cloud-token",
+                 "KUMIHO_SERVICE_TOKEN": "stale-cloud-token",
+             }, clear=True):
+            env = _kumiho_forward_env()
+            assert env["KUMIHO_LOCAL_SERVER_ENDPOINT"] == "127.0.0.1:9190"
+            assert env["KUMIHO_AUTH_TOKEN"] == ""
+            assert env["KUMIHO_SERVICE_TOKEN"] == ""
+            assert env["KUMIHO_CONTROL_PLANE_URL"] == ""
+
 
 class TestOperatorToolsConfig:
     def test_basic_config(self):
