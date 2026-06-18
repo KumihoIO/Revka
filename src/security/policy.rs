@@ -1881,6 +1881,11 @@ mod tests {
         assert!(!p.is_path_allowed(".."));
     }
 
+    // Unix-specific: asserts blocking of Unix absolute paths (/etc, /root, /tmp).
+    // Cross-platform "absolute-outside-workspace is blocked" coverage lives in
+    // absolute_path_in_allowed_root_permitted_when_workspace_only and
+    // checklist_workspace_only_blocks_absolute_outside_workspace (temp_dir-based).
+    #[cfg(unix)]
     #[test]
     fn absolute_paths_blocked_when_workspace_only() {
         let p = default_policy();
@@ -1891,17 +1896,28 @@ mod tests {
 
     #[test]
     fn absolute_path_inside_workspace_allowed_when_workspace_only() {
+        // temp_dir-based workspace so the paths are absolute on every platform
+        // ("/home/user/..." is not absolute on Windows).
+        let base = std::env::temp_dir().join("revka_test_abs_inside_ws");
+        let workspace = base.join("workspace");
         let p = SecurityPolicy {
-            workspace_dir: PathBuf::from("/home/user/.revka/workspace"),
+            workspace_dir: workspace.clone(),
             workspace_only: true,
             ..SecurityPolicy::default()
         };
         // Absolute path inside workspace should be allowed
-        assert!(p.is_path_allowed("/home/user/.revka/workspace/images/example.png"));
-        assert!(p.is_path_allowed("/home/user/.revka/workspace/file.txt"));
+        assert!(
+            p.is_path_allowed(
+                workspace
+                    .join("images")
+                    .join("example.png")
+                    .to_str()
+                    .unwrap()
+            )
+        );
+        assert!(p.is_path_allowed(workspace.join("file.txt").to_str().unwrap()));
         // Absolute path outside workspace should still be blocked
-        assert!(!p.is_path_allowed("/home/user/other/file.txt"));
-        assert!(!p.is_path_allowed("/tmp/file.txt"));
+        assert!(!p.is_path_allowed(base.join("other").join("file.txt").to_str().unwrap()));
     }
 
     #[test]
@@ -1937,6 +1953,11 @@ mod tests {
         assert!(p.is_path_allowed("/tmp/file.txt"));
     }
 
+    // Unix-specific: tests the Unix forbidden_paths defaults (/etc, /root) and
+    // Unix-style absolute paths. Windows has its own defaults (see
+    // default_forbidden_paths). Cross-platform dotfile blocking is covered by
+    // checklist_sensitive_dotfiles_blocked.
+    #[cfg(unix)]
     #[test]
     fn forbidden_paths_blocked() {
         let p = SecurityPolicy {
@@ -2293,6 +2314,10 @@ mod tests {
         assert!(!p.is_command_allowed("FOO=bar rm -rf /"));
     }
 
+    // Unix-specific: a "/etc/passwd" literal is absolute only on Unix. The
+    // arg-parser's cross-platform behavior is covered by the `_allows_*` and
+    // `detects_parent_dir_reference` tests, which pass on Windows.
+    #[cfg(unix)]
     #[test]
     fn forbidden_path_argument_detects_absolute_path() {
         let p = default_policy();
@@ -2322,6 +2347,8 @@ mod tests {
         assert_eq!(p.forbidden_path_argument("grep -r todo ./src"), None);
     }
 
+    // Unix-specific: asserts detection of "/etc/passwd" (absolute only on Unix).
+    #[cfg(unix)]
     #[test]
     fn forbidden_path_argument_detects_option_assignment_paths() {
         let p = default_policy();
@@ -2344,6 +2371,8 @@ mod tests {
         );
     }
 
+    // Unix-specific: asserts detection of "/etc/passwd" (absolute only on Unix).
+    #[cfg(unix)]
     #[test]
     fn forbidden_path_argument_detects_short_option_attached_paths() {
         let p = default_policy();
@@ -2380,6 +2409,8 @@ mod tests {
         );
     }
 
+    // Unix-specific: asserts detection of "/etc/passwd" (absolute only on Unix).
+    #[cfg(unix)]
     #[test]
     fn forbidden_path_argument_detects_input_redirection_paths() {
         let p = default_policy();
@@ -2418,6 +2449,8 @@ mod tests {
         assert!(!p.is_path_allowed("file\0.txt"));
     }
 
+    // Unix-specific: "/proc/..." is absolute only on Unix.
+    #[cfg(unix)]
     #[test]
     fn path_symlink_style_absolute() {
         let p = default_policy();
@@ -2436,6 +2469,9 @@ mod tests {
         assert!(!p.is_path_allowed("~nobody"));
     }
 
+    // Unix-specific: "/var/run/..." is absolute only on Unix and is in the Unix
+    // forbidden defaults.
+    #[cfg(unix)]
     #[test]
     fn path_var_run_blocked() {
         let p = SecurityPolicy {
@@ -2503,6 +2539,9 @@ mod tests {
         assert!(!p.is_command_allowed("docker ps"));
     }
 
+    // Unix-specific: asserts Unix forbidden paths (/etc/shadow, /root) are
+    // blocked. Windows has its own forbidden defaults (default_forbidden_paths).
+    #[cfg(unix)]
     #[test]
     fn full_autonomy_still_respects_forbidden_paths() {
         let p = SecurityPolicy {
@@ -2615,6 +2654,8 @@ mod tests {
 
     // ── Checklist #3: Filesystem scoped (no /) ──────────────
 
+    // Unix-specific: "/" / "/anything" are absolute only on Unix.
+    #[cfg(unix)]
     #[test]
     fn checklist_root_path_blocked() {
         let p = default_policy();
@@ -2622,6 +2663,9 @@ mod tests {
         assert!(!p.is_path_allowed("/anything"));
     }
 
+    // Unix-specific: iterates Unix system dirs (/etc, /proc, ...). Windows has
+    // its own forbidden defaults (default_forbidden_paths).
+    #[cfg(unix)]
     #[test]
     fn checklist_all_system_dirs_blocked() {
         let p = SecurityPolicy {
@@ -2672,11 +2716,15 @@ mod tests {
 
     #[test]
     fn checklist_workspace_only_blocks_absolute_outside_workspace() {
+        // temp_dir-based workspace + outside path so both are absolute on every
+        // platform ("/any/absolute/path" is not absolute on Windows).
+        let base = std::env::temp_dir().join("revka_test_ws_only_blocks_abs");
         let p = SecurityPolicy {
+            workspace_dir: base.join("workspace"),
             workspace_only: true,
             ..SecurityPolicy::default()
         };
-        assert!(!p.is_path_allowed("/any/absolute/path"));
+        assert!(!p.is_path_allowed(base.join("outside").join("path").to_str().unwrap()));
         assert!(p.is_path_allowed("relative/path.txt"));
     }
 
@@ -2704,6 +2752,9 @@ mod tests {
         );
     }
 
+    // Unix-specific: asserts the Unix forbidden_paths defaults (/etc, /root, ...).
+    // The Windows defaults (C:\Windows, ...) live in default_forbidden_paths.
+    #[cfg(unix)]
     #[test]
     fn checklist_default_forbidden_paths_comprehensive() {
         let p = SecurityPolicy::default();
