@@ -294,8 +294,8 @@ pub fn warn_if_kumiho_advanced_missing(config: &Config, advanced_available: bool
         "Kumiho high-level memory tools were not registered after MCP startup. \
         Bootstrap prompt is using the lite variant. Check ~/.revka/logs/ \
         for MCP startup errors. To re-install: \
-        `~/.revka/kumiho/venv/bin/pip install 'kumiho_memory>=0.5.0'` \
-        (or re-run scripts/install-sidecars.sh)."
+        `~/.revka/kumiho/venv/bin/pip install 'kumiho_memory>=0.5.2'` \
+        (or re-run `revka install --sidecars-only`)."
     );
 }
 
