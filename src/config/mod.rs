@@ -33,8 +33,8 @@ pub use schema::{
     WhatsAppChatPolicy, WhatsAppWebMode, WorkspaceConfig, apply_channel_proxy_to_builder,
     apply_runtime_proxy_to_builder, build_channel_proxy_client,
     build_channel_proxy_client_with_timeouts, build_runtime_proxy_client,
-    build_runtime_proxy_client_with_timeouts, runtime_proxy_config, set_runtime_proxy_config,
-    ws_connect_with_proxy,
+    build_runtime_proxy_client_with_timeouts, local_ce_redis_url, runtime_proxy_config,
+    set_runtime_proxy_config, ws_connect_with_proxy,
 };
 
 pub fn name_and_presence<T: traits::ChannelConfig>(channel: Option<&T>) -> (&'static str, bool) {

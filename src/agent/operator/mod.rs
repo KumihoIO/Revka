@@ -175,6 +175,14 @@ pub fn inject_operator(mut config: Config, is_internal: bool) -> Config {
                 "KUMIHO_LOCAL_SERVER_ENDPOINT".to_string(),
                 config.kumiho.local_ce_endpoint(),
             );
+            // High-level memory (kumiho_memory) buffers sessions in Redis; CE has
+            // no control plane, so point it at the local loopback Redis. Without
+            // it, `reflect`/write hits the cloud memory proxy and fails with
+            // "No credentials available for memory proxy".
+            server.env.insert(
+                "KUMIHO_UPSTASH_REDIS_URL".to_string(),
+                crate::config::local_ce_redis_url(),
+            );
             for var in [
                 "KUMIHO_AUTH_TOKEN",
                 "KUMIHO_SERVICE_TOKEN",
@@ -519,6 +527,19 @@ mod tests {
                 "CE mode must shadow {var} to empty to defeat inherited cloud creds"
             );
         }
+        // High-level memory (kumiho_memory) needs a direct Redis URL in CE so
+        // `reflect` doesn't fall back to the cloud memory proxy. The exact value
+        // honors KUMIHO_UPSTASH_REDIS_URL/UPSTASH_REDIS_URL overrides (asserted
+        // precisely in kumiho.rs's CE test), so here just assert it's a Redis URL.
+        let redis = entry
+            .env
+            .get("KUMIHO_UPSTASH_REDIS_URL")
+            .map(String::as_str)
+            .unwrap_or("");
+        assert!(
+            redis.starts_with("redis://"),
+            "CE mode must set KUMIHO_UPSTASH_REDIS_URL to a Redis URL, got {redis:?}"
+        );
     }
 
     #[test]

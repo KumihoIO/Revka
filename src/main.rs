@@ -1214,6 +1214,12 @@ async fn main() -> Result<()> {
                 "KUMIHO_LOCAL_SERVER_ENDPOINT",
                 config.kumiho.local_ce_endpoint(),
             );
+            // High-level memory (kumiho_memory) buffers sessions in Redis. Cloud
+            // discovers an Upstash URL via the control plane; CE has none, so
+            // point it at the local loopback Redis (honoring an explicit
+            // user-provided URL). Without this, writes (reflect) hit the cloud
+            // memory proxy and fail with "Run 'kumiho-auth login'".
+            std::env::set_var("KUMIHO_UPSTASH_REDIS_URL", revka::config::local_ce_redis_url());
             for var in [
                 "KUMIHO_AUTH_TOKEN",
                 "KUMIHO_SERVICE_TOKEN",

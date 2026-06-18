@@ -155,6 +155,26 @@ class TestKumihoMemoryConfig:
             assert env["KUMIHO_AUTH_TOKEN"] == ""
             assert env["KUMIHO_SERVICE_TOKEN"] == ""
             assert env["KUMIHO_CONTROL_PLANE_URL"] == ""
+            # High-level memory writes (reflect) need a direct Redis URL in CE,
+            # else kumiho_memory falls back to the cloud memory proxy. With no
+            # explicit URL set, default to the local loopback Redis.
+            assert env["KUMIHO_UPSTASH_REDIS_URL"] == "redis://127.0.0.1:6379"
+
+    def test_local_ce_honors_explicit_redis_url(self, tmp_path):
+        # An explicit KUMIHO_UPSTASH_REDIS_URL must win over the loopback default.
+        cfg = tmp_path / "config.toml"
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        cfg.write_text("[kumiho]\n", encoding="utf-8")
+        with patch("operator_mcp.revka_config._CONFIG_PATH", str(cfg)), \
+             patch("operator_mcp.revka_config._cached_workspace_dir", None), \
+             patch.dict("os.environ", {
+                 "REVKA_WORKSPACE": str(workspace),
+                 "KUMIHO_LOCAL_SERVER_ENDPOINT": "127.0.0.1:9190",
+                 "KUMIHO_UPSTASH_REDIS_URL": "redis://10.0.0.5:6380",
+             }, clear=True):
+            env = _kumiho_forward_env()
+            assert env["KUMIHO_UPSTASH_REDIS_URL"] == "redis://10.0.0.5:6380"
 
 
 class TestOperatorToolsConfig:

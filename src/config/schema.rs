@@ -999,6 +999,13 @@ impl Default for McpConfig {
 /// `_DEFAULT_LOCAL_CE_PORT` (`9190`) so the memory MCP can auto-detect it.
 pub const KUMIHO_LOCAL_CE_API_URL: &str = "http://127.0.0.1:9190";
 
+/// Loopback Redis URL the high-level memory layer (`kumiho_memory`) uses in
+/// local CE mode. Matches the `kumiho-redis` container the CE onboarding
+/// provisions (`127.0.0.1:6379`). CE has no control plane, so without a direct
+/// Redis URL `kumiho_memory` falls back to the cloud memory proxy and writes
+/// (`reflect`) fail with "No credentials available for memory proxy".
+pub const KUMIHO_LOCAL_CE_REDIS_URL: &str = "redis://127.0.0.1:6379";
+
 /// Which Kumiho backend Revka talks to.
 ///
 /// `Cloud` is the hosted, token/account-based backend (`https://api.kumiho.cloud`).
@@ -1138,6 +1145,23 @@ fn local_ce_host_port(api_url: &str) -> String {
     } else {
         format!("{host_port}:9190")
     }
+}
+
+/// Resolve the Redis URL for the high-level memory layer (`kumiho_memory`) in
+/// local CE mode. Honors an explicit `KUMIHO_UPSTASH_REDIS_URL` /
+/// `UPSTASH_REDIS_URL` from the environment; otherwise defaults to the loopback
+/// Redis the CE onboarding provisions. `kumiho_memory` is Upstash/control-plane
+/// oriented, so in tokenless CE the only working path is a direct Redis URL.
+pub fn local_ce_redis_url() -> String {
+    std::env::var("KUMIHO_UPSTASH_REDIS_URL")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| {
+            std::env::var("UPSTASH_REDIS_URL")
+                .ok()
+                .filter(|s| !s.trim().is_empty())
+        })
+        .unwrap_or_else(|| KUMIHO_LOCAL_CE_REDIS_URL.to_string())
 }
 
 impl Default for KumihoConfig {

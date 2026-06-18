@@ -334,6 +334,15 @@ pub fn kumiho_mcp_server_config(kumiho_cfg: &KumihoConfig) -> McpServerConfig {
             "KUMIHO_LOCAL_SERVER_ENDPOINT".to_string(),
             kumiho_cfg.local_ce_endpoint(),
         );
+        // The high-level memory tools (kumiho_memory) buffer sessions in Redis.
+        // CE has no control plane to discover an Upstash URL, so point the layer
+        // at the local loopback Redis (the kumiho-redis container CE onboarding
+        // provisions). Without this, `reflect`/write hits the cloud memory proxy
+        // and fails with "No credentials available for memory proxy".
+        env.insert(
+            "KUMIHO_UPSTASH_REDIS_URL".to_string(),
+            crate::config::local_ce_redis_url(),
+        );
         // The MCP child inherits the daemon's environment, which may carry a
         // cloud token (workspace `.env`, a shell export, or the auth-file
         // injection in main.rs). A non-empty KUMIHO_AUTH_TOKEN would make the
@@ -864,6 +873,8 @@ mod tests {
         let _guard = ENV_LOCK.lock().expect("env lock poisoned");
         let previous_auth = std::env::var("KUMIHO_AUTH_TOKEN").ok();
         let previous_service = std::env::var("KUMIHO_SERVICE_TOKEN").ok();
+        let previous_redis = std::env::var("KUMIHO_UPSTASH_REDIS_URL").ok();
+        let previous_upstash = std::env::var("UPSTASH_REDIS_URL").ok();
 
         // Even with a stale cloud token in the environment, CE mode must NOT
         // forward it (a token would push the SDK onto the cloud discovery path
@@ -871,6 +882,9 @@ mod tests {
         unsafe {
             std::env::set_var("KUMIHO_SERVICE_TOKEN", "stale-cloud-token");
             std::env::set_var("KUMIHO_AUTH_TOKEN", "stale-cloud-token");
+            // Clear any Redis override so the loopback default is deterministic.
+            std::env::remove_var("KUMIHO_UPSTASH_REDIS_URL");
+            std::env::remove_var("UPSTASH_REDIS_URL");
         }
 
         let kc = KumihoConfig {
@@ -902,6 +916,16 @@ mod tests {
                 "CE mode must shadow {var} to empty to defeat inherited cloud creds"
             );
         }
+        // High-level memory writes need a Redis URL; CE points it at the local
+        // loopback Redis so `reflect` doesn't fall back to the cloud memory proxy.
+        assert_eq!(
+            server
+                .env
+                .get("KUMIHO_UPSTASH_REDIS_URL")
+                .map(String::as_str),
+            Some("redis://127.0.0.1:6379"),
+            "CE mode must point kumiho_memory at the local loopback Redis"
+        );
 
         unsafe {
             match previous_auth {
@@ -911,6 +935,14 @@ mod tests {
             match previous_service {
                 Some(value) => std::env::set_var("KUMIHO_SERVICE_TOKEN", value),
                 None => std::env::remove_var("KUMIHO_SERVICE_TOKEN"),
+            }
+            match previous_redis {
+                Some(value) => std::env::set_var("KUMIHO_UPSTASH_REDIS_URL", value),
+                None => std::env::remove_var("KUMIHO_UPSTASH_REDIS_URL"),
+            }
+            match previous_upstash {
+                Some(value) => std::env::set_var("UPSTASH_REDIS_URL", value),
+                None => std::env::remove_var("UPSTASH_REDIS_URL"),
             }
         }
     }
