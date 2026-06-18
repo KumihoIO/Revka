@@ -5520,7 +5520,11 @@ fn default_always_ask() -> Vec<String> {
 }
 
 fn default_allowed_roots() -> Vec<String> {
-    vec!["~/.revka/workflows".into()]
+    vec![
+        "~/.revka/workflows".into(),
+        "~/.revka/artifacts".into(),
+        "~/.revka/workspace".into(),
+    ]
 }
 
 impl AutonomyConfig {
@@ -11500,6 +11504,8 @@ mod tests {
         assert!(a.block_high_risk_commands);
         assert!(a.shell_env_passthrough.is_empty());
         assert!(a.allowed_roots.contains(&"~/.revka/workflows".to_string()));
+        assert!(a.allowed_roots.contains(&"~/.revka/artifacts".to_string()));
+        assert!(a.allowed_roots.contains(&"~/.revka/workspace".to_string()));
     }
 
     #[test]
