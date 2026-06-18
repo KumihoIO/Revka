@@ -1113,9 +1113,7 @@ async fn main() -> Result<()> {
                 // Move every entry except `bin/` into the backup instead.
                 tokio::fs::create_dir_all(&backup_dir)
                     .await
-                    .with_context(|| {
-                        format!("Failed to create backup directory {}", backup_dir)
-                    })?;
+                    .with_context(|| format!("Failed to create backup directory {}", backup_dir))?;
                 let backup_path = std::path::Path::new(&backup_dir);
                 let mut entries = tokio::fs::read_dir(&revka_dir)
                     .await
