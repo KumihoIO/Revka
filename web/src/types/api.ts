@@ -233,7 +233,9 @@ export interface Session {
 }
 
 export interface ChannelDetail {
+  id?: string;
   name: string;
+  display_name?: string;
   type: string;
   enabled: boolean;
   status: 'active' | 'inactive' | 'error';

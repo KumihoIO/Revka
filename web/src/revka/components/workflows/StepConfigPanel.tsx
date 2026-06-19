@@ -403,7 +403,9 @@ export default function StepConfigPanel({
   const [showSkillPicker, setShowSkillPicker] = useState(false);
   const [allSkills, setAllSkills] = useState<SkillDefinition[]>([]);
   const [skillLoading, setSkillLoading] = useState(false);
-  const [channelOptions, setChannelOptions] = useState<string[]>(['dashboard']);
+  const [channelOptions, setChannelOptions] = useState<{ value: string; label: string }[]>([
+    { value: 'dashboard', label: 'Dashboard' },
+  ]);
 
   // Pool-agent picker — single shared mount lives in WorkflowEditor. The
   // "Choose agent…" button below dispatches OPEN_AGENT_PICKER_EVENT instead
@@ -458,15 +460,22 @@ export default function StepConfigPanel({
     [gcloudConfigs, selectedGcloudConfig],
   );
 
-  // Channels: load for human / notify steps
+  // Channels: load for human / notify steps. Values are canonical slugs (what the
+  // executor matches); labels are display names.
   useEffect(() => {
     if (stepType !== 'human_input' && stepType !== 'notify' && stepType !== 'human_approval') return;
     getChannels()
       .then((channels) => {
-        const active = channels.filter((ch) => ch.enabled && ch.status === 'active').map((ch) => ch.name);
-        setChannelOptions(Array.from(new Set(['dashboard', ...active])));
+        const byValue = new Map<string, { value: string; label: string }>();
+        byValue.set('dashboard', { value: 'dashboard', label: 'Dashboard' });
+        for (const ch of channels) {
+          if (!ch.enabled || ch.status !== 'active') continue;
+          const value = ch.id ?? ch.name;
+          byValue.set(value, { value, label: ch.display_name ?? ch.name });
+        }
+        setChannelOptions(Array.from(byValue.values()));
       })
-      .catch(() => setChannelOptions(['dashboard']));
+      .catch(() => setChannelOptions([{ value: 'dashboard', label: 'Dashboard' }]));
   }, [stepType]);
 
   // Skills: load when picker opens
@@ -2714,9 +2723,11 @@ export default function StepConfigPanel({
                     onChange={(e) => onUpdate(node.id, { channel: e.target.value })}
                     style={inputStyle}
                   >
-                    <option value="dashboard">Dashboard</option>
-                    <option value="discord">Discord</option>
-                    <option value="slack">Slack</option>
+                    {channelOptions.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ))}
                   </select>
                 </div>
                 <div style={{ flex: 1 }}>
@@ -2744,9 +2755,9 @@ export default function StepConfigPanel({
                   onChange={(e) => onUpdate(node.id, { humanApprovalChannel: e.target.value })}
                   style={inputStyle}
                 >
-                  {channelOptions.map((ch) => (
-                    <option key={ch} value={ch}>
-                      {ch}
+                  {channelOptions.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
                     </option>
                   ))}
                 </select>
@@ -4055,13 +4066,13 @@ export default function StepConfigPanel({
               <div>
                 <label style={labelStyle}>Channels</label>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                  {channelOptions.map((ch) => {
-                    const active = (data.channels ?? []).includes(ch);
+                  {channelOptions.map((opt) => {
+                    const active = (data.channels ?? []).includes(opt.value);
                     return (
                       <button
-                        key={ch}
+                        key={opt.value}
                         type="button"
-                        onClick={() => toggleChannel(ch)}
+                        onClick={() => toggleChannel(opt.value)}
                         style={{
                           padding: '4px 10px',
                           borderRadius: 8,
@@ -4073,7 +4084,7 @@ export default function StepConfigPanel({
                           cursor: 'pointer',
                         }}
                       >
-                        {ch}
+                        {opt.label}
                       </button>
                     );
                   })}

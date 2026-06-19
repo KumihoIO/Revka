@@ -6343,6 +6343,9 @@ impl<T: ChannelConfig> crate::config::traits::ConfigHandle for ConfigWrapper<T> 
     fn desc(&self) -> &'static str {
         T::desc()
     }
+    fn slug(&self) -> &'static str {
+        T::slug()
+    }
 }
 
 /// Top-level channel configurations (`[channels_config]` section).
@@ -6682,6 +6685,9 @@ pub struct TelegramConfig {
 }
 
 impl ChannelConfig for TelegramConfig {
+    fn slug() -> &'static str {
+        "telegram"
+    }
     fn name() -> &'static str {
         "Telegram"
     }
@@ -6736,6 +6742,9 @@ pub struct DiscordConfig {
 }
 
 impl ChannelConfig for DiscordConfig {
+    fn slug() -> &'static str {
+        "discord"
+    }
     fn name() -> &'static str {
         "Discord"
     }
@@ -6769,6 +6778,9 @@ pub struct DiscordHistoryConfig {
 }
 
 impl ChannelConfig for DiscordHistoryConfig {
+    fn slug() -> &'static str {
+        "discord_history"
+    }
     fn name() -> &'static str {
         "Discord History"
     }
@@ -6839,6 +6851,9 @@ fn default_slack_draft_update_interval_ms() -> u64 {
 }
 
 impl ChannelConfig for SlackConfig {
+    fn slug() -> &'static str {
+        "slack"
+    }
     fn name() -> &'static str {
         "Slack"
     }
@@ -6878,6 +6893,9 @@ pub struct MattermostConfig {
 }
 
 impl ChannelConfig for MattermostConfig {
+    fn slug() -> &'static str {
+        "mattermost"
+    }
     fn name() -> &'static str {
         "Mattermost"
     }
@@ -6911,6 +6929,9 @@ pub struct WebhookConfig {
 }
 
 impl ChannelConfig for WebhookConfig {
+    fn slug() -> &'static str {
+        "webhook"
+    }
     fn name() -> &'static str {
         "Webhook"
     }
@@ -6927,6 +6948,9 @@ pub struct IMessageConfig {
 }
 
 impl ChannelConfig for IMessageConfig {
+    fn slug() -> &'static str {
+        "imessage"
+    }
     fn name() -> &'static str {
         "iMessage"
     }
@@ -6977,6 +7001,9 @@ pub struct MatrixConfig {
 }
 
 impl ChannelConfig for MatrixConfig {
+    fn slug() -> &'static str {
+        "matrix"
+    }
     fn name() -> &'static str {
         "Matrix"
     }
@@ -7013,6 +7040,9 @@ pub struct SignalConfig {
 }
 
 impl ChannelConfig for SignalConfig {
+    fn slug() -> &'static str {
+        "signal"
+    }
     fn name() -> &'static str {
         "Signal"
     }
@@ -7123,6 +7153,9 @@ pub struct WhatsAppConfig {
 }
 
 impl ChannelConfig for WhatsAppConfig {
+    fn slug() -> &'static str {
+        "whatsapp"
+    }
     fn name() -> &'static str {
         "WhatsApp"
     }
@@ -7146,6 +7179,9 @@ pub struct LinqConfig {
 }
 
 impl ChannelConfig for LinqConfig {
+    fn slug() -> &'static str {
+        "linq"
+    }
     fn name() -> &'static str {
         "Linq"
     }
@@ -7179,6 +7215,9 @@ fn default_wati_api_url() -> String {
 }
 
 impl ChannelConfig for WatiConfig {
+    fn slug() -> &'static str {
+        "wati"
+    }
     fn name() -> &'static str {
         "WATI"
     }
@@ -7214,6 +7253,9 @@ pub struct NextcloudTalkConfig {
 }
 
 impl ChannelConfig for NextcloudTalkConfig {
+    fn slug() -> &'static str {
+        "nextcloud_talk"
+    }
     fn name() -> &'static str {
         "NextCloud Talk"
     }
@@ -7283,6 +7325,9 @@ pub struct IrcConfig {
 }
 
 impl ChannelConfig for IrcConfig {
+    fn slug() -> &'static str {
+        "irc"
+    }
     fn name() -> &'static str {
         "IRC"
     }
@@ -7345,6 +7390,9 @@ pub struct LarkConfig {
 }
 
 impl ChannelConfig for LarkConfig {
+    fn slug() -> &'static str {
+        "lark"
+    }
     fn name() -> &'static str {
         "Lark"
     }
@@ -7383,6 +7431,9 @@ pub struct FeishuConfig {
 }
 
 impl ChannelConfig for FeishuConfig {
+    fn slug() -> &'static str {
+        "feishu"
+    }
     fn name() -> &'static str {
         "Feishu"
     }
@@ -7900,6 +7951,9 @@ pub struct DingTalkConfig {
 }
 
 impl ChannelConfig for DingTalkConfig {
+    fn slug() -> &'static str {
+        "dingtalk"
+    }
     fn name() -> &'static str {
         "DingTalk"
     }
@@ -7919,6 +7973,9 @@ pub struct WeComConfig {
 }
 
 impl ChannelConfig for WeComConfig {
+    fn slug() -> &'static str {
+        "wecom"
+    }
     fn name() -> &'static str {
         "WeCom"
     }
@@ -7944,6 +8001,9 @@ pub struct QQConfig {
 }
 
 impl ChannelConfig for QQConfig {
+    fn slug() -> &'static str {
+        "qq"
+    }
     fn name() -> &'static str {
         "QQ Official"
     }
@@ -7963,6 +8023,9 @@ pub struct TwitterConfig {
 }
 
 impl ChannelConfig for TwitterConfig {
+    fn slug() -> &'static str {
+        "twitter"
+    }
     fn name() -> &'static str {
         "X/Twitter"
     }
@@ -7991,6 +8054,9 @@ fn default_mochat_poll_interval() -> u64 {
 }
 
 impl ChannelConfig for MochatConfig {
+    fn slug() -> &'static str {
+        "mochat"
+    }
     fn name() -> &'static str {
         "Mochat"
     }
@@ -8017,6 +8083,9 @@ pub struct RedditConfig {
 }
 
 impl ChannelConfig for RedditConfig {
+    fn slug() -> &'static str {
+        "reddit"
+    }
     fn name() -> &'static str {
         "Reddit"
     }
@@ -8035,6 +8104,9 @@ pub struct BlueskyConfig {
 }
 
 impl ChannelConfig for BlueskyConfig {
+    fn slug() -> &'static str {
+        "bluesky"
+    }
     fn name() -> &'static str {
         "Bluesky"
     }
@@ -8103,6 +8175,9 @@ impl Default for VoiceWakeConfig {
 
 #[cfg(feature = "voice-wake")]
 impl ChannelConfig for VoiceWakeConfig {
+    fn slug() -> &'static str {
+        "voice_wake"
+    }
     fn name() -> &'static str {
         "VoiceWake"
     }
@@ -8127,6 +8202,9 @@ pub struct NostrConfig {
 
 #[cfg(feature = "channel-nostr")]
 impl ChannelConfig for NostrConfig {
+    fn slug() -> &'static str {
+        "nostr"
+    }
     fn name() -> &'static str {
         "Nostr"
     }

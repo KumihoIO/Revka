@@ -79,6 +79,9 @@ impl crate::config::traits::ChannelConfig for EmailConfig {
     fn desc() -> &'static str {
         "Email over IMAP/SMTP"
     }
+    fn slug() -> &'static str {
+        "email"
+    }
 }
 
 fn default_imap_port() -> u16 {

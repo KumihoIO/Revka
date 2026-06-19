@@ -4,6 +4,8 @@ pub trait ChannelConfig {
     fn name() -> &'static str;
     /// short description
     fn desc() -> &'static str;
+    /// canonical lowercase channel slug (the TOML key)
+    fn slug() -> &'static str;
 }
 
 // Maybe there should be a `&self` as parameter for custom channel/info or what...
@@ -11,4 +13,5 @@ pub trait ChannelConfig {
 pub trait ConfigHandle {
     fn name(&self) -> &'static str;
     fn desc(&self) -> &'static str;
+    fn slug(&self) -> &'static str;
 }

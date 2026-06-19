@@ -52,6 +52,9 @@ impl ChannelConfig for ClawdTalkConfig {
     fn desc() -> &'static str {
         "ClawdTalk Channel"
     }
+    fn slug() -> &'static str {
+        "clawdtalk"
+    }
 }
 
 impl ClawdTalkChannel {

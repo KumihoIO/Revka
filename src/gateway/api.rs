@@ -2570,7 +2570,9 @@ pub async fn handle_api_channels(
 
     // CLI is a plain bool, not Option-wrapped, so handle it separately.
     channels.push(serde_json::json!({
+        "id": "cli",
         "name": "cli",
+        "display_name": "CLI",
         "type": "cli",
         "enabled": cc.cli,
         "status": if cc.cli { "active" } else { "inactive" },
@@ -2582,8 +2584,10 @@ pub async fn handle_api_channels(
     // All other channels go through the ConfigHandle iterator.
     for (handle, present) in cc.channels() {
         channels.push(serde_json::json!({
-            "name": handle.name(),
-            "type": handle.name(),
+            "id": handle.slug(),
+            "name": handle.slug(),
+            "display_name": handle.name(),
+            "type": handle.slug(),
             "enabled": present,
             "status": if present { "active" } else { "inactive" },
             "message_count": 0,
