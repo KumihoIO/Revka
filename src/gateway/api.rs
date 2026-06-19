@@ -2228,44 +2228,33 @@ pub async fn handle_api_channel_events(
                     };
                     // Wire the platform identifiers back to the approval registry
                     // so the channel's listener can match replies to this run.
-                    match slug_c.as_str() {
-                        "discord" => {
-                            // Spin up a thread from the prompt message so replies
-                            // are scoped to this specific approval.
-                            let thread_id = match (&discord_token, &outcome.message_id) {
-                                (Some(token), Some(msg_id)) => {
-                                    let thread_name = format!(
-                                        "Approval: {}",
-                                        truncate_thread_name(&workflow_name)
-                                    );
-                                    create_discord_thread(token, &target_c, msg_id, &thread_name)
-                                        .await
-                                }
-                                _ => None,
-                            };
-                            registry.attach_discord(
-                                &run_id,
-                                Some(target_c.clone()),
-                                thread_id,
-                                outcome.message_id,
-                            );
+                    // Discord needs an extra step (spinning up a thread from the
+                    // prompt message) before the scope is complete; every other
+                    // channel maps the SendOutcome straight into ApprovalScope.
+                    let scope = if slug_c == "discord" {
+                        // Spin up a thread from the prompt message so replies
+                        // are scoped to this specific approval.
+                        let thread_id = match (&discord_token, &outcome.message_id) {
+                            (Some(token), Some(msg_id)) => {
+                                let thread_name =
+                                    format!("Approval: {}", truncate_thread_name(&workflow_name));
+                                create_discord_thread(token, &target_c, msg_id, &thread_name).await
+                            }
+                            _ => None,
+                        };
+                        crate::gateway::approval_registry::ApprovalScope {
+                            channel_id: Some(target_c.clone()),
+                            thread_id,
+                            prompt_message_id: outcome.message_id,
                         }
-                        "slack" => {
-                            registry.attach_slack(
-                                &run_id,
-                                Some(target_c.clone()),
-                                outcome.thread_id,
-                            );
+                    } else {
+                        crate::gateway::approval_registry::ApprovalScope {
+                            channel_id: Some(target_c.clone()),
+                            thread_id: outcome.thread_id,
+                            prompt_message_id: outcome.message_id,
                         }
-                        "telegram" => {
-                            let msg_id = outcome.message_id.and_then(|s| s.parse::<i64>().ok());
-                            registry.attach_telegram(&run_id, Some(target_c.clone()), msg_id);
-                        }
-                        _ => {
-                            // Other channels deliver the approval prompt but do
-                            // not yet support reply-based scoping.
-                        }
-                    }
+                    };
+                    registry.attach(&run_id, &slug_c, scope);
                 });
             } else {
                 let slug_c = slug.clone();
