@@ -24,6 +24,18 @@ pub struct ChannelMessage {
     pub attachments: Vec<super::media_pipeline::MediaAttachment>,
 }
 
+/// Outcome of sending a message through a channel.
+///
+/// Carries the platform-assigned identifiers for a sent message so callers
+/// (e.g. notification dispatch) can track or thread follow-up messages.
+#[derive(Debug, Clone, Default)]
+pub struct SendOutcome {
+    /// Platform-assigned message identifier, when the channel reports one.
+    pub message_id: Option<String>,
+    /// Platform thread identifier (e.g. Slack `ts`), when applicable.
+    pub thread_id: Option<String>,
+}
+
 /// Message to send through a channel
 #[derive(Debug, Clone)]
 pub struct SendMessage {

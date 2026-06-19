@@ -242,6 +242,8 @@ export interface ChannelDetail {
   message_count: number;
   last_message_at: string | null;
   health: 'healthy' | 'degraded' | 'down';
+  notify_capable?: boolean;
+  notification_target_configured?: boolean;
 }
 
 // ---------------------------------------------------------------------------

@@ -842,7 +842,7 @@ mod tests {
             mention_only: false,
             ack_reactions: None,
             proxy_url: None,
-            notification_chat_id: None,
+            notification_target: None,
         });
         let entries = all_integrations();
         let tg = entries.iter().find(|e| e.name == "Telegram").unwrap();

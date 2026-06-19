@@ -4724,7 +4724,7 @@ fn setup_channels() -> Result<ChannelsConfig> {
                     mention_only: false,
                     ack_reactions: None,
                     proxy_url: None,
-                    notification_chat_id: None,
+                    notification_target: None,
                 });
             }
             ChannelMenuChoice::Discord => {
@@ -4826,7 +4826,7 @@ fn setup_channels() -> Result<ChannelsConfig> {
                     listen_to_bots: false,
                     interrupt_on_new_message: false,
                     mention_only: false,
-                    notification_channel_id: None,
+                    notification_target: None,
                     proxy_url: None,
                     stream_mode: StreamMode::MultiMessage,
                     draft_update_interval_ms: 1000,
@@ -4968,7 +4968,7 @@ fn setup_channels() -> Result<ChannelsConfig> {
                     stream_drafts: false,
                     draft_update_interval_ms: 1200,
                     cancel_reaction: None,
-                    notification_channel_id: None,
+                    notification_target: None,
                 });
             }
             ChannelMenuChoice::IMessage => {
@@ -5007,7 +5007,10 @@ fn setup_channels() -> Result<ChannelsConfig> {
                         .collect()
                 };
 
-                config.imessage = Some(IMessageConfig { allowed_contacts });
+                config.imessage = Some(IMessageConfig {
+                    allowed_contacts,
+                    notification_target: None,
+                });
                 println!(
                     "  {} {}",
                     style("✅").green().bold(),
@@ -5143,6 +5146,7 @@ fn setup_channels() -> Result<ChannelsConfig> {
                     draft_update_interval_ms: 1500,
                     multi_message_delay_ms: 800,
                     recovery_key,
+                    notification_target: None,
                 });
             }
             ChannelMenuChoice::Signal => {
@@ -5236,6 +5240,7 @@ fn setup_channels() -> Result<ChannelsConfig> {
                     ignore_attachments,
                     ignore_stories,
                     proxy_url: None,
+                    notification_target: None,
                 });
 
                 println!(
@@ -5335,6 +5340,7 @@ fn setup_channels() -> Result<ChannelsConfig> {
                         dm_mention_patterns: vec![],
                         group_mention_patterns: vec![],
                         proxy_url: None,
+                        notification_target: None,
                     });
 
                     println!(
@@ -5444,6 +5450,7 @@ fn setup_channels() -> Result<ChannelsConfig> {
                     dm_mention_patterns: vec![],
                     group_mention_patterns: vec![],
                     proxy_url: None,
+                    notification_target: None,
                 });
             }
             ChannelMenuChoice::Linq => {
@@ -5536,6 +5543,7 @@ fn setup_channels() -> Result<ChannelsConfig> {
                         Some(signing_secret.trim().to_string())
                     },
                     allowed_senders,
+                    notification_target: None,
                 });
             }
             ChannelMenuChoice::Irc => {
@@ -5777,6 +5785,7 @@ fn setup_channels() -> Result<ChannelsConfig> {
                     allowed_users,
                     proxy_url: None,
                     bot_name: None,
+                    notification_target: None,
                 });
 
                 println!(
@@ -5935,6 +5944,7 @@ fn setup_channels() -> Result<ChannelsConfig> {
                     app_secret,
                     allowed_users,
                     proxy_url: None,
+                    notification_target: None,
                 });
             }
             ChannelMenuChoice::Lark | ChannelMenuChoice::Feishu => {
@@ -6220,6 +6230,7 @@ fn setup_channels() -> Result<ChannelsConfig> {
                     private_key: private_key.trim().to_string(),
                     relays: relays.clone(),
                     allowed_pubkeys,
+                    notification_target: None,
                 });
 
                 println!(

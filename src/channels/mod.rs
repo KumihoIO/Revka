@@ -11613,7 +11613,7 @@ This is an example JSON object for profile settings."#;
             mention_only: false,
             ack_reactions: None,
             proxy_url: None,
-            notification_chat_id: None,
+            notification_target: None,
         });
         match build_channel_by_id(&config, "telegram") {
             Ok(channel) => assert_eq!(channel.name(), "telegram"),

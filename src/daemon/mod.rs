@@ -948,7 +948,7 @@ mod tests {
             mention_only: false,
             ack_reactions: None,
             proxy_url: None,
-            notification_chat_id: None,
+            notification_target: None,
         });
         assert!(has_supervised_channels(&config));
     }
@@ -1074,7 +1074,7 @@ mod tests {
             mention_only: false,
             ack_reactions: None,
             proxy_url: None,
-            notification_chat_id: None,
+            notification_target: None,
         });
 
         let target = resolve_heartbeat_delivery(&config).unwrap();
@@ -1093,7 +1093,7 @@ mod tests {
             mention_only: false,
             ack_reactions: None,
             proxy_url: None,
-            notification_chat_id: None,
+            notification_target: None,
         });
 
         let target = resolve_heartbeat_delivery(&config).unwrap();

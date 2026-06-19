@@ -6328,15 +6328,15 @@ pub struct CustomTunnelConfig {
 
 // ── Channels ─────────────────────────────────────────────────────
 
-struct ConfigWrapper<T: ChannelConfig>(std::marker::PhantomData<T>);
+struct ConfigWrapper<T: ChannelConfig + Clone>(Option<T>);
 
-impl<T: ChannelConfig> ConfigWrapper<T> {
-    fn new(_: Option<&T>) -> Self {
-        Self(std::marker::PhantomData)
+impl<T: ChannelConfig + Clone> ConfigWrapper<T> {
+    fn new(opt: Option<&T>) -> Self {
+        Self(opt.cloned())
     }
 }
 
-impl<T: ChannelConfig> crate::config::traits::ConfigHandle for ConfigWrapper<T> {
+impl<T: ChannelConfig + Clone> crate::config::traits::ConfigHandle for ConfigWrapper<T> {
     fn name(&self) -> &'static str {
         T::name()
     }
@@ -6345,6 +6345,15 @@ impl<T: ChannelConfig> crate::config::traits::ConfigHandle for ConfigWrapper<T> 
     }
     fn slug(&self) -> &'static str {
         T::slug()
+    }
+    fn notification_target(&self) -> Option<String> {
+        self.0.as_ref().and_then(|c| c.notification_target())
+    }
+    fn supports_notify(&self) -> bool {
+        self.0
+            .as_ref()
+            .map(|c| c.supports_notify())
+            .unwrap_or(false)
     }
 }
 
@@ -6680,8 +6689,8 @@ pub struct TelegramConfig {
     /// Telegram chat ID for workflow notifications and human-approval prompts.
     /// When set, workflow `notify` steps targeting "telegram" post here, and
     /// approval replies are scoped to this chat via `reply_to_message_id`.
-    #[serde(default)]
-    pub notification_chat_id: Option<String>,
+    #[serde(default, alias = "notification_chat_id")]
+    pub notification_target: Option<String>,
 }
 
 impl ChannelConfig for TelegramConfig {
@@ -6693,6 +6702,12 @@ impl ChannelConfig for TelegramConfig {
     }
     fn desc() -> &'static str {
         "connect your bot"
+    }
+    fn notification_target(&self) -> Option<String> {
+        self.notification_target.clone()
+    }
+    fn supports_notify(&self) -> bool {
+        true
     }
 }
 
@@ -6720,8 +6735,8 @@ pub struct DiscordConfig {
     pub mention_only: bool,
     /// Discord channel ID for workflow notifications and system alerts.
     /// When set, workflow `notify` steps targeting "discord" post here.
-    #[serde(default)]
-    pub notification_channel_id: Option<String>,
+    #[serde(default, alias = "notification_channel_id")]
+    pub notification_target: Option<String>,
     /// Per-channel proxy URL (http, https, socks5, socks5h).
     /// Overrides the global `[proxy]` setting for this channel only.
     #[serde(default)]
@@ -6750,6 +6765,12 @@ impl ChannelConfig for DiscordConfig {
     }
     fn desc() -> &'static str {
         "connect your bot"
+    }
+    fn notification_target(&self) -> Option<String> {
+        self.notification_target.clone()
+    }
+    fn supports_notify(&self) -> bool {
+        true
     }
 }
 
@@ -6842,8 +6863,8 @@ pub struct SlackConfig {
     /// Slack channel ID for workflow notifications and human-approval prompts.
     /// When set, workflow `notify` steps targeting "slack" post here, and
     /// approval replies are scoped to the posted message's `thread_ts`.
-    #[serde(default)]
-    pub notification_channel_id: Option<String>,
+    #[serde(default, alias = "notification_channel_id")]
+    pub notification_target: Option<String>,
 }
 
 fn default_slack_draft_update_interval_ms() -> u64 {
@@ -6859,6 +6880,12 @@ impl ChannelConfig for SlackConfig {
     }
     fn desc() -> &'static str {
         "connect your bot"
+    }
+    fn notification_target(&self) -> Option<String> {
+        self.notification_target.clone()
+    }
+    fn supports_notify(&self) -> bool {
+        true
     }
 }
 
@@ -6890,6 +6917,9 @@ pub struct MattermostConfig {
     /// Overrides the global `[proxy]` setting for this channel only.
     #[serde(default)]
     pub proxy_url: Option<String>,
+    /// Target identifier for workflow notifications and one-off sends.
+    #[serde(default)]
+    pub notification_target: Option<String>,
 }
 
 impl ChannelConfig for MattermostConfig {
@@ -6901,6 +6931,12 @@ impl ChannelConfig for MattermostConfig {
     }
     fn desc() -> &'static str {
         "connect to your bot"
+    }
+    fn notification_target(&self) -> Option<String> {
+        self.notification_target.clone()
+    }
+    fn supports_notify(&self) -> bool {
+        true
     }
 }
 
@@ -6945,6 +6981,9 @@ impl ChannelConfig for WebhookConfig {
 pub struct IMessageConfig {
     /// Allowed iMessage contacts (phone numbers or email addresses). Empty = deny all.
     pub allowed_contacts: Vec<String>,
+    /// Target identifier for workflow notifications and one-off sends.
+    #[serde(default)]
+    pub notification_target: Option<String>,
 }
 
 impl ChannelConfig for IMessageConfig {
@@ -6956,6 +6995,12 @@ impl ChannelConfig for IMessageConfig {
     }
     fn desc() -> &'static str {
         "macOS only"
+    }
+    fn notification_target(&self) -> Option<String> {
+        self.notification_target.clone()
+    }
+    fn supports_notify(&self) -> bool {
+        true
     }
 }
 
@@ -6998,6 +7043,9 @@ pub struct MatrixConfig {
     /// When set, Revka recovers room keys and cross-signing secrets on startup.
     #[serde(default)]
     pub recovery_key: Option<String>,
+    /// Target identifier for workflow notifications and one-off sends.
+    #[serde(default)]
+    pub notification_target: Option<String>,
 }
 
 impl ChannelConfig for MatrixConfig {
@@ -7009,6 +7057,12 @@ impl ChannelConfig for MatrixConfig {
     }
     fn desc() -> &'static str {
         "self-hosted chat"
+    }
+    fn notification_target(&self) -> Option<String> {
+        self.notification_target.clone()
+    }
+    fn supports_notify(&self) -> bool {
+        true
     }
 }
 
@@ -7037,6 +7091,9 @@ pub struct SignalConfig {
     /// Overrides the global `[proxy]` setting for this channel only.
     #[serde(default)]
     pub proxy_url: Option<String>,
+    /// Target identifier for workflow notifications and one-off sends.
+    #[serde(default)]
+    pub notification_target: Option<String>,
 }
 
 impl ChannelConfig for SignalConfig {
@@ -7048,6 +7105,12 @@ impl ChannelConfig for SignalConfig {
     }
     fn desc() -> &'static str {
         "An open-source, encrypted messaging service"
+    }
+    fn notification_target(&self) -> Option<String> {
+        self.notification_target.clone()
+    }
+    fn supports_notify(&self) -> bool {
+        true
     }
 }
 
@@ -7150,6 +7213,9 @@ pub struct WhatsAppConfig {
     /// Overrides the global `[proxy]` setting for this channel only.
     #[serde(default)]
     pub proxy_url: Option<String>,
+    /// Target identifier for workflow notifications and one-off sends.
+    #[serde(default)]
+    pub notification_target: Option<String>,
 }
 
 impl ChannelConfig for WhatsAppConfig {
@@ -7161,6 +7227,12 @@ impl ChannelConfig for WhatsAppConfig {
     }
     fn desc() -> &'static str {
         "Business Cloud API"
+    }
+    fn notification_target(&self) -> Option<String> {
+        self.notification_target.clone()
+    }
+    fn supports_notify(&self) -> bool {
+        true
     }
 }
 
@@ -7176,6 +7248,9 @@ pub struct LinqConfig {
     /// Allowed sender handles (phone numbers) or "*" for all
     #[serde(default)]
     pub allowed_senders: Vec<String>,
+    /// Target identifier for workflow notifications and one-off sends.
+    #[serde(default)]
+    pub notification_target: Option<String>,
 }
 
 impl ChannelConfig for LinqConfig {
@@ -7187,6 +7262,12 @@ impl ChannelConfig for LinqConfig {
     }
     fn desc() -> &'static str {
         "iMessage/RCS/SMS via Linq API"
+    }
+    fn notification_target(&self) -> Option<String> {
+        self.notification_target.clone()
+    }
+    fn supports_notify(&self) -> bool {
+        true
     }
 }
 
@@ -7208,6 +7289,9 @@ pub struct WatiConfig {
     /// Overrides the global `[proxy]` setting for this channel only.
     #[serde(default)]
     pub proxy_url: Option<String>,
+    /// Target identifier for workflow notifications and one-off sends.
+    #[serde(default)]
+    pub notification_target: Option<String>,
 }
 
 fn default_wati_api_url() -> String {
@@ -7223,6 +7307,12 @@ impl ChannelConfig for WatiConfig {
     }
     fn desc() -> &'static str {
         "WhatsApp via WATI Business API"
+    }
+    fn notification_target(&self) -> Option<String> {
+        self.notification_target.clone()
+    }
+    fn supports_notify(&self) -> bool {
+        true
     }
 }
 
@@ -7250,6 +7340,9 @@ pub struct NextcloudTalkConfig {
     /// If not set, defaults to an empty string (no self-message filtering by name).
     #[serde(default)]
     pub bot_name: Option<String>,
+    /// Target identifier for workflow notifications and one-off sends.
+    #[serde(default)]
+    pub notification_target: Option<String>,
 }
 
 impl ChannelConfig for NextcloudTalkConfig {
@@ -7261,6 +7354,12 @@ impl ChannelConfig for NextcloudTalkConfig {
     }
     fn desc() -> &'static str {
         "NextCloud Talk platform"
+    }
+    fn notification_target(&self) -> Option<String> {
+        self.notification_target.clone()
+    }
+    fn supports_notify(&self) -> bool {
+        true
     }
 }
 
@@ -7998,6 +8097,9 @@ pub struct QQConfig {
     /// Overrides the global `[proxy]` setting for this channel only.
     #[serde(default)]
     pub proxy_url: Option<String>,
+    /// Target identifier for workflow notifications and one-off sends.
+    #[serde(default)]
+    pub notification_target: Option<String>,
 }
 
 impl ChannelConfig for QQConfig {
@@ -8009,6 +8111,12 @@ impl ChannelConfig for QQConfig {
     }
     fn desc() -> &'static str {
         "Tencent QQ Bot"
+    }
+    fn notification_target(&self) -> Option<String> {
+        self.notification_target.clone()
+    }
+    fn supports_notify(&self) -> bool {
+        true
     }
 }
 
@@ -8047,6 +8155,9 @@ pub struct MochatConfig {
     /// Poll interval in seconds for new messages. Default: 5
     #[serde(default = "default_mochat_poll_interval")]
     pub poll_interval_secs: u64,
+    /// Target identifier for workflow notifications and one-off sends.
+    #[serde(default)]
+    pub notification_target: Option<String>,
 }
 
 fn default_mochat_poll_interval() -> u64 {
@@ -8062,6 +8173,12 @@ impl ChannelConfig for MochatConfig {
     }
     fn desc() -> &'static str {
         "Mochat Customer Service"
+    }
+    fn notification_target(&self) -> Option<String> {
+        self.notification_target.clone()
+    }
+    fn supports_notify(&self) -> bool {
+        true
     }
 }
 
@@ -8080,6 +8197,9 @@ pub struct RedditConfig {
     /// When set, only messages from this subreddit are processed.
     #[serde(default)]
     pub subreddit: Option<String>,
+    /// Target identifier for workflow notifications and one-off sends.
+    #[serde(default)]
+    pub notification_target: Option<String>,
 }
 
 impl ChannelConfig for RedditConfig {
@@ -8091,6 +8211,12 @@ impl ChannelConfig for RedditConfig {
     }
     fn desc() -> &'static str {
         "Reddit bot (OAuth2)"
+    }
+    fn notification_target(&self) -> Option<String> {
+        self.notification_target.clone()
+    }
+    fn supports_notify(&self) -> bool {
+        true
     }
 }
 
@@ -8198,6 +8324,9 @@ pub struct NostrConfig {
     /// Allowed sender public keys (hex or npub). Empty = deny all, "*" = allow all
     #[serde(default)]
     pub allowed_pubkeys: Vec<String>,
+    /// Target identifier for workflow notifications and one-off sends.
+    #[serde(default)]
+    pub notification_target: Option<String>,
 }
 
 #[cfg(feature = "channel-nostr")]
@@ -8210,6 +8339,12 @@ impl ChannelConfig for NostrConfig {
     }
     fn desc() -> &'static str {
         "Nostr DMs"
+    }
+    fn notification_target(&self) -> Option<String> {
+        self.notification_target.clone()
+    }
+    fn supports_notify(&self) -> bool {
+        true
     }
 }
 
@@ -11767,7 +11902,7 @@ default_temperature = 0.7
                     mention_only: false,
                     ack_reactions: None,
                     proxy_url: None,
-                    notification_chat_id: None,
+                    notification_target: None,
                 }),
                 discord: None,
                 discord_history: None,
@@ -12598,7 +12733,7 @@ default_temperature = 0.7
             mention_only: false,
             ack_reactions: None,
             proxy_url: None,
-            notification_chat_id: None,
+            notification_target: None,
         };
         let json = serde_json::to_string(&tc).unwrap();
         let parsed: TelegramConfig = serde_json::from_str(&json).unwrap();
@@ -12631,7 +12766,7 @@ default_temperature = 0.7
             stream_mode: StreamMode::default(),
             draft_update_interval_ms: 1000,
             multi_message_delay_ms: 800,
-            notification_channel_id: None,
+            notification_target: None,
         };
         let json = serde_json::to_string(&dc).unwrap();
         let parsed: DiscordConfig = serde_json::from_str(&json).unwrap();
@@ -12652,7 +12787,7 @@ default_temperature = 0.7
             stream_mode: StreamMode::default(),
             draft_update_interval_ms: 1000,
             multi_message_delay_ms: 800,
-            notification_channel_id: None,
+            notification_target: None,
         };
         let json = serde_json::to_string(&dc).unwrap();
         let parsed: DiscordConfig = serde_json::from_str(&json).unwrap();
@@ -15463,7 +15598,7 @@ require_otp_to_resume = true
             mention_only: false,
             ack_reactions: None,
             proxy_url: None,
-            notification_chat_id: None,
+            notification_target: None,
         });
 
         // Save (triggers encryption)

@@ -70,6 +70,9 @@ pub struct EmailConfig {
     /// Default subject line for outgoing emails (default: "Revka Message")
     #[serde(default = "default_subject")]
     pub default_subject: String,
+    /// Target identifier for workflow notifications and one-off sends.
+    #[serde(default)]
+    pub notification_target: Option<String>,
 }
 
 impl crate::config::traits::ChannelConfig for EmailConfig {
@@ -81,6 +84,12 @@ impl crate::config::traits::ChannelConfig for EmailConfig {
     }
     fn slug() -> &'static str {
         "email"
+    }
+    fn notification_target(&self) -> Option<String> {
+        self.notification_target.clone()
+    }
+    fn supports_notify(&self) -> bool {
+        true
     }
 }
 
@@ -118,6 +127,7 @@ impl Default for EmailConfig {
             idle_timeout_secs: default_idle_timeout(),
             allowed_senders: Vec::new(),
             default_subject: default_subject(),
+            notification_target: None,
         }
     }
 }

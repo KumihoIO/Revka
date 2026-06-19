@@ -65,7 +65,7 @@ mod tests {
             mention_only: false,
             ack_reactions: None,
             proxy_url: None,
-            notification_chat_id: None,
+            notification_target: None,
         };
 
         let discord = DiscordConfig {
@@ -79,7 +79,7 @@ mod tests {
             stream_mode: StreamMode::default(),
             draft_update_interval_ms: 1000,
             multi_message_delay_ms: 800,
-            notification_channel_id: None,
+            notification_target: None,
         };
 
         let lark = LarkConfig {

@@ -2165,7 +2165,7 @@ pub async fn handle_api_channel_events(
             match ch.to_ascii_lowercase().as_str() {
                 "discord" => {
                     if let Some(dc) = &config.channels_config.discord {
-                        if let Some(ch_id) = &dc.notification_channel_id {
+                        if let Some(ch_id) = &dc.notification_target {
                             let token = dc.bot_token.clone();
                             let channel_id = ch_id.clone();
                             let title_c = title.clone();
@@ -2220,7 +2220,7 @@ pub async fn handle_api_channel_events(
                 }
                 "slack" => {
                     if let Some(sc) = &config.channels_config.slack {
-                        if let Some(ch_id) = &sc.notification_channel_id {
+                        if let Some(ch_id) = &sc.notification_target {
                             let token = sc.bot_token.clone();
                             let channel_id = ch_id.clone();
                             let title_c = title.clone();
@@ -2248,7 +2248,7 @@ pub async fn handle_api_channel_events(
                 }
                 "telegram" => {
                     if let Some(tc) = &config.channels_config.telegram {
-                        if let Some(chat_id) = &tc.notification_chat_id {
+                        if let Some(chat_id) = &tc.notification_target {
                             let token = tc.bot_token.clone();
                             let chat_id_c = chat_id.clone();
                             let title_c = title.clone();
@@ -2579,6 +2579,8 @@ pub async fn handle_api_channels(
         "message_count": 0,
         "last_message_at": null,
         "health": if cc.cli { "healthy" } else { "down" },
+        "notify_capable": false,
+        "notification_target_configured": false,
     }));
 
     // All other channels go through the ConfigHandle iterator.
@@ -2593,6 +2595,8 @@ pub async fn handle_api_channels(
             "message_count": 0,
             "last_message_at": null,
             "health": if present { "healthy" } else { "down" },
+            "notify_capable": handle.supports_notify(),
+            "notification_target_configured": handle.notification_target().is_some(),
         }));
     }
 
