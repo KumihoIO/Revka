@@ -126,13 +126,15 @@ export class PermissionHandler {
         return new Promise((resolve) => {
             this.pending.set(request.id, { request, resolve });
             this.history.push(request);
-            // Auto-deny after 5 minutes if no response
-            setTimeout(() => {
+            // Auto-deny after 5 minutes if no response. unref() so a pending request
+            // never keeps the process (or a test runner) alive on its own.
+            const timer = setTimeout(() => {
                 if (this.pending.has(request.id)) {
                     log(`Permission auto-denied (timeout): ${request.id}`);
                     this.respond(request.id, "deny", "auto-timeout");
                 }
             }, 5 * 60 * 1000);
+            timer.unref?.();
         });
     }
     /**
