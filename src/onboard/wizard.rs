@@ -8953,6 +8953,7 @@ mod tests {
             ignore_attachments: false,
             ignore_stories: true,
             proxy_url: None,
+            notification_target: None,
         });
         assert!(has_launchable_channels(&channels));
 
@@ -8966,6 +8967,7 @@ mod tests {
             mention_only: Some(false),
             interrupt_on_new_message: false,
             proxy_url: None,
+            notification_target: None,
         });
         assert!(has_launchable_channels(&channels));
 
@@ -8975,6 +8977,7 @@ mod tests {
             app_secret: "app-secret".into(),
             allowed_users: vec!["*".into()],
             proxy_url: None,
+            notification_target: None,
         });
         assert!(has_launchable_channels(&channels));
 
@@ -8986,6 +8989,7 @@ mod tests {
             allowed_users: vec!["*".into()],
             proxy_url: None,
             bot_name: None,
+            notification_target: None,
         });
         assert!(has_launchable_channels(&channels));
 

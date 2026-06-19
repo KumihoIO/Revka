@@ -112,6 +112,7 @@ mod tests {
             allowed_users: vec!["*".into()],
             proxy_url: None,
             bot_name: None,
+            notification_target: None,
         };
 
         assert_eq!(telegram.allowed_users.len(), 1);

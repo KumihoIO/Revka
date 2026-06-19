@@ -10634,6 +10634,7 @@ This is an example JSON object for profile settings."#;
             mention_only: Some(false),
             interrupt_on_new_message: false,
             proxy_url: None,
+            notification_target: None,
         });
 
         let channels = collect_configured_channels(&config, "test");

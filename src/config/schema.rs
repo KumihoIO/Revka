@@ -12800,6 +12800,7 @@ default_temperature = 0.7
     async fn imessage_config_serde() {
         let ic = IMessageConfig {
             allowed_contacts: vec!["+1234567890".into(), "user@icloud.com".into()],
+            notification_target: None,
         };
         let json = serde_json::to_string(&ic).unwrap();
         let parsed: IMessageConfig = serde_json::from_str(&json).unwrap();
@@ -12811,6 +12812,7 @@ default_temperature = 0.7
     async fn imessage_config_empty_contacts() {
         let ic = IMessageConfig {
             allowed_contacts: vec![],
+            notification_target: None,
         };
         let json = serde_json::to_string(&ic).unwrap();
         let parsed: IMessageConfig = serde_json::from_str(&json).unwrap();
@@ -12821,6 +12823,7 @@ default_temperature = 0.7
     async fn imessage_config_wildcard() {
         let ic = IMessageConfig {
             allowed_contacts: vec!["*".into()],
+            notification_target: None,
         };
         let toml_str = toml::to_string(&ic).unwrap();
         let parsed: IMessageConfig = toml::from_str(&toml_str).unwrap();
@@ -12842,6 +12845,7 @@ default_temperature = 0.7
             draft_update_interval_ms: 1500,
             multi_message_delay_ms: 800,
             recovery_key: None,
+            notification_target: None,
         };
         let json = serde_json::to_string(&mc).unwrap();
         let parsed: MatrixConfig = serde_json::from_str(&json).unwrap();
@@ -12868,6 +12872,7 @@ default_temperature = 0.7
             draft_update_interval_ms: 1500,
             multi_message_delay_ms: 800,
             recovery_key: None,
+            notification_target: None,
         };
         let toml_str = toml::to_string(&mc).unwrap();
         let parsed: MatrixConfig = toml::from_str(&toml_str).unwrap();
@@ -12900,6 +12905,7 @@ allowed_users = ["@ops:matrix.org"]
             ignore_attachments: true,
             ignore_stories: false,
             proxy_url: None,
+            notification_target: None,
         };
         let json = serde_json::to_string(&sc).unwrap();
         let parsed: SignalConfig = serde_json::from_str(&json).unwrap();
@@ -12921,6 +12927,7 @@ allowed_users = ["@ops:matrix.org"]
             ignore_attachments: false,
             ignore_stories: true,
             proxy_url: None,
+            notification_target: None,
         };
         let toml_str = toml::to_string(&sc).unwrap();
         let parsed: SignalConfig = toml::from_str(&toml_str).unwrap();
@@ -12952,6 +12959,7 @@ allowed_users = ["@ops:matrix.org"]
             webhook: None,
             imessage: Some(IMessageConfig {
                 allowed_contacts: vec!["+1".into()],
+                notification_target: None,
             }),
             matrix: Some(MatrixConfig {
                 homeserver: "https://m.org".into(),
@@ -12966,6 +12974,7 @@ allowed_users = ["@ops:matrix.org"]
                 draft_update_interval_ms: 1500,
                 multi_message_delay_ms: 800,
                 recovery_key: None,
+                notification_target: None,
             }),
             signal: None,
             whatsapp: None,
@@ -13195,6 +13204,7 @@ channel_ids = ["C123", "D456"]
             dm_mention_patterns: vec![],
             group_mention_patterns: vec![],
             proxy_url: None,
+            notification_target: None,
         };
         let json = serde_json::to_string(&wc).unwrap();
         let parsed: WhatsAppConfig = serde_json::from_str(&json).unwrap();
@@ -13222,6 +13232,7 @@ channel_ids = ["C123", "D456"]
             dm_mention_patterns: vec![],
             group_mention_patterns: vec![],
             proxy_url: None,
+            notification_target: None,
         };
         let toml_str = toml::to_string(&wc).unwrap();
         let parsed: WhatsAppConfig = toml::from_str(&toml_str).unwrap();
@@ -13254,6 +13265,7 @@ channel_ids = ["C123", "D456"]
             dm_mention_patterns: vec![],
             group_mention_patterns: vec![],
             proxy_url: None,
+            notification_target: None,
         };
         let toml_str = toml::to_string(&wc).unwrap();
         let parsed: WhatsAppConfig = toml::from_str(&toml_str).unwrap();
@@ -13278,6 +13290,7 @@ channel_ids = ["C123", "D456"]
             dm_mention_patterns: vec![],
             group_mention_patterns: vec![],
             proxy_url: None,
+            notification_target: None,
         };
         assert!(wc.is_ambiguous_config());
         assert_eq!(wc.backend_type(), "cloud");
@@ -13301,6 +13314,7 @@ channel_ids = ["C123", "D456"]
             dm_mention_patterns: vec![],
             group_mention_patterns: vec![],
             proxy_url: None,
+            notification_target: None,
         };
         assert!(!wc.is_ambiguous_config());
         assert_eq!(wc.backend_type(), "web");
@@ -13335,6 +13349,7 @@ channel_ids = ["C123", "D456"]
                 dm_mention_patterns: vec![],
                 group_mention_patterns: vec![],
                 proxy_url: None,
+                notification_target: None,
             }),
             linq: None,
             wati: None,
@@ -15366,6 +15381,7 @@ default_model = "persisted-profile"
             allowed_users: vec!["user_a".into(), "*".into()],
             proxy_url: None,
             bot_name: None,
+            notification_target: None,
         };
 
         let json = serde_json::to_string(&nc).unwrap();

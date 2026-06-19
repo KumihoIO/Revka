@@ -2579,6 +2579,7 @@ mod tests {
             tenant_id: None,
             allowed_numbers: vec![],
             proxy_url: None,
+            notification_target: None,
         });
         cfg.channels_config.feishu = Some(crate::config::schema::FeishuConfig {
             app_id: "cli_aabbcc".to_string(),
@@ -2603,6 +2604,7 @@ mod tests {
             idle_timeout_secs: 1740,
             allowed_senders: vec!["*".to_string()],
             default_subject: "Revka Message".to_string(),
+            notification_target: None,
         });
         cfg.model_routes = vec![crate::config::schema::ModelRouteConfig {
             hint: "reasoning".to_string(),
@@ -2715,6 +2717,7 @@ mod tests {
             tenant_id: None,
             allowed_numbers: vec![],
             proxy_url: None,
+            notification_target: None,
         });
         current.channels_config.feishu = Some(crate::config::schema::FeishuConfig {
             app_id: "cli_current".to_string(),
@@ -2739,6 +2742,7 @@ mod tests {
             idle_timeout_secs: 1740,
             allowed_senders: vec!["*".to_string()],
             default_subject: "Revka Message".to_string(),
+            notification_target: None,
         });
         current.model_routes = vec![
             crate::config::schema::ModelRouteConfig {
