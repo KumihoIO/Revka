@@ -32,9 +32,9 @@ import type { AgentSessionConfig, AgentEvent } from "./types.js";
 
 const log = (msg: string) => process.stderr.write(`[session-mgr] ${msg}\n`);
 
-const manager = new AgentManager();
-const chat = new ChatService();
 const permissions = new PermissionHandler();
+const manager = new AgentManager(permissions);
+const chat = new ChatService();
 
 // Wire mention-based interrupts: when an agent is mentioned in chat,
 // inject the message as a follow-up prompt if the agent is idle.

@@ -7,6 +7,7 @@
  * - Supports multi-turn via query re-invocation
  */
 import type { AgentSessionConfig, AgentStreamEvent, AgentUsage } from "../types.js";
+import type { PermissionHandler } from "../permission-handler.js";
 export interface ClaudeSessionHandle {
     id: string;
     claudeSessionId: string | null;
@@ -24,7 +25,11 @@ export interface ClaudeSessionHandle {
 /**
  * Create a Claude agent session and start the query pump.
  */
-export declare function createClaudeSession(config: AgentSessionConfig, onEvent: (event: AgentStreamEvent) => void): ClaudeSessionHandle;
+export interface ClaudePermissionContext {
+    permissions: PermissionHandler;
+    agentId: string;
+}
+export declare function createClaudeSession(config: AgentSessionConfig, onEvent: (event: AgentStreamEvent) => void, perm?: ClaudePermissionContext): ClaudeSessionHandle;
 /**
  * Send a follow-up query to an existing session.
  */

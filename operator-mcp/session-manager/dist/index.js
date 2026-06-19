@@ -28,9 +28,9 @@ import { AgentManager } from "./agent-manager.js";
 import { ChatService } from "./chat-service.js";
 import { PermissionHandler } from "./permission-handler.js";
 const log = (msg) => process.stderr.write(`[session-mgr] ${msg}\n`);
-const manager = new AgentManager();
-const chat = new ChatService();
 const permissions = new PermissionHandler();
+const manager = new AgentManager(permissions);
+const chat = new ChatService();
 // Wire mention-based interrupts: when an agent is mentioned in chat,
 // inject the message as a follow-up prompt if the agent is idle.
 chat.setMentionHandler((roomId, message) => {
