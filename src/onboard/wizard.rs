@@ -4469,6 +4469,180 @@ fn channel_menu_choices() -> &'static [ChannelMenuChoice] {
     CHANNEL_MENU_CHOICES
 }
 
+/// Prompt for an optional notification target identifier.
+///
+/// Used by channels that have no smarter auto-detection. Returns `None` when
+/// the user leaves the field empty. Never hard-fails onboarding.
+fn prompt_notification_target() -> Result<Option<String>> {
+    let target: String = Input::new()
+        .with_prompt(format!("  {}", t!("notify-target-prompt")))
+        .allow_empty(true)
+        .interact_text()?;
+    let target = target.trim().to_string();
+    Ok((!target.is_empty()).then_some(target))
+}
+
+/// Capture Telegram's notification target during onboarding.
+///
+/// Tries to auto-detect the chat id via `getUpdates` (the user is asked to
+/// message the bot first), then falls back to a manual chat-id prompt. A 409
+/// from `getUpdates` (the daemon is already long-polling) also falls back to
+/// manual entry. This never hard-fails onboarding — on any error the user can
+/// still enter a chat id manually, and may leave it blank.
+fn telegram_notification_target(token: &str) -> Result<Option<String>> {
+    print_bullet(&t!("telegram-notify-info"));
+
+    let proceed = Confirm::new()
+        .with_prompt(format!("  {}", t!("telegram-notify-detect-prompt")))
+        .default(true)
+        .interact()?;
+
+    if proceed {
+        print!("  {} {} ", style("⏳").dim(), t!("channel-testing"));
+        let token_clone = token.to_string();
+        let thread_result = std::thread::spawn(move || {
+            let client = reqwest::blocking::Client::new();
+            let url = format!("https://api.telegram.org/bot{token_clone}/getUpdates");
+            let resp = client.get(&url).send()?;
+            let status = resp.status();
+            let data: serde_json::Value = resp.json().unwrap_or_default();
+            // result[].message.chat.id — take the most recent update with a chat id.
+            let chat_id = data
+                .get("result")
+                .and_then(serde_json::Value::as_array)
+                .and_then(|updates| {
+                    updates.iter().rev().find_map(|update| {
+                        update
+                            .get("message")
+                            .and_then(|m| m.get("chat"))
+                            .and_then(|c| c.get("id"))
+                            .map(|id| id.to_string())
+                    })
+                });
+            Ok::<_, reqwest::Error>((status, chat_id))
+        })
+        .join();
+
+        match thread_result {
+            Ok(Ok((status, Some(chat_id)))) if status.is_success() => {
+                println!(
+                    "\r  {} {}        ",
+                    style("✅").green().bold(),
+                    t!("telegram-notify-detected", chat_id = chat_id.clone())
+                );
+                return Ok(Some(chat_id));
+            }
+            Ok(Ok((status, _))) => {
+                // 409 = daemon already polling getUpdates; otherwise no message yet.
+                let reason = if status.as_u16() == 409 {
+                    t!("telegram-notify-detect-conflict")
+                } else {
+                    t!("telegram-notify-detect-empty")
+                };
+                println!("\r  {} {}        ", style("→").dim(), reason);
+            }
+            _ => {
+                println!(
+                    "\r  {} {}        ",
+                    style("→").dim(),
+                    t!("telegram-notify-detect-empty")
+                );
+            }
+        }
+    }
+
+    // Manual fallback — always optional.
+    let manual: String = Input::new()
+        .with_prompt(format!("  {}", t!("telegram-notify-manual-prompt")))
+        .allow_empty(true)
+        .interact_text()?;
+    let manual = manual.trim().to_string();
+    Ok((!manual.is_empty()).then_some(manual))
+}
+
+/// Capture Discord's notification target during onboarding.
+///
+/// When a guild id was collected, offers to list the guild's text channels for
+/// a Select; otherwise (or on any API failure) falls back to a manual channel-id
+/// Input. Always optional — never hard-fails onboarding.
+fn discord_notification_target(token: &str, guild_id: Option<&str>) -> Result<Option<String>> {
+    if let Some(guild_id) = guild_id {
+        let want_list = Confirm::new()
+            .with_prompt(format!("  {}", t!("discord-notify-list-prompt")))
+            .default(true)
+            .interact()?;
+
+        if want_list {
+            print!("  {} {} ", style("⏳").dim(), t!("channel-testing"));
+            let token_clone = token.to_string();
+            let guild_clone = guild_id.to_string();
+            let thread_result = std::thread::spawn(move || {
+                let client = reqwest::blocking::Client::new();
+                let url = format!("https://discord.com/api/v10/guilds/{guild_clone}/channels");
+                let resp = client
+                    .get(&url)
+                    .header("Authorization", format!("Bot {token_clone}"))
+                    .send()?;
+                let ok = resp.status().is_success();
+                let data: serde_json::Value = resp.json().unwrap_or_default();
+                // type 0 = GUILD_TEXT. Collect (id, name) pairs.
+                let channels: Vec<(String, String)> = data
+                    .as_array()
+                    .map(|arr| {
+                        arr.iter()
+                            .filter(|c| {
+                                c.get("type").and_then(serde_json::Value::as_i64) == Some(0)
+                            })
+                            .filter_map(|c| {
+                                let id = c.get("id").and_then(serde_json::Value::as_str)?;
+                                let name = c
+                                    .get("name")
+                                    .and_then(serde_json::Value::as_str)
+                                    .unwrap_or("");
+                                Some((id.to_string(), name.to_string()))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                Ok::<_, reqwest::Error>((ok, channels))
+            })
+            .join();
+
+            if let Ok(Ok((true, channels))) = thread_result {
+                if !channels.is_empty() {
+                    print!("\r                                        \r");
+                    let labels: Vec<String> = channels
+                        .iter()
+                        .map(|(id, name)| format!("#{name} ({id})"))
+                        .collect();
+                    let selection = Select::new()
+                        .with_prompt(format!("  {}", t!("discord-notify-select-prompt")))
+                        .items(&labels)
+                        .default(0)
+                        .interact()?;
+                    if let Some((id, _)) = channels.get(selection) {
+                        return Ok(Some(id.clone()));
+                    }
+                }
+            }
+            // Listing failed or returned nothing — fall through to manual entry.
+            println!(
+                "\r  {} {}        ",
+                style("→").dim(),
+                t!("discord-notify-list-failed")
+            );
+        }
+    }
+
+    // Manual fallback — always optional.
+    let manual: String = Input::new()
+        .with_prompt(format!("  {}", t!("discord-notify-manual-prompt")))
+        .allow_empty(true)
+        .interact_text()?;
+    let manual = manual.trim().to_string();
+    Ok((!manual.is_empty()).then_some(manual))
+}
+
 #[allow(clippy::too_many_lines)]
 fn setup_channels() -> Result<ChannelsConfig> {
     print_bullet(&t!("channels-info-1"));
@@ -4715,6 +4889,9 @@ fn setup_channels() -> Result<ChannelsConfig> {
                     );
                 }
 
+                // ── Notification target (auto-detect via getUpdates) ──
+                let notification_target = telegram_notification_target(&token)?;
+
                 config.telegram = Some(TelegramConfig {
                     bot_token: token,
                     allowed_users,
@@ -4724,7 +4901,7 @@ fn setup_channels() -> Result<ChannelsConfig> {
                     mention_only: false,
                     ack_reactions: None,
                     proxy_url: None,
-                    notification_target: None,
+                    notification_target,
                 });
             }
             ChannelMenuChoice::Discord => {
@@ -4819,6 +4996,11 @@ fn setup_channels() -> Result<ChannelsConfig> {
                     );
                 }
 
+                // ── Notification target ──
+                let guild_opt = (!guild.is_empty()).then(|| guild.clone());
+                let notification_target =
+                    discord_notification_target(&token, guild_opt.as_deref())?;
+
                 config.discord = Some(DiscordConfig {
                     bot_token: token,
                     guild_id: if guild.is_empty() { None } else { Some(guild) },
@@ -4826,7 +5008,7 @@ fn setup_channels() -> Result<ChannelsConfig> {
                     listen_to_bots: false,
                     interrupt_on_new_message: false,
                     mention_only: false,
-                    notification_target: None,
+                    notification_target,
                     proxy_url: None,
                     stream_mode: StreamMode::MultiMessage,
                     draft_update_interval_ms: 1000,
@@ -4946,6 +5128,25 @@ fn setup_channels() -> Result<ChannelsConfig> {
                     );
                 }
 
+                // ── Notification target ──
+                // Default to the already-entered channel id when it is a concrete
+                // channel (not blank, not the '*' wildcard); otherwise prompt.
+                let notification_target = if !channel.is_empty() && channel.trim() != "*" {
+                    println!(
+                        "  {} {}",
+                        style("→").dim(),
+                        t!("slack-notify-default", channel = channel.clone())
+                    );
+                    Some(channel.clone())
+                } else {
+                    let target: String = Input::new()
+                        .with_prompt(format!("  {}", t!("slack-notify-prompt")))
+                        .allow_empty(true)
+                        .interact_text()?;
+                    let target = target.trim().to_string();
+                    (!target.is_empty()).then_some(target)
+                };
+
                 config.slack = Some(SlackConfig {
                     bot_token: token,
                     app_token: if app_token.is_empty() {
@@ -4968,7 +5169,7 @@ fn setup_channels() -> Result<ChannelsConfig> {
                     stream_drafts: false,
                     draft_update_interval_ms: 1200,
                     cancel_reaction: None,
-                    notification_target: None,
+                    notification_target,
                 });
             }
             ChannelMenuChoice::IMessage => {
@@ -5007,9 +5208,11 @@ fn setup_channels() -> Result<ChannelsConfig> {
                         .collect()
                 };
 
+                let notification_target = prompt_notification_target()?;
+
                 config.imessage = Some(IMessageConfig {
                     allowed_contacts,
-                    notification_target: None,
+                    notification_target,
                 });
                 println!(
                     "  {} {}",
@@ -5133,6 +5336,8 @@ fn setup_channels() -> Result<ChannelsConfig> {
                     Some(recovery_input.trim().to_string())
                 };
 
+                let notification_target = prompt_notification_target()?;
+
                 config.matrix = Some(MatrixConfig {
                     homeserver: homeserver.trim_end_matches('/').to_string(),
                     access_token,
@@ -5146,7 +5351,7 @@ fn setup_channels() -> Result<ChannelsConfig> {
                     draft_update_interval_ms: 1500,
                     multi_message_delay_ms: 800,
                     recovery_key,
-                    notification_target: None,
+                    notification_target,
                 });
             }
             ChannelMenuChoice::Signal => {
@@ -5232,6 +5437,8 @@ fn setup_channels() -> Result<ChannelsConfig> {
                     .default(true)
                     .interact()?;
 
+                let notification_target = prompt_notification_target()?;
+
                 config.signal = Some(SignalConfig {
                     http_url: http_url.trim_end_matches('/').to_string(),
                     account: account.trim().to_string(),
@@ -5240,7 +5447,7 @@ fn setup_channels() -> Result<ChannelsConfig> {
                     ignore_attachments,
                     ignore_stories,
                     proxy_url: None,
-                    notification_target: None,
+                    notification_target,
                 });
 
                 println!(
@@ -5534,6 +5741,8 @@ fn setup_channels() -> Result<ChannelsConfig> {
                     .allow_empty(true)
                     .interact_text()?;
 
+                let notification_target = prompt_notification_target()?;
+
                 config.linq = Some(LinqConfig {
                     api_token: api_token.trim().to_string(),
                     from_phone: from_phone.trim().to_string(),
@@ -5543,7 +5752,7 @@ fn setup_channels() -> Result<ChannelsConfig> {
                         Some(signing_secret.trim().to_string())
                     },
                     allowed_senders,
-                    notification_target: None,
+                    notification_target,
                 });
             }
             ChannelMenuChoice::Irc => {
@@ -5774,6 +5983,8 @@ fn setup_channels() -> Result<ChannelsConfig> {
                         .collect()
                 };
 
+                let notification_target = prompt_notification_target()?;
+
                 config.nextcloud_talk = Some(NextcloudTalkConfig {
                     base_url,
                     app_token: app_token.trim().to_string(),
@@ -5785,7 +5996,7 @@ fn setup_channels() -> Result<ChannelsConfig> {
                     allowed_users,
                     proxy_url: None,
                     bot_name: None,
-                    notification_target: None,
+                    notification_target,
                 });
 
                 println!(
@@ -5939,12 +6150,14 @@ fn setup_channels() -> Result<ChannelsConfig> {
                     .filter(|s| !s.is_empty())
                     .collect();
 
+                let notification_target = prompt_notification_target()?;
+
                 config.qq = Some(QQConfig {
                     app_id,
                     app_secret,
                     allowed_users,
                     proxy_url: None,
-                    notification_target: None,
+                    notification_target,
                 });
             }
             ChannelMenuChoice::Lark | ChannelMenuChoice::Feishu => {
@@ -6226,11 +6439,13 @@ fn setup_channels() -> Result<ChannelsConfig> {
                     );
                 }
 
+                let notification_target = prompt_notification_target()?;
+
                 config.nostr = Some(NostrConfig {
                     private_key: private_key.trim().to_string(),
                     relays: relays.clone(),
                     allowed_pubkeys,
-                    notification_target: None,
+                    notification_target,
                 });
 
                 println!(

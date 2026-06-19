@@ -410,6 +410,7 @@ channel-skipped = Skipped
 channel-testing = Testing connection...
 channel-conn-failed-token = Connection failed — check your token and try again
 channel-conn-failed-creds = Connection failed — check your credentials
+notify-target-prompt = Notification target for outbound notifications (optional, Enter to skip)
 
 ## ── Telegram ──────────────────────────────────────────────────────
 
@@ -425,6 +426,12 @@ telegram-allowlist-info-2 = Use your @username without '@' (example: yourname), 
 telegram-allowlist-info-3 = Use '*' only for temporary open testing.
 telegram-allowlist-prompt = Allowed Telegram identities (comma-separated: username without '@' and/or numeric user ID, '*' for all)
 telegram-allowlist-warn = No users allowlisted — Telegram inbound messages will be denied until you add your username/user ID or '*'.
+telegram-notify-info = Set a notification target so workflow notifications and approval prompts have somewhere to go.
+telegram-notify-detect-prompt = Message your bot now, then continue to auto-detect the chat ID?
+telegram-notify-detected = Detected chat ID: {$chat_id}
+telegram-notify-detect-empty = No recent message found — enter the chat ID manually below.
+telegram-notify-detect-conflict = The daemon is already polling — enter the chat ID manually below.
+telegram-notify-manual-prompt = Notification chat ID (optional, Enter to skip)
 
 ## ── Discord ───────────────────────────────────────────────────────
 
@@ -442,6 +449,10 @@ discord-allowlist-info-2 = Get it in Discord: Settings → Advanced → Develope
 discord-allowlist-info-3 = Use '*' only for temporary open testing.
 discord-allowlist-prompt = Allowed Discord user IDs (comma-separated, recommended: your own ID, '*' for all)
 discord-allowlist-warn = No users allowlisted — Discord inbound messages will be denied until you add IDs or '*'.
+discord-notify-list-prompt = List this server's text channels to pick a notification target?
+discord-notify-select-prompt = Notification channel
+discord-notify-list-failed = Could not list channels — enter the channel ID manually below.
+discord-notify-manual-prompt = Notification channel ID (optional, Enter to skip)
 
 ## ── Slack ─────────────────────────────────────────────────────────
 
@@ -461,6 +472,8 @@ slack-allowlist-info-2 = Member IDs usually start with 'U' (open your Slack prof
 slack-allowlist-info-3 = Use '*' only for temporary open testing.
 slack-allowlist-prompt = Allowed Slack user IDs (comma-separated, recommended: your own member ID, '*' for all)
 slack-allowlist-warn = No users allowlisted — Slack inbound messages will be denied until you add IDs or '*'.
+slack-notify-default = Using default channel {$channel} as the notification target.
+slack-notify-prompt = Notification channel ID (optional, Enter to skip)
 
 ## ── iMessage ──────────────────────────────────────────────────────
 
