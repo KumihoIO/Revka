@@ -2259,7 +2259,10 @@ pub async fn handle_api_channel_events(
             } else {
                 let slug_c = slug.clone();
                 tokio::spawn(async move {
-                    if let Err(e) = channel.send(&msg).await {
+                    // Use send_with_id (not send) so channels that render the
+                    // notification title (discord/slack/telegram) keep it on
+                    // plain notify/human_input events; the outcome is unused here.
+                    if let Err(e) = channel.send_with_id(&msg).await {
                         tracing::warn!("channel-events: '{slug_c}' notification send failed: {e}");
                     }
                 });
