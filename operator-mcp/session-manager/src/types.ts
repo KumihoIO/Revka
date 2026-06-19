@@ -46,6 +46,10 @@ export interface AgentSessionConfig {
   parentId?: string;
   env?: Record<string, string>;
   title?: string;
+  /** Agent role used by the permission policy (e.g. "coder", "researcher"). */
+  role?: string;
+  /** When true the agent bypasses the permission gate (trusted/full-autonomy spawns). */
+  trusted?: boolean;
 }
 
 export interface AgentSessionInfo {

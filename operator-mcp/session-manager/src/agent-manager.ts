@@ -11,6 +11,7 @@ import { AgentEventEmitter } from "./event-emitter.js";
 import { createClaudeSession, sendClaudeQuery, closeClaudeSession, type ClaudeSessionHandle } from "./providers/claude.js";
 import { createCodexSession, sendCodexQuery, closeCodexSession, type CodexSessionHandle } from "./providers/codex.js";
 import { saveAgentState, removeAgentState, updateAgentStatus, getResumableStates } from "./persistence.js";
+import type { PermissionHandler } from "./permission-handler.js";
 
 const log = (msg: string) => process.stderr.write(`[session-mgr] ${msg}\n`);
 
@@ -29,6 +30,12 @@ interface ManagedSession {
 export class AgentManager {
   private sessions = new Map<string, ManagedSession>();
   readonly emitter = new AgentEventEmitter();
+
+  /**
+   * @param permissions Shared permission handler used to gate tool calls from
+   * spawned (non-trusted) Claude agents. When omitted, agents are not gated.
+   */
+  constructor(private readonly permissions?: PermissionHandler) {}
 
   /**
    * Create a new agent session.
@@ -77,7 +84,11 @@ export class AgentManager {
     // Create provider session
     try {
       if (config.agentType === "claude") {
-        session.handle = createClaudeSession(config, onEvent);
+        session.handle = createClaudeSession(
+          config,
+          onEvent,
+          this.permissions ? { permissions: this.permissions, agentId: id } : undefined,
+        );
       } else if (
         config.agentType === "codex" ||
         config.agentType === "agy" ||

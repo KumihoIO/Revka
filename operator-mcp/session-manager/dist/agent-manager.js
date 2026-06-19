@@ -11,8 +11,16 @@ import { createCodexSession, sendCodexQuery, closeCodexSession } from "./provide
 import { saveAgentState, removeAgentState, updateAgentStatus, getResumableStates } from "./persistence.js";
 const log = (msg) => process.stderr.write(`[session-mgr] ${msg}\n`);
 export class AgentManager {
+    permissions;
     sessions = new Map();
     emitter = new AgentEventEmitter();
+    /**
+     * @param permissions Shared permission handler used to gate tool calls from
+     * spawned (non-trusted) Claude agents. When omitted, agents are not gated.
+     */
+    constructor(permissions) {
+        this.permissions = permissions;
+    }
     /**
      * Create a new agent session.
      */
@@ -53,7 +61,7 @@ export class AgentManager {
         // Create provider session
         try {
             if (config.agentType === "claude") {
-                session.handle = createClaudeSession(config, onEvent);
+                session.handle = createClaudeSession(config, onEvent, this.permissions ? { permissions: this.permissions, agentId: id } : undefined);
             }
             else if (config.agentType === "codex" ||
                 config.agentType === "agy" ||
