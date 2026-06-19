@@ -281,6 +281,10 @@ impl Channel for BlueskyChannel {
         "bluesky"
     }
 
+    fn supports_one_off_send(&self) -> bool {
+        false
+    }
+
     async fn send(&self, message: &SendMessage) -> Result<()> {
         let token = self.get_access_jwt().await?;
         let did = self.get_did();

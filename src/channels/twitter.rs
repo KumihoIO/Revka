@@ -155,6 +155,10 @@ impl Channel for TwitterChannel {
         "twitter"
     }
 
+    fn supports_one_off_send(&self) -> bool {
+        false
+    }
+
     async fn send(&self, message: &SendMessage) -> anyhow::Result<()> {
         // recipient format: "dm:{user_id}" for DMs, "tweet:{tweet_id}" for replies
         if let Some(user_id) = message.recipient.strip_prefix("dm:") {

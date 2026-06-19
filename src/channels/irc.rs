@@ -346,6 +346,10 @@ impl Channel for IrcChannel {
         "irc"
     }
 
+    fn supports_one_off_send(&self) -> bool {
+        false
+    }
+
     async fn send(&self, message: &SendMessage) -> anyhow::Result<()> {
         let mut guard = self.writer.lock().await;
         let writer = guard

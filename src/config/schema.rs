@@ -6328,20 +6328,32 @@ pub struct CustomTunnelConfig {
 
 // ── Channels ─────────────────────────────────────────────────────
 
-struct ConfigWrapper<T: ChannelConfig>(std::marker::PhantomData<T>);
+struct ConfigWrapper<T: ChannelConfig + Clone>(Option<T>);
 
-impl<T: ChannelConfig> ConfigWrapper<T> {
-    fn new(_: Option<&T>) -> Self {
-        Self(std::marker::PhantomData)
+impl<T: ChannelConfig + Clone> ConfigWrapper<T> {
+    fn new(opt: Option<&T>) -> Self {
+        Self(opt.cloned())
     }
 }
 
-impl<T: ChannelConfig> crate::config::traits::ConfigHandle for ConfigWrapper<T> {
+impl<T: ChannelConfig + Clone> crate::config::traits::ConfigHandle for ConfigWrapper<T> {
     fn name(&self) -> &'static str {
         T::name()
     }
     fn desc(&self) -> &'static str {
         T::desc()
+    }
+    fn slug(&self) -> &'static str {
+        T::slug()
+    }
+    fn notification_target(&self) -> Option<String> {
+        self.0.as_ref().and_then(|c| c.notification_target())
+    }
+    fn supports_notify(&self) -> bool {
+        self.0
+            .as_ref()
+            .map(|c| c.supports_notify())
+            .unwrap_or(false)
     }
 }
 
@@ -6677,16 +6689,25 @@ pub struct TelegramConfig {
     /// Telegram chat ID for workflow notifications and human-approval prompts.
     /// When set, workflow `notify` steps targeting "telegram" post here, and
     /// approval replies are scoped to this chat via `reply_to_message_id`.
-    #[serde(default)]
-    pub notification_chat_id: Option<String>,
+    #[serde(default, alias = "notification_chat_id")]
+    pub notification_target: Option<String>,
 }
 
 impl ChannelConfig for TelegramConfig {
+    fn slug() -> &'static str {
+        "telegram"
+    }
     fn name() -> &'static str {
         "Telegram"
     }
     fn desc() -> &'static str {
         "connect your bot"
+    }
+    fn notification_target(&self) -> Option<String> {
+        self.notification_target.clone()
+    }
+    fn supports_notify(&self) -> bool {
+        true
     }
 }
 
@@ -6714,8 +6735,8 @@ pub struct DiscordConfig {
     pub mention_only: bool,
     /// Discord channel ID for workflow notifications and system alerts.
     /// When set, workflow `notify` steps targeting "discord" post here.
-    #[serde(default)]
-    pub notification_channel_id: Option<String>,
+    #[serde(default, alias = "notification_channel_id")]
+    pub notification_target: Option<String>,
     /// Per-channel proxy URL (http, https, socks5, socks5h).
     /// Overrides the global `[proxy]` setting for this channel only.
     #[serde(default)]
@@ -6736,11 +6757,20 @@ pub struct DiscordConfig {
 }
 
 impl ChannelConfig for DiscordConfig {
+    fn slug() -> &'static str {
+        "discord"
+    }
     fn name() -> &'static str {
         "Discord"
     }
     fn desc() -> &'static str {
         "connect your bot"
+    }
+    fn notification_target(&self) -> Option<String> {
+        self.notification_target.clone()
+    }
+    fn supports_notify(&self) -> bool {
+        true
     }
 }
 
@@ -6769,6 +6799,9 @@ pub struct DiscordHistoryConfig {
 }
 
 impl ChannelConfig for DiscordHistoryConfig {
+    fn slug() -> &'static str {
+        "discord_history"
+    }
     fn name() -> &'static str {
         "Discord History"
     }
@@ -6830,8 +6863,8 @@ pub struct SlackConfig {
     /// Slack channel ID for workflow notifications and human-approval prompts.
     /// When set, workflow `notify` steps targeting "slack" post here, and
     /// approval replies are scoped to the posted message's `thread_ts`.
-    #[serde(default)]
-    pub notification_channel_id: Option<String>,
+    #[serde(default, alias = "notification_channel_id")]
+    pub notification_target: Option<String>,
 }
 
 fn default_slack_draft_update_interval_ms() -> u64 {
@@ -6839,11 +6872,20 @@ fn default_slack_draft_update_interval_ms() -> u64 {
 }
 
 impl ChannelConfig for SlackConfig {
+    fn slug() -> &'static str {
+        "slack"
+    }
     fn name() -> &'static str {
         "Slack"
     }
     fn desc() -> &'static str {
         "connect your bot"
+    }
+    fn notification_target(&self) -> Option<String> {
+        self.notification_target.clone()
+    }
+    fn supports_notify(&self) -> bool {
+        true
     }
 }
 
@@ -6875,14 +6917,26 @@ pub struct MattermostConfig {
     /// Overrides the global `[proxy]` setting for this channel only.
     #[serde(default)]
     pub proxy_url: Option<String>,
+    /// Target identifier for workflow notifications and one-off sends.
+    #[serde(default)]
+    pub notification_target: Option<String>,
 }
 
 impl ChannelConfig for MattermostConfig {
+    fn slug() -> &'static str {
+        "mattermost"
+    }
     fn name() -> &'static str {
         "Mattermost"
     }
     fn desc() -> &'static str {
         "connect to your bot"
+    }
+    fn notification_target(&self) -> Option<String> {
+        self.notification_target.clone()
+    }
+    fn supports_notify(&self) -> bool {
+        true
     }
 }
 
@@ -6911,6 +6965,9 @@ pub struct WebhookConfig {
 }
 
 impl ChannelConfig for WebhookConfig {
+    fn slug() -> &'static str {
+        "webhook"
+    }
     fn name() -> &'static str {
         "Webhook"
     }
@@ -6924,14 +6981,26 @@ impl ChannelConfig for WebhookConfig {
 pub struct IMessageConfig {
     /// Allowed iMessage contacts (phone numbers or email addresses). Empty = deny all.
     pub allowed_contacts: Vec<String>,
+    /// Target identifier for workflow notifications and one-off sends.
+    #[serde(default)]
+    pub notification_target: Option<String>,
 }
 
 impl ChannelConfig for IMessageConfig {
+    fn slug() -> &'static str {
+        "imessage"
+    }
     fn name() -> &'static str {
         "iMessage"
     }
     fn desc() -> &'static str {
         "macOS only"
+    }
+    fn notification_target(&self) -> Option<String> {
+        self.notification_target.clone()
+    }
+    fn supports_notify(&self) -> bool {
+        true
     }
 }
 
@@ -6974,14 +7043,26 @@ pub struct MatrixConfig {
     /// When set, Revka recovers room keys and cross-signing secrets on startup.
     #[serde(default)]
     pub recovery_key: Option<String>,
+    /// Target identifier for workflow notifications and one-off sends.
+    #[serde(default)]
+    pub notification_target: Option<String>,
 }
 
 impl ChannelConfig for MatrixConfig {
+    fn slug() -> &'static str {
+        "matrix"
+    }
     fn name() -> &'static str {
         "Matrix"
     }
     fn desc() -> &'static str {
         "self-hosted chat"
+    }
+    fn notification_target(&self) -> Option<String> {
+        self.notification_target.clone()
+    }
+    fn supports_notify(&self) -> bool {
+        true
     }
 }
 
@@ -7010,14 +7091,26 @@ pub struct SignalConfig {
     /// Overrides the global `[proxy]` setting for this channel only.
     #[serde(default)]
     pub proxy_url: Option<String>,
+    /// Target identifier for workflow notifications and one-off sends.
+    #[serde(default)]
+    pub notification_target: Option<String>,
 }
 
 impl ChannelConfig for SignalConfig {
+    fn slug() -> &'static str {
+        "signal"
+    }
     fn name() -> &'static str {
         "Signal"
     }
     fn desc() -> &'static str {
         "An open-source, encrypted messaging service"
+    }
+    fn notification_target(&self) -> Option<String> {
+        self.notification_target.clone()
+    }
+    fn supports_notify(&self) -> bool {
+        true
     }
 }
 
@@ -7120,14 +7213,26 @@ pub struct WhatsAppConfig {
     /// Overrides the global `[proxy]` setting for this channel only.
     #[serde(default)]
     pub proxy_url: Option<String>,
+    /// Target identifier for workflow notifications and one-off sends.
+    #[serde(default)]
+    pub notification_target: Option<String>,
 }
 
 impl ChannelConfig for WhatsAppConfig {
+    fn slug() -> &'static str {
+        "whatsapp"
+    }
     fn name() -> &'static str {
         "WhatsApp"
     }
     fn desc() -> &'static str {
         "Business Cloud API"
+    }
+    fn notification_target(&self) -> Option<String> {
+        self.notification_target.clone()
+    }
+    fn supports_notify(&self) -> bool {
+        true
     }
 }
 
@@ -7143,14 +7248,26 @@ pub struct LinqConfig {
     /// Allowed sender handles (phone numbers) or "*" for all
     #[serde(default)]
     pub allowed_senders: Vec<String>,
+    /// Target identifier for workflow notifications and one-off sends.
+    #[serde(default)]
+    pub notification_target: Option<String>,
 }
 
 impl ChannelConfig for LinqConfig {
+    fn slug() -> &'static str {
+        "linq"
+    }
     fn name() -> &'static str {
         "Linq"
     }
     fn desc() -> &'static str {
         "iMessage/RCS/SMS via Linq API"
+    }
+    fn notification_target(&self) -> Option<String> {
+        self.notification_target.clone()
+    }
+    fn supports_notify(&self) -> bool {
+        true
     }
 }
 
@@ -7172,6 +7289,9 @@ pub struct WatiConfig {
     /// Overrides the global `[proxy]` setting for this channel only.
     #[serde(default)]
     pub proxy_url: Option<String>,
+    /// Target identifier for workflow notifications and one-off sends.
+    #[serde(default)]
+    pub notification_target: Option<String>,
 }
 
 fn default_wati_api_url() -> String {
@@ -7179,11 +7299,20 @@ fn default_wati_api_url() -> String {
 }
 
 impl ChannelConfig for WatiConfig {
+    fn slug() -> &'static str {
+        "wati"
+    }
     fn name() -> &'static str {
         "WATI"
     }
     fn desc() -> &'static str {
         "WhatsApp via WATI Business API"
+    }
+    fn notification_target(&self) -> Option<String> {
+        self.notification_target.clone()
+    }
+    fn supports_notify(&self) -> bool {
+        true
     }
 }
 
@@ -7211,14 +7340,26 @@ pub struct NextcloudTalkConfig {
     /// If not set, defaults to an empty string (no self-message filtering by name).
     #[serde(default)]
     pub bot_name: Option<String>,
+    /// Target identifier for workflow notifications and one-off sends.
+    #[serde(default)]
+    pub notification_target: Option<String>,
 }
 
 impl ChannelConfig for NextcloudTalkConfig {
+    fn slug() -> &'static str {
+        "nextcloud_talk"
+    }
     fn name() -> &'static str {
         "NextCloud Talk"
     }
     fn desc() -> &'static str {
         "NextCloud Talk platform"
+    }
+    fn notification_target(&self) -> Option<String> {
+        self.notification_target.clone()
+    }
+    fn supports_notify(&self) -> bool {
+        true
     }
 }
 
@@ -7283,6 +7424,9 @@ pub struct IrcConfig {
 }
 
 impl ChannelConfig for IrcConfig {
+    fn slug() -> &'static str {
+        "irc"
+    }
     fn name() -> &'static str {
         "IRC"
     }
@@ -7345,6 +7489,9 @@ pub struct LarkConfig {
 }
 
 impl ChannelConfig for LarkConfig {
+    fn slug() -> &'static str {
+        "lark"
+    }
     fn name() -> &'static str {
         "Lark"
     }
@@ -7383,6 +7530,9 @@ pub struct FeishuConfig {
 }
 
 impl ChannelConfig for FeishuConfig {
+    fn slug() -> &'static str {
+        "feishu"
+    }
     fn name() -> &'static str {
         "Feishu"
     }
@@ -7900,6 +8050,9 @@ pub struct DingTalkConfig {
 }
 
 impl ChannelConfig for DingTalkConfig {
+    fn slug() -> &'static str {
+        "dingtalk"
+    }
     fn name() -> &'static str {
         "DingTalk"
     }
@@ -7919,6 +8072,9 @@ pub struct WeComConfig {
 }
 
 impl ChannelConfig for WeComConfig {
+    fn slug() -> &'static str {
+        "wecom"
+    }
     fn name() -> &'static str {
         "WeCom"
     }
@@ -7941,14 +8097,26 @@ pub struct QQConfig {
     /// Overrides the global `[proxy]` setting for this channel only.
     #[serde(default)]
     pub proxy_url: Option<String>,
+    /// Target identifier for workflow notifications and one-off sends.
+    #[serde(default)]
+    pub notification_target: Option<String>,
 }
 
 impl ChannelConfig for QQConfig {
+    fn slug() -> &'static str {
+        "qq"
+    }
     fn name() -> &'static str {
         "QQ Official"
     }
     fn desc() -> &'static str {
         "Tencent QQ Bot"
+    }
+    fn notification_target(&self) -> Option<String> {
+        self.notification_target.clone()
+    }
+    fn supports_notify(&self) -> bool {
+        true
     }
 }
 
@@ -7963,6 +8131,9 @@ pub struct TwitterConfig {
 }
 
 impl ChannelConfig for TwitterConfig {
+    fn slug() -> &'static str {
+        "twitter"
+    }
     fn name() -> &'static str {
         "X/Twitter"
     }
@@ -7984,6 +8155,9 @@ pub struct MochatConfig {
     /// Poll interval in seconds for new messages. Default: 5
     #[serde(default = "default_mochat_poll_interval")]
     pub poll_interval_secs: u64,
+    /// Target identifier for workflow notifications and one-off sends.
+    #[serde(default)]
+    pub notification_target: Option<String>,
 }
 
 fn default_mochat_poll_interval() -> u64 {
@@ -7991,11 +8165,20 @@ fn default_mochat_poll_interval() -> u64 {
 }
 
 impl ChannelConfig for MochatConfig {
+    fn slug() -> &'static str {
+        "mochat"
+    }
     fn name() -> &'static str {
         "Mochat"
     }
     fn desc() -> &'static str {
         "Mochat Customer Service"
+    }
+    fn notification_target(&self) -> Option<String> {
+        self.notification_target.clone()
+    }
+    fn supports_notify(&self) -> bool {
+        true
     }
 }
 
@@ -8014,14 +8197,26 @@ pub struct RedditConfig {
     /// When set, only messages from this subreddit are processed.
     #[serde(default)]
     pub subreddit: Option<String>,
+    /// Target identifier for workflow notifications and one-off sends.
+    #[serde(default)]
+    pub notification_target: Option<String>,
 }
 
 impl ChannelConfig for RedditConfig {
+    fn slug() -> &'static str {
+        "reddit"
+    }
     fn name() -> &'static str {
         "Reddit"
     }
     fn desc() -> &'static str {
         "Reddit bot (OAuth2)"
+    }
+    fn notification_target(&self) -> Option<String> {
+        self.notification_target.clone()
+    }
+    fn supports_notify(&self) -> bool {
+        true
     }
 }
 
@@ -8035,6 +8230,9 @@ pub struct BlueskyConfig {
 }
 
 impl ChannelConfig for BlueskyConfig {
+    fn slug() -> &'static str {
+        "bluesky"
+    }
     fn name() -> &'static str {
         "Bluesky"
     }
@@ -8103,6 +8301,9 @@ impl Default for VoiceWakeConfig {
 
 #[cfg(feature = "voice-wake")]
 impl ChannelConfig for VoiceWakeConfig {
+    fn slug() -> &'static str {
+        "voice_wake"
+    }
     fn name() -> &'static str {
         "VoiceWake"
     }
@@ -8123,15 +8324,27 @@ pub struct NostrConfig {
     /// Allowed sender public keys (hex or npub). Empty = deny all, "*" = allow all
     #[serde(default)]
     pub allowed_pubkeys: Vec<String>,
+    /// Target identifier for workflow notifications and one-off sends.
+    #[serde(default)]
+    pub notification_target: Option<String>,
 }
 
 #[cfg(feature = "channel-nostr")]
 impl ChannelConfig for NostrConfig {
+    fn slug() -> &'static str {
+        "nostr"
+    }
     fn name() -> &'static str {
         "Nostr"
     }
     fn desc() -> &'static str {
         "Nostr DMs"
+    }
+    fn notification_target(&self) -> Option<String> {
+        self.notification_target.clone()
+    }
+    fn supports_notify(&self) -> bool {
+        true
     }
 }
 
@@ -11689,7 +11902,7 @@ default_temperature = 0.7
                     mention_only: false,
                     ack_reactions: None,
                     proxy_url: None,
-                    notification_chat_id: None,
+                    notification_target: None,
                 }),
                 discord: None,
                 discord_history: None,
@@ -12520,7 +12733,7 @@ default_temperature = 0.7
             mention_only: false,
             ack_reactions: None,
             proxy_url: None,
-            notification_chat_id: None,
+            notification_target: None,
         };
         let json = serde_json::to_string(&tc).unwrap();
         let parsed: TelegramConfig = serde_json::from_str(&json).unwrap();
@@ -12553,7 +12766,7 @@ default_temperature = 0.7
             stream_mode: StreamMode::default(),
             draft_update_interval_ms: 1000,
             multi_message_delay_ms: 800,
-            notification_channel_id: None,
+            notification_target: None,
         };
         let json = serde_json::to_string(&dc).unwrap();
         let parsed: DiscordConfig = serde_json::from_str(&json).unwrap();
@@ -12574,7 +12787,7 @@ default_temperature = 0.7
             stream_mode: StreamMode::default(),
             draft_update_interval_ms: 1000,
             multi_message_delay_ms: 800,
-            notification_channel_id: None,
+            notification_target: None,
         };
         let json = serde_json::to_string(&dc).unwrap();
         let parsed: DiscordConfig = serde_json::from_str(&json).unwrap();
@@ -12587,6 +12800,7 @@ default_temperature = 0.7
     async fn imessage_config_serde() {
         let ic = IMessageConfig {
             allowed_contacts: vec!["+1234567890".into(), "user@icloud.com".into()],
+            notification_target: None,
         };
         let json = serde_json::to_string(&ic).unwrap();
         let parsed: IMessageConfig = serde_json::from_str(&json).unwrap();
@@ -12598,6 +12812,7 @@ default_temperature = 0.7
     async fn imessage_config_empty_contacts() {
         let ic = IMessageConfig {
             allowed_contacts: vec![],
+            notification_target: None,
         };
         let json = serde_json::to_string(&ic).unwrap();
         let parsed: IMessageConfig = serde_json::from_str(&json).unwrap();
@@ -12608,6 +12823,7 @@ default_temperature = 0.7
     async fn imessage_config_wildcard() {
         let ic = IMessageConfig {
             allowed_contacts: vec!["*".into()],
+            notification_target: None,
         };
         let toml_str = toml::to_string(&ic).unwrap();
         let parsed: IMessageConfig = toml::from_str(&toml_str).unwrap();
@@ -12629,6 +12845,7 @@ default_temperature = 0.7
             draft_update_interval_ms: 1500,
             multi_message_delay_ms: 800,
             recovery_key: None,
+            notification_target: None,
         };
         let json = serde_json::to_string(&mc).unwrap();
         let parsed: MatrixConfig = serde_json::from_str(&json).unwrap();
@@ -12655,6 +12872,7 @@ default_temperature = 0.7
             draft_update_interval_ms: 1500,
             multi_message_delay_ms: 800,
             recovery_key: None,
+            notification_target: None,
         };
         let toml_str = toml::to_string(&mc).unwrap();
         let parsed: MatrixConfig = toml::from_str(&toml_str).unwrap();
@@ -12687,6 +12905,7 @@ allowed_users = ["@ops:matrix.org"]
             ignore_attachments: true,
             ignore_stories: false,
             proxy_url: None,
+            notification_target: None,
         };
         let json = serde_json::to_string(&sc).unwrap();
         let parsed: SignalConfig = serde_json::from_str(&json).unwrap();
@@ -12708,6 +12927,7 @@ allowed_users = ["@ops:matrix.org"]
             ignore_attachments: false,
             ignore_stories: true,
             proxy_url: None,
+            notification_target: None,
         };
         let toml_str = toml::to_string(&sc).unwrap();
         let parsed: SignalConfig = toml::from_str(&toml_str).unwrap();
@@ -12739,6 +12959,7 @@ allowed_users = ["@ops:matrix.org"]
             webhook: None,
             imessage: Some(IMessageConfig {
                 allowed_contacts: vec!["+1".into()],
+                notification_target: None,
             }),
             matrix: Some(MatrixConfig {
                 homeserver: "https://m.org".into(),
@@ -12753,6 +12974,7 @@ allowed_users = ["@ops:matrix.org"]
                 draft_update_interval_ms: 1500,
                 multi_message_delay_ms: 800,
                 recovery_key: None,
+                notification_target: None,
             }),
             signal: None,
             whatsapp: None,
@@ -12982,6 +13204,7 @@ channel_ids = ["C123", "D456"]
             dm_mention_patterns: vec![],
             group_mention_patterns: vec![],
             proxy_url: None,
+            notification_target: None,
         };
         let json = serde_json::to_string(&wc).unwrap();
         let parsed: WhatsAppConfig = serde_json::from_str(&json).unwrap();
@@ -13009,6 +13232,7 @@ channel_ids = ["C123", "D456"]
             dm_mention_patterns: vec![],
             group_mention_patterns: vec![],
             proxy_url: None,
+            notification_target: None,
         };
         let toml_str = toml::to_string(&wc).unwrap();
         let parsed: WhatsAppConfig = toml::from_str(&toml_str).unwrap();
@@ -13041,6 +13265,7 @@ channel_ids = ["C123", "D456"]
             dm_mention_patterns: vec![],
             group_mention_patterns: vec![],
             proxy_url: None,
+            notification_target: None,
         };
         let toml_str = toml::to_string(&wc).unwrap();
         let parsed: WhatsAppConfig = toml::from_str(&toml_str).unwrap();
@@ -13065,6 +13290,7 @@ channel_ids = ["C123", "D456"]
             dm_mention_patterns: vec![],
             group_mention_patterns: vec![],
             proxy_url: None,
+            notification_target: None,
         };
         assert!(wc.is_ambiguous_config());
         assert_eq!(wc.backend_type(), "cloud");
@@ -13088,6 +13314,7 @@ channel_ids = ["C123", "D456"]
             dm_mention_patterns: vec![],
             group_mention_patterns: vec![],
             proxy_url: None,
+            notification_target: None,
         };
         assert!(!wc.is_ambiguous_config());
         assert_eq!(wc.backend_type(), "web");
@@ -13122,6 +13349,7 @@ channel_ids = ["C123", "D456"]
                 dm_mention_patterns: vec![],
                 group_mention_patterns: vec![],
                 proxy_url: None,
+                notification_target: None,
             }),
             linq: None,
             wati: None,
@@ -15153,6 +15381,7 @@ default_model = "persisted-profile"
             allowed_users: vec!["user_a".into(), "*".into()],
             proxy_url: None,
             bot_name: None,
+            notification_target: None,
         };
 
         let json = serde_json::to_string(&nc).unwrap();
@@ -15385,7 +15614,7 @@ require_otp_to_resume = true
             mention_only: false,
             ack_reactions: None,
             proxy_url: None,
-            notification_chat_id: None,
+            notification_target: None,
         });
 
         // Save (triggers encryption)
