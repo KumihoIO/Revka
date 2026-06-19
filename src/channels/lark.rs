@@ -1883,7 +1883,10 @@ impl LarkChannel {
                     "Lark webhook: rejecting request — no verification_token configured \
                      ([channels_config.lark].verification_token is required for webhook mode)"
                 );
-                return (StatusCode::UNAUTHORIZED, "verification token not configured")
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    "verification token not configured",
+                )
                     .into_response();
             }
             if !webhook_token_matches(&payload, &state.verification_token) {
