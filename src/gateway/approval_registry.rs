@@ -16,6 +16,25 @@ pub fn global() -> Arc<ApprovalRegistry> {
     Arc::clone(GLOBAL_REGISTRY.get_or_init(|| Arc::new(ApprovalRegistry::new())))
 }
 
+/// Per-channel scoping for a pending approval — populated AFTER the approval
+/// prompt is sent so we can restrict keyword matching to the thread / reply
+/// that belongs to this specific approval. Without this the bot matches any
+/// message in the configured notification channel, which conflates parallel
+/// approvals and triggers on unrelated chatter.
+///
+/// The fields are interpreted per platform:
+/// - `channel_id`: the platform channel/conversation the prompt was sent to
+///   (Discord channel, Slack channel, Telegram chat).
+/// - `thread_id`: the platform thread anchor (Discord thread, Slack `thread_ts`).
+/// - `prompt_message_id`: the prompt's message id (Discord prompt message for
+///   reply matching, Telegram prompt message id stored as a string).
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ApprovalScope {
+    pub channel_id: Option<String>,
+    pub thread_id: Option<String>,
+    pub prompt_message_id: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PendingApproval {
     pub run_id: String,
@@ -26,20 +45,10 @@ pub struct PendingApproval {
     pub cwd: String,
     pub created_at: DateTime<Utc>,
 
-    // Channel scoping — populated AFTER the approval prompt is sent so we can
-    // restrict keyword matching to the thread / reply that belongs to this
-    // specific approval. Without these the bot matches any message in the
-    // configured notification channel, which conflates parallel approvals
-    // and triggers on unrelated chatter.
-    pub discord_channel_id: Option<String>,
-    pub discord_thread_id: Option<String>,
-    pub discord_prompt_message_id: Option<String>,
-
-    pub slack_channel_id: Option<String>,
-    pub slack_thread_ts: Option<String>,
-
-    pub telegram_chat_id: Option<String>,
-    pub telegram_prompt_message_id: Option<i64>,
+    /// Per-channel reply scoping, keyed by channel slug (e.g. "discord",
+    /// "slack", "telegram"). Populated by `attach` once the channel adapter
+    /// has sent the prompt and reported the platform identifiers back.
+    pub scopes: HashMap<String, ApprovalScope>,
 }
 
 impl PendingApproval {
@@ -59,13 +68,7 @@ impl PendingApproval {
             reject_keywords,
             cwd,
             created_at: Utc::now(),
-            discord_channel_id: None,
-            discord_thread_id: None,
-            discord_prompt_message_id: None,
-            slack_channel_id: None,
-            slack_thread_ts: None,
-            telegram_chat_id: None,
-            telegram_prompt_message_id: None,
+            scopes: HashMap::new(),
         }
     }
 }
@@ -89,56 +92,21 @@ impl ApprovalRegistry {
     }
 
     /// Register a new pending approval. Channel thread/reply IDs are attached
-    /// later via the `attach_*` methods once the channel adapter has sent the
-    /// prompt and received the message/thread identifiers back.
+    /// later via [`ApprovalRegistry::attach`] once the channel adapter has sent
+    /// the prompt and received the message/thread identifiers back.
     pub fn register(&self, approval: PendingApproval) {
         let mut map = self.pending.write().unwrap();
         map.insert(approval.run_id.clone(), approval);
     }
 
-    /// Attach Discord thread + prompt message IDs to an existing pending approval.
-    pub fn attach_discord(
-        &self,
-        run_id: &str,
-        channel_id: Option<String>,
-        thread_id: Option<String>,
-        prompt_message_id: Option<String>,
-    ) {
+    /// Attach per-channel reply scoping to an existing pending approval, keyed
+    /// by channel slug (e.g. "discord", "slack", "telegram"). Called after the
+    /// channel adapter has sent the prompt and reported the platform message /
+    /// thread identifiers back.
+    pub fn attach(&self, run_id: &str, channel: &str, scope: ApprovalScope) {
         let mut map = self.pending.write().unwrap();
         if let Some(a) = map.get_mut(run_id) {
-            if channel_id.is_some() {
-                a.discord_channel_id = channel_id;
-            }
-            a.discord_thread_id = thread_id;
-            a.discord_prompt_message_id = prompt_message_id;
-        }
-    }
-
-    /// Attach Slack channel + thread_ts to an existing pending approval.
-    pub fn attach_slack(
-        &self,
-        run_id: &str,
-        channel_id: Option<String>,
-        thread_ts: Option<String>,
-    ) {
-        let mut map = self.pending.write().unwrap();
-        if let Some(a) = map.get_mut(run_id) {
-            a.slack_channel_id = channel_id;
-            a.slack_thread_ts = thread_ts;
-        }
-    }
-
-    /// Attach Telegram chat + prompt message_id to an existing pending approval.
-    pub fn attach_telegram(
-        &self,
-        run_id: &str,
-        chat_id: Option<String>,
-        prompt_message_id: Option<i64>,
-    ) {
-        let mut map = self.pending.write().unwrap();
-        if let Some(a) = map.get_mut(run_id) {
-            a.telegram_chat_id = chat_id;
-            a.telegram_prompt_message_id = prompt_message_id;
+            a.scopes.insert(channel.to_string(), scope);
         }
     }
 
@@ -171,23 +139,25 @@ impl ApprovalRegistry {
         let msg_lower = message.trim().to_lowercase();
 
         for (run_id, approval) in map.iter() {
-            let in_expected_thread = match (&approval.discord_thread_id, thread_id) {
+            let Some(scope) = approval.scopes.get("discord") else {
+                continue;
+            };
+            let in_expected_thread = match (&scope.thread_id, thread_id) {
                 (Some(want), Some(got)) => want == got,
                 _ => false,
             };
-            let is_reply_to_prompt =
-                match (&approval.discord_prompt_message_id, reply_to_message_id) {
-                    (Some(want), Some(got)) => want == got,
-                    _ => false,
-                };
+            let is_reply_to_prompt = match (&scope.prompt_message_id, reply_to_message_id) {
+                (Some(want), Some(got)) => want == got,
+                _ => false,
+            };
             // Back-compat: if we never captured thread/message IDs (e.g. send
             // failed or thread creation was denied), fall back to matching by
             // channel only. This preserves existing behavior for unscoped
             // deployments but is strictly worse disambiguation.
-            let fallback_channel_only = approval.discord_thread_id.is_none()
-                && approval.discord_prompt_message_id.is_none()
-                && approval
-                    .discord_channel_id
+            let fallback_channel_only = scope.thread_id.is_none()
+                && scope.prompt_message_id.is_none()
+                && scope
+                    .channel_id
                     .as_ref()
                     .map(|id| id == channel_id)
                     .unwrap_or(false);
@@ -221,15 +191,18 @@ impl ApprovalRegistry {
         let msg_lower = message.trim().to_lowercase();
 
         for (run_id, approval) in map.iter() {
-            let channel_match = approval
-                .slack_channel_id
+            let Some(scope) = approval.scopes.get("slack") else {
+                continue;
+            };
+            let channel_match = scope
+                .channel_id
                 .as_ref()
                 .map(|id| id == channel_id)
                 .unwrap_or(false);
             if !channel_match {
                 continue;
             }
-            let thread_match = match (&approval.slack_thread_ts, thread_ts) {
+            let thread_match = match (&scope.thread_id, thread_ts) {
                 (Some(want), Some(got)) => want == got,
                 _ => false,
             };
@@ -261,15 +234,22 @@ impl ApprovalRegistry {
         let msg_lower = message.trim().to_lowercase();
 
         for (run_id, approval) in map.iter() {
-            let chat_match = approval
-                .telegram_chat_id
+            let Some(scope) = approval.scopes.get("telegram") else {
+                continue;
+            };
+            let chat_match = scope
+                .channel_id
                 .as_ref()
                 .map(|id| id == chat_id)
                 .unwrap_or(false);
             if !chat_match {
                 continue;
             }
-            let reply_match = match (approval.telegram_prompt_message_id, reply_to_message_id) {
+            let want_prompt = scope
+                .prompt_message_id
+                .as_ref()
+                .and_then(|s| s.parse::<i64>().ok());
+            let reply_match = match (want_prompt, reply_to_message_id) {
                 (Some(want), Some(got)) => want == got,
                 _ => false,
             };

@@ -103,6 +103,10 @@ impl Channel for WebhookChannel {
         "webhook"
     }
 
+    fn supports_one_off_send(&self) -> bool {
+        false
+    }
+
     async fn send(&self, message: &SendMessage) -> Result<()> {
         let Some(ref send_url) = self.send_url else {
             tracing::debug!("Webhook channel: no send_url configured, skipping outbound message");

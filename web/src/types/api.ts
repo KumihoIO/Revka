@@ -233,13 +233,17 @@ export interface Session {
 }
 
 export interface ChannelDetail {
+  id?: string;
   name: string;
+  display_name?: string;
   type: string;
   enabled: boolean;
   status: 'active' | 'inactive' | 'error';
   message_count: number;
   last_message_at: string | null;
   health: 'healthy' | 'degraded' | 'down';
+  notify_capable?: boolean;
+  notification_target_configured?: boolean;
 }
 
 // ---------------------------------------------------------------------------

@@ -70,6 +70,9 @@ pub struct EmailConfig {
     /// Default subject line for outgoing emails (default: "Revka Message")
     #[serde(default = "default_subject")]
     pub default_subject: String,
+    /// Target identifier for workflow notifications and one-off sends.
+    #[serde(default)]
+    pub notification_target: Option<String>,
 }
 
 impl crate::config::traits::ChannelConfig for EmailConfig {
@@ -78,6 +81,15 @@ impl crate::config::traits::ChannelConfig for EmailConfig {
     }
     fn desc() -> &'static str {
         "Email over IMAP/SMTP"
+    }
+    fn slug() -> &'static str {
+        "email"
+    }
+    fn notification_target(&self) -> Option<String> {
+        self.notification_target.clone()
+    }
+    fn supports_notify(&self) -> bool {
+        true
     }
 }
 
@@ -115,6 +127,7 @@ impl Default for EmailConfig {
             idle_timeout_secs: default_idle_timeout(),
             allowed_senders: Vec::new(),
             default_subject: default_subject(),
+            notification_target: None,
         }
     }
 }
@@ -682,6 +695,7 @@ mod tests {
             idle_timeout_secs: 1200,
             allowed_senders: vec!["allowed@example.com".to_string()],
             default_subject: "Custom Subject".to_string(),
+            notification_target: None,
         };
         assert_eq!(config.imap_host, "imap.example.com");
         assert_eq!(config.imap_folder, "Archive");
@@ -704,6 +718,7 @@ mod tests {
             idle_timeout_secs: 1740,
             allowed_senders: vec!["*".to_string()],
             default_subject: "Test Subject".to_string(),
+            notification_target: None,
         };
         let cloned = config.clone();
         assert_eq!(cloned.imap_host, config.imap_host);
@@ -951,6 +966,7 @@ mod tests {
             idle_timeout_secs: 1740,
             allowed_senders: vec!["allowed@example.com".to_string()],
             default_subject: "Serialization Test".to_string(),
+            notification_target: None,
         };
 
         let json = serde_json::to_string(&config).unwrap();

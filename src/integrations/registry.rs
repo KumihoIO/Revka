@@ -842,7 +842,7 @@ mod tests {
             mention_only: false,
             ack_reactions: None,
             proxy_url: None,
-            notification_chat_id: None,
+            notification_target: None,
         });
         let entries = all_integrations();
         let tg = entries.iter().find(|e| e.name == "Telegram").unwrap();
@@ -865,6 +865,7 @@ mod tests {
         let mut config = Config::default();
         config.channels_config.imessage = Some(IMessageConfig {
             allowed_contacts: vec!["*".into()],
+            notification_target: None,
         });
         let entries = all_integrations();
         let im = entries.iter().find(|e| e.name == "iMessage").unwrap();
@@ -898,6 +899,7 @@ mod tests {
             draft_update_interval_ms: 1500,
             multi_message_delay_ms: 800,
             recovery_key: None,
+            notification_target: None,
         });
         let entries = all_integrations();
         let mx = entries.iter().find(|e| e.name == "Matrix").unwrap();

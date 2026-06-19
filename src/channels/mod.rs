@@ -4534,7 +4534,7 @@ pub(crate) async fn handle_command(command: crate::ChannelCommands, config: &Con
 }
 
 /// Build a single channel instance by config section name (e.g. "telegram").
-fn build_channel_by_id(config: &Config, channel_id: &str) -> Result<Arc<dyn Channel>> {
+pub(crate) fn build_channel_by_id(config: &Config, channel_id: &str) -> Result<Arc<dyn Channel>> {
     match channel_id {
         "telegram" => {
             let tg = config
@@ -4692,8 +4692,118 @@ fn build_channel_by_id(config: &Config, channel_id: &str) -> Result<Arc<dyn Chan
                 qq.allowed_users.clone(),
             )))
         }
+        "email" => {
+            let email = config
+                .channels_config
+                .email
+                .as_ref()
+                .context("Email channel is not configured")?;
+            Ok(Arc::new(EmailChannel::new(email.clone())))
+        }
+        "wati" => {
+            let wati = config
+                .channels_config
+                .wati
+                .as_ref()
+                .context("WATI channel is not configured")?;
+            Ok(Arc::new(
+                WatiChannel::new_with_proxy(
+                    wati.api_token.clone(),
+                    wati.api_url.clone(),
+                    wati.tenant_id.clone(),
+                    wati.allowed_numbers.clone(),
+                    wati.proxy_url.clone(),
+                )
+                .with_transcription(config.transcription.clone()),
+            ))
+        }
+        "linq" => {
+            let lq = config
+                .channels_config
+                .linq
+                .as_ref()
+                .context("Linq channel is not configured")?;
+            Ok(Arc::new(LinqChannel::new(
+                lq.api_token.clone(),
+                lq.from_phone.clone(),
+                lq.allowed_senders.clone(),
+            )))
+        }
+        "nextcloud_talk" => {
+            let nc = config
+                .channels_config
+                .nextcloud_talk
+                .as_ref()
+                .context("Nextcloud Talk channel is not configured")?;
+            Ok(Arc::new(NextcloudTalkChannel::new_with_proxy(
+                nc.base_url.clone(),
+                nc.app_token.clone(),
+                nc.bot_name.clone().unwrap_or_default(),
+                nc.allowed_users.clone(),
+                nc.proxy_url.clone(),
+            )))
+        }
+        "mochat" => {
+            let mc = config
+                .channels_config
+                .mochat
+                .as_ref()
+                .context("Mochat channel is not configured")?;
+            Ok(Arc::new(MochatChannel::new(
+                mc.api_url.clone(),
+                mc.api_token.clone(),
+                mc.allowed_users.clone(),
+                mc.poll_interval_secs,
+            )))
+        }
+        "reddit" => {
+            let rd = config
+                .channels_config
+                .reddit
+                .as_ref()
+                .context("Reddit channel is not configured")?;
+            Ok(Arc::new(RedditChannel::new(
+                rd.client_id.clone(),
+                rd.client_secret.clone(),
+                rd.refresh_token.clone(),
+                rd.username.clone(),
+                rd.subreddit.clone(),
+            )))
+        }
+        "imessage" => {
+            let im = config
+                .channels_config
+                .imessage
+                .as_ref()
+                .context("iMessage channel is not configured")?;
+            Ok(Arc::new(IMessageChannel::new(im.allowed_contacts.clone())))
+        }
+        "nostr" => {
+            #[cfg(feature = "channel-nostr")]
+            {
+                let ns = config
+                    .channels_config
+                    .nostr
+                    .as_ref()
+                    .context("Nostr channel is not configured")?;
+                // NostrChannel::new is async (connects to relays). Build it on the
+                // current runtime without making this helper async.
+                let channel = tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current().block_on(NostrChannel::new(
+                        &ns.private_key,
+                        ns.relays.clone(),
+                        &ns.allowed_pubkeys,
+                    ))
+                })?;
+                Ok(Arc::new(channel))
+            }
+            #[cfg(not(feature = "channel-nostr"))]
+            {
+                anyhow::bail!("Nostr channel requires the `channel-nostr` feature");
+            }
+        }
         other => anyhow::bail!(
-            "Unknown channel '{other}'. Supported: telegram, discord, slack, mattermost, signal, matrix, whatsapp, qq"
+            "Unknown channel '{other}'. Supported: telegram, discord, slack, mattermost, signal, matrix, whatsapp, qq, email, wati, linq, nextcloud_talk, mochat, reddit, imessage, nostr"
         ),
     }
 }
@@ -10524,6 +10634,7 @@ This is an example JSON object for profile settings."#;
             mention_only: Some(false),
             interrupt_on_new_message: false,
             proxy_url: None,
+            notification_target: None,
         });
 
         let channels = collect_configured_channels(&config, "test");
@@ -11613,7 +11724,7 @@ This is an example JSON object for profile settings."#;
             mention_only: false,
             ack_reactions: None,
             proxy_url: None,
-            notification_chat_id: None,
+            notification_target: None,
         });
         match build_channel_by_id(&config, "telegram") {
             Ok(channel) => assert_eq!(channel.name(), "telegram"),

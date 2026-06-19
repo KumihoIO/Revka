@@ -52,6 +52,9 @@ impl ChannelConfig for ClawdTalkConfig {
     fn desc() -> &'static str {
         "ClawdTalk Channel"
     }
+    fn slug() -> &'static str {
+        "clawdtalk"
+    }
 }
 
 impl ClawdTalkChannel {
@@ -281,6 +284,10 @@ struct VoiceSettings {
 impl Channel for ClawdTalkChannel {
     fn name(&self) -> &str {
         "ClawdTalk"
+    }
+
+    fn supports_one_off_send(&self) -> bool {
+        false
     }
 
     async fn send(&self, message: &SendMessage) -> anyhow::Result<()> {

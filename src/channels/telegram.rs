@@ -1,4 +1,4 @@
-use super::traits::{Channel, ChannelMessage, SendMessage};
+use super::traits::{Channel, ChannelMessage, SendMessage, SendOutcome};
 use crate::config::{Config, StreamMode};
 use crate::security::pairing::PairingGuard;
 use anyhow::Context;
@@ -2872,6 +2872,54 @@ impl Channel for TelegramChannel {
         }
 
         self.send_text_chunks(&content, chat_id, thread_id).await
+    }
+
+    async fn send_with_id(&self, message: &SendMessage) -> anyhow::Result<SendOutcome> {
+        // Post a plain-text notification and capture the Telegram `message_id`
+        // so the dispatch layer can scope approval replies via
+        // `reply_to_message`.
+        let (chat_id, thread_id) = match message.recipient.split_once(':') {
+            Some((chat, thread)) => (chat, Some(thread)),
+            None => (message.recipient.as_str(), None),
+        };
+        let text = match &message.subject {
+            Some(subject) => format!("*{subject}*\n\n{}", message.content),
+            None => message.content.clone(),
+        };
+
+        let mut body = serde_json::json!({
+            "chat_id": chat_id,
+            "text": text,
+        });
+        if let Some(tid) = thread_id {
+            body["message_thread_id"] = serde_json::Value::String(tid.to_string());
+        }
+
+        let resp = self
+            .http_client()
+            .post(self.api_url("sendMessage"))
+            .json(&body)
+            .send()
+            .await?;
+
+        let status = resp.status();
+        let parsed: serde_json::Value = resp.json().await.unwrap_or(serde_json::Value::Null);
+        if !status.is_success() || parsed.get("ok") != Some(&serde_json::Value::Bool(true)) {
+            let desc = parsed
+                .get("description")
+                .and_then(|e| e.as_str())
+                .unwrap_or("unknown");
+            anyhow::bail!("Telegram sendMessage failed ({status}): {desc}");
+        }
+
+        let message_id = parsed
+            .pointer("/result/message_id")
+            .and_then(|v| v.as_i64())
+            .map(|id| id.to_string());
+        Ok(SendOutcome {
+            message_id,
+            thread_id: None,
+        })
     }
 
     async fn listen(&self, tx: tokio::sync::mpsc::Sender<ChannelMessage>) -> anyhow::Result<()> {

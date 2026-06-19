@@ -24,6 +24,18 @@ pub struct ChannelMessage {
     pub attachments: Vec<super::media_pipeline::MediaAttachment>,
 }
 
+/// Outcome of sending a message through a channel.
+///
+/// Carries the platform-assigned identifiers for a sent message so callers
+/// (e.g. notification dispatch) can track or thread follow-up messages.
+#[derive(Debug, Clone, Default)]
+pub struct SendOutcome {
+    /// Platform-assigned message identifier, when the channel reports one.
+    pub message_id: Option<String>,
+    /// Platform thread identifier (e.g. Slack `ts`), when applicable.
+    pub thread_id: Option<String>,
+}
+
 /// Message to send through a channel
 #[derive(Debug, Clone)]
 pub struct SendMessage {
@@ -84,6 +96,24 @@ pub trait Channel: Send + Sync {
 
     /// Send a message through this channel
     async fn send(&self, message: &SendMessage) -> anyhow::Result<()>;
+
+    /// Whether this channel can deliver a one-off cold send (e.g. a workflow
+    /// notification) addressed at a configured target. Listen-only or
+    /// broadcast-style channels override this to `false`.
+    fn supports_one_off_send(&self) -> bool {
+        true
+    }
+
+    /// Send a message and return the platform-assigned identifiers for it.
+    ///
+    /// The default implementation delegates to [`Channel::send`] and reports an
+    /// empty [`SendOutcome`]. Channels that can capture the created message ID
+    /// (and thread ID where applicable) override this to populate the outcome,
+    /// which notification dispatch uses to scope approval replies.
+    async fn send_with_id(&self, message: &SendMessage) -> anyhow::Result<SendOutcome> {
+        self.send(message).await?;
+        Ok(SendOutcome::default())
+    }
 
     /// Start listening for incoming messages (long-running)
     async fn listen(&self, tx: tokio::sync::mpsc::Sender<ChannelMessage>) -> anyhow::Result<()>;

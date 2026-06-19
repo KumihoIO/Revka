@@ -948,7 +948,7 @@ mod tests {
             mention_only: false,
             ack_reactions: None,
             proxy_url: None,
-            notification_chat_id: None,
+            notification_target: None,
         });
         assert!(has_supervised_channels(&config));
     }
@@ -977,6 +977,7 @@ mod tests {
             mention_only: Some(false),
             interrupt_on_new_message: false,
             proxy_url: None,
+            notification_target: None,
         });
         assert!(has_supervised_channels(&config));
     }
@@ -989,6 +990,7 @@ mod tests {
             app_secret: "app-secret".into(),
             allowed_users: vec!["*".into()],
             proxy_url: None,
+            notification_target: None,
         });
         assert!(has_supervised_channels(&config));
     }
@@ -1003,6 +1005,7 @@ mod tests {
             allowed_users: vec!["*".into()],
             proxy_url: None,
             bot_name: None,
+            notification_target: None,
         });
         assert!(has_supervised_channels(&config));
     }
@@ -1074,7 +1077,7 @@ mod tests {
             mention_only: false,
             ack_reactions: None,
             proxy_url: None,
-            notification_chat_id: None,
+            notification_target: None,
         });
 
         let target = resolve_heartbeat_delivery(&config).unwrap();
@@ -1093,7 +1096,7 @@ mod tests {
             mention_only: false,
             ack_reactions: None,
             proxy_url: None,
-            notification_chat_id: None,
+            notification_target: None,
         });
 
         let target = resolve_heartbeat_delivery(&config).unwrap();

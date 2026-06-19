@@ -1,4 +1,4 @@
-use super::traits::{Channel, ChannelMessage, SendMessage};
+use super::traits::{Channel, ChannelMessage, SendMessage, SendOutcome};
 use async_trait::async_trait;
 use futures_util::{SinkExt, StreamExt};
 use parking_lot::Mutex;
@@ -912,6 +912,44 @@ impl Channel for DiscordChannel {
         }
 
         Ok(())
+    }
+
+    async fn send_with_id(&self, message: &SendMessage) -> anyhow::Result<SendOutcome> {
+        // Render an optional subject as a bold header, then split into
+        // Discord-sized chunks. The first chunk's message ID is returned so the
+        // notification dispatch can thread approval replies from it.
+        let body = match &message.subject {
+            Some(subject) => format!("**{subject}**\n\n{}", message.content),
+            None => message.content.clone(),
+        };
+        let chunks = split_message_for_discord(&body);
+        let client = self.http_client();
+        let mut first_id: Option<String> = None;
+
+        for (i, chunk) in chunks.iter().enumerate() {
+            if i == 0 {
+                let id = send_discord_message_json_with_id(
+                    &client,
+                    &self.bot_token,
+                    &message.recipient,
+                    chunk,
+                )
+                .await?;
+                first_id = Some(id);
+            } else {
+                send_discord_message_json(&client, &self.bot_token, &message.recipient, chunk)
+                    .await?;
+            }
+
+            if i < chunks.len() - 1 {
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            }
+        }
+
+        Ok(SendOutcome {
+            message_id: first_id,
+            thread_id: None,
+        })
     }
 
     #[allow(clippy::too_many_lines)]

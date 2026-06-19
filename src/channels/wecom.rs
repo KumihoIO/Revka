@@ -40,6 +40,10 @@ impl Channel for WeComChannel {
         "wecom"
     }
 
+    fn supports_one_off_send(&self) -> bool {
+        false
+    }
+
     async fn send(&self, message: &SendMessage) -> anyhow::Result<()> {
         let body = serde_json::json!({
             "msgtype": "text",

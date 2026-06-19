@@ -433,6 +433,10 @@ impl Channel for VoiceCallChannel {
         "voice_call"
     }
 
+    fn supports_one_off_send(&self) -> bool {
+        false
+    }
+
     async fn send(&self, message: &SendMessage) -> Result<()> {
         // For active calls, TTS the message to the caller
         if let Some(ref thread_ts) = message.thread_ts {

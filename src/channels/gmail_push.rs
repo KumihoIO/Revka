@@ -74,6 +74,9 @@ impl crate::config::traits::ChannelConfig for GmailPushConfig {
     fn desc() -> &'static str {
         "Gmail Pub/Sub real-time push notifications"
     }
+    fn slug() -> &'static str {
+        "gmail_push"
+    }
 }
 
 impl Default for GmailPushConfig {
