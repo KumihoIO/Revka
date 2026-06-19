@@ -2006,6 +2006,86 @@ async fn handle_runtime_command_if_needed(
     true
 }
 
+/// Resume a paused `human_approval` run when an incoming channel message is an
+/// unambiguous bare approve/reject keyword.
+///
+/// The channel adapters (Discord/Slack/Telegram) intercept *replies* to the
+/// prompt in their own listeners for precise, parallel-safe matching. This
+/// central hook adds a generic fallback for EVERY channel: a plain keyword (no
+/// reply) resumes the run when exactly one approval is pending for that chat
+/// (see [`ApprovalRegistry::match_any_channel_keyword`]). Returns `true` when
+/// handled, so the caller skips the agent turn for that message.
+async fn handle_approval_if_needed(
+    ctx: &ChannelRuntimeContext,
+    msg: &traits::ChannelMessage,
+    target_channel: Option<&Arc<dyn Channel>>,
+) -> bool {
+    let registry = crate::gateway::approval_registry::global();
+    let Some((run_id, approved, feedback)) =
+        registry.match_any_channel_keyword(&msg.channel, &msg.reply_target, &msg.content)
+    else {
+        return false;
+    };
+    let Some(pending) = registry.try_claim(&run_id) else {
+        return false;
+    };
+
+    let port = ctx.prompt_config.gateway.port;
+    let url = format!("http://127.0.0.1:{port}/api/workflows/runs/{run_id}/approve");
+    let client = reqwest::Client::new();
+    match client
+        .post(&url)
+        .json(&serde_json::json!({ "approved": approved, "feedback": feedback }))
+        .send()
+        .await
+    {
+        Ok(resp) if resp.status().is_success() => {
+            tracing::info!(
+                run_id = %run_id,
+                channel = %msg.channel,
+                approved,
+                "approval resumed via bare keyword"
+            );
+        }
+        Ok(resp) => {
+            tracing::warn!(
+                run_id = %run_id,
+                status = %resp.status(),
+                "approval resume endpoint returned error"
+            );
+        }
+        Err(e) => {
+            tracing::warn!(
+                run_id = %run_id,
+                error = %e,
+                "failed to call approval resume endpoint"
+            );
+        }
+    }
+
+    if let Some(channel) = target_channel {
+        let wf = pending.workflow_name;
+        let confirm = if approved {
+            format!("✅ Workflow `{wf}` approved.")
+        } else if feedback.is_empty() {
+            format!("❌ Workflow `{wf}` rejected.")
+        } else {
+            format!("❌ Workflow `{wf}` rejected. Feedback: {feedback}")
+        };
+        if let Err(e) = channel
+            .send(&SendMessage::new(confirm, &msg.reply_target).in_thread(msg.thread_ts.clone()))
+            .await
+        {
+            tracing::warn!(
+                "Failed to send approval confirmation on {}: {e}",
+                channel.name()
+            );
+        }
+    }
+
+    true
+}
+
 /// Call `kumiho_memory_engage` via MCP before the LLM turn.
 ///
 /// Returns a formatted memory context string to inject into the system prompt,
@@ -2962,6 +3042,10 @@ async fn process_channel_message(
     );
 
     if handle_runtime_command_if_needed(ctx.as_ref(), &msg, target_channel.as_ref()).await {
+        return;
+    }
+
+    if handle_approval_if_needed(ctx.as_ref(), &msg, target_channel.as_ref()).await {
         return;
     }
 

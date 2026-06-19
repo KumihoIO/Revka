@@ -269,6 +269,53 @@ impl ApprovalRegistry {
         None
     }
 
+    /// Match a bare approve/reject keyword to a pending approval on ANY channel,
+    /// scoped to `(channel, channel_id)`. Channel-agnostic and reply-free: the
+    /// per-platform matchers above handle precise reply/thread matching (which
+    /// disambiguates parallel approvals), while this fallback lets a plain
+    /// "approve" resume a run on any channel — but ONLY when exactly one approval
+    /// is pending for that chat/channel, so multiple concurrent approvals still
+    /// require an explicit reply/thread to disambiguate.
+    ///
+    /// `channel` is the channel slug (e.g. "telegram", "discord", "mattermost");
+    /// `channel_id` is the incoming message's chat/channel, compared against the
+    /// scope's `channel_id` captured when the prompt was sent.
+    pub fn match_any_channel_keyword(
+        &self,
+        channel: &str,
+        channel_id: &str,
+        message: &str,
+    ) -> Option<(String, bool, String)> {
+        let map = self.pending.read().unwrap();
+        let msg_lower = message.trim().to_lowercase();
+
+        let mut only: Option<(&String, &PendingApproval)> = None;
+        let mut count = 0usize;
+        for (run_id, approval) in map.iter() {
+            let scoped = approval
+                .scopes
+                .get(channel)
+                .and_then(|s| s.channel_id.as_deref())
+                .map(|id| id == channel_id)
+                .unwrap_or(false);
+            if scoped {
+                count += 1;
+                only = Some((run_id, approval));
+            }
+        }
+        if count != 1 {
+            return None;
+        }
+        let (run_id, approval) = only?;
+        match_keywords(
+            &msg_lower,
+            message,
+            &approval.approve_keywords,
+            &approval.reject_keywords,
+        )
+        .map(|(is_approve, feedback)| (run_id.clone(), is_approve, feedback))
+    }
+
     /// Remove a pending approval (cleanup after resolution).
     pub fn remove(&self, run_id: &str) {
         let mut map = self.pending.write().unwrap();
@@ -305,4 +352,93 @@ fn match_keywords(
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn approval(run_id: &str) -> PendingApproval {
+        PendingApproval::new(
+            run_id.into(),
+            "approve".into(),
+            "wf".into(),
+            vec!["approve".into(), "yes".into()],
+            vec!["reject".into()],
+            "/tmp".into(),
+        )
+    }
+
+    fn scope(chat: &str) -> ApprovalScope {
+        ApprovalScope {
+            channel_id: Some(chat.into()),
+            thread_id: None,
+            prompt_message_id: None,
+        }
+    }
+
+    #[test]
+    fn bare_keyword_resumes_single_pending_on_any_channel() {
+        for ch in ["telegram", "discord", "slack", "mattermost", "signal"] {
+            let reg = ApprovalRegistry::new();
+            reg.register(approval("r1"));
+            reg.attach("r1", ch, scope("100"));
+            let m = reg.match_any_channel_keyword(ch, "100", "approve");
+            assert_eq!(
+                m.map(|(id, ok, _)| (id, ok)),
+                Some(("r1".into(), true)),
+                "channel {ch}"
+            );
+        }
+    }
+
+    #[test]
+    fn bare_reject_carries_feedback() {
+        let reg = ApprovalRegistry::new();
+        reg.register(approval("r1"));
+        reg.attach("r1", "discord", scope("c1"));
+        let m = reg.match_any_channel_keyword("discord", "c1", "reject not safe");
+        assert_eq!(m, Some(("r1".into(), false, "not safe".into())));
+    }
+
+    #[test]
+    fn ambiguous_when_multiple_pending_in_same_chat() {
+        let reg = ApprovalRegistry::new();
+        reg.register(approval("r1"));
+        reg.attach("r1", "slack", scope("c1"));
+        reg.register(approval("r2"));
+        reg.attach("r2", "slack", scope("c1"));
+        // Two pending in the same chat → ambiguous → no match (an explicit
+        // reply/thread via the per-platform matcher disambiguates instead).
+        assert!(
+            reg.match_any_channel_keyword("slack", "c1", "approve")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn no_match_for_other_chat_or_channel() {
+        let reg = ApprovalRegistry::new();
+        reg.register(approval("r1"));
+        reg.attach("r1", "telegram", scope("100"));
+        assert!(
+            reg.match_any_channel_keyword("telegram", "999", "approve")
+                .is_none()
+        );
+        assert!(
+            reg.match_any_channel_keyword("discord", "100", "approve")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn no_match_for_non_keyword_message() {
+        let reg = ApprovalRegistry::new();
+        reg.register(approval("r1"));
+        reg.attach("r1", "telegram", scope("100"));
+        assert!(
+            reg.match_any_channel_keyword("telegram", "100", "hello there")
+                .is_none()
+        );
+    }
 }
