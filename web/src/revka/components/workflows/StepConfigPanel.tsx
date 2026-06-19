@@ -470,6 +470,9 @@ export default function StepConfigPanel({
         byValue.set('dashboard', { value: 'dashboard', label: 'Dashboard' });
         for (const ch of channels) {
           if (!ch.enabled || ch.status !== 'active') continue;
+          // Only channels that can deliver a one-off notification are valid
+          // targets. When the backend reports notify_capable, honor it.
+          if (ch.notify_capable === false) continue;
           const value = ch.id ?? ch.name;
           byValue.set(value, { value, label: ch.display_name ?? ch.name });
         }

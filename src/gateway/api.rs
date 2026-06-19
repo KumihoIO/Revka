@@ -2162,168 +2162,123 @@ pub async fn handle_api_channel_events(
             // Case-insensitive channel routing — authored YAML often has
             // `Discord` / `DISCORD` and a silent fall-through is a painful
             // failure mode (the message just never shows up).
-            match ch.to_ascii_lowercase().as_str() {
-                "discord" => {
-                    if let Some(dc) = &config.channels_config.discord {
-                        if let Some(ch_id) = &dc.notification_target {
-                            let token = dc.bot_token.clone();
-                            let channel_id = ch_id.clone();
-                            let title_c = title.clone();
-                            let message_c = format!("{message}{keyword_instructions}");
-                            let approval_run_id = approval_run_id.clone();
-                            let workflow_name = approval_workflow_name.clone();
-                            let registry = state.approval_registry.clone();
-                            tokio::spawn(async move {
-                                let first_msg_id = dispatch_discord_long(
-                                    &token,
-                                    &channel_id,
-                                    &title_c,
-                                    &message_c,
-                                )
-                                .await;
-                                // If this was an approval prompt, spin up a thread
-                                // from the first message so replies are scoped to
-                                // this specific approval, and attach the IDs to
-                                // the registry so the Discord listener can match
-                                // responses back to this run.
-                                if let Some(run_id) = approval_run_id {
+            let slug = ch.to_ascii_lowercase();
+
+            // "dashboard" is handled by the WebSocket/SSE broadcast above.
+            if slug == "dashboard" {
+                continue;
+            }
+
+            // Resolve the channel's configured notification target generically.
+            // Skip (with a warning, not silently) when it isn't configured.
+            let target = config
+                .channels_config
+                .channels()
+                .into_iter()
+                .find(|(handle, present)| *present && handle.slug() == slug)
+                .and_then(|(handle, _)| handle.notification_target());
+            let Some(target) = target else {
+                tracing::warn!(
+                    "channel-events: '{ch}' requested but no notification_target is configured; skipping"
+                );
+                continue;
+            };
+
+            // Build the channel instance and confirm it can do a one-off send.
+            let channel = match crate::channels::build_channel_by_id(&config, &slug) {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::warn!("channel-events: cannot build '{ch}': {e}; skipping");
+                    continue;
+                }
+            };
+            if !channel.supports_one_off_send() {
+                tracing::warn!("channel-events: '{ch}' does not support one-off sends; skipping");
+                continue;
+            }
+
+            let message_c = format!("{message}{keyword_instructions}");
+            let msg = crate::channels::traits::SendMessage::with_subject(
+                message_c,
+                target.clone(),
+                title.clone(),
+            );
+
+            if is_approval_request {
+                let registry = state.approval_registry.clone();
+                let approval_run_id = approval_run_id.clone();
+                let workflow_name = approval_workflow_name.clone();
+                let discord_token = config
+                    .channels_config
+                    .discord
+                    .as_ref()
+                    .map(|dc| dc.bot_token.clone());
+                let slug_c = slug.clone();
+                let target_c = target.clone();
+                tokio::spawn(async move {
+                    let outcome = match channel.send_with_id(&msg).await {
+                        Ok(o) => o,
+                        Err(e) => {
+                            tracing::warn!("channel-events: '{slug_c}' send failed: {e}");
+                            return;
+                        }
+                    };
+                    let Some(run_id) = approval_run_id else {
+                        return;
+                    };
+                    // Wire the platform identifiers back to the approval registry
+                    // so the channel's listener can match replies to this run.
+                    match slug_c.as_str() {
+                        "discord" => {
+                            // Spin up a thread from the prompt message so replies
+                            // are scoped to this specific approval.
+                            let thread_id = match (&discord_token, &outcome.message_id) {
+                                (Some(token), Some(msg_id)) => {
                                     let thread_name = format!(
                                         "Approval: {}",
                                         truncate_thread_name(&workflow_name)
                                     );
-                                    let thread_id = match &first_msg_id {
-                                        Some(msg_id) => {
-                                            create_discord_thread(
-                                                &token,
-                                                &channel_id,
-                                                msg_id,
-                                                &thread_name,
-                                            )
-                                            .await
-                                        }
-                                        None => None,
-                                    };
-                                    registry.attach_discord(
-                                        &run_id,
-                                        Some(channel_id.clone()),
-                                        thread_id,
-                                        first_msg_id,
-                                    );
+                                    create_discord_thread(token, &target_c, msg_id, &thread_name)
+                                        .await
                                 }
-                            });
-                        } else {
-                            tracing::debug!(
-                                "channel-events: discord requested but notification_channel_id not configured"
+                                _ => None,
+                            };
+                            registry.attach_discord(
+                                &run_id,
+                                Some(target_c.clone()),
+                                thread_id,
+                                outcome.message_id,
                             );
                         }
-                    }
-                }
-                "slack" => {
-                    if let Some(sc) = &config.channels_config.slack {
-                        if let Some(ch_id) = &sc.notification_target {
-                            let token = sc.bot_token.clone();
-                            let channel_id = ch_id.clone();
-                            let title_c = title.clone();
-                            let message_c = format!("{message}{keyword_instructions}");
-                            let approval_run_id = approval_run_id.clone();
-                            let registry = state.approval_registry.clone();
-                            tokio::spawn(async move {
-                                let text = format!("*{title_c}*\n\n{message_c}");
-                                let thread_ts =
-                                    dispatch_slack_notification(&token, &channel_id, &text).await;
-                                if let Some(run_id) = approval_run_id {
-                                    registry.attach_slack(
-                                        &run_id,
-                                        Some(channel_id.clone()),
-                                        thread_ts,
-                                    );
-                                }
-                            });
-                        } else {
-                            tracing::debug!(
-                                "channel-events: slack requested but notification_channel_id not configured"
+                        "slack" => {
+                            registry.attach_slack(
+                                &run_id,
+                                Some(target_c.clone()),
+                                outcome.thread_id,
                             );
                         }
-                    }
-                }
-                "telegram" => {
-                    if let Some(tc) = &config.channels_config.telegram {
-                        if let Some(chat_id) = &tc.notification_target {
-                            let token = tc.bot_token.clone();
-                            let chat_id_c = chat_id.clone();
-                            let title_c = title.clone();
-                            let message_c = format!("{message}{keyword_instructions}");
-                            let approval_run_id = approval_run_id.clone();
-                            let registry = state.approval_registry.clone();
-                            tokio::spawn(async move {
-                                let text = format!("*{title_c}*\n\n{message_c}");
-                                let msg_id =
-                                    dispatch_telegram_notification(&token, &chat_id_c, &text).await;
-                                if let Some(run_id) = approval_run_id {
-                                    registry.attach_telegram(
-                                        &run_id,
-                                        Some(chat_id_c.clone()),
-                                        msg_id,
-                                    );
-                                }
-                            });
-                        } else {
-                            tracing::debug!(
-                                "channel-events: telegram requested but notification_chat_id not configured"
-                            );
+                        "telegram" => {
+                            let msg_id = outcome.message_id.and_then(|s| s.parse::<i64>().ok());
+                            registry.attach_telegram(&run_id, Some(target_c.clone()), msg_id);
+                        }
+                        _ => {
+                            // Other channels deliver the approval prompt but do
+                            // not yet support reply-based scoping.
                         }
                     }
-                }
-                // "dashboard" is handled by the WebSocket broadcast above
-                "dashboard" => {}
-                _ => {
-                    tracing::debug!("channel-events: unsupported channel '{ch}', skipping");
-                }
+                });
+            } else {
+                let slug_c = slug.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = channel.send(&msg).await {
+                        tracing::warn!("channel-events: '{slug_c}' notification send failed: {e}");
+                    }
+                });
             }
         }
     }
 
     Json(serde_json::json!({ "ok": true })).into_response()
-}
-
-/// Send a message to a Discord channel via the REST API. Returns the created
-/// message's ID on success so callers can thread replies from it.
-async fn dispatch_discord_notification(
-    bot_token: &str,
-    channel_id: &str,
-    content: &str,
-) -> Option<String> {
-    let url = format!(
-        "https://discord.com/api/v10/channels/{}/messages",
-        channel_id
-    );
-    let client = reqwest::Client::new();
-    match client
-        .post(&url)
-        .header("Authorization", format!("Bot {bot_token}"))
-        .json(&serde_json::json!({ "content": content }))
-        .send()
-        .await
-    {
-        Ok(resp) if resp.status().is_success() => {
-            tracing::info!("channel-events: Discord notification sent to {channel_id}");
-            let body: serde_json::Value = resp.json().await.unwrap_or(serde_json::Value::Null);
-            body.get("id").and_then(|v| v.as_str()).map(String::from)
-        }
-        Ok(resp) => {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            tracing::warn!(
-                "channel-events: Discord API {status}: {}",
-                &body[..body.len().min(200)]
-            );
-            None
-        }
-        Err(e) => {
-            tracing::warn!("channel-events: Discord send failed: {e}");
-            None
-        }
-    }
 }
 
 /// Create a public thread from an existing message so approval replies are
@@ -2378,80 +2333,6 @@ async fn create_discord_thread(
     }
 }
 
-/// Send a plain-text message to a Slack channel via the Web API. Returns the
-/// posted message's `ts` so callers can scope replies via `thread_ts`.
-async fn dispatch_slack_notification(
-    bot_token: &str,
-    channel_id: &str,
-    text: &str,
-) -> Option<String> {
-    let client = reqwest::Client::new();
-    match client
-        .post("https://slack.com/api/chat.postMessage")
-        .bearer_auth(bot_token)
-        .json(&serde_json::json!({
-            "channel": channel_id,
-            "text": text,
-        }))
-        .send()
-        .await
-    {
-        Ok(resp) => {
-            let body: serde_json::Value = resp.json().await.unwrap_or(serde_json::Value::Null);
-            if body.get("ok") == Some(&serde_json::Value::Bool(true)) {
-                tracing::info!("channel-events: Slack notification sent to {channel_id}");
-                body.get("ts").and_then(|v| v.as_str()).map(String::from)
-            } else {
-                let err = body
-                    .get("error")
-                    .and_then(|e| e.as_str())
-                    .unwrap_or("unknown");
-                tracing::warn!("channel-events: Slack chat.postMessage error: {err}");
-                None
-            }
-        }
-        Err(e) => {
-            tracing::warn!("channel-events: Slack send failed: {e}");
-            None
-        }
-    }
-}
-
-/// Send a plain-text message to a Telegram chat. Returns the sent message_id
-/// so callers can scope approval replies via `reply_to_message`.
-async fn dispatch_telegram_notification(bot_token: &str, chat_id: &str, text: &str) -> Option<i64> {
-    let url = format!("https://api.telegram.org/bot{bot_token}/sendMessage");
-    let client = reqwest::Client::new();
-    match client
-        .post(&url)
-        .json(&serde_json::json!({
-            "chat_id": chat_id,
-            "text": text,
-        }))
-        .send()
-        .await
-    {
-        Ok(resp) => {
-            let body: serde_json::Value = resp.json().await.unwrap_or(serde_json::Value::Null);
-            if body.get("ok") == Some(&serde_json::Value::Bool(true)) {
-                tracing::info!("channel-events: Telegram notification sent to {chat_id}");
-                body.pointer("/result/message_id").and_then(|v| v.as_i64())
-            } else {
-                let desc = body
-                    .get("description")
-                    .and_then(|e| e.as_str())
-                    .unwrap_or("unknown");
-                tracing::warn!("channel-events: Telegram sendMessage error: {desc}");
-                None
-            }
-        }
-        Err(e) => {
-            tracing::warn!("channel-events: Telegram send failed: {e}");
-            None
-        }
-    }
-}
-
 /// Discord thread names must be ≤100 chars. Truncate with an ellipsis for
 /// long workflow names.
 fn truncate_thread_name(name: &str) -> String {
@@ -2462,90 +2343,6 @@ fn truncate_thread_name(name: &str) -> String {
         let truncated: String = name.chars().take(MAX - 1).collect();
         format!("{truncated}…")
     }
-}
-
-/// Send a long message to Discord, splitting into multiple ≤1900-char chunks
-/// so nothing is truncated.  The first chunk gets the bold title header.
-async fn dispatch_discord_long(
-    bot_token: &str,
-    channel_id: &str,
-    title: &str,
-    message: &str,
-) -> Option<String> {
-    let header = format!("**{}**\n\n", title);
-    let full = format!("{}{}", header, message);
-
-    if full.len() <= 1900 {
-        return dispatch_discord_notification(bot_token, channel_id, &full).await;
-    }
-
-    // Split on line boundaries, respecting the 1900-char limit per message.
-    let mut chunks: Vec<String> = Vec::new();
-    let mut current = header;
-
-    for line in message.lines() {
-        // Hard-split individual lines that exceed the limit on their own.
-        let sub_lines: Vec<&str> = if line.len() > 1850 {
-            // Split at char boundaries near 1850 chars
-            let mut parts = Vec::new();
-            let mut start = 0;
-            while start < line.len() {
-                let end = std::cmp::min(start + 1850, line.len());
-                // Try to break at a space if possible
-                let break_at = if end < line.len() {
-                    line[start..end]
-                        .rfind(' ')
-                        .map(|p| start + p + 1)
-                        .unwrap_or(end)
-                } else {
-                    end
-                };
-                parts.push(&line[start..break_at]);
-                start = break_at;
-            }
-            parts
-        } else {
-            vec![line]
-        };
-
-        for sub in sub_lines {
-            let candidate = if current.is_empty() {
-                sub.to_string()
-            } else {
-                format!("{}\n{}", current, sub)
-            };
-
-            if candidate.len() > 1900 && !current.is_empty() {
-                chunks.push(current);
-                current = sub.to_string();
-            } else {
-                current = candidate;
-            }
-        }
-    }
-    if !current.is_empty() {
-        chunks.push(current);
-    }
-
-    let n = chunks.len();
-    let mut first_msg_id: Option<String> = None;
-    for (i, chunk) in chunks.iter().enumerate() {
-        let text = if n > 1 {
-            format!("{}\n`({}/{})`", chunk, i + 1, n)
-        } else {
-            chunk.clone()
-        };
-        let msg_id = dispatch_discord_notification(bot_token, channel_id, &text).await;
-        if i == 0 {
-            first_msg_id = msg_id;
-        }
-        // Rate limit: wait 600ms between messages to avoid Discord 429s
-        if i + 1 < n {
-            tokio::time::sleep(std::time::Duration::from_millis(600)).await;
-        }
-    }
-    tracing::info!("channel-events: Discord long message sent in {n} chunk(s) to {channel_id}");
-    first_msg_id
 }
 
 // ── Channels detail endpoint ─────────────────────────────────────

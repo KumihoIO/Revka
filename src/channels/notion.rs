@@ -272,6 +272,10 @@ impl Channel for NotionChannel {
         "notion"
     }
 
+    fn supports_one_off_send(&self) -> bool {
+        false
+    }
+
     async fn send(&self, message: &SendMessage) -> Result<()> {
         // recipient is the page_id for Notion
         let page_id = &message.recipient;

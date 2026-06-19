@@ -286,6 +286,10 @@ impl Channel for ClawdTalkChannel {
         "ClawdTalk"
     }
 
+    fn supports_one_off_send(&self) -> bool {
+        false
+    }
+
     async fn send(&self, message: &SendMessage) -> anyhow::Result<()> {
         // For ClawdTalk, "send" initiates a call with the message as TTS
         let session = self.initiate_call(&message.recipient, None).await?;
