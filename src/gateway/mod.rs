@@ -493,8 +493,15 @@ const TUNNEL_HEALTH_CHECK_INTERVAL_SECS: u64 = 30;
 /// public URL offline with no restart and no health signal, and it was never
 /// stopped on shutdown. This mirrors the channel supervisor: it probes
 /// `health_check()` on an interval, restarts (`stop()` then `start()`) with
-/// exponential backoff on failure, feeds status into `crate::health`, and
-/// stops the tunnel gracefully when the gateway shuts down.
+/// exponential backoff on failure, and feeds status into `crate::health`.
+///
+/// On shutdown (the watch flips to `true`, or the sender is dropped) it stops
+/// the tunnel and exits — including from inside the backoff wait, so it never
+/// lingers for a full backoff. The caller must **await the returned handle**
+/// on the shutdown path (as it does for the MCP task) so the stop completes
+/// before the process exits; this matters for providers like Tailscale whose
+/// exposure lives in a daemon and is only torn down by `stop()` (not by
+/// `kill_on_drop` of the spawned CLI child).
 fn spawn_tunnel_supervisor(
     tunnel: Box<dyn crate::tunnel::Tunnel>,
     host: String,
@@ -517,45 +524,56 @@ fn spawn_tunnel_supervisor(
         crate::health::mark_component_ok(&component);
 
         loop {
+            // Wait for the next health probe, but wake immediately on shutdown.
             tokio::select! {
                 changed = shutdown_rx.changed() => {
                     // `Err` means the gateway dropped the sender (it is going
                     // away); `Ok` with a `true` value is an explicit shutdown.
-                    // Either way, stop the tunnel and exit so the child process
-                    // is not orphaned.
                     if changed.is_err() || *shutdown_rx.borrow() {
                         match tunnel.stop().await {
                             Ok(()) => tracing::info!(component = %component, "Tunnel stopped on shutdown"),
                             Err(e) => tracing::warn!(component = %component, error = %e, "Tunnel stop on shutdown failed"),
                         }
-                        break;
+                        return;
+                    }
+                    continue;
+                }
+                () = tokio::time::sleep(check_interval) => {}
+            }
+
+            if tunnel.health_check().await {
+                crate::health::mark_component_ok(&component);
+                backoff = initial_backoff_secs.max(1);
+                continue;
+            }
+
+            tracing::warn!(component = %component, "Tunnel health check failed; restarting");
+            crate::health::mark_component_error(&component, "tunnel health check failed");
+            let _ = tunnel.stop().await;
+            crate::health::bump_component_restart(&component);
+
+            // Back off before restarting, but stay responsive to shutdown. The
+            // tunnel is already stopped here, so a shutdown just exits.
+            tokio::select! {
+                changed = shutdown_rx.changed() => {
+                    if changed.is_err() || *shutdown_rx.borrow() {
+                        tracing::info!(component = %component, "Tunnel stopped on shutdown");
+                        return;
                     }
                 }
-                () = tokio::time::sleep(check_interval) => {
-                    if tunnel.health_check().await {
-                        crate::health::mark_component_ok(&component);
-                        backoff = initial_backoff_secs.max(1);
-                        continue;
-                    }
+                () = tokio::time::sleep(Duration::from_secs(backoff)) => {}
+            }
 
-                    tracing::warn!(component = %component, "Tunnel health check failed; restarting");
-                    crate::health::mark_component_error(&component, "tunnel health check failed");
-                    let _ = tunnel.stop().await;
-                    crate::health::bump_component_restart(&component);
-                    tokio::time::sleep(Duration::from_secs(backoff)).await;
-
-                    match tunnel.start(&host, port).await {
-                        Ok(url) => {
-                            tracing::info!(component = %component, url = %url, "Tunnel restarted");
-                            crate::health::mark_component_ok(&component);
-                            backoff = initial_backoff_secs.max(1);
-                        }
-                        Err(e) => {
-                            tracing::error!(component = %component, error = %e, "Tunnel restart failed; will retry");
-                            crate::health::mark_component_error(&component, e.to_string());
-                            backoff = backoff.saturating_mul(2).min(max_backoff);
-                        }
-                    }
+            match tunnel.start(&host, port).await {
+                Ok(url) => {
+                    tracing::info!(component = %component, url = %url, "Tunnel restarted");
+                    crate::health::mark_component_ok(&component);
+                    backoff = initial_backoff_secs.max(1);
+                }
+                Err(e) => {
+                    tracing::error!(component = %component, error = %e, "Tunnel restart failed; will retry");
+                    crate::health::mark_component_error(&component, e.to_string());
+                    backoff = backoff.saturating_mul(2).min(max_backoff);
                 }
             }
         }
@@ -1143,8 +1161,9 @@ pub async fn run_gateway_with_mcp_registry(
 
     // Supervise the running tunnel: health-check + restart with backoff, and a
     // graceful stop on shutdown (#427). Reuses the channel-restart backoff
-    // bounds for consistency with the channel supervisor.
-    if let Some(tun) = running_tunnel.take() {
+    // bounds for consistency with the channel supervisor. The handle is awaited
+    // on the shutdown path below (like `mcp_task`) so the tunnel stop completes.
+    let tunnel_task = running_tunnel.take().map(|tun| {
         spawn_tunnel_supervisor(
             tun,
             host.to_string(),
@@ -1153,8 +1172,8 @@ pub async fn run_gateway_with_mcp_registry(
             config.reliability.channel_initial_backoff_secs,
             config.reliability.channel_max_backoff_secs,
             shutdown_tx.subscribe(),
-        );
-    }
+        )
+    });
 
     // Node registry for dynamic node discovery
     let node_registry = Arc::new(nodes::NodeRegistry::new(config.nodes.max_nodes));
@@ -2302,6 +2321,13 @@ pub async fn run_gateway_with_mcp_registry(
     // Wait for the in-process MCP task to finish its own graceful shutdown.
     // It watches the same `shutdown_tx` we just flipped above.
     if let Some(task) = mcp_task {
+        let _ = task.await;
+    }
+
+    // Wait for the tunnel supervisor to stop the tunnel gracefully (#427). It
+    // watches the same `shutdown_tx`; awaiting it here guarantees `stop()`
+    // (e.g. Tailscale's `funnel reset`) completes before we return.
+    if let Some(task) = tunnel_task {
         let _ = task.await;
     }
 
