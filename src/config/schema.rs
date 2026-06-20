@@ -5646,6 +5646,158 @@ fn is_valid_env_var_name(name: &str) -> bool {
     chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
 }
 
+/// Resolve a JSON-schema node to its effective subschema, following a single
+/// `$ref` (into `$defs`/`definitions`), unwrapping a single-element `allOf`, and
+/// collapsing `anyOf`/`oneOf` to its sole non-null branch (the `Option<T>`
+/// shape). Returns `None` when the schema is ambiguous (a multi-branch
+/// `anyOf`/`oneOf`, e.g. an enum of struct variants) so callers stay
+/// conservative and never flag keys that might be valid in another branch.
+fn resolve_schema_node(
+    node: &serde_json::Value,
+    defs: Option<&serde_json::Value>,
+    depth: u8,
+) -> Option<serde_json::Value> {
+    if depth > 16 {
+        return None; // guard against pathological $ref chains
+    }
+    let obj = node.as_object()?;
+
+    if let Some(reference) = obj.get("$ref").and_then(|v| v.as_str()) {
+        let name = reference.rsplit('/').next()?;
+        let target = defs?.get(name)?;
+        return resolve_schema_node(target, defs, depth + 1);
+    }
+
+    if let Some(all_of) = obj.get("allOf").and_then(|v| v.as_array()) {
+        if all_of.len() == 1 {
+            return resolve_schema_node(&all_of[0], defs, depth + 1);
+        }
+    }
+
+    for combiner in ["anyOf", "oneOf"] {
+        if let Some(variants) = obj.get(combiner).and_then(|v| v.as_array()) {
+            let non_null: Vec<&serde_json::Value> = variants
+                .iter()
+                .filter(|v| v.get("type").and_then(|t| t.as_str()) != Some("null"))
+                .collect();
+            return match non_null.as_slice() {
+                [single] => resolve_schema_node(single, defs, depth + 1),
+                _ => None, // ambiguous (or all-null) — do not flag
+            };
+        }
+    }
+
+    Some(node.clone())
+}
+
+/// Recurse a TOML value into the schema for its declared field, descending into
+/// nested tables and arrays-of-tables so typos at any depth are detected.
+fn collect_unknown_keys_in_value(
+    value: &toml::Value,
+    field_schema: &serde_json::Value,
+    defs: Option<&serde_json::Value>,
+    path: &str,
+    out: &mut Vec<String>,
+) {
+    match value {
+        toml::Value::Table(table) => {
+            collect_unknown_keys_in_table(table, field_schema, defs, path, out);
+        }
+        toml::Value::Array(items) => {
+            // `[[table]]` arrays: validate each element against the `items` schema.
+            if let Some(resolved) = resolve_schema_node(field_schema, defs, 0) {
+                if let Some(item_schema) = resolved.get("items") {
+                    for elem in items {
+                        if let toml::Value::Table(table) = elem {
+                            collect_unknown_keys_in_table(table, item_schema, defs, path, out);
+                        }
+                    }
+                }
+            }
+        }
+        _ => {} // scalars carry no nested keys
+    }
+}
+
+/// Walk a TOML table against an object schema, collecting the dotted paths of
+/// keys that are not declared anywhere in the schema (typos / removed options).
+///
+/// `HashMap`-backed tables (`additionalProperties`) allow arbitrary user-chosen
+/// keys, so those keys are never flagged — but their values are still recursed
+/// into the value schema so a typo *inside* a map entry is still caught.
+fn collect_unknown_keys_in_table(
+    table: &toml::Table,
+    schema_node: &serde_json::Value,
+    defs: Option<&serde_json::Value>,
+    path: &str,
+    out: &mut Vec<String>,
+) {
+    let Some(resolved) = resolve_schema_node(schema_node, defs, 0) else {
+        return; // unresolvable/ambiguous schema — stay conservative
+    };
+
+    let properties = resolved.get("properties").and_then(|v| v.as_object());
+    let additional = resolved.get("additionalProperties");
+    let additional_schema = match additional {
+        Some(serde_json::Value::Object(_)) => additional,
+        // `additionalProperties: true` (or untyped map) — keys are free-form but
+        // there is no value schema to recurse into.
+        Some(serde_json::Value::Bool(true)) => None,
+        _ => None,
+    };
+    let allows_additional = matches!(
+        additional,
+        Some(serde_json::Value::Object(_)) | Some(serde_json::Value::Bool(true))
+    );
+
+    for (key, value) in table {
+        let dotted = if path.is_empty() {
+            key.clone()
+        } else {
+            format!("{path}.{key}")
+        };
+
+        match properties.and_then(|p| p.get(key)) {
+            Some(field_schema) => {
+                collect_unknown_keys_in_value(value, field_schema, defs, &dotted, out);
+            }
+            None => {
+                if let Some(map_value_schema) = additional_schema {
+                    // Known map entry: recurse into the value, don't flag the key.
+                    collect_unknown_keys_in_value(value, map_value_schema, defs, &dotted, out);
+                } else if !allows_additional && properties.is_some() {
+                    // A struct with a fixed field set and no free-form keys: this
+                    // key is a genuine unknown (typo or deprecated option).
+                    out.push(dotted);
+                }
+                // properties absent and no additionalProperties → unknown schema
+                // shape; stay conservative and do not flag.
+            }
+        }
+    }
+}
+
+/// Collect every unknown config key (full dotted path) by walking the parsed
+/// TOML against the JSON schema for [`Config`], recursing into nested tables and
+/// arrays. Returns an empty vec when the schema cannot be built. See #4171 for
+/// why this is a separate diagnostic pass rather than `serde_ignored` on the
+/// real deserialization.
+fn collect_unknown_config_keys(raw: &toml::Table) -> Vec<String> {
+    static SCHEMA_JSON: OnceLock<serde_json::Value> = OnceLock::new();
+    let schema = SCHEMA_JSON.get_or_init(|| {
+        serde_json::to_value(schemars::schema_for!(Config)).unwrap_or(serde_json::Value::Null)
+    });
+    if schema.is_null() {
+        return Vec::new();
+    }
+    // schemars 1.x emits `$defs`; older 0.8 emits `definitions`.
+    let defs = schema.get("$defs").or_else(|| schema.get("definitions"));
+
+    let mut out = Vec::new();
+    collect_unknown_keys_in_table(raw, schema, defs, "", &mut out);
+    out
+}
+
 impl Default for AutonomyConfig {
     fn default() -> Self {
         Self {
@@ -9406,8 +9558,9 @@ impl Config {
             // `[autonomy]` table), causing user-supplied values to be
             // replaced by defaults.  See #4171.
             //
-            // We now deserialize with `toml::from_str` (which is correct)
-            // and run `serde_ignored` separately just for diagnostics.
+            // We now deserialize with `toml::from_str` (which is correct) and
+            // run a separate recursive schema-walk purely for diagnostics
+            // (see the unknown-key detection below).
             let mut config: Config =
                 toml::from_str(&contents).context("Failed to deserialize config file")?;
 
@@ -9430,32 +9583,19 @@ impl Config {
             // config — the warning is advisory.
             warn_on_legacy_memory_tool_names(&config);
 
-            // Detect unknown top-level config keys by comparing the raw
-            // TOML table keys against the JSON schema for `Config`.
-            //
-            // Earlier versions built the known-key set from a default `Config`
-            // round-tripped through TOML, but any field marked
-            // `#[serde(skip_serializing_if = "Option::is_none")]` is dropped
-            // when its default is `None` — so legitimate top-level keys like
-            // `language` were warned about as unknown. The JSON schema from
-            // `schemars` reflects every declared field regardless of default.
+            // Detect unknown config keys at *any* depth by recursively walking
+            // the raw TOML against the JSON schema for `Config`. A typo inside a
+            // nested table (e.g. `[gateway] portt = 99`) is silently dropped by
+            // serde during deserialization, leaving the field at its default; a
+            // top-level-only check missed these. The `schemars` schema reflects
+            // every declared field regardless of `#[serde(default)]` /
+            // `skip_serializing_if`, so legitimate keys are never flagged, and
+            // `HashMap`-backed tables allow their free-form keys.
             if let Ok(raw) = contents.parse::<toml::Table>() {
-                static KNOWN_KEYS: OnceLock<Vec<String>> = OnceLock::new();
-                let known = KNOWN_KEYS.get_or_init(|| {
-                    let schema = schemars::schema_for!(Config);
-                    serde_json::to_value(&schema)
-                        .ok()
-                        .and_then(|v| v.get("properties").cloned())
-                        .and_then(|props| props.as_object().cloned())
-                        .map(|obj| obj.keys().cloned().collect())
-                        .unwrap_or_default()
-                });
-                for key in raw.keys() {
-                    if !known.contains(key) {
-                        tracing::warn!(
-                            "Unknown config key ignored: \"{key}\". Check config.toml for typos or deprecated options.",
-                        );
-                    }
+                for key in collect_unknown_config_keys(&raw) {
+                    tracing::warn!(
+                        "Unknown config key ignored: \"{key}\". Check config.toml for typos or deprecated options.",
+                    );
                 }
             }
             // Set computed paths that are skipped during serialization
@@ -11562,6 +11702,94 @@ mod tests {
             .gated_actions
             .push("memory_forget".to_string());
         warn_on_legacy_memory_tool_names(&cfg);
+    }
+
+    // ── Unknown config key detection (#416) ───────────────────
+
+    fn unknown_keys(toml_src: &str) -> Vec<String> {
+        let raw = toml_src
+            .parse::<toml::Table>()
+            .expect("test TOML should parse");
+        collect_unknown_config_keys(&raw)
+    }
+
+    #[test]
+    async fn unknown_top_level_key_is_flagged() {
+        let keys = unknown_keys("definitely_not_a_real_key = 1\n");
+        assert_eq!(keys, vec!["definitely_not_a_real_key".to_string()]);
+    }
+
+    #[test]
+    async fn known_top_level_key_is_not_flagged() {
+        // `language` is a real top-level Config field (an `Option` with a
+        // `skip_serializing_if`, the case the schema-based check exists to keep
+        // from being false-flagged).
+        let keys = unknown_keys("language = \"en\"\n");
+        assert!(keys.is_empty(), "expected no unknown keys, got {keys:?}");
+    }
+
+    #[test]
+    async fn nested_typo_in_gateway_is_flagged_with_dotted_path() {
+        let keys = unknown_keys("[gateway]\nportt = 99\n");
+        assert_eq!(keys, vec!["gateway.portt".to_string()]);
+    }
+
+    #[test]
+    async fn valid_nested_gateway_key_is_not_flagged() {
+        let keys = unknown_keys("[gateway]\nport = 99\nrequire_pairing = false\n");
+        assert!(keys.is_empty(), "expected no unknown keys, got {keys:?}");
+    }
+
+    #[test]
+    async fn nested_typo_in_defaulted_autonomy_table_is_flagged() {
+        // `[autonomy]` carries a container-level `#[serde(default)]`, the exact
+        // case that previously hid the typo behind the whole-struct default.
+        let keys = unknown_keys("[autonomy]\nmax_actions_per_hourr = 5\n");
+        assert_eq!(keys, vec!["autonomy.max_actions_per_hourr".to_string()]);
+    }
+
+    #[test]
+    async fn hashmap_entry_key_is_not_flagged() {
+        // `model_providers` is a HashMap; the entry name is user-chosen and must
+        // not be treated as a typo, and valid fields inside are accepted.
+        let keys =
+            unknown_keys("[model_providers.myprovider]\nbase_url = \"https://example.com\"\n");
+        assert!(keys.is_empty(), "expected no unknown keys, got {keys:?}");
+    }
+
+    #[test]
+    async fn typo_inside_hashmap_value_is_flagged_with_full_path() {
+        let keys =
+            unknown_keys("[model_providers.myprovider]\nbase_urll = \"https://example.com\"\n");
+        assert_eq!(
+            keys,
+            vec!["model_providers.myprovider.base_urll".to_string()]
+        );
+    }
+
+    #[test]
+    async fn free_form_string_map_keys_are_not_flagged() {
+        // `extra_headers` is a HashMap<String, String> — arbitrary header names.
+        let keys = unknown_keys("[extra_headers]\nX-Custom-Header = \"value\"\n");
+        assert!(keys.is_empty(), "expected no unknown keys, got {keys:?}");
+    }
+
+    #[test]
+    async fn default_config_round_trip_has_no_unknown_keys() {
+        // Critical false-positive guard: every field a fully-populated default
+        // Config serializes must be recognized by the schema walk. A failure
+        // here means a serde/schema name mismatch the walker would wrongly warn
+        // about on a legitimate config.
+        let cfg = Config::default();
+        let serialized = toml::to_string(&cfg).expect("default config should serialize to TOML");
+        let raw = serialized
+            .parse::<toml::Table>()
+            .expect("serialized default config should parse");
+        let keys = collect_unknown_config_keys(&raw);
+        assert!(
+            keys.is_empty(),
+            "default config produced false-positive unknown keys: {keys:?}"
+        );
     }
 
     // ── Tilde expansion ───────────────────────────────────────
