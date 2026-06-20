@@ -3,7 +3,8 @@ use std::sync::Arc;
 use anyhow::Result;
 use tracing::{info, warn};
 
-use super::types::{SopRun, SopStepResult};
+use super::engine::now_iso8601;
+use super::types::{SopRun, SopRunStatus, SopStepResult};
 use crate::memory::traits::{Memory, MemoryCategory};
 
 const SOP_CATEGORY: &str = "sop";
@@ -116,6 +117,52 @@ impl SopAuditLogger {
             .map(|e| e.key)
             .collect();
         Ok(run_keys)
+    }
+
+    /// Mark interrupted (non-terminal) runs as `Failed` on daemon startup.
+    ///
+    /// Mirrors the Python operator's recovery contract
+    /// (`operator-mcp/operator_mcp/workflow/recovery.py`): after a restart any
+    /// run still in a non-terminal state is marked `Failed` — runs are **not**
+    /// auto-resumed; retry is an explicit user action. Deterministic
+    /// `PausedCheckpoint` runs are intentionally left untouched (their resume is
+    /// handled separately from the persisted checkpoint state — see #391), so
+    /// this sweeps only the non-deterministic in-flight states (`Pending`,
+    /// `Running`, `WaitingApproval`). Returns the number of runs marked.
+    ///
+    /// Best-effort and idempotent: terminal runs are skipped, so a second call
+    /// marks nothing.
+    pub async fn mark_stale_runs(&self) -> Result<usize> {
+        let mut marked = 0usize;
+        for key in self.list_runs().await? {
+            let run_id = key.strip_prefix("sop_run_").unwrap_or(key.as_str());
+            let Some(mut run) = self.get_run(run_id).await? else {
+                continue;
+            };
+            let stale = matches!(
+                run.status,
+                SopRunStatus::Pending | SopRunStatus::Running | SopRunStatus::WaitingApproval
+            );
+            if !stale {
+                continue;
+            }
+            run.status = SopRunStatus::Failed;
+            if run.completed_at.is_none() {
+                run.completed_at = Some(now_iso8601());
+            }
+            let content = serde_json::to_string_pretty(&run)?;
+            self.memory.store(&key, &content, category(), None).await?;
+            warn!(
+                "SOP recovery: run {} ('{}') was interrupted by a daemon restart — marked Failed \
+                 (retry is a manual action)",
+                run.run_id, run.sop_name
+            );
+            marked += 1;
+        }
+        if marked > 0 {
+            info!("SOP recovery: marked {marked} interrupted run(s) Failed on startup");
+        }
+        Ok(marked)
     }
 }
 
@@ -248,6 +295,65 @@ mod tests {
             .collect();
         assert_eq!(held_keys.len(), 1);
         assert!(held_keys[0].key.contains("run-test-001"));
+    }
+
+    #[tokio::test]
+    async fn mark_stale_runs_fails_non_terminal_and_leaves_terminal() {
+        let memory: Arc<dyn Memory> = Arc::new(crate::memory::test_memory::TestMemory::new());
+        let logger = SopAuditLogger::new(memory);
+
+        let persist = |id: &str, status: SopRunStatus| {
+            let mut r = test_run();
+            r.run_id = id.into();
+            r.status = status;
+            r
+        };
+        // Non-terminal in-flight states (must be marked Failed):
+        logger
+            .log_run_start(&persist("run-running", SopRunStatus::Running))
+            .await
+            .unwrap();
+        logger
+            .log_run_start(&persist("run-waiting", SopRunStatus::WaitingApproval))
+            .await
+            .unwrap();
+        // Terminal (must be left as-is):
+        logger
+            .log_run_complete(&persist("run-completed", SopRunStatus::Completed))
+            .await
+            .unwrap();
+        // Deterministic checkpoint (left for #391's resume, NOT failed):
+        logger
+            .log_run_start(&persist("run-paused", SopRunStatus::PausedCheckpoint))
+            .await
+            .unwrap();
+
+        let marked = logger.mark_stale_runs().await.unwrap();
+        assert_eq!(marked, 2, "only Running + WaitingApproval should be marked");
+
+        async fn status_of(logger: &SopAuditLogger, id: &str) -> SopRunStatus {
+            logger.get_run(id).await.unwrap().unwrap().status
+        }
+        assert_eq!(
+            status_of(&logger, "run-running").await,
+            SopRunStatus::Failed
+        );
+        assert_eq!(
+            status_of(&logger, "run-waiting").await,
+            SopRunStatus::Failed
+        );
+        assert_eq!(
+            status_of(&logger, "run-completed").await,
+            SopRunStatus::Completed
+        );
+        // Deterministic checkpoint left for #391's resume, NOT failed.
+        assert_eq!(
+            status_of(&logger, "run-paused").await,
+            SopRunStatus::PausedCheckpoint
+        );
+
+        // Idempotent: a second sweep marks nothing.
+        assert_eq!(logger.mark_stale_runs().await.unwrap(), 0);
     }
 
     #[tokio::test]
