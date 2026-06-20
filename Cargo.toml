@@ -97,6 +97,9 @@ serde_json = { version = "1.0", default-features = false, features = ["std"] }
 directories = "6.0"
 toml = "1.0"
 shellexpand = "3.1"
+# Diagnostics-only: report unknown/typo'd config keys (#416). Drives the real
+# Deserialize impl, so it honors serde alias/rename/deny_unknown_fields.
+serde_ignored = "0.1"
 
 # JSON Schema generation for config export
 schemars = "1.2"

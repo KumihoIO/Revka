@@ -5646,183 +5646,31 @@ fn is_valid_env_var_name(name: &str) -> bool {
     chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
 }
 
-/// Resolve a JSON-schema node to its effective subschema, following a single
-/// `$ref` (into `$defs`/`definitions`), unwrapping a single-element `allOf`, and
-/// collapsing `anyOf`/`oneOf` to its sole non-null branch (the `Option<T>`
-/// shape). Returns `None` when the schema is ambiguous (a multi-branch
-/// `anyOf`/`oneOf`, e.g. an enum of struct variants) so callers stay
-/// conservative and never flag keys that might be valid in another branch.
-fn resolve_schema_node(
-    node: &serde_json::Value,
-    defs: Option<&serde_json::Value>,
-    depth: u8,
-) -> Option<serde_json::Value> {
-    if depth > 16 {
-        return None; // guard against pathological $ref chains
-    }
-    let obj = node.as_object()?;
-
-    if let Some(reference) = obj.get("$ref").and_then(|v| v.as_str()) {
-        let name = reference.rsplit('/').next()?;
-        let target = defs?.get(name)?;
-        return resolve_schema_node(target, defs, depth + 1);
-    }
-
-    if let Some(all_of) = obj.get("allOf").and_then(|v| v.as_array()) {
-        if all_of.len() == 1 {
-            return resolve_schema_node(&all_of[0], defs, depth + 1);
-        }
-    }
-
-    for combiner in ["anyOf", "oneOf"] {
-        if let Some(variants) = obj.get(combiner).and_then(|v| v.as_array()) {
-            let non_null: Vec<&serde_json::Value> = variants
-                .iter()
-                .filter(|v| v.get("type").and_then(|t| t.as_str()) != Some("null"))
-                .collect();
-            return match non_null.as_slice() {
-                [single] => resolve_schema_node(single, defs, depth + 1),
-                _ => None, // ambiguous (or all-null) — do not flag
-            };
-        }
-    }
-
-    Some(node.clone())
-}
-
-/// Recurse a TOML value into the schema for its declared field, descending into
-/// nested tables and arrays-of-tables so typos at any depth are detected.
-fn collect_unknown_keys_in_value(
-    value: &toml::Value,
-    field_schema: &serde_json::Value,
-    defs: Option<&serde_json::Value>,
-    path: &str,
-    out: &mut Vec<String>,
-) {
-    match value {
-        toml::Value::Table(table) => {
-            collect_unknown_keys_in_table(table, field_schema, defs, path, out);
-        }
-        toml::Value::Array(items) => {
-            // `[[table]]` arrays: validate each element against the `items` schema.
-            if let Some(resolved) = resolve_schema_node(field_schema, defs, 0) {
-                if let Some(item_schema) = resolved.get("items") {
-                    for elem in items {
-                        if let toml::Value::Table(table) = elem {
-                            collect_unknown_keys_in_table(table, item_schema, defs, path, out);
-                        }
-                    }
-                }
-            }
-        }
-        _ => {} // scalars carry no nested keys
-    }
-}
-
-/// Walk a TOML table against an object schema, collecting the dotted paths of
-/// keys that are not declared anywhere in the schema (typos / removed options).
+/// Collect every unknown config key (full dotted path, e.g. `gateway.portt`) in
+/// the raw TOML by running a **diagnostics-only** deserialization through
+/// `serde_ignored`.
 ///
-/// `HashMap`-backed tables (`additionalProperties`) allow arbitrary user-chosen
-/// keys, so those keys are never flagged — but their values are still recursed
-/// into the value schema so a typo *inside* a map entry is still caught.
+/// This drives `Config`'s real `Deserialize` impl, so it honors
+/// `#[serde(alias/rename/rename_all/deny_unknown_fields)]` and config types
+/// defined in other modules automatically — a typo at any depth is reported
+/// while every legitimate (even aliased, even cross-module) key stays silent.
 ///
-/// Serde field aliases (declared via the `serde(alias=...)` attribute) are
-/// *accepted* by serde during deserialization but are **not** emitted into the
-/// `schemars` schema (only the canonical field name is). Listing them here keeps
-/// the recursive walk from false-flagging valid, documented aliases as typos.
-/// The `accepted_aliases_cover_every_serde_alias` test parses this source file
-/// and fails if a serde alias is ever added without updating this set.
-const ACCEPTED_CONFIG_ALIASES: &[&str] = &[
-    "model_provider",
-    "model",
-    "mcpServers",
-    "enable",
-    "dbURL",
-    "database_url",
-    "databaseUrl",
-    "channel",
-    "recipient",
-    "notification_chat_id",
-    "notification_channel_id",
-    "sandbox-exec",
-];
-
-fn collect_unknown_keys_in_table(
-    table: &toml::Table,
-    schema_node: &serde_json::Value,
-    defs: Option<&serde_json::Value>,
-    path: &str,
-    out: &mut Vec<String>,
-) {
-    let Some(resolved) = resolve_schema_node(schema_node, defs, 0) else {
-        return; // unresolvable/ambiguous schema — stay conservative
-    };
-
-    let properties = resolved.get("properties").and_then(|v| v.as_object());
-    let additional = resolved.get("additionalProperties");
-    let additional_schema = match additional {
-        Some(serde_json::Value::Object(_)) => additional,
-        // `additionalProperties: true` (or untyped map) — keys are free-form but
-        // there is no value schema to recurse into.
-        Some(serde_json::Value::Bool(true)) => None,
-        _ => None,
-    };
-    let allows_additional = matches!(
-        additional,
-        Some(serde_json::Value::Object(_)) | Some(serde_json::Value::Bool(true))
-    );
-
-    for (key, value) in table {
-        let dotted = if path.is_empty() {
-            key.clone()
-        } else {
-            format!("{path}.{key}")
-        };
-
-        match properties.and_then(|p| p.get(key)) {
-            Some(field_schema) => {
-                collect_unknown_keys_in_value(value, field_schema, defs, &dotted, out);
-            }
-            None => {
-                if let Some(map_value_schema) = additional_schema {
-                    // Known map entry: recurse into the value, don't flag the key.
-                    collect_unknown_keys_in_value(value, map_value_schema, defs, &dotted, out);
-                } else if !allows_additional
-                    && properties.is_some()
-                    && !ACCEPTED_CONFIG_ALIASES.contains(&key.as_str())
-                {
-                    // A struct with a fixed field set and no free-form keys: this
-                    // key is a genuine unknown (typo or deprecated option). Serde
-                    // aliases are accepted by deserialization but absent from the
-                    // schema, so they are excluded above.
-                    out.push(dotted);
-                }
-                // properties absent and no additionalProperties → unknown schema
-                // shape; stay conservative and do not flag.
-            }
-        }
+/// The deserialized value is discarded: the real config is loaded separately
+/// via `toml::from_str`. Per #4171, `serde_ignored` must NOT be used for the
+/// real deserialization because it drops user values inside `#[serde(default)]`
+/// nested structs — but that is irrelevant here since we only keep the set of
+/// ignored key paths, not the value.
+fn collect_unknown_config_keys(contents: &str) -> Vec<String> {
+    let mut unknown = Vec::new();
+    // The same `contents` already deserialized successfully via `toml::from_str`
+    // before this runs, so the parse + this pass also succeed; ignore the
+    // (discarded) value and only keep the ignored key paths.
+    if let Ok(de) = toml::Deserializer::parse(contents) {
+        let _ = serde_ignored::deserialize::<_, _, Config>(de, |path| {
+            unknown.push(path.to_string());
+        });
     }
-}
-
-/// Collect every unknown config key (full dotted path) by walking the parsed
-/// TOML against the JSON schema for [`Config`], recursing into nested tables and
-/// arrays. Returns an empty vec when the schema cannot be built. See #4171 for
-/// why this is a separate diagnostic pass rather than `serde_ignored` on the
-/// real deserialization.
-fn collect_unknown_config_keys(raw: &toml::Table) -> Vec<String> {
-    static SCHEMA_JSON: OnceLock<serde_json::Value> = OnceLock::new();
-    let schema = SCHEMA_JSON.get_or_init(|| {
-        serde_json::to_value(schemars::schema_for!(Config)).unwrap_or(serde_json::Value::Null)
-    });
-    if schema.is_null() {
-        return Vec::new();
-    }
-    // schemars 1.x emits `$defs`; older 0.8 emits `definitions`.
-    let defs = schema.get("$defs").or_else(|| schema.get("definitions"));
-
-    let mut out = Vec::new();
-    collect_unknown_keys_in_table(raw, schema, defs, "", &mut out);
-    out
+    unknown
 }
 
 impl Default for AutonomyConfig {
@@ -9610,20 +9458,17 @@ impl Config {
             // config — the warning is advisory.
             warn_on_legacy_memory_tool_names(&config);
 
-            // Detect unknown config keys at *any* depth by recursively walking
-            // the raw TOML against the JSON schema for `Config`. A typo inside a
-            // nested table (e.g. `[gateway] portt = 99`) is silently dropped by
-            // serde during deserialization, leaving the field at its default; a
-            // top-level-only check missed these. The `schemars` schema reflects
-            // every declared field regardless of `#[serde(default)]` /
-            // `skip_serializing_if`, so legitimate keys are never flagged, and
-            // `HashMap`-backed tables allow their free-form keys.
-            if let Ok(raw) = contents.parse::<toml::Table>() {
-                for key in collect_unknown_config_keys(&raw) {
-                    tracing::warn!(
-                        "Unknown config key ignored: \"{key}\". Check config.toml for typos or deprecated options.",
-                    );
-                }
+            // Detect unknown config keys at *any* depth. A typo inside a nested
+            // table (e.g. `[gateway] portt = 99`) is silently dropped by serde
+            // during deserialization, leaving the field at its default; a
+            // top-level-only check missed these. `collect_unknown_config_keys`
+            // re-runs the deserialization through `serde_ignored` purely to
+            // gather the ignored key paths (aliases and cross-module config
+            // types are honored, so legitimate keys are never flagged).
+            for key in collect_unknown_config_keys(&contents) {
+                tracing::warn!(
+                    "Unknown config key ignored: \"{key}\". Check config.toml for typos or deprecated options.",
+                );
             }
             // Set computed paths that are skipped during serialization
             config.config_path = config_path.clone();
@@ -11734,10 +11579,7 @@ mod tests {
     // ── Unknown config key detection (#416) ───────────────────
 
     fn unknown_keys(toml_src: &str) -> Vec<String> {
-        let raw = toml_src
-            .parse::<toml::Table>()
-            .expect("test TOML should parse");
-        collect_unknown_config_keys(&raw)
+        collect_unknown_config_keys(toml_src)
     }
 
     #[test]
@@ -11802,57 +11644,40 @@ mod tests {
     }
 
     #[test]
-    async fn nested_serde_aliases_are_not_flagged() {
-        // `#[serde(alias = ...)]` keys deserialize correctly but are absent from
-        // the schemars schema; the recursive walk must not warn about them.
-        // `[heartbeat] channel`/`recipient` alias target/to.
+    async fn serde_aliases_are_not_flagged() {
+        // Serde aliases deserialize correctly but are absent from the schema.
+        // Because detection runs through the real Deserialize impl
+        // (serde_ignored), every alias is honored automatically — no manual
+        // allow-list. `[heartbeat] channel`/`recipient` alias target/to.
         assert!(
             unknown_keys("[heartbeat]\nchannel = \"telegram\"\nrecipient = \"123\"\n").is_empty()
         );
-        // `[composio] enable` aliases `enabled`.
+        // `[composio] enable` aliases `enabled` (same-module config type).
         assert!(unknown_keys("[composio]\nenable = true\n").is_empty());
-        // `mcpServers` aliases `mcp_servers` (top-level).
-        assert!(unknown_keys("[mcpServers]\n").is_empty());
     }
 
     #[test]
-    async fn accepted_aliases_cover_every_serde_alias() {
-        // Drift guard: every serde field-alias declared in this file must be in
-        // ACCEPTED_CONFIG_ALIASES, or the recursive unknown-key walk would
-        // false-flag that alias as a typo. Parsing the source keeps the set
-        // honest as new aliases are added. (This comment deliberately avoids the
-        // attribute literal so it is not matched as an alias itself.)
-        let src = include_str!("schema.rs");
-        let mut missing = Vec::new();
-        for (idx, _) in src.match_indices("alias = \"") {
-            let rest = &src[idx + "alias = \"".len()..];
-            if let Some(end) = rest.find('"') {
-                let alias = &rest[..end];
-                if !ACCEPTED_CONFIG_ALIASES.contains(&alias) {
-                    missing.push(alias.to_string());
-                }
-            }
-        }
-        missing.sort();
-        missing.dedup();
+    async fn cross_module_serde_alias_is_not_flagged() {
+        // `channels_config.email` is `crate::channels::email_channel::EmailConfig`,
+        // defined in another module, whose `idle_timeout_secs` field aliases
+        // `poll_interval_secs`. Driving the real Deserialize impl honors aliases
+        // on cross-module config types automatically — a schema/text-scan
+        // approach could not. (#416 review regression guard.)
+        let keys = unknown_keys("[channels_config.email]\npoll_interval_secs = 300\n");
         assert!(
-            missing.is_empty(),
-            "serde aliases missing from ACCEPTED_CONFIG_ALIASES (would be false-flagged as typos): {missing:?}"
+            !keys.iter().any(|k| k.contains("poll_interval_secs")),
+            "the poll_interval_secs alias must not be flagged, got {keys:?}"
         );
     }
 
     #[test]
     async fn default_config_round_trip_has_no_unknown_keys() {
-        // Critical false-positive guard: every field a fully-populated default
-        // Config serializes must be recognized by the schema walk. A failure
-        // here means a serde/schema name mismatch the walker would wrongly warn
-        // about on a legitimate config.
+        // Critical false-positive guard: a fully-populated default Config,
+        // serialized and re-checked, must produce zero unknown keys. A failure
+        // here means the diagnostic would wrongly warn on a legitimate config.
         let cfg = Config::default();
         let serialized = toml::to_string(&cfg).expect("default config should serialize to TOML");
-        let raw = serialized
-            .parse::<toml::Table>()
-            .expect("serialized default config should parse");
-        let keys = collect_unknown_config_keys(&raw);
+        let keys = collect_unknown_config_keys(&serialized);
         assert!(
             keys.is_empty(),
             "default config produced false-positive unknown keys: {keys:?}"
