@@ -365,6 +365,17 @@ pub fn state_dir_from_config(config: &Config) -> PathBuf {
         .map_or_else(|| PathBuf::from("."), PathBuf::from)
 }
 
+/// Read the gateway's service token from `<state_dir>/service-token`.
+///
+/// Mirrors operator-mcp's reader: returns `None` when the file is missing or
+/// the (trimmed) contents are empty. The token is the credential trusted local
+/// sidecars present via `X-Revka-Service-Token` to call gated gateway routes.
+pub fn read_service_token(config: &Config) -> Option<String> {
+    let path = state_dir_from_config(config).join("service-token");
+    let token = std::fs::read_to_string(path).ok()?.trim().to_string();
+    if token.is_empty() { None } else { Some(token) }
+}
+
 pub fn default_profile_id(provider: &str) -> String {
     profile_id(provider, DEFAULT_PROFILE_NAME)
 }
