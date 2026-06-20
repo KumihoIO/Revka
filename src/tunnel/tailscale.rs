@@ -1,5 +1,6 @@
 use super::{SharedProcess, Tunnel, TunnelProcess, kill_shared, new_shared_process};
 use anyhow::{Result, bail};
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::process::Command;
 
 /// Tailscale Tunnel — uses `tailscale serve` (tailnet-only) or
@@ -10,6 +11,10 @@ pub struct TailscaleTunnel {
     funnel: bool,
     hostname: Option<String>,
     proc: SharedProcess,
+    /// Whether `start()` has configured an active serve/funnel that `stop()` (or
+    /// `Drop`) must reset. A plain flag (not the async `proc` lock) so the Drop
+    /// guard can read it without ever failing open on lock contention (#427).
+    started: AtomicBool,
 }
 
 impl TailscaleTunnel {
@@ -18,6 +23,7 @@ impl TailscaleTunnel {
             funnel,
             hostname,
             proc: new_shared_process(),
+            started: AtomicBool::new(false),
         }
     }
 }
@@ -72,11 +78,14 @@ impl Tunnel for TailscaleTunnel {
             child,
             public_url: public_url.clone(),
         });
+        self.started.store(true, Ordering::Relaxed);
 
         Ok(public_url)
     }
 
     async fn stop(&self) -> Result<()> {
+        // No longer active — also disarms the Drop-time reset below.
+        self.started.store(false, Ordering::Relaxed);
         // Also reset the tailscale serve/funnel
         let subcommand = if self.funnel { "funnel" } else { "serve" };
         Command::new("tailscale")
@@ -112,10 +121,10 @@ impl Drop for TailscaleTunnel {
     /// funnel can outlive the gateway. This runs on every drop path (abort,
     /// teardown, panic) and is a no-op (idempotent) if `stop()` already reset.
     fn drop(&mut self) {
-        // Only reset if a process was actually started — avoids shelling out to
-        // `tailscale` for every dropped (never-started) instance.
-        let started = self.proc.try_lock().is_ok_and(|g| g.is_some());
-        if !started {
+        // Only reset if a serve/funnel is active — avoids shelling out to
+        // `tailscale` for every dropped (never-started or already-stopped)
+        // instance. A plain atomic load never fails open under lock contention.
+        if !self.started.load(Ordering::Relaxed) {
             return;
         }
         let subcommand = if self.funnel { "funnel" } else { "serve" };
