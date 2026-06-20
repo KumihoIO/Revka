@@ -432,10 +432,28 @@ impl SopEngine {
     /// proceeds. Completed-step outputs are mapped back into `step_results` so
     /// status queries reflect prior progress. Fails if the SOP is no longer loaded.
     fn sop_run_from_state(&self, state: &DeterministicRunState) -> Result<SopRun> {
+        let sop = self
+            .sops
+            .iter()
+            .find(|s| s.name == state.sop_name)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "SOP '{}' no longer loaded; cannot resume run {}",
+                    state.sop_name,
+                    state.run_id
+                )
+            })?;
+        // Only resume against an unchanged SOP shape: if the definition was
+        // edited since the checkpoint (different step count), the persisted step
+        // indices are stale, so refuse rather than risk resuming the wrong step
+        // or indexing out of bounds. Re-run the SOP from the start instead.
         anyhow::ensure!(
-            self.sops.iter().any(|s| s.name == state.sop_name),
-            "SOP '{}' no longer loaded; cannot resume run {}",
+            sop.steps.len() == state.total_steps as usize,
+            "SOP '{}' definition changed since checkpoint (now {} steps, state has {}); \
+             cannot safely resume run {} — re-run the SOP",
             state.sop_name,
+            sop.steps.len(),
+            state.total_steps,
             state.run_id
         );
         let mut step_results: Vec<SopStepResult> = state
@@ -524,7 +542,19 @@ impl SopEngine {
         run.current_step = next_step_num;
 
         let step_idx = (next_step_num - 1) as usize;
-        let step = sop.steps[step_idx].clone();
+        let step = sop
+            .steps
+            .get(step_idx)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Deterministic run {}: persisted step {next_step_num} is out of range \
+                     for SOP '{}' ({} steps)",
+                    state.run_id,
+                    sop.name,
+                    sop.steps.len()
+                )
+            })?
+            .clone();
 
         // Use last step's output as input, or Null
         let last_output = state
@@ -2090,6 +2120,29 @@ mod tests {
             paused_at_checkpoint: true,
         };
         assert!(engine.resume_deterministic_run(state).is_err());
+    }
+
+    #[test]
+    fn resume_deterministic_run_rejects_stale_step_count() {
+        // #391 hardening: a persisted state whose total_steps no longer matches
+        // the (edited) SOP must be refused cleanly, NOT panic on an
+        // out-of-bounds step index.
+        let mut engine = engine_with_sops(vec![deterministic_sop("det-sop")]); // 3 steps
+        let state = DeterministicRunState {
+            run_id: "det-run-stale".into(),
+            sop_name: "det-sop".into(),
+            last_completed_step: 8,
+            total_steps: 10, // SOP only has 3 steps now
+            step_outputs: std::collections::HashMap::new(),
+            persisted_at: "2026-01-01T00:00:00Z".into(),
+            llm_calls_saved: 0,
+            paused_at_checkpoint: true,
+        };
+        let err = engine.resume_deterministic_run(state).unwrap_err();
+        assert!(
+            err.to_string().contains("definition changed"),
+            "expected SOP-shape-drift rejection, got: {err}"
+        );
     }
 
     #[test]
