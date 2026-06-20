@@ -140,13 +140,27 @@ async fn fetch_link_summary(url: &str, timeout_secs: u64) -> Option<LinkSummary>
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(timeout_secs))
         .connect_timeout(Duration::from_secs(5))
-        .redirect(reqwest::redirect::Policy::limited(5))
+        // SSRF defense, two layers — both are required:
+        // 1. Per-hop redirect check: reqwest connects to *literal-IP* authorities
+        //    WITHOUT invoking the custom dns_resolver below, so a 302 to
+        //    http://169.254.169.254/ would otherwise slip past it. Re-run the
+        //    string SSRF check on every redirect target (max 5 hops).
+        // 2. Connect-time dns_resolver: validates every *resolved* IP (original
+        //    host and each hop) against the deny-list, stopping a public
+        //    hostname that resolves to an internal address (DNS-rebinding).
+        .redirect(reqwest::redirect::Policy::custom(|attempt| {
+            if attempt.previous().len() >= 5 {
+                return attempt.stop();
+            }
+            if is_ssrf_target(attempt.url().as_str()) {
+                return attempt.error(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "link enricher: blocked redirect to private/SSRF target",
+                ));
+            }
+            attempt.follow()
+        }))
         .user_agent("Revka/0.1 (link-enricher)")
-        // SSRF guard: validate every resolved IP — the original host AND each
-        // redirect hop — against the private/reserved deny-list at connect time.
-        // The is_ssrf_target string check only catches literal private IPs in
-        // the URL; this stops a public hostname that resolves to (or redirects
-        // to) an internal address, e.g. cloud metadata at 169.254.169.254.
         .dns_resolver(std::sync::Arc::new(
             crate::security::ssrf::SsrfResolver::deny_private(),
         ))
