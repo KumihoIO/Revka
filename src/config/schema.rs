@@ -11372,8 +11372,9 @@ pub struct SopConfig {
     pub max_concurrent_total: usize,
 
     /// Approval timeout in seconds. When a run waits for approval longer than
-    /// this, Critical/High-priority SOPs auto-approve; others stay waiting.
-    /// Set to 0 to disable timeout.
+    /// this, it is held for a human (fail-safe — never auto-executed) and
+    /// surfaced for escalation, regardless of priority. Set to 0 to disable the
+    /// timeout check.
     #[serde(default = "default_sop_approval_timeout_secs")]
     pub approval_timeout_secs: u64,
 

@@ -569,18 +569,24 @@ impl SopEngine {
 
     // ── Approval timeout ──────────────────────────────────────────
 
-    /// Check all WaitingApproval runs for timeout. For Critical/High-priority SOPs,
-    /// auto-approve and return the resulting actions. Non-critical SOPs stay
-    /// in WaitingApproval indefinitely (or until explicitly approved/cancelled).
-    pub fn check_approval_timeouts(&mut self) -> Vec<SopRunAction> {
+    /// Detect WaitingApproval runs that have exceeded `approval_timeout_secs`.
+    ///
+    /// Fail-safe: timed-out runs are **held** (left in `WaitingApproval`) and
+    /// never auto-executed, regardless of priority. (Previously Critical/High
+    /// SOPs were auto-approved on timeout — a fail-OPEN inversion that let the
+    /// highest-risk procedures run unattended.) The returned snapshots let an
+    /// async caller escalate / audit (via
+    /// [`SopAuditLogger::log_timeout_held`](crate::sop::audit::SopAuditLogger::log_timeout_held))
+    /// or, on a headless path that cannot host an approver, cancel the run.
+    /// `approval_timeout_secs == 0` disables the check.
+    pub fn check_approval_timeouts(&self) -> Vec<SopRun> {
         let timeout_secs = self.config.approval_timeout_secs;
         if timeout_secs == 0 {
             return Vec::new();
         }
 
-        // Collect timed-out runs with their priority classification
-        // cooldown_elapsed(ts, secs) returns true when (now - ts) >= secs
-        let timed_out: Vec<(String, bool)> = self
+        // cooldown_elapsed(ts, secs) returns true when (now - ts) >= secs.
+        let held: Vec<SopRun> = self
             .active_runs
             .values()
             .filter(|r| r.status == SopRunStatus::WaitingApproval)
@@ -589,35 +595,17 @@ impl SopEngine {
                     .as_deref()
                     .map_or(false, |ts| cooldown_elapsed(ts, timeout_secs))
             })
-            .map(|r| {
-                let is_critical = self
-                    .sops
-                    .iter()
-                    .find(|s| s.name == r.sop_name)
-                    .map_or(false, |s| {
-                        matches!(s.priority, SopPriority::Critical | SopPriority::High)
-                    });
-                (r.run_id.clone(), is_critical)
-            })
+            .cloned()
             .collect();
 
-        let mut actions = Vec::new();
-        for (run_id, is_critical) in timed_out {
-            if is_critical {
-                // Auto-approve: Critical/High priority SOPs fall back to Auto on timeout
-                info!(
-                    "SOP run {run_id}: approval timeout — auto-approving (critical/high priority)"
-                );
-                match self.approve_step(&run_id) {
-                    Ok(action) => actions.push(action),
-                    Err(e) => warn!("SOP run {run_id}: auto-approve failed: {e}"),
-                }
-            } else {
-                info!("SOP run {run_id}: approval timeout — waiting indefinitely (non-critical)");
-            }
+        for run in &held {
+            info!(
+                "SOP run {}: approval timeout — held for human approval (fail-safe; never auto-executed)",
+                run.run_id
+            );
         }
 
-        actions
+        held
     }
 
     // ── Test helpers ──────────────────────────────────────────────
@@ -1742,7 +1730,7 @@ mod tests {
     // ── Approval timeout ─────────────────────────────────
 
     #[test]
-    fn timeout_auto_approves_critical() {
+    fn timeout_holds_critical_run_failsafe() {
         let mut engine = SopEngine::new(SopConfig {
             approval_timeout_secs: 1, // 1 second for test
             ..SopConfig::default()
@@ -1760,13 +1748,18 @@ mod tests {
         let run = engine.active_runs.get_mut(&run_id).unwrap();
         run.waiting_since = Some("2020-01-01T00:00:00Z".into());
 
-        let actions = engine.check_approval_timeouts();
-        assert_eq!(actions.len(), 1);
-        assert!(matches!(actions[0], SopRunAction::ExecuteStep { .. }));
+        // Fail-safe: even a Critical SOP is HELD on timeout, never auto-executed.
+        let held = engine.check_approval_timeouts();
+        assert_eq!(held.len(), 1);
+        assert_eq!(held[0].run_id, run_id);
+        assert_eq!(
+            engine.get_run(&run_id).unwrap().status,
+            SopRunStatus::WaitingApproval
+        );
     }
 
     #[test]
-    fn timeout_does_not_auto_approve_normal() {
+    fn timeout_holds_normal_run() {
         let mut engine = SopEngine::new(SopConfig {
             approval_timeout_secs: 1,
             ..SopConfig::default()
@@ -1784,10 +1777,9 @@ mod tests {
         let run = engine.active_runs.get_mut(&run_id).unwrap();
         run.waiting_since = Some("2020-01-01T00:00:00Z".into());
 
-        // Normal priority → no auto-approve
-        let actions = engine.check_approval_timeouts();
-        assert!(actions.is_empty());
-        // Run should still be WaitingApproval
+        // Held (returned) but never auto-approved; run stays WaitingApproval.
+        let held = engine.check_approval_timeouts();
+        assert_eq!(held.len(), 1);
         assert_eq!(
             engine.get_run(&run_id).unwrap().status,
             SopRunStatus::WaitingApproval
@@ -1811,8 +1803,8 @@ mod tests {
         let run = engine.active_runs.get_mut(&run_id).unwrap();
         run.waiting_since = Some("2020-01-01T00:00:00Z".into());
 
-        let actions = engine.check_approval_timeouts();
-        assert!(actions.is_empty());
+        let held = engine.check_approval_timeouts();
+        assert!(held.is_empty());
     }
 
     #[test]
