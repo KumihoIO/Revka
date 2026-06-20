@@ -5646,6 +5646,39 @@ fn is_valid_env_var_name(name: &str) -> bool {
     chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
 }
 
+/// Collect every unknown config key (full dotted path, e.g. `gateway.portt`) in
+/// the raw TOML by running a **diagnostics-only** deserialization through
+/// `serde_ignored`.
+///
+/// This drives `Config`'s real `Deserialize` impl, so it honors
+/// `#[serde(alias/rename/rename_all)]` and config types defined in other
+/// modules automatically — a typo at any depth is reported while every
+/// legitimate (even aliased, even cross-module) key stays silent.
+///
+/// Note: a typo inside a `#[serde(deny_unknown_fields)]` struct (the `[security]`
+/// tables) does not surface *here* — it makes the earlier real `toml::from_str`
+/// in `load_or_init` fail with a fatal, line-pointed error before this runs, so
+/// the typo is still caught (more loudly). This pass only reports keys the real
+/// deserialize *ignored*.
+///
+/// The deserialized value is discarded: the real config is loaded separately
+/// via `toml::from_str`. Per #4171, `serde_ignored` must NOT be used for the
+/// real deserialization because it drops user values inside `#[serde(default)]`
+/// nested structs — but that is irrelevant here since we only keep the set of
+/// ignored key paths, not the value.
+fn collect_unknown_config_keys(contents: &str) -> Vec<String> {
+    let mut unknown = Vec::new();
+    // The same `contents` already deserialized successfully via `toml::from_str`
+    // before this runs, so the parse + this pass also succeed; ignore the
+    // (discarded) value and only keep the ignored key paths.
+    if let Ok(de) = toml::Deserializer::parse(contents) {
+        let _ = serde_ignored::deserialize::<_, _, Config>(de, |path| {
+            unknown.push(path.to_string());
+        });
+    }
+    unknown
+}
+
 impl Default for AutonomyConfig {
     fn default() -> Self {
         Self {
@@ -9406,8 +9439,9 @@ impl Config {
             // `[autonomy]` table), causing user-supplied values to be
             // replaced by defaults.  See #4171.
             //
-            // We now deserialize with `toml::from_str` (which is correct)
-            // and run `serde_ignored` separately just for diagnostics.
+            // We now deserialize with `toml::from_str` (which is correct) and
+            // run a separate `serde_ignored` pass purely for diagnostics (see
+            // the unknown-key detection below).
             let mut config: Config =
                 toml::from_str(&contents).context("Failed to deserialize config file")?;
 
@@ -9430,33 +9464,17 @@ impl Config {
             // config — the warning is advisory.
             warn_on_legacy_memory_tool_names(&config);
 
-            // Detect unknown top-level config keys by comparing the raw
-            // TOML table keys against the JSON schema for `Config`.
-            //
-            // Earlier versions built the known-key set from a default `Config`
-            // round-tripped through TOML, but any field marked
-            // `#[serde(skip_serializing_if = "Option::is_none")]` is dropped
-            // when its default is `None` — so legitimate top-level keys like
-            // `language` were warned about as unknown. The JSON schema from
-            // `schemars` reflects every declared field regardless of default.
-            if let Ok(raw) = contents.parse::<toml::Table>() {
-                static KNOWN_KEYS: OnceLock<Vec<String>> = OnceLock::new();
-                let known = KNOWN_KEYS.get_or_init(|| {
-                    let schema = schemars::schema_for!(Config);
-                    serde_json::to_value(&schema)
-                        .ok()
-                        .and_then(|v| v.get("properties").cloned())
-                        .and_then(|props| props.as_object().cloned())
-                        .map(|obj| obj.keys().cloned().collect())
-                        .unwrap_or_default()
-                });
-                for key in raw.keys() {
-                    if !known.contains(key) {
-                        tracing::warn!(
-                            "Unknown config key ignored: \"{key}\". Check config.toml for typos or deprecated options.",
-                        );
-                    }
-                }
+            // Detect unknown config keys at *any* depth. A typo inside a nested
+            // table (e.g. `[gateway] portt = 99`) is silently dropped by serde
+            // during deserialization, leaving the field at its default; a
+            // top-level-only check missed these. `collect_unknown_config_keys`
+            // re-runs the deserialization through `serde_ignored` purely to
+            // gather the ignored key paths (aliases and cross-module config
+            // types are honored, so legitimate keys are never flagged).
+            for key in collect_unknown_config_keys(&contents) {
+                tracing::warn!(
+                    "Unknown config key ignored: \"{key}\". Check config.toml for typos or deprecated options.",
+                );
             }
             // Set computed paths that are skipped during serialization
             config.config_path = config_path.clone();
@@ -11562,6 +11580,127 @@ mod tests {
             .gated_actions
             .push("memory_forget".to_string());
         warn_on_legacy_memory_tool_names(&cfg);
+    }
+
+    // ── Unknown config key detection (#416) ───────────────────
+
+    fn unknown_keys(toml_src: &str) -> Vec<String> {
+        collect_unknown_config_keys(toml_src)
+    }
+
+    #[test]
+    async fn unknown_top_level_key_is_flagged() {
+        let keys = unknown_keys("definitely_not_a_real_key = 1\n");
+        assert_eq!(keys, vec!["definitely_not_a_real_key".to_string()]);
+    }
+
+    #[test]
+    async fn known_top_level_key_is_not_flagged() {
+        // `language` is a real top-level Config field (an `Option` with a
+        // `skip_serializing_if`, the case the schema-based check exists to keep
+        // from being false-flagged).
+        let keys = unknown_keys("language = \"en\"\n");
+        assert!(keys.is_empty(), "expected no unknown keys, got {keys:?}");
+    }
+
+    #[test]
+    async fn nested_typo_in_gateway_is_flagged_with_dotted_path() {
+        let keys = unknown_keys("[gateway]\nportt = 99\n");
+        assert_eq!(keys, vec!["gateway.portt".to_string()]);
+    }
+
+    #[test]
+    async fn valid_nested_gateway_key_is_not_flagged() {
+        let keys = unknown_keys("[gateway]\nport = 99\nrequire_pairing = false\n");
+        assert!(keys.is_empty(), "expected no unknown keys, got {keys:?}");
+    }
+
+    #[test]
+    async fn nested_typo_in_defaulted_autonomy_table_is_flagged() {
+        // `[autonomy]` carries a container-level `#[serde(default)]`, the exact
+        // case that previously hid the typo behind the whole-struct default.
+        let keys = unknown_keys("[autonomy]\nmax_actions_per_hourr = 5\n");
+        assert_eq!(keys, vec!["autonomy.max_actions_per_hourr".to_string()]);
+    }
+
+    #[test]
+    async fn hashmap_entry_key_is_not_flagged() {
+        // `model_providers` is a HashMap; the entry name is user-chosen and must
+        // not be treated as a typo, and valid fields inside are accepted.
+        let keys =
+            unknown_keys("[model_providers.myprovider]\nbase_url = \"https://example.com\"\n");
+        assert!(keys.is_empty(), "expected no unknown keys, got {keys:?}");
+    }
+
+    #[test]
+    async fn typo_inside_hashmap_value_is_flagged_with_full_path() {
+        let keys =
+            unknown_keys("[model_providers.myprovider]\nbase_urll = \"https://example.com\"\n");
+        assert_eq!(
+            keys,
+            vec!["model_providers.myprovider.base_urll".to_string()]
+        );
+    }
+
+    #[test]
+    async fn free_form_string_map_keys_are_not_flagged() {
+        // `extra_headers` is a HashMap<String, String> — arbitrary header names.
+        let keys = unknown_keys("[extra_headers]\nX-Custom-Header = \"value\"\n");
+        assert!(keys.is_empty(), "expected no unknown keys, got {keys:?}");
+    }
+
+    #[test]
+    async fn serde_aliases_are_not_flagged() {
+        // Serde aliases deserialize correctly but are absent from the schema.
+        // Because detection runs through the real Deserialize impl
+        // (serde_ignored), every alias is honored automatically — no manual
+        // allow-list. `[heartbeat] channel`/`recipient` alias target/to.
+        assert!(
+            unknown_keys("[heartbeat]\nchannel = \"telegram\"\nrecipient = \"123\"\n").is_empty()
+        );
+        // `[composio] enable` aliases `enabled` (same-module config type).
+        assert!(unknown_keys("[composio]\nenable = true\n").is_empty());
+    }
+
+    #[test]
+    async fn cross_module_serde_alias_is_not_flagged() {
+        // `channels_config.email` is `crate::channels::email_channel::EmailConfig`,
+        // defined in another module, whose `idle_timeout_secs` field aliases
+        // `poll_interval_secs`. Driving the real Deserialize impl honors aliases
+        // on cross-module config types automatically — a schema/text-scan
+        // approach could not. (#416 review regression guard.)
+        let keys = unknown_keys("[channels_config.email]\npoll_interval_secs = 300\n");
+        assert!(
+            !keys.iter().any(|k| k.contains("poll_interval_secs")),
+            "the poll_interval_secs alias must not be flagged, got {keys:?}"
+        );
+    }
+
+    #[test]
+    async fn typo_in_deny_unknown_fields_security_table_fails_load() {
+        // The `[security]` tables (OtpConfig/EstopConfig/Nevis*) carry
+        // `#[serde(deny_unknown_fields)]`, so a typo there is caught *fatally* by
+        // the real `toml::from_str` in load_or_init (before the advisory
+        // serde_ignored pass) — strictly louder than a warning. Pin that.
+        let err = toml::from_str::<Config>("[security.otp]\nenabledd = true\n");
+        assert!(
+            err.is_err(),
+            "a typo in a deny_unknown_fields security table must fail deserialization"
+        );
+    }
+
+    #[test]
+    async fn default_config_round_trip_has_no_unknown_keys() {
+        // Critical false-positive guard: a fully-populated default Config,
+        // serialized and re-checked, must produce zero unknown keys. A failure
+        // here means the diagnostic would wrongly warn on a legitimate config.
+        let cfg = Config::default();
+        let serialized = toml::to_string(&cfg).expect("default config should serialize to TOML");
+        let keys = unknown_keys(&serialized);
+        assert!(
+            keys.is_empty(),
+            "default config produced false-positive unknown keys: {keys:?}"
+        );
     }
 
     // ── Tilde expansion ───────────────────────────────────────
