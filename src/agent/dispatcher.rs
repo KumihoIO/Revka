@@ -362,6 +362,26 @@ mod tests {
     }
 
     #[test]
+    fn xml_format_results_reports_failure_status() {
+        // #396: status must reflect the result's success flag, not always "ok".
+        let dispatcher = XmlToolDispatcher;
+        let render = |success: bool| {
+            let msg = dispatcher.format_results(&[ToolExecutionResult {
+                name: "shell".into(),
+                output: "boom".into(),
+                success,
+                tool_call_id: None,
+            }]);
+            match msg {
+                ConversationMessage::Chat(chat) => chat.content,
+                _ => String::new(),
+            }
+        };
+        assert!(render(false).contains("status=\"error\""));
+        assert!(render(true).contains("status=\"ok\""));
+    }
+
+    #[test]
     fn native_format_results_keeps_tool_call_id() {
         let dispatcher = NativeToolDispatcher;
         let msg = dispatcher.format_results(&[ToolExecutionResult {

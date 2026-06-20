@@ -1391,33 +1391,11 @@ impl Agent {
         let start = Instant::now();
 
         // First try to find tool in static registry, then in activated MCP tools.
-        let result = if let Some(tool) = self.tools.iter().find(|t| t.name() == call.name) {
-            match tool.execute(call.arguments.clone()).await {
-                Ok(r) => {
-                    self.observer.record_event(&ObserverEvent::ToolCall {
-                        tool: call.name.clone(),
-                        duration: start.elapsed(),
-                        success: r.success,
-                    });
-                    if r.success {
-                        r.output
-                    } else {
-                        format!("Error: {}", r.error.unwrap_or(r.output))
-                    }
-                }
-                Err(e) => {
-                    self.observer.record_event(&ObserverEvent::ToolCall {
-                        tool: call.name.clone(),
-                        duration: start.elapsed(),
-                        success: false,
-                    });
-                    format!("Error executing {}: {e}", call.name)
-                }
-            }
-        } else if let Some(activated_arc) = self.activated_tools.as_ref() {
-            // Try to find in activated MCP tools.
-            let activated_opt = activated_arc.lock().unwrap().get_resolved(&call.name);
-            if let Some(tool) = activated_opt {
+        // Each branch yields (output, success) so the real outcome is preserved
+        // — previously `success` was hardcoded `true`, making the XmlToolDispatcher
+        // report failed tools as status="ok".
+        let (result, success) =
+            if let Some(tool) = self.tools.iter().find(|t| t.name() == call.name) {
                 match tool.execute(call.arguments.clone()).await {
                     Ok(r) => {
                         self.observer.record_event(&ObserverEvent::ToolCall {
@@ -1425,11 +1403,12 @@ impl Agent {
                             duration: start.elapsed(),
                             success: r.success,
                         });
-                        if r.success {
+                        let output = if r.success {
                             r.output
                         } else {
                             format!("Error: {}", r.error.unwrap_or(r.output))
-                        }
+                        };
+                        (output, r.success)
                     }
                     Err(e) => {
                         self.observer.record_event(&ObserverEvent::ToolCall {
@@ -1437,15 +1416,42 @@ impl Agent {
                             duration: start.elapsed(),
                             success: false,
                         });
-                        format!("Error executing {}: {e}", call.name)
+                        (format!("Error executing {}: {e}", call.name), false)
                     }
                 }
+            } else if let Some(activated_arc) = self.activated_tools.as_ref() {
+                // Try to find in activated MCP tools.
+                let activated_opt = activated_arc.lock().unwrap().get_resolved(&call.name);
+                if let Some(tool) = activated_opt {
+                    match tool.execute(call.arguments.clone()).await {
+                        Ok(r) => {
+                            self.observer.record_event(&ObserverEvent::ToolCall {
+                                tool: call.name.clone(),
+                                duration: start.elapsed(),
+                                success: r.success,
+                            });
+                            let output = if r.success {
+                                r.output
+                            } else {
+                                format!("Error: {}", r.error.unwrap_or(r.output))
+                            };
+                            (output, r.success)
+                        }
+                        Err(e) => {
+                            self.observer.record_event(&ObserverEvent::ToolCall {
+                                tool: call.name.clone(),
+                                duration: start.elapsed(),
+                                success: false,
+                            });
+                            (format!("Error executing {}: {e}", call.name), false)
+                        }
+                    }
+                } else {
+                    (format!("Unknown tool: {}", call.name), false)
+                }
             } else {
-                format!("Unknown tool: {}", call.name)
-            }
-        } else {
-            format!("Unknown tool: {}", call.name)
-        };
+                (format!("Unknown tool: {}", call.name), false)
+            };
 
         let command_hint = call
             .arguments
@@ -1456,7 +1462,7 @@ impl Agent {
         ToolExecutionResult {
             name: call.name.clone(),
             output: result,
-            success: true,
+            success,
             tool_call_id: call.tool_call_id.clone(),
         }
     }
@@ -2724,6 +2730,75 @@ mod tests {
                 error: None,
             })
         }
+    }
+
+    struct FailingTool;
+
+    #[async_trait]
+    impl Tool for FailingTool {
+        fn name(&self) -> &str {
+            "fail"
+        }
+        fn description(&self) -> &str {
+            "always fails"
+        }
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({"type": "object"})
+        }
+        async fn execute(&self, _args: serde_json::Value) -> Result<crate::tools::ToolResult> {
+            Ok(crate::tools::ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some("boom".into()),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn execute_tool_call_propagates_real_success() {
+        // #396: the ToolExecutionResult.success must reflect the real outcome
+        // (it was previously hardcoded `true`, so the XML dispatcher reported
+        // failed tools as status="ok").
+        let provider = Box::new(MockProvider {
+            responses: Mutex::new(vec![]),
+        });
+        let memory_cfg = crate::config::MemoryConfig {
+            backend: "none".into(),
+            ..crate::config::MemoryConfig::default()
+        };
+        let mem: Arc<dyn Memory> = Arc::from(
+            crate::memory::create_memory(&memory_cfg, std::path::Path::new("/tmp"), None).unwrap(),
+        );
+        let observer: Arc<dyn Observer> = Arc::from(crate::observability::NoopObserver {});
+        let agent = Agent::builder()
+            .provider(provider)
+            .tools(vec![Box::new(MockTool), Box::new(FailingTool)])
+            .memory(mem)
+            .observer(observer)
+            .tool_dispatcher(Box::new(NativeToolDispatcher))
+            .workspace_dir(std::path::PathBuf::from("/tmp"))
+            .build()
+            .unwrap();
+
+        let call = |name: &str| ParsedToolCall {
+            name: name.into(),
+            arguments: serde_json::json!({}),
+            tool_call_id: None,
+        };
+
+        // Failing tool -> success=false, error surfaced in the output.
+        let failed = agent.execute_tool_call(&call("fail")).await;
+        assert!(!failed.success, "failing tool must report success=false");
+        assert!(failed.output.contains("boom"));
+
+        // Succeeding tool -> success=true.
+        let ok = agent.execute_tool_call(&call("echo")).await;
+        assert!(ok.success, "succeeding tool must report success=true");
+
+        // Unknown tool -> success=false.
+        let unknown = agent.execute_tool_call(&call("nope")).await;
+        assert!(!unknown.success, "unknown tool must report success=false");
+        assert!(unknown.output.contains("Unknown tool"));
     }
 
     #[tokio::test]
