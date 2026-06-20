@@ -121,14 +121,17 @@ impl SopAuditLogger {
 
     /// Mark interrupted (non-terminal) runs as `Failed` on daemon startup.
     ///
-    /// Mirrors the Python operator's recovery contract
-    /// (`operator-mcp/operator_mcp/workflow/recovery.py`): after a restart any
-    /// run still in a non-terminal state is marked `Failed` — runs are **not**
-    /// auto-resumed; retry is an explicit user action. Deterministic
-    /// `PausedCheckpoint` runs are intentionally left untouched (their resume is
-    /// handled separately from the persisted checkpoint state — see #391), so
-    /// this sweeps only the non-deterministic in-flight states (`Pending`,
-    /// `Running`, `WaitingApproval`). Returns the number of runs marked.
+    /// Follows the spirit of the Python operator's startup recovery
+    /// (`operator-mcp/operator_mcp/workflow/memory.py::mark_stale_runs`): after a
+    /// restart, interrupted runs are marked `Failed` rather than auto-resumed —
+    /// retry is an explicit user action.
+    ///
+    /// One deliberate divergence from Python: the Python sweep also fails
+    /// `paused`/checkpoint runs, whereas here deterministic `PausedCheckpoint`
+    /// runs are intentionally left untouched so the #391 checkpoint-resume path
+    /// can reconstruct them (per the SOP-cluster design). This sweep therefore
+    /// covers only the non-deterministic in-flight states (`Pending`, `Running`,
+    /// `WaitingApproval`). Returns the number of runs marked.
     ///
     /// Best-effort and idempotent: terminal runs are skipped, so a second call
     /// marks nothing.
