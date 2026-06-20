@@ -333,8 +333,10 @@ mod tests {
 
     #[test]
     fn ssrf_blocks_ipv6_loopback() {
-        // IPv6 in brackets is rejected by extract_host
+        // [::1] is parsed and caught by the deny-list as an IPv6 loopback.
         assert!(is_ssrf_target("http://[::1]/admin"));
+        // IPv4-compatible IPv6 embedding a metadata IP is also blocked.
+        assert!(is_ssrf_target("http://[::169.254.169.254]/"));
     }
 
     #[test]

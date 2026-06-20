@@ -42,7 +42,9 @@ pub(crate) fn is_non_global_v6(v6: Ipv6Addr) -> bool {
         || (segs[0] & 0xfe00) == 0xfc00 // fc00::/7 unique-local
         || (segs[0] & 0xffc0) == 0xfe80 // fe80::/10 link-local
         || (segs[0] == 0x2001 && segs[1] == 0x0db8) // 2001:db8::/32 documentation
-        || v6.to_ipv4_mapped().is_some_and(is_non_global_v4)
+        // Catches both IPv4-mapped (::ffff:a.b.c.d) and deprecated
+        // IPv4-compatible (::a.b.c.d) embeddings, e.g. ::169.254.169.254.
+        || v6.to_ipv4().is_some_and(is_non_global_v4)
 }
 
 /// True if an IP is private/reserved (non-global).
@@ -143,9 +145,10 @@ mod tests {
             "169.254.169.254", // cloud metadata
             "100.64.0.1",      // CGNAT
             "::1",
-            "::ffff:127.0.0.1", // IPv4-mapped loopback
-            "fe80::1",          // link-local
-            "fc00::1",          // unique-local
+            "::ffff:127.0.0.1",  // IPv4-mapped loopback
+            "::169.254.169.254", // IPv4-compatible metadata
+            "fe80::1",           // link-local
+            "fc00::1",           // unique-local
         ] {
             assert!(
                 is_non_global_ip(ip.parse().unwrap()),
