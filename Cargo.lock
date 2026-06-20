@@ -7280,7 +7280,6 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "directories",
- "portable-atomic",
  "reqwest 0.12.28",
  "rppal",
  "serde",
