@@ -49,8 +49,6 @@ jobs:
             cross_compiler: gcc-arm-linux-gnueabihf
             linker_env: CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER
             linker: arm-linux-gnueabihf-gcc
-          - os: macos-15-intel
-            target: x86_64-apple-darwin
           - os: windows-latest
             target: x86_64-pc-windows-msvc
     steps:

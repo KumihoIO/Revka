@@ -70,7 +70,7 @@ Current maintainers with PR approval authority: `kaveone`.
 ### 4) Full Platform Build (manual)
 
 1. Maintainer runs `cross-platform-build-manual.yml` via `workflow_dispatch`.
-2. `build` job (matrix, 3 targets): `aarch64-linux-gnu`, `x86_64-darwin` (macOS 15 Intel), `x86_64-windows-msvc`.
+2. `build` job (matrix, 3 targets): `aarch64-linux-gnu`, `armv7-linux-gnueabihf`, `x86_64-windows-msvc`.
 3. Build-only, no tests, no publish. Used to verify cross-compilation on platforms not covered by `checks-on-pr.yml`.
 
 ## Build Targets by Workflow
@@ -83,7 +83,6 @@ Current maintainers with PR approval authority: `kaveone`.
 | `arm-unknown-linux-gnueabihf` | | | | ✓ |
 | `aarch64-apple-darwin` | ✓ | | ✓ | ✓ |
 | `aarch64-linux-android` | | | ✓ | ✓ |
-| `x86_64-apple-darwin` | | ✓ | | |
 | `x86_64-pc-windows-msvc` | ✓ | ✓ | ✓ | ✓ |
 
 ## Mermaid Diagrams
