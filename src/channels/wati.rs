@@ -1090,4 +1090,39 @@ mod tests {
         let result = ch.try_transcribe_audio(&payload).await;
         assert!(result.is_none());
     }
+
+    #[test]
+    fn wati_verify_inbound_secret_unset_accepts_anything() {
+        // No secret configured -> inbound verification is a pass-through
+        // (authentication is opt-in; allowed_numbers still authorizes).
+        let ch = make_channel();
+        assert!(ch.verify_inbound_secret(None));
+        assert!(ch.verify_inbound_secret(Some("anything")));
+        assert!(ch.verify_inbound_secret(Some("")));
+    }
+
+    #[test]
+    fn wati_verify_inbound_secret_set_requires_match() {
+        let ch = make_channel().with_webhook_secret(Some("s3cr3t".into()));
+        // Matching header passes; wrong/missing header is rejected.
+        assert!(ch.verify_inbound_secret(Some("s3cr3t")));
+        assert!(!ch.verify_inbound_secret(Some("wrong")));
+        assert!(!ch.verify_inbound_secret(Some("")));
+        assert!(!ch.verify_inbound_secret(None));
+    }
+
+    #[test]
+    fn wati_with_webhook_secret_treats_blank_as_unset() {
+        // Empty and whitespace-only secrets are normalized to "no secret",
+        // so verification stays in pass-through mode rather than rejecting
+        // every request against a degenerate key.
+        let ch_empty = make_channel().with_webhook_secret(Some(String::new()));
+        assert!(ch_empty.verify_inbound_secret(None));
+
+        let ch_ws = make_channel().with_webhook_secret(Some("   ".into()));
+        assert!(ch_ws.verify_inbound_secret(None));
+
+        let ch_none = make_channel().with_webhook_secret(None);
+        assert!(ch_none.verify_inbound_secret(None));
+    }
 }

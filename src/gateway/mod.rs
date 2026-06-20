@@ -777,7 +777,7 @@ pub async fn run_gateway_with_mcp_registry(
         .channels_config
         .whatsapp
         .as_ref()
-        .is_some_and(|wa| wa.verify_token.is_some())
+        .is_some_and(|wa| wa.is_cloud_config())
         && whatsapp_app_secret.is_none()
     {
         tracing::warn!(

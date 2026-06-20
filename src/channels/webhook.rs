@@ -63,7 +63,10 @@ impl WebhookChannel {
                 .unwrap_or_else(|| "POST".to_string())
                 .to_uppercase(),
             auth_header,
-            secret,
+            // A whitespace-only secret is treated as no secret at all, so the
+            // fail-closed gate in `listen()` engages instead of silently using
+            // a degenerate HMAC key. Mirrors WATI's `with_webhook_secret`.
+            secret: secret.filter(|s| !s.trim().is_empty()),
             allow_unsigned,
         }
     }
