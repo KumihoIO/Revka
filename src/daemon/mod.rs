@@ -265,6 +265,18 @@ where
     })
 }
 
+/// Aborts the wrapped task when dropped, binding a spawned task's lifetime to
+/// the scope that holds the guard. Used so the heartbeat deadman watcher cannot
+/// outlive the worker invocation that owns it (#420) — including on the `?`
+/// early-return paths inside the worker loop.
+struct AbortOnDrop(tokio::task::JoinHandle<()>);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
 async fn run_heartbeat_worker(config: Config) -> Result<()> {
     use crate::heartbeat::engine::{
         HeartbeatEngine, HeartbeatTask, TaskPriority, TaskStatus, compute_adaptive_interval,
@@ -285,12 +297,18 @@ async fn run_heartbeat_worker(config: Config) -> Result<()> {
     let start_time = std::time::Instant::now();
 
     // ── Deadman watcher ──────────────────────────────────────────
+    // The watcher is bound to this worker invocation via `AbortOnDrop`: when the
+    // worker returns (including the `?` early-returns in the loop below), the
+    // guard drops and aborts the watcher. Otherwise the supervisor's restart
+    // loop would leak one watcher per restart, and any watcher whose worker had
+    // recorded a tick would keep a frozen `last_tick_at` that eventually fires a
+    // false dead-man's-switch alert every 60s (#420).
     let deadman_timeout = config.heartbeat.deadman_timeout_minutes;
-    if deadman_timeout > 0 {
+    let _deadman_watcher = (deadman_timeout > 0).then(|| {
         let dm_metrics = Arc::clone(&metrics);
         let dm_config = config.clone();
         let dm_delivery = delivery.clone();
-        tokio::spawn(async move {
+        AbortOnDrop(tokio::spawn(async move {
             let check_interval = Duration::from_secs(60);
             let timeout = chrono::Duration::minutes(i64::from(deadman_timeout));
             loop {
@@ -322,8 +340,8 @@ async fn run_heartbeat_worker(config: Config) -> Result<()> {
                     }
                 }
             }
-        });
-    }
+        }))
+    });
 
     let base_interval = config.heartbeat.interval_minutes.max(5);
     let mut sleep_mins = base_interval;
@@ -927,6 +945,34 @@ mod tests {
                 .as_str()
                 .unwrap_or("")
                 .contains("component exited unexpectedly")
+        );
+    }
+
+    #[tokio::test]
+    async fn abort_on_drop_aborts_watcher_task() {
+        // #420: dropping the guard must abort the spawned (otherwise infinite)
+        // task, so each worker restart cannot leak its deadman watcher.
+        let handle = tokio::spawn(async {
+            loop {
+                tokio::time::sleep(Duration::from_secs(3600)).await;
+            }
+        });
+        let abort_handle = handle.abort_handle();
+        assert!(!abort_handle.is_finished());
+
+        let guard = AbortOnDrop(handle);
+        drop(guard);
+
+        // Give the runtime a moment to process the abort.
+        for _ in 0..50 {
+            if abort_handle.is_finished() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(
+            abort_handle.is_finished(),
+            "watcher task should be aborted when its AbortOnDrop guard is dropped"
         );
     }
 
