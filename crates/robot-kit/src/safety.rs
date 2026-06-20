@@ -108,7 +108,12 @@ impl SafetyMonitor {
 
     /// Check if movement is currently allowed
     pub async fn can_move(&self) -> bool {
-        if self.state.estop_active.load(Ordering::SeqCst) {
+        // estop and the watchdog dead-man's switch are independent gates over the
+        // obstacle/bump/stale `can_move` bool, so neither can be silently undone
+        // by a `can_move = true` writer (e.g. a clear sensor reading) (#439).
+        if self.state.estop_active.load(Ordering::SeqCst)
+            || self.state.watchdog_tripped.load(Ordering::SeqCst)
+        {
             return false;
         }
         self.state.can_move.load(Ordering::SeqCst)
@@ -126,18 +131,12 @@ impl SafetyMonitor {
             return Err("Emergency stop active".to_string());
         }
 
-        // A fresh command means the controller is alive again, so auto-recover
-        // from a watchdog trip (#439). Re-derive `can_move` from the current
-        // obstacle state rather than blindly enabling it, so this does not clobber
-        // a concurrent obstacle block.
+        // A fresh command means the controller is alive again, so clear the
+        // watchdog gate (#439). This only lifts the dead-man's switch — it does
+        // NOT touch `can_move`, so any concurrent obstacle / bump / sensor-stale
+        // block still rejects the move via the check below.
         if self.state.watchdog_tripped.swap(false, Ordering::SeqCst) {
-            let min_dist = *self.state.min_obstacle_distance.read().await;
-            let clear = min_dist >= self.config.min_obstacle_distance;
-            self.state.can_move.store(clear, Ordering::SeqCst);
-            if clear {
-                *self.state.block_reason.write().await = None;
-                let _ = self.event_tx.send(SafetyEvent::Recovered);
-            }
+            let _ = self.event_tx.send(SafetyEvent::Recovered);
         }
 
         // Check general movement permission
@@ -254,13 +253,11 @@ impl SafetyMonitor {
             let _ = self
                 .event_tx
                 .send(SafetyEvent::ObstacleDetected { distance, angle });
-        } else if !self.state.estop_active.load(Ordering::SeqCst)
-            && !self.state.watchdog_tripped.load(Ordering::SeqCst)
-        {
-            // Clear block if obstacle moved away and no E-stop / watchdog trip.
-            // The watchdog guard is essential: sensor readings keep arriving after
-            // the *controller* is lost, so without it a clear reading would
-            // silently re-enable a robot the dead-man's switch just stopped (#439).
+        } else if !self.state.estop_active.load(Ordering::SeqCst) {
+            // Clear the obstacle block when the obstacle moves away. This only
+            // manages the obstacle dimension of `can_move`; the watchdog is an
+            // independent gate in `can_move()`, so a clear reading re-enabling
+            // `can_move` here does NOT undo a dead-man's-switch trip (#439).
             self.state.can_move.store(true, Ordering::SeqCst);
             *self.state.block_reason.write().await = None;
         }
@@ -302,14 +299,14 @@ impl SafetyMonitor {
     /// approved within `watchdog_timeout` ("auto-stop if no commands for N
     /// seconds"). Returns `true` if it tripped this call (#439).
     ///
-    /// It sets a dedicated `watchdog_tripped` flag (plus `can_move = false` and a
-    /// `block_reason`) rather than calling `emergency_stop`: a full e-stop latches
-    /// `estop_active` and has no in-tree `reset_estop` caller, so it would wedge
-    /// the robot permanently. The dedicated flag instead **auto-recovers on the
-    /// next command** (see `request_movement`), while being immune to the
-    /// `update_obstacle_distance` auto-clear (which is guarded on
-    /// `!watchdog_tripped`), so a clear sensor reading can't silently re-enable a
-    /// robot whose controller went away.
+    /// It sets ONLY the dedicated `watchdog_tripped` flag, which `can_move()`
+    /// consults directly — deliberately not the shared `can_move` bool nor an
+    /// `emergency_stop`. This keeps the watchdog an independent gate that (a)
+    /// cannot be silently cleared by the obstacle / bump / sensor-stale writers
+    /// of `can_move`, and (b) does not itself clobber any of those blocks. It is
+    /// not a hard e-stop (which has no in-tree `reset_estop` caller and would
+    /// wedge the robot); instead it **auto-recovers on the next command** in
+    /// `request_movement`.
     async fn check_watchdog(&self, watchdog_timeout: Duration) -> bool {
         let last_cmd_ms = self.state.last_command_ms.load(Ordering::SeqCst);
         // 0 = disarmed (no command yet / explicit stop). Fire at most once per
@@ -327,23 +324,21 @@ impl SafetyMonitor {
         if elapsed > watchdog_timeout {
             tracing::warn!("Watchdog timeout - no commands for {elapsed:?}; blocking movement");
             self.state.watchdog_tripped.store(true, Ordering::SeqCst);
-            self.state.can_move.store(false, Ordering::SeqCst);
-            *self.state.block_reason.write().await =
-                Some(format!("Watchdog timeout - no commands for {elapsed:?}"));
             let _ = self.event_tx.send(SafetyEvent::WatchdogTimeout);
             return true;
         }
         false
     }
 
-    /// Disarm the watchdog on an **explicit stop**. A deliberate stop means the
-    /// operator intends the robot to be idle, so the dead-man's switch should not
-    /// trip during that intentional idle. (It is intentionally NOT called on
-    /// normal drive completion — the watchdog must keep counting through the
-    /// idle-between-commands window, which is the case it exists to protect; see
-    /// `check_watchdog`.)
+    /// Disarm the watchdog on an **explicit stop** (and lift any active trip). A
+    /// deliberate stop means the operator intends the robot to be idle, so the
+    /// dead-man's switch should not trip during that intentional idle. It is
+    /// intentionally NOT called on normal drive completion — the watchdog must
+    /// keep counting through the idle-between-commands window, which is the case
+    /// it exists to protect; see `check_watchdog`.
     pub fn record_drive_finished(&self) {
         self.state.last_command_ms.store(0, Ordering::SeqCst);
+        self.state.watchdog_tripped.store(false, Ordering::SeqCst);
     }
 
     /// Run the safety monitor loop (call in background task)
@@ -635,6 +630,62 @@ mod tests {
         assert_eq!(monitor.state.last_command_ms.load(Ordering::SeqCst), 0);
         assert!(!monitor.check_watchdog(Duration::from_secs(30)).await);
         assert!(monitor.can_move().await);
+    }
+
+    #[tokio::test]
+    async fn watchdog_recovery_does_not_clobber_a_stale_block() {
+        // #439 review: when the watchdog AND a sensor-stale block are both active,
+        // a fresh command must not re-enable a blind robot — the stale block must
+        // still reject the move (the watchdog clears, the stale block does not).
+        let (monitor, _rx) = SafetyMonitor::new(SafetyConfig::default());
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        monitor
+            .state
+            .last_command_ms
+            .store(now_ms - 60_000, Ordering::SeqCst);
+        // Simulate a concurrent sensor-stale block.
+        monitor.state.can_move.store(false, Ordering::SeqCst);
+        *monitor.state.block_reason.write().await = Some("Sensor data stale".to_string());
+
+        assert!(monitor.check_watchdog(Duration::from_secs(30)).await);
+
+        let err = monitor
+            .request_movement("forward", 0.1)
+            .await
+            .expect_err("stale block must still reject the move");
+        assert!(err.contains("stale"), "got: {err}");
+        // The watchdog cleared (controller is back) but the stale block remains.
+        assert!(!monitor.state.watchdog_tripped.load(Ordering::SeqCst));
+        assert!(!monitor.can_move().await);
+    }
+
+    #[tokio::test]
+    async fn watchdog_trip_gates_can_move_even_if_bump_recovery_reenables() {
+        // #439 review: bump_detected's delayed recovery sets the raw can_move bool
+        // back to true (it only checks e-stop). can_move() must still report false
+        // while the watchdog is tripped, because it gates on watchdog_tripped.
+        let (monitor, _rx) = SafetyMonitor::new(SafetyConfig::default());
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        monitor
+            .state
+            .last_command_ms
+            .store(now_ms - 60_000, Ordering::SeqCst);
+        assert!(monitor.check_watchdog(Duration::from_secs(30)).await);
+
+        // Simulate bump_detected's recovery task re-enabling the raw bool.
+        monitor.state.can_move.store(true, Ordering::SeqCst);
+        *monitor.state.block_reason.write().await = None;
+
+        assert!(
+            !monitor.can_move().await,
+            "watchdog trip must gate can_move() regardless of the raw bool"
+        );
     }
 
     #[tokio::test]
