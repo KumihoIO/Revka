@@ -78,6 +78,20 @@ impl SopAuditLogger {
         Ok(())
     }
 
+    /// Log that a timed-out approval gate was **held** for a human — the
+    /// fail-safe default: the run was not auto-executed and still awaits
+    /// explicit approval.
+    pub async fn log_timeout_held(&self, run: &SopRun, step_number: u32) -> Result<()> {
+        let key = format!("sop_timeout_held_{}_{step_number}", run.run_id);
+        let content = serde_json::to_string_pretty(run)?;
+        self.memory.store(&key, &content, category(), None).await?;
+        info!(
+            "SOP audit: run {} step {step_number} held for human approval after timeout",
+            run.run_id
+        );
+        Ok(())
+    }
+
     /// Retrieve a stored run by ID (if it exists in memory).
     pub async fn get_run(&self, run_id: &str) -> Result<Option<SopRun>> {
         let key = run_key(run_id);
@@ -217,6 +231,23 @@ mod tests {
             .collect();
         assert_eq!(timeout_keys.len(), 1);
         assert!(timeout_keys[0].key.contains("run-test-001"));
+    }
+
+    #[tokio::test]
+    async fn log_timeout_held_persists_entry() {
+        let memory: Arc<dyn Memory> = Arc::new(crate::memory::test_memory::TestMemory::new());
+
+        let logger = SopAuditLogger::new(memory.clone());
+        let run = test_run();
+        logger.log_timeout_held(&run, 1).await.unwrap();
+
+        let entries = memory.list(Some(&category()), None).await.unwrap();
+        let held_keys: Vec<_> = entries
+            .iter()
+            .filter(|e| e.key.starts_with("sop_timeout_held_"))
+            .collect();
+        assert_eq!(held_keys.len(), 1);
+        assert!(held_keys[0].key.contains("run-test-001"));
     }
 
     #[tokio::test]
