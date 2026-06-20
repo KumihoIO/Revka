@@ -47,12 +47,25 @@ pub fn extract_urls(text: &str, max: usize) -> Vec<String> {
 /// Returns `true` if the URL points to a private/local address that should be
 /// blocked for SSRF protection.
 pub fn is_ssrf_target(url: &str) -> bool {
-    let host = match extract_host(url) {
-        Some(h) => h,
-        None => return true, // unparseable URLs are rejected
+    // Parse with the same URL crate reqwest uses so our host view matches what
+    // reqwest will actually connect to. A hand-rolled parser diverges and lets
+    // bypasses through: userinfo (`trusted.com@127.0.0.1`) and alternative IP
+    // encodings (decimal `2130706433`, hex `0x7f000001`) — both of which the url
+    // crate canonicalizes to a literal IP that then skips the connect-time
+    // resolver, so they must be caught here.
+    let parsed = match reqwest::Url::parse(url) {
+        Ok(u) => u,
+        Err(_) => return true, // unparseable URLs are rejected
+    };
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return true;
+    }
+    let host = match parsed.host_str() {
+        Some(h) if !h.is_empty() => h.to_ascii_lowercase(),
+        _ => return true, // no host -> reject
     };
 
-    // Check hostname-based locals
+    // Hostname-based locals.
     if host == "localhost"
         || host.ends_with(".localhost")
         || host.ends_with(".local")
@@ -61,33 +74,19 @@ pub fn is_ssrf_target(url: &str) -> bool {
         return true;
     }
 
-    // Check IP-based private ranges for literal IPs in the URL. Hosts that
-    // resolve via DNS are validated at connect time by the SsrfResolver in
-    // fetch_link_summary (which also covers redirect hops).
-    if let Ok(ip) = host.parse::<IpAddr>() {
+    // Literal IPs — host_str() gives the canonical form (decimal/hex/octal IPv4
+    // normalized); strip IPv6 brackets before parsing. DNS-resolving hostnames
+    // are validated at connect time by the SsrfResolver in fetch_link_summary
+    // (which also covers redirect hops).
+    let bare = host
+        .strip_prefix('[')
+        .and_then(|h| h.strip_suffix(']'))
+        .unwrap_or(&host);
+    if let Ok(ip) = bare.parse::<IpAddr>() {
         return crate::security::ssrf::is_non_global_ip(ip);
     }
 
     false
-}
-
-/// Extract the host portion from a URL string.
-fn extract_host(url: &str) -> Option<String> {
-    let rest = url
-        .strip_prefix("https://")
-        .or_else(|| url.strip_prefix("http://"))?;
-    let authority = rest.split(['/', '?', '#']).next()?;
-    if authority.is_empty() {
-        return None;
-    }
-    // Strip port
-    let host = if authority.starts_with('[') {
-        // IPv6 in brackets — reject for simplicity
-        return None;
-    } else {
-        authority.split(':').next().unwrap_or(authority)
-    };
-    Some(host.to_lowercase())
 }
 
 /// Extract the `<title>` tag content from HTML.
@@ -355,6 +354,23 @@ mod tests {
         // #402: routing literal-IP checks through the shared deny-list extends
         // coverage to ranges the old local check missed (e.g. 100.64.0.0/10 CGNAT).
         assert!(is_ssrf_target("http://100.64.0.1/x"));
+    }
+
+    #[test]
+    fn ssrf_blocks_userinfo_literal_ip() {
+        // #402 re-review: userinfo must not hide a private host. The real host
+        // is 127.0.0.1 / 169.254.169.254, which reqwest connects to directly
+        // (skipping the resolver, as it's a literal IP), so catch it here.
+        assert!(is_ssrf_target("http://trusted.com@127.0.0.1/admin"));
+        assert!(is_ssrf_target("http://user:pass@169.254.169.254/latest"));
+    }
+
+    #[test]
+    fn ssrf_blocks_alternative_ip_encodings() {
+        // #402 re-review: decimal/hex IPv4 encodings normalize to a literal IP
+        // (which skips the connect-time resolver), so they must be blocked here.
+        assert!(is_ssrf_target("http://2130706433/")); // 127.0.0.1 decimal
+        assert!(is_ssrf_target("http://0x7f000001/")); // 127.0.0.1 hex
     }
 
     // ── Title extraction ────────────────────────────────────────────
