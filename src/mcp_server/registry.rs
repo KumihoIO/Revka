@@ -47,7 +47,8 @@ pub type SkippedEntry = (String, String);
 pub fn build_default_tools(
     workspace_dir: &std::path::Path,
 ) -> (Vec<Arc<dyn Tool>>, Vec<SkippedEntry>) {
-    let (tools, skipped) = build_baseline(workspace_dir);
+    let security = Arc::new(baseline_security(workspace_dir, None));
+    let (tools, skipped) = build_baseline(workspace_dir, &security);
     // Return as owned Strings so callers can interleave with the config-
     // driven skip messages uniformly.
     (
@@ -59,12 +60,31 @@ pub fn build_default_tools(
     )
 }
 
+/// Build the [`SecurityPolicy`] that gates the filesystem/shell tools.
+///
+/// With a `Config` we honor the operator's `[autonomy]` settings (and pin the
+/// policy to the real `workspace_dir`). Without one we fall back to the safe
+/// defaults but still pin `workspace_dir` to the requested path — crucially
+/// *not* the hard-coded `"."` that [`SecurityPolicy::default`] uses, which
+/// would otherwise confine file access to the daemon's CWD instead of the
+/// configured workspace.
+fn baseline_security(workspace_dir: &std::path::Path, config: Option<&Config>) -> SecurityPolicy {
+    match config {
+        Some(config) => SecurityPolicy::from_config(&config.autonomy, workspace_dir),
+        None => SecurityPolicy {
+            workspace_dir: workspace_dir.to_path_buf(),
+            ..SecurityPolicy::default()
+        },
+    }
+}
+
 /// Shared implementation used by both `build_default_tools` (no config) and
-/// `build_tools_with_config` (config-aware).
+/// `build_tools_with_config` (config-aware). The caller supplies the
+/// `workspace_dir`-aware [`SecurityPolicy`] (see [`baseline_security`]).
 fn build_baseline(
     workspace_dir: &std::path::Path,
+    security: &Arc<SecurityPolicy>,
 ) -> (Vec<Arc<dyn Tool>>, Vec<(&'static str, &'static str)>) {
-    let security = Arc::new(SecurityPolicy::default());
     let runtime = Arc::new(crate::runtime::NativeRuntime::new());
 
     let mut tools: Vec<Arc<dyn Tool>> = Vec::new();
@@ -163,8 +183,8 @@ pub fn build_tools_with_config(
     workspace_dir: &std::path::Path,
     config: &Config,
 ) -> (Vec<Arc<dyn Tool>>, Vec<SkippedEntry>) {
-    let security = Arc::new(SecurityPolicy::default());
-    let (mut tools, baseline_skipped) = build_baseline(workspace_dir);
+    let security = Arc::new(baseline_security(workspace_dir, Some(config)));
+    let (mut tools, baseline_skipped) = build_baseline(workspace_dir, &security);
     let mut skipped: Vec<SkippedEntry> = baseline_skipped
         .into_iter()
         .map(|(n, r)| (n.to_string(), r.to_string()))
@@ -380,7 +400,7 @@ pub fn build_tools_with_runtime(
     config: &Config,
     runtime: &RuntimeHandles,
 ) -> (Vec<Arc<dyn Tool>>, Vec<SkippedEntry>) {
-    let security = Arc::new(SecurityPolicy::default());
+    let security = Arc::new(baseline_security(workspace_dir, Some(config)));
     let (mut tools, mut skipped) = build_tools_with_config(workspace_dir, config);
 
     // Drop baseline skip entries that we're about to override — otherwise the
@@ -610,6 +630,26 @@ mod tests {
 
     fn names(tools: &[Arc<dyn Tool>]) -> Vec<&str> {
         tools.iter().map(|t| t.name()).collect()
+    }
+
+    #[test]
+    fn baseline_security_uses_passed_workspace_dir_not_dot() {
+        // The policy that gates the filesystem/shell tools must be pinned to the
+        // workspace_dir the registry was asked to serve — never the "." that
+        // SecurityPolicy::default() hard-codes (which would confine file access
+        // to the daemon's CWD). Regression guard for the registry builders.
+        let ws = std::path::Path::new("/srv/agent/workspace");
+
+        // No-config (baseline / degraded fallback) path.
+        let no_config = baseline_security(ws, None);
+        assert_eq!(no_config.workspace_dir, ws);
+        assert_ne!(no_config.workspace_dir, std::path::PathBuf::from("."));
+
+        // Config-aware path — from_config must thread the same workspace_dir.
+        let config = Config::default();
+        let with_config = baseline_security(ws, Some(&config));
+        assert_eq!(with_config.workspace_dir, ws);
+        assert_ne!(with_config.workspace_dir, std::path::PathBuf::from("."));
     }
 
     #[test]
