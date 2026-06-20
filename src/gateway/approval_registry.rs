@@ -287,33 +287,41 @@ impl ApprovalRegistry {
         message: &str,
     ) -> Option<(String, bool, String)> {
         let map = self.pending.read().unwrap();
+        if map.is_empty() {
+            return None;
+        }
         let msg_lower = message.trim().to_lowercase();
 
-        let mut only: Option<(&String, &PendingApproval)> = None;
-        let mut count = 0usize;
+        // Collect REAL keyword matches scoped to (channel, channel_id). Two
+        // pendings in the same chat are only ambiguous when BOTH match the same
+        // keyword — disjoint keyword lists disambiguate themselves. So filter by
+        // keyword first, then bail only if more than one pending actually
+        // matched the incoming text.
+        let mut hit: Option<(String, bool, String)> = None;
         for (run_id, approval) in map.iter() {
             let scoped = approval
                 .scopes
                 .get(channel)
                 .and_then(|s| s.channel_id.as_deref())
-                .map(|id| id == channel_id)
-                .unwrap_or(false);
-            if scoped {
-                count += 1;
-                only = Some((run_id, approval));
+                == Some(channel_id);
+            if !scoped {
+                continue;
+            }
+            if let Some((is_approve, feedback)) = match_keywords(
+                &msg_lower,
+                message,
+                &approval.approve_keywords,
+                &approval.reject_keywords,
+            ) {
+                if hit.is_some() {
+                    // More than one pending matched the keyword → ambiguous;
+                    // require an explicit reply/thread to disambiguate.
+                    return None;
+                }
+                hit = Some((run_id.clone(), is_approve, feedback));
             }
         }
-        if count != 1 {
-            return None;
-        }
-        let (run_id, approval) = only?;
-        match_keywords(
-            &msg_lower,
-            message,
-            &approval.approve_keywords,
-            &approval.reject_keywords,
-        )
-        .map(|(is_approve, feedback)| (run_id.clone(), is_approve, feedback))
+        hit
     }
 
     /// Remove a pending approval (cleanup after resolution).
@@ -338,7 +346,11 @@ fn match_keywords(
     reject_keywords: &[String],
 ) -> Option<(bool, String)> {
     for kw in approve_keywords {
-        if msg_lower == kw || msg_lower.starts_with(&format!("{} ", kw)) {
+        if msg_lower == kw
+            || msg_lower
+                .strip_prefix(kw.as_str())
+                .is_some_and(|rest| rest.starts_with(' '))
+        {
             return Some((true, String::new()));
         }
     }
@@ -346,9 +358,22 @@ fn match_keywords(
         if msg_lower == kw {
             return Some((false, String::new()));
         }
-        if msg_lower.starts_with(&format!("{} ", kw)) {
-            let feedback = original.trim()[kw.len()..].trim().to_string();
-            return Some((false, feedback));
+        if let Some(rest_lower) = msg_lower.strip_prefix(kw.as_str()) {
+            if rest_lower.starts_with(' ') {
+                // Preserve the user's original casing when the keyword end lands
+                // on a char boundary in the original (always true for ASCII
+                // keywords); otherwise fall back to the lowercased remainder so
+                // a case-folding byte-length change can never slice inside a
+                // multibyte char and panic (which, under the registry read
+                // lock, would poison it and brick all approvals).
+                let trimmed = original.trim();
+                let feedback = if trimmed.is_char_boundary(kw.len()) {
+                    trimmed[kw.len()..].trim().to_string()
+                } else {
+                    rest_lower.trim().to_string()
+                };
+                return Some((false, feedback));
+            }
         }
     }
     None
@@ -365,6 +390,21 @@ mod tests {
             "wf".into(),
             vec!["approve".into(), "yes".into()],
             vec!["reject".into()],
+            "/tmp".into(),
+        )
+    }
+
+    fn approval_with_keywords(
+        run_id: &str,
+        approve: Vec<String>,
+        reject: Vec<String>,
+    ) -> PendingApproval {
+        PendingApproval::new(
+            run_id.into(),
+            "approve".into(),
+            "wf".into(),
+            approve,
+            reject,
             "/tmp".into(),
         )
     }
@@ -399,6 +439,23 @@ mod tests {
         reg.attach("r1", "discord", scope("c1"));
         let m = reg.match_any_channel_keyword("discord", "c1", "reject not safe");
         assert_eq!(m, Some(("r1".into(), false, "not safe".into())));
+    }
+
+    #[test]
+    fn reject_feedback_survives_case_folding_byte_change() {
+        // Kelvin sign 'K' (U+212A, 3 bytes) lowercases to ASCII 'k' (1 byte).
+        // Slicing the original by the lowercased keyword's byte length would land
+        // inside the multibyte char and panic (poisoning the registry lock). The
+        // matcher must instead fall back to the lowercased remainder.
+        let reg = ApprovalRegistry::new();
+        reg.register(approval_with_keywords(
+            "r1",
+            vec!["approve".into()],
+            vec!["k".into()],
+        ));
+        reg.attach("r1", "telegram", scope("100"));
+        let m = reg.match_any_channel_keyword("telegram", "100", "\u{212A} bad");
+        assert_eq!(m, Some(("r1".into(), false, "bad".into())));
     }
 
     #[test]
@@ -440,5 +497,48 @@ mod tests {
             reg.match_any_channel_keyword("telegram", "100", "hello there")
                 .is_none()
         );
+    }
+
+    #[test]
+    fn two_pending_disjoint_keywords_disambiguate() {
+        let reg = ApprovalRegistry::new();
+        // Two pendings in the same chat, but with DISJOINT keyword lists. A
+        // keyword unique to one of them is unambiguous and resumes that run.
+        reg.register(approval_with_keywords(
+            "r1",
+            vec!["alpha".into()],
+            vec!["nope".into()],
+        ));
+        reg.attach("r1", "slack", scope("c1"));
+        reg.register(approval_with_keywords(
+            "r2",
+            vec!["bravo".into()],
+            vec!["deny".into()],
+        ));
+        reg.attach("r2", "slack", scope("c1"));
+
+        let m = reg.match_any_channel_keyword("slack", "c1", "alpha");
+        assert_eq!(m.map(|(id, ok, _)| (id, ok)), Some(("r1".into(), true)));
+
+        let m = reg.match_any_channel_keyword("slack", "c1", "bravo");
+        assert_eq!(m.map(|(id, ok, _)| (id, ok)), Some(("r2".into(), true)));
+    }
+
+    #[test]
+    fn is_empty_registry_returns_none() {
+        let reg = ApprovalRegistry::new();
+        assert!(
+            reg.match_any_channel_keyword("telegram", "100", "approve")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn keyword_with_trailing_text_strip_prefix() {
+        let reg = ApprovalRegistry::new();
+        reg.register(approval("r1"));
+        reg.attach("r1", "discord", scope("c1"));
+        let m = reg.match_any_channel_keyword("discord", "c1", "yes please");
+        assert_eq!(m.map(|(id, ok, _)| (id, ok)), Some(("r1".into(), true)));
     }
 }
