@@ -38,7 +38,7 @@ Current maintainers with PR approval authority: `kaveone`.
 1. Contributor opens or updates a PR against `main`.
 2. `checks-on-pr.yml` starts:
    - `lint` job: runs `cargo fmt --check` and `cargo clippy -D warnings`.
-   - `test` job: runs `cargo nextest run --locked` on `ubuntu-latest` with Rust 1.92.0 and mold linker.
+   - `test` job: runs `cargo nextest run --locked` on `ubuntu-latest` with Rust 1.93.0 and mold linker.
    - `build` job (matrix): compiles release binary on `x86_64-unknown-linux-gnu` and `aarch64-apple-darwin`.
    - `security` job: runs `cargo audit` and `cargo deny check licenses sources`.
    - Concurrency group cancels in-progress runs for the same PR on new pushes.

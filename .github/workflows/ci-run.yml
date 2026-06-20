@@ -43,6 +43,34 @@ jobs:
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
 
+  msrv:
+    name: MSRV (rust-version)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      # Derive the toolchain from Cargo.toml's `rust-version` so this job always
+      # enforces the declared MSRV and can never drift from it (#431).
+      - name: Read MSRV from Cargo.toml
+        id: msrv
+        run: echo "version=$(grep -m1 '^rust-version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          cache-bin: false
+
+      - name: Ensure web/dist placeholder exists
+        run: mkdir -p web/dist && touch web/dist/.gitkeep
+
+      # Scoped to the `revka` package (the one whose `rust-version` we enforce);
+      # the desktop/tauri crate has its own toolchain needs. If this fails, the
+      # real floor is higher than declared — bump `rust-version` in Cargo.toml
+      # (the setup scripts and docs derive their floor from it).
+      - name: Check revka builds on the declared MSRV
+        run: cargo check --locked -p revka
+
   bench-compile:
     name: Verify Benchmarks Compile
     runs-on: ubuntu-latest
@@ -266,7 +294,7 @@ jobs:
   gate:
     name: CI Required Gate
     if: always()
-    needs: [lint, bench-compile, lint-strict-delta, test, build, docs-quality, check-all-features, feature-matrix, version-drift]
+    needs: [lint, msrv, bench-compile, lint-strict-delta, test, build, docs-quality, check-all-features, feature-matrix, version-drift]
     runs-on: ubuntu-latest
     steps:
       - name: Check upstream job results

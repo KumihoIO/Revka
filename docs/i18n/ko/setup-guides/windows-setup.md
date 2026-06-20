@@ -41,7 +41,7 @@ copy target\x86_64-pc-windows-msvc\release\revka.exe %USERPROFILE%\.revka\bin\
 | 요구 사항 | 필수? | 메모 |
 |---|---|---|
 | Git | 예 | [git-scm.com/download/win](https://git-scm.com/download/win) |
-| Rust 1.87 이상 | 예 | `setup.bat`이 없으면 자동 설치 |
+| Rust 1.89 이상 | 예 | `setup.bat`이 없으면 자동 설치 |
 | Visual Studio Build Tools | 예 (소스 빌드 시) | MSVC 링커를 위한 C++ 워크로드 필요 |
 | Node.js | 아니오 | 웹 대시보드를 소스에서 빌드할 때만 |
 

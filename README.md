@@ -477,7 +477,7 @@ Add `--features channel-matrix,channel-lark,browser-native,hardware,rag-pdf,obse
 
 ### Prerequisites
 
-- **Rust stable (1.87+)** — `install.sh` / `setup.bat` will install it via rustup if missing.
+- **Rust stable (1.89+)** — `install.sh` / `setup.bat` will install it via rustup if missing.
 - **Python 3.11+** — required for the Kumiho and Operator Python MCP sidecars.
 - **Node.js 20+** — optional, only needed to rebuild the embedded React dashboard from source (`cd web && npm install && npx vite build`). The dashboard is re-embedded into the Rust binary at compile time via `rust-embed`.
 - **Kumiho endpoint** — an HTTP endpoint discoverable via `[kumiho].api_url` in `~/.revka/config.toml`. Default points at the **kumiho-FastAPI BFF** (`https://api.kumiho.cloud`) that fronts the managed control plane; free tier is 5,000 nodes, sign up at [kumiho.io](https://kumiho.io). Self-host is available on Enterprise. Without a reachable Kumiho endpoint Revka runs statelessly. See [docs/setup-guides/kumiho-operator-setup.md](docs/setup-guides/kumiho-operator-setup.md).

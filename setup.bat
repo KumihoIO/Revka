@@ -15,7 +15,12 @@ set "VERSION=unknown"
 for /f "tokens=2 delims==" %%v in ('findstr /b /c:"version = " "%~dp0Cargo.toml" 2^>nul') do set "VERSION=%%v"
 set "VERSION=%VERSION:"=%"
 set "VERSION=%VERSION: =%"
-set "RUST_MIN_VERSION=1.87"
+:: Single-source the minimum Rust version from Cargo.toml's rust-version so it
+:: never drifts from the real build floor (#431).
+set "RUST_MIN_VERSION=1.89"
+for /f "tokens=2 delims==" %%v in ('findstr /b /c:"rust-version = " "%~dp0Cargo.toml" 2^>nul') do set "RUST_MIN_VERSION=%%v"
+set "RUST_MIN_VERSION=%RUST_MIN_VERSION:"=%"
+set "RUST_MIN_VERSION=%RUST_MIN_VERSION: =%"
 set "TARGET=x86_64-pc-windows-msvc"
 set "REPO=https://github.com/KumihoIO/Revka"
 
@@ -71,7 +76,18 @@ if %ERRORLEVEL% NEQ 0 (
     goto :install_rust
 ) else (
     for /f "tokens=2" %%v in ('rustc --version 2^>nul') do set "RUST_VER=%%v"
-    echo   %GREEN%OK%RESET% Rust !RUST_VER! found
+    for /f "tokens=1,2 delims=." %%a in ("!RUST_VER!") do ( set "RV_MAJOR=%%a" & set "RV_MINOR=%%b" )
+    for /f "tokens=1,2 delims=." %%a in ("!RUST_MIN_VERSION!") do ( set "RM_MAJOR=%%a" & set "RM_MINOR=%%b" )
+    set "RUST_TOO_OLD="
+    if !RV_MAJOR! LSS !RM_MAJOR! set "RUST_TOO_OLD=1"
+    if !RV_MAJOR! EQU !RM_MAJOR! if !RV_MINOR! LSS !RM_MINOR! set "RUST_TOO_OLD=1"
+    if defined RUST_TOO_OLD (
+        echo   %RED%ERROR%RESET% Rust !RUST_VER! is too old. Revka requires Rust !RUST_MIN_VERSION!+ ^(Cargo.toml rust-version^).
+        echo     Update with: rustup update stable
+        exit /b 1
+    ) else (
+        echo   %GREEN%OK%RESET% Rust !RUST_VER! found ^(^>= !RUST_MIN_VERSION! required^)
+    )
 )
 
 :: Check Node.js (optional)
@@ -352,7 +368,7 @@ echo Without arguments, runs in interactive mode.
 echo.
 echo Prerequisites:
 echo   - Git (required)
-echo   - Rust 1.87+ (auto-installed if missing)
+echo   - Rust !RUST_MIN_VERSION!+ (auto-installed if missing)
 echo   - Visual Studio Build Tools with C++ workload (for source builds)
 echo   - Node.js (optional, for web dashboard)
 echo.
