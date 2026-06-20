@@ -3116,6 +3116,14 @@ Ensure only one `revka` process is using this bot token."
                     // indicator and agent forwarding. The approval must be a
                     // reply (via Telegram's native reply-to) to the prompt
                     // message we captured when the workflow paused.
+                    //
+                    // Match against the user's RAW reply text, not `msg.content`:
+                    // for a reply, `parse_update_message` prepends the quoted
+                    // prompt (`"{quote}\n\n{text}"`), so the keyword would no
+                    // longer be at the start of the string and the match would
+                    // miss — which is exactly why replying "approve" to the
+                    // prompt failed while a plain "approve" worked. Telegram keeps
+                    // the user's own text in `text`, separate from the quote.
                     let reply_to_message_id = update
                         .pointer("/message/reply_to_message/message_id")
                         .and_then(|v| v.as_i64())
@@ -3124,10 +3132,19 @@ Ensure only one `revka` process is using this bot token."
                                 .pointer("/channel_post/reply_to_message/message_id")
                                 .and_then(|v| v.as_i64())
                         });
+                    let approval_text = update
+                        .pointer("/message/text")
+                        .and_then(|v| v.as_str())
+                        .or_else(|| {
+                            update
+                                .pointer("/channel_post/text")
+                                .and_then(|v| v.as_str())
+                        })
+                        .unwrap_or(msg.content.as_str());
                     if self.try_intercept_approval(
                         &msg.reply_target,
                         reply_to_message_id,
-                        &msg.content,
+                        approval_text,
                         &msg.sender,
                     ) {
                         continue;
