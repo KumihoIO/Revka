@@ -101,6 +101,32 @@ impl Tunnel for TailscaleTunnel {
     }
 }
 
+impl Drop for TailscaleTunnel {
+    /// Best-effort **synchronous** teardown of the public exposure (#427).
+    ///
+    /// The async `stop()` is the normal path, but on abrupt shutdown — the
+    /// daemon aborts the gateway on SIGTERM, then runtime teardown cancels the
+    /// tunnel supervisor — `stop()` may never run. Unlike the child-process
+    /// backends, a Tailscale funnel lives in `tailscaled`, so `kill_on_drop` of
+    /// the spawned CLI child does NOT remove it; without this reset the public
+    /// funnel can outlive the gateway. This runs on every drop path (abort,
+    /// teardown, panic) and is a no-op (idempotent) if `stop()` already reset.
+    fn drop(&mut self) {
+        // Only reset if a process was actually started — avoids shelling out to
+        // `tailscale` for every dropped (never-started) instance.
+        let started = self.proc.try_lock().is_ok_and(|g| g.is_some());
+        if !started {
+            return;
+        }
+        let subcommand = if self.funnel { "funnel" } else { "serve" };
+        let _ = std::process::Command::new("tailscale")
+            .args([subcommand, "reset"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -129,5 +155,13 @@ mod tests {
         let tunnel = TailscaleTunnel::new(false, None);
         let result = tunnel.stop().await;
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn drop_without_started_process_is_a_noop() {
+        // The Drop guard must early-return when the tunnel was never started, so
+        // it does not invoke the `tailscale` CLI for unstarted instances (#427).
+        let tunnel = TailscaleTunnel::new(true, None);
+        drop(tunnel); // must not panic or shell out
     }
 }

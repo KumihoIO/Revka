@@ -497,11 +497,15 @@ const TUNNEL_HEALTH_CHECK_INTERVAL_SECS: u64 = 30;
 ///
 /// On shutdown (the watch flips to `true`, or the sender is dropped) it stops
 /// the tunnel and exits — including from inside the backoff wait, so it never
-/// lingers for a full backoff. The caller must **await the returned handle**
-/// on the shutdown path (as it does for the MCP task) so the stop completes
-/// before the process exits; this matters for providers like Tailscale whose
-/// exposure lives in a daemon and is only torn down by `stop()` (not by
-/// `kill_on_drop` of the spawned CLI child).
+/// lingers for a full backoff. The caller awaits the returned handle on the
+/// gateway's own (HTTP-admin) shutdown path (as it does for the MCP task) so
+/// the async `stop()` completes cleanly.
+///
+/// On abrupt paths the gateway future is cancelled before that await runs
+/// (notably `revka daemon` SIGTERM, which `abort()`s components). Teardown then
+/// falls to the tunnel backend's `Drop`: child-process backends are reaped via
+/// `kill_on_drop`, and `TailscaleTunnel::drop` resets its funnel synchronously
+/// (its exposure lives in `tailscaled`, so `kill_on_drop` alone is insufficient).
 fn spawn_tunnel_supervisor(
     tunnel: Box<dyn crate::tunnel::Tunnel>,
     host: String,
