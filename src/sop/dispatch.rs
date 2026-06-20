@@ -156,12 +156,18 @@ pub async fn dispatch_sop_event(
 
 /// Process dispatch results in headless (non-agent-loop) callers.
 ///
-/// This handles audit and logging for fan-in callers (MQTT, webhook, cron)
-/// that cannot execute SOP steps interactively. For `WaitApproval` actions,
-/// approval timeout polling in the scheduler handles progression.
-/// For `ExecuteStep` actions, the run is started in the engine but steps
-/// cannot be executed without an agent loop — this is logged as a warning.
-pub fn process_headless_results(results: &[DispatchResult]) {
+/// Handles audit and logging for fan-in callers (MQTT, webhook, cron) that
+/// cannot execute SOP steps interactively. A `WaitApproval` action is **failed
+/// closed**: a headless caller has no interactive approver and no timeout poller
+/// runs on this path, so the run would otherwise be orphaned in
+/// `WaitingApproval` forever — instead it is cancelled and audited, leaving a
+/// trail for a human to re-run. `ExecuteStep` cannot run without an agent loop
+/// and is logged as a warning.
+pub async fn process_headless_results(
+    engine: &Arc<Mutex<SopEngine>>,
+    audit: &SopAuditLogger,
+    results: &[DispatchResult],
+) {
     for result in results {
         match result {
             DispatchResult::Started {
@@ -177,11 +183,37 @@ pub fn process_headless_results(results: &[DispatchResult]) {
                     );
                 }
                 SopRunAction::WaitApproval { step, .. } => {
-                    info!(
-                        "SOP headless dispatch: run {run_id} ('{sop_name}') waiting for approval \
-                         on step {} '{}'. Timeout polling will handle progression",
+                    // Fail closed: no interactive approver exists on the headless
+                    // path and nothing polls approval timeouts here, so cancel the
+                    // run (with an audit trail) rather than orphan it forever.
+                    warn!(
+                        "SOP headless dispatch: run {run_id} ('{sop_name}') needs approval on \
+                         step {} '{}' but no approver is available headless — cancelling (fail-closed)",
                         step.number, step.title,
                     );
+                    let cancelled = match engine.lock() {
+                        Ok(mut eng) => match eng.cancel_run(run_id) {
+                            Ok(()) => eng.get_run(run_id).cloned(),
+                            Err(e) => {
+                                warn!("SOP headless dispatch: failed to cancel run {run_id}: {e}");
+                                None
+                            }
+                        },
+                        Err(e) => {
+                            warn!(
+                                "SOP headless dispatch: engine lock poisoned cancelling \
+                                 {run_id}: {e}"
+                            );
+                            None
+                        }
+                    }; // lock dropped before await
+                    if let Some(run) = cancelled {
+                        if let Err(e) = audit.log_run_complete(&run).await {
+                            warn!(
+                                "SOP headless dispatch: audit failed for cancelled run {run_id}: {e}"
+                            );
+                        }
+                    }
                 }
                 SopRunAction::DeterministicStep { step, .. } => {
                     info!(
@@ -353,7 +385,8 @@ mod tests {
     use crate::config::SopConfig;
     use crate::memory::traits::Memory;
     use crate::sop::types::{
-        Sop, SopExecutionMode, SopPriority, SopRunAction, SopStep, SopTrigger, SopTriggerSource,
+        Sop, SopExecutionMode, SopPriority, SopRunAction, SopRunStatus, SopStep, SopTrigger,
+        SopTriggerSource,
     };
 
     fn test_sop(name: &str, triggers: Vec<SopTrigger>) -> Sop {
@@ -557,6 +590,82 @@ mod tests {
             }
             other => panic!("Expected Started, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn headless_wait_approval_is_cancelled_failclosed() {
+        // A Supervised SOP dispatched headlessly yields WaitApproval. With no
+        // approver on the headless path, the run must be cancelled (fail-closed),
+        // never left orphaned in WaitingApproval (#389).
+        let mut sop = test_sop(
+            "supervised-sop",
+            vec![SopTrigger::Mqtt {
+                topic: "alert".into(),
+                condition: None,
+            }],
+        );
+        sop.execution_mode = SopExecutionMode::Supervised;
+        let engine = test_engine(vec![sop]);
+        let audit = test_audit();
+
+        let event = SopEvent {
+            source: SopTriggerSource::Mqtt,
+            topic: Some("alert".into()),
+            payload: None,
+            timestamp: now_iso8601(),
+        };
+        let results = dispatch_sop_event(&engine, &audit, event).await;
+        let run_id = match &results[0] {
+            DispatchResult::Started { run_id, .. } => run_id.clone(),
+            other => panic!("Expected Started, got {other:?}"),
+        };
+        assert_eq!(
+            engine.lock().unwrap().get_run(&run_id).unwrap().status,
+            SopRunStatus::WaitingApproval
+        );
+
+        process_headless_results(&engine, &audit, &results).await;
+
+        assert_eq!(
+            engine.lock().unwrap().get_run(&run_id).unwrap().status,
+            SopRunStatus::Cancelled,
+            "headless WaitApproval run must be cancelled, not orphaned"
+        );
+    }
+
+    #[tokio::test]
+    async fn headless_execute_step_is_not_cancelled() {
+        // An Auto-mode SOP yields ExecuteStep; headless processing logs but must
+        // NOT cancel it.
+        let sop = test_sop(
+            "auto-sop",
+            vec![SopTrigger::Mqtt {
+                topic: "go".into(),
+                condition: None,
+            }],
+        );
+        let engine = test_engine(vec![sop]);
+        let audit = test_audit();
+
+        let event = SopEvent {
+            source: SopTriggerSource::Mqtt,
+            topic: Some("go".into()),
+            payload: None,
+            timestamp: now_iso8601(),
+        };
+        let results = dispatch_sop_event(&engine, &audit, event).await;
+        let run_id = match &results[0] {
+            DispatchResult::Started { run_id, .. } => run_id.clone(),
+            other => panic!("Expected Started, got {other:?}"),
+        };
+
+        process_headless_results(&engine, &audit, &results).await;
+
+        assert_eq!(
+            engine.lock().unwrap().get_run(&run_id).map(|r| r.status),
+            Some(SopRunStatus::Running),
+            "Auto ExecuteStep run must not be cancelled by headless processing"
+        );
     }
 
     /// B1 DoD: Auto-mode SOP returns ExecuteStep action in dispatch result.
