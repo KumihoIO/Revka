@@ -105,7 +105,7 @@ This runs inside a container:
 - `./scripts/ci/rust_quality_gate.sh`
 - `cargo test --locked --verbose`
 - `cargo build --release --locked --verbose`
-- `cargo deny check licenses sources`
+- `cargo deny check all`
 - `cargo audit`
 - Docker smoke build (`docker build --target dev ...` + `--version` check)
 
