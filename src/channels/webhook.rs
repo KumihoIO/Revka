@@ -188,16 +188,44 @@ impl Channel for WebhookChannel {
         use portable_atomic::{AtomicU64, Ordering};
         use std::sync::Arc;
 
-        // Fail closed: a webhook listener with no secret would silently accept
-        // unauthenticated POSTs (it binds 0.0.0.0) that flow straight into the
-        // agent. Require either a secret or an explicit allow_unsigned opt-in.
+        // Resolve the bind host (loopback by default, #425). A non-loopback
+        // address exposes the endpoint on the network; everything below fails
+        // closed unless the operator explicitly opted in.
+        let host = self.host.as_str();
+        let public_bind = crate::security::pairing::is_public_bind(host);
+
+        // Gate 1: binding a non-loopback address requires an explicit opt-in.
+        // This is stricter than the gateway (which only warns): a webhook feeds
+        // straight into the agent, so it fails closed rather than warning.
+        if public_bind && !self.allow_public_bind {
+            bail!(
+                "Webhook channel is configured to bind a non-loopback address \
+                 ({host}:{port}), which exposes it on the network. Set \
+                 [channels_config.webhook].allow_public_bind = true to opt in (a secret is \
+                 then required), or set host = \"127.0.0.1\" to restrict it to loopback.",
+                port = self.listen_port
+            );
+        }
+
+        // Gate 2: authentication. A network-exposed (public) bind MUST be
+        // authenticated — a secret is required regardless of allow_unsigned,
+        // which only relaxes loopback binds where reachability is already
+        // restricted to the host.
         if self.secret.is_none() {
-            if self.allow_unsigned {
+            if public_bind {
+                bail!(
+                    "Webhook channel binds a non-loopback address ({host}:{port}) but has no \
+                     secret. A network-exposed endpoint must be authenticated: set \
+                     [channels_config.webhook].secret. (allow_unsigned only applies to \
+                     loopback binds.)",
+                    port = self.listen_port
+                );
+            } else if self.allow_unsigned {
                 tracing::warn!(
                     "Webhook channel: NO secret configured and allow_unsigned=true — accepting \
-                     UNAUTHENTICATED requests on 0.0.0.0:{}{}. Any caller can inject messages \
-                     that trigger the agent; set [channels_config.webhook].secret to require \
-                     HMAC-SHA256 signatures.",
+                     UNAUTHENTICATED requests on {host}:{}{} (loopback). Any local caller can \
+                     inject messages that trigger the agent; set \
+                     [channels_config.webhook].secret to require HMAC-SHA256 signatures.",
                     self.listen_port,
                     self.listen_path
                 );
@@ -205,7 +233,8 @@ impl Channel for WebhookChannel {
                 bail!(
                     "Webhook channel is enabled without a secret. Set \
                      [channels_config.webhook].secret for HMAC-SHA256 verification, or set \
-                     allow_unsigned=true to deliberately accept unauthenticated requests."
+                     allow_unsigned=true to deliberately accept unauthenticated requests on \
+                     loopback."
                 );
             }
         }
@@ -308,27 +337,19 @@ impl Channel for WebhookChannel {
             .route(&listen_path, post(handle_webhook))
             .with_state(state);
 
-        // Fail closed on a network-exposed bind unless the operator opted in,
-        // mirroring the gateway's `allow_public_bind` policy. Default is loopback
-        // (#425).
-        let host = self.host.as_str();
-        if crate::security::pairing::is_public_bind(host) && !self.allow_public_bind {
-            bail!(
-                "Webhook channel is configured to bind a non-loopback address \
-                 ({host}:{port}), which exposes it on the network. Set \
-                 [channels_config.webhook].allow_public_bind = true to opt in (and keep a \
-                 secret set), or set host = \"127.0.0.1\" to restrict it to loopback.",
-                port = self.listen_port
-            );
-        }
-
         tracing::info!(
             "Webhook channel listening on http://{host}:{}{} ...",
             self.listen_port,
             self.listen_path
         );
 
-        let listener = tokio::net::TcpListener::bind((host, self.listen_port)).await?;
+        // Strip surrounding brackets from a bracketed IPv6 literal (e.g. `[::1]`)
+        // so the tuple form of `ToSocketAddrs` resolves it cross-platform.
+        let bind_host = host
+            .strip_prefix('[')
+            .and_then(|h| h.strip_suffix(']'))
+            .unwrap_or(host);
+        let listener = tokio::net::TcpListener::bind((bind_host, self.listen_port)).await?;
         axum::serve(listener, app)
             .await
             .map_err(|e| anyhow::anyhow!("Webhook server error: {e}"))?;
@@ -427,6 +448,17 @@ mod tests {
         let err = ch.listen(tx).await.unwrap_err().to_string();
         assert!(err.contains("non-loopback"), "got: {err}");
         assert!(err.contains("allow_public_bind"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn listen_bails_on_public_bind_without_secret_even_with_allow_unsigned() {
+        // #425: a network-exposed bind must be authenticated. allow_unsigned only
+        // relaxes loopback binds — it must NOT permit an unauthenticated public
+        // endpoint. make_channel() has no secret and allow_unsigned=true.
+        let ch = make_channel().with_bind(Some("0.0.0.0".into()), true);
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        let err = ch.listen(tx).await.unwrap_err().to_string();
+        assert!(err.contains("must be authenticated"), "got: {err}");
     }
 
     #[test]
