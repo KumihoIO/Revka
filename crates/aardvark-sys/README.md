@@ -24,7 +24,7 @@ Download the SDK from <https://www.totalphase.com/products/aardvark-software-api
 
 ## Behavior without the SDK
 
-If no copy of the library is found, every `AardvarkHandle` method returns `AardvarkError::NotFound`. Hardware discovery simply reports zero Aardvark adapters; the rest of Revka continues to function.
+If no copy of the library is found, every `AardvarkHandle` method that needs it returns `AardvarkError::LibraryNotFound`. Hardware discovery simply reports zero Aardvark adapters; the rest of Revka continues to function.
 
 ## Architecture notes
 

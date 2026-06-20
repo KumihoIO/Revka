@@ -1,13 +1,18 @@
 //! Bindings for the Total Phase Aardvark I2C/SPI/GPIO USB adapter.
 //!
-//! Uses [`libloading`] to load `aardvark.so` at runtime — the same pattern
-//! the official Total Phase C stub (`aardvark.c`) uses internally.
+//! Uses [`libloading`] to load the Aardvark shared library at runtime — the
+//! same pattern the official Total Phase C stub (`aardvark.c`) uses internally.
+//! The library filename is platform-specific: `aardvark.so` on Linux,
+//! `aardvark.dll` on Windows, and `aardvark.dylib` on macOS.
 //!
 //! # Library search order
 //!
-//! 1. `REVKA_AARDVARK_LIB` environment variable (full path to `aardvark.so`)
-//! 2. `<workspace>/crates/aardvark-sys/vendor/aardvark.so` (development default)
-//! 3. `./aardvark.so` (next to the binary, for deployment)
+//! 1. `REVKA_AARDVARK_LIB` environment variable (full path to the library)
+//! 2. `<workspace>/crates/aardvark-sys/vendor/<lib>` (development default)
+//! 3. `<exe dir>/<lib>` (next to the binary, for deployment)
+//! 4. `./<lib>` (current working directory)
+//!
+//! where `<lib>` is the platform-specific filename above.
 //!
 //! If none resolve, every method returns
 //! [`Err(AardvarkError::LibraryNotFound)`](AardvarkError::LibraryNotFound).
@@ -39,6 +44,17 @@ const AA_I2C_PULLUP_BOTH: u8 = 0x03;
 
 // ── Library loading ───────────────────────────────────────────────────────
 
+/// Platform-appropriate Total Phase shared-library filename. Total Phase ships
+/// the SDK as `aardvark.so` on Linux, `aardvark.dll` on Windows, and
+/// `aardvark.dylib` on macOS — note the macOS file has no `lib` prefix, so we
+/// select the exact name rather than deriving it from `DLL_PREFIX`/`DLL_SUFFIX`.
+#[cfg(target_os = "windows")]
+const AARDVARK_LIB_NAME: &str = "aardvark.dll";
+#[cfg(target_os = "macos")]
+const AARDVARK_LIB_NAME: &str = "aardvark.dylib";
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+const AARDVARK_LIB_NAME: &str = "aardvark.so";
+
 static AARDVARK_LIB: OnceLock<Option<Library>> = OnceLock::new();
 
 fn lib() -> Option<&'static Library> {
@@ -53,16 +69,17 @@ fn lib() -> Option<&'static Library> {
                 // 2. Vendor directory shipped with this crate (dev default)
                 {
                     let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-                    p.push("vendor/aardvark.so");
+                    p.push("vendor");
+                    p.push(AARDVARK_LIB_NAME);
                     p
                 },
                 // 3. Next to the running binary (deployment)
                 std::env::current_exe()
                     .ok()
-                    .and_then(|e| e.parent().map(|d| d.join("aardvark.so")))
+                    .and_then(|e| e.parent().map(|d| d.join(AARDVARK_LIB_NAME)))
                     .unwrap_or_default(),
                 // 4. Current working directory
-                PathBuf::from("aardvark.so"),
+                PathBuf::from(AARDVARK_LIB_NAME),
             ];
             let mut tried_any = false;
             for path in &candidates {
@@ -96,12 +113,13 @@ fn lib() -> Option<&'static Library> {
                         if msg.contains("incompatible architecture") || msg.contains("mach-o file") {
                             eprintln!(
                                 "[aardvark-sys] ARCHITECTURE MISMATCH loading {}: {}\n\
-                                 [aardvark-sys] The vendored aardvark.so is x86_64 but this \
+                                 [aardvark-sys] The {} is x86_64 but this \
                                  binary is {}.\n\
                                  [aardvark-sys] Download the arm64 SDK from https://www.totalphase.com/downloads/ \
                                  or build with --target x86_64-apple-darwin.",
                                 path.display(),
                                 msg,
+                                AARDVARK_LIB_NAME,
                                 std::env::consts::ARCH,
                             );
                         } else {
@@ -115,7 +133,7 @@ fn lib() -> Option<&'static Library> {
                 }
             }
             if !tried_any {
-                eprintln!("[aardvark-sys] no library candidates found; set REVKA_AARDVARK_LIB or place aardvark.so next to the binary");
+                eprintln!("[aardvark-sys] no library candidates found; set REVKA_AARDVARK_LIB or place {AARDVARK_LIB_NAME} next to the binary");
             }
             None
         })

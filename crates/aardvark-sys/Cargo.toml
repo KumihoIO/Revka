@@ -13,7 +13,7 @@ repository = "https://github.com/KumihoIO/Revka"
 # The Total Phase SDK (aardvark.h, aardvark.so / .dll / .dylib) is NOT
 # redistributable under Revka's dual MIT/Apache-2.0 license and is not
 # checked in. This crate loads the shared library at runtime via `libloading`
-# and returns AardvarkError::NotFound when the library is unavailable.
+# and returns AardvarkError::LibraryNotFound when the library is unavailable.
 #
 # To enable real hardware, download the SDK from
 # https://www.totalphase.com/products/aardvark-software-api/ and either:
