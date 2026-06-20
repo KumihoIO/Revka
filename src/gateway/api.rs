@@ -2579,6 +2579,7 @@ mod tests {
             tenant_id: None,
             allowed_numbers: vec![],
             proxy_url: None,
+            webhook_secret: None,
             notification_target: None,
         });
         cfg.channels_config.feishu = Some(crate::config::schema::FeishuConfig {
@@ -2717,6 +2718,7 @@ mod tests {
             tenant_id: None,
             allowed_numbers: vec![],
             proxy_url: None,
+            webhook_secret: None,
             notification_target: None,
         });
         current.channels_config.feishu = Some(crate::config::schema::FeishuConfig {

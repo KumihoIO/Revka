@@ -5355,6 +5355,7 @@ fn collect_configured_channels(
                 wh.send_method.clone(),
                 wh.auth_header.clone(),
                 wh.secret.clone(),
+                wh.allow_unsigned,
             )),
         });
     }

@@ -6962,6 +6962,12 @@ pub struct WebhookConfig {
     pub auth_header: Option<String>,
     /// Optional shared secret for webhook signature verification (HMAC-SHA256).
     pub secret: Option<String>,
+    /// Explicitly accept unsigned requests when no `secret` is set. Without this,
+    /// an enabled webhook channel with no secret fails closed (refuses to start)
+    /// rather than silently accepting unauthenticated requests that trigger the
+    /// agent. Set this to `true` to deliberately run the endpoint unauthenticated.
+    #[serde(default)]
+    pub allow_unsigned: bool,
 }
 
 impl ChannelConfig for WebhookConfig {
@@ -7289,6 +7295,14 @@ pub struct WatiConfig {
     /// Overrides the global `[proxy]` setting for this channel only.
     #[serde(default)]
     pub proxy_url: Option<String>,
+    /// Optional inbound shared secret. When set, the `/wati` webhook requires a
+    /// matching `X-Revka-Webhook-Secret` header (constant-time compared) and
+    /// rejects mismatches with 401. WATI has no native HMAC, so without this the
+    /// only authn is the spoofable `waId` payload field — note `allowed_numbers`
+    /// is an authorization filter, NOT authentication. Configure your WATI/proxy
+    /// to send this header.
+    #[serde(default)]
+    pub webhook_secret: Option<String>,
     /// Target identifier for workflow notifications and one-off sends.
     #[serde(default)]
     pub notification_target: Option<String>,
