@@ -8,7 +8,7 @@
 //! 1. **Pre-move checks** - Verify path clear before any movement
 //! 2. **Active monitoring** - Continuous sensor polling during movement
 //! 3. **Reactive stops** - Instant halt on obstacle detection
-//! 4. **Watchdog timer** - Auto-stop if no commands for N seconds
+//! 4. **Watchdog timer** - Latched emergency-stop if no commands for N seconds
 //! 5. **Hardware E-stop** - Physical button overrides everything
 //!
 //! ## Design Philosophy
@@ -274,6 +274,42 @@ impl SafetyMonitor {
         self.shutdown.store(true, Ordering::SeqCst);
     }
 
+    /// Watchdog (dead-man's switch): trigger an emergency stop if no movement
+    /// command has been approved within `watchdog_timeout`. Returns `true` if it
+    /// fired (#439).
+    ///
+    /// An emergency stop is used rather than a bare `can_move = false` because
+    /// `update_obstacle_distance` re-enables `can_move` on the next clear sensor
+    /// reading whenever `estop_active` is false — which would silently re-arm a
+    /// robot that has lost its controller. `emergency_stop` latches the block
+    /// (`estop_active = true`) until an explicit `reset_estop`, the actual
+    /// dead-man's-switch semantics the docs promise.
+    async fn check_watchdog(&self, watchdog_timeout: Duration) -> bool {
+        let last_cmd_ms = self.state.last_command_ms.load(Ordering::SeqCst);
+        // 0 = disarmed: no command since startup or since the last timeout fired.
+        if last_cmd_ms == 0 {
+            return false;
+        }
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        // saturating_sub guards against wall-clock skew (NTP/manual set) that
+        // would otherwise underflow and wrap to a huge elapsed time (#439).
+        let elapsed = Duration::from_millis(now_ms.saturating_sub(last_cmd_ms));
+        if elapsed > watchdog_timeout {
+            tracing::warn!("Watchdog timeout - no commands for {elapsed:?}; emergency stop");
+            self.emergency_stop(&format!("Watchdog timeout - no commands for {elapsed:?}"))
+                .await;
+            let _ = self.event_tx.send(SafetyEvent::WatchdogTimeout);
+            // Disarm so the watchdog fires once per lost-controller episode; the
+            // next approved command re-arms it.
+            self.state.last_command_ms.store(0, Ordering::SeqCst);
+            return true;
+        }
+        false
+    }
+
     /// Run the safety monitor loop (call in background task)
     pub async fn run(&self, mut sensor_rx: tokio::sync::mpsc::Receiver<SensorReading>) {
         let watchdog_timeout = Duration::from_secs(self.config.max_drive_duration);
@@ -309,21 +345,8 @@ impl SafetyMonitor {
                             Some("Sensor data stale".to_string());
                     }
 
-                    // Check watchdog (auto-stop if no commands)
-                    let last_cmd_ms = self.state.last_command_ms.load(Ordering::SeqCst);
-                    if last_cmd_ms > 0 {
-                        let now_ms = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap()
-                            .as_millis() as u64;
-
-                        let elapsed = Duration::from_millis(now_ms - last_cmd_ms);
-                        if elapsed > watchdog_timeout {
-                            tracing::info!("Watchdog timeout - no commands for {:?}", elapsed);
-                            let _ = self.event_tx.send(SafetyEvent::WatchdogTimeout);
-                            // Don't block movement, just notify
-                        }
-                    }
+                    // Watchdog dead-man's switch: latched e-stop if commands stop.
+                    self.check_watchdog(watchdog_timeout).await;
                 }
             }
         }
@@ -499,6 +522,49 @@ mod tests {
         // At minimum = stop
         let speed = monitor.calculate_speed_limit(0.3).await;
         assert!((speed - 0.0).abs() < 0.01);
+    }
+
+    #[tokio::test]
+    async fn watchdog_timeout_triggers_latched_emergency_stop() {
+        // #439: a robot that loses its controller mid-motion must actually stop
+        // (and stay stopped), not merely emit an event.
+        let (monitor, _rx) = SafetyMonitor::new(SafetyConfig::default());
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        // Arm the watchdog with a command timestamp well past the 30s timeout.
+        monitor
+            .state
+            .last_command_ms
+            .store(now_ms - 60_000, Ordering::SeqCst);
+
+        assert!(monitor.check_watchdog(Duration::from_secs(30)).await);
+
+        assert!(monitor.state.estop_active.load(Ordering::SeqCst));
+        assert!(!monitor.can_move().await);
+        assert!(monitor.request_movement("forward", 0.5).await.is_err());
+
+        // Disarmed after firing — does not re-fire every tick.
+        assert_eq!(monitor.state.last_command_ms.load(Ordering::SeqCst), 0);
+        assert!(!monitor.check_watchdog(Duration::from_secs(30)).await);
+
+        // A clear sensor reading must NOT silently re-enable movement: the
+        // dead-man's switch is latched until an explicit reset.
+        monitor.update_obstacle_distance(5.0, 0).await;
+        assert!(
+            !monitor.can_move().await,
+            "watchdog e-stop must latch despite clear sensor readings"
+        );
+    }
+
+    #[tokio::test]
+    async fn watchdog_disarmed_before_any_command() {
+        // No command issued yet (last_command_ms == 0) => watchdog must not fire,
+        // even with a zero timeout.
+        let (monitor, _rx) = SafetyMonitor::new(SafetyConfig::default());
+        assert!(!monitor.check_watchdog(Duration::from_secs(0)).await);
+        assert!(monitor.can_move().await);
     }
 
     #[tokio::test]
