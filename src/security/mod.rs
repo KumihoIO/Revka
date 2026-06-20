@@ -42,6 +42,7 @@ pub mod prompt_guard;
 #[cfg(target_os = "macos")]
 pub mod seatbelt;
 pub mod secrets;
+pub mod ssrf;
 pub mod traits;
 pub mod vulnerability;
 #[cfg(feature = "webauthn")]

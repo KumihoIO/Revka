@@ -61,9 +61,11 @@ pub fn is_ssrf_target(url: &str) -> bool {
         return true;
     }
 
-    // Check IP-based private ranges
+    // Check IP-based private ranges for literal IPs in the URL. Hosts that
+    // resolve via DNS are validated at connect time by the SsrfResolver in
+    // fetch_link_summary (which also covers redirect hops).
     if let Ok(ip) = host.parse::<IpAddr>() {
-        return is_private_ip(ip);
+        return crate::security::ssrf::is_non_global_ip(ip);
     }
 
     false
@@ -86,32 +88,6 @@ fn extract_host(url: &str) -> Option<String> {
         authority.split(':').next().unwrap_or(authority)
     };
     Some(host.to_lowercase())
-}
-
-/// Check if an IP address falls within private/reserved ranges.
-fn is_private_ip(ip: IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(v4) => {
-            v4.is_loopback()           // 127.0.0.0/8
-                || v4.is_private()     // 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
-                || v4.is_link_local()  // 169.254.0.0/16
-                || v4.is_unspecified() // 0.0.0.0
-                || v4.is_broadcast()   // 255.255.255.255
-                || v4.is_multicast() // 224.0.0.0/4
-        }
-        IpAddr::V6(v6) => {
-            v6.is_loopback()       // ::1
-                || v6.is_unspecified() // ::
-                || v6.is_multicast()
-                // Check for IPv4-mapped IPv6 addresses
-                || v6.to_ipv4_mapped().is_some_and(|v4| {
-                    v4.is_loopback()
-                        || v4.is_private()
-                        || v4.is_link_local()
-                        || v4.is_unspecified()
-                })
-        }
-    }
 }
 
 /// Extract the `<title>` tag content from HTML.
@@ -166,6 +142,14 @@ async fn fetch_link_summary(url: &str, timeout_secs: u64) -> Option<LinkSummary>
         .connect_timeout(Duration::from_secs(5))
         .redirect(reqwest::redirect::Policy::limited(5))
         .user_agent("Revka/0.1 (link-enricher)")
+        // SSRF guard: validate every resolved IP — the original host AND each
+        // redirect hop — against the private/reserved deny-list at connect time.
+        // The is_ssrf_target string check only catches literal private IPs in
+        // the URL; this stops a public hostname that resolves to (or redirects
+        // to) an internal address, e.g. cloud metadata at 169.254.169.254.
+        .dns_resolver(std::sync::Arc::new(
+            crate::security::ssrf::SsrfResolver::deny_private(),
+        ))
         .build()
         .ok()?;
 
@@ -350,6 +334,13 @@ mod tests {
         assert!(!is_ssrf_target("https://example.com/page"));
         assert!(!is_ssrf_target("https://www.google.com"));
         assert!(!is_ssrf_target("http://93.184.216.34/resource"));
+    }
+
+    #[test]
+    fn ssrf_blocks_cgnat_via_shared_denylist() {
+        // #402: routing literal-IP checks through the shared deny-list extends
+        // coverage to ranges the old local check missed (e.g. 100.64.0.0/10 CGNAT).
+        assert!(is_ssrf_target("http://100.64.0.1/x"));
     }
 
     // ── Title extraction ────────────────────────────────────────────
