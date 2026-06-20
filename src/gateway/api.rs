@@ -77,7 +77,7 @@ async fn reconnect_gateway_mcp_registry(
 
 /// Header name used by trusted local sidecars (e.g. operator-mcp) to present
 /// the gateway's own service token. Matches `api_auth_profiles.rs`.
-const SERVICE_TOKEN_HEADER: &str = "X-Revka-Service-Token";
+pub(crate) const SERVICE_TOKEN_HEADER: &str = "X-Revka-Service-Token";
 
 /// Extract and validate bearer token from Authorization header.
 fn extract_bearer_token(headers: &HeaderMap) -> Option<&str> {

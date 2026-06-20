@@ -60,6 +60,10 @@ pub struct SlackChannel {
     /// Gateway HTTP port, used to call the workflow approval endpoint when a
     /// keyword match is detected.
     gateway_port: u16,
+    /// Gateway service token, presented via `X-Revka-Service-Token` when calling
+    /// the local `/approve` endpoint so the resume succeeds even when the
+    /// gateway requires auth.
+    service_token: Option<String>,
 }
 
 const SLACK_HISTORY_MAX_RETRIES: u32 = 3;
@@ -191,6 +195,7 @@ impl SlackChannel {
             cancel_reaction: None,
             approval_registry: None,
             gateway_port: 42617,
+            service_token: None,
         }
     }
 
@@ -201,9 +206,11 @@ impl SlackChannel {
         mut self,
         registry: std::sync::Arc<crate::gateway::approval_registry::ApprovalRegistry>,
         gateway_port: u16,
+        service_token: Option<String>,
     ) -> Self {
         self.approval_registry = Some(registry);
         self.gateway_port = gateway_port;
+        self.service_token = service_token;
         self
     }
 
@@ -232,36 +239,65 @@ impl SlackChannel {
         else {
             return false;
         };
+        // Claim the approval here so duplicate/redelivered replies are deduped
+        // (a second claim returns None and is dropped). The captured cwd is
+        // passed to the `/approve` endpoint in the body since its own
+        // `try_claim` then returns None; the endpoint still does the resume,
+        // audit, cache invalidation, and SSE broadcast.
         let Some(pending) = registry.try_claim(&run_id) else {
             return false;
         };
 
         let port = self.gateway_port;
+        let service_token = self.service_token.clone();
         let token = self.bot_token.clone();
         let channel = channel_id.to_string();
         let thread_ts = thread_ts.to_string();
         let workflow_name = pending.workflow_name.clone();
+        let cwd = pending.cwd.clone();
         let author = author_display.to_string();
 
         tokio::spawn(async move {
             // Resume the workflow via the gateway's approve endpoint.
             let url = format!("http://127.0.0.1:{port}/api/workflows/runs/{run_id}/approve");
             let client = reqwest::Client::new();
-            match client
-                .post(&url)
-                .json(&serde_json::json!({
-                    "approved": is_approve,
-                    "feedback": feedback,
-                }))
-                .send()
-                .await
-            {
+            let mut req = client.post(&url).json(&serde_json::json!({
+                "approved": is_approve,
+                "feedback": feedback,
+                "cwd": cwd,
+            }));
+            if let Some(ref svc) = service_token {
+                req = req.header(crate::gateway::api::SERVICE_TOKEN_HEADER, svc);
+            }
+            match req.send().await {
                 Ok(resp) if resp.status().is_success() => {
                     tracing::info!(
                         run_id = %run_id,
                         approved = %is_approve,
                         "Slack: workflow approval processed"
                     );
+
+                    let confirm = if is_approve {
+                        format!("✅ Workflow `{workflow_name}` approved by {author}")
+                    } else if feedback.is_empty() {
+                        format!("❌ Workflow `{workflow_name}` rejected by {author}")
+                    } else {
+                        format!(
+                            "❌ Workflow `{workflow_name}` rejected by {author}. Feedback: {feedback}"
+                        )
+                    };
+
+                    let body = serde_json::json!({
+                        "channel": channel,
+                        "text": confirm,
+                        "thread_ts": thread_ts,
+                    });
+                    let _ = client
+                        .post("https://slack.com/api/chat.postMessage")
+                        .bearer_auth(&token)
+                        .json(&body)
+                        .send()
+                        .await;
                 }
                 Ok(resp) => {
                     tracing::warn!(
@@ -278,26 +314,6 @@ impl SlackChannel {
                     );
                 }
             }
-
-            let confirm = if is_approve {
-                format!("✅ Workflow `{workflow_name}` approved by {author}")
-            } else if feedback.is_empty() {
-                format!("❌ Workflow `{workflow_name}` rejected by {author}")
-            } else {
-                format!("❌ Workflow `{workflow_name}` rejected by {author}. Feedback: {feedback}")
-            };
-
-            let body = serde_json::json!({
-                "channel": channel,
-                "text": confirm,
-                "thread_ts": thread_ts,
-            });
-            let _ = client
-                .post("https://slack.com/api/chat.postMessage")
-                .bearer_auth(&token)
-                .json(&body)
-                .send()
-                .await;
         });
 
         true

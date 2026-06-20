@@ -344,6 +344,9 @@ pub struct TelegramChannel {
     approval_registry: Option<std::sync::Arc<crate::gateway::approval_registry::ApprovalRegistry>>,
     /// Gateway HTTP port for calling the workflow approval endpoint.
     gateway_port: u16,
+    /// Gateway service token, presented via `X-Revka-Service-Token` when calling
+    /// the local `/approve` endpoint.
+    service_token: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -390,6 +393,7 @@ impl TelegramChannel {
             proxy_url: None,
             approval_registry: None,
             gateway_port: 42617,
+            service_token: None,
         }
     }
 
@@ -400,9 +404,11 @@ impl TelegramChannel {
         mut self,
         registry: std::sync::Arc<crate::gateway::approval_registry::ApprovalRegistry>,
         gateway_port: u16,
+        service_token: Option<String>,
     ) -> Self {
         self.approval_registry = Some(registry);
         self.gateway_port = gateway_port;
+        self.service_token = service_token;
         self
     }
 
@@ -428,36 +434,64 @@ impl TelegramChannel {
         else {
             return false;
         };
+        // Claim the approval here so duplicate/redelivered replies are deduped
+        // (a second claim returns None and is dropped). The captured cwd is
+        // passed to the `/approve` endpoint in the body since its own
+        // `try_claim` then returns None; the endpoint still does the resume,
+        // audit, cache invalidation, and SSE broadcast.
         let Some(pending) = registry.try_claim(&run_id) else {
             return false;
         };
 
         let port = self.gateway_port;
+        let service_token = self.service_token.clone();
         let token = self.bot_token.clone();
         let api_base = self.api_base.clone();
         let chat = chat_id.to_string();
         let workflow_name = pending.workflow_name.clone();
+        let cwd = pending.cwd.clone();
         let author = author_display.to_string();
         let reply_message_id = reply_to;
 
         tokio::spawn(async move {
             let url = format!("http://127.0.0.1:{port}/api/workflows/runs/{run_id}/approve");
             let client = reqwest::Client::new();
-            match client
-                .post(&url)
-                .json(&serde_json::json!({
-                    "approved": is_approve,
-                    "feedback": feedback,
-                }))
-                .send()
-                .await
-            {
+            let mut req = client.post(&url).json(&serde_json::json!({
+                "approved": is_approve,
+                "feedback": feedback,
+                "cwd": cwd,
+            }));
+            if let Some(ref svc) = service_token {
+                req = req.header(crate::gateway::api::SERVICE_TOKEN_HEADER, svc);
+            }
+            match req.send().await {
                 Ok(resp) if resp.status().is_success() => {
                     tracing::info!(
                         run_id = %run_id,
                         approved = %is_approve,
                         "Telegram: workflow approval processed"
                     );
+
+                    let confirm = if is_approve {
+                        format!("✅ Workflow `{workflow_name}` approved by {author}")
+                    } else if feedback.is_empty() {
+                        format!("❌ Workflow `{workflow_name}` rejected by {author}")
+                    } else {
+                        format!(
+                            "❌ Workflow `{workflow_name}` rejected by {author}. Feedback: {feedback}"
+                        )
+                    };
+
+                    let send_url = format!("{api_base}/bot{token}/sendMessage");
+                    let _ = client
+                        .post(&send_url)
+                        .json(&serde_json::json!({
+                            "chat_id": chat,
+                            "text": confirm,
+                            "reply_to_message_id": reply_message_id,
+                        }))
+                        .send()
+                        .await;
                 }
                 Ok(resp) => {
                     tracing::warn!(
@@ -474,25 +508,6 @@ impl TelegramChannel {
                     );
                 }
             }
-
-            let confirm = if is_approve {
-                format!("✅ Workflow `{workflow_name}` approved by {author}")
-            } else if feedback.is_empty() {
-                format!("❌ Workflow `{workflow_name}` rejected by {author}")
-            } else {
-                format!("❌ Workflow `{workflow_name}` rejected by {author}. Feedback: {feedback}")
-            };
-
-            let send_url = format!("{api_base}/bot{token}/sendMessage");
-            let _ = client
-                .post(&send_url)
-                .json(&serde_json::json!({
-                    "chat_id": chat,
-                    "text": confirm,
-                    "reply_to_message_id": reply_message_id,
-                }))
-                .send()
-                .await;
         });
 
         true
@@ -3101,6 +3116,14 @@ Ensure only one `revka` process is using this bot token."
                     // indicator and agent forwarding. The approval must be a
                     // reply (via Telegram's native reply-to) to the prompt
                     // message we captured when the workflow paused.
+                    //
+                    // Match against the user's RAW reply text, not `msg.content`:
+                    // for a reply, `parse_update_message` prepends the quoted
+                    // prompt (`"{quote}\n\n{text}"`), so the keyword would no
+                    // longer be at the start of the string and the match would
+                    // miss — which is exactly why replying "approve" to the
+                    // prompt failed while a plain "approve" worked. Telegram keeps
+                    // the user's own text in `text`, separate from the quote.
                     let reply_to_message_id = update
                         .pointer("/message/reply_to_message/message_id")
                         .and_then(|v| v.as_i64())
@@ -3109,10 +3132,19 @@ Ensure only one `revka` process is using this bot token."
                                 .pointer("/channel_post/reply_to_message/message_id")
                                 .and_then(|v| v.as_i64())
                         });
+                    let approval_text = update
+                        .pointer("/message/text")
+                        .and_then(|v| v.as_str())
+                        .or_else(|| {
+                            update
+                                .pointer("/channel_post/text")
+                                .and_then(|v| v.as_str())
+                        })
+                        .unwrap_or(msg.content.as_str());
                     if self.try_intercept_approval(
                         &msg.reply_target,
                         reply_to_message_id,
-                        &msg.content,
+                        approval_text,
                         &msg.sender,
                     ) {
                         continue;

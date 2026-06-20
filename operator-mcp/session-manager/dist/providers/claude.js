@@ -157,10 +157,12 @@ function normalizeMcpServers(servers) {
 /**
  * Build Claude SDK options from a Revka session config.
  */
-function buildClaudeOptions(config, onStderr) {
+function buildClaudeOptions(config, onStderr, canUseTool) {
     const opts = {
         cwd: config.cwd,
-        permissionMode: "bypassPermissions",
+        // With a permission gate wired in (canUseTool), run in "default" mode so the
+        // SDK consults the callback. Trusted / ungated spawns keep bypassing.
+        permissionMode: (canUseTool ? "default" : "bypassPermissions"),
         includePartialMessages: true,
         env: {
             ...process.env,
@@ -202,6 +204,9 @@ function buildClaudeOptions(config, onStderr) {
     // Limit max turns to prevent runaway agents
     if (config.maxTurns) {
         opts.maxTurns = config.maxTurns;
+    }
+    if (canUseTool) {
+        opts.canUseTool = canUseTool;
     }
     return opts;
 }
@@ -369,10 +374,7 @@ function extractUsage(message) {
     };
 }
 const MAX_RECOVERY_ATTEMPTS = 2;
-/**
- * Create a Claude agent session and start the query pump.
- */
-export function createClaudeSession(config, onEvent) {
+export function createClaudeSession(config, onEvent, perm) {
     const handle = {
         id: config.title ?? "claude-session",
         claudeSessionId: null,
@@ -388,6 +390,23 @@ export function createClaudeSession(config, onEvent) {
     const accumulatedEvents = [];
     // Store the original user prompt so recovery can re-inject it
     const originalPrompt = config.prompt;
+    // Permission gate: when a handler is wired in and the spawn isn't trusted,
+    // each tool call is evaluated; risky ones escalate to the operator via
+    // createPendingRequest (which emits the channel event + 5-min auto-deny).
+    const gated = !!perm && config.trusted !== true;
+    const canUseTool = gated
+        ? async (toolName, input) => {
+            const role = config.role ?? "coder";
+            const verdict = perm.permissions.evaluate(toolName, input, config.cwd, role);
+            if (verdict === "approve") {
+                return { behavior: "allow", updatedInput: input };
+            }
+            const action = await perm.permissions.createPendingRequest(perm.agentId, config.title ?? "agent", toolName, input, config.cwd, role, onEvent);
+            return action === "approve"
+                ? { behavior: "allow", updatedInput: input }
+                : { behavior: "deny", message: "Denied by the operator permission policy (or timed out)." };
+        }
+        : undefined;
     const startPump = (prompt) => {
         const input = createAsyncInput();
         handle.input = input;
@@ -399,7 +418,7 @@ export function createClaudeSession(config, onEvent) {
             if (handle.stderr.length > 8000) {
                 handle.stderr = handle.stderr.slice(-8000);
             }
-        });
+        }, canUseTool);
         const q = claudeQuery({ prompt: input.iterable, options });
         handle.query = q;
         const turnId = `turn-${++handle.turnSeq}`;

@@ -2913,12 +2913,53 @@ async fn cleanup_local_run_files(run_id: &str) {
     }
 }
 
+/// Resume an already-claimed `human_approval` run by calling the operator MCP
+/// `resume_workflow` tool. The caller is responsible for claiming the approval
+/// (so this is the single in-process resume primitive shared by the REST
+/// endpoint and the channel keyword handler). Returns `Ok(())` on success or a
+/// human-readable error string.
+pub(crate) async fn resume_claimed_approval(
+    mcp: &crate::tools::McpRegistry,
+    run_id: &str,
+    approved: bool,
+    feedback: &str,
+    cwd: &str,
+) -> Result<(), String> {
+    let tool_name = format!(
+        "{}__resume_workflow",
+        crate::agent::operator::OPERATOR_SERVER_NAME
+    );
+    let mut tool_args = serde_json::Map::new();
+    tool_args.insert(
+        "run_id".to_string(),
+        serde_json::Value::String(run_id.to_string()),
+    );
+    tool_args.insert("approved".to_string(), serde_json::Value::Bool(approved));
+    tool_args.insert(
+        "response".to_string(),
+        serde_json::Value::String(feedback.to_string()),
+    );
+    tool_args.insert(
+        "cwd".to_string(),
+        serde_json::Value::String(cwd.to_string()),
+    );
+
+    let mcp_future = mcp.call_tool(&tool_name, serde_json::Value::Object(tool_args));
+    match tokio::time::timeout(std::time::Duration::from_secs(30), mcp_future).await {
+        Ok(Ok(_)) => Ok(()),
+        Ok(Err(e)) => Err(format!("operator tool call failed: {e:#}")),
+        Err(_) => Err("operator tool call timed out (30s)".to_string()),
+    }
+}
+
 /// POST /api/workflows/runs/{run_id}/approve
 ///
-/// Body: { "approved": bool, "feedback": string (optional) }
+/// Body: { "approved": bool, "feedback": string (optional), "cwd": string (optional) }
 ///
 /// Approves or rejects a paused workflow step. Atomically claims the approval
-/// from the registry to prevent race conditions with Discord.
+/// from the registry to prevent race conditions. Channel listeners claim the
+/// approval themselves (for duplicate-message dedup) and pass the captured
+/// `cwd` in the body, since this endpoint's own `try_claim` then returns None.
 pub async fn handle_approve_workflow_run(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -2931,53 +2972,44 @@ pub async fn handle_approve_workflow_run(
 
     let approved = body.approved;
     let feedback = body.feedback.unwrap_or_default();
+    let body_cwd = body
+        .cwd
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
 
-    // Atomically claim the approval from the registry to prevent races with Discord.
-    // If None returned, the registry may have been lost (gateway restart) — fall through
-    // and call resume_workflow directly; the operator validates paused state itself.
+    // Atomically claim the approval from the registry to prevent double-resume.
+    // Channel listeners already claim before POSTing (so this returns None) and
+    // supply `cwd` in the body. If None AND no body cwd, the registry may have
+    // been lost (gateway restart) — fall through and call resume_workflow
+    // directly with a best-effort cwd; the operator validates paused state.
     let claimed = state.approval_registry.try_claim(&run_id);
     let cwd = claimed
         .as_ref()
         .map(|a| a.cwd.clone())
-        .unwrap_or_else(|| "/tmp".to_string());
+        .or_else(|| body_cwd.clone())
+        .unwrap_or_else(|| {
+            std::env::current_dir()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|_| ".".into())
+        });
 
-    if claimed.is_none() {
+    if claimed.is_none() && body_cwd.is_none() {
         tracing::info!(
             "approve_workflow_run: no registry entry for run_id={run_id} (gateway restart?), \
              calling resume_workflow directly"
         );
     }
 
-    // Call the operator MCP tool `resume_workflow`
-    let tool_name = format!(
-        "{}__resume_workflow",
-        crate::agent::operator::OPERATOR_SERVER_NAME
-    );
-    let mut tool_args = serde_json::Map::new();
-    tool_args.insert(
-        "run_id".to_string(),
-        serde_json::Value::String(run_id.clone()),
-    );
-    tool_args.insert("approved".to_string(), serde_json::Value::Bool(approved));
-    tool_args.insert(
-        "response".to_string(),
-        serde_json::Value::String(feedback.clone()),
-    );
-    tool_args.insert("cwd".to_string(), serde_json::Value::String(cwd));
-
     let mcp_result = if let Some(registry) = state.mcp_registry() {
-        let mcp_future = registry.call_tool(&tool_name, serde_json::Value::Object(tool_args));
-        match tokio::time::timeout(std::time::Duration::from_secs(30), mcp_future).await {
-            Ok(Ok(result_str)) => Ok(result_str),
-            Ok(Err(e)) => Err(format!("operator tool call failed: {e:#}")),
-            Err(_) => Err("operator tool call timed out (30s)".to_string()),
-        }
+        resume_claimed_approval(&registry, &run_id, approved, &feedback, &cwd).await
     } else {
         Err("MCP registry not available — operator not connected".to_string())
     };
 
     match mcp_result {
-        Ok(_) => {
+        Ok(()) => {
             invalidate_dashboard_runs_cache();
             invalidate_proxy_cache();
             audit_workflow_command(
@@ -3030,6 +3062,11 @@ pub async fn handle_approve_workflow_run(
 pub struct ApproveWorkflowBody {
     pub approved: bool,
     pub feedback: Option<String>,
+    /// Captured run cwd, supplied by channel listeners that claim the approval
+    /// before POSTing (so the endpoint's own `try_claim` returns None and cannot
+    /// recover the cwd from the registry). Optional for direct/dashboard calls.
+    #[serde(default)]
+    pub cwd: Option<String>,
 }
 
 /// POST /api/workflows/runs/{run_id}/retry

@@ -42,6 +42,9 @@ pub struct DiscordChannel {
     approval_registry: Option<Arc<crate::gateway::approval_registry::ApprovalRegistry>>,
     /// Gateway port used to POST approval decisions to the local REST endpoint.
     gateway_port: u16,
+    /// Gateway service token, presented via `X-Revka-Service-Token` when calling
+    /// the local `/approve` endpoint.
+    service_token: Option<String>,
 }
 
 impl DiscordChannel {
@@ -70,6 +73,7 @@ impl DiscordChannel {
             multi_message_thread_ts: Mutex::new(HashMap::new()),
             approval_registry: None,
             gateway_port: 42617,
+            service_token: None,
         }
     }
 
@@ -78,9 +82,11 @@ impl DiscordChannel {
         mut self,
         registry: Arc<crate::gateway::approval_registry::ApprovalRegistry>,
         gateway_port: u16,
+        service_token: Option<String>,
     ) -> Self {
         self.approval_registry = Some(registry);
         self.gateway_port = gateway_port;
+        self.service_token = service_token;
         self
     }
 
@@ -1169,9 +1175,15 @@ impl Channel for DiscordChannel {
                             &clean_content,
                         )
                         {
-                            // Atomically claim — prevents duplicate handling.
+                            // Claim here so duplicate/redelivered replies are
+                            // deduped (a second claim returns None and is
+                            // dropped). The captured cwd is passed to `/approve`
+                            // in the body since the endpoint's own `try_claim`
+                            // then returns None; the endpoint still does the
+                            // resume, audit, cache invalidation, and SSE.
                             if let Some(pending) = registry.try_claim(&run_id) {
                                 let port = self.gateway_port;
+                                let service_token = self.service_token.clone();
                                 let bot_token = self.bot_token.clone();
                                 let author_username = d
                                     .get("author")
@@ -1189,15 +1201,53 @@ impl Channel for DiscordChannel {
                                     let payload = serde_json::json!({
                                         "approved": is_approve,
                                         "feedback": feedback,
+                                        "cwd": pending.cwd,
                                     });
                                     let client = reqwest::Client::new();
-                                    match client.post(&url).json(&payload).send().await {
+                                    let mut req = client.post(&url).json(&payload);
+                                    if let Some(ref svc) = service_token {
+                                        req = req.header(
+                                            crate::gateway::api::SERVICE_TOKEN_HEADER,
+                                            svc,
+                                        );
+                                    }
+                                    match req.send().await {
                                         Ok(resp) if resp.status().is_success() => {
                                             tracing::info!(
                                                 run_id = %run_id,
                                                 approved = %is_approve,
                                                 "Discord: workflow approval processed"
                                             );
+
+                                            // Send confirmation message back to Discord.
+                                            let confirm_msg = if is_approve {
+                                                format!(
+                                                    "✅ Workflow `{}` approved by @{}",
+                                                    pending.workflow_name, author_username
+                                                )
+                                            } else if feedback.is_empty() {
+                                                format!(
+                                                    "❌ Workflow `{}` rejected by @{}",
+                                                    pending.workflow_name, author_username
+                                                )
+                                            } else {
+                                                format!(
+                                                    "❌ Workflow `{}` rejected by @{}. Feedback: {}",
+                                                    pending.workflow_name, author_username, feedback
+                                                )
+                                            };
+                                            let notify_url = format!(
+                                                "https://discord.com/api/v10/channels/{reply_channel}/messages"
+                                            );
+                                            let _ = reqwest::Client::new()
+                                                .post(&notify_url)
+                                                .header(
+                                                    "Authorization",
+                                                    format!("Bot {bot_token}"),
+                                                )
+                                                .json(&serde_json::json!({ "content": confirm_msg }))
+                                                .send()
+                                                .await;
                                         }
                                         Ok(resp) => {
                                             let status = resp.status();
@@ -1215,36 +1265,6 @@ impl Channel for DiscordChannel {
                                             );
                                         }
                                     }
-
-                                    // Send confirmation message back to Discord.
-                                    let confirm_msg = if is_approve {
-                                        format!(
-                                            "✅ Workflow `{}` approved by @{}",
-                                            pending.workflow_name, author_username
-                                        )
-                                    } else if feedback.is_empty() {
-                                        format!(
-                                            "❌ Workflow `{}` rejected by @{}",
-                                            pending.workflow_name, author_username
-                                        )
-                                    } else {
-                                        format!(
-                                            "❌ Workflow `{}` rejected by @{}. Feedback: {}",
-                                            pending.workflow_name, author_username, feedback
-                                        )
-                                    };
-                                    let notify_url = format!(
-                                        "https://discord.com/api/v10/channels/{reply_channel}/messages"
-                                    );
-                                    let _ = reqwest::Client::new()
-                                        .post(&notify_url)
-                                        .header(
-                                            "Authorization",
-                                            format!("Bot {bot_token}"),
-                                        )
-                                        .json(&serde_json::json!({ "content": confirm_msg }))
-                                        .send()
-                                        .await;
                                 });
 
                                 // Don't forward to the agent pipeline.
