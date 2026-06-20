@@ -8,15 +8,21 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 
-workspace_version=$(awk '
-  /^\[package\]/ { in_block = 1; next }
-  /^\[/ && in_block { in_block = 0 }
-  in_block && /^version[[:space:]]*=/ {
-    match($0, /"[^"]+"/)
-    print substr($0, RSTART + 1, RLENGTH - 2)
-    exit
-  }
-' "$ROOT/Cargo.toml")
+# Print the quoted value of a `[package]` field (e.g. version, rust-version)
+# from Cargo.toml, or nothing if absent.
+cargo_pkg_field() {
+  awk -v key="$1" '
+    /^\[package\]/ { in_block = 1; next }
+    /^\[/ && in_block { in_block = 0 }
+    in_block && $0 ~ "^" key "[[:space:]]*=" {
+      match($0, /"[^"]+"/)
+      print substr($0, RSTART + 1, RLENGTH - 2)
+      exit
+    }
+  ' "$ROOT/Cargo.toml"
+}
+
+workspace_version=$(cargo_pkg_field version)
 
 tauri_version=$(python3 -c "import json,sys; print(json.load(open('$ROOT/apps/tauri/tauri.conf.json'))['version'])")
 web_version=$(python3 -c "import json,sys; print(json.load(open('$ROOT/web/package.json')).get('version',''))")
@@ -37,6 +43,31 @@ fi
 if [ "$web_version" != "$workspace_version" ]; then
   echo "::error::web/package.json version ($web_version) != workspace ($workspace_version)"
   fail=1
+fi
+
+# ── Rust MSRV drift (#431) ────────────────────────────────────────────────
+# The advertised Rust prerequisite in user-facing docs must match Cargo.toml's
+# `rust-version` (the real build floor). The setup scripts derive the floor from
+# Cargo.toml at runtime so they cannot drift; the docs are static, so guard them.
+rust_version=$(cargo_pkg_field rust-version)
+
+echo "rust-version: ${rust_version}"
+
+if [ -z "$rust_version" ]; then
+  echo "::error::could not parse rust-version from Cargo.toml"
+  fail=1
+else
+  rust_version_re=${rust_version//./\\.}
+  for doc in \
+    "README.md" \
+    "README.ko.md" \
+    "docs/setup-guides/windows-setup.md" \
+    "docs/i18n/ko/setup-guides/windows-setup.md"; do
+    if [ -f "$ROOT/$doc" ] && ! grep -qE "Rust[^0-9]*${rust_version_re}([^0-9]|$)" "$ROOT/$doc"; then
+      echo "::error::$doc does not advertise Rust ${rust_version} (rust-version drift?)"
+      fail=1
+    fi
+  done
 fi
 
 if [ "$fail" -ne 0 ]; then

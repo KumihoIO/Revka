@@ -449,7 +449,7 @@ cargo build --release --locked
 
 ### 사전 요구사항
 
-- **Rust stable (1.87+)** — `install.sh` / `setup.bat`가 rustup으로 설치합니다(없는 경우).
+- **Rust stable (1.89+)** — `install.sh` / `setup.bat`가 rustup으로 설치합니다(없는 경우).
 - **Python 3.11+** — Kumiho 및 Operator Python MCP 사이드카에 필요합니다.
 - **Node.js 20+** — 선택 사항, 임베디드 React 대시보드를 소스로부터 다시 빌드할 때만 필요(`cd web && npm install && npx vite build`). 대시보드는 컴파일 타임에 `rust-embed`를 통해 Rust 바이너리에 재임베드됩니다.
 - **Kumiho 컨트롤 플레인** — `~/.revka/config.toml`의 `[kumiho].api_url`로 탐색 가능한 HTTP 엔드포인트(예: 관리형은 `https://api.kumiho.cloud`, 또는 자체 호스팅 URL). 없으면 Revka는 상태 없이 실행됩니다. [docs/setup-guides/kumiho-operator-setup.md](docs/setup-guides/kumiho-operator-setup.md) 참조.

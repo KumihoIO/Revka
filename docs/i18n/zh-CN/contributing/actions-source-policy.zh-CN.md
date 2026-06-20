@@ -14,7 +14,7 @@
 | `actions/checkout@v4` | 所有工作流 | 仓库检出 |
 | `actions/upload-artifact@v4` | release、promote-release | 上传构建产物 |
 | `actions/download-artifact@v4` | release、promote-release | 下载构建产物用于打包 |
-| `dtolnay/rust-toolchain@stable` | 所有工作流 | 安装 Rust 工具链（1.92.0） |
+| `dtolnay/rust-toolchain@stable` | 所有工作流 | 安装 Rust 工具链（1.93.0） |
 | `Swatinem/rust-cache@v2` | 所有工作流 | Cargo 构建/依赖缓存 |
 | `softprops/action-gh-release@v2` | release、promote-release | 创建 GitHub Releases |
 | `docker/setup-buildx-action@v3` | release、promote-release | Docker Buildx 设置 |

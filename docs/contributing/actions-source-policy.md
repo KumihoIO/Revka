@@ -14,7 +14,7 @@ Selected allowlist (all actions currently used across Quality Gate, Release Beta
 | `actions/checkout@v4` | All workflows | Repository checkout |
 | `actions/upload-artifact@v4` | release, promote-release | Upload build artifacts |
 | `actions/download-artifact@v4` | release, promote-release | Download build artifacts for packaging |
-| `dtolnay/rust-toolchain@stable` | All workflows | Install Rust toolchain (1.92.0) |
+| `dtolnay/rust-toolchain@stable` | All workflows | Install Rust toolchain (1.93.0) |
 | `Swatinem/rust-cache@v2` | All workflows | Cargo build/dependency caching |
 | `softprops/action-gh-release@v2` | release, promote-release | Create GitHub Releases |
 | `docker/setup-buildx-action@v3` | release, promote-release | Docker Buildx setup |

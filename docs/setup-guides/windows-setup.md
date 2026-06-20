@@ -42,7 +42,7 @@ copy target\x86_64-pc-windows-msvc\release\revka.exe %USERPROFILE%\.revka\bin\
 | Requirement | Required? | Notes |
 |-------------|-----------|-------|
 | Git | Yes | [git-scm.com/download/win](https://git-scm.com/download/win) |
-| Rust 1.87+ | Yes | Auto-installed by `setup.bat` if missing |
+| Rust 1.89+ | Yes | Auto-installed by `setup.bat` if missing |
 | Visual Studio Build Tools | Yes (source builds) | C++ workload required for MSVC linker |
 | Node.js | No | Only needed to build the web dashboard from source |
 
