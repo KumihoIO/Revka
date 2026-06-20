@@ -135,6 +135,59 @@ pub async fn handle_command(cmd: crate::PeripheralCommands, config: &Config) -> 
     Ok(())
 }
 
+/// Merge CLI `--peripheral board:path` overrides into the peripherals config.
+///
+/// Config-defined boards take precedence: an override naming a board already in
+/// `config.boards` is ignored (and logged). `board:native` attaches via the
+/// native transport; any other value after the first `:` is treated as the
+/// serial path (baud defaults to 115200). A malformed override — missing `:`,
+/// or an empty board/path — is a hard error rather than a silent no-op. Sets
+/// `enabled` whenever an override is actually added.
+///
+/// Note: on non-`hardware` builds `create_peripheral_tools` is a no-op, so
+/// merged boards only materialize as tools when built with `--features
+/// hardware`; the merge itself is always performed so the flag is never
+/// silently discarded.
+pub fn apply_peripheral_overrides(
+    config: &mut PeripheralsConfig,
+    overrides: &[String],
+) -> Result<()> {
+    for spec in overrides {
+        let (board, path) = spec.split_once(':').ok_or_else(|| {
+            anyhow::anyhow!(
+                "invalid --peripheral '{spec}': expected 'board:path' \
+                 (e.g. nucleo-f401re:/dev/ttyACM0 or nucleo-f401re:native)"
+            )
+        })?;
+        let (board, path) = (board.trim(), path.trim());
+        anyhow::ensure!(
+            !board.is_empty() && !path.is_empty(),
+            "invalid --peripheral '{spec}': both board and path are required (board:path)"
+        );
+        if config.boards.iter().any(|b| b.board == board) {
+            tracing::info!(
+                board,
+                "Peripheral override '--peripheral {spec}' ignored — config board takes precedence"
+            );
+            continue;
+        }
+        let (transport, path_opt) = if path == "native" {
+            ("native".to_string(), None)
+        } else {
+            ("serial".to_string(), Some(path.to_string()))
+        };
+        config.boards.push(PeripheralBoardConfig {
+            board: board.to_string(),
+            transport,
+            path: path_opt,
+            baud: 115_200,
+        });
+        config.enabled = true;
+        tracing::info!(board, "Attached peripheral from --peripheral override");
+    }
+    Ok(())
+}
+
 /// Create and connect peripherals from config, returning their tools.
 /// Returns empty vec if peripherals disabled or hardware feature off.
 #[cfg(feature = "hardware")]
@@ -281,6 +334,53 @@ mod tests {
             result.is_empty(),
             "disabled peripherals should return no boards"
         );
+    }
+
+    #[test]
+    fn apply_overrides_adds_serial_board_and_enables() {
+        let mut cfg = PeripheralsConfig::default();
+        apply_peripheral_overrides(&mut cfg, &["nucleo-f401re:/dev/ttyACM0".to_string()]).unwrap();
+        assert!(cfg.enabled);
+        assert_eq!(cfg.boards.len(), 1);
+        let b = &cfg.boards[0];
+        assert_eq!(b.board, "nucleo-f401re");
+        assert_eq!(b.transport, "serial");
+        assert_eq!(b.path.as_deref(), Some("/dev/ttyACM0"));
+        assert_eq!(b.baud, 115_200);
+    }
+
+    #[test]
+    fn apply_overrides_native_transport_has_no_path() {
+        let mut cfg = PeripheralsConfig::default();
+        apply_peripheral_overrides(&mut cfg, &["rpi-gpio:native".to_string()]).unwrap();
+        assert_eq!(cfg.boards[0].transport, "native");
+        assert!(cfg.boards[0].path.is_none());
+    }
+
+    #[test]
+    fn apply_overrides_config_board_takes_precedence() {
+        let mut cfg = PeripheralsConfig {
+            enabled: true,
+            boards: vec![PeripheralBoardConfig {
+                board: "nucleo-f401re".into(),
+                transport: "serial".into(),
+                path: Some("/dev/ttyUSB0".into()),
+                baud: 115_200,
+            }],
+            datasheet_dir: None,
+        };
+        apply_peripheral_overrides(&mut cfg, &["nucleo-f401re:/dev/ttyACM0".to_string()]).unwrap();
+        // Override ignored — config board wins; original path retained.
+        assert_eq!(cfg.boards.len(), 1);
+        assert_eq!(cfg.boards[0].path.as_deref(), Some("/dev/ttyUSB0"));
+    }
+
+    #[test]
+    fn apply_overrides_rejects_malformed() {
+        let mut cfg = PeripheralsConfig::default();
+        assert!(apply_peripheral_overrides(&mut cfg, &["no-colon".to_string()]).is_err());
+        assert!(apply_peripheral_overrides(&mut cfg, &[":/dev/ttyACM0".to_string()]).is_err());
+        assert!(apply_peripheral_overrides(&mut cfg, &["board:".to_string()]).is_err());
     }
 
     #[test]

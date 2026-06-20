@@ -3695,7 +3695,7 @@ pub(crate) fn build_tool_instructions(
 
 #[allow(clippy::too_many_lines)]
 pub async fn run(
-    config: Config,
+    mut config: Config,
     message: Option<String>,
     provider_override: Option<String>,
     model_override: Option<String>,
@@ -3725,13 +3725,10 @@ pub async fn run(
     )?);
     tracing::info!(backend = mem.name(), "Memory initialized");
 
-    // ── Peripherals (merge peripheral tools into registry) ─
-    if !peripheral_overrides.is_empty() {
-        tracing::info!(
-            peripherals = ?peripheral_overrides,
-            "Peripheral overrides from CLI (config boards take precedence)"
-        );
-    }
+    // ── Peripherals: merge `--peripheral board:path` CLI overrides into config
+    // (config-defined boards take precedence) before the tool registry is built,
+    // so the flag actually attaches boards instead of being a documented no-op.
+    crate::peripherals::apply_peripheral_overrides(&mut config.peripherals, &peripheral_overrides)?;
 
     // ── Tools (including memory tools and peripherals) ────────────
     let (composio_key, composio_entity_id) = if config.composio.enabled {
