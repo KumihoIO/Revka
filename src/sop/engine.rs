@@ -425,15 +425,69 @@ impl SopEngine {
         self.resolve_deterministic_action(&sop, &run_id_owned, &step, step_output)
     }
 
+    /// Reconstruct a [`SopRun`] from persisted [`DeterministicRunState`] so an
+    /// interrupted deterministic run can be resumed after a restart (when
+    /// `active_runs` is empty). The run is rebuilt in `PausedCheckpoint` status —
+    /// the only state from which [`resume_deterministic_run`](Self::resume_deterministic_run)
+    /// proceeds. Completed-step outputs are mapped back into `step_results` so
+    /// status queries reflect prior progress. Fails if the SOP is no longer loaded.
+    fn sop_run_from_state(&self, state: &DeterministicRunState) -> Result<SopRun> {
+        anyhow::ensure!(
+            self.sops.iter().any(|s| s.name == state.sop_name),
+            "SOP '{}' no longer loaded; cannot resume run {}",
+            state.sop_name,
+            state.run_id
+        );
+        let mut step_results: Vec<SopStepResult> = state
+            .step_outputs
+            .iter()
+            .map(|(num, out)| SopStepResult {
+                step_number: *num,
+                status: SopStepStatus::Completed,
+                output: out.to_string(),
+                started_at: state.persisted_at.clone(),
+                completed_at: Some(state.persisted_at.clone()),
+            })
+            .collect();
+        step_results.sort_by_key(|r| r.step_number);
+
+        Ok(SopRun {
+            run_id: state.run_id.clone(),
+            sop_name: state.sop_name.clone(),
+            trigger_event: SopEvent {
+                source: SopTriggerSource::Manual,
+                topic: None,
+                payload: None,
+                timestamp: state.persisted_at.clone(),
+            },
+            status: SopRunStatus::PausedCheckpoint,
+            current_step: state.last_completed_step,
+            total_steps: state.total_steps,
+            started_at: state.persisted_at.clone(),
+            completed_at: None,
+            step_results,
+            waiting_since: None,
+            llm_calls_saved: state.llm_calls_saved,
+        })
+    }
+
     /// Resume a deterministic run from persisted state.
     pub fn resume_deterministic_run(
         &mut self,
         state: DeterministicRunState,
     ) -> Result<SopRunAction> {
+        // Reconstruct the run into active_runs if it isn't there (e.g. after a
+        // daemon restart, where active_runs starts empty). Without this, resume
+        // could only ever succeed for a run that was never actually interrupted —
+        // which made the persisted-state resume feature dead code (#391).
+        if !self.active_runs.contains_key(&state.run_id) {
+            let reconstructed = self.sop_run_from_state(&state)?;
+            self.active_runs.insert(state.run_id.clone(), reconstructed);
+        }
         let run = self
             .active_runs
             .get_mut(&state.run_id)
-            .ok_or_else(|| anyhow::anyhow!("Active run not found: {}", state.run_id))?;
+            .expect("run is present after reconstruction");
 
         if run.status != SopRunStatus::PausedCheckpoint {
             bail!(
@@ -1979,6 +2033,63 @@ mod tests {
         // start_run should auto-route to start_deterministic_run
         let action = engine.start_run("det-sop", manual_event()).unwrap();
         assert!(matches!(action, SopRunAction::DeterministicStep { .. }));
+    }
+
+    #[test]
+    fn resume_reconstructs_deterministic_run_after_restart() {
+        // #391: after a restart active_runs is empty; resume must reconstruct the
+        // run from persisted state instead of failing "Active run not found".
+        let mut engine = engine_with_sops(vec![deterministic_sop("det-sop")]);
+        assert!(
+            engine.get_run("det-run-1").is_none(),
+            "precondition: run absent (simulating a fresh post-restart engine)"
+        );
+
+        let mut step_outputs = std::collections::HashMap::new();
+        step_outputs.insert(1u32, serde_json::json!("step1 output"));
+        step_outputs.insert(2u32, serde_json::json!("checkpoint output"));
+        let state = DeterministicRunState {
+            run_id: "det-run-1".into(),
+            sop_name: "det-sop".into(),
+            last_completed_step: 2, // paused at the checkpoint (step 2)
+            total_steps: 3,
+            step_outputs,
+            persisted_at: "2026-01-01T00:00:00Z".into(),
+            llm_calls_saved: 5,
+            paused_at_checkpoint: true,
+        };
+
+        let action = engine.resume_deterministic_run(state).unwrap();
+        // Resumed onto step 3 (Execute) as a deterministic step.
+        assert!(
+            matches!(action, SopRunAction::DeterministicStep { ref step, .. } if step.number == 3),
+            "resume should proceed to step 3, got {action:?}"
+        );
+        // The run was reconstructed into the engine and advanced to Running.
+        let run = engine.get_run("det-run-1").unwrap();
+        assert_eq!(run.status, SopRunStatus::Running);
+        assert_eq!(run.current_step, 3);
+        assert_eq!(run.llm_calls_saved, 5);
+        // Prior step outputs were reconstructed into step_results.
+        assert!(run.step_results.iter().any(|r| r.step_number == 1));
+    }
+
+    #[test]
+    fn resume_deterministic_run_fails_when_sop_unloaded() {
+        // If the SOP is no longer loaded, reconstruction must fail cleanly
+        // (not panic) rather than resume against a missing definition.
+        let mut engine = engine_with_sops(vec![]); // no SOPs loaded
+        let state = DeterministicRunState {
+            run_id: "det-run-x".into(),
+            sop_name: "gone".into(),
+            last_completed_step: 1,
+            total_steps: 2,
+            step_outputs: std::collections::HashMap::new(),
+            persisted_at: "2026-01-01T00:00:00Z".into(),
+            llm_calls_saved: 0,
+            paused_at_checkpoint: true,
+        };
+        assert!(engine.resume_deterministic_run(state).is_err());
     }
 
     #[test]
