@@ -483,6 +483,85 @@ impl AppState {
     }
 }
 
+/// How often the tunnel supervisor probes `health_check()` (#427).
+const TUNNEL_HEALTH_CHECK_INTERVAL_SECS: u64 = 30;
+
+/// Supervise an already-started tunnel for the lifetime of the gateway (#427).
+///
+/// The tunnel was previously fire-and-forget: started once and never monitored,
+/// so a post-startup crash of `cloudflared`/`ngrok`/etc. silently took the
+/// public URL offline with no restart and no health signal, and it was never
+/// stopped on shutdown. This mirrors the channel supervisor: it probes
+/// `health_check()` on an interval, restarts (`stop()` then `start()`) with
+/// exponential backoff on failure, feeds status into `crate::health`, and
+/// stops the tunnel gracefully when the gateway shuts down.
+fn spawn_tunnel_supervisor(
+    tunnel: Box<dyn crate::tunnel::Tunnel>,
+    host: String,
+    port: u16,
+    check_interval: Duration,
+    initial_backoff_secs: u64,
+    max_backoff_secs: u64,
+    mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
+) -> tokio::task::JoinHandle<()> {
+    let check_interval = if check_interval.is_zero() {
+        Duration::from_secs(TUNNEL_HEALTH_CHECK_INTERVAL_SECS)
+    } else {
+        check_interval
+    };
+
+    tokio::spawn(async move {
+        let component = format!("tunnel:{}", tunnel.name());
+        let mut backoff = initial_backoff_secs.max(1);
+        let max_backoff = max_backoff_secs.max(backoff);
+        crate::health::mark_component_ok(&component);
+
+        loop {
+            tokio::select! {
+                changed = shutdown_rx.changed() => {
+                    // `Err` means the gateway dropped the sender (it is going
+                    // away); `Ok` with a `true` value is an explicit shutdown.
+                    // Either way, stop the tunnel and exit so the child process
+                    // is not orphaned.
+                    if changed.is_err() || *shutdown_rx.borrow() {
+                        match tunnel.stop().await {
+                            Ok(()) => tracing::info!(component = %component, "Tunnel stopped on shutdown"),
+                            Err(e) => tracing::warn!(component = %component, error = %e, "Tunnel stop on shutdown failed"),
+                        }
+                        break;
+                    }
+                }
+                () = tokio::time::sleep(check_interval) => {
+                    if tunnel.health_check().await {
+                        crate::health::mark_component_ok(&component);
+                        backoff = initial_backoff_secs.max(1);
+                        continue;
+                    }
+
+                    tracing::warn!(component = %component, "Tunnel health check failed; restarting");
+                    crate::health::mark_component_error(&component, "tunnel health check failed");
+                    let _ = tunnel.stop().await;
+                    crate::health::bump_component_restart(&component);
+                    tokio::time::sleep(Duration::from_secs(backoff)).await;
+
+                    match tunnel.start(&host, port).await {
+                        Ok(url) => {
+                            tracing::info!(component = %component, url = %url, "Tunnel restarted");
+                            crate::health::mark_component_ok(&component);
+                            backoff = initial_backoff_secs.max(1);
+                        }
+                        Err(e) => {
+                            tracing::error!(component = %component, error = %e, "Tunnel restart failed; will retry");
+                            crate::health::mark_component_error(&component, e.to_string());
+                            backoff = backoff.saturating_mul(2).min(max_backoff);
+                        }
+                    }
+                }
+            }
+        }
+    })
+}
+
 /// Run the HTTP gateway using axum with proper HTTP/1.1 compliance.
 pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
     Box::pin(run_gateway_with_mcp_registry(host, port, config, None)).await
@@ -979,13 +1058,19 @@ pub async fn run_gateway_with_mcp_registry(
     // ── Tunnel ────────────────────────────────────────────────
     let tunnel = crate::tunnel::create_tunnel(&config.tunnel)?;
     let mut tunnel_url: Option<String> = None;
+    // Holds the successfully-started tunnel so it can be moved into the
+    // supervisor task below (started once a shutdown channel exists). A tunnel
+    // whose initial start failed is dropped here, preserving the prior
+    // local-only fallback.
+    let mut running_tunnel: Option<Box<dyn crate::tunnel::Tunnel>> = None;
 
-    if let Some(ref tun) = tunnel {
+    if let Some(tun) = tunnel {
         println!("🔗 Starting {} tunnel...", tun.name());
         match tun.start(host, actual_port).await {
             Ok(url) => {
                 println!("🌐 Tunnel active: {url}");
                 tunnel_url = Some(url);
+                running_tunnel = Some(tun);
             }
             Err(e) => {
                 println!("⚠️  Tunnel failed to start: {e}");
@@ -1055,6 +1140,21 @@ pub async fn run_gateway_with_mcp_registry(
         ));
 
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
+
+    // Supervise the running tunnel: health-check + restart with backoff, and a
+    // graceful stop on shutdown (#427). Reuses the channel-restart backoff
+    // bounds for consistency with the channel supervisor.
+    if let Some(tun) = running_tunnel.take() {
+        spawn_tunnel_supervisor(
+            tun,
+            host.to_string(),
+            actual_port,
+            Duration::from_secs(TUNNEL_HEALTH_CHECK_INTERVAL_SECS),
+            config.reliability.channel_initial_backoff_secs,
+            config.reliability.channel_max_backoff_secs,
+            shutdown_tx.subscribe(),
+        );
+    }
 
     // Node registry for dynamic node discovery
     let node_registry = Arc::new(nodes::NodeRegistry::new(config.nodes.max_nodes));
@@ -3426,6 +3526,100 @@ mod tests {
     use http_body_util::BodyExt;
     use parking_lot::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    // ── #427: tunnel supervisor ───────────────────────────────
+    struct MockTunnel {
+        healthy: std::sync::atomic::AtomicBool,
+        start_calls: Arc<AtomicUsize>,
+        stop_calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl crate::tunnel::Tunnel for MockTunnel {
+        fn name(&self) -> &str {
+            "mock"
+        }
+        async fn start(&self, _host: &str, _port: u16) -> Result<String> {
+            self.start_calls.fetch_add(1, Ordering::SeqCst);
+            // A successful (re)start makes the tunnel healthy again.
+            self.healthy.store(true, Ordering::SeqCst);
+            Ok("https://mock.tunnel.test".to_string())
+        }
+        async fn stop(&self) -> Result<()> {
+            self.stop_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+        async fn health_check(&self) -> bool {
+            self.healthy.load(Ordering::SeqCst)
+        }
+        fn public_url(&self) -> Option<String> {
+            Some("https://mock.tunnel.test".to_string())
+        }
+    }
+
+    #[tokio::test]
+    async fn tunnel_supervisor_stops_tunnel_on_shutdown() {
+        let stop_calls = Arc::new(AtomicUsize::new(0));
+        let tunnel = Box::new(MockTunnel {
+            healthy: std::sync::atomic::AtomicBool::new(true),
+            start_calls: Arc::new(AtomicUsize::new(0)),
+            stop_calls: stop_calls.clone(),
+        });
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        // Long health interval so the task parks on the shutdown arm.
+        let handle = spawn_tunnel_supervisor(
+            tunnel,
+            "127.0.0.1".to_string(),
+            8080,
+            Duration::from_secs(3600),
+            1,
+            60,
+            shutdown_rx,
+        );
+
+        shutdown_tx.send(true).unwrap();
+        tokio::time::timeout(Duration::from_secs(5), handle)
+            .await
+            .expect("supervisor should exit on shutdown")
+            .expect("supervisor task should not panic");
+        assert_eq!(stop_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn tunnel_supervisor_restarts_on_health_failure() {
+        let start_calls = Arc::new(AtomicUsize::new(0));
+        let stop_calls = Arc::new(AtomicUsize::new(0));
+        let tunnel = Box::new(MockTunnel {
+            healthy: std::sync::atomic::AtomicBool::new(false), // dead from the first check
+            start_calls: start_calls.clone(),
+            stop_calls: stop_calls.clone(),
+        });
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let handle = spawn_tunnel_supervisor(
+            tunnel,
+            "127.0.0.1".to_string(),
+            8080,
+            Duration::from_millis(10),
+            1,
+            1,
+            shutdown_rx,
+        );
+
+        // Wait for at least one restart: stop -> backoff(1s) -> start.
+        let mut restarted = false;
+        for _ in 0..40 {
+            if start_calls.load(Ordering::SeqCst) >= 1 {
+                restarted = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        assert!(restarted, "supervisor should restart a dead tunnel");
+        assert!(stop_calls.load(Ordering::SeqCst) >= 1);
+
+        shutdown_tx.send(true).unwrap();
+        let _ = tokio::time::timeout(Duration::from_secs(5), handle).await;
+    }
 
     /// Generate a random hex secret at runtime to avoid hard-coded cryptographic values.
     fn generate_test_secret() -> String {
