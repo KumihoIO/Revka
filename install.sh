@@ -823,6 +823,30 @@ install_rust_toolchain() {
   fi
 }
 
+# Abort before a doomed source build if the detected rustc is older than
+# Cargo.toml's `rust-version` (the real MSRV). Mirrors the Windows setup
+# scripts; single-sourced from Cargo.toml so it never drifts (#431).
+check_rust_msrv() {
+  local cargo_toml="$WORK_DIR/Cargo.toml"
+  [[ -f "$cargo_toml" ]] || return 0
+  have_cmd rustc || return 0
+  local min
+  min="$(grep -m1 '^rust-version' "$cargo_toml" | sed 's/.*"\(.*\)".*/\1/' || true)"
+  [[ -n "$min" ]] || return 0
+  local cur
+  cur="$(rustc --version 2>/dev/null | sed -E 's/^rustc ([0-9]+\.[0-9]+).*/\1/')"
+  [[ -n "$cur" ]] || return 0
+  local cur_major="${cur%%.*}" cur_minor="${cur#*.}"
+  local min_major="${min%%.*}" min_rest="${min#*.}" min_minor
+  min_minor="${min_rest%%.*}"
+  if (( cur_major < min_major )) || { (( cur_major == min_major )) && (( cur_minor < min_minor )); }; then
+    error "Rust $cur is too old. Revka requires Rust $min or newer (Cargo.toml rust-version)."
+    error "Update with: rustup update stable"
+    exit 1
+  fi
+  step_ok "Rust $cur satisfies the $min minimum"
+}
+
 prompt_provider() {
   local provider_input=""
   echo
@@ -1708,6 +1732,9 @@ if [[ -n "$TARGET_VERSION" ]]; then
   step_dot "Installing Revka v${TARGET_VERSION}"
 fi
 if [[ "$SKIP_BUILD" == false ]]; then
+  # Fail fast on a too-old toolchain before the 15-30 min build (#431).
+  check_rust_msrv
+
   # Clean stale build artifacts on upgrade to prevent bindgen/build-script
   # cache mismatches (e.g. libsqlite3-sys bindgen.rs not found).
   if [[ "$INSTALL_MODE" == "upgrade" && -d "$WORK_DIR/target/release/build" ]]; then
