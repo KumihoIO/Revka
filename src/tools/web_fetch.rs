@@ -51,7 +51,7 @@ impl WebFetchTool {
         }
     }
 
-    fn validate_url(&self, raw_url: &str) -> anyhow::Result<String> {
+    fn validate_url(&self, raw_url: &str) -> anyhow::Result<ValidatedTarget> {
         validate_target_url(
             raw_url,
             &self.allowed_domains,
@@ -309,7 +309,7 @@ impl Tool for WebFetchTool {
             });
         }
 
-        let url = match self.validate_url(url) {
+        let validated = match self.validate_url(url) {
             Ok(v) => v,
             Err(e) => {
                 return Ok(ToolResult {
@@ -352,11 +352,25 @@ impl Tool for WebFetchTool {
             attempt.follow()
         });
 
-        let builder = reqwest::Client::builder()
+        let mut builder = reqwest::Client::builder()
             .timeout(Duration::from_secs(timeout_secs))
             .connect_timeout(Duration::from_secs(10))
             .redirect(redirect_policy)
             .user_agent("Revka/0.1 (web_fetch)");
+
+        // Pin DNS to the IPs we already validated. Without this reqwest would
+        // re-resolve at connect time and an attacker controlling DNS for an
+        // allowlisted host could serve a public IP to the validator and a
+        // metadata/RFC1918 IP to the actual request (DNS-rebinding TOCTOU).
+        // reqwest ignores the port in the SocketAddr — the URL's port is used.
+        if !validated.resolved_ips.is_empty() {
+            let addrs: Vec<std::net::SocketAddr> = validated
+                .resolved_ips
+                .iter()
+                .map(|ip| std::net::SocketAddr::new(*ip, 0))
+                .collect();
+            builder = builder.resolve_to_addrs(&validated.host, &addrs);
+        }
         let builder = crate::config::apply_runtime_proxy_to_builder(builder, "tool.web_fetch");
         let client = match builder.build() {
             Ok(c) => c,
@@ -369,15 +383,16 @@ impl Tool for WebFetchTool {
             }
         };
 
-        let standard_result = self.standard_fetch(&client, &url).await;
+        let standard_result = self.standard_fetch(&client, &validated.url).await;
 
         // If standard fetch succeeded well enough, return it directly.
         // Otherwise, try Firecrawl fallback if enabled.
         if self.should_fallback_to_firecrawl(&standard_result) {
             tracing::info!(
-                "web_fetch: standard fetch insufficient for {url}, attempting Firecrawl fallback"
+                "web_fetch: standard fetch insufficient for {}, attempting Firecrawl fallback",
+                validated.url
             );
-            match Box::pin(self.fetch_via_firecrawl(&url)).await {
+            match Box::pin(self.fetch_via_firecrawl(&validated.url)).await {
                 Ok(firecrawl_result) if firecrawl_result.success => {
                     return Ok(firecrawl_result);
                 }
@@ -406,7 +421,7 @@ fn validate_target_url(
     blocked_domains: &[String],
     allowed_private_hosts: &[String],
     tool_name: &str,
-) -> anyhow::Result<String> {
+) -> anyhow::Result<ValidatedTarget> {
     let url = raw_url.trim();
 
     if url.is_empty() {
@@ -455,11 +470,31 @@ fn validate_target_url(
         anyhow::bail!("Host '{host}' is not in {tool_name}.allowed_domains");
     }
 
-    if !private_host_allowed {
-        validate_resolved_host_is_public(&host)?;
-    }
+    // Resolve and validate the host's IPs (for the public-host path) so the
+    // caller can pin them onto the reqwest client, closing the DNS-rebinding
+    // TOCTOU gap. `private_host_allowed` hosts are operator-opted-in and skip
+    // resolution (nothing to pin).
+    let resolved_ips = if private_host_allowed {
+        Vec::new()
+    } else {
+        validate_resolved_host_is_public(&host)?
+    };
 
-    Ok(url.to_string())
+    Ok(ValidatedTarget {
+        url: url.to_string(),
+        host,
+        resolved_ips,
+    })
+}
+
+/// A validated fetch target: the normalized URL, its host, and the validated
+/// global IPs to pin onto the HTTP client (empty for bare-IP literals or
+/// operator-allowed private hosts, where there is nothing to pin).
+#[derive(Debug)]
+struct ValidatedTarget {
+    url: String,
+    host: String,
+    resolved_ips: Vec<std::net::IpAddr>,
 }
 
 fn append_chunk_with_cap(buffer: &mut Vec<u8>, chunk: &[u8], hard_cap: usize) -> bool {
@@ -593,22 +628,36 @@ fn is_private_or_local_host(host: &str) -> bool {
 }
 
 #[cfg(not(test))]
-fn validate_resolved_host_is_public(host: &str) -> anyhow::Result<()> {
+fn validate_resolved_host_is_public(host: &str) -> anyhow::Result<Vec<std::net::IpAddr>> {
     use std::net::ToSocketAddrs;
 
-    let ips = (host, 0)
+    let bare = host
+        .strip_prefix('[')
+        .and_then(|h| h.strip_suffix(']'))
+        .unwrap_or(host);
+
+    // Bare IP literal in the URL: reqwest connects to exactly this IP with no
+    // DNS lookup, so there is nothing to pin (the is_private_or_local_host
+    // check already rejected non-global literals).
+    if bare.parse::<std::net::IpAddr>().is_ok() {
+        return Ok(Vec::new());
+    }
+
+    let ips = (bare, 0)
         .to_socket_addrs()
         .map_err(|e| anyhow::anyhow!("Failed to resolve host '{host}': {e}"))?
         .map(|addr| addr.ip())
         .collect::<Vec<_>>();
 
-    validate_resolved_ips_are_public(host, &ips)
+    validate_resolved_ips_are_public(host, &ips)?;
+    Ok(ips)
 }
 
 #[cfg(test)]
-fn validate_resolved_host_is_public(_host: &str) -> anyhow::Result<()> {
-    // DNS checks are covered by validate_resolved_ips_are_public unit tests.
-    Ok(())
+fn validate_resolved_host_is_public(_host: &str) -> anyhow::Result<Vec<std::net::IpAddr>> {
+    // DNS checks are covered by validate_resolved_ips_are_public unit tests;
+    // return no pins so client construction stays offline in tests.
+    Ok(Vec::new())
 }
 
 fn validate_resolved_ips_are_public(host: &str, ips: &[std::net::IpAddr]) -> anyhow::Result<()> {
@@ -760,7 +809,7 @@ mod tests {
     fn validate_accepts_exact_domain() {
         let tool = test_tool(vec!["example.com"]);
         let got = tool.validate_url("https://example.com/page").unwrap();
-        assert_eq!(got, "https://example.com/page");
+        assert_eq!(got.url, "https://example.com/page");
     }
 
     #[test]
@@ -887,6 +936,25 @@ mod tests {
             )
             .is_ok()
         );
+    }
+
+    #[test]
+    fn validate_target_url_returns_host_for_pinning() {
+        // #397: validation now yields the host (and the resolved IPs to pin onto
+        // the client). DNS is stubbed in tests, so resolved_ips is empty here;
+        // the host must still be surfaced for resolve_to_addrs.
+        let allowed = vec!["example.com".to_string()];
+        let v = validate_target_url(
+            "https://docs.example.com/page",
+            &allowed,
+            &[],
+            &[],
+            "web_fetch",
+        )
+        .unwrap();
+        assert_eq!(v.url, "https://docs.example.com/page");
+        assert_eq!(v.host, "docs.example.com");
+        assert!(v.resolved_ips.is_empty());
     }
 
     #[test]
