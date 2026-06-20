@@ -310,10 +310,30 @@ impl SafetyMonitor {
         false
     }
 
+    /// Disarm the watchdog — call when a drive completes or is explicitly
+    /// stopped. The watchdog is armed by an approved `request_movement`; without
+    /// this, the timer would keep counting after a finished discrete move and
+    /// latch a (currently unrecoverable) e-stop while the robot merely sits idle.
+    /// Disarming makes the watchdog track an *in-progress* drive that overruns
+    /// `max_drive_duration`, matching the documented "maximum continuous drive
+    /// time" semantics (#439).
+    pub fn record_drive_finished(&self) {
+        self.state.last_command_ms.store(0, Ordering::SeqCst);
+    }
+
     /// Run the safety monitor loop (call in background task)
     pub async fn run(&self, mut sensor_rx: tokio::sync::mpsc::Receiver<SensorReading>) {
         let watchdog_timeout = Duration::from_secs(self.config.max_drive_duration);
         let mut last_sensor_update = Instant::now();
+
+        // A standalone interval — not an inline `sleep` inside the select! — so
+        // the periodic safety checks (sensor-stale + watchdog) cannot be starved
+        // by a steady stream of sensor readings. The interval's deadline persists
+        // across iterations, whereas a fresh `sleep` future restarts from zero
+        // every time the recv() branch wins, which (at typical LIDAR cadence)
+        // means the timer branch would essentially never elapse (#439).
+        let mut safety_tick = tokio::time::interval(Duration::from_secs(1));
+        safety_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
         while !self.shutdown.load(Ordering::SeqCst) {
             tokio::select! {
@@ -335,8 +355,8 @@ impl SafetyMonitor {
                     }
                 }
 
-                // Watchdog check every second
-                _ = tokio::time::sleep(Duration::from_secs(1)) => {
+                // Periodic safety checks (stale-sensor + watchdog), ~1Hz.
+                _ = safety_tick.tick() => {
                     // Check for sensor timeout
                     if last_sensor_update.elapsed() > Duration::from_secs(5) {
                         tracing::warn!("Sensor data stale - blocking movement");
@@ -397,8 +417,10 @@ impl crate::traits::Tool for SafeDrive {
         let action = args["action"].as_str().unwrap_or("unknown");
         let distance = args["distance"].as_f64().unwrap_or(0.5);
 
-        // Always allow stop
+        // Always allow stop — and disarm the watchdog, since a stopped robot is
+        // not driving and must not later latch an e-stop while idle (#439).
         if action == "stop" {
+            self.safety.record_drive_finished();
             return self.inner_drive.execute(args).await;
         }
 
@@ -417,7 +439,13 @@ impl crate::traits::Tool for SafeDrive {
                     );
                 }
 
-                self.inner_drive.execute(modified_args).await
+                let result = self.inner_drive.execute(modified_args).await;
+                // The (discrete) drive has finished — disarm the watchdog so it
+                // does not trip on the subsequent idle period (#439). A
+                // continuous drive that overruns max_drive_duration is still
+                // caught while in progress by check_watchdog in run().
+                self.safety.record_drive_finished();
+                result
             }
             Err(reason) => Ok(ToolResult {
                 success: false,
@@ -556,6 +584,29 @@ mod tests {
             !monitor.can_move().await,
             "watchdog e-stop must latch despite clear sensor readings"
         );
+    }
+
+    #[tokio::test]
+    async fn drive_completion_disarms_watchdog_so_idle_does_not_estop() {
+        // #439: after a discrete drive finishes, the watchdog must be disarmed so
+        // a robot that then sits idle past max_drive_duration is NOT latched into
+        // an (unrecoverable) e-stop. Without record_drive_finished this would fire.
+        let (monitor, _rx) = SafetyMonitor::new(SafetyConfig::default());
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        // An armed watchdog (a move was approved long ago)...
+        monitor
+            .state
+            .last_command_ms
+            .store(now_ms - 60_000, Ordering::SeqCst);
+        // ...then the drive completes.
+        monitor.record_drive_finished();
+
+        assert_eq!(monitor.state.last_command_ms.load(Ordering::SeqCst), 0);
+        assert!(!monitor.check_watchdog(Duration::from_secs(30)).await);
+        assert!(monitor.can_move().await);
     }
 
     #[tokio::test]
