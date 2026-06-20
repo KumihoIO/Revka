@@ -180,8 +180,8 @@ jobs:
         run: curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C ${CARGO_HOME:-~/.cargo}/bin
 
       # Runs the ~167 inline tests in the feature-gated channel modules
-      # (matrix, lark, nostr, whatsapp-web, whatsapp-storage, voice-wake) that
-      # the default-only `test` job never executes (#433).
+      # (matrix, lark, nostr, whatsapp-web — incl. its whatsapp_storage backend —
+      # and voice-wake) that the default-only `test` job never executes (#433).
       - name: Run feature-gated channel tests
         run: cargo nextest run --locked --features channel-matrix,channel-lark,channel-nostr,whatsapp-web,voice-wake
         env:
