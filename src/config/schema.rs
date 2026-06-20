@@ -4643,6 +4643,44 @@ pub fn build_runtime_proxy_client_with_timeouts(
     client
 }
 
+/// Build a client tuned for *streaming* (SSE) requests: a per-read **idle**
+/// timeout instead of a total request timeout, so a long generation is not
+/// aborted while tokens are actively arriving — the timeout only fires on
+/// genuine inactivity. Mirrors the streaming-client shape in `openai_codex.rs`.
+/// Use [`build_runtime_proxy_client_with_timeouts`] for non-streaming calls
+/// where a bounded total request time is appropriate.
+pub fn build_runtime_proxy_streaming_client_with_timeouts(
+    service_key: &str,
+    read_timeout_secs: u64,
+    connect_timeout_secs: u64,
+) -> reqwest::Client {
+    // Distinct cache key: `read_timeout=` vs `timeout=` cannot collide with the
+    // total-timeout client built for the same service/numbers.
+    let cache_key = format!(
+        "{}|read_timeout={}|connect_timeout={}",
+        service_key.trim().to_ascii_lowercase(),
+        read_timeout_secs,
+        connect_timeout_secs
+    );
+    if let Some(client) = runtime_proxy_cached_client(&cache_key) {
+        return client;
+    }
+
+    let builder = reqwest::Client::builder()
+        .read_timeout(std::time::Duration::from_secs(read_timeout_secs))
+        .connect_timeout(std::time::Duration::from_secs(connect_timeout_secs));
+    let builder = apply_runtime_proxy_to_builder(builder, service_key);
+    let client = builder.build().unwrap_or_else(|error| {
+        tracing::warn!(
+            service_key,
+            "Failed to build proxied streaming client: {error}"
+        );
+        reqwest::Client::new()
+    });
+    set_runtime_proxy_cached_client(cache_key, client.clone());
+    client
+}
+
 /// Build an HTTP client for a channel, using an explicit per-channel proxy URL
 /// when configured.  Falls back to the global runtime proxy when `proxy_url` is
 /// `None` or empty.
@@ -15190,6 +15228,34 @@ default_model = "persisted-profile"
 
         let _ = build_runtime_proxy_client(&service_key);
         assert!(runtime_proxy_cache_contains(&cache_key));
+    }
+
+    #[test]
+    async fn streaming_client_cache_key_does_not_collide_with_total_timeout() {
+        // #407: the streaming (read/idle timeout) client must be cached under a
+        // distinct key so it never aliases the total-timeout client built for
+        // the same service/timeouts.
+        let service_key = format!(
+            "provider.stream_cache_test.{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock should be after unix epoch")
+                .as_nanos()
+        );
+        let total_key = runtime_proxy_cache_key(&service_key, Some(30), Some(5));
+        let stream_key = format!("{service_key}|read_timeout=30|connect_timeout=5");
+        assert_ne!(total_key, stream_key);
+
+        clear_runtime_proxy_client_cache();
+        let _ = build_runtime_proxy_streaming_client_with_timeouts(&service_key, 30, 5);
+        assert!(runtime_proxy_cache_contains(&stream_key));
+        // The total-timeout entry must not have been created by the streaming build.
+        assert!(!runtime_proxy_cache_contains(&total_key));
+
+        // Building the total-timeout client adds a separate entry; both coexist.
+        let _ = build_runtime_proxy_client_with_timeouts(&service_key, 30, 5);
+        assert!(runtime_proxy_cache_contains(&total_key));
+        assert!(runtime_proxy_cache_contains(&stream_key));
     }
 
     #[test]
