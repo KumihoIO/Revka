@@ -7039,6 +7039,16 @@ pub struct WebhookConfig {
     /// agent. Set this to `true` to deliberately run the endpoint unauthenticated.
     #[serde(default)]
     pub allow_unsigned: bool,
+    /// Address to bind the listener to. Defaults to `127.0.0.1` (loopback only).
+    /// Set a non-loopback address (e.g. `0.0.0.0`) only together with
+    /// `allow_public_bind = true`.
+    #[serde(default)]
+    pub host: Option<String>,
+    /// Opt-in to bind a non-loopback (network-exposed) address. Defaults to
+    /// `false`; a non-loopback `host` without this makes the channel fail closed
+    /// at startup rather than silently exposing the endpoint on all interfaces.
+    #[serde(default)]
+    pub allow_public_bind: bool,
 }
 
 impl ChannelConfig for WebhookConfig {

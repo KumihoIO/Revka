@@ -16,6 +16,12 @@ pub struct WebhookChannel {
     /// When no `secret` is set, accept unauthenticated requests only if this is
     /// `true`; otherwise the listener fails closed (refuses to start).
     allow_unsigned: bool,
+    /// Address to bind the listener to. Defaults to `127.0.0.1` (loopback);
+    /// binding a non-loopback address requires `allow_public_bind` (#425).
+    host: String,
+    /// Explicit opt-in to bind a non-loopback (network-exposed) address.
+    /// Without it, a non-loopback `host` makes the listener fail closed.
+    allow_public_bind: bool,
 }
 
 /// Incoming webhook payload format.
@@ -68,7 +74,23 @@ impl WebhookChannel {
             // a degenerate HMAC key. Mirrors WATI's `with_webhook_secret`.
             secret: secret.filter(|s| !s.trim().is_empty()),
             allow_unsigned,
+            // Secure default: loopback only, no public bind. Override via
+            // `with_bind` from config (#425).
+            host: "127.0.0.1".to_string(),
+            allow_public_bind: false,
         }
+    }
+
+    /// Set the bind address and whether a non-loopback bind is permitted.
+    /// An empty/whitespace `host` falls back to `127.0.0.1` (loopback).
+    #[must_use]
+    pub fn with_bind(mut self, host: Option<String>, allow_public_bind: bool) -> Self {
+        self.host = host
+            .map(|h| h.trim().to_string())
+            .filter(|h| !h.is_empty())
+            .unwrap_or_else(|| "127.0.0.1".to_string());
+        self.allow_public_bind = allow_public_bind;
+        self
     }
 
     fn http_client(&self) -> reqwest::Client {
@@ -286,14 +308,27 @@ impl Channel for WebhookChannel {
             .route(&listen_path, post(handle_webhook))
             .with_state(state);
 
-        let addr = std::net::SocketAddr::from(([0, 0, 0, 0], self.listen_port));
+        // Fail closed on a network-exposed bind unless the operator opted in,
+        // mirroring the gateway's `allow_public_bind` policy. Default is loopback
+        // (#425).
+        let host = self.host.as_str();
+        if crate::security::pairing::is_public_bind(host) && !self.allow_public_bind {
+            bail!(
+                "Webhook channel is configured to bind a non-loopback address \
+                 ({host}:{port}), which exposes it on the network. Set \
+                 [channels_config.webhook].allow_public_bind = true to opt in (and keep a \
+                 secret set), or set host = \"127.0.0.1\" to restrict it to loopback.",
+                port = self.listen_port
+            );
+        }
+
         tracing::info!(
-            "Webhook channel listening on http://0.0.0.0:{}{} ...",
+            "Webhook channel listening on http://{host}:{}{} ...",
             self.listen_port,
             self.listen_path
         );
 
-        let listener = tokio::net::TcpListener::bind(addr).await?;
+        let listener = tokio::net::TcpListener::bind((host, self.listen_port)).await?;
         axum::serve(listener, app)
             .await
             .map_err(|e| anyhow::anyhow!("Webhook server error: {e}"))?;
@@ -364,6 +399,34 @@ mod tests {
         let (tx, _rx) = tokio::sync::mpsc::channel(1);
         let err = ch.listen(tx).await.unwrap_err().to_string();
         assert!(err.contains("without a secret"), "got: {err}");
+    }
+
+    #[test]
+    fn host_defaults_to_loopback() {
+        // #425: secure default — bind loopback only unless opted in.
+        let ch = make_channel();
+        assert_eq!(ch.host, "127.0.0.1");
+        assert!(!ch.allow_public_bind);
+    }
+
+    #[test]
+    fn with_bind_blank_host_falls_back_to_loopback() {
+        let ch = make_channel_with_secret().with_bind(Some("   ".into()), false);
+        assert_eq!(ch.host, "127.0.0.1");
+        let ch2 = make_channel_with_secret().with_bind(None, true);
+        assert_eq!(ch2.host, "127.0.0.1");
+        assert!(ch2.allow_public_bind);
+    }
+
+    #[tokio::test]
+    async fn listen_bails_on_public_bind_without_opt_in() {
+        // #425: a non-loopback bind without allow_public_bind must fail closed,
+        // even when a secret is set, rather than exposing the endpoint.
+        let ch = make_channel_with_secret().with_bind(Some("0.0.0.0".into()), false);
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        let err = ch.listen(tx).await.unwrap_err().to_string();
+        assert!(err.contains("non-loopback"), "got: {err}");
+        assert!(err.contains("allow_public_bind"), "got: {err}");
     }
 
     #[test]

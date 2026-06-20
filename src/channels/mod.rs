@@ -5348,15 +5348,18 @@ fn collect_configured_channels(
     if let Some(ref wh) = config.channels_config.webhook {
         channels.push(ConfiguredChannel {
             display_name: "Webhook",
-            channel: Arc::new(WebhookChannel::new(
-                wh.port,
-                wh.listen_path.clone(),
-                wh.send_url.clone(),
-                wh.send_method.clone(),
-                wh.auth_header.clone(),
-                wh.secret.clone(),
-                wh.allow_unsigned,
-            )),
+            channel: Arc::new(
+                WebhookChannel::new(
+                    wh.port,
+                    wh.listen_path.clone(),
+                    wh.send_url.clone(),
+                    wh.send_method.clone(),
+                    wh.auth_header.clone(),
+                    wh.secret.clone(),
+                    wh.allow_unsigned,
+                )
+                .with_bind(wh.host.clone(), wh.allow_public_bind),
+            ),
         });
     }
 
