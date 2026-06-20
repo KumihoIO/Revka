@@ -269,6 +269,10 @@ where
 /// the scope that holds the guard. Used so the heartbeat deadman watcher cannot
 /// outlive the worker invocation that owns it (#420) — including on the `?`
 /// early-return paths inside the worker loop.
+///
+/// `#[must_use]`: the guard must be bound for its whole scope; an unbound
+/// `AbortOnDrop(..)` statement would drop (and abort) it immediately.
+#[must_use]
 struct AbortOnDrop(tokio::task::JoinHandle<()>);
 
 impl Drop for AbortOnDrop {
