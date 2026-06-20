@@ -19,9 +19,8 @@
 use crate::config::{RobotConfig, SafetyConfig};
 use crate::traits::ToolResult;
 use anyhow::Result;
-use portable_atomic::Ordering;
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::{RwLock, broadcast};
 
@@ -137,7 +136,9 @@ impl SafetyMonitor {
         // A command — even one about to be denied — proves the controller is
         // alive, so refresh the watchdog timer and clear any trip (#439).
         // Re-arm BEFORE clearing the trip so a concurrent check_watchdog tick
-        // sees the fresh timestamp and cannot immediately re-trip (TOCTOU).
+        // sees the fresh timestamp and is very unlikely to immediately re-trip
+        // (the two stores aren't atomic together, but any re-trip is fail-safe —
+        // it only over-blocks, and the next command clears it again).
         // This only lifts the dead-man's switch; it does NOT touch `can_move`, so
         // any concurrent obstacle / bump / sensor-stale block still rejects the
         // move via the checks below.
@@ -228,6 +229,12 @@ impl SafetyMonitor {
         self.state.estop_active.store(false, Ordering::SeqCst);
         self.state.can_move.store(true, Ordering::SeqCst);
         *self.state.block_reason.write().await = None;
+        // A deliberate reset is a full "restore movement" action, so also lift any
+        // concurrent watchdog trip and disarm the dead-man's switch until the next
+        // command — otherwise the watchdog gate would keep `can_move()` false even
+        // after the e-stop clears (#439).
+        self.state.watchdog_tripped.store(false, Ordering::SeqCst);
+        *self.state.last_command.write().await = None;
 
         let _ = self.event_tx.send(SafetyEvent::Recovered);
     }
@@ -334,7 +341,7 @@ impl SafetyMonitor {
     /// intentionally NOT called on normal drive completion — the watchdog must
     /// keep counting through the idle-between-commands window, which is the case
     /// it exists to protect; see `check_watchdog`.
-    pub async fn record_drive_finished(&self) {
+    pub async fn disarm_watchdog(&self) {
         *self.state.last_command.write().await = None;
         self.state.watchdog_tripped.store(false, Ordering::SeqCst);
     }
@@ -436,9 +443,10 @@ impl crate::traits::Tool for SafeDrive {
         let distance = args["distance"].as_f64().unwrap_or(0.5);
 
         // Always allow stop — and disarm the watchdog, since a stopped robot is
-        // not driving and must not later latch an e-stop while idle (#439).
+        // deliberately idle and the dead-man's switch must not trip while it is
+        // intentionally parked (#439).
         if action == "stop" {
-            self.safety.record_drive_finished().await;
+            self.safety.disarm_watchdog().await;
             return self.inner_drive.execute(args).await;
         }
 
@@ -612,11 +620,11 @@ mod tests {
     #[tokio::test]
     async fn explicit_stop_disarms_watchdog() {
         // A deliberate stop should not later trip the dead-man's switch during the
-        // intentional idle (SafeDrive calls record_drive_finished on `stop`).
+        // intentional idle (SafeDrive calls disarm_watchdog on `stop`).
         let (monitor, _rx) = SafetyMonitor::new(SafetyConfig::default());
         arm_watchdog_expired(&monitor).await;
 
-        monitor.record_drive_finished().await;
+        monitor.disarm_watchdog().await;
         assert!(monitor.state.last_command.read().await.is_none());
         assert!(!monitor.check_watchdog(Duration::from_millis(1)).await);
         assert!(monitor.can_move().await);
@@ -671,6 +679,30 @@ mod tests {
         let (monitor, _rx) = SafetyMonitor::new(SafetyConfig::default());
         assert!(!monitor.check_watchdog(Duration::from_secs(0)).await);
         assert!(monitor.can_move().await);
+    }
+
+    #[tokio::test]
+    async fn reset_estop_clears_a_concurrent_watchdog_trip() {
+        // #439 review: reset_estop is a full "restore movement" action. If a
+        // watchdog trip and an e-stop are both active, clearing the e-stop alone
+        // would leave can_move() false (the watchdog gate still holds). reset_estop
+        // must also lift the watchdog trip and disarm the dead-man's switch.
+        let (monitor, _rx) = SafetyMonitor::new(SafetyConfig::default());
+        arm_watchdog_expired(&monitor).await;
+        assert!(monitor.check_watchdog(Duration::from_millis(1)).await);
+        monitor.emergency_stop("test").await;
+        assert!(!monitor.can_move().await);
+
+        monitor.reset_estop().await;
+
+        assert!(
+            monitor.can_move().await,
+            "reset_estop must clear both the e-stop and the watchdog trip"
+        );
+        assert!(!monitor.state.watchdog_tripped.load(Ordering::SeqCst));
+        // Disarmed until the next command: a zero-timeout check must not re-fire
+        // (proves last_command was reset to None, not left at a stale timestamp).
+        assert!(!monitor.check_watchdog(Duration::from_secs(0)).await);
     }
 
     #[tokio::test]
