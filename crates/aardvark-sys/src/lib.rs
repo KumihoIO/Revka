@@ -161,8 +161,11 @@ pub enum AardvarkError {
     /// GPIO operation returned a negative status code.
     #[error("GPIO error (code {0})")]
     GpioError(i32),
-    /// `aardvark.so` could not be found or loaded.
-    #[error("aardvark.so not found — set REVKA_AARDVARK_LIB or place it next to the binary")]
+    /// The Aardvark shared library could not be found or loaded.
+    #[error(
+        "{lib} not found — set REVKA_AARDVARK_LIB or place it next to the binary",
+        lib = AARDVARK_LIB_NAME
+    )]
     LibraryNotFound,
 }
 
@@ -210,7 +213,7 @@ impl AardvarkHandle {
     /// Return the port numbers of all **free** connected adapters.
     ///
     /// Ports in-use by another process are filtered out.
-    /// Returns an empty `Vec` when `aardvark.so` cannot be loaded.
+    /// Returns an empty `Vec` when the Aardvark library cannot be loaded.
     pub fn find_devices() -> Vec<u16> {
         let Some(lib) = lib() else {
             eprintln!("[aardvark-sys] find_devices: library not loaded");
@@ -492,10 +495,12 @@ mod tests {
                 .to_string()
                 .contains("SPI")
         );
+        // The message must name the platform-correct library file (#440), so the
+        // diagnostic points Windows/macOS users at aardvark.dll / aardvark.dylib.
         assert!(
             AardvarkError::LibraryNotFound
                 .to_string()
-                .contains("aardvark.so")
+                .contains(AARDVARK_LIB_NAME)
         );
     }
 }
