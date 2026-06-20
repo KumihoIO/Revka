@@ -13,6 +13,9 @@ pub struct WebhookChannel {
     send_method: String,
     auth_header: Option<String>,
     secret: Option<String>,
+    /// When no `secret` is set, accept unauthenticated requests only if this is
+    /// `true`; otherwise the listener fails closed (refuses to start).
+    allow_unsigned: bool,
 }
 
 /// Incoming webhook payload format.
@@ -42,6 +45,7 @@ impl WebhookChannel {
         send_method: Option<String>,
         auth_header: Option<String>,
         secret: Option<String>,
+        allow_unsigned: bool,
     ) -> Self {
         let path = listen_path.unwrap_or_else(|| "/webhook".to_string());
         // Ensure path starts with /
@@ -60,6 +64,7 @@ impl WebhookChannel {
                 .to_uppercase(),
             auth_header,
             secret,
+            allow_unsigned,
         }
     }
 
@@ -157,6 +162,28 @@ impl Channel for WebhookChannel {
         };
         use portable_atomic::{AtomicU64, Ordering};
         use std::sync::Arc;
+
+        // Fail closed: a webhook listener with no secret would silently accept
+        // unauthenticated POSTs (it binds 0.0.0.0) that flow straight into the
+        // agent. Require either a secret or an explicit allow_unsigned opt-in.
+        if self.secret.is_none() {
+            if self.allow_unsigned {
+                tracing::warn!(
+                    "Webhook channel: NO secret configured and allow_unsigned=true — accepting \
+                     UNAUTHENTICATED requests on 0.0.0.0:{}{}. Any caller can inject messages \
+                     that trigger the agent; set [channels_config.webhook].secret to require \
+                     HMAC-SHA256 signatures.",
+                    self.listen_port,
+                    self.listen_path
+                );
+            } else {
+                bail!(
+                    "Webhook channel is enabled without a secret. Set \
+                     [channels_config.webhook].secret for HMAC-SHA256 verification, or set \
+                     allow_unsigned=true to deliberately accept unauthenticated requests."
+                );
+            }
+        }
 
         let counter = Arc::new(AtomicU64::new(0));
 
@@ -290,6 +317,7 @@ mod tests {
             None,
             None,
             None,
+            true,
         )
     }
 
@@ -301,19 +329,38 @@ mod tests {
             None,
             None,
             Some("mysecret".into()),
+            false,
         )
     }
 
     #[test]
     fn default_path() {
-        let ch = WebhookChannel::new(8080, None, None, None, None, None);
+        let ch = WebhookChannel::new(8080, None, None, None, None, None, false);
         assert_eq!(ch.listen_path, "/webhook");
     }
 
     #[test]
     fn path_normalized() {
-        let ch = WebhookChannel::new(8080, Some("hooks/incoming".into()), None, None, None, None);
+        let ch = WebhookChannel::new(
+            8080,
+            Some("hooks/incoming".into()),
+            None,
+            None,
+            None,
+            None,
+            false,
+        );
         assert_eq!(ch.listen_path, "/hooks/incoming");
+    }
+
+    #[tokio::test]
+    async fn listen_fails_closed_without_secret() {
+        // #403: an enabled webhook with no secret and no allow_unsigned must
+        // refuse to start rather than silently accept unauthenticated requests.
+        let ch = WebhookChannel::new(0, None, None, None, None, None, false);
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        let err = ch.listen(tx).await.unwrap_err().to_string();
+        assert!(err.contains("without a secret"), "got: {err}");
     }
 
     #[test]
@@ -331,6 +378,7 @@ mod tests {
             Some("put".into()),
             None,
             None,
+            true,
         );
         assert_eq!(ch.send_method, "PUT");
     }

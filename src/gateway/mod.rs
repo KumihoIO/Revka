@@ -770,6 +770,24 @@ pub async fn run_gateway_with_mcp_registry(
         })
         .map(Arc::from);
 
+    // #403: surface the unsigned-acceptance state. A Cloud-API WhatsApp webhook
+    // (verify_token set) with no app_secret accepts unverified inbound POSTs that
+    // flow into the agent — make that a loud, visible choice rather than silent.
+    if config
+        .channels_config
+        .whatsapp
+        .as_ref()
+        .is_some_and(|wa| wa.verify_token.is_some())
+        && whatsapp_app_secret.is_none()
+    {
+        tracing::warn!(
+            "WhatsApp Cloud webhook is configured (verify_token set) but no app_secret \
+             (REVKA_WHATSAPP_APP_SECRET or [channels_config.whatsapp].app_secret) — inbound \
+             webhooks are NOT signature-verified; any caller can POST messages that trigger the \
+             agent. Set app_secret to require X-Hub-Signature-256 verification."
+        );
+    }
+
     // Linq channel (if configured)
     let linq_channel: Option<Arc<LinqChannel>> = config.channels_config.linq.as_ref().map(|lq| {
         Arc::new(LinqChannel::new(
@@ -808,9 +826,24 @@ pub async fn run_gateway_with_mcp_registry(
                     wati_cfg.tenant_id.clone(),
                     wati_cfg.allowed_numbers.clone(),
                 )
-                .with_transcription(config.transcription.clone()),
+                .with_transcription(config.transcription.clone())
+                .with_webhook_secret(wati_cfg.webhook_secret.clone()),
             )
         });
+
+    // #403: surface the unsigned-acceptance state for WATI (no native HMAC).
+    if config.channels_config.wati.as_ref().is_some_and(|w| {
+        w.webhook_secret
+            .as_deref()
+            .is_none_or(|s| s.trim().is_empty())
+    }) {
+        tracing::warn!(
+            "WATI channel enabled without webhook_secret — inbound /wati webhooks are \
+             UNAUTHENTICATED (only the spoofable waId / allowed_numbers filter applies). Set \
+             [channels_config.wati].webhook_secret and have your WATI/proxy send the \
+             X-Revka-Webhook-Secret header."
+        );
+    }
 
     // Nextcloud Talk channel (if configured)
     let nextcloud_talk_channel: Option<Arc<NextcloudTalkChannel>> =
@@ -2958,13 +2991,30 @@ pub struct WatiVerifyQuery {
 }
 
 /// POST /wati — incoming WATI WhatsApp message webhook
-async fn handle_wati_webhook(State(state): State<AppState>, body: Bytes) -> impl IntoResponse {
+async fn handle_wati_webhook(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> impl IntoResponse {
     let Some(ref wati) = state.wati else {
         return (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({"error": "WATI not configured"})),
         );
     };
+
+    // #403: when an inbound webhook_secret is configured, require a matching
+    // X-Revka-Webhook-Secret header (WATI has no native HMAC).
+    let provided_secret = headers
+        .get("x-revka-webhook-secret")
+        .and_then(|v| v.to_str().ok());
+    if !wati.verify_inbound_secret(provided_secret) {
+        tracing::warn!("WATI webhook: missing/invalid X-Revka-Webhook-Secret, rejecting request");
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({"error": "Invalid or missing webhook secret"})),
+        );
+    }
 
     // Parse JSON body
     let Ok(payload) = serde_json::from_slice::<serde_json::Value>(&body) else {
