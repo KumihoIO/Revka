@@ -339,7 +339,7 @@ fn push_failure(
 //                configured alternatives).
 //   Middle loop: iterate registered providers in priority order.
 //   Inner loop:  retry the same (provider, model) pair with exponential
-//                backoff, rotating API keys on rate-limit errors.
+//                backoff on rate-limit / transient errors.
 // Loop invariant: `failures` accumulates every failed attempt so the final
 // error message gives operators a complete diagnostic trail.
 

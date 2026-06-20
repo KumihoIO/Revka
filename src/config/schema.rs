@@ -5841,7 +5841,7 @@ impl Default for RuntimeConfig {
 
 /// Reliability and supervision configuration (`[reliability]` section).
 ///
-/// Controls provider retries, fallback chains, API key rotation, and channel restart backoff.
+/// Controls provider retries, fallback chains, model failover, and channel restart backoff.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ReliabilityConfig {
     /// Retries per provider before failing over.
