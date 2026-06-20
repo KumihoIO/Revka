@@ -5928,6 +5928,11 @@ fn setup_channels() -> Result<ChannelsConfig> {
                     } else {
                         Some(secret)
                     },
+                    // Secure default: bind loopback only. Operators who need the
+                    // endpoint reachable off-host set host + allow_public_bind in
+                    // config.toml (#425).
+                    host: None,
+                    allow_public_bind: false,
                 });
                 println!(
                     "  {} {}",
