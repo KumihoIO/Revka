@@ -150,6 +150,44 @@ jobs:
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: clang
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: "-C link-arg=-fuse-ld=mold"
 
+  test-features:
+    name: Test (feature-gated channels)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    needs: [lint]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
+        with:
+          toolchain: 1.93.0
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          prefix-key: test-features
+          cache-bin: false
+
+      - name: Ensure web/dist placeholder exists
+        run: mkdir -p web/dist && touch web/dist/.gitkeep
+
+      - name: Install system dependencies
+        # mold: linker (matches the default test job).
+        # libasound2-dev: voice-wake (cpal/ALSA); ci-all omits voice-wake
+        # precisely because standard runners lack this lib, so install it here.
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y mold libasound2-dev
+
+      - name: Install cargo-nextest
+        run: curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C ${CARGO_HOME:-~/.cargo}/bin
+
+      # Runs the ~167 inline tests in the feature-gated channel modules
+      # (matrix, lark, nostr, whatsapp-web — incl. its whatsapp_storage backend —
+      # and voice-wake) that the default-only `test` job never executes (#433).
+      - name: Run feature-gated channel tests
+        run: cargo nextest run --locked --features channel-matrix,channel-lark,channel-nostr,whatsapp-web,voice-wake
+        env:
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: clang
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: "-C link-arg=-fuse-ld=mold"
+
   build:
     name: Build ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
@@ -294,7 +332,7 @@ jobs:
   gate:
     name: CI Required Gate
     if: always()
-    needs: [lint, msrv, bench-compile, lint-strict-delta, test, build, docs-quality, check-all-features, feature-matrix, version-drift]
+    needs: [lint, msrv, bench-compile, lint-strict-delta, test, test-features, build, docs-quality, check-all-features, feature-matrix, version-drift]
     runs-on: ubuntu-latest
     steps:
       - name: Check upstream job results
