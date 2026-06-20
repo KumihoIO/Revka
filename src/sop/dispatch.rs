@@ -156,9 +156,12 @@ pub async fn dispatch_sop_event(
 
 /// Process dispatch results in headless (non-agent-loop) callers.
 ///
-/// Handles audit and logging for fan-in callers (MQTT, webhook, cron) that
-/// cannot execute SOP steps interactively. A `WaitApproval` action is **failed
-/// closed**: a headless caller has no interactive approver and no timeout poller
+/// Handles audit and disposition for headless fan-in callers that cannot execute
+/// SOP steps interactively. (Today only the MQTT listener calls this — and that
+/// listener is itself not yet wired into production; there is no webhook/cron
+/// headless caller. Any new headless fan-in should route through here.) A
+/// `WaitApproval` action is **failed closed**: a headless caller has no
+/// interactive approver and no timeout poller
 /// runs on this path, so the run would otherwise be orphaned in
 /// `WaitingApproval` forever — instead it is cancelled and audited, leaving a
 /// trail for a human to re-run. `ExecuteStep` cannot run without an agent loop
