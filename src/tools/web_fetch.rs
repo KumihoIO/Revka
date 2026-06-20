@@ -371,6 +371,17 @@ impl Tool for WebFetchTool {
                 .collect();
             builder = builder.resolve_to_addrs(&validated.host, &addrs);
         }
+
+        // Backstop the pin with a connect-time SSRF resolver. reqwest checks the
+        // pin overrides above first, then falls back to this resolver for every
+        // other host it resolves — crucially each *redirect hop* (web_fetch
+        // follows up to 10) and any host the pin key does not match (e.g. a
+        // trailing-dot FQDN). It rejects connections whose resolved IPs are
+        // private/reserved, closing the rebinding TOCTOU that per-hop string
+        // re-validation alone leaves open. Operator-allowed private hosts pass.
+        builder = builder.dns_resolver(std::sync::Arc::new(SsrfResolver {
+            allowed_private_hosts: self.allowed_private_hosts.clone(),
+        }));
         let builder = crate::config::apply_runtime_proxy_to_builder(builder, "tool.web_fetch");
         let client = match builder.build() {
             Ok(c) => c,
@@ -631,19 +642,15 @@ fn is_private_or_local_host(host: &str) -> bool {
 fn validate_resolved_host_is_public(host: &str) -> anyhow::Result<Vec<std::net::IpAddr>> {
     use std::net::ToSocketAddrs;
 
-    let bare = host
-        .strip_prefix('[')
-        .and_then(|h| h.strip_suffix(']'))
-        .unwrap_or(host);
-
     // Bare IP literal in the URL: reqwest connects to exactly this IP with no
     // DNS lookup, so there is nothing to pin (the is_private_or_local_host
-    // check already rejected non-global literals).
-    if bare.parse::<std::net::IpAddr>().is_ok() {
+    // check already rejected non-global literals). `extract_host` rejects
+    // bracketed IPv6 authorities upstream, so `host` is never bracketed here.
+    if host.parse::<std::net::IpAddr>().is_ok() {
         return Ok(Vec::new());
     }
 
-    let ips = (bare, 0)
+    let ips = (host, 0)
         .to_socket_addrs()
         .map_err(|e| anyhow::anyhow!("Failed to resolve host '{host}': {e}"))?
         .map(|addr| addr.ip())
@@ -658,6 +665,62 @@ fn validate_resolved_host_is_public(_host: &str) -> anyhow::Result<Vec<std::net:
     // DNS checks are covered by validate_resolved_ips_are_public unit tests;
     // return no pins so client construction stays offline in tests.
     Ok(Vec::new())
+}
+
+/// Resolve `host` and validate every resulting IP against the private/reserved
+/// deny-list, returning the socket addresses to connect to. Operator-allowed
+/// private hosts bypass the deny-list (they opted in). This runs at reqwest's
+/// connect time (see [`SsrfResolver`]), so the SSRF check covers the original
+/// host's redirect hops and any host not pinned via an exact override — closing
+/// the DNS-rebinding TOCTOU that validate-then-reresolve leaves open.
+async fn ssrf_resolve(
+    host: &str,
+    allowed_private_hosts: &[String],
+) -> anyhow::Result<Vec<std::net::SocketAddr>> {
+    use std::net::ToSocketAddrs;
+    let lookup = host.to_string();
+    let addrs: Vec<std::net::SocketAddr> = tokio::task::spawn_blocking(move || {
+        (lookup.as_str(), 0)
+            .to_socket_addrs()
+            .map(|it| it.collect::<Vec<_>>())
+    })
+    .await
+    .map_err(|e| anyhow::anyhow!("DNS resolve task failed for '{host}': {e}"))?
+    .map_err(|e| anyhow::anyhow!("Failed to resolve host '{host}': {e}"))?;
+
+    // Operator-allowed private hosts skip the deny-list. Match on the host
+    // without a trailing dot (the FQDN root) to mirror the allowlist checks.
+    let bare = host.strip_suffix('.').unwrap_or(host);
+    if !host_matches_allowlist(bare, allowed_private_hosts) {
+        let ips: Vec<std::net::IpAddr> = addrs.iter().map(|a| a.ip()).collect();
+        validate_resolved_ips_are_public(host, &ips)?;
+    }
+    Ok(addrs)
+}
+
+/// reqwest base DNS resolver that rejects connections resolving to
+/// private/reserved IPs (SSRF guard), allowing operator-configured private
+/// hosts. Used so the check runs at connect time for every host — including
+/// redirect targets — not just the originally-validated URL.
+struct SsrfResolver {
+    allowed_private_hosts: Vec<String>,
+}
+
+impl reqwest::dns::Resolve for SsrfResolver {
+    fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
+        let host = name.as_str().to_string();
+        let allowed = self.allowed_private_hosts.clone();
+        Box::pin(async move {
+            let addrs = ssrf_resolve(&host, &allowed).await.map_err(|e| {
+                Box::new(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    e.to_string(),
+                )) as Box<dyn std::error::Error + Send + Sync>
+            })?;
+            Ok(Box::new(addrs.into_iter())
+                as Box<dyn Iterator<Item = std::net::SocketAddr> + Send>)
+        })
+    }
 }
 
 fn validate_resolved_ips_are_public(host: &str, ips: &[std::net::IpAddr]) -> anyhow::Result<()> {
@@ -955,6 +1018,28 @@ mod tests {
         assert_eq!(v.url, "https://docs.example.com/page");
         assert_eq!(v.host, "docs.example.com");
         assert!(v.resolved_ips.is_empty());
+    }
+
+    #[tokio::test]
+    async fn ssrf_resolve_rejects_loopback_host() {
+        // #397: localhost resolves to a loopback address; with no allowlist the
+        // connect-time resolver must reject it (closes redirect/rebind SSRF).
+        let err = ssrf_resolve("localhost", &[])
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("non-global"),
+            "expected non-global rejection, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn ssrf_resolve_allows_operator_private_host() {
+        // An operator-allowed private host bypasses the deny-list.
+        let allowed = normalize_allowed_domains(vec!["localhost".into()]);
+        let addrs = ssrf_resolve("localhost", &allowed).await.unwrap();
+        assert!(!addrs.is_empty(), "allowed private host should resolve");
     }
 
     #[test]
