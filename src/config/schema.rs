@@ -5725,6 +5725,28 @@ fn collect_unknown_keys_in_value(
 /// `HashMap`-backed tables (`additionalProperties`) allow arbitrary user-chosen
 /// keys, so those keys are never flagged — but their values are still recursed
 /// into the value schema so a typo *inside* a map entry is still caught.
+///
+/// Serde field aliases (declared via the `serde(alias=...)` attribute) are
+/// *accepted* by serde during deserialization but are **not** emitted into the
+/// `schemars` schema (only the canonical field name is). Listing them here keeps
+/// the recursive walk from false-flagging valid, documented aliases as typos.
+/// The `accepted_aliases_cover_every_serde_alias` test parses this source file
+/// and fails if a serde alias is ever added without updating this set.
+const ACCEPTED_CONFIG_ALIASES: &[&str] = &[
+    "model_provider",
+    "model",
+    "mcpServers",
+    "enable",
+    "dbURL",
+    "database_url",
+    "databaseUrl",
+    "channel",
+    "recipient",
+    "notification_chat_id",
+    "notification_channel_id",
+    "sandbox-exec",
+];
+
 fn collect_unknown_keys_in_table(
     table: &toml::Table,
     schema_node: &serde_json::Value,
@@ -5765,9 +5787,14 @@ fn collect_unknown_keys_in_table(
                 if let Some(map_value_schema) = additional_schema {
                     // Known map entry: recurse into the value, don't flag the key.
                     collect_unknown_keys_in_value(value, map_value_schema, defs, &dotted, out);
-                } else if !allows_additional && properties.is_some() {
+                } else if !allows_additional
+                    && properties.is_some()
+                    && !ACCEPTED_CONFIG_ALIASES.contains(&key.as_str())
+                {
                     // A struct with a fixed field set and no free-form keys: this
-                    // key is a genuine unknown (typo or deprecated option).
+                    // key is a genuine unknown (typo or deprecated option). Serde
+                    // aliases are accepted by deserialization but absent from the
+                    // schema, so they are excluded above.
                     out.push(dotted);
                 }
                 // properties absent and no additionalProperties → unknown schema
@@ -11772,6 +11799,46 @@ mod tests {
         // `extra_headers` is a HashMap<String, String> — arbitrary header names.
         let keys = unknown_keys("[extra_headers]\nX-Custom-Header = \"value\"\n");
         assert!(keys.is_empty(), "expected no unknown keys, got {keys:?}");
+    }
+
+    #[test]
+    async fn nested_serde_aliases_are_not_flagged() {
+        // `#[serde(alias = ...)]` keys deserialize correctly but are absent from
+        // the schemars schema; the recursive walk must not warn about them.
+        // `[heartbeat] channel`/`recipient` alias target/to.
+        assert!(
+            unknown_keys("[heartbeat]\nchannel = \"telegram\"\nrecipient = \"123\"\n").is_empty()
+        );
+        // `[composio] enable` aliases `enabled`.
+        assert!(unknown_keys("[composio]\nenable = true\n").is_empty());
+        // `mcpServers` aliases `mcp_servers` (top-level).
+        assert!(unknown_keys("[mcpServers]\n").is_empty());
+    }
+
+    #[test]
+    async fn accepted_aliases_cover_every_serde_alias() {
+        // Drift guard: every serde field-alias declared in this file must be in
+        // ACCEPTED_CONFIG_ALIASES, or the recursive unknown-key walk would
+        // false-flag that alias as a typo. Parsing the source keeps the set
+        // honest as new aliases are added. (This comment deliberately avoids the
+        // attribute literal so it is not matched as an alias itself.)
+        let src = include_str!("schema.rs");
+        let mut missing = Vec::new();
+        for (idx, _) in src.match_indices("alias = \"") {
+            let rest = &src[idx + "alias = \"".len()..];
+            if let Some(end) = rest.find('"') {
+                let alias = &rest[..end];
+                if !ACCEPTED_CONFIG_ALIASES.contains(&alias) {
+                    missing.push(alias.to_string());
+                }
+            }
+        }
+        missing.sort();
+        missing.dedup();
+        assert!(
+            missing.is_empty(),
+            "serde aliases missing from ACCEPTED_CONFIG_ALIASES (would be false-flagged as typos): {missing:?}"
+        );
     }
 
     #[test]
