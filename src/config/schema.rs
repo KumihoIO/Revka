@@ -5651,9 +5651,15 @@ fn is_valid_env_var_name(name: &str) -> bool {
 /// `serde_ignored`.
 ///
 /// This drives `Config`'s real `Deserialize` impl, so it honors
-/// `#[serde(alias/rename/rename_all/deny_unknown_fields)]` and config types
-/// defined in other modules automatically — a typo at any depth is reported
-/// while every legitimate (even aliased, even cross-module) key stays silent.
+/// `#[serde(alias/rename/rename_all)]` and config types defined in other
+/// modules automatically — a typo at any depth is reported while every
+/// legitimate (even aliased, even cross-module) key stays silent.
+///
+/// Note: a typo inside a `#[serde(deny_unknown_fields)]` struct (the `[security]`
+/// tables) does not surface *here* — it makes the earlier real `toml::from_str`
+/// in `load_or_init` fail with a fatal, line-pointed error before this runs, so
+/// the typo is still caught (more loudly). This pass only reports keys the real
+/// deserialize *ignored*.
 ///
 /// The deserialized value is discarded: the real config is loaded separately
 /// via `toml::from_str`. Per #4171, `serde_ignored` must NOT be used for the
@@ -9434,8 +9440,8 @@ impl Config {
             // replaced by defaults.  See #4171.
             //
             // We now deserialize with `toml::from_str` (which is correct) and
-            // run a separate recursive schema-walk purely for diagnostics
-            // (see the unknown-key detection below).
+            // run a separate `serde_ignored` pass purely for diagnostics (see
+            // the unknown-key detection below).
             let mut config: Config =
                 toml::from_str(&contents).context("Failed to deserialize config file")?;
 
@@ -11671,13 +11677,26 @@ mod tests {
     }
 
     #[test]
+    async fn typo_in_deny_unknown_fields_security_table_fails_load() {
+        // The `[security]` tables (OtpConfig/EstopConfig/Nevis*) carry
+        // `#[serde(deny_unknown_fields)]`, so a typo there is caught *fatally* by
+        // the real `toml::from_str` in load_or_init (before the advisory
+        // serde_ignored pass) — strictly louder than a warning. Pin that.
+        let err = toml::from_str::<Config>("[security.otp]\nenabledd = true\n");
+        assert!(
+            err.is_err(),
+            "a typo in a deny_unknown_fields security table must fail deserialization"
+        );
+    }
+
+    #[test]
     async fn default_config_round_trip_has_no_unknown_keys() {
         // Critical false-positive guard: a fully-populated default Config,
         // serialized and re-checked, must produce zero unknown keys. A failure
         // here means the diagnostic would wrongly warn on a legitimate config.
         let cfg = Config::default();
         let serialized = toml::to_string(&cfg).expect("default config should serialize to TOML");
-        let keys = collect_unknown_config_keys(&serialized);
+        let keys = unknown_keys(&serialized);
         assert!(
             keys.is_empty(),
             "default config produced false-positive unknown keys: {keys:?}"
