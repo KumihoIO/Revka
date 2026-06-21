@@ -19,6 +19,19 @@ const TELEGRAM_MAX_MESSAGE_LENGTH: usize = 4096;
 const TELEGRAM_CONTINUATION_OVERHEAD: usize = 30;
 const TELEGRAM_ACK_REACTIONS: &[&str] = &["⚡️", "👌", "👀", "🔥", "👍"];
 
+/// Maximum number of attempts (initial + retries) for an outbound send before
+/// giving up when the Bot API rate-limits (429) or returns a server error (5xx).
+const TELEGRAM_MAX_SEND_ATTEMPTS: u32 = 4;
+/// Upper bound on how long to wait for a single backoff, so a hostile/large
+/// `retry_after` can't stall a send indefinitely.
+const TELEGRAM_MAX_BACKOFF_SECS: u64 = 60;
+/// Fallback wait when a 429 body has no parseable `parameters.retry_after`.
+const TELEGRAM_DEFAULT_RETRY_AFTER_SECS: u64 = 5;
+/// Base delay for 5xx retries (scaled by attempt number).
+const TELEGRAM_SERVER_ERROR_BASE_DELAY_SECS: u64 = 1;
+/// Maximum random jitter added to each backoff to avoid synchronized retries.
+const TELEGRAM_RETRY_JITTER_MS: u64 = 500;
+
 /// Metadata for an incoming document or photo attachment.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct IncomingAttachment {
@@ -701,6 +714,85 @@ impl TelegramChannel {
 
     fn api_url(&self, method: &str) -> String {
         format!("{}/bot{}/{method}", self.api_base, self.bot_token)
+    }
+
+    /// Parse the `parameters.retry_after` field (seconds) from a Telegram Bot API
+    /// 429 error body. The Bot API returns rate-limit hints in the JSON body
+    /// rather than a `Retry-After` header, e.g.
+    /// `{"ok":false,"error_code":429,"description":"Too Many Requests: retry after 5","parameters":{"retry_after":5}}`.
+    fn parse_retry_after_secs(body: &str) -> Option<u64> {
+        let value: serde_json::Value = serde_json::from_str(body).ok()?;
+        value.get("parameters")?.get("retry_after")?.as_u64()
+    }
+
+    /// Compute how long to wait before the next retry: the API-provided
+    /// `retry_after` (or a fallback for 5xx), capped to a sane maximum, plus a
+    /// small random jitter to avoid synchronized retries.
+    fn compute_retry_delay(retry_after_secs: u64) -> Duration {
+        let capped = retry_after_secs.min(TELEGRAM_MAX_BACKOFF_SECS);
+        let jitter_ms = rand::random::<u64>() % (TELEGRAM_RETRY_JITTER_MS + 1);
+        Duration::from_secs(capped) + Duration::from_millis(jitter_ms)
+    }
+
+    /// Send a request with bounded retry on rate-limit (429) and server errors
+    /// (5xx). On 429 the Bot API's `parameters.retry_after` is honored; on 5xx a
+    /// fixed base delay is used. The `build` closure is invoked once per attempt
+    /// so it can reconstruct the request body (JSON value or multipart form).
+    /// The first response with a non-retryable status (including success) is
+    /// returned so callers keep their existing status/body handling.
+    async fn send_with_retry<F>(&self, method: &str, build: F) -> anyhow::Result<reqwest::Response>
+    where
+        F: Fn() -> reqwest::RequestBuilder,
+    {
+        let mut last_err: Option<anyhow::Error> = None;
+        for attempt in 0..TELEGRAM_MAX_SEND_ATTEMPTS {
+            match build().send().await {
+                Ok(resp) => {
+                    let status = resp.status();
+                    let is_rate_limited = status.as_u16() == 429;
+                    if !is_rate_limited && !status.is_server_error() {
+                        return Ok(resp);
+                    }
+                    // Read the body so we can parse retry_after; on the final
+                    // attempt rebuild an equivalent response is impossible, so
+                    // surface a descriptive error the caller can bubble up.
+                    let body = resp.text().await.unwrap_or_default();
+                    let delay = if is_rate_limited {
+                        let retry_after = Self::parse_retry_after_secs(&body)
+                            .unwrap_or(TELEGRAM_DEFAULT_RETRY_AFTER_SECS);
+                        Self::compute_retry_delay(retry_after)
+                    } else {
+                        Self::compute_retry_delay(
+                            TELEGRAM_SERVER_ERROR_BASE_DELAY_SECS
+                                .saturating_mul(attempt as u64 + 1),
+                        )
+                    };
+                    tracing::warn!(
+                        attempt = attempt + 1,
+                        max_attempts = TELEGRAM_MAX_SEND_ATTEMPTS,
+                        ?status,
+                        delay_secs = delay.as_secs_f64(),
+                        "Telegram {method} rate-limited/5xx; backing off before retry"
+                    );
+                    last_err = Some(anyhow::anyhow!(
+                        "Telegram {method} failed: status={status}, body={body}"
+                    ));
+                    if attempt + 1 < TELEGRAM_MAX_SEND_ATTEMPTS {
+                        tokio::time::sleep(delay).await;
+                    }
+                }
+                Err(e) => {
+                    last_err = Some(anyhow::anyhow!("Telegram {method} request failed: {e}"));
+                    if attempt + 1 < TELEGRAM_MAX_SEND_ATTEMPTS {
+                        tokio::time::sleep(Self::compute_retry_delay(
+                            TELEGRAM_SERVER_ERROR_BASE_DELAY_SECS,
+                        ))
+                        .await;
+                    }
+                }
+            }
+        }
+        Err(last_err.unwrap_or_else(|| anyhow::anyhow!("Telegram {method} failed after retries")))
     }
 
     /// Synthesize text to speech and send as a Telegram voice note (static version for spawned tasks).
@@ -1856,10 +1948,11 @@ Allowlist Telegram username (without '@') or numeric user ID.",
             }
 
             let markdown_resp = self
-                .http_client()
-                .post(self.api_url("sendMessage"))
-                .json(&markdown_body)
-                .send()
+                .send_with_retry("sendMessage", || {
+                    self.http_client()
+                        .post(self.api_url("sendMessage"))
+                        .json(&markdown_body)
+                })
                 .await?;
 
             if markdown_resp.status().is_success() {
@@ -1886,10 +1979,11 @@ Allowlist Telegram username (without '@') or numeric user ID.",
                 plain_body["message_thread_id"] = serde_json::Value::String(tid.to_string());
             }
             let plain_resp = self
-                .http_client()
-                .post(self.api_url("sendMessage"))
-                .json(&plain_body)
-                .send()
+                .send_with_retry("sendMessage", || {
+                    self.http_client()
+                        .post(self.api_url("sendMessage"))
+                        .json(&plain_body)
+                })
                 .await?;
 
             if !plain_resp.status().is_success() {
@@ -1935,10 +2029,9 @@ Allowlist Telegram username (without '@') or numeric user ID.",
         }
 
         let resp = self
-            .http_client()
-            .post(self.api_url(method))
-            .json(&body)
-            .send()
+            .send_with_retry(method, || {
+                self.http_client().post(self.api_url(method)).json(&body)
+            })
             .await?;
 
         if !resp.status().is_success() {
@@ -2051,25 +2144,20 @@ Allowlist Telegram username (without '@') or numeric user ID.",
             .unwrap_or("file");
 
         let file_bytes = tokio::fs::read(file_path).await?;
-        let part = Part::bytes(file_bytes).file_name(file_name.to_string());
-
-        let mut form = Form::new()
-            .text("chat_id", chat_id.to_string())
-            .part("document", part);
-
-        if let Some(tid) = thread_id {
-            form = form.text("message_thread_id", tid.to_string());
-        }
-
-        if let Some(cap) = caption {
-            form = form.text("caption", cap.to_string());
-        }
 
         let resp = self
-            .http_client()
-            .post(self.api_url("sendDocument"))
-            .multipart(form)
-            .send()
+            .send_with_retry("sendDocument", || {
+                self.http_client()
+                    .post(self.api_url("sendDocument"))
+                    .multipart(Self::build_media_form(
+                        "document",
+                        chat_id,
+                        thread_id,
+                        file_bytes.clone(),
+                        file_name,
+                        caption,
+                    ))
+            })
             .await?;
 
         if !resp.status().is_success() {
@@ -2081,20 +2169,20 @@ Allowlist Telegram username (without '@') or numeric user ID.",
         Ok(())
     }
 
-    /// Send a document from bytes (in-memory) to a Telegram chat
-    pub async fn send_document_bytes(
-        &self,
+    /// Build a multipart form for a media upload (used by the file/byte send
+    /// paths so the form can be reconstructed on each retry attempt).
+    fn build_media_form(
+        media_field: &str,
         chat_id: &str,
         thread_id: Option<&str>,
         file_bytes: Vec<u8>,
         file_name: &str,
         caption: Option<&str>,
-    ) -> anyhow::Result<()> {
+    ) -> Form {
         let part = Part::bytes(file_bytes).file_name(file_name.to_string());
-
         let mut form = Form::new()
             .text("chat_id", chat_id.to_string())
-            .part("document", part);
+            .part(media_field.to_string(), part);
 
         if let Some(tid) = thread_id {
             form = form.text("message_thread_id", tid.to_string());
@@ -2104,11 +2192,31 @@ Allowlist Telegram username (without '@') or numeric user ID.",
             form = form.text("caption", cap.to_string());
         }
 
+        form
+    }
+
+    /// Send a document from bytes (in-memory) to a Telegram chat
+    pub async fn send_document_bytes(
+        &self,
+        chat_id: &str,
+        thread_id: Option<&str>,
+        file_bytes: Vec<u8>,
+        file_name: &str,
+        caption: Option<&str>,
+    ) -> anyhow::Result<()> {
         let resp = self
-            .http_client()
-            .post(self.api_url("sendDocument"))
-            .multipart(form)
-            .send()
+            .send_with_retry("sendDocument", || {
+                self.http_client()
+                    .post(self.api_url("sendDocument"))
+                    .multipart(Self::build_media_form(
+                        "document",
+                        chat_id,
+                        thread_id,
+                        file_bytes.clone(),
+                        file_name,
+                        caption,
+                    ))
+            })
             .await?;
 
         if !resp.status().is_success() {
@@ -2134,25 +2242,20 @@ Allowlist Telegram username (without '@') or numeric user ID.",
             .unwrap_or("photo.jpg");
 
         let file_bytes = tokio::fs::read(file_path).await?;
-        let part = Part::bytes(file_bytes).file_name(file_name.to_string());
-
-        let mut form = Form::new()
-            .text("chat_id", chat_id.to_string())
-            .part("photo", part);
-
-        if let Some(tid) = thread_id {
-            form = form.text("message_thread_id", tid.to_string());
-        }
-
-        if let Some(cap) = caption {
-            form = form.text("caption", cap.to_string());
-        }
 
         let resp = self
-            .http_client()
-            .post(self.api_url("sendPhoto"))
-            .multipart(form)
-            .send()
+            .send_with_retry("sendPhoto", || {
+                self.http_client()
+                    .post(self.api_url("sendPhoto"))
+                    .multipart(Self::build_media_form(
+                        "photo",
+                        chat_id,
+                        thread_id,
+                        file_bytes.clone(),
+                        file_name,
+                        caption,
+                    ))
+            })
             .await?;
 
         if !resp.status().is_success() {
@@ -2173,25 +2276,19 @@ Allowlist Telegram username (without '@') or numeric user ID.",
         file_name: &str,
         caption: Option<&str>,
     ) -> anyhow::Result<()> {
-        let part = Part::bytes(file_bytes).file_name(file_name.to_string());
-
-        let mut form = Form::new()
-            .text("chat_id", chat_id.to_string())
-            .part("photo", part);
-
-        if let Some(tid) = thread_id {
-            form = form.text("message_thread_id", tid.to_string());
-        }
-
-        if let Some(cap) = caption {
-            form = form.text("caption", cap.to_string());
-        }
-
         let resp = self
-            .http_client()
-            .post(self.api_url("sendPhoto"))
-            .multipart(form)
-            .send()
+            .send_with_retry("sendPhoto", || {
+                self.http_client()
+                    .post(self.api_url("sendPhoto"))
+                    .multipart(Self::build_media_form(
+                        "photo",
+                        chat_id,
+                        thread_id,
+                        file_bytes.clone(),
+                        file_name,
+                        caption,
+                    ))
+            })
             .await?;
 
         if !resp.status().is_success() {
@@ -2217,25 +2314,20 @@ Allowlist Telegram username (without '@') or numeric user ID.",
             .unwrap_or("video.mp4");
 
         let file_bytes = tokio::fs::read(file_path).await?;
-        let part = Part::bytes(file_bytes).file_name(file_name.to_string());
-
-        let mut form = Form::new()
-            .text("chat_id", chat_id.to_string())
-            .part("video", part);
-
-        if let Some(tid) = thread_id {
-            form = form.text("message_thread_id", tid.to_string());
-        }
-
-        if let Some(cap) = caption {
-            form = form.text("caption", cap.to_string());
-        }
 
         let resp = self
-            .http_client()
-            .post(self.api_url("sendVideo"))
-            .multipart(form)
-            .send()
+            .send_with_retry("sendVideo", || {
+                self.http_client()
+                    .post(self.api_url("sendVideo"))
+                    .multipart(Self::build_media_form(
+                        "video",
+                        chat_id,
+                        thread_id,
+                        file_bytes.clone(),
+                        file_name,
+                        caption,
+                    ))
+            })
             .await?;
 
         if !resp.status().is_success() {
@@ -2261,25 +2353,20 @@ Allowlist Telegram username (without '@') or numeric user ID.",
             .unwrap_or("audio.mp3");
 
         let file_bytes = tokio::fs::read(file_path).await?;
-        let part = Part::bytes(file_bytes).file_name(file_name.to_string());
-
-        let mut form = Form::new()
-            .text("chat_id", chat_id.to_string())
-            .part("audio", part);
-
-        if let Some(tid) = thread_id {
-            form = form.text("message_thread_id", tid.to_string());
-        }
-
-        if let Some(cap) = caption {
-            form = form.text("caption", cap.to_string());
-        }
 
         let resp = self
-            .http_client()
-            .post(self.api_url("sendAudio"))
-            .multipart(form)
-            .send()
+            .send_with_retry("sendAudio", || {
+                self.http_client()
+                    .post(self.api_url("sendAudio"))
+                    .multipart(Self::build_media_form(
+                        "audio",
+                        chat_id,
+                        thread_id,
+                        file_bytes.clone(),
+                        file_name,
+                        caption,
+                    ))
+            })
             .await?;
 
         if !resp.status().is_success() {
@@ -2305,25 +2392,20 @@ Allowlist Telegram username (without '@') or numeric user ID.",
             .unwrap_or("voice.ogg");
 
         let file_bytes = tokio::fs::read(file_path).await?;
-        let part = Part::bytes(file_bytes).file_name(file_name.to_string());
-
-        let mut form = Form::new()
-            .text("chat_id", chat_id.to_string())
-            .part("voice", part);
-
-        if let Some(tid) = thread_id {
-            form = form.text("message_thread_id", tid.to_string());
-        }
-
-        if let Some(cap) = caption {
-            form = form.text("caption", cap.to_string());
-        }
 
         let resp = self
-            .http_client()
-            .post(self.api_url("sendVoice"))
-            .multipart(form)
-            .send()
+            .send_with_retry("sendVoice", || {
+                self.http_client()
+                    .post(self.api_url("sendVoice"))
+                    .multipart(Self::build_media_form(
+                        "voice",
+                        chat_id,
+                        thread_id,
+                        file_bytes.clone(),
+                        file_name,
+                        caption,
+                    ))
+            })
             .await?;
 
         if !resp.status().is_success() {
@@ -2357,10 +2439,11 @@ Allowlist Telegram username (without '@') or numeric user ID.",
         }
 
         let resp = self
-            .http_client()
-            .post(self.api_url("sendDocument"))
-            .json(&body)
-            .send()
+            .send_with_retry("sendDocument", || {
+                self.http_client()
+                    .post(self.api_url("sendDocument"))
+                    .json(&body)
+            })
             .await?;
 
         if !resp.status().is_success() {
@@ -2394,10 +2477,11 @@ Allowlist Telegram username (without '@') or numeric user ID.",
         }
 
         let resp = self
-            .http_client()
-            .post(self.api_url("sendPhoto"))
-            .json(&body)
-            .send()
+            .send_with_retry("sendPhoto", || {
+                self.http_client()
+                    .post(self.api_url("sendPhoto"))
+                    .json(&body)
+            })
             .await?;
 
         if !resp.status().is_success() {
@@ -3218,6 +3302,35 @@ mod tests {
         assert_eq!(body["message_id"], 42);
         assert_eq!(body["reaction"][0]["type"], "emoji");
         assert_eq!(body["reaction"][0]["emoji"], "⚡️");
+    }
+
+    #[test]
+    fn telegram_parse_retry_after_reads_parameters_field() {
+        let body = r#"{"ok":false,"error_code":429,"description":"Too Many Requests: retry after 7","parameters":{"retry_after":7}}"#;
+        assert_eq!(TelegramChannel::parse_retry_after_secs(body), Some(7));
+    }
+
+    #[test]
+    fn telegram_parse_retry_after_missing_returns_none() {
+        let no_params = r#"{"ok":false,"error_code":429,"description":"Too Many Requests"}"#;
+        assert_eq!(TelegramChannel::parse_retry_after_secs(no_params), None);
+        assert_eq!(TelegramChannel::parse_retry_after_secs("not json"), None);
+    }
+
+    #[test]
+    fn telegram_compute_retry_delay_caps_and_jitters() {
+        // Within cap: at least retry_after seconds, at most retry_after + jitter.
+        let d = TelegramChannel::compute_retry_delay(5);
+        assert!(d.as_secs() >= 5);
+        assert!(d.as_millis() <= (5 * 1000 + TELEGRAM_RETRY_JITTER_MS) as u128);
+
+        // Over cap: clamped to TELEGRAM_MAX_BACKOFF_SECS (+ jitter).
+        let capped = TelegramChannel::compute_retry_delay(10_000);
+        assert!(capped.as_secs() >= TELEGRAM_MAX_BACKOFF_SECS);
+        assert!(
+            capped.as_millis()
+                <= (TELEGRAM_MAX_BACKOFF_SECS * 1000 + TELEGRAM_RETRY_JITTER_MS) as u128
+        );
     }
 
     #[test]
