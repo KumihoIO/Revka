@@ -36,6 +36,13 @@ tokio::task_local! {
     static PROVIDER_FALLBACK: RefCell<Option<ProviderFallbackInfo>>;
 }
 
+/// Shared cell used to carry a streaming fallback across the `tokio::spawn`
+/// boundary. The detached streaming driver writes into this slot (it cannot use
+/// the task-local, which is not inherited by spawned tasks), and the consumer —
+/// which runs inside `scope_provider_fallback` — drains it into the task-local
+/// via `drain_fallback_slot` once the stream completes.
+type FallbackSlot = Arc<std::sync::Mutex<Option<ProviderFallbackInfo>>>;
+
 /// Take (consume) the last provider fallback info, if any.
 /// Must be called within a `scope_provider_fallback` scope.
 pub fn take_last_provider_fallback() -> Option<ProviderFallbackInfo> {
@@ -60,14 +67,33 @@ fn record_provider_fallback(
     actual_provider: &str,
     actual_model: &str,
 ) {
-    let _ = PROVIDER_FALLBACK.try_with(|cell| {
-        *cell.borrow_mut() = Some(ProviderFallbackInfo {
-            requested_provider: requested_provider.to_string(),
-            requested_model: requested_model.to_string(),
-            actual_provider: actual_provider.to_string(),
-            actual_model: actual_model.to_string(),
-        });
+    record_provider_fallback_info(ProviderFallbackInfo {
+        requested_provider: requested_provider.to_string(),
+        requested_model: requested_model.to_string(),
+        actual_provider: actual_provider.to_string(),
+        actual_model: actual_model.to_string(),
     });
+}
+
+/// Record a pre-built `ProviderFallbackInfo` into the task-local. Must be called
+/// from within a `scope_provider_fallback` scope (otherwise the write is a
+/// no-op). Used by the streaming consumer to drain a fallback captured by the
+/// detached driver task — see `FallbackSlot`.
+fn record_provider_fallback_info(info: ProviderFallbackInfo) {
+    let _ = PROVIDER_FALLBACK.try_with(|cell| {
+        *cell.borrow_mut() = Some(info);
+    });
+}
+
+/// Move any fallback the streaming driver captured in `slot` into the task-local
+/// so `take_last_provider_fallback` can see it. Called by the stream consumer,
+/// which runs inside the caller's `scope_provider_fallback` scope (the detached
+/// driver task does not). A no-op when no fallback occurred.
+fn drain_fallback_slot(slot: &FallbackSlot) {
+    let captured = slot.lock().ok().and_then(|mut s| s.take());
+    if let Some(info) = captured {
+        record_provider_fallback_info(info);
+    }
 }
 
 // ── Error Classification ─────────────────────────────────────────────────
@@ -374,6 +400,7 @@ async fn drive_stream_failover<T: Send + 'static>(
     base_backoff_ms: u64,
     requested_provider: String,
     requested_model: String,
+    fallback_slot: FallbackSlot,
 ) {
     let max_attempts = max_retries + 1;
     let mut failures: Vec<String> = Vec::new();
@@ -393,6 +420,12 @@ async fn drive_stream_failover<T: Send + 'static>(
                     // Connected. Record fallback if we deviated from the
                     // originally requested primary provider/model, then forward
                     // the first event and drain the rest.
+                    //
+                    // NOTE: this driver runs in a detached `tokio::spawn` task,
+                    // which does NOT inherit the caller's `PROVIDER_FALLBACK`
+                    // task-local. We therefore stash the deviation in a shared
+                    // slot; the consumer (which IS inside the scope) drains it
+                    // into the task-local once the stream completes.
                     if provider_name != requested_provider || model != requested_model {
                         tracing::info!(
                             provider = provider_name,
@@ -400,12 +433,14 @@ async fn drive_stream_failover<T: Send + 'static>(
                             requested_model = %requested_model,
                             "Streaming provider recovered (failover/retry)"
                         );
-                        record_provider_fallback(
-                            &requested_provider,
-                            &requested_model,
-                            provider_name,
-                            model,
-                        );
+                        if let Ok(mut slot) = fallback_slot.lock() {
+                            *slot = Some(ProviderFallbackInfo {
+                                requested_provider: requested_provider.clone(),
+                                requested_model: requested_model.clone(),
+                                actual_provider: provider_name.to_string(),
+                                actual_model: model.to_string(),
+                            });
+                        }
                     }
                     if tx.send(Ok(first)).await.is_err() {
                         return; // Receiver dropped.
@@ -1252,6 +1287,7 @@ impl Provider for ReliableProvider {
             .map(|(n, _)| n.clone())
             .unwrap_or_default();
         let requested_model = model.to_string();
+        let fallback_slot: FallbackSlot = Arc::new(std::sync::Mutex::new(None));
         tokio::spawn(drive_stream_failover(
             tx,
             candidates,
@@ -1259,10 +1295,17 @@ impl Provider for ReliableProvider {
             base_backoff_ms,
             requested_provider,
             requested_model,
+            Arc::clone(&fallback_slot),
         ));
 
-        stream::unfold(rx, |mut rx| async move {
-            rx.recv().await.map(|event| (event, rx))
+        stream::unfold((rx, fallback_slot), |(mut rx, slot)| async move {
+            match rx.recv().await {
+                Some(event) => Some((event, (rx, slot))),
+                None => {
+                    drain_fallback_slot(&slot);
+                    None
+                }
+            }
         })
         .boxed()
     }
@@ -1330,6 +1373,7 @@ impl Provider for ReliableProvider {
             .first()
             .map(|(n, _)| n.clone())
             .unwrap_or_default();
+        let fallback_slot: FallbackSlot = Arc::new(std::sync::Mutex::new(None));
         tokio::spawn(drive_stream_failover(
             tx,
             candidates,
@@ -1337,10 +1381,17 @@ impl Provider for ReliableProvider {
             self.base_backoff_ms,
             requested_provider,
             model.to_string(),
+            Arc::clone(&fallback_slot),
         ));
 
-        stream::unfold(rx, |mut rx| async move {
-            rx.recv().await.map(|chunk| (chunk, rx))
+        stream::unfold((rx, fallback_slot), |(mut rx, slot)| async move {
+            match rx.recv().await {
+                Some(chunk) => Some((chunk, (rx, slot))),
+                None => {
+                    drain_fallback_slot(&slot);
+                    None
+                }
+            }
         })
         .boxed()
     }
@@ -1403,6 +1454,7 @@ impl Provider for ReliableProvider {
             .first()
             .map(|(n, _)| n.clone())
             .unwrap_or_default();
+        let fallback_slot: FallbackSlot = Arc::new(std::sync::Mutex::new(None));
         tokio::spawn(drive_stream_failover(
             tx,
             candidates,
@@ -1410,10 +1462,17 @@ impl Provider for ReliableProvider {
             self.base_backoff_ms,
             requested_provider,
             model.to_string(),
+            Arc::clone(&fallback_slot),
         ));
 
-        stream::unfold(rx, |mut rx| async move {
-            rx.recv().await.map(|chunk| (chunk, rx))
+        stream::unfold((rx, fallback_slot), |(mut rx, slot)| async move {
+            match rx.recv().await {
+                Some(chunk) => Some((chunk, (rx, slot))),
+                None => {
+                    drain_fallback_slot(&slot);
+                    None
+                }
+            }
         })
         .boxed()
     }
