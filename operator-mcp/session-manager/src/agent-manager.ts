@@ -8,7 +8,7 @@
 import { randomUUID } from "node:crypto";
 import type { AgentSessionConfig, AgentSessionInfo, AgentStatus, AgentStreamEvent, AgentUsage } from "./types.js";
 import { AgentEventEmitter } from "./event-emitter.js";
-import { createClaudeSession, sendClaudeQuery, closeClaudeSession, type ClaudeSessionHandle } from "./providers/claude.js";
+import { createClaudeSession, resumeClaudeSession, sendClaudeQuery, closeClaudeSession, type ClaudeSessionHandle } from "./providers/claude.js";
 import { createCodexSession, sendCodexQuery, closeCodexSession, type CodexSessionHandle } from "./providers/codex.js";
 import { saveAgentState, removeAgentState, updateAgentStatus, getResumableStates } from "./persistence.js";
 
@@ -51,28 +51,7 @@ export class AgentManager {
     this.sessions.set(id, session);
 
     // Event handler — receives events from provider and dispatches
-    const onEvent = (event: AgentStreamEvent) => {
-      session.events.push(event);
-
-      // Track status transitions
-      if (event.type === "status_changed") {
-        session.status = event.status;
-        updateAgentStatus(id, event.status);
-      }
-
-      // Track usage
-      if (event.type === "turn_completed" && event.usage) {
-        session.usage = {
-          inputTokens: (session.usage.inputTokens ?? 0) + (event.usage.inputTokens ?? 0),
-          outputTokens: (session.usage.outputTokens ?? 0) + (event.usage.outputTokens ?? 0),
-          totalCostUsd: (session.usage.totalCostUsd ?? 0) + (event.usage.totalCostUsd ?? 0),
-          model: event.usage.model ?? session.usage.model,
-          provider: event.usage.provider ?? session.usage.provider,
-        };
-      }
-
-      this.emitter.emit(id, event);
-    };
+    const onEvent = this.makeOnEvent(id, session);
 
     // Create provider session
     try {
@@ -263,18 +242,19 @@ export class AgentManager {
         };
         this.sessions.set(state.id, session);
 
-        // For Claude sessions with a session ID, create a dormant handle
-        // that can be activated with sendQuery using the resume option
-        session.handle = {
-          id: state.title ?? "claude-session",
-          claudeSessionId: state.sessionId ?? null,
-          query: null,
-          input: null,
-          closed: false,
-          turnSeq: 0,
-          usage: state.usage,
-          stderr: "",
-        } as ClaudeSessionHandle;
+        // Rebuild the handle through the provider so the follow-up `sendQuery`
+        // closure (with its continuation-summary fallback) is attached. A plain
+        // object literal — as this used to be — has no `sendQuery`, so the first
+        // follow-up threw `TypeError: sendQuery is not a function` (#450). The
+        // handle stays idle; the persisted timeline seeds the continuation
+        // context for the first follow-up.
+        const onEvent = this.makeOnEvent(state.id, session);
+        session.handle = resumeClaudeSession(
+          config,
+          session.events,
+          onEvent,
+          state.sessionId ?? null,
+        );
 
         resumed++;
         updateAgentStatus(state.id, "idle");
@@ -290,6 +270,35 @@ export class AgentManager {
     }
 
     return resumed;
+  }
+
+  /**
+   * Build the event handler that dispatches provider events into a managed
+   * session: appends to the timeline, tracks status (+ persisted status),
+   * accumulates usage, and rebroadcasts via the emitter. Shared by createAgent
+   * and resumePersistedSessions so resumed sessions handle events identically.
+   */
+  private makeOnEvent(id: string, session: ManagedSession): (event: AgentStreamEvent) => void {
+    return (event) => {
+      session.events.push(event);
+
+      if (event.type === "status_changed") {
+        session.status = event.status;
+        updateAgentStatus(id, event.status);
+      }
+
+      if (event.type === "turn_completed" && event.usage) {
+        session.usage = {
+          inputTokens: (session.usage.inputTokens ?? 0) + (event.usage.inputTokens ?? 0),
+          outputTokens: (session.usage.outputTokens ?? 0) + (event.usage.outputTokens ?? 0),
+          totalCostUsd: (session.usage.totalCostUsd ?? 0) + (event.usage.totalCostUsd ?? 0),
+          model: event.usage.model ?? session.usage.model,
+          provider: event.usage.provider ?? session.usage.provider,
+        };
+      }
+
+      this.emitter.emit(id, event);
+    };
   }
 
   private getSessionInfo(session: ManagedSession): AgentSessionInfo {

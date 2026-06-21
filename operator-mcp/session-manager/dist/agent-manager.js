@@ -6,7 +6,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { AgentEventEmitter } from "./event-emitter.js";
-import { createClaudeSession, sendClaudeQuery, closeClaudeSession } from "./providers/claude.js";
+import { createClaudeSession, resumeClaudeSession, sendClaudeQuery, closeClaudeSession } from "./providers/claude.js";
 import { createCodexSession, sendCodexQuery, closeCodexSession } from "./providers/codex.js";
 import { saveAgentState, removeAgentState, updateAgentStatus, getResumableStates } from "./persistence.js";
 const log = (msg) => process.stderr.write(`[session-mgr] ${msg}\n`);
@@ -31,25 +31,7 @@ export class AgentManager {
         };
         this.sessions.set(id, session);
         // Event handler — receives events from provider and dispatches
-        const onEvent = (event) => {
-            session.events.push(event);
-            // Track status transitions
-            if (event.type === "status_changed") {
-                session.status = event.status;
-                updateAgentStatus(id, event.status);
-            }
-            // Track usage
-            if (event.type === "turn_completed" && event.usage) {
-                session.usage = {
-                    inputTokens: (session.usage.inputTokens ?? 0) + (event.usage.inputTokens ?? 0),
-                    outputTokens: (session.usage.outputTokens ?? 0) + (event.usage.outputTokens ?? 0),
-                    totalCostUsd: (session.usage.totalCostUsd ?? 0) + (event.usage.totalCostUsd ?? 0),
-                    model: event.usage.model ?? session.usage.model,
-                    provider: event.usage.provider ?? session.usage.provider,
-                };
-            }
-            this.emitter.emit(id, event);
-        };
+        const onEvent = this.makeOnEvent(id, session);
         // Create provider session
         try {
             if (config.agentType === "claude") {
@@ -231,18 +213,14 @@ export class AgentManager {
                     events: state.timelineTail ?? [],
                 };
                 this.sessions.set(state.id, session);
-                // For Claude sessions with a session ID, create a dormant handle
-                // that can be activated with sendQuery using the resume option
-                session.handle = {
-                    id: state.title ?? "claude-session",
-                    claudeSessionId: state.sessionId ?? null,
-                    query: null,
-                    input: null,
-                    closed: false,
-                    turnSeq: 0,
-                    usage: state.usage,
-                    stderr: "",
-                };
+                // Rebuild the handle through the provider so the follow-up `sendQuery`
+                // closure (with its continuation-summary fallback) is attached. A plain
+                // object literal — as this used to be — has no `sendQuery`, so the first
+                // follow-up threw `TypeError: sendQuery is not a function` (#450). The
+                // handle stays idle; the persisted timeline seeds the continuation
+                // context for the first follow-up.
+                const onEvent = this.makeOnEvent(state.id, session);
+                session.handle = resumeClaudeSession(config, session.events, onEvent, state.sessionId ?? null);
                 resumed++;
                 updateAgentStatus(state.id, "idle");
                 log(`Resumed agent ${state.id} (idle, ready for queries)`);
@@ -256,6 +234,31 @@ export class AgentManager {
             log(`Resumed ${resumed} agent(s) from previous session`);
         }
         return resumed;
+    }
+    /**
+     * Build the event handler that dispatches provider events into a managed
+     * session: appends to the timeline, tracks status (+ persisted status),
+     * accumulates usage, and rebroadcasts via the emitter. Shared by createAgent
+     * and resumePersistedSessions so resumed sessions handle events identically.
+     */
+    makeOnEvent(id, session) {
+        return (event) => {
+            session.events.push(event);
+            if (event.type === "status_changed") {
+                session.status = event.status;
+                updateAgentStatus(id, event.status);
+            }
+            if (event.type === "turn_completed" && event.usage) {
+                session.usage = {
+                    inputTokens: (session.usage.inputTokens ?? 0) + (event.usage.inputTokens ?? 0),
+                    outputTokens: (session.usage.outputTokens ?? 0) + (event.usage.outputTokens ?? 0),
+                    totalCostUsd: (session.usage.totalCostUsd ?? 0) + (event.usage.totalCostUsd ?? 0),
+                    model: event.usage.model ?? session.usage.model,
+                    provider: event.usage.provider ?? session.usage.provider,
+                };
+            }
+            this.emitter.emit(id, event);
+        };
     }
     getSessionInfo(session) {
         return {
