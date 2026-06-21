@@ -16,7 +16,11 @@ const OTP_ISSUER: &str = "Revka";
 pub struct OtpValidator {
     config: OtpConfig,
     secret: Vec<u8>,
-    cached_codes: Mutex<HashMap<String, u64>>,
+    /// Codes that have already validated once, mapped to the timestamp after
+    /// which they may be forgotten. A code present here is treated as consumed
+    /// and is rejected on any subsequent presentation, making each code
+    /// single-use rather than replayable within `cache_valid_secs`.
+    consumed_codes: Mutex<HashMap<String, u64>>,
 }
 
 impl OtpValidator {
@@ -47,7 +51,7 @@ impl OtpValidator {
         let validator = Self {
             config: config.clone(),
             secret,
-            cached_codes: Mutex::new(HashMap::new()),
+            consumed_codes: Mutex::new(HashMap::new()),
         };
         let uri = if generated {
             Some(validator.otpauth_uri())
@@ -70,13 +74,17 @@ impl OtpValidator {
         }
 
         {
-            let mut cache = self.cached_codes.lock();
-            cache.retain(|_, expiry| *expiry >= now_secs);
-            if cache
+            // A code that has already validated once is consumed: reject any
+            // later presentation so an intercepted code cannot be replayed
+            // within `cache_valid_secs`. Stale entries are pruned first so the
+            // map cannot grow unbounded.
+            let mut consumed = self.consumed_codes.lock();
+            consumed.retain(|_, expiry| *expiry >= now_secs);
+            if consumed
                 .get(normalized)
                 .is_some_and(|expiry| *expiry >= now_secs)
             {
-                return Ok(true);
+                return Ok(false);
             }
         }
 
@@ -94,8 +102,11 @@ impl OtpValidator {
             .any(|candidate| candidate == normalized);
 
         if is_valid {
-            let mut cache = self.cached_codes.lock();
-            cache.insert(
+            // Remember this code as consumed so it cannot be replayed. The
+            // entry is retained for `cache_valid_secs` to keep rejecting
+            // replays past the TOTP step that produced the code.
+            let mut consumed = self.consumed_codes.lock();
+            consumed.insert(
                 normalized.to_string(),
                 now_secs.saturating_add(self.config.cache_valid_secs),
             );
@@ -285,6 +296,23 @@ mod tests {
         let now = stale + 300;
         let code = validator.code_for_timestamp(stale);
         assert!(!validator.validate_at(&code, now).unwrap());
+    }
+
+    #[test]
+    fn validated_code_cannot_be_replayed_within_cache_window() {
+        let dir = tempdir().unwrap();
+        let store = SecretStore::new(dir.path(), true);
+        let (validator, _) = OtpValidator::from_config(&test_config(), dir.path(), &store).unwrap();
+
+        let now = 1_700_000_000u64;
+        let code = validator.code_for_timestamp(now);
+
+        // First presentation succeeds and consumes the code.
+        assert!(validator.validate_at(&code, now).unwrap());
+        // A replay within the still-valid TOTP step is rejected.
+        assert!(!validator.validate_at(&code, now).unwrap());
+        // A later replay still inside `cache_valid_secs` is also rejected.
+        assert!(!validator.validate_at(&code, now + 60).unwrap());
     }
 
     #[test]
