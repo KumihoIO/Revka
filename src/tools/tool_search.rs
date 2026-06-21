@@ -11,10 +11,29 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 
 use crate::tools::mcp_deferred::{ActivatedToolSet, DeferredMcpToolSet};
-use crate::tools::traits::{Tool, ToolResult};
+use crate::tools::traits::{Tool, ToolResult, ToolSpec};
 
 /// Default maximum number of search results.
 const DEFAULT_MAX_RESULTS: usize = 5;
+
+/// Serialize a tool spec into a `<function>{...}</function>` entry.
+///
+/// Uses `serde_json` so that the free-form `name` and `description` fields are
+/// escaped correctly — backslashes (Windows paths, regex hints), newlines,
+/// tabs, and control characters all produce valid JSON, which hand-rolled
+/// quote-only escaping did not.
+fn write_function_entry(output: &mut String, spec: &ToolSpec) {
+    let entry = serde_json::json!({
+        "name": spec.name,
+        "description": spec.description,
+        "parameters": spec.parameters,
+    });
+    let _ = writeln!(
+        output,
+        "<function>{}</function>",
+        serde_json::to_string(&entry).unwrap_or_default()
+    );
+}
 
 /// Built-in tool that fetches full schemas for deferred MCP tools.
 pub struct ToolSearchTool {
@@ -111,13 +130,7 @@ impl Tool for ToolSearchTool {
                         activated_count += 1;
                     }
                 }
-                let _ = writeln!(
-                    output,
-                    "<function>{{\"name\": \"{}\", \"description\": \"{}\", \"parameters\": {}}}</function>",
-                    spec.name,
-                    spec.description.replace('"', "\\\""),
-                    spec.parameters
-                );
+                write_function_entry(&mut output, &spec);
             }
         }
 
@@ -159,13 +172,7 @@ impl ToolSearchTool {
                                 activated_count += 1;
                             }
                         }
-                        let _ = writeln!(
-                            output,
-                            "<function>{{\"name\": \"{}\", \"description\": \"{}\", \"parameters\": {}}}</function>",
-                            spec.name,
-                            spec.description.replace('"', "\\\""),
-                            spec.parameters
-                        );
+                        write_function_entry(&mut output, &spec);
                     }
                 }
                 None => {
@@ -349,6 +356,35 @@ mod tests {
         assert!(guard.is_activated("srv__tool_a"));
         assert!(guard.is_activated("srv__tool_b"));
         assert_eq!(guard.tool_specs().len(), 2);
+    }
+
+    /// A description containing a backslash, newline, and tab must still produce
+    /// a `<function>` entry whose JSON payload parses back cleanly.
+    #[tokio::test]
+    async fn description_with_control_chars_emits_valid_json() {
+        let desc = "Reads a file at C:\\Users\\me.\nMatches \\d+ digits.\tDone.";
+        let tool = ToolSearchTool::new(
+            make_deferred_set(vec![make_stub("fs__read", desc)]).await,
+            Arc::new(Mutex::new(ActivatedToolSet::new())),
+        );
+        let result = tool
+            .execute(serde_json::json!({"query": "select:fs__read"}))
+            .await
+            .unwrap();
+        assert!(result.success);
+
+        // Extract the JSON between the <function> tags and parse it.
+        let payload = result
+            .output
+            .lines()
+            .find(|l| l.starts_with("<function>"))
+            .and_then(|l| l.strip_prefix("<function>"))
+            .and_then(|l| l.strip_suffix("</function>"))
+            .expect("expected a <function> entry");
+        let parsed: serde_json::Value =
+            serde_json::from_str(payload).expect("emitted entry must be valid JSON");
+        assert_eq!(parsed["name"], "fs__read");
+        assert_eq!(parsed["description"], desc);
     }
 
     /// Verify re-activating an already-activated tool does not duplicate it.
