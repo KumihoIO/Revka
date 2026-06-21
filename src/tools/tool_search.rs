@@ -39,6 +39,12 @@ fn write_function_entry(output: &mut String, spec: &ToolSpec) {
 pub struct ToolSearchTool {
     deferred: DeferredMcpToolSet,
     activated: Arc<Mutex<ActivatedToolSet>>,
+    /// Optional per-run capability allowlist. When `Some(list)`, only deferred
+    /// tools whose prefixed name appears in the list may be searched, selected,
+    /// or activated — so a run scoped down via `allowed_tools` cannot reach
+    /// arbitrary MCP tools through `tool_search`. When `None`, all deferred
+    /// tools are reachable (backward compatible).
+    allowed_tools: Option<Vec<String>>,
 }
 
 impl ToolSearchTool {
@@ -46,6 +52,25 @@ impl ToolSearchTool {
         Self {
             deferred,
             activated,
+            allowed_tools: None,
+        }
+    }
+
+    /// Restrict which deferred tools this `tool_search` may activate to the
+    /// given capability allowlist. Pass the same `allowed_tools` that was used
+    /// to filter the static registry so MCP exposure is bounded by it too.
+    #[must_use]
+    pub fn with_allowed_tools(mut self, allowed_tools: Option<Vec<String>>) -> Self {
+        self.allowed_tools = allowed_tools;
+        self
+    }
+
+    /// Whether `prefixed_name` is permitted by the capability allowlist.
+    /// Returns `true` when no allowlist is configured.
+    fn is_allowed(&self, prefixed_name: &str) -> bool {
+        match &self.allowed_tools {
+            None => true,
+            Some(list) => list.iter().any(|name| name == prefixed_name),
         }
     }
 }
@@ -108,7 +133,12 @@ impl Tool for ToolSearchTool {
         }
 
         // Keyword search mode
-        let results = self.deferred.search(query, max_results);
+        let results: Vec<_> = self
+            .deferred
+            .search(query, max_results)
+            .into_iter()
+            .filter(|stub| self.is_allowed(&stub.prefixed_name))
+            .collect();
         if results.is_empty() {
             return Ok(ToolResult {
                 success: true,
@@ -163,6 +193,10 @@ impl ToolSearchTool {
             }
             // get_by_name handles both exact and suffix-resolved lookups.
             match self.deferred.get_by_name(name) {
+                Some(stub) if !self.is_allowed(&stub.prefixed_name) => {
+                    // Outside the capability allowlist — treat as unavailable.
+                    not_found.push(*name);
+                }
                 Some(stub) => {
                     let full_name = &stub.prefixed_name;
                     if let Some(spec) = self.deferred.tool_spec(full_name) {
@@ -404,5 +438,79 @@ mod tests {
             .unwrap();
 
         assert_eq!(activated.lock().unwrap().tool_specs().len(), 1);
+    }
+
+    /// With an allowlist configured, keyword search must not surface or activate
+    /// tools outside the allowed set, while allowed tools still work.
+    #[tokio::test]
+    async fn allowlist_filters_keyword_search() {
+        let activated = Arc::new(Mutex::new(ActivatedToolSet::new()));
+        let stubs = vec![
+            make_stub("fs__read", "Read a file from disk"),
+            make_stub("net__fetch", "Fetch a file from the network"),
+        ];
+        let tool = ToolSearchTool::new(make_deferred_set(stubs).await, Arc::clone(&activated))
+            .with_allowed_tools(Some(vec!["fs__read".to_string()]));
+
+        let result = tool
+            .execute(serde_json::json!({"query": "file"}))
+            .await
+            .unwrap();
+        assert!(result.success);
+        // Allowed tool appears and is activated.
+        assert!(result.output.contains("fs__read"));
+        assert!(activated.lock().unwrap().is_activated("fs__read"));
+        // Disallowed tool is neither surfaced nor activated.
+        assert!(!result.output.contains("net__fetch"));
+        assert!(!activated.lock().unwrap().is_activated("net__fetch"));
+    }
+
+    /// With an allowlist configured, `select:` must refuse to activate a tool
+    /// outside the allowed set and report it as not found.
+    #[tokio::test]
+    async fn allowlist_blocks_select_of_disallowed_tool() {
+        let activated = Arc::new(Mutex::new(ActivatedToolSet::new()));
+        let stubs = vec![
+            make_stub("fs__read", "Read a file"),
+            make_stub("net__fetch", "Fetch from the network"),
+        ];
+        let tool = ToolSearchTool::new(make_deferred_set(stubs).await, Arc::clone(&activated))
+            .with_allowed_tools(Some(vec!["fs__read".to_string()]));
+
+        // Disallowed tool: reported as not found, never activated.
+        let result = tool
+            .execute(serde_json::json!({"query": "select:net__fetch"}))
+            .await
+            .unwrap();
+        assert!(result.success);
+        assert!(result.output.contains("Not found"));
+        assert!(!activated.lock().unwrap().is_activated("net__fetch"));
+
+        // Allowed tool: activates normally.
+        let result = tool
+            .execute(serde_json::json!({"query": "select:fs__read"}))
+            .await
+            .unwrap();
+        assert!(result.success);
+        assert!(result.output.contains("fs__read"));
+        assert!(activated.lock().unwrap().is_activated("fs__read"));
+    }
+
+    /// No allowlist (`None`) keeps every deferred tool reachable — the
+    /// pre-existing default behavior.
+    #[tokio::test]
+    async fn no_allowlist_allows_all_tools() {
+        let activated = Arc::new(Mutex::new(ActivatedToolSet::new()));
+        let stubs = vec![make_stub("net__fetch", "Fetch from the network")];
+        let tool = ToolSearchTool::new(make_deferred_set(stubs).await, Arc::clone(&activated))
+            .with_allowed_tools(None);
+
+        let result = tool
+            .execute(serde_json::json!({"query": "select:net__fetch"}))
+            .await
+            .unwrap();
+        assert!(result.success);
+        assert!(result.output.contains("net__fetch"));
+        assert!(activated.lock().unwrap().is_activated("net__fetch"));
     }
 }
