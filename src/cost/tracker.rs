@@ -314,8 +314,15 @@ impl CostTracker {
             return BudgetStatus::default();
         }
 
-        let daily_limit = self.config.daily_limit_usd.max(0.0);
-        let monthly_limit = self.config.monthly_limit_usd.max(0.0);
+        // Report against the SAME effective (reserve-adjusted) limits that
+        // check_budget enforces, so this status and the budget gate agree. The
+        // operator agent calls get_budget_status() to decide whether to spend,
+        // so the reported limit/remaining/state must reflect the threshold
+        // enforcement actually trips at — not the raw configured limit (#453).
+        let reserve_factor =
+            1.0 - f64::from(self.config.enforcement.reserve_percent.min(100)) / 100.0;
+        let daily_limit = self.config.daily_limit_usd.max(0.0) * reserve_factor;
+        let monthly_limit = self.config.monthly_limit_usd.max(0.0) * reserve_factor;
         let warn_at_percent = self.config.warn_at_percent.min(100);
         let daily_percent = percent_used(daily_cost, daily_limit);
         let monthly_percent = percent_used(monthly_cost, monthly_limit);
@@ -1000,5 +1007,40 @@ mod tests {
             matches!(check, BudgetCheck::Exceeded { .. }),
             "spend past the reserved buffer should be treated as exceeded"
         );
+    }
+
+    #[test]
+    fn budget_status_reflects_reserve_percent() {
+        // #453 review: the reported status must agree with the enforcement gate.
+        // With a 50% reserve on a $1.00/day limit, the gate exceeds at $0.50, so
+        // get_summary().budget must also report "exceeded" against the effective
+        // $0.50 limit — not "ok" with $0.40 remaining against the raw $1.00.
+        let tmp = TempDir::new().unwrap();
+        let config = CostConfig {
+            enabled: true,
+            daily_limit_usd: 1.0,
+            monthly_limit_usd: 1000.0,
+            warn_at_percent: 100,
+            enforcement: CostEnforcementConfig {
+                reserve_percent: 50,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let tracker = CostTracker::new(config, tmp.path()).unwrap();
+
+        // ~$0.60 spent — over the $0.50 effective floor, under the $1.00 raw limit.
+        tracker
+            .record_usage(TokenUsage::new("test/model", 600_000, 0, 1.0, 0.0))
+            .unwrap();
+
+        let budget = tracker.get_summary().unwrap().budget;
+        assert_eq!(budget.state, "exceeded", "status must match the gate");
+        assert!(
+            (budget.daily_limit_usd - 0.5).abs() < 1e-9,
+            "status must report the effective limit, got {}",
+            budget.daily_limit_usd
+        );
+        assert_eq!(budget.daily_remaining_usd, 0.0);
     }
 }
