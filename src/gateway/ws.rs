@@ -820,21 +820,22 @@ fn parse_attachments(parsed: &serde_json::Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Size of the trailing window (in bytes) the streaming output guardrail scans
-/// on each chunk. Large enough to cover any single-line credential pattern plus
-/// a small multi-line block, while keeping the per-chunk scan cost bounded so a
-/// long reply does not incur a quadratic full-buffer re-scan on every token.
+/// Overlap (in bytes) the streaming output guardrail re-scans into the
+/// already-scanned prefix when a new chunk arrives. Large enough to cover any
+/// single-line credential pattern that straddles a chunk boundary, while keeping
+/// the per-chunk scan cost bounded (no quadratic full-buffer re-scan per token).
 const STREAM_SCAN_WINDOW: usize = 4096;
 
-/// Return the trailing `STREAM_SCAN_WINDOW` bytes of `buf` on a UTF-8 char
-/// boundary (the whole string when it is shorter than the window). Used to
-/// bound the per-chunk leak scan; the authoritative `done` redaction still runs
-/// over the complete response.
-fn stream_scan_window(buf: &str) -> &str {
-    if buf.len() <= STREAM_SCAN_WINDOW {
-        return buf;
-    }
-    let mut start = buf.len() - STREAM_SCAN_WINDOW;
+/// Return the slice of `buf` to scan for leaks after appending a chunk: EVERY
+/// newly-appended byte (from `prev_len` onward) plus a trailing
+/// `STREAM_SCAN_WINDOW` overlap into the previously-scanned text. Scanning the
+/// whole new chunk — not just a fixed trailing window of the cumulative buffer —
+/// is what catches a credential that arrives inside a single jumbo (>window)
+/// chunk; the overlap additionally catches one that straddles a chunk boundary.
+/// Cost is O(chunk + window) per chunk. The authoritative `done` redaction still
+/// runs over the complete response as the backstop.
+fn stream_scan_region(buf: &str, prev_len: usize) -> &str {
+    let mut start = prev_len.saturating_sub(STREAM_SCAN_WINDOW);
     while start < buf.len() && !buf.is_char_boundary(start) {
         start += 1;
     }
@@ -962,20 +963,21 @@ async fn process_chat_message(
     ping_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     ping_interval.tick().await;
 
-    // Streaming output guardrail: accumulate streamed reply text and scan a
-    // bounded trailing window of the cumulative buffer on each chunk so a
-    // credential split across chunk boundaries is still caught. Once a leak is
+    // Streaming output guardrail: accumulate streamed reply text and, on each
+    // chunk, scan every newly-appended byte plus a STREAM_SCAN_WINDOW overlap
+    // (see stream_scan_region) so a credential is caught whether it arrives
+    // inside one large chunk or straddles a chunk boundary. Once a leak is
     // detected we stop forwarding raw chunks for the rest of the turn — the
     // authoritative redacted `done.full_response` below delivers the clean text,
     // and the client discards the streamed draft on `chunk_reset`.
     //
-    // The window keeps the per-chunk cost bounded (O(window) instead of
-    // re-scanning the whole reply each chunk, which is quadratic on a long
-    // turn). It is best-effort: secrets longer than the window — notably a
-    // multi-line PEM block whose BEGIN/END markers straddle more than
-    // `STREAM_SCAN_WINDOW` bytes — may slip past the streaming scan, but the
-    // final `done` redaction over the complete response is authoritative and
-    // scrubs them before the reply is persisted or delivered.
+    // Cost is O(chunk + window) per chunk, not a quadratic full-buffer re-scan.
+    // It is best-effort for one narrow case: a secret whose matchable pattern is
+    // itself longer than STREAM_SCAN_WINDOW *and* is split across multiple chunks
+    // (e.g. a multi-line PEM block) can have its start scroll out of the overlap
+    // before its end arrives. The final `done` redaction over the complete
+    // response is authoritative and scrubs any such remnant before the reply is
+    // persisted or delivered.
     let mut streamed_buf = String::new();
     let mut chunk_redaction_active = false;
 
@@ -987,10 +989,11 @@ async fn process_chat_message(
                 if let Some(event) = event {
                     let ws_msg = match event {
                         TurnEvent::Chunk { delta } => {
+                            let prev_len = streamed_buf.len();
                             streamed_buf.push_str(&delta);
                             if !chunk_redaction_active
                                 && crate::security::redact_outbound(
-                                    stream_scan_window(&streamed_buf),
+                                    stream_scan_region(&streamed_buf, prev_len),
                                 )
                                 .1
                                 .is_some()
@@ -1361,17 +1364,19 @@ mod tests {
     }
 
     /// Mirrors the streaming output-guardrail policy in `process_chat_message`:
-    /// accumulate streamed deltas and scan a bounded trailing window of the
-    /// cumulative buffer so a credential split across chunk boundaries is still
-    /// detected and chunk forwarding is suppressed for the rest of the turn.
+    /// accumulate streamed deltas and scan every newly-appended byte (plus a
+    /// trailing overlap) so a credential is detected whether it arrives inside a
+    /// single jumbo chunk or straddles a chunk boundary, suppressing chunk
+    /// forwarding for the rest of the turn.
     fn forwarded_chunks(deltas: &[&str]) -> Vec<String> {
         let mut streamed_buf = String::new();
         let mut chunk_redaction_active = false;
         let mut forwarded = Vec::new();
         for delta in deltas {
+            let prev_len = streamed_buf.len();
             streamed_buf.push_str(delta);
             if !chunk_redaction_active
-                && crate::security::redact_outbound(stream_scan_window(&streamed_buf))
+                && crate::security::redact_outbound(stream_scan_region(&streamed_buf, prev_len))
                     .1
                     .is_some()
             {
@@ -1436,20 +1441,38 @@ mod tests {
     }
 
     #[test]
-    fn stream_scan_window_returns_trailing_bytes_on_char_boundary() {
-        // Short input is returned whole.
-        assert_eq!(stream_scan_window("hello"), "hello");
+    fn streamed_chunks_suppressed_when_key_buried_in_a_jumbo_chunk() {
+        // Regression for the windowing gap: a credential that arrives inside a
+        // single chunk LARGER than STREAM_SCAN_WINDOW, positioned before the
+        // trailing window, must still be caught. The old trailing-window scan of
+        // the cumulative buffer missed it (the key was pushed out of the last
+        // 4 KB) and streamed the chunk raw; stream_scan_region scans the whole
+        // new chunk, so it is detected and suppressed.
+        let jumbo = format!(
+            "{}sk_test_1234567890abcdefghijklmnop{}",
+            "a".repeat(8192), // key sits ~8 KB before the chunk's end
+            "b".repeat(8192),
+        );
+        let forwarded = forwarded_chunks(&["Here is a long reply ", &jumbo, " trailing"]);
+        assert_eq!(forwarded, vec!["Here is a long reply "]);
+        assert!(
+            !forwarded.iter().any(|c| c.contains("sk_test_")),
+            "a key buried in a single jumbo chunk must never be forwarded"
+        );
+    }
 
-        // Longer-than-window input is truncated to the trailing window, and the
-        // returned slice always starts on a UTF-8 char boundary (never panics
-        // by slicing through a multi-byte char).
-        let prefix = "é".repeat(STREAM_SCAN_WINDOW); // 2 bytes each
+    #[test]
+    fn stream_scan_region_covers_new_bytes_on_char_boundary() {
+        // The scan region starts STREAM_SCAN_WINDOW bytes before prev_len, on a
+        // UTF-8 char boundary, and always includes every newly-appended byte.
+        let prefix = "é".repeat(STREAM_SCAN_WINDOW); // 2 bytes each, > window
+        let prev_len = prefix.len();
         let buf = format!("{prefix}sk_test_1234567890abcdefghijklmnop");
-        let window = stream_scan_window(&buf);
-        assert!(buf.len() > STREAM_SCAN_WINDOW);
-        assert!(window.len() <= STREAM_SCAN_WINDOW);
-        // The trailing secret is still inside the window, so it remains
-        // detectable by the streaming scan.
-        assert!(window.contains("sk_test_1234567890abcdefghijklmnop"));
+        let region = stream_scan_region(&buf, prev_len);
+        // Every newly-appended byte is in the region, so the trailing secret is
+        // always detectable regardless of how far it sits from the buffer end.
+        assert!(region.contains("sk_test_1234567890abcdefghijklmnop"));
+        // Short buffer (prev_len below the window) is returned whole.
+        assert_eq!(stream_scan_region("hello", 0), "hello");
     }
 }
