@@ -281,6 +281,10 @@ landlock = { version = "0.4", optional = true }
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+# Windows-specific dependencies (free-disk-space query for `revka doctor`, etc.)
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
+
 [features]
 default = ["observability-prometheus", "skill-creation"]
 channel-nostr = ["dep:nostr-sdk"]
