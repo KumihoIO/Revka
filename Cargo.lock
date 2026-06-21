@@ -7247,6 +7247,7 @@ dependencies = [
  "wa-rs-ureq-http",
  "webpki-roots 1.0.7",
  "which",
+ "windows-sys 0.61.2",
  "wiremock",
  "zip",
 ]
