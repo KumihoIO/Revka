@@ -3843,6 +3843,14 @@ pub async fn run(
     // filter is not appropriate for them and would silently drop all MCP tools when
     // a restrictive allowlist is configured. Keep this block after any such filter call.
     //
+    // The run-level `allowed_tools` capability allowlist is a DISTINCT mechanism
+    // from the built-in allow/deny filter above. It DOES bound the deferred MCP
+    // surface: the `tool_search` built-in below is constructed with
+    // `with_allowed_tools` so it cannot search, select, activate, or (therefore)
+    // dispatch MCP tools whose prefixed name is not in the allowlist. The small
+    // curated eager set (operator essentials + Kumiho memory reflexes) is also
+    // gated by the same allowlist when one is configured.
+    //
     // When `deferred_loading` is enabled, MCP tools are NOT added to the registry
     // eagerly. Instead, a `tool_search` built-in is registered so the LLM can
     // fetch schemas on demand. This reduces context window waste.
@@ -3888,11 +3896,21 @@ pub async fn run(
                         }
                     };
 
+                    // Eager MCP tools are pushed after the registry `retain`
+                    // above, so they must honor the run-level capability
+                    // allowlist explicitly or they would escape it.
+                    let is_mcp_allowed = |name: &str| -> bool {
+                        match allowed_tools {
+                            None => true,
+                            Some(ref list) => list.iter().any(|n| n == name),
+                        }
+                    };
+
                     let all_names = registry.tool_names();
                     let mut eager_count = 0usize;
 
                     for name in &all_names {
-                        if is_eager_tool(name) {
+                        if is_eager_tool(name) && is_mcp_allowed(name) {
                             if let Some(def) = registry.get_tool_def(name).await {
                                 let wrapper: std::sync::Arc<dyn Tool> =
                                     std::sync::Arc::new(crate::tools::McpToolWrapper::new(
@@ -3938,15 +3956,30 @@ pub async fn run(
                         crate::tools::ActivatedToolSet::new(),
                     ));
                     activated_handle = Some(std::sync::Arc::clone(&activated));
-                    tools_registry.push(Box::new(crate::tools::ToolSearchTool::new(
-                        deferred_set,
-                        activated,
-                    )));
+                    // Bound MCP exposure by the same capability allowlist that
+                    // filtered the static registry above, so a restricted run
+                    // cannot reach arbitrary MCP tools via `tool_search`.
+                    tools_registry.push(Box::new(
+                        crate::tools::ToolSearchTool::new(deferred_set, activated)
+                            .with_allowed_tools(allowed_tools.clone()),
+                    ));
                 } else {
-                    // Eager path: register all MCP tools directly
+                    // Eager path: register all MCP tools directly. This runs
+                    // after the registry `retain` above, so honor the run-level
+                    // capability allowlist here too — otherwise MCP tools would
+                    // escape a restricted run.
+                    let is_mcp_allowed = |name: &str| -> bool {
+                        match allowed_tools {
+                            None => true,
+                            Some(ref list) => list.iter().any(|n| n == name),
+                        }
+                    };
                     let names = registry.tool_names();
                     let mut registered = 0usize;
                     for name in names {
+                        if !is_mcp_allowed(&name) {
+                            continue;
+                        }
                         if let Some(def) = registry.get_tool_def(&name).await {
                             let wrapper: std::sync::Arc<dyn Tool> =
                                 std::sync::Arc::new(crate::tools::McpToolWrapper::new(
