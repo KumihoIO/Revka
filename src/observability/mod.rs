@@ -235,7 +235,11 @@ mod tests {
     fn global_observer_is_a_shared_singleton() {
         // The first caller's config wins; every later caller — regardless of the
         // config it passes — gets the SAME `Arc`, so all telemetry feeds one
-        // registry (#455).
+        // registry (#455). `GLOBAL_OBSERVER` is a process-global `OnceLock`
+        // shared across the whole test binary, so whichever test touches it
+        // first decides the backend — we therefore assert only the pointer
+        // identity, which holds regardless of initialization order, and avoid
+        // any backend-name assertion that would race other unit tests.
         let first = get_or_init_global(&ObservabilityConfig {
             backend: "log".into(),
             ..ObservabilityConfig::default()
@@ -248,7 +252,5 @@ mod tests {
             Arc::ptr_eq(&first, &second),
             "expected the same global observer instance on every call"
         );
-        assert_eq!(first.name(), "log");
-        assert_eq!(second.name(), "log");
     }
 }
