@@ -1,8 +1,10 @@
 use crate::config::OtpConfig;
+use crate::security::pairing::constant_time_eq;
 use crate::security::secrets::SecretStore;
 use anyhow::{Context, Result};
 use parking_lot::Mutex;
 use ring::hmac;
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -16,11 +18,14 @@ const OTP_ISSUER: &str = "Revka";
 pub struct OtpValidator {
     config: OtpConfig,
     secret: Vec<u8>,
-    /// Codes that have already validated once, mapped to the timestamp after
+    /// Codes that have already validated once, keyed by a fixed-length
+    /// SHA-256 digest of `(code, counter)` and mapped to the timestamp after
     /// which they may be forgotten. A code present here is treated as consumed
     /// and is rejected on any subsequent presentation, making each code
-    /// single-use rather than replayable within `cache_valid_secs`.
-    consumed_codes: Mutex<HashMap<String, u64>>,
+    /// single-use rather than replayable within `cache_valid_secs`. The key is
+    /// a digest rather than the plaintext code so the `HashMap` lookup never
+    /// hashes/compares the raw secret and cannot be probed via lookup timing.
+    consumed_codes: Mutex<HashMap<[u8; 32], u64>>,
 }
 
 impl OtpValidator {
@@ -73,21 +78,6 @@ impl OtpValidator {
             return Ok(false);
         }
 
-        {
-            // A code that has already validated once is consumed: reject any
-            // later presentation so an intercepted code cannot be replayed
-            // within `cache_valid_secs`. Stale entries are pruned first so the
-            // map cannot grow unbounded.
-            let mut consumed = self.consumed_codes.lock();
-            consumed.retain(|_, expiry| *expiry >= now_secs);
-            if consumed
-                .get(normalized)
-                .is_some_and(|expiry| *expiry >= now_secs)
-            {
-                return Ok(false);
-            }
-        }
-
         let step = self.config.token_ttl_secs.max(1);
         let counter = now_secs / step;
         let counters = [
@@ -96,10 +86,40 @@ impl OtpValidator {
             counter.saturating_add(1),
         ];
 
-        let is_valid = counters
-            .iter()
-            .map(|c| compute_totp_code(&self.secret, *c))
-            .any(|candidate| candidate == normalized);
+        {
+            // A code that has already validated once is consumed: reject any
+            // later presentation so an intercepted code cannot be replayed
+            // within `cache_valid_secs`. Stale entries are pruned first so the
+            // map cannot grow unbounded. Lookups are keyed on the digest of
+            // each candidate `(code, counter)` so the `HashMap` never operates
+            // on the plaintext code.
+            let mut consumed = self.consumed_codes.lock();
+            consumed.retain(|_, expiry| *expiry >= now_secs);
+            let already_consumed = counters.iter().any(|c| {
+                consumed
+                    .get(&consumed_key(normalized, *c))
+                    .is_some_and(|expiry| *expiry >= now_secs)
+            });
+            if already_consumed {
+                return Ok(false);
+            }
+        }
+
+        // Compare the supplied code against every candidate in constant time,
+        // accumulating the result so the loop does not short-circuit on the
+        // first match and leak which counter window produced the code via
+        // timing. The matched counter is recorded so the consumed entry can be
+        // keyed on the digest of `(code, counter)`.
+        let mut is_valid = false;
+        let mut matched_counter = counter;
+        for c in counters {
+            let candidate = compute_totp_code(&self.secret, c);
+            let matches = constant_time_eq(&candidate, normalized);
+            if matches {
+                matched_counter = c;
+            }
+            is_valid |= matches;
+        }
 
         if is_valid {
             // Remember this code as consumed so it cannot be replayed. The
@@ -107,7 +127,7 @@ impl OtpValidator {
             // replays past the TOTP step that produced the code.
             let mut consumed = self.consumed_codes.lock();
             consumed.insert(
-                normalized.to_string(),
+                consumed_key(normalized, matched_counter),
                 now_secs.saturating_add(self.config.cache_valid_secs),
             );
         }
@@ -170,6 +190,18 @@ fn unix_timestamp_now() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs())
         .unwrap_or(0)
+}
+
+/// Fixed-length key for the consumed-codes cache: a SHA-256 digest of the
+/// `(code, counter)` pair. Keying on a digest rather than the plaintext code
+/// keeps the raw secret out of the `HashMap` and gives every key the same
+/// length, so neither hashing nor equality on a probe can leak information
+/// about a real code via lookup timing.
+fn consumed_key(code: &str, counter: u64) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(code.as_bytes());
+    hasher.update(counter.to_be_bytes());
+    hasher.finalize().into()
 }
 
 fn compute_totp_code(secret: &[u8], counter: u64) -> String {
