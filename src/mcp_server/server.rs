@@ -774,11 +774,27 @@ mod tests {
     use async_trait::async_trait;
     use std::sync::atomic::{AtomicBool, Ordering};
 
-    /// Tool that sleeps a long time before "finishing"; it flips `finished`
-    /// only if it runs to completion, so a test can prove cancellation.
+    /// Flips an [`AtomicBool`] when dropped. Held across the tool's sleep so the
+    /// test can observe the tool's future actually being dropped (cancelled),
+    /// rather than merely "not yet finished".
+    struct DropSentinel {
+        dropped: Arc<AtomicBool>,
+    }
+
+    impl Drop for DropSentinel {
+        fn drop(&mut self) {
+            self.dropped.store(true, Ordering::SeqCst);
+        }
+    }
+
+    /// Tool that sleeps a long time before "finishing". It holds a
+    /// [`DropSentinel`] across the sleep and only flips `finished` if it runs to
+    /// completion, so a test can prove cancellation by observing either the
+    /// sentinel drop (future was cancelled) or that `finished` never flips.
     struct SlowTool {
         started: Arc<tokio::sync::Notify>,
         finished: Arc<AtomicBool>,
+        sentinel_dropped: Arc<AtomicBool>,
     }
 
     #[async_trait]
@@ -793,6 +809,11 @@ mod tests {
             json!({ "type": "object", "properties": {} })
         }
         async fn execute(&self, _args: Value) -> anyhow::Result<ToolResult> {
+            // Live across the await; its Drop fires iff this future is dropped
+            // before completing (i.e. the task was actually cancelled/aborted).
+            let _sentinel = DropSentinel {
+                dropped: self.sentinel_dropped.clone(),
+            };
             self.started.notify_one();
             // Far longer than the test waits; only completes if not cancelled.
             tokio::time::sleep(Duration::from_secs(30)).await;
@@ -809,9 +830,11 @@ mod tests {
     async fn disconnect_cancels_in_flight_tool() {
         let started = Arc::new(tokio::sync::Notify::new());
         let finished = Arc::new(AtomicBool::new(false));
+        let sentinel_dropped = Arc::new(AtomicBool::new(false));
         let tool = Arc::new(SlowTool {
             started: started.clone(),
             finished: finished.clone(),
+            sentinel_dropped: sentinel_dropped.clone(),
         });
         let state = state_with_tools(vec![tool as Arc<dyn Tool>]);
         let (bus, _bus_rx) = broadcast::channel(8);
@@ -825,14 +848,28 @@ mod tests {
 
         // Wait until the tool has actually begun executing.
         started.notified().await;
+        assert!(
+            !sentinel_dropped.load(Ordering::SeqCst),
+            "sentinel must still be live while the tool is mid-flight"
+        );
 
         // Simulate the SSE client disconnecting: drop the response (and with it
         // the stream and its TaskAbortGuard).
         drop(resp);
 
-        // Give the cancellation a moment to propagate, then confirm the tool
-        // never ran to completion.
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        // The disconnect must abort the spawned task, which drops the in-flight
+        // tool future and therefore the sentinel. Poll briefly: if cancellation
+        // is a no-op the future keeps sleeping (30s), the sentinel is never
+        // dropped, and this loop times out -> the assertion below fails.
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while !sentinel_dropped.load(Ordering::SeqCst) && std::time::Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(
+            sentinel_dropped.load(Ordering::SeqCst),
+            "disconnect must drop (cancel) the in-flight tool future"
+        );
+        // And it certainly must not have run to completion.
         assert!(
             !finished.load(Ordering::SeqCst),
             "tool should have been cancelled on disconnect, not run to completion"
