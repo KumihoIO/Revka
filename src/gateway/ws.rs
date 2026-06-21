@@ -941,6 +941,15 @@ async fn process_chat_message(
     ping_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     ping_interval.tick().await;
 
+    // Streaming output guardrail: accumulate streamed reply text and scan the
+    // cumulative buffer on each chunk so a credential split across chunk
+    // boundaries (e.g. a multi-line PEM block) is still caught. Once a leak is
+    // detected we stop forwarding raw chunks for the rest of the turn — the
+    // authoritative redacted `done.full_response` below delivers the clean text,
+    // and the client discards the streamed draft on `chunk_reset`.
+    let mut streamed_buf = String::new();
+    let mut chunk_redaction_active = false;
+
     tokio::pin!(turn_fut);
     let result = loop {
         tokio::select! {
@@ -949,24 +958,42 @@ async fn process_chat_message(
                 if let Some(event) = event {
                     let ws_msg = match event {
                         TurnEvent::Chunk { delta } => {
-                            serde_json::json!({ "type": "chunk", "content": delta })
+                            streamed_buf.push_str(&delta);
+                            if !chunk_redaction_active
+                                && crate::security::redact_outbound(&streamed_buf).1.is_some()
+                            {
+                                // Leak surfaced mid-stream: suppress this and all
+                                // subsequent chunks; the redacted `done` is authoritative.
+                                chunk_redaction_active = true;
+                                tracing::warn!(
+                                    session = %session_key,
+                                    "output guardrail: suppressing streamed chunks after credential leak detected"
+                                );
+                            }
+                            if chunk_redaction_active {
+                                None
+                            } else {
+                                Some(serde_json::json!({ "type": "chunk", "content": delta }))
+                            }
                         }
                         TurnEvent::Thinking { delta } => {
-                            serde_json::json!({ "type": "thinking", "content": delta })
+                            Some(serde_json::json!({ "type": "thinking", "content": delta }))
                         }
                         TurnEvent::ToolCall { name, args } => {
-                            serde_json::json!({ "type": "tool_call", "name": name, "args": args })
+                            Some(serde_json::json!({ "type": "tool_call", "name": name, "args": args }))
                         }
                         TurnEvent::ToolResult { name, output } => {
-                            serde_json::json!({ "type": "tool_result", "name": name, "output": output })
+                            Some(serde_json::json!({ "type": "tool_result", "name": name, "output": output }))
                         }
                         TurnEvent::OperatorStatus { phase, detail } => {
-                            serde_json::json!({ "type": "operator_status", "phase": phase, "detail": detail })
+                            Some(serde_json::json!({ "type": "operator_status", "phase": phase, "detail": detail }))
                         }
                     };
-                    if sender.send(Message::Text(ws_msg.to_string().into())).await.is_err() {
-                        tracing::warn!(session = %session_key, "WebSocket chat send failed during active turn");
-                        break None;
+                    if let Some(ws_msg) = ws_msg {
+                        if sender.send(Message::Text(ws_msg.to_string().into())).await.is_err() {
+                            tracing::warn!(session = %session_key, "WebSocket chat send failed during active turn");
+                            break None;
+                        }
                     }
                 }
             }
@@ -1080,6 +1107,19 @@ async fn process_chat_message(
 
     match result {
         Ok(response) => {
+            // Output guardrail: scrub credential leaks before the reply leaves
+            // the gateway. The redacted form is the authoritative text that gets
+            // both persisted (so the REST session-messages replay is clean at
+            // rest) and sent as `done.full_response`.
+            let (response, leaked) = crate::security::redact_outbound(&response);
+            if let Some(patterns) = leaked {
+                tracing::warn!(
+                    session = %session_key,
+                    patterns = ?patterns,
+                    "output guardrail: credential leak detected in gateway chat response"
+                );
+            }
+
             // Persist assistant response
             if let Some(ref backend) = state.session_backend {
                 let assistant_msg = crate::providers::ChatMessage::assistant(&response);
@@ -1285,5 +1325,52 @@ mod tests {
         assert!(architect_instructions_block(page_context).is_none());
         assert!(architect_instructions_block("").is_none());
         assert!(architect_instructions_block("<architect-instructions>oops").is_none());
+    }
+
+    /// Mirrors the streaming output-guardrail policy in `process_chat_message`:
+    /// accumulate streamed deltas and scan the cumulative buffer so a credential
+    /// split across chunk boundaries is still detected and chunk forwarding is
+    /// suppressed for the rest of the turn.
+    fn forwarded_chunks(deltas: &[&str]) -> Vec<String> {
+        let mut streamed_buf = String::new();
+        let mut chunk_redaction_active = false;
+        let mut forwarded = Vec::new();
+        for delta in deltas {
+            streamed_buf.push_str(delta);
+            if !chunk_redaction_active
+                && crate::security::redact_outbound(&streamed_buf).1.is_some()
+            {
+                chunk_redaction_active = true;
+            }
+            if !chunk_redaction_active {
+                forwarded.push((*delta).to_string());
+            }
+        }
+        forwarded
+    }
+
+    #[test]
+    fn streamed_chunks_forwarded_when_clean() {
+        let forwarded = forwarded_chunks(&["Hello ", "there, ", "how can I help?"]);
+        assert_eq!(forwarded, vec!["Hello ", "there, ", "how can I help?"]);
+    }
+
+    #[test]
+    fn streamed_chunks_suppressed_after_key_split_across_boundaries() {
+        // A single Stripe key broken into pieces that individually do not match
+        // any pattern, but match once the cumulative buffer is reassembled.
+        let forwarded = forwarded_chunks(&[
+            "Your key is sk_test_",
+            "1234567890",
+            "abcdefghijklmnop",
+            " — keep it safe",
+        ]);
+        // The first chunk is clean and forwarded; once the cumulative buffer
+        // forms the full key, that chunk and all subsequent ones are suppressed.
+        assert_eq!(forwarded, vec!["Your key is sk_test_"]);
+        assert!(
+            !forwarded.iter().any(|c| c.contains("1234567890")),
+            "chunks completing the leaked key must be suppressed"
+        );
     }
 }
