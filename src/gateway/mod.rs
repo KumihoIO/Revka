@@ -106,6 +106,13 @@ pub const RATE_LIMIT_MAX_KEYS_DEFAULT: usize = 10_000;
 /// Fallback max distinct idempotency keys retained in gateway memory.
 pub const IDEMPOTENCY_MAX_KEYS_DEFAULT: usize = 10_000;
 
+/// Idle TTL for per-session serialization slots. Slots untouched for this long
+/// (with no in-flight turn) are reclaimed by the background sweeper.
+pub const SESSION_QUEUE_IDLE_TTL_SECS: u64 = 600;
+/// How often the background sweeper calls `evict_idle()` to reclaim leaked
+/// session slots. Half the idle TTL keeps reclamation timely without churn.
+pub const SESSION_QUEUE_SWEEP_INTERVAL_SECS: u64 = SESSION_QUEUE_IDLE_TTL_SECS / 2;
+
 fn webhook_memory_key() -> String {
     format!("webhook_msg_{}", Uuid::new_v4())
 }
@@ -1398,7 +1405,7 @@ pub async fn run_gateway_with_mcp_registry(
         session_queue: Arc::new(session_queue::SessionActorQueue::new(
             8,
             session_queue::session_lock_timeout_secs(),
-            600,
+            SESSION_QUEUE_IDLE_TTL_SECS,
         )),
         device_registry,
         pending_pairings,
@@ -1435,6 +1442,43 @@ pub async fn run_gateway_with_mcp_registry(
             None
         },
     };
+
+    // ── Session-queue idle sweeper ──────────────────────────────────────
+    //
+    // `SessionActorQueue` lazily mints one slot per distinct session key and
+    // never reclaims it on its own — `evict_idle()` exists but has no caller in
+    // the runtime, so the map grows unbounded over the daemon's lifetime as new
+    // chat/channel/user pairings churn through. Spawn a periodic sweeper tied to
+    // the shutdown signal that reclaims slots idle past their TTL.
+    {
+        let session_queue = Arc::clone(&state.session_queue);
+        let mut shutdown_rx = state.shutdown_tx.subscribe();
+        drop(tokio::spawn(async move {
+            let interval = Duration::from_secs(SESSION_QUEUE_SWEEP_INTERVAL_SECS);
+            loop {
+                tokio::select! {
+                    changed = shutdown_rx.changed() => {
+                        // `Err` means the sender was dropped (gateway going
+                        // away); `Ok` with `true` is an explicit shutdown.
+                        if changed.is_err() || *shutdown_rx.borrow() {
+                            return;
+                        }
+                        continue;
+                    }
+                    () = tokio::time::sleep(interval) => {}
+                }
+
+                let reclaimed = session_queue.evict_idle().await;
+                if reclaimed > 0 {
+                    tracing::debug!(
+                        target: "gateway",
+                        reclaimed,
+                        "reclaimed idle session-queue slots"
+                    );
+                }
+            }
+        }));
+    }
 
     // ── Skill effectiveness cache ───────────────────────────────────────
     //
