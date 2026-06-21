@@ -11,7 +11,7 @@ const log = (msg) => process.stderr.write(`[session-mgr:claude] ${msg}\n`);
 /**
  * Detects if an error is a tool_use_id mismatch (orphaned tool_result after context truncation).
  */
-function isToolIdMismatchError(err) {
+export function isToolIdMismatchError(err) {
     // Check the error message, its cause chain, and stringified form
     const parts = [];
     if (err instanceof Error) {
@@ -31,7 +31,7 @@ function isToolIdMismatchError(err) {
 /**
  * Build a continuation summary from session events for recovery after context corruption.
  */
-function buildContinuationSummary(events, originalPrompt) {
+export function buildContinuationSummary(events, originalPrompt) {
     const parts = [
         "IMPORTANT: Your previous session was interrupted due to a context window issue.",
         "Here is a summary of what you accomplished so far. Continue from where you left off.\n",
@@ -217,13 +217,13 @@ function buildClaudeOptions(config, onStderr) {
     }
     return opts;
 }
-function createToolCallStreamState() {
+export function createToolCallStreamState() {
     return { pending: new Map(), idToName: new Map() };
 }
 /**
  * Translate a raw SDK message into zero or more AgentStreamEvents.
  */
-function translateMessage(message, turnId, state, stderrTail = "") {
+export function translateMessage(message, turnId, state, stderrTail = "") {
     const events = [];
     switch (message.type) {
         case "assistant": {
