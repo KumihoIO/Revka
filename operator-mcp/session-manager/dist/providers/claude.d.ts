@@ -7,6 +7,14 @@
  * - Supports multi-turn via query re-invocation
  */
 import type { AgentSessionConfig, AgentStreamEvent, AgentUsage } from "../types.js";
+/**
+ * Detects if an error is a tool_use_id mismatch (orphaned tool_result after context truncation).
+ */
+export declare function isToolIdMismatchError(err: unknown): boolean;
+/**
+ * Build a continuation summary from session events for recovery after context corruption.
+ */
+export declare function buildContinuationSummary(events: AgentStreamEvent[], originalPrompt?: string): string;
 export interface ClaudeSessionHandle {
     id: string;
     claudeSessionId: string | null;
@@ -21,6 +29,25 @@ export interface ClaudeSessionHandle {
     recoveryAttempts: number;
     stderr: string;
 }
+/**
+ * Per-session state for tracking in-flight tool calls across stream events.
+ * Accumulates input_json_delta chunks so the emitted tool_call has full args.
+ */
+interface ToolCallStreamState {
+    /** content_block index → pending tool call info */
+    pending: Map<number, {
+        id: string;
+        name: string;
+        inputChunks: string[];
+    }>;
+    /** tool_use_id → tool name, for resolving tool_result blocks */
+    idToName: Map<string, string>;
+}
+export declare function createToolCallStreamState(): ToolCallStreamState;
+/**
+ * Translate a raw SDK message into zero or more AgentStreamEvents.
+ */
+export declare function translateMessage(message: any, turnId: string, state: ToolCallStreamState, stderrTail?: string): AgentStreamEvent[];
 /**
  * Create a Claude agent session and start the query pump immediately.
  */
@@ -45,3 +72,4 @@ export declare function sendClaudeQuery(handle: ClaudeSessionHandle, prompt: str
  * Close a Claude session.
  */
 export declare function closeClaudeSession(handle: ClaudeSessionHandle): Promise<void>;
+export {};
