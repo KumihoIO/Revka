@@ -820,6 +820,28 @@ fn parse_attachments(parsed: &serde_json::Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Overlap (in bytes) the streaming output guardrail re-scans into the
+/// already-scanned prefix when a new chunk arrives. Large enough to cover any
+/// single-line credential pattern that straddles a chunk boundary, while keeping
+/// the per-chunk scan cost bounded (no quadratic full-buffer re-scan per token).
+const STREAM_SCAN_WINDOW: usize = 4096;
+
+/// Return the slice of `buf` to scan for leaks after appending a chunk: EVERY
+/// newly-appended byte (from `prev_len` onward) plus a trailing
+/// `STREAM_SCAN_WINDOW` overlap into the previously-scanned text. Scanning the
+/// whole new chunk — not just a fixed trailing window of the cumulative buffer —
+/// is what catches a credential that arrives inside a single jumbo (>window)
+/// chunk; the overlap additionally catches one that straddles a chunk boundary.
+/// Cost is O(chunk + window) per chunk. The authoritative `done` redaction still
+/// runs over the complete response as the backstop.
+fn stream_scan_region(buf: &str, prev_len: usize) -> &str {
+    let mut start = prev_len.saturating_sub(STREAM_SCAN_WINDOW);
+    while start < buf.len() && !buf.is_char_boundary(start) {
+        start += 1;
+    }
+    &buf[start..]
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn process_chat_message(
     state: &AppState,
@@ -941,6 +963,24 @@ async fn process_chat_message(
     ping_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     ping_interval.tick().await;
 
+    // Streaming output guardrail: accumulate streamed reply text and, on each
+    // chunk, scan every newly-appended byte plus a STREAM_SCAN_WINDOW overlap
+    // (see stream_scan_region) so a credential is caught whether it arrives
+    // inside one large chunk or straddles a chunk boundary. Once a leak is
+    // detected we stop forwarding raw chunks for the rest of the turn — the
+    // authoritative redacted `done.full_response` below delivers the clean text,
+    // and the client discards the streamed draft on `chunk_reset`.
+    //
+    // Cost is O(chunk + window) per chunk, not a quadratic full-buffer re-scan.
+    // It is best-effort for one narrow case: a secret whose matchable pattern is
+    // itself longer than STREAM_SCAN_WINDOW *and* is split across multiple chunks
+    // (e.g. a multi-line PEM block) can have its start scroll out of the overlap
+    // before its end arrives. The final `done` redaction over the complete
+    // response is authoritative and scrubs any such remnant before the reply is
+    // persisted or delivered.
+    let mut streamed_buf = String::new();
+    let mut chunk_redaction_active = false;
+
     tokio::pin!(turn_fut);
     let result = loop {
         tokio::select! {
@@ -949,24 +989,47 @@ async fn process_chat_message(
                 if let Some(event) = event {
                     let ws_msg = match event {
                         TurnEvent::Chunk { delta } => {
-                            serde_json::json!({ "type": "chunk", "content": delta })
+                            let prev_len = streamed_buf.len();
+                            streamed_buf.push_str(&delta);
+                            if !chunk_redaction_active
+                                && crate::security::redact_outbound(
+                                    stream_scan_region(&streamed_buf, prev_len),
+                                )
+                                .1
+                                .is_some()
+                            {
+                                // Leak surfaced mid-stream: suppress this and all
+                                // subsequent chunks; the redacted `done` is authoritative.
+                                chunk_redaction_active = true;
+                                tracing::warn!(
+                                    session = %session_key,
+                                    "output guardrail: suppressing streamed chunks after credential leak detected"
+                                );
+                            }
+                            if chunk_redaction_active {
+                                None
+                            } else {
+                                Some(serde_json::json!({ "type": "chunk", "content": delta }))
+                            }
                         }
                         TurnEvent::Thinking { delta } => {
-                            serde_json::json!({ "type": "thinking", "content": delta })
+                            Some(serde_json::json!({ "type": "thinking", "content": delta }))
                         }
                         TurnEvent::ToolCall { name, args } => {
-                            serde_json::json!({ "type": "tool_call", "name": name, "args": args })
+                            Some(serde_json::json!({ "type": "tool_call", "name": name, "args": args }))
                         }
                         TurnEvent::ToolResult { name, output } => {
-                            serde_json::json!({ "type": "tool_result", "name": name, "output": output })
+                            Some(serde_json::json!({ "type": "tool_result", "name": name, "output": output }))
                         }
                         TurnEvent::OperatorStatus { phase, detail } => {
-                            serde_json::json!({ "type": "operator_status", "phase": phase, "detail": detail })
+                            Some(serde_json::json!({ "type": "operator_status", "phase": phase, "detail": detail }))
                         }
                     };
-                    if sender.send(Message::Text(ws_msg.to_string().into())).await.is_err() {
-                        tracing::warn!(session = %session_key, "WebSocket chat send failed during active turn");
-                        break None;
+                    if let Some(ws_msg) = ws_msg {
+                        if sender.send(Message::Text(ws_msg.to_string().into())).await.is_err() {
+                            tracing::warn!(session = %session_key, "WebSocket chat send failed during active turn");
+                            break None;
+                        }
                     }
                 }
             }
@@ -1080,6 +1143,19 @@ async fn process_chat_message(
 
     match result {
         Ok(response) => {
+            // Output guardrail: scrub credential leaks before the reply leaves
+            // the gateway. The redacted form is the authoritative text that gets
+            // both persisted (so the REST session-messages replay is clean at
+            // rest) and sent as `done.full_response`.
+            let (response, leaked) = crate::security::redact_outbound(&response);
+            if let Some(patterns) = leaked {
+                tracing::warn!(
+                    session = %session_key,
+                    patterns = ?patterns,
+                    "output guardrail: credential leak detected in gateway chat response"
+                );
+            }
+
             // Persist assistant response
             if let Some(ref backend) = state.session_backend {
                 let assistant_msg = crate::providers::ChatMessage::assistant(&response);
@@ -1285,5 +1361,118 @@ mod tests {
         assert!(architect_instructions_block(page_context).is_none());
         assert!(architect_instructions_block("").is_none());
         assert!(architect_instructions_block("<architect-instructions>oops").is_none());
+    }
+
+    /// Mirrors the streaming output-guardrail policy in `process_chat_message`:
+    /// accumulate streamed deltas and scan every newly-appended byte (plus a
+    /// trailing overlap) so a credential is detected whether it arrives inside a
+    /// single jumbo chunk or straddles a chunk boundary, suppressing chunk
+    /// forwarding for the rest of the turn.
+    fn forwarded_chunks(deltas: &[&str]) -> Vec<String> {
+        let mut streamed_buf = String::new();
+        let mut chunk_redaction_active = false;
+        let mut forwarded = Vec::new();
+        for delta in deltas {
+            let prev_len = streamed_buf.len();
+            streamed_buf.push_str(delta);
+            if !chunk_redaction_active
+                && crate::security::redact_outbound(stream_scan_region(&streamed_buf, prev_len))
+                    .1
+                    .is_some()
+            {
+                chunk_redaction_active = true;
+            }
+            if !chunk_redaction_active {
+                forwarded.push((*delta).to_string());
+            }
+        }
+        forwarded
+    }
+
+    #[test]
+    fn streamed_chunks_forwarded_when_clean() {
+        let forwarded = forwarded_chunks(&["Hello ", "there, ", "how can I help?"]);
+        assert_eq!(forwarded, vec!["Hello ", "there, ", "how can I help?"]);
+    }
+
+    #[test]
+    fn streamed_chunks_suppressed_when_key_completes_in_a_chunk() {
+        // The Stripe pattern is `sk_(live|test)_[a-zA-Z0-9]{24,}`, so the key
+        // only matches once 24+ trailing alphanumerics are present. Here the
+        // chunk that arrives carries the full key, so detection fires on that
+        // chunk: the preceding clean prose is forwarded, but the chunk holding
+        // the key — and everything after — is suppressed, so no part of the key
+        // ever reaches the wire.
+        let forwarded = forwarded_chunks(&[
+            "Your key is ",
+            "sk_test_1234567890abcdefghijklmnop",
+            " — keep it safe",
+        ]);
+        assert_eq!(forwarded, vec!["Your key is "]);
+        assert!(
+            !forwarded.iter().any(|c| c.contains("sk_test_")),
+            "no chunk containing the leaked key may be forwarded"
+        );
+    }
+
+    #[test]
+    fn streamed_chunks_suppressed_after_key_split_across_boundaries() {
+        // The key is split so the matching 24-char suffix only completes on the
+        // second chunk. The cumulative-buffer scan catches it there and
+        // suppresses that chunk and all subsequent ones.
+        //
+        // NOTE: a *partial* prefix can still be streamed before the suffix
+        // completes — after delta 1 the buffer `...sk_test_1234567890` has only
+        // 10 trailing alphanumerics (< 24), so no pattern matches yet and that
+        // chunk is forwarded. The streaming guardrail is best-effort; the
+        // authoritative `done` redaction over the complete response scrubs the
+        // full key before it is persisted or delivered.
+        let forwarded = forwarded_chunks(&[
+            "Your key is sk_test_1234567890",
+            "abcdefghijklmnop",
+            " — keep it safe",
+        ]);
+        // Suppression begins exactly on the chunk that completes the key.
+        assert_eq!(forwarded, vec!["Your key is sk_test_1234567890"]);
+        assert!(
+            !forwarded.iter().any(|c| c.contains("abcdefghijklmnop")),
+            "the chunk completing the leaked key must be suppressed"
+        );
+    }
+
+    #[test]
+    fn streamed_chunks_suppressed_when_key_buried_in_a_jumbo_chunk() {
+        // Regression for the windowing gap: a credential that arrives inside a
+        // single chunk LARGER than STREAM_SCAN_WINDOW, positioned before the
+        // trailing window, must still be caught. The old trailing-window scan of
+        // the cumulative buffer missed it (the key was pushed out of the last
+        // 4 KB) and streamed the chunk raw; stream_scan_region scans the whole
+        // new chunk, so it is detected and suppressed.
+        let jumbo = format!(
+            "{}sk_test_1234567890abcdefghijklmnop{}",
+            "a".repeat(8192), // key sits ~8 KB before the chunk's end
+            "b".repeat(8192),
+        );
+        let forwarded = forwarded_chunks(&["Here is a long reply ", &jumbo, " trailing"]);
+        assert_eq!(forwarded, vec!["Here is a long reply "]);
+        assert!(
+            !forwarded.iter().any(|c| c.contains("sk_test_")),
+            "a key buried in a single jumbo chunk must never be forwarded"
+        );
+    }
+
+    #[test]
+    fn stream_scan_region_covers_new_bytes_on_char_boundary() {
+        // The scan region starts STREAM_SCAN_WINDOW bytes before prev_len, on a
+        // UTF-8 char boundary, and always includes every newly-appended byte.
+        let prefix = "é".repeat(STREAM_SCAN_WINDOW); // 2 bytes each, > window
+        let prev_len = prefix.len();
+        let buf = format!("{prefix}sk_test_1234567890abcdefghijklmnop");
+        let region = stream_scan_region(&buf, prev_len);
+        // Every newly-appended byte is in the region, so the trailing secret is
+        // always detectable regardless of how far it sits from the buffer end.
+        assert!(region.contains("sk_test_1234567890abcdefghijklmnop"));
+        // Short buffer (prev_len below the window) is returned whole.
+        assert_eq!(stream_scan_region("hello", 0), "hello");
     }
 }

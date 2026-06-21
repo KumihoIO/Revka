@@ -2302,16 +2302,14 @@ fn sanitize_channel_response(response: &str, tools: &[Box<dyn Tool>]) -> String 
     let sanitized = strip_tool_narration(&stripped_json);
 
     // Scan for credential leaks before returning to caller
-    match crate::security::LeakDetector::new().scan(&sanitized) {
-        crate::security::LeakResult::Clean => sanitized,
-        crate::security::LeakResult::Detected { patterns, redacted } => {
-            tracing::warn!(
-                patterns = ?patterns,
-                "output guardrail: credential leak detected in outbound channel response"
-            );
-            redacted
-        }
+    let (redacted, leaked) = crate::security::redact_outbound(&sanitized);
+    if let Some(patterns) = leaked {
+        tracing::warn!(
+            patterns = ?patterns,
+            "output guardrail: credential leak detected in outbound channel response"
+        );
     }
+    redacted
 }
 
 /// Remove leading lines that narrate tool usage (e.g. "Let me check the weather for you.").

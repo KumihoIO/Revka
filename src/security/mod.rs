@@ -78,6 +78,20 @@ pub use prompt_guard::{GuardAction, GuardResult, PromptGuard};
 #[allow(unused_imports)]
 pub use workspace_boundary::{BoundaryVerdict, WorkspaceBoundary};
 
+/// Scan outbound content for credential leaks and return its redacted form.
+///
+/// Shared output-guardrail entrypoint used by every transport that emits the
+/// agent's reply to a client (messaging channels, the cron scheduler, and the
+/// gateway WebSocket/REST paths). Returns the (possibly unchanged) content
+/// plus `Some(patterns)` describing what was redacted, or `None` when the
+/// content was already clean.
+pub fn redact_outbound(content: &str) -> (String, Option<Vec<String>>) {
+    match LeakDetector::new().scan(content) {
+        LeakResult::Clean => (content.to_string(), None),
+        LeakResult::Detected { patterns, redacted } => (redacted, Some(patterns)),
+    }
+}
+
 /// Redact sensitive values for safe logging. Shows first 4 characters + "***" suffix.
 /// Uses char-boundary-safe indexing to avoid panics on multi-byte UTF-8 strings.
 /// This function intentionally breaks the data-flow taint chain for static analysis.
@@ -113,6 +127,28 @@ mod tests {
         let decrypted = store.decrypt(&encrypted).unwrap();
 
         assert_eq!(decrypted, "top-secret");
+    }
+
+    #[test]
+    fn redact_outbound_returns_clean_unchanged() {
+        let (out, leaked) = redact_outbound("just some normal text");
+        assert_eq!(out, "just some normal text");
+        assert!(leaked.is_none());
+    }
+
+    #[test]
+    fn redact_outbound_scrubs_api_key_and_pem_block() {
+        let content = "key sk_test_1234567890abcdefghijklmnop and\n\
+-----BEGIN PRIVATE KEY-----\n\
+MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQ\n\
+-----END PRIVATE KEY-----";
+        let (out, leaked) = redact_outbound(content);
+        let patterns = leaked.expect("should detect leaks");
+        assert!(patterns.iter().any(|p| p.contains("Stripe")));
+        assert!(patterns.iter().any(|p| p.contains("Private key")));
+        assert!(!out.contains("sk_test_1234567890abcdefghijklmnop"));
+        assert!(!out.contains("MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQ"));
+        assert!(out.contains("[REDACTED_PRIVATE_KEY]"));
     }
 
     #[test]
