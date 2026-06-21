@@ -1,5 +1,5 @@
 use crate::cost::CostTracker;
-use crate::cost::types::{BudgetCheck, CostRecordMetadata};
+use crate::cost::types::{BudgetCheck, BudgetEnforcement, CostRecordMetadata};
 use std::sync::Arc;
 
 // ── Cost tracking via task-local ──
@@ -73,16 +73,20 @@ pub(crate) fn record_tool_loop_cost_usage(
     }
 }
 
-/// Check budget before an LLM call. Returns `None` when no cost tracking
-/// context is scoped (tests, delegate, CLI without cost config).
-pub(crate) fn check_tool_loop_budget() -> Option<BudgetCheck> {
+/// Check budget before an LLM call and resolve the configured enforcement
+/// directive (`warn`/`block`/`route_down`, honoring `allow_override`).
+/// Returns `None` when no cost tracking context is scoped (tests, delegate,
+/// CLI without cost config), in which case the call should proceed.
+pub(crate) fn check_tool_loop_budget() -> Option<BudgetEnforcement> {
     TOOL_LOOP_COST_TRACKING_CONTEXT
         .try_with(Clone::clone)
         .ok()
         .flatten()
         .map(|ctx| {
-            ctx.tracker
+            let check = ctx
+                .tracker
                 .check_budget(0.0)
-                .unwrap_or(BudgetCheck::Allowed)
+                .unwrap_or(BudgetCheck::Allowed);
+            ctx.tracker.resolve_enforcement(&check)
         })
 }

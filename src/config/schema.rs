@@ -2119,7 +2119,8 @@ pub struct CostConfig {
     #[serde(default = "default_warn_percent")]
     pub warn_at_percent: u8,
 
-    /// Allow requests to exceed budget with --override flag (default: false)
+    /// Allow requests to proceed even when the budget is exceeded, bypassing
+    /// the `enforcement.mode` block (default: false)
     #[serde(default)]
     pub allow_override: bool,
 

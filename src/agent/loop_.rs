@@ -1,6 +1,6 @@
 use crate::approval::{ApprovalManager, ApprovalRequest, ApprovalResponse};
 use crate::config::Config;
-use crate::cost::types::BudgetCheck;
+use crate::cost::types::BudgetEnforcement;
 use crate::i18n::ToolDescriptions;
 use crate::memory::{self, Memory, MemoryCategory, decay};
 use crate::multimodal;
@@ -2504,7 +2504,7 @@ pub(crate) async fn run_tool_call_loop(
             None
         };
 
-        let (active_provider, active_provider_name, active_model): (&dyn Provider, &str, &str) =
+        let (active_provider, active_provider_name, mut active_model): (&dyn Provider, &str, &str) =
             if let Some(ref vp_box) = vision_provider_box {
                 let vp_name = multimodal_config
                     .vision_provider
@@ -2555,19 +2555,33 @@ pub(crate) async fn run_tool_call_loop(
             hooks.fire_llm_input(history, model).await;
         }
 
-        // Budget enforcement — block if limit exceeded (no-op when not scoped)
-        if let Some(BudgetCheck::Exceeded {
-            current_usd,
-            limit_usd,
-            period,
-        }) = check_tool_loop_budget()
-        {
-            return Err(anyhow::anyhow!(
-                "Budget exceeded: ${:.4} of ${:.2} {:?} limit. Cannot make further API calls until the budget resets.",
+        // Budget enforcement — honor the configured `[cost.enforcement] mode`
+        // (no-op when cost tracking isn't scoped, e.g. tests/delegate/CLI).
+        // `route_down_holder` keeps the downgraded model string alive so
+        // `active_model` (a `&str`) can borrow it for the rest of this iteration.
+        let route_down_holder;
+        match check_tool_loop_budget() {
+            None | Some(BudgetEnforcement::Proceed) => {}
+            Some(BudgetEnforcement::Warn { reason }) => {
+                tracing::warn!("{reason}");
+            }
+            Some(BudgetEnforcement::RouteDown { model, reason }) => {
+                tracing::warn!("{reason}");
+                route_down_holder = model;
+                active_model = route_down_holder.as_str();
+            }
+            Some(BudgetEnforcement::Block {
                 current_usd,
                 limit_usd,
-                period
-            ));
+                period,
+            }) => {
+                return Err(anyhow::anyhow!(
+                    "Budget exceeded: ${:.4} of ${:.2} {:?} limit. Cannot make further API calls until the budget resets.",
+                    current_usd,
+                    limit_usd,
+                    period
+                ));
+            }
         }
 
         // Unified path via Provider::chat so provider-specific native tool logic
@@ -10020,6 +10034,12 @@ Let me check the result."#;
         let cost_config = crate::config::CostConfig {
             enabled: true,
             daily_limit_usd: 0.001, // very low limit
+            // The default enforcement mode is "warn"; opt into the hard-stop
+            // path explicitly so this test exercises Block end-to-end.
+            enforcement: crate::config::schema::CostEnforcementConfig {
+                mode: "block".to_string(),
+                ..crate::config::schema::CostEnforcementConfig::default()
+            },
             ..crate::config::CostConfig::default()
         };
         let tracker = Arc::new(CostTracker::new(cost_config.clone(), workspace.path()).unwrap());
@@ -10074,6 +10094,78 @@ Let me check the result."#;
             err.to_string().contains("Budget exceeded"),
             "error should mention budget: {err}"
         );
+    }
+
+    #[tokio::test]
+    async fn cost_tracking_warn_mode_proceeds_when_over_budget() {
+        use super::{
+            TOOL_LOOP_COST_TRACKING_CONTEXT, ToolLoopCostTrackingContext, run_tool_call_loop,
+        };
+        use crate::cost::CostTracker;
+        use crate::observability::noop::NoopObserver;
+
+        // Same over-budget setup as `cost_tracking_enforces_budget`, but with
+        // the default enforcement mode ("warn") — the loop must proceed and
+        // return the provider's response instead of hard-blocking.
+        let provider = ScriptedProvider::from_text_responses(vec!["proceeded over budget"]);
+        let observer = NoopObserver;
+        let workspace = tempfile::TempDir::new().unwrap();
+        let cost_config = crate::config::CostConfig {
+            enabled: true,
+            daily_limit_usd: 0.001, // very low limit
+            // Default mode is "warn"; assert it does not block.
+            ..crate::config::CostConfig::default()
+        };
+        assert_eq!(cost_config.enforcement.mode, "warn");
+        let tracker = Arc::new(CostTracker::new(cost_config, workspace.path()).unwrap());
+        // Record a usage that already exceeds the limit.
+        tracker
+            .record_usage(crate::cost::types::TokenUsage::new(
+                "mock-model",
+                100_000,
+                50_000,
+                1.0,
+                1.0,
+            ))
+            .unwrap();
+
+        let ctx = ToolLoopCostTrackingContext::new(Arc::clone(&tracker), "test");
+        let mut history = vec![ChatMessage::system("test"), ChatMessage::user("hello")];
+
+        let result = TOOL_LOOP_COST_TRACKING_CONTEXT
+            .scope(
+                Some(ctx),
+                run_tool_call_loop(
+                    &provider,
+                    &mut history,
+                    &[],
+                    &observer,
+                    "mock-provider",
+                    "mock-model",
+                    0.0,
+                    true,
+                    None,
+                    "test",
+                    None,
+                    &crate::config::MultimodalConfig::default(),
+                    2,
+                    None,
+                    None,
+                    None,
+                    &[],
+                    &[],
+                    None,
+                    None,
+                    &crate::config::PacingConfig::default(),
+                    0,
+                    0,
+                    None,
+                ),
+            )
+            .await
+            .expect("warn mode should proceed past the budget gate");
+
+        assert_eq!(result, "proceeded over budget");
     }
 
     #[tokio::test]
