@@ -320,9 +320,11 @@ impl CostTracker {
 
     /// Get the current cost summary.
     pub fn get_summary(&self) -> Result<CostSummary> {
-        let (daily_cost, monthly_cost) = {
+        let (daily_cost, monthly_cost, daily_tokens, monthly_tokens) = {
             let mut storage = self.lock_storage();
-            storage.get_aggregated_costs()?
+            let (daily_cost, monthly_cost) = storage.get_aggregated_costs()?;
+            let (daily_tokens, monthly_tokens) = storage.get_aggregated_tokens()?;
+            (daily_cost, monthly_cost, daily_tokens, monthly_tokens)
         };
 
         let session_costs = self.lock_session_costs();
@@ -338,7 +340,7 @@ impl CostTracker {
         let by_model = build_session_model_stats(&session_costs);
         let by_agent = build_session_agent_stats(&session_costs);
         let by_source = build_session_source_stats(&session_costs);
-        let budget = self.budget_status(daily_cost, monthly_cost);
+        let budget = self.budget_status(daily_cost, monthly_cost, daily_tokens, monthly_tokens);
 
         Ok(CostSummary {
             session_cost_usd: session_cost,
@@ -353,7 +355,13 @@ impl CostTracker {
         })
     }
 
-    fn budget_status(&self, daily_cost: f64, monthly_cost: f64) -> BudgetStatus {
+    fn budget_status(
+        &self,
+        daily_cost: f64,
+        monthly_cost: f64,
+        daily_tokens: u64,
+        monthly_tokens: u64,
+    ) -> BudgetStatus {
         if !self.config.enabled {
             return BudgetStatus::default();
         }
@@ -371,7 +379,28 @@ impl CostTracker {
         let daily_percent = percent_used(daily_cost, daily_limit);
         let monthly_percent = percent_used(monthly_cost, monthly_limit);
         let warning_threshold = f64::from(warn_at_percent);
-        let state = if daily_cost > daily_limit || monthly_cost > monthly_limit {
+
+        // Token safety net (#454): unpriced models record $0.00, so a token
+        // breach never shows up on the dollar axis. check_budget hard-blocks
+        // via TokensExceeded once a configured token limit is reached, so the
+        // reported status must also flip to "exceeded" — otherwise the operator
+        // agent sees "ok" here, commits to spend, and the call dies at the gate.
+        let daily_tokens_exceeded = self
+            .config
+            .daily_token_limit
+            .filter(|limit| *limit > 0)
+            .is_some_and(|limit| daily_tokens >= limit);
+        let monthly_tokens_exceeded = self
+            .config
+            .monthly_token_limit
+            .filter(|limit| *limit > 0)
+            .is_some_and(|limit| monthly_tokens >= limit);
+
+        let state = if daily_cost > daily_limit
+            || monthly_cost > monthly_limit
+            || daily_tokens_exceeded
+            || monthly_tokens_exceeded
+        {
             "exceeded"
         } else if daily_percent >= warning_threshold || monthly_percent >= warning_threshold {
             "warning"
@@ -1224,5 +1253,53 @@ mod tests {
             budget.daily_limit_usd
         );
         assert_eq!(budget.daily_remaining_usd, 0.0);
+    }
+
+    #[test]
+    fn budget_status_reflects_token_limit() {
+        // #454 review: budget_status() must agree with the token gate in
+        // check_budget. An unpriced model records $0.00, so the dollar state
+        // stays "ok"; once the daily token limit is reached, check_budget
+        // hard-blocks via TokensExceeded, so get_summary().budget must also
+        // report "exceeded" — otherwise the operator agent sees green, spends,
+        // and then gets hard-blocked.
+        let tmp = TempDir::new().unwrap();
+        let config = CostConfig {
+            enabled: true,
+            daily_limit_usd: 1_000_000.0, // effectively unbounded by dollars
+            monthly_limit_usd: 1_000_000.0,
+            daily_token_limit: Some(1_000),
+            ..Default::default()
+        };
+        let tracker = CostTracker::new(config, tmp.path()).unwrap();
+
+        // Unpriced model: zero input/output price => cost_usd == 0.0, but 1_200
+        // tokens is over the 1_000 daily token limit.
+        tracker
+            .record_usage(TokenUsage::new(
+                "openrouter/unknown-model",
+                800,
+                400,
+                0.0,
+                0.0,
+            ))
+            .unwrap();
+
+        let summary = tracker.get_summary().unwrap();
+        assert_eq!(summary.session_cost_usd, 0.0, "unpriced model costs $0.00");
+
+        // The dollar gate would report "ok" on its own; the token breach must
+        // still flip the reported state to match check_budget's hard block.
+        assert!(
+            matches!(
+                tracker.check_budget(0.0).unwrap(),
+                BudgetCheck::TokensExceeded { .. }
+            ),
+            "precondition: token gate must trip"
+        );
+        assert_eq!(
+            summary.budget.state, "exceeded",
+            "status must match the token gate"
+        );
     }
 }
