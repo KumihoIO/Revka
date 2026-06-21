@@ -161,6 +161,10 @@ pub enum AardvarkError {
     /// GPIO operation returned a negative status code.
     #[error("GPIO error (code {0})")]
     GpioError(i32),
+    /// A bus-configuration call (`configure`/`pullup`/`bitrate`/`spi_configure`)
+    /// returned a negative status code.
+    #[error("bus configuration failed (code {0})")]
+    ConfigFailed(i32),
     /// The Aardvark shared library could not be found or loaded.
     #[error(
         "{lib} not found — set REVKA_AARDVARK_LIB or place it next to the binary",
@@ -256,15 +260,25 @@ impl AardvarkHandle {
             let configure: Symbol<unsafe extern "C" fn(i32, i32) -> i32> = lib
                 .get(b"c_aa_configure\0")
                 .map_err(|_| AardvarkError::LibraryNotFound)?;
-            configure(self.handle, AA_CONFIG_GPIO_I2C);
+            let ret = configure(self.handle, AA_CONFIG_GPIO_I2C);
+            if ret < 0 {
+                return Err(AardvarkError::ConfigFailed(ret));
+            }
             let pullup: Symbol<unsafe extern "C" fn(i32, u8) -> i32> = lib
                 .get(b"c_aa_i2c_pullup\0")
                 .map_err(|_| AardvarkError::LibraryNotFound)?;
-            pullup(self.handle, AA_I2C_PULLUP_BOTH);
+            let ret = pullup(self.handle, AA_I2C_PULLUP_BOTH);
+            if ret < 0 {
+                return Err(AardvarkError::ConfigFailed(ret));
+            }
             let bitrate: Symbol<unsafe extern "C" fn(i32, i32) -> i32> = lib
                 .get(b"c_aa_i2c_bitrate\0")
                 .map_err(|_| AardvarkError::LibraryNotFound)?;
-            bitrate(self.handle, bitrate_khz as i32);
+            // Returns the actual bitrate set (non-negative); only < 0 is an error.
+            let ret = bitrate(self.handle, bitrate_khz as i32);
+            if ret < 0 {
+                return Err(AardvarkError::ConfigFailed(ret));
+            }
         }
         Ok(())
     }
@@ -356,16 +370,26 @@ impl AardvarkHandle {
             let configure: Symbol<unsafe extern "C" fn(i32, i32) -> i32> = lib
                 .get(b"c_aa_configure\0")
                 .map_err(|_| AardvarkError::LibraryNotFound)?;
-            configure(self.handle, AA_CONFIG_SPI_GPIO);
+            let ret = configure(self.handle, AA_CONFIG_SPI_GPIO);
+            if ret < 0 {
+                return Err(AardvarkError::ConfigFailed(ret));
+            }
             // SPI mode 0: polarity=rising/falling(0), phase=sample/setup(0), MSB first(0)
             let spi_cfg: Symbol<unsafe extern "C" fn(i32, i32, i32, i32) -> i32> = lib
                 .get(b"c_aa_spi_configure\0")
                 .map_err(|_| AardvarkError::LibraryNotFound)?;
-            spi_cfg(self.handle, 0, 0, 0);
+            let ret = spi_cfg(self.handle, 0, 0, 0);
+            if ret < 0 {
+                return Err(AardvarkError::ConfigFailed(ret));
+            }
             let bitrate: Symbol<unsafe extern "C" fn(i32, i32) -> i32> = lib
                 .get(b"c_aa_spi_bitrate\0")
                 .map_err(|_| AardvarkError::LibraryNotFound)?;
-            bitrate(self.handle, bitrate_khz as i32);
+            // Returns the actual bitrate set (non-negative); only < 0 is an error.
+            let ret = bitrate(self.handle, bitrate_khz as i32);
+            if ret < 0 {
+                return Err(AardvarkError::ConfigFailed(ret));
+            }
         }
         Ok(())
     }
@@ -494,6 +518,11 @@ mod tests {
             AardvarkError::SpiTransferFailed(-2)
                 .to_string()
                 .contains("SPI")
+        );
+        assert!(
+            AardvarkError::ConfigFailed(-3)
+                .to_string()
+                .contains("configuration")
         );
         // The message must name the platform-correct library file (#440), so the
         // diagnostic points Windows/macOS users at aardvark.dll / aardvark.dylib.
