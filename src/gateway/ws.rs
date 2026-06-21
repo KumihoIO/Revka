@@ -113,6 +113,107 @@ fn extract_ws_token<'a>(headers: &'a HeaderMap, query_token: Option<&'a str>) ->
     None
 }
 
+/// Defense-in-depth check against cross-site WebSocket hijacking.
+///
+/// The browser same-origin policy does **not** block cross-origin WebSocket
+/// handshakes, so any page the user visits could otherwise open a socket to the
+/// gateway. We reject upgrades whose `Origin` header is a *cross-site* web
+/// origin while still allowing the gateway's own first-party origins — which
+/// matters because the dashboard is served same-origin by this very gateway and
+/// is reachable not only over loopback but also over a tunnel
+/// (ngrok/cloudflare/tailscale/pinggy) or a LAN/public bind (`allow_public_bind`).
+///
+/// Rules:
+/// - **No `Origin` header → allow.** Non-browser clients (the `revka` CLI,
+///   native apps, relay/node clients) do not send `Origin`; only browsers do.
+///   A genuine cross-site browser request always carries one, so absent is safe.
+/// - **Same-origin as the request `Host` → allow.** The first-party dashboard is
+///   served by this gateway, so the page's `Origin` host always equals the `Host`
+///   it connected to (loopback, tunnel host, LAN IP, public host — whatever the
+///   browser loaded the dashboard from). A cross-site attacker page carries its
+///   own `Origin` (e.g. `evil.com`) while `Host` stays the gateway's, so the two
+///   differ and the upgrade is rejected. `Host` is set by the browser to the
+///   gateway it is talking to and is not attacker-controllable cross-site.
+/// - **Loopback origin → allow.** Kept as an additional allow so the default
+///   loopback dashboard works even if the `Host` header is absent/unusual.
+/// - **Tauri webview origin → allow.** The Revka Desktop app (Tauri/WebView2)
+///   loads the dashboard from `tauri://localhost` (macOS custom scheme) or
+///   `http(s)://tauri.localhost` (Windows/Linux WebView2), neither of which
+///   matches the gateway `Host`.
+/// - **Anything else → reject** as a cross-site origin.
+///
+/// Shared by all WS upgrade handlers (`/ws/chat`, `/ws/terminal`,
+/// `/ws/mcp/events`, `/ws/nodes`, `/ws/canvas`) so the policy stays consistent.
+pub fn check_ws_origin(headers: &HeaderMap) -> bool {
+    let origin = match headers.get(header::ORIGIN).and_then(|v| v.to_str().ok()) {
+        // Absent Origin → non-browser client → allow.
+        None => return true,
+        Some(o) => o,
+    };
+
+    let parsed_origin_host = match origin_host(origin) {
+        Some(h) => h,
+        // Unparseable origin (e.g. the opaque "null") → reject.
+        None => return false,
+    };
+
+    // First-party dashboard: the served page's Origin host matches the Host it
+    // connected to (covers loopback, tunnel, and LAN/public-bind transparently).
+    if let Some(request_host) = headers.get(header::HOST).and_then(|v| v.to_str().ok()) {
+        if let Some(host) = host_only(request_host) {
+            if parsed_origin_host.eq_ignore_ascii_case(host) {
+                return true;
+            }
+        }
+    }
+
+    // Loopback origin (default dashboard) — allowed even without a Host match.
+    if host_is_loopback(parsed_origin_host) {
+        return true;
+    }
+
+    // Tauri/WebView2 desktop app origins.
+    matches!(
+        origin,
+        "tauri://localhost" | "http://tauri.localhost" | "https://tauri.localhost"
+    )
+}
+
+/// Parse the host out of a web origin (`scheme://host[:port]`), dropping the
+/// scheme, any path, and the port. Returns `None` if there is no `scheme://`.
+fn origin_host(origin: &str) -> Option<&str> {
+    let after_scheme = origin.split_once("://")?.1;
+    host_only(after_scheme)
+}
+
+/// Extract the bare host from an authority (`host[:port]` or `[ipv6]:port`),
+/// stripping any path suffix and the port while keeping IPv6 literals intact.
+fn host_only(authority: &str) -> Option<&str> {
+    // Drop any path component (`host:port/path` → `host:port`).
+    let authority = authority.split('/').next().unwrap_or("");
+    if authority.is_empty() {
+        return None;
+    }
+    let host = if let Some(rest) = authority.strip_prefix('[') {
+        // IPv6 literal: `[::1]:port` → `::1`
+        rest.split(']').next().unwrap_or("")
+    } else {
+        authority.split(':').next().unwrap_or("")
+    };
+    if host.is_empty() { None } else { Some(host) }
+}
+
+/// True when `host` is a loopback name/address (the gateway's own first-party
+/// loopback origin).
+fn host_is_loopback(host: &str) -> bool {
+    if host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    host.parse::<std::net::IpAddr>()
+        .map(|ip| ip.is_loopback())
+        .unwrap_or(false)
+}
+
 /// GET /ws/chat — WebSocket upgrade for agent chat
 pub async fn handle_ws_chat(
     State(state): State<AppState>,
@@ -120,6 +221,15 @@ pub async fn handle_ws_chat(
     headers: HeaderMap,
     ws: WebSocketUpgrade,
 ) -> impl IntoResponse {
+    // Defense-in-depth: reject cross-site WebSocket handshakes (#383).
+    if !check_ws_origin(&headers) {
+        return (
+            axum::http::StatusCode::FORBIDDEN,
+            "Forbidden — cross-origin WebSocket upgrade rejected",
+        )
+            .into_response();
+    }
+
     // Auth: check header, subprotocol, then query param (precedence order)
     if state.pairing.require_pairing() {
         let token = extract_ws_token(&headers, params.token.as_deref()).unwrap_or("");
@@ -1474,5 +1584,93 @@ mod tests {
         assert!(region.contains("sk_test_1234567890abcdefghijklmnop"));
         // Short buffer (prev_len below the window) is returned whole.
         assert_eq!(stream_scan_region("hello", 0), "hello");
+    }
+
+    #[test]
+    fn check_ws_origin_allows_absent_origin() {
+        // Non-browser clients (CLI, native, node) send no Origin → allow.
+        let headers = HeaderMap::new();
+        assert!(check_ws_origin(&headers));
+    }
+
+    #[test]
+    fn check_ws_origin_allows_loopback_origins() {
+        for origin in [
+            "http://127.0.0.1:42617",
+            "http://127.0.0.1",
+            "https://localhost:42617",
+            "http://localhost",
+            "http://[::1]:42617",
+            "http://LocalHost", // case-insensitive host
+        ] {
+            let mut headers = HeaderMap::new();
+            headers.insert("origin", origin.parse().unwrap());
+            assert!(check_ws_origin(&headers), "expected allow for {origin}");
+        }
+    }
+
+    #[test]
+    fn check_ws_origin_rejects_cross_site_origins() {
+        for origin in [
+            "https://evil.example.com",
+            "http://attacker.test:8080",
+            "https://127.0.0.1.evil.com", // loopback-looking but not loopback
+            "http://192.168.1.10",
+            "null",
+        ] {
+            let mut headers = HeaderMap::new();
+            headers.insert("origin", origin.parse().unwrap());
+            assert!(!check_ws_origin(&headers), "expected reject for {origin}");
+        }
+    }
+
+    #[test]
+    fn check_ws_origin_allows_first_party_same_host() {
+        // The dashboard is served same-origin by this gateway, so over a tunnel
+        // or public/LAN bind the browser's Origin host equals the Host it
+        // connected to. These first-party handshakes must pass.
+        for (origin, host) in [
+            ("https://foo.trycloudflare.com", "foo.trycloudflare.com"),
+            ("https://abc.ngrok-free.app", "abc.ngrok-free.app"),
+            ("http://192.168.1.50:42617", "192.168.1.50:42617"),
+            ("https://revka.example.com", "revka.example.com"),
+            // Port present on Origin but Host carries none (and vice versa):
+            // host comparison ignores the port.
+            ("http://192.168.1.50:42617", "192.168.1.50"),
+        ] {
+            let mut headers = HeaderMap::new();
+            headers.insert("origin", origin.parse().unwrap());
+            headers.insert("host", host.parse().unwrap());
+            assert!(
+                check_ws_origin(&headers),
+                "expected allow for same-origin {origin} / Host {host}"
+            );
+        }
+    }
+
+    #[test]
+    fn check_ws_origin_rejects_cross_site_even_with_host() {
+        // A cross-site attacker page carries its own Origin while Host stays the
+        // gateway's, so the two differ and the upgrade is rejected.
+        let mut headers = HeaderMap::new();
+        headers.insert("origin", "https://evil.example.com".parse().unwrap());
+        headers.insert("host", "foo.trycloudflare.com".parse().unwrap());
+        assert!(!check_ws_origin(&headers));
+    }
+
+    #[test]
+    fn check_ws_origin_allows_tauri_webview_origins() {
+        // Revka Desktop (Tauri/WebView2) loads the dashboard from these origins,
+        // none of which match the gateway Host.
+        for origin in [
+            "tauri://localhost",
+            "http://tauri.localhost",
+            "https://tauri.localhost",
+        ] {
+            let mut headers = HeaderMap::new();
+            headers.insert("origin", origin.parse().unwrap());
+            headers.insert("host", "127.0.0.1:42617".parse().unwrap());
+            assert!(check_ws_origin(&headers), "expected allow for {origin}");
+        }
     }
 }

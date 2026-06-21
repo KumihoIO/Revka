@@ -236,6 +236,17 @@ pub async fn handle_ws_nodes(
     headers: HeaderMap,
     ws: WebSocketUpgrade,
 ) -> impl IntoResponse {
+    // Defense-in-depth: reject cross-site WebSocket handshakes (#383). Non-browser
+    // node/relay clients do not send an `Origin` header, so they pass through;
+    // only cross-site web origins are rejected.
+    if !super::ws::check_ws_origin(&headers) {
+        return (
+            axum::http::StatusCode::FORBIDDEN,
+            "Forbidden — cross-origin WebSocket upgrade rejected",
+        )
+            .into_response();
+    }
+
     // Auth: check node auth token if configured
     let nodes_config = state.config.lock().nodes.clone();
     if let Some(ref expected_token) = nodes_config.auth_token {
