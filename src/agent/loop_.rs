@@ -3486,11 +3486,31 @@ pub(crate) async fn run_tool_call_loop(
                     }
                     crate::agent::loop_detector::LoopDetectionResult::Block(ref msg) => {
                         tracing::warn!(tool = %tool_name, %msg, "loop detector blocked tool call");
-                        // Replace the tool output with the block message.
-                        // We still continue the loop so the LLM sees the block feedback.
-                        history.push(ChatMessage::system(format!(
-                            "[Loop Detection — BLOCKED] {msg}"
-                        )));
+                        runtime_trace::record_event(
+                            "loop_detector_block",
+                            Some(channel_name),
+                            Some(provider_name),
+                            Some(model),
+                            Some(&turn_id),
+                            Some(false),
+                            Some(msg.as_str()),
+                            serde_json::json!({
+                                "iteration": iteration + 1,
+                                "tool": tool_name.as_str(),
+                            }),
+                        );
+                        let block_output = format!("[Loop Detection — BLOCKED] {msg}");
+                        history.push(ChatMessage::system(block_output.clone()));
+                        // Refuse the offending call: replace the real tool output
+                        // with the block message so the repeated output never
+                        // reaches the model, and skip the compression/append below.
+                        individual_results.push((tool_call_id, block_output.clone()));
+                        let _ = writeln!(
+                            tool_results,
+                            "<tool_result name=\"{}\">\n{}\n</tool_result>",
+                            tool_name, block_output
+                        );
+                        continue;
                     }
                     crate::agent::loop_detector::LoopDetectionResult::Break(msg) => {
                         runtime_trace::record_event(
