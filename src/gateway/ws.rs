@@ -113,6 +113,60 @@ fn extract_ws_token<'a>(headers: &'a HeaderMap, query_token: Option<&'a str>) ->
     None
 }
 
+/// Defense-in-depth check against cross-site WebSocket hijacking.
+///
+/// The browser same-origin policy does **not** block cross-origin WebSocket
+/// handshakes, so any page the user visits could otherwise open a socket to the
+/// loopback-bound gateway. We reject upgrades whose `Origin` header is a
+/// cross-site web origin.
+///
+/// Rules:
+/// - **No `Origin` header → allow.** Non-browser clients (the `revka` CLI,
+///   native apps, relay/node clients) do not send `Origin`; only browsers do.
+///   A genuine cross-site browser request always carries one, so absent is safe.
+/// - **Loopback origin → allow.** The dashboard is served same-origin from the
+///   loopback gateway, so `http(s)://127.0.0.1[:port]`, `localhost`, and `[::1]`
+///   are the expected first-party origins.
+/// - **Anything else → reject** as a cross-site origin.
+///
+/// Shared by all WS upgrade handlers (`/ws/chat`, `/ws/terminal`,
+/// `/ws/mcp/events`, `/ws/nodes`, `/ws/canvas`) so the policy stays consistent.
+pub fn check_ws_origin(headers: &HeaderMap) -> bool {
+    let origin = match headers.get(header::ORIGIN).and_then(|v| v.to_str().ok()) {
+        // Absent Origin → non-browser client → allow.
+        None => return true,
+        Some(o) => o,
+    };
+    origin_is_loopback(origin)
+}
+
+/// True when `origin` is a loopback web origin (the gateway's own first-party
+/// origin). Parses the host out of `scheme://host[:port]` and checks it against
+/// the loopback names/addresses.
+fn origin_is_loopback(origin: &str) -> bool {
+    // Strip scheme.
+    let after_scheme = match origin.split_once("://") {
+        Some((_, rest)) => rest,
+        None => return false,
+    };
+    // Host is everything up to the first `/` (path) then before any `:` port,
+    // taking care to keep bracketed IPv6 literals intact.
+    let authority = after_scheme.split('/').next().unwrap_or("");
+    let host = if let Some(rest) = authority.strip_prefix('[') {
+        // IPv6 literal: `[::1]:port` → `::1`
+        rest.split(']').next().unwrap_or("")
+    } else {
+        authority.split(':').next().unwrap_or("")
+    };
+
+    if host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    host.parse::<std::net::IpAddr>()
+        .map(|ip| ip.is_loopback())
+        .unwrap_or(false)
+}
+
 /// GET /ws/chat — WebSocket upgrade for agent chat
 pub async fn handle_ws_chat(
     State(state): State<AppState>,
@@ -120,6 +174,15 @@ pub async fn handle_ws_chat(
     headers: HeaderMap,
     ws: WebSocketUpgrade,
 ) -> impl IntoResponse {
+    // Defense-in-depth: reject cross-site WebSocket handshakes (#383).
+    if !check_ws_origin(&headers) {
+        return (
+            axum::http::StatusCode::FORBIDDEN,
+            "Forbidden — cross-origin WebSocket upgrade rejected",
+        )
+            .into_response();
+    }
+
     // Auth: check header, subprotocol, then query param (precedence order)
     if state.pairing.require_pairing() {
         let token = extract_ws_token(&headers, params.token.as_deref()).unwrap_or("");
@@ -1474,5 +1537,43 @@ mod tests {
         assert!(region.contains("sk_test_1234567890abcdefghijklmnop"));
         // Short buffer (prev_len below the window) is returned whole.
         assert_eq!(stream_scan_region("hello", 0), "hello");
+    }
+
+    #[test]
+    fn check_ws_origin_allows_absent_origin() {
+        // Non-browser clients (CLI, native, node) send no Origin → allow.
+        let headers = HeaderMap::new();
+        assert!(check_ws_origin(&headers));
+    }
+
+    #[test]
+    fn check_ws_origin_allows_loopback_origins() {
+        for origin in [
+            "http://127.0.0.1:42617",
+            "http://127.0.0.1",
+            "https://localhost:42617",
+            "http://localhost",
+            "http://[::1]:42617",
+            "http://LocalHost", // case-insensitive host
+        ] {
+            let mut headers = HeaderMap::new();
+            headers.insert("origin", origin.parse().unwrap());
+            assert!(check_ws_origin(&headers), "expected allow for {origin}");
+        }
+    }
+
+    #[test]
+    fn check_ws_origin_rejects_cross_site_origins() {
+        for origin in [
+            "https://evil.example.com",
+            "http://attacker.test:8080",
+            "https://127.0.0.1.evil.com", // loopback-looking but not loopback
+            "http://192.168.1.10",
+            "null",
+        ] {
+            let mut headers = HeaderMap::new();
+            headers.insert("origin", origin.parse().unwrap());
+            assert!(!check_ws_origin(&headers), "expected reject for {origin}");
+        }
     }
 }

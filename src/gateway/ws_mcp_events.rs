@@ -230,6 +230,15 @@ pub async fn handle_ws_mcp_events(
     headers: HeaderMap,
     ws: WebSocketUpgrade,
 ) -> axum::response::Response {
+    // Defense-in-depth: reject cross-site WebSocket handshakes (#383).
+    if !super::ws::check_ws_origin(&headers) {
+        return (
+            StatusCode::FORBIDDEN,
+            "Forbidden — cross-origin WebSocket upgrade rejected",
+        )
+            .into_response();
+    }
+
     if state.pairing.require_pairing() {
         let token = extract_ws_token(&headers, params.token.as_deref()).unwrap_or("");
         if !state.pairing.is_authenticated(token) {

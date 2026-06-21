@@ -436,6 +436,23 @@ pub async fn handle_ws_terminal(
     headers: HeaderMap,
     ws: WebSocketUpgrade,
 ) -> impl IntoResponse {
+    // Defense-in-depth: reject cross-site WebSocket handshakes (#383). The PTY
+    // is the highest-value target, so close the cross-origin handshake hole the
+    // same-origin policy leaves open before any other check.
+    if !super::ws::check_ws_origin(&headers) {
+        if let Some(ref logger) = state.audit_logger {
+            let _ = logger.log_security_event(
+                "dashboard",
+                "WebSocket terminal upgrade refused: cross-origin handshake",
+            );
+        }
+        return (
+            StatusCode::FORBIDDEN,
+            "Forbidden — cross-origin WebSocket upgrade rejected",
+        )
+            .into_response();
+    }
+
     // Auth check.
     //
     // The terminal is the single most dangerous endpoint in the gateway: it

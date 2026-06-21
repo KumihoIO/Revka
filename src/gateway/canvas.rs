@@ -180,6 +180,15 @@ pub async fn handle_ws_canvas(
     headers: HeaderMap,
     ws: WebSocketUpgrade,
 ) -> impl IntoResponse {
+    // Defense-in-depth: reject cross-site WebSocket handshakes (#383).
+    if !super::ws::check_ws_origin(&headers) {
+        return (
+            StatusCode::FORBIDDEN,
+            "Forbidden — cross-origin WebSocket upgrade rejected",
+        )
+            .into_response();
+    }
+
     // Auth check — same precedence as ws::handle_ws_chat:
     // 1. Authorization header, 2. Sec-WebSocket-Protocol bearer, 3. ?token= query param
     if state.pairing.require_pairing() {
