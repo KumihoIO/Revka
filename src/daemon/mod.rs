@@ -145,9 +145,25 @@ pub async fn run(config: Config, host: String, port: u16) -> Result<()> {
         tracing::info!("Cron disabled; scheduler supervisor not started");
     }
 
+    if config.sop.sops_dir.is_some() {
+        let sop_cron_cfg = config.clone();
+        handles.push(spawn_component_supervisor(
+            "sop_cron",
+            initial_backoff,
+            max_backoff,
+            move || {
+                let cfg = sop_cron_cfg.clone();
+                async move { Box::pin(run_sop_cron_worker(cfg)).await }
+            },
+        ));
+    } else {
+        crate::health::mark_component_ok("sop_cron");
+        tracing::info!("No SOPs directory configured; SOP cron scheduler not started");
+    }
+
     println!("🧠 Revka daemon started");
     println!("   Gateway:  http://{host}:{port}");
-    println!("   Components: gateway, channels, heartbeat, scheduler");
+    println!("   Components: gateway, channels, heartbeat, scheduler, sop_cron");
     if config.gateway.require_pairing {
         println!("   Pairing:    enabled (code appears in gateway output above)");
     }
@@ -604,6 +620,63 @@ async fn run_heartbeat_worker(config: Config) -> Result<()> {
         } else {
             sleep_mins = base_interval;
         }
+    }
+}
+
+/// Poll interval for the SOP cron scheduler. Window-based evaluation in
+/// `check_sop_cron_triggers` guarantees ticks between polls are never missed,
+/// so this only bounds firing latency, not correctness.
+const SOP_CRON_POLL_SECONDS: u64 = 30;
+
+/// Long-running worker that fires cron-triggered SOPs.
+///
+/// Owns its own daemon-side `SopEngine` (loaded from the configured SOPs
+/// directory) plus an audit logger, mirroring how `run_mqtt_sop_listener` owns
+/// the engine handle for the headless MQTT fan-in path. On each tick it checks
+/// the pre-parsed cron cache for occurrences in the window since the last poll
+/// and dispatches a `SopEvent` for every firing, then disposes of the results
+/// through `process_headless_results` (no agent loop runs here).
+async fn run_sop_cron_worker(config: Config) -> Result<()> {
+    use crate::sop::dispatch::{SopCronCache, check_sop_cron_triggers, process_headless_results};
+    use crate::sop::{SopAuditLogger, SopEngine};
+    use std::sync::Mutex;
+
+    // Load the engine from disk once at startup.
+    let engine = {
+        let mut eng = SopEngine::new(config.sop.clone());
+        eng.reload(&config.workspace_dir);
+        Arc::new(Mutex::new(eng))
+    };
+
+    let memory: Arc<dyn crate::memory::Memory> =
+        Arc::from(crate::memory::create_memory_with_storage_and_routes(
+            &config.memory,
+            &config.embedding_routes,
+            Some(&config.storage.provider.config),
+            &config.workspace_dir,
+            config.api_key.as_deref(),
+        )?);
+    let audit = SopAuditLogger::new(memory);
+
+    // Pre-parse cron schedules once. Built after the initial load so newly
+    // authored cron triggers present at startup are picked up.
+    let cache = SopCronCache::from_engine(&engine);
+
+    let mut interval = tokio::time::interval(Duration::from_secs(SOP_CRON_POLL_SECONDS));
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+    // Start the window at "now" so we don't retroactively batch-fire schedules
+    // for downtime — at-most-once semantics begin from worker startup.
+    let mut last_check = chrono::Utc::now();
+
+    crate::health::mark_component_ok("sop_cron");
+
+    loop {
+        interval.tick().await;
+        crate::health::mark_component_ok("sop_cron");
+
+        let results = check_sop_cron_triggers(&engine, &audit, &cache, &mut last_check).await;
+        process_headless_results(&engine, &audit, &results).await;
     }
 }
 
