@@ -73,16 +73,81 @@ pub(crate) fn record_tool_loop_cost_usage(
     }
 }
 
-/// Check budget before an LLM call. Returns `None` when no cost tracking
-/// context is scoped (tests, delegate, CLI without cost config).
-pub(crate) fn check_tool_loop_budget() -> Option<BudgetCheck> {
-    TOOL_LOOP_COST_TRACKING_CONTEXT
+/// Action the tool loop should take when the budget is exceeded, derived from
+/// the configured `enforcement.mode`.
+pub(crate) enum BudgetDecision {
+    /// Within budget (or warning only) — proceed normally.
+    Proceed,
+    /// Budget exceeded; hard-block with this overage detail.
+    Block {
+        current_usd: f64,
+        limit_usd: f64,
+        period: crate::cost::types::UsagePeriod,
+    },
+    /// Budget exceeded; downgrade to a cheaper model and continue.
+    RouteDown { model: String },
+}
+
+/// Resolve the budget gate for the current LLM call, applying the configured
+/// `enforcement.mode`. `active_model` is the model the loop is about to use,
+/// used to avoid re-routing when already on the route-down target.
+///
+/// Returns `None` when no cost tracking context is scoped.
+pub(crate) fn decide_tool_loop_budget(active_model: &str) -> Option<BudgetDecision> {
+    let ctx = TOOL_LOOP_COST_TRACKING_CONTEXT
         .try_with(Clone::clone)
         .ok()
-        .flatten()
-        .map(|ctx| {
-            ctx.tracker
-                .check_budget(0.0)
-                .unwrap_or(BudgetCheck::Allowed)
-        })
+        .flatten()?;
+
+    let check = ctx
+        .tracker
+        .check_budget(0.0)
+        .unwrap_or(BudgetCheck::Allowed);
+
+    let BudgetCheck::Exceeded {
+        current_usd,
+        limit_usd,
+        period,
+    } = check
+    else {
+        return Some(BudgetDecision::Proceed);
+    };
+
+    let block = BudgetDecision::Block {
+        current_usd,
+        limit_usd,
+        period,
+    };
+
+    match ctx.tracker.enforcement_mode() {
+        // Warn: annotate the overage but let the call proceed.
+        "warn" => {
+            tracing::warn!(
+                current_usd,
+                limit_usd,
+                ?period,
+                "Budget exceeded; proceeding because enforcement mode is \"warn\""
+            );
+            Some(BudgetDecision::Proceed)
+        }
+        // Route down: switch to the cheaper model when one is configured and we
+        // are not already using it; otherwise fall back to blocking.
+        "route_down" => match ctx.tracker.route_down_model() {
+            Some(target) if target != active_model => {
+                tracing::warn!(
+                    current_usd,
+                    limit_usd,
+                    ?period,
+                    target,
+                    "Budget exceeded; routing down to cheaper model"
+                );
+                Some(BudgetDecision::RouteDown {
+                    model: target.to_string(),
+                })
+            }
+            _ => Some(block),
+        },
+        // Block (and any unknown mode): keep the hard limit.
+        _ => Some(block),
+    }
 }

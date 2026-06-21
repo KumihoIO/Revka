@@ -1,6 +1,5 @@
 use crate::approval::{ApprovalManager, ApprovalRequest, ApprovalResponse};
 use crate::config::Config;
-use crate::cost::types::BudgetCheck;
 use crate::i18n::ToolDescriptions;
 use crate::memory::{self, Memory, MemoryCategory, decay};
 use crate::multimodal;
@@ -27,8 +26,8 @@ use uuid::Uuid;
 
 // Cost tracking moved to `super::cost`.
 pub(crate) use super::cost::{
-    TOOL_LOOP_COST_TRACKING_CONTEXT, ToolLoopCostTrackingContext, check_tool_loop_budget,
-    record_tool_loop_cost_usage,
+    BudgetDecision, TOOL_LOOP_COST_TRACKING_CONTEXT, ToolLoopCostTrackingContext,
+    decide_tool_loop_budget, record_tool_loop_cost_usage,
 };
 
 /// Minimum characters per chunk when relaying LLM text to a streaming draft.
@@ -2555,19 +2554,30 @@ pub(crate) async fn run_tool_call_loop(
             hooks.fire_llm_input(history, model).await;
         }
 
-        // Budget enforcement — block if limit exceeded (no-op when not scoped)
-        if let Some(BudgetCheck::Exceeded {
-            current_usd,
-            limit_usd,
-            period,
-        }) = check_tool_loop_budget()
-        {
-            return Err(anyhow::anyhow!(
-                "Budget exceeded: ${:.4} of ${:.2} {:?} limit. Cannot make further API calls until the budget resets.",
+        // Budget enforcement — honor `cost.enforcement.mode` (no-op when not
+        // scoped). `warn` proceeds, `block` hard-stops, `route_down` switches
+        // to a cheaper model when one is configured.
+        match decide_tool_loop_budget(active_model) {
+            None | Some(BudgetDecision::Proceed) => {}
+            Some(BudgetDecision::Block {
                 current_usd,
                 limit_usd,
-                period
-            ));
+                period,
+            }) => {
+                return Err(anyhow::anyhow!(
+                    "Budget exceeded: ${:.4} of ${:.2} {:?} limit. Cannot make further API calls until the budget resets.",
+                    current_usd,
+                    limit_usd,
+                    period
+                ));
+            }
+            Some(BudgetDecision::RouteDown { model: target }) => {
+                return Err(ModelSwitchRequested {
+                    provider: active_provider_name.to_string(),
+                    model: target,
+                }
+                .into());
+            }
         }
 
         // Unified path via Provider::chat so provider-specific native tool logic

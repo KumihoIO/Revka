@@ -50,7 +50,29 @@ impl CostTracker {
         self.session_costs.lock()
     }
 
+    /// Configured cost-enforcement mode (`warn`, `block`, or `route_down`).
+    pub fn enforcement_mode(&self) -> &str {
+        &self.config.enforcement.mode
+    }
+
+    /// Model hint to route to when the budget is exceeded (`route_down` mode).
+    pub fn route_down_model(&self) -> Option<&str> {
+        self.config.enforcement.route_down_model.as_deref()
+    }
+
+    /// Whether requests may bypass the budget gate (per-request override).
+    pub fn allow_override(&self) -> bool {
+        self.config.allow_override
+    }
+
     /// Check if a request is within budget.
+    ///
+    /// `reserve_percent` is honored as a soft threshold: the effective limit
+    /// used for the `Exceeded` decision is reduced so that the configured
+    /// reserve is kept available for critical operations. When
+    /// `allow_override` is set, an over-budget request is reported as
+    /// [`BudgetCheck::Warning`] instead of [`BudgetCheck::Exceeded`] so the
+    /// caller can let it proceed.
     pub fn check_budget(&self, estimated_cost_usd: f64) -> Result<BudgetCheck> {
         if !self.config.enabled {
             return Ok(BudgetCheck::Allowed);
@@ -65,9 +87,25 @@ impl CostTracker {
         let mut storage = self.lock_storage();
         let (daily_cost, monthly_cost) = storage.get_aggregated_costs()?;
 
+        // Reserve a fraction of each limit for critical operations: the
+        // effective ceiling for the `Exceeded` decision is the configured
+        // limit scaled down by `reserve_percent`.
+        let reserve_factor =
+            1.0 - f64::from(self.config.enforcement.reserve_percent.min(100)) / 100.0;
+        let effective_daily_limit = self.config.daily_limit_usd * reserve_factor;
+        let effective_monthly_limit = self.config.monthly_limit_usd * reserve_factor;
+        let allow_override = self.config.allow_override;
+
         // Check daily limit
         let projected_daily = daily_cost + estimated_cost_usd;
-        if projected_daily > self.config.daily_limit_usd {
+        if projected_daily > effective_daily_limit {
+            if allow_override {
+                return Ok(BudgetCheck::Warning {
+                    current_usd: daily_cost,
+                    limit_usd: self.config.daily_limit_usd,
+                    period: UsagePeriod::Day,
+                });
+            }
             return Ok(BudgetCheck::Exceeded {
                 current_usd: daily_cost,
                 limit_usd: self.config.daily_limit_usd,
@@ -77,7 +115,14 @@ impl CostTracker {
 
         // Check monthly limit
         let projected_monthly = monthly_cost + estimated_cost_usd;
-        if projected_monthly > self.config.monthly_limit_usd {
+        if projected_monthly > effective_monthly_limit {
+            if allow_override {
+                return Ok(BudgetCheck::Warning {
+                    current_usd: monthly_cost,
+                    limit_usd: self.config.monthly_limit_usd,
+                    period: UsagePeriod::Month,
+                });
+            }
             return Ok(BudgetCheck::Exceeded {
                 current_usd: monthly_cost,
                 limit_usd: self.config.monthly_limit_usd,
@@ -722,6 +767,68 @@ mod tests {
 
         let check = tracker.check_budget(0.01).unwrap();
         assert!(matches!(check, BudgetCheck::Exceeded { .. }));
+    }
+
+    #[test]
+    fn allow_override_downgrades_exceeded_to_warning() {
+        let tmp = TempDir::new().unwrap();
+        let config = CostConfig {
+            enabled: true,
+            daily_limit_usd: 0.01,
+            allow_override: true,
+            ..Default::default()
+        };
+
+        let tracker = CostTracker::new(config, tmp.path()).unwrap();
+        assert!(tracker.allow_override());
+
+        let usage = TokenUsage::new("test/model", 10000, 5000, 1.0, 2.0); // ~0.02 USD
+        tracker.record_usage(usage).unwrap();
+
+        let check = tracker.check_budget(0.01).unwrap();
+        assert!(matches!(check, BudgetCheck::Warning { .. }));
+    }
+
+    #[test]
+    fn reserve_percent_lowers_the_effective_limit() {
+        let tmp = TempDir::new().unwrap();
+        let mut config = CostConfig {
+            enabled: true,
+            daily_limit_usd: 1.0,
+            monthly_limit_usd: 1000.0,
+            warn_at_percent: 100,
+            ..Default::default()
+        };
+        // Reserve 50%: anything over $0.50/day is "exceeded".
+        config.enforcement = crate::config::schema::CostEnforcementConfig {
+            mode: "block".to_string(),
+            route_down_model: None,
+            reserve_percent: 50,
+        };
+
+        let tracker = CostTracker::new(config, tmp.path()).unwrap();
+
+        // ~$0.60 spent — below the $1.00 limit but above the $0.50 reserve floor.
+        let usage = TokenUsage::new("test/model", 600_000, 0, 1.0, 0.0);
+        tracker.record_usage(usage).unwrap();
+
+        let check = tracker.check_budget(0.0).unwrap();
+        assert!(matches!(check, BudgetCheck::Exceeded { .. }));
+    }
+
+    #[test]
+    fn enforcement_accessors_expose_config() {
+        let tmp = TempDir::new().unwrap();
+        let mut config = enabled_config();
+        config.enforcement = crate::config::schema::CostEnforcementConfig {
+            mode: "route_down".to_string(),
+            route_down_model: Some("anthropic/claude-3-haiku".to_string()),
+            reserve_percent: 10,
+        };
+
+        let tracker = CostTracker::new(config, tmp.path()).unwrap();
+        assert_eq!(tracker.enforcement_mode(), "route_down");
+        assert_eq!(tracker.route_down_model(), Some("anthropic/claude-3-haiku"));
     }
 
     #[test]
