@@ -3371,21 +3371,30 @@ async fn handle_gmail_push_webhook(
     }
 
     // Authenticate the webhook request using a shared secret.
+    // An unconfigured secret is a misconfiguration, not open access: reject so
+    // the endpoint is never silently unauthenticated.
     let secret = gmail_push.resolve_webhook_secret();
-    if !secret.is_empty() {
-        let provided = headers
-            .get(axum::http::header::AUTHORIZATION)
-            .and_then(|v| v.to_str().ok())
-            .and_then(|auth| auth.strip_prefix("Bearer "))
-            .unwrap_or("");
+    if secret.is_empty() {
+        tracing::error!(
+            "Gmail push webhook: no shared secret configured (set GMAIL_PUSH_WEBHOOK_SECRET); rejecting request"
+        );
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({"error": "Unauthorized"})),
+        );
+    }
+    let provided = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|auth| auth.strip_prefix("Bearer "))
+        .unwrap_or("");
 
-        if provided != secret {
-            tracing::warn!("Gmail push webhook: unauthorized request");
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(serde_json::json!({"error": "Unauthorized"})),
-            );
-        }
+    if !constant_time_eq(provided, &secret) {
+        tracing::warn!("Gmail push webhook: unauthorized request");
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({"error": "Unauthorized"})),
+        );
     }
 
     let body_str = String::from_utf8_lossy(&body);
