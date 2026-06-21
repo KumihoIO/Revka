@@ -99,13 +99,17 @@ pub fn is_non_retryable(err: &anyhow::Error) -> bool {
     }
     // Fallback: parse status codes from stringified errors (some providers
     // embed codes in error messages rather than returning typed HTTP errors).
+    // Classify on the *primary* status token only — not the first in-range
+    // digit run anywhere in the string — so a transient 5xx whose body embeds
+    // a 4xx-looking token or a trace/request-id number in 400–499 is not
+    // misclassified as non-retryable.
     let msg = err.to_string();
-    for word in msg.split(|c: char| !c.is_ascii_digit()) {
-        if let Ok(code) = word.parse::<u16>() {
-            if (400..500).contains(&code) {
-                return code != 429 && code != 408;
-            }
+    if let Some(code) = primary_http_status(&msg) {
+        if (400..500).contains(&code) {
+            return code != 429 && code != 408;
         }
+        // Any other status (1xx/2xx/3xx/5xx) is treated as retryable here and
+        // falls through to the keyword heuristics below.
     }
 
     // Heuristic: detect auth/model failures by keyword when no HTTP status
@@ -138,6 +142,47 @@ pub fn is_non_retryable(err: &anyhow::Error) -> bool {
             || msg_lower.contains("unsupported")
             || msg_lower.contains("does not exist")
             || msg_lower.contains("invalid"))
+}
+
+/// Extract the *primary* HTTP status code from a stringified provider error.
+///
+/// Providers emit errors in a canonical `"… API error (NNN …): …"` /
+/// `"HTTP NNN"` shape where the status code is the first token after the `(`
+/// or the `HTTP ` keyword. Anchoring to that shape (and otherwise to the first
+/// status-looking 3-digit token) ensures a leading 5xx is honored as the
+/// primary status instead of being skipped in favour of a later 4xx-looking
+/// token embedded in the body or a trace/request-id number.
+fn primary_http_status(msg: &str) -> Option<u16> {
+    // Prefer a status-context anchor: the code immediately after a `(` or the
+    // `HTTP ` keyword (both ASCII, so byte offsets are char boundaries).
+    let anchors = msg
+        .match_indices('(')
+        .map(|(i, _)| i + 1)
+        .chain(msg.match_indices("HTTP ").map(|(i, _)| i + "HTTP ".len()));
+    for start in anchors {
+        if let Some(code) = parse_status_at(&msg[start..]) {
+            return Some(code);
+        }
+    }
+    // No status-context anchor found: fall back to the *first* status-looking
+    // token (100–599) so the leading status wins over later digits.
+    msg.split(|c: char| !c.is_ascii_digit())
+        .filter_map(|word| word.parse::<u16>().ok())
+        .find(|&code| (100..600).contains(&code))
+}
+
+/// Parse a leading 3-digit HTTP status (100–599) at the start of `s`, requiring
+/// the digit run to be exactly three digits (not part of a longer number).
+fn parse_status_at(s: &str) -> Option<u16> {
+    let digits: String = s.chars().take_while(|c| c.is_ascii_digit()).collect();
+    if digits.len() == 3 {
+        if let Ok(code) = digits.parse::<u16>() {
+            if (100..600).contains(&code) {
+                return Some(code);
+            }
+        }
+    }
+    None
 }
 
 /// Check if an error is a tool schema validation failure (e.g. Groq returning
@@ -1826,6 +1871,46 @@ mod tests {
         assert!(
             !is_non_retryable(&err),
             "502 must NOT be treated as non-retryable"
+        );
+    }
+
+    #[test]
+    fn non_retryable_does_not_flag_5xx_with_embedded_4xx_token() {
+        // A transient 5xx whose body mentions a 4xx code must stay retryable:
+        // classification must anchor to the primary (leading) status, not the
+        // first in-range digit run anywhere in the string.
+        let err = anyhow::anyhow!("500 Internal Server Error: upstream returned 404 for model X");
+        assert!(
+            !is_non_retryable(&err),
+            "5xx with an embedded 4xx token must NOT be treated as non-retryable"
+        );
+
+        let anchored =
+            anyhow::anyhow!("OpenAI API error (500 Internal Server Error): upstream 404");
+        assert!(
+            !is_non_retryable(&anchored),
+            "canonical 5xx error with an embedded 4xx token must NOT be non-retryable"
+        );
+    }
+
+    #[test]
+    fn non_retryable_does_not_flag_5xx_with_trace_number_in_4xx_range() {
+        // A 5xx whose request-id/trace number happens to fall in 400–499 must
+        // not be misclassified as non-retryable.
+        let err = anyhow::anyhow!("503 Service Unavailable (request id req-412abc)");
+        assert!(
+            !is_non_retryable(&err),
+            "5xx with a 400–499 trace number must NOT be treated as non-retryable"
+        );
+    }
+
+    #[test]
+    fn non_retryable_flags_canonical_4xx_error_shape() {
+        // The canonical "… API error (NNN …)" shape must still flag genuine 4xx.
+        let err = anyhow::anyhow!("Anthropic API error (404 Not Found): no such model");
+        assert!(
+            is_non_retryable(&err),
+            "canonical 4xx error shape must be treated as non-retryable"
         );
     }
 
