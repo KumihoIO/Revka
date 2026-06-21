@@ -3310,14 +3310,14 @@ mod tests {
         // Within cap: at least retry_after seconds, at most retry_after + jitter.
         let d = TelegramChannel::compute_retry_delay(5);
         assert!(d.as_secs() >= 5);
-        assert!(d.as_millis() <= (5 * 1000 + TELEGRAM_RETRY_JITTER_MS) as u128);
+        assert!(d.as_millis() <= u128::from(5 * 1000 + TELEGRAM_RETRY_JITTER_MS));
 
         // Over cap: clamped to TELEGRAM_MAX_BACKOFF_SECS (+ jitter).
         let capped = TelegramChannel::compute_retry_delay(10_000);
         assert!(capped.as_secs() >= TELEGRAM_MAX_BACKOFF_SECS);
         assert!(
             capped.as_millis()
-                <= (TELEGRAM_MAX_BACKOFF_SECS * 1000 + TELEGRAM_RETRY_JITTER_MS) as u128
+                <= u128::from(TELEGRAM_MAX_BACKOFF_SECS * 1000 + TELEGRAM_RETRY_JITTER_MS)
         );
     }
 
