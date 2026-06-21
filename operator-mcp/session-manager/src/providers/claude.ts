@@ -17,7 +17,7 @@ const log = (msg: string) => process.stderr.write(`[session-mgr:claude] ${msg}\n
 /**
  * Detects if an error is a tool_use_id mismatch (orphaned tool_result after context truncation).
  */
-function isToolIdMismatchError(err: unknown): boolean {
+export function isToolIdMismatchError(err: unknown): boolean {
   // Check the error message, its cause chain, and stringified form
   const parts: string[] = [];
   if (err instanceof Error) {
@@ -38,7 +38,7 @@ function isToolIdMismatchError(err: unknown): boolean {
 /**
  * Build a continuation summary from session events for recovery after context corruption.
  */
-function buildContinuationSummary(events: AgentStreamEvent[], originalPrompt?: string): string {
+export function buildContinuationSummary(events: AgentStreamEvent[], originalPrompt?: string): string {
   const parts: string[] = [
     "IMPORTANT: Your previous session was interrupted due to a context window issue.",
     "Here is a summary of what you accomplished so far. Continue from where you left off.\n",
@@ -269,14 +269,14 @@ interface ToolCallStreamState {
   idToName: Map<string, string>;
 }
 
-function createToolCallStreamState(): ToolCallStreamState {
+export function createToolCallStreamState(): ToolCallStreamState {
   return { pending: new Map(), idToName: new Map() };
 }
 
 /**
  * Translate a raw SDK message into zero or more AgentStreamEvents.
  */
-function translateMessage(
+export function translateMessage(
   message: any,
   turnId: string,
   state: ToolCallStreamState,

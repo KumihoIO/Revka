@@ -328,11 +328,33 @@ jobs:
       - name: Check version alignment
         run: bash scripts/ci/check_version_drift.sh
 
+  session-manager:
+    name: Session Manager (TS)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: operator-mcp/session-manager
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a # v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Typecheck (tsc)
+        run: npm run build
+
+      - name: Test
+        run: npm test
+
   # Composite status check — branch protection requires this single job.
   gate:
     name: CI Required Gate
     if: always()
-    needs: [lint, msrv, bench-compile, lint-strict-delta, test, test-features, build, docs-quality, check-all-features, feature-matrix, version-drift]
+    needs: [lint, msrv, bench-compile, lint-strict-delta, test, test-features, build, docs-quality, check-all-features, feature-matrix, version-drift, session-manager]
     runs-on: ubuntu-latest
     steps:
       - name: Check upstream job results
