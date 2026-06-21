@@ -58,6 +58,23 @@ const WS_PROTOCOL: &str = "revka.v1";
 /// Prefix used in `Sec-WebSocket-Protocol` to carry a bearer token.
 const BEARER_SUBPROTO_PREFIX: &str = "bearer.";
 
+/// Cap on how far the per-turn timeout budget scales with the configured tool
+/// iteration count, mirroring the channel dispatch path's
+/// `CHANNEL_MESSAGE_TIMEOUT_SCALE_CAP`. Keeps a large `max_tool_iterations`
+/// from producing an effectively unbounded turn ceiling.
+const WS_TURN_TIMEOUT_SCALE_CAP: u64 = 4;
+
+/// Overall wall-clock budget (seconds) for a single WS chat turn. Mirrors the
+/// channel path's `channel_message_timeout_budget_secs_with_cap`: the
+/// per-provider-call timeout scaled by the effective tool-iteration count,
+/// capped by [`WS_TURN_TIMEOUT_SCALE_CAP`]. This is an upper bound on how long
+/// a silent/stalled provider or tool can hold the per-session queue permit
+/// before the turn is force-stopped and the permit released.
+fn ws_turn_timeout_budget_secs(provider_timeout_secs: u64, max_tool_iterations: usize) -> u64 {
+    let iterations = (max_tool_iterations.max(1) as u64).min(WS_TURN_TIMEOUT_SCALE_CAP);
+    provider_timeout_secs.max(1).saturating_mul(iterations)
+}
+
 #[derive(Deserialize)]
 pub struct WsQuery {
     pub token: Option<String>,
@@ -1056,12 +1073,26 @@ async fn process_chat_message(
         .cost_tracker
         .clone()
         .map(|tracker| crate::agent::cost::ToolLoopCostTrackingContext::new(tracker, "gateway"));
+    // Overall turn timeout: a provider that opens a stream and then goes silent
+    // (or a stalled tool) would otherwise leave the turn awaiting indefinitely
+    // and keep the per-session queue permit (`_session_guard`) held for the
+    // whole life of the connection, blocking follow-up turns on this session.
+    // Bound it the same way the channel dispatch path bounds its tool-call loop.
+    let turn_timeout_secs = {
+        let config = state.config.lock();
+        ws_turn_timeout_budget_secs(
+            config.provider_timeout_secs,
+            crate::agent::loop_::effective_max_tool_iterations(&config),
+        )
+    };
     let turn_fut =
         crate::agent::loop_::TOOL_LOOP_COST_TRACKING_CONTEXT.scope(cost_tracking_context, async {
             agent
                 .turn_streamed_with_steering(&content_owned, event_tx, Some(steering_rx))
                 .await
         });
+    let turn_fut =
+        tokio::time::timeout(std::time::Duration::from_secs(turn_timeout_secs), turn_fut);
 
     // Drive the turn and relays in one select loop so the WebSocket can
     // receive a `stop` control frame while the agent is still working.
@@ -1251,6 +1282,38 @@ async fn process_chat_message(
         return;
     };
 
+    // Peel the overall-turn-timeout layer. On elapse the inner `turn_fut` is
+    // dropped, cancelling the stalled provider/tool future at its next await
+    // point. Mirror the `stop`/disconnect cleanup above so the per-session
+    // queue permit is released even when neither the provider nor the client
+    // ever signals completion.
+    let result = match result {
+        Ok(inner) => inner,
+        Err(_elapsed) => {
+            tracing::warn!(
+                session = %session_key,
+                timeout_secs = turn_timeout_secs,
+                "WebSocket chat turn exceeded its overall timeout budget; stopping turn"
+            );
+            if let Some(ref backend) = state.session_backend {
+                let _ = backend.set_session_state(session_key, "idle", None);
+            }
+            let stopped = serde_json::json!({
+                "type": "stopped",
+                "message": format!(
+                    "Stopped current Operator turn after {turn_timeout_secs}s with no response."
+                )
+            });
+            let _ = sender.send(Message::Text(stopped.to_string().into())).await;
+            let _ = state.event_tx.send(serde_json::json!({
+                "type": "agent_end",
+                "provider": provider_label,
+                "model": state.model,
+            }));
+            return;
+        }
+    };
+
     match result {
         Ok(response) => {
             // Output guardrail: scrub credential leaks before the reply leaves
@@ -1342,6 +1405,21 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert("authorization", "Bearer rk_test123".parse().unwrap());
         assert_eq!(extract_ws_token(&headers, None), Some("rk_test123"));
+    }
+
+    #[test]
+    fn ws_turn_timeout_budget_scales_and_caps() {
+        // Scales with iterations: 120s × 3 iterations.
+        assert_eq!(ws_turn_timeout_budget_secs(120, 3), 360);
+        // Capped at WS_TURN_TIMEOUT_SCALE_CAP regardless of iteration count.
+        assert_eq!(
+            ws_turn_timeout_budget_secs(120, 80),
+            120 * WS_TURN_TIMEOUT_SCALE_CAP
+        );
+        // Zero iterations is treated as one (never an unbounded/zero budget).
+        assert_eq!(ws_turn_timeout_budget_secs(120, 0), 120);
+        // Zero provider timeout floors at one second of budget.
+        assert_eq!(ws_turn_timeout_budget_secs(0, 1), 1);
     }
 
     #[test]
