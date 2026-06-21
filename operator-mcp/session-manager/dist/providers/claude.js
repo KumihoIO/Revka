@@ -87,6 +87,18 @@ function buildContinuationSummary(events, originalPrompt) {
     return parts.join("\n");
 }
 /**
+ * Find the first user-message text in a timeline, used to recover the original
+ * prompt for a resumed session (whose live config.prompt is empty).
+ */
+function firstUserMessageText(events) {
+    for (const event of events) {
+        if (event.type === "timeline" && event.item.type === "user_message" && event.item.text) {
+            return event.item.text;
+        }
+    }
+    return undefined;
+}
+/**
  * Creates a reusable async message input channel (producer/consumer pair).
  * The `push()` side queues user messages; the `iterable` side yields them
  * into the Claude SDK query pump.
@@ -370,12 +382,15 @@ function extractUsage(message) {
 }
 const MAX_RECOVERY_ATTEMPTS = 2;
 /**
- * Create a Claude agent session and start the query pump.
+ * Internal: build a Claude session handle with its query pump and follow-up
+ * `sendQuery` closure attached. Shared by `createClaudeSession` (starts a turn
+ * immediately) and `resumeClaudeSession` (leaves the handle dormant until the
+ * first follow-up).
  */
-export function createClaudeSession(config, onEvent) {
+function buildClaudeHandle(config, onEvent, opts) {
     const handle = {
         id: config.title ?? "claude-session",
-        claudeSessionId: null,
+        claudeSessionId: opts.resumedSessionId ?? null,
         query: null,
         input: null,
         closed: false,
@@ -384,10 +399,13 @@ export function createClaudeSession(config, onEvent) {
         recoveryAttempts: 0,
         stderr: "",
     };
-    // Accumulate all events across pump restarts for recovery context
-    const accumulatedEvents = [];
-    // Store the original user prompt so recovery can re-inject it
-    const originalPrompt = config.prompt;
+    // Accumulate all events across pump restarts for recovery context. For a
+    // resumed session this is seeded with the persisted timeline so the first
+    // continuation summary carries the prior conversation.
+    const accumulatedEvents = opts.seedEvents ? [...opts.seedEvents] : [];
+    // Original user prompt so recovery can re-inject it. On resume config.prompt
+    // is empty, so fall back to the first user message in the persisted timeline.
+    const originalPrompt = config.prompt || firstUserMessageText(accumulatedEvents);
     const startPump = (prompt) => {
         const input = createAsyncInput();
         handle.input = input;
@@ -491,11 +509,10 @@ export function createClaudeSession(config, onEvent) {
             }
         })();
     };
-    // Start the first turn
-    onEvent({ type: "status_changed", status: "running" });
-    startPump(config.prompt);
     // Attach follow-up method — pushes into existing input stream if pump is alive,
-    // otherwise starts a fresh pump with continuation context.
+    // otherwise starts a fresh pump with continuation context. For a resumed
+    // (dormant) handle the pump is never started below, so the first follow-up
+    // takes the "start fresh with continuation summary" branch — exactly resume.
     handle.sendQuery = (prompt) => {
         if (handle.closed)
             throw new Error("Session is closed");
@@ -512,7 +529,37 @@ export function createClaudeSession(config, onEvent) {
             startPump(continuationPrompt + "\n\n## New User Message\n" + prompt);
         }
     };
+    // A fresh session starts its first turn now; a resumed handle stays idle until
+    // the first follow-up arrives via sendQuery.
+    if (opts.startImmediately) {
+        onEvent({ type: "status_changed", status: "running" });
+        startPump(config.prompt);
+    }
     return handle;
+}
+/**
+ * Create a Claude agent session and start the query pump immediately.
+ */
+export function createClaudeSession(config, onEvent) {
+    return buildClaudeHandle(config, onEvent, { startImmediately: true });
+}
+/**
+ * Rebuild a dormant, resumable Claude handle on sidecar restart.
+ *
+ * The handle carries the persisted timeline (`persistedEvents`) as recovery
+ * context and stays idle (no pump) until the first follow-up, at which point
+ * `sendQuery` starts a fresh pump seeded with a continuation summary — the same
+ * path `createClaudeSession` uses after its pump dies. This matches the
+ * provider's deliberate choice NOT to use the SDK `resume` option (see
+ * `buildClaudeOptions`), avoiding orphaned-`tool_result` 400s. `claudeSessionId`
+ * is carried for reference only; it is not fed to the SDK.
+ */
+export function resumeClaudeSession(config, persistedEvents, onEvent, claudeSessionId) {
+    return buildClaudeHandle(config, onEvent, {
+        startImmediately: false,
+        seedEvents: persistedEvents,
+        resumedSessionId: claudeSessionId,
+    });
 }
 /**
  * Send a follow-up query to an existing session.

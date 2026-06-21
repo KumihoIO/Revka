@@ -1,0 +1,11 @@
+{
+  // Test build: like the production tsconfig but re-includes *.test.ts and emits
+  // to a separate, git-ignored dir so the committed dist/ stays free of test
+  // artifacts. Run via `npm test`.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "dist-test"
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist", "dist-test"]
+}

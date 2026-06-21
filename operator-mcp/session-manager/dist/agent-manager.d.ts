@@ -42,5 +42,12 @@ export declare class AgentManager {
      * Only resumes Claude sessions that have a session ID (Codex cannot resume).
      */
     resumePersistedSessions(): Promise<number>;
+    /**
+     * Build the event handler that dispatches provider events into a managed
+     * session: appends to the timeline, tracks status (+ persisted status),
+     * accumulates usage, and rebroadcasts via the emitter. Shared by createAgent
+     * and resumePersistedSessions so resumed sessions handle events identically.
+     */
+    private makeOnEvent;
     private getSessionInfo;
 }

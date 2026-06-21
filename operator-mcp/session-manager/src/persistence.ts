@@ -2,8 +2,10 @@
  * Session Persistence — saves/restores agent state to disk.
  *
  * Agent state files live in ~/.revka/operator_mcp/agents/{agent_id}.json.
- * On sidecar startup, persisted sessions with status "running" or "idle"
- * are eligible for resume via the Claude SDK's `resume` option.
+ * On sidecar startup, persisted sessions with status "running" or "idle" are
+ * eligible for resume. Continuation context is rebuilt from the persisted
+ * timeline (a continuation summary), NOT the Claude SDK's `resume` option —
+ * see providers/claude.ts for why SDK resume is deliberately avoided.
  */
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
@@ -19,7 +21,7 @@ export interface PersistedAgentState {
   title: string;
   cwd: string;
   agentType: AgentProvider;
-  sessionId?: string;       // Claude SDK session ID (for resume)
+  sessionId?: string;       // Claude SDK session ID — marks a real, resumable session (not fed to SDK resume)
   status: string;
   parentId?: string;
   usage: AgentUsage;
