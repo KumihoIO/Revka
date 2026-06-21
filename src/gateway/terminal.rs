@@ -436,12 +436,30 @@ pub async fn handle_ws_terminal(
     headers: HeaderMap,
     ws: WebSocketUpgrade,
 ) -> impl IntoResponse {
-    // Auth check
-    if state.pairing.require_pairing() {
-        let token = extract_ws_token(&headers, params.token.as_deref()).unwrap_or("");
-        if !state.pairing.is_authenticated(token) {
-            return (StatusCode::UNAUTHORIZED, "Unauthorized").into_response();
+    // Auth check.
+    //
+    // The terminal is the single most dangerous endpoint in the gateway: it
+    // upgrades to an interactive PTY running the daemon user's shell with full
+    // local command execution. Unlike a read-only dashboard route, it must NOT
+    // ride the all-or-nothing pairing switch. When `require_pairing` is off
+    // (an explicit operator opt-out that opens every other endpoint), refuse
+    // to upgrade the terminal rather than handing out an unauthenticated shell.
+    if !state.pairing.require_pairing() {
+        if let Some(ref logger) = state.audit_logger {
+            let _ = logger.log_security_event(
+                "dashboard",
+                "WebSocket terminal upgrade refused: pairing is disabled",
+            );
         }
+        return (
+            StatusCode::FORBIDDEN,
+            "Terminal is disabled while pairing is off",
+        )
+            .into_response();
+    }
+    let token = extract_ws_token(&headers, params.token.as_deref()).unwrap_or("");
+    if !state.pairing.is_authenticated(token) {
+        return (StatusCode::UNAUTHORIZED, "Unauthorized").into_response();
     }
 
     // Echo sub-protocol if client requests it
