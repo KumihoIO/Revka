@@ -40,6 +40,13 @@ const STREAM_TOOL_MARKER_WINDOW_CHARS: usize = 512;
 /// Used as a safe fallback when `max_tool_iterations` is unset or configured as zero.
 const DEFAULT_MAX_TOOL_ITERATIONS: usize = 10;
 
+/// Output-token allowance added to the pre-call budget estimate so the projected
+/// cost accounts for generation, not just the prepared input (see #456). A fixed
+/// conservative reserve — the loop has no configured per-request output cap to
+/// borrow — biases the estimate toward blocking a request that would breach the
+/// limit before it is sent.
+const BUDGET_OUTPUT_RESERVE_TOKENS: u64 = 4_096;
+
 /// Resolve the effective max tool iterations.
 ///
 /// When the operator is enabled and has a non-zero `max_tool_iterations`,
@@ -2560,7 +2567,13 @@ pub(crate) async fn run_tool_call_loop(
         // `route_down_holder` keeps the downgraded model string alive so
         // `active_model` (a `&str`) can borrow it for the rest of this iteration.
         let route_down_holder;
-        match check_tool_loop_budget() {
+        let estimated_input_tokens = estimate_history_tokens(history) as u64;
+        match check_tool_loop_budget(
+            active_provider_name,
+            active_model,
+            estimated_input_tokens,
+            BUDGET_OUTPUT_RESERVE_TOKENS,
+        ) {
             None | Some(BudgetEnforcement::Proceed) => {}
             Some(BudgetEnforcement::Warn { reason }) => {
                 tracing::warn!("{reason}");

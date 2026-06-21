@@ -77,15 +77,33 @@ pub(crate) fn record_tool_loop_cost_usage(
 /// directive (`warn`/`block`/`route_down`, honoring `allow_override`).
 /// Returns `None` when no cost tracking context is scoped (tests, delegate,
 /// CLI without cost config), in which case the call should proceed.
-pub(crate) fn check_tool_loop_budget() -> Option<BudgetEnforcement> {
+///
+/// The check is predictive: it estimates the cost of the request about to be
+/// made from `input_tokens` (an estimate of the prepared request) plus
+/// `output_reserve_tokens` (an allowance for the generation), so the request
+/// that would breach the limit is blocked *before* it is sent rather than after
+/// (#456). The estimate degrades to `0.0` — i.e. the prior reactive behavior —
+/// when the active model has no pricing entry.
+pub(crate) fn check_tool_loop_budget(
+    provider_name: &str,
+    model: &str,
+    input_tokens: u64,
+    output_reserve_tokens: u64,
+) -> Option<BudgetEnforcement> {
     TOOL_LOOP_COST_TRACKING_CONTEXT
         .try_with(Clone::clone)
         .ok()
         .flatten()
         .map(|ctx| {
+            let estimated_cost_usd = ctx.tracker.estimate_request_cost(
+                provider_name,
+                model,
+                input_tokens,
+                output_reserve_tokens,
+            );
             let check = ctx
                 .tracker
-                .check_budget(0.0)
+                .check_budget(estimated_cost_usd)
                 .unwrap_or(BudgetCheck::Allowed);
             ctx.tracker.resolve_enforcement(&check)
         })
