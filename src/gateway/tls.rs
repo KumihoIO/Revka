@@ -7,6 +7,7 @@
 use crate::config::schema::{GatewayClientAuthConfig, GatewayTlsConfig};
 use anyhow::{Context, Result};
 use rustls::RootCertStore;
+use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use rustls::server::WebPkiClientVerifier;
 use rustls::server::danger::{ClientCertVerified, ClientCertVerifier};
@@ -169,7 +170,7 @@ fn load_certs(path: &str) -> Result<Vec<CertificateDer<'static>>> {
     let file = std::fs::File::open(path)
         .with_context(|| format!("cannot open certificate file: {path}"))?;
     let mut reader = std::io::BufReader::new(file);
-    let certs: Vec<CertificateDer<'static>> = rustls_pemfile::certs(&mut reader)
+    let certs: Vec<CertificateDer<'static>> = CertificateDer::pem_reader_iter(&mut reader)
         .collect::<std::result::Result<Vec<_>, _>>()
         .with_context(|| format!("failed to parse PEM certificates from {path}"))?;
     if certs.is_empty() {
@@ -183,9 +184,11 @@ fn load_private_key(path: &str) -> Result<PrivateKeyDer<'static>> {
     let file = std::fs::File::open(path)
         .with_context(|| format!("cannot open private key file: {path}"))?;
     let mut reader = std::io::BufReader::new(file);
-    let key = rustls_pemfile::private_key(&mut reader)
-        .with_context(|| format!("failed to parse private key from {path}"))?
-        .ok_or_else(|| anyhow::anyhow!("no private key found in {path}"))?;
+    // `from_pem_reader` returns the first private-key section (PKCS#8 / PKCS#1 /
+    // SEC1), skipping any non-key sections, and errors if none is found — same
+    // selection behavior as the previous `rustls_pemfile::private_key`.
+    let key = PrivateKeyDer::from_pem_reader(&mut reader)
+        .with_context(|| format!("failed to parse private key from {path}"))?;
     Ok(key)
 }
 
@@ -246,6 +249,40 @@ mod tests {
         assert!(!certs.is_empty());
 
         let _key = load_private_key(key_file.path().to_str().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn test_load_from_combined_cert_and_key_pem() {
+        // A single PEM file holding both the cert and the key (a common deployment
+        // layout). Each loader must skip the section it doesn't care about, matching
+        // the previous rustls_pemfile selection behavior.
+        let (ca_cert_pem, _ca_key_pem, ca_key) = test_ca();
+        let (server_cert_pem, server_key_pem) = test_server_cert(&ca_cert_pem, &ca_key);
+        let combined = format!("{server_cert_pem}{server_key_pem}");
+        let file = write_temp_file(&combined);
+
+        // load_certs returns the certificate(s), skipping the key section.
+        let certs = load_certs(file.path().to_str().unwrap()).unwrap();
+        assert_eq!(certs.len(), 1, "expected exactly the one certificate");
+        // load_private_key returns the key, skipping the leading certificate.
+        let _key = load_private_key(file.path().to_str().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn test_load_private_key_fails_closed_when_no_key_present() {
+        // A PEM file with only a certificate (no key section) must error, not
+        // silently succeed — preserving the previous rustls_pemfile fail-closed
+        // behavior after the rustls-pki-types migration.
+        let (ca_cert_pem, _ca_key_pem, ca_key) = test_ca();
+        let (server_cert_pem, _server_key_pem) = test_server_cert(&ca_cert_pem, &ca_key);
+        let file = write_temp_file(&server_cert_pem);
+
+        let err = load_private_key(file.path().to_str().unwrap()).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("failed to parse private key"),
+            "unexpected error: {msg}"
+        );
     }
 
     #[test]

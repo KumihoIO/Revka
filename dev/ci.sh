@@ -132,11 +132,11 @@ case "$1" in
     ;;
 
   deny)
-    run_in_ci "cargo deny check licenses sources"
+    run_in_ci "cargo deny check all"
     ;;
 
   security)
-    run_in_ci "cargo deny check licenses sources"
+    run_in_ci "cargo deny check all"
     run_in_ci "cargo audit"
     ;;
 
@@ -151,7 +151,7 @@ case "$1" in
     run_in_ci "cargo test --locked --verbose --features channel-matrix,channel-lark,channel-nostr,whatsapp-web"
     run_in_ci "bash tests/manual/test_dockerignore.sh"
     run_in_ci "cargo build --release --locked --verbose"
-    run_in_ci "cargo deny check licenses sources"
+    run_in_ci "cargo deny check all"
     run_in_ci "cargo audit"
     build_smoke_image
     docker run --rm revka-local-smoke:latest --version

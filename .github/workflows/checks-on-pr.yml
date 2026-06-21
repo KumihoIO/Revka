@@ -141,8 +141,11 @@ jobs:
             | awk '{ printf "--ignore %s ", $0 }')
           cargo audit $ignores
 
-      - name: Check licenses and sources
-        run: cargo deny check licenses sources
+      - name: Run cargo-deny policy (advisories, bans, licenses, sources)
+        # `all` runs every check kind, so the [advisories] (unmaintained/yanked)
+        # and [bans] policy in deny.toml is actually enforced — not just licenses
+        # and sources. See #443.
+        run: cargo deny check all
 
   check-32bit:
     name: "Check (32-bit)"
