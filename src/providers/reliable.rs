@@ -1,11 +1,13 @@
 use super::Provider;
 use super::traits::{
-    ChatMessage, ChatRequest, ChatResponse, StreamChunk, StreamEvent, StreamOptions, StreamResult,
+    ChatMessage, ChatRequest, ChatResponse, StreamChunk, StreamError, StreamEvent, StreamOptions,
+    StreamResult,
 };
 use async_trait::async_trait;
 use futures_util::{StreamExt, stream};
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::sync::Arc;
 // Atomics are only used by the test mocks now that key rotation was removed (#426).
 #[cfg(test)]
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -333,6 +335,182 @@ fn push_failure(
     ));
 }
 
+// ── Streaming connect-time resilience ──────────────────────────────────────
+// Streaming gets the same three-level failover as the non-streaming path —
+// model chain → provider chain → retry loop — but only for *connect-time*
+// failures (a pre-first-chunk error: connection refused, 5xx, 429 before any
+// event is emitted). Once the first event of a stream arrives we commit to
+// that stream and forward the rest; a mid-stream failure is NOT recoverable
+// because a partially emitted response cannot be safely re-attempted.
+
+/// One streaming attempt target: a (provider, model) pair plus a factory that
+/// lazily creates a fresh underlying stream for each retry. The factory owns
+/// all of its inputs (an `Arc<dyn Provider>` clone and owned argument copies),
+/// so it is `'static` and can run inside the spawned driver task.
+type StreamFactory<T> = Box<dyn FnMut() -> stream::BoxStream<'static, StreamResult<T>> + Send>;
+
+struct StreamCandidate<T> {
+    provider_name: String,
+    model: String,
+    make_stream: StreamFactory<T>,
+}
+
+/// Convert a `StreamError` into an `anyhow::Error` so it can be fed through the
+/// shared classification helpers (`is_non_retryable`, `is_rate_limited`,
+/// `compute_backoff`). Providers surface connect-time HTTP failures as
+/// `StreamError::Provider("<status>: <body>")` (see `compatible.rs`), which the
+/// string-based code-detection in those helpers recognizes.
+fn stream_err_to_anyhow(err: &StreamError) -> anyhow::Error {
+    anyhow::anyhow!("{err}")
+}
+
+/// Drive the streaming failover loop and forward the committed stream's events
+/// through `tx`. Mirrors the non-streaming loop's classification/backoff so the
+/// two paths recover from the same transient failures.
+async fn drive_stream_failover<T: Send + 'static>(
+    tx: tokio::sync::mpsc::Sender<StreamResult<T>>,
+    mut candidates: Vec<StreamCandidate<T>>,
+    max_retries: u32,
+    base_backoff_ms: u64,
+    requested_provider: String,
+    requested_model: String,
+) {
+    let max_attempts = max_retries + 1;
+    let mut failures: Vec<String> = Vec::new();
+
+    for candidate in candidates.iter_mut() {
+        let provider_name = candidate.provider_name.as_str();
+        let model = candidate.model.as_str();
+        let make_stream = &mut candidate.make_stream;
+        let mut backoff_ms = base_backoff_ms;
+
+        for attempt in 0..=max_retries {
+            let mut stream = make_stream();
+
+            // Peek the first event to decide whether the stream connected.
+            match stream.next().await {
+                Some(Ok(first)) => {
+                    // Connected. Record fallback if we deviated from the
+                    // originally requested primary provider/model, then forward
+                    // the first event and drain the rest.
+                    if provider_name != requested_provider || model != requested_model {
+                        tracing::info!(
+                            provider = provider_name,
+                            model,
+                            requested_model = %requested_model,
+                            "Streaming provider recovered (failover/retry)"
+                        );
+                        record_provider_fallback(
+                            &requested_provider,
+                            &requested_model,
+                            provider_name,
+                            model,
+                        );
+                    }
+                    if tx.send(Ok(first)).await.is_err() {
+                        return; // Receiver dropped.
+                    }
+                    while let Some(event) = stream.next().await {
+                        if tx.send(event).await.is_err() {
+                            return; // Receiver dropped.
+                        }
+                    }
+                    return;
+                }
+                Some(Err(e)) => {
+                    // Pre-first-chunk error: classify exactly like the
+                    // non-streaming path and retry or advance accordingly.
+                    let anyhow_err = stream_err_to_anyhow(&e);
+                    let non_retryable_rate_limit = is_non_retryable_rate_limit(&anyhow_err);
+                    let non_retryable = is_non_retryable(&anyhow_err) || non_retryable_rate_limit;
+                    let rate_limited = is_rate_limited(&anyhow_err);
+                    let reason = failure_reason(rate_limited, non_retryable);
+                    let error_detail = compact_error_detail(&anyhow_err);
+
+                    push_failure(
+                        &mut failures,
+                        provider_name,
+                        model,
+                        attempt + 1,
+                        max_attempts,
+                        reason,
+                        &error_detail,
+                    );
+
+                    if non_retryable {
+                        tracing::warn!(
+                            provider = provider_name,
+                            model,
+                            error = %error_detail,
+                            "Non-retryable streaming error, moving on"
+                        );
+                        break;
+                    }
+
+                    if attempt < max_retries {
+                        let wait = compute_backoff(backoff_ms, &anyhow_err);
+                        tracing::warn!(
+                            provider = provider_name,
+                            model,
+                            attempt = attempt + 1,
+                            backoff_ms = wait,
+                            reason,
+                            error = %error_detail,
+                            "Streaming connect failed, retrying"
+                        );
+                        tokio::time::sleep(Duration::from_millis(wait)).await;
+                        backoff_ms = (backoff_ms.saturating_mul(2)).min(10_000);
+                    }
+                }
+                None => {
+                    // Stream ended before any event — treat as a retryable
+                    // connect failure.
+                    push_failure(
+                        &mut failures,
+                        provider_name,
+                        model,
+                        attempt + 1,
+                        max_attempts,
+                        "retryable",
+                        "stream produced no events",
+                    );
+                    if attempt < max_retries {
+                        tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+                        backoff_ms = (backoff_ms.saturating_mul(2)).min(10_000);
+                    }
+                }
+            }
+        }
+
+        tracing::warn!(
+            provider = provider_name,
+            model,
+            "Exhausted streaming retries, trying next provider/model"
+        );
+    }
+
+    let summary = if failures.is_empty() {
+        "No provider supports streaming".to_string()
+    } else {
+        format!(
+            "All providers/models failed. Attempts:\n{}",
+            failures.join("\n")
+        )
+    };
+    let _ = tx.send(Err(StreamError::Provider(summary))).await;
+}
+
+/// Compute backoff duration, respecting Retry-After if present.
+/// Free-function twin of `ReliableProvider::compute_backoff` for use by the
+/// streaming driver, which runs outside `&self`.
+fn compute_backoff(base: u64, err: &anyhow::Error) -> u64 {
+    if let Some(retry_after) = parse_retry_after_ms(err) {
+        retry_after.min(30_000).max(base)
+    } else {
+        base
+    }
+}
+
 // ── Resilient Provider Wrapper ────────────────────────────────────────────
 // Three-level failover strategy: model chain → provider chain → retry loop.
 //   Outer loop:  iterate model fallback chain (original model first, then
@@ -345,7 +523,10 @@ fn push_failure(
 
 /// Provider wrapper with retry, fallback, and model failover.
 pub struct ReliableProvider {
-    providers: Vec<(String, Box<dyn Provider>)>,
+    // Providers are held as `Arc` so the streaming failover driver can move a
+    // cheap clone of each provider into the `'static` task that lazily
+    // (re-)creates underlying streams during connect-time retry/fallback.
+    providers: Vec<(String, Arc<dyn Provider>)>,
     max_retries: u32,
     base_backoff_ms: u64,
     /// Per-model fallback chains: model_name → [fallback_model_1, fallback_model_2, ...]
@@ -359,7 +540,10 @@ impl ReliableProvider {
         base_backoff_ms: u64,
     ) -> Self {
         Self {
-            providers,
+            providers: providers
+                .into_iter()
+                .map(|(name, provider)| (name, Arc::from(provider)))
+                .collect(),
             max_retries,
             base_backoff_ms: base_backoff_ms.max(50),
             model_fallbacks: HashMap::new(),
@@ -383,12 +567,7 @@ impl ReliableProvider {
 
     /// Compute backoff duration, respecting Retry-After if present.
     fn compute_backoff(&self, base: u64, err: &anyhow::Error) -> u64 {
-        if let Some(retry_after) = parse_retry_after_ms(err) {
-            // Use Retry-After but cap at 30s to avoid indefinite waits
-            retry_after.min(30_000).max(base)
-        } else {
-            base
-        }
+        compute_backoff(base, err)
     }
 }
 
@@ -1011,59 +1190,81 @@ impl Provider for ReliableProvider {
     ) -> stream::BoxStream<'static, StreamResult<StreamEvent>> {
         let needs_tool_events = request.tools.is_some_and(|tools| !tools.is_empty());
 
-        for (provider_name, provider) in &self.providers {
-            if !provider.supports_streaming() || !options.enabled {
-                continue;
-            }
+        // Connect-time resilience: try every model in the chain across every
+        // streaming-capable provider (respecting `needs_tool_events`), with
+        // per-attempt retry/backoff, until the first event arrives. Once a
+        // stream emits its first event we commit to it; mid-stream failures are
+        // NOT recovered (a partially emitted response cannot be re-attempted).
+        let owned_messages = request.messages.to_vec();
+        let owned_tools = request.tools.map(|t| t.to_vec());
 
-            if needs_tool_events && !provider.supports_streaming_tool_events() {
-                continue;
-            }
-
-            let provider_clone = provider_name.clone();
-
-            let current_model = self
-                .model_chain(model)
-                .first()
-                .copied()
-                .unwrap_or(model)
-                .to_string();
-
-            let req = ChatRequest {
-                messages: request.messages,
-                tools: request.tools,
-            };
-            let stream = provider.stream_chat(req, &current_model, temperature, options);
-            let (tx, rx) = tokio::sync::mpsc::channel::<StreamResult<StreamEvent>>(100);
-
-            tokio::spawn(async move {
-                let mut stream = stream;
-                while let Some(event) = stream.next().await {
-                    if let Err(ref e) = event {
-                        tracing::warn!(
-                            provider = provider_clone,
-                            model = current_model,
-                            "Streaming error: {e}"
-                        );
+        let mut candidates: Vec<StreamCandidate<StreamEvent>> = Vec::new();
+        if options.enabled {
+            for current_model in self.model_chain(model) {
+                let current_model = current_model.to_string();
+                for (provider_name, provider) in &self.providers {
+                    if !provider.supports_streaming() {
+                        continue;
                     }
-                    if tx.send(event).await.is_err() {
-                        break;
+                    if needs_tool_events && !provider.supports_streaming_tool_events() {
+                        continue;
                     }
+
+                    let provider = Arc::clone(provider);
+                    let messages = owned_messages.clone();
+                    let tools = owned_tools.clone();
+                    let model_for_call = current_model.clone();
+                    let make_stream: StreamFactory<StreamEvent> = Box::new(move || {
+                        provider.stream_chat(
+                            ChatRequest {
+                                messages: &messages,
+                                tools: tools.as_deref(),
+                            },
+                            &model_for_call,
+                            temperature,
+                            options,
+                        )
+                    });
+                    candidates.push(StreamCandidate {
+                        provider_name: provider_name.clone(),
+                        model: current_model.clone(),
+                        make_stream,
+                    });
                 }
-            });
-
-            return stream::unfold(rx, |mut rx| async move {
-                rx.recv().await.map(|event| (event, rx))
-            })
-            .boxed();
+            }
         }
 
-        let message = if needs_tool_events {
-            "No provider supports streaming tool events".to_string()
-        } else {
-            "No provider supports streaming".to_string()
-        };
-        stream::once(async move { Err(super::traits::StreamError::Provider(message)) }).boxed()
+        if candidates.is_empty() {
+            let message = if needs_tool_events {
+                "No provider supports streaming tool events".to_string()
+            } else {
+                "No provider supports streaming".to_string()
+            };
+            return stream::once(async move { Err(StreamError::Provider(message)) }).boxed();
+        }
+
+        let (tx, rx) = tokio::sync::mpsc::channel::<StreamResult<StreamEvent>>(100);
+        let max_retries = self.max_retries;
+        let base_backoff_ms = self.base_backoff_ms;
+        let requested_provider = self
+            .providers
+            .first()
+            .map(|(n, _)| n.clone())
+            .unwrap_or_default();
+        let requested_model = model.to_string();
+        tokio::spawn(drive_stream_failover(
+            tx,
+            candidates,
+            max_retries,
+            base_backoff_ms,
+            requested_provider,
+            requested_model,
+        ));
+
+        stream::unfold(rx, |mut rx| async move {
+            rx.recv().await.map(|event| (event, rx))
+        })
+        .boxed()
     }
 
     fn stream_chat_with_system(
@@ -1074,63 +1275,72 @@ impl Provider for ReliableProvider {
         temperature: f64,
         options: StreamOptions,
     ) -> stream::BoxStream<'static, StreamResult<StreamChunk>> {
-        // Try each provider/model combination for streaming
-        // For streaming, we use the first provider that supports it and has streaming enabled
-        for (provider_name, provider) in &self.providers {
-            if !provider.supports_streaming() || !options.enabled {
-                continue;
-            }
+        // Connect-time resilience mirroring the non-streaming path: iterate the
+        // full model chain across every streaming-capable provider, retrying
+        // transient pre-first-chunk failures with backoff. We attempt the
+        // stream and recover any connect-time error; mid-stream failures are
+        // propagated unchanged because a partially emitted response cannot be
+        // safely re-attempted.
+        let owned_system = system_prompt.map(|s| s.to_string());
+        let owned_message = message.to_string();
 
-            // Clone provider data for the stream
-            let provider_clone = provider_name.clone();
-
-            // Try the first model in the chain for streaming
-            let current_model = match self.model_chain(model).first() {
-                Some(m) => (*m).to_string(),
-                None => model.to_string(),
-            };
-
-            // For streaming, we attempt once and propagate errors
-            // The caller can retry the entire request if needed
-            let stream = provider.stream_chat_with_system(
-                system_prompt,
-                message,
-                &current_model,
-                temperature,
-                options,
-            );
-
-            // Use a channel to bridge the stream with logging
-            let (tx, rx) = tokio::sync::mpsc::channel::<StreamResult<StreamChunk>>(100);
-
-            tokio::spawn(async move {
-                let mut stream = stream;
-                while let Some(chunk) = stream.next().await {
-                    if let Err(ref e) = chunk {
-                        tracing::warn!(
-                            provider = provider_clone,
-                            model = current_model,
-                            "Streaming error: {e}"
-                        );
+        let mut candidates: Vec<StreamCandidate<StreamChunk>> = Vec::new();
+        if options.enabled {
+            for current_model in self.model_chain(model) {
+                let current_model = current_model.to_string();
+                for (provider_name, provider) in &self.providers {
+                    if !provider.supports_streaming() {
+                        continue;
                     }
-                    if tx.send(chunk).await.is_err() {
-                        break; // Receiver dropped
-                    }
+
+                    let provider = Arc::clone(provider);
+                    let system = owned_system.clone();
+                    let user = owned_message.clone();
+                    let model_for_call = current_model.clone();
+                    let make_stream: StreamFactory<StreamChunk> = Box::new(move || {
+                        provider.stream_chat_with_system(
+                            system.as_deref(),
+                            &user,
+                            &model_for_call,
+                            temperature,
+                            options,
+                        )
+                    });
+                    candidates.push(StreamCandidate {
+                        provider_name: provider_name.clone(),
+                        model: current_model.clone(),
+                        make_stream,
+                    });
                 }
-            });
+            }
+        }
 
-            // Convert channel receiver to stream
-            return stream::unfold(rx, |mut rx| async move {
-                rx.recv().await.map(|chunk| (chunk, rx))
+        if candidates.is_empty() {
+            return stream::once(async move {
+                Err(StreamError::Provider(
+                    "No provider supports streaming".to_string(),
+                ))
             })
             .boxed();
         }
 
-        // No streaming support available
-        stream::once(async move {
-            Err(super::traits::StreamError::Provider(
-                "No provider supports streaming".to_string(),
-            ))
+        let (tx, rx) = tokio::sync::mpsc::channel::<StreamResult<StreamChunk>>(100);
+        let requested_provider = self
+            .providers
+            .first()
+            .map(|(n, _)| n.clone())
+            .unwrap_or_default();
+        tokio::spawn(drive_stream_failover(
+            tx,
+            candidates,
+            self.max_retries,
+            self.base_backoff_ms,
+            requested_provider,
+            model.to_string(),
+        ));
+
+        stream::unfold(rx, |mut rx| async move {
+            rx.recv().await.map(|chunk| (chunk, rx))
         })
         .boxed()
     }
@@ -1142,53 +1352,68 @@ impl Provider for ReliableProvider {
         temperature: f64,
         options: StreamOptions,
     ) -> stream::BoxStream<'static, StreamResult<StreamChunk>> {
-        // Try each provider/model combination for streaming with history.
-        // Mirrors stream_chat_with_system but delegates to the underlying
-        // provider's stream_chat_with_history, preserving the full conversation.
-        for (provider_name, provider) in &self.providers {
-            if !provider.supports_streaming() || !options.enabled {
-                continue;
-            }
+        // Connect-time resilience mirroring the non-streaming path, preserving
+        // the full conversation: iterate the model chain across every
+        // streaming-capable provider, retrying transient pre-first-chunk
+        // failures with backoff. Mid-stream failures are propagated unchanged
+        // because a partially emitted response cannot be safely re-attempted.
+        let owned_messages = messages.to_vec();
 
-            let provider_clone = provider_name.clone();
-
-            let current_model = match self.model_chain(model).first() {
-                Some(m) => (*m).to_string(),
-                None => model.to_string(),
-            };
-
-            let stream =
-                provider.stream_chat_with_history(messages, &current_model, temperature, options);
-
-            let (tx, rx) = tokio::sync::mpsc::channel::<StreamResult<StreamChunk>>(100);
-
-            tokio::spawn(async move {
-                let mut stream = stream;
-                while let Some(chunk) = stream.next().await {
-                    if let Err(ref e) = chunk {
-                        tracing::warn!(
-                            provider = provider_clone,
-                            model = current_model,
-                            "Streaming error: {e}"
-                        );
+        let mut candidates: Vec<StreamCandidate<StreamChunk>> = Vec::new();
+        if options.enabled {
+            for current_model in self.model_chain(model) {
+                let current_model = current_model.to_string();
+                for (provider_name, provider) in &self.providers {
+                    if !provider.supports_streaming() {
+                        continue;
                     }
-                    if tx.send(chunk).await.is_err() {
-                        break; // Receiver dropped
-                    }
+
+                    let provider = Arc::clone(provider);
+                    let messages = owned_messages.clone();
+                    let model_for_call = current_model.clone();
+                    let make_stream: StreamFactory<StreamChunk> = Box::new(move || {
+                        provider.stream_chat_with_history(
+                            &messages,
+                            &model_for_call,
+                            temperature,
+                            options,
+                        )
+                    });
+                    candidates.push(StreamCandidate {
+                        provider_name: provider_name.clone(),
+                        model: current_model.clone(),
+                        make_stream,
+                    });
                 }
-            });
+            }
+        }
 
-            return stream::unfold(rx, |mut rx| async move {
-                rx.recv().await.map(|chunk| (chunk, rx))
+        if candidates.is_empty() {
+            return stream::once(async move {
+                Err(StreamError::Provider(
+                    "No provider supports streaming".to_string(),
+                ))
             })
             .boxed();
         }
 
-        // No streaming support available
-        stream::once(async move {
-            Err(super::traits::StreamError::Provider(
-                "No provider supports streaming".to_string(),
-            ))
+        let (tx, rx) = tokio::sync::mpsc::channel::<StreamResult<StreamChunk>>(100);
+        let requested_provider = self
+            .providers
+            .first()
+            .map(|(n, _)| n.clone())
+            .unwrap_or_default();
+        tokio::spawn(drive_stream_failover(
+            tx,
+            candidates,
+            self.max_retries,
+            self.base_backoff_ms,
+            requested_provider,
+            model.to_string(),
+        ));
+
+        stream::unfold(rx, |mut rx| async move {
+            rx.recv().await.map(|chunk| (chunk, rx))
         })
         .boxed()
     }
@@ -2899,5 +3124,272 @@ mod tests {
             assert!(take_last_provider_fallback().is_none());
         })
         .await;
+    }
+
+    // ── streaming connect-time resilience tests (#410) ───────────────────
+
+    /// Streaming mock that fails connect-time (yields an `Err` as the first and
+    /// only event) for the first `fail_until_attempt` calls, then succeeds.
+    /// Used to verify retry/backoff and provider/model failover for streams.
+    struct ConnectFailStreamMock {
+        calls: Arc<AtomicUsize>,
+        fail_until_attempt: usize,
+        error: &'static str,
+        response: &'static str,
+        /// Models that should always fail connect-time (for model-fallback tests).
+        fail_models: Vec<&'static str>,
+        models_seen: Arc<parking_lot::Mutex<Vec<String>>>,
+    }
+
+    impl ConnectFailStreamMock {
+        fn new(error: &'static str, response: &'static str) -> Self {
+            Self {
+                calls: Arc::new(AtomicUsize::new(0)),
+                fail_until_attempt: 0,
+                error,
+                response,
+                fail_models: Vec::new(),
+                models_seen: Arc::new(parking_lot::Mutex::new(Vec::new())),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl Provider for ConnectFailStreamMock {
+        async fn chat_with_system(
+            &self,
+            _system_prompt: Option<&str>,
+            _message: &str,
+            _model: &str,
+            _temperature: f64,
+        ) -> anyhow::Result<String> {
+            Ok("ok".to_string())
+        }
+
+        fn supports_streaming(&self) -> bool {
+            true
+        }
+
+        fn stream_chat_with_history(
+            &self,
+            _messages: &[ChatMessage],
+            model: &str,
+            _temperature: f64,
+            _options: StreamOptions,
+        ) -> stream::BoxStream<'static, StreamResult<StreamChunk>> {
+            let attempt = self.calls.fetch_add(1, Ordering::SeqCst) + 1;
+            self.models_seen.lock().push(model.to_string());
+            let fail = attempt <= self.fail_until_attempt || self.fail_models.contains(&model);
+            if fail {
+                let error = self.error.to_string();
+                stream::once(async move { Err(StreamError::Provider(error)) }).boxed()
+            } else {
+                stream::iter(vec![
+                    Ok(StreamChunk::delta(self.response)),
+                    Ok(StreamChunk::final_chunk()),
+                ])
+                .boxed()
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn stream_with_history_retries_connect_failure_then_recovers() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let provider = ReliableProvider::new(
+            vec![(
+                "primary".into(),
+                Box::new(ConnectFailStreamMock {
+                    calls: Arc::clone(&calls),
+                    fail_until_attempt: 1, // first connect attempt fails (503)
+                    error: "503 Service Unavailable",
+                    response: "recovered",
+                    fail_models: Vec::new(),
+                    models_seen: Arc::new(parking_lot::Mutex::new(Vec::new())),
+                }) as Box<dyn Provider>,
+            )],
+            2, // max_retries
+            1, // base backoff (ms)
+        );
+
+        let messages = vec![ChatMessage::user("hello")];
+        let mut stream =
+            provider.stream_chat_with_history(&messages, "model", 0.0, StreamOptions::new(true));
+
+        let first = stream.next().await.unwrap().unwrap();
+        assert_eq!(first.delta, "recovered");
+        let second = stream.next().await.unwrap().unwrap();
+        assert!(second.is_final);
+        assert!(stream.next().await.is_none());
+        // One failed connect + one successful retry on the same provider.
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn stream_with_history_fails_over_to_next_provider() {
+        scope_provider_fallback(async {
+            let primary_calls = Arc::new(AtomicUsize::new(0));
+            let fallback_calls = Arc::new(AtomicUsize::new(0));
+            let provider = ReliableProvider::new(
+                vec![
+                    (
+                        "primary".into(),
+                        Box::new(ConnectFailStreamMock {
+                            calls: Arc::clone(&primary_calls),
+                            fail_until_attempt: usize::MAX, // always fails connect
+                            error: "401 Unauthorized",      // non-retryable -> advance
+                            response: "unused",
+                            fail_models: Vec::new(),
+                            models_seen: Arc::new(parking_lot::Mutex::new(Vec::new())),
+                        }) as Box<dyn Provider>,
+                    ),
+                    (
+                        "fallback".into(),
+                        Box::new(ConnectFailStreamMock {
+                            calls: Arc::clone(&fallback_calls),
+                            fail_until_attempt: 0,
+                            error: "unused",
+                            response: "from fallback",
+                            fail_models: Vec::new(),
+                            models_seen: Arc::new(parking_lot::Mutex::new(Vec::new())),
+                        }) as Box<dyn Provider>,
+                    ),
+                ],
+                2,
+                1,
+            );
+
+            let messages = vec![ChatMessage::user("hello")];
+            let mut stream = provider.stream_chat_with_history(
+                &messages,
+                "model",
+                0.0,
+                StreamOptions::new(true),
+            );
+
+            let first = stream.next().await.unwrap().unwrap();
+            assert_eq!(first.delta, "from fallback");
+            assert!(stream.next().await.unwrap().unwrap().is_final);
+            assert!(stream.next().await.is_none());
+
+            // Non-retryable primary error means a single primary attempt before
+            // advancing to the working fallback.
+            assert_eq!(primary_calls.load(Ordering::SeqCst), 1);
+            assert_eq!(fallback_calls.load(Ordering::SeqCst), 1);
+
+            let fb = take_last_provider_fallback().expect("fallback info recorded");
+            assert_eq!(fb.requested_provider, "primary");
+            assert_eq!(fb.actual_provider, "fallback");
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn stream_with_history_falls_back_to_next_model() {
+        let mock = ConnectFailStreamMock {
+            fail_models: vec!["primary-model"], // primary model always 500s on connect
+            ..ConnectFailStreamMock::new("500 model unavailable", "from fallback model")
+        };
+        let calls = Arc::clone(&mock.calls);
+        let models_seen = Arc::clone(&mock.models_seen);
+
+        let mut fallbacks = HashMap::new();
+        fallbacks.insert(
+            "primary-model".to_string(),
+            vec!["fallback-model".to_string()],
+        );
+        let provider = ReliableProvider::new(
+            vec![("primary".into(), Box::new(mock) as Box<dyn Provider>)],
+            0, // no per-attempt retries; rely on model-chain fallback
+            1,
+        )
+        .with_model_fallbacks(fallbacks);
+
+        let messages = vec![ChatMessage::user("hello")];
+        let mut stream = provider.stream_chat_with_history(
+            &messages,
+            "primary-model",
+            0.0,
+            StreamOptions::new(true),
+        );
+
+        let first = stream.next().await.unwrap().unwrap();
+        assert_eq!(first.delta, "from fallback model");
+        assert!(stream.next().await.unwrap().unwrap().is_final);
+        assert!(stream.next().await.is_none());
+
+        // Tried primary-model (failed) then fallback-model (succeeded).
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            *models_seen.lock(),
+            vec!["primary-model".to_string(), "fallback-model".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn stream_with_history_mid_stream_error_is_not_recovered() {
+        // A provider that emits one good chunk then errors mid-stream. The
+        // error must be forwarded to the caller unchanged — no failover —
+        // because a partially emitted response cannot be safely re-attempted.
+        struct MidStreamFailMock {
+            calls: Arc<AtomicUsize>,
+        }
+
+        #[async_trait]
+        impl Provider for MidStreamFailMock {
+            async fn chat_with_system(
+                &self,
+                _system_prompt: Option<&str>,
+                _message: &str,
+                _model: &str,
+                _temperature: f64,
+            ) -> anyhow::Result<String> {
+                Ok("ok".to_string())
+            }
+
+            fn supports_streaming(&self) -> bool {
+                true
+            }
+
+            fn stream_chat_with_history(
+                &self,
+                _messages: &[ChatMessage],
+                _model: &str,
+                _temperature: f64,
+                _options: StreamOptions,
+            ) -> stream::BoxStream<'static, StreamResult<StreamChunk>> {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                stream::iter(vec![
+                    Ok(StreamChunk::delta("partial")),
+                    Err(StreamError::Provider("503 mid-stream".to_string())),
+                ])
+                .boxed()
+            }
+        }
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let provider = ReliableProvider::new(
+            vec![(
+                "primary".into(),
+                Box::new(MidStreamFailMock {
+                    calls: Arc::clone(&calls),
+                }) as Box<dyn Provider>,
+            )],
+            2,
+            1,
+        );
+
+        let messages = vec![ChatMessage::user("hello")];
+        let mut stream =
+            provider.stream_chat_with_history(&messages, "model", 0.0, StreamOptions::new(true));
+
+        let first = stream.next().await.unwrap().unwrap();
+        assert_eq!(first.delta, "partial");
+        let second = stream.next().await.unwrap();
+        let err = second.expect_err("mid-stream error should propagate");
+        assert!(err.to_string().contains("mid-stream"), "got: {err}");
+        assert!(stream.next().await.is_none());
+        // Committed to the first stream — no retry/failover after first chunk.
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 }
