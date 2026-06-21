@@ -10095,6 +10095,14 @@ impl Config {
             anyhow::bail!("scheduler.max_tasks must be greater than 0");
         }
 
+        // Provider HTTP timeout: a zero deadline aborts every provider call
+        // immediately (reqwest treats Duration::ZERO as an instantly-firing
+        // timeout). Reject for parity with the REVKA_PROVIDER_TIMEOUT_SECS env
+        // path and the sibling timeout fields.
+        if self.provider_timeout_secs == 0 {
+            anyhow::bail!("provider_timeout_secs must be greater than 0");
+        }
+
         // Model routes
         for (i, route) in self.model_routes.iter().enumerate() {
             if route.hint.trim().is_empty() {
@@ -12362,6 +12370,17 @@ provider_timeout_secs = 300
 "#;
         let parsed = parse_test_config(raw);
         assert_eq!(parsed.provider_timeout_secs, 300);
+    }
+
+    #[test]
+    async fn provider_timeout_secs_zero_is_rejected() {
+        let mut config = Config::default();
+        config.provider_timeout_secs = 0;
+        let err = config.validate().unwrap_err().to_string();
+        assert!(
+            err.contains("provider_timeout_secs must be greater than 0"),
+            "expected provider_timeout_secs zero-guard error, got: {err}"
+        );
     }
 
     #[test]
