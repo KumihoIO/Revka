@@ -2582,6 +2582,18 @@ pub(crate) async fn run_tool_call_loop(
                     period
                 ));
             }
+            Some(BudgetEnforcement::BlockTokens {
+                current_tokens,
+                limit_tokens,
+                period,
+            }) => {
+                return Err(anyhow::anyhow!(
+                    "Token budget exceeded: {} of {} {:?} token limit. Cannot make further API calls until the budget resets.",
+                    current_tokens,
+                    limit_tokens,
+                    period
+                ));
+            }
         }
 
         // Unified path via Provider::chat so provider-specific native tool logic

@@ -137,6 +137,14 @@ pub enum BudgetCheck {
         limit_usd: f64,
         period: UsagePeriod,
     },
+    /// Token limit exceeded, request blocked. Tracked independently of cost so
+    /// that models with no pricing entry (which record `$0.00`) are still
+    /// bounded.
+    TokensExceeded {
+        current_tokens: u64,
+        limit_tokens: u64,
+        period: UsagePeriod,
+    },
 }
 
 /// Action the agent loop should take after a budget check, derived from the
@@ -156,6 +164,13 @@ pub enum BudgetEnforcement {
     Block {
         current_usd: f64,
         limit_usd: f64,
+        period: UsagePeriod,
+    },
+    /// Token limit exceeded and `mode = "block"` (or `route_down` without a
+    /// target) — hard-stop the call. Carries the token overage details.
+    BlockTokens {
+        current_tokens: u64,
+        limit_tokens: u64,
         period: UsagePeriod,
     },
 }
