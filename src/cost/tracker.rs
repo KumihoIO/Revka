@@ -64,6 +64,29 @@ impl CostTracker {
 
         let mut storage = self.lock_storage();
         let (daily_cost, monthly_cost) = storage.get_aggregated_costs()?;
+        let (daily_tokens, monthly_tokens) = storage.get_aggregated_tokens()?;
+
+        // Token-based safety net: enforced independently of cost so that models
+        // with no pricing entry (which record `$0.00`) are still bounded. A
+        // token limit of `None`/`0` disables that period's token gate.
+        if let Some(limit) = self.config.daily_token_limit.filter(|limit| *limit > 0) {
+            if daily_tokens >= limit {
+                return Ok(BudgetCheck::TokensExceeded {
+                    current_tokens: daily_tokens,
+                    limit_tokens: limit,
+                    period: UsagePeriod::Day,
+                });
+            }
+        }
+        if let Some(limit) = self.config.monthly_token_limit.filter(|limit| *limit > 0) {
+            if monthly_tokens >= limit {
+                return Ok(BudgetCheck::TokensExceeded {
+                    current_tokens: monthly_tokens,
+                    limit_tokens: limit,
+                    period: UsagePeriod::Month,
+                });
+            }
+        }
 
         // `reserve_percent` carves a soft buffer off the top of each limit so a
         // request that would dip into the reserve is treated as exceeding the
@@ -119,11 +142,14 @@ impl CostTracker {
     /// Map a budget check into an enforcement directive based on the configured
     /// `[cost.enforcement] mode` and `allow_override`.
     ///
-    /// Only `BudgetCheck::Exceeded` is mode-sensitive; `Allowed`/`Warning`
-    /// always `Proceed`. The previous behavior (always hard-block on exceed)
-    /// now corresponds only to `mode = "block"`.
+    /// Only `BudgetCheck::Exceeded` / `TokensExceeded` are mode-sensitive;
+    /// `Allowed`/`Warning` always `Proceed`. The previous behavior (always
+    /// hard-block on exceed) now corresponds only to `mode = "block"`.
     pub fn resolve_enforcement(&self, check: &BudgetCheck) -> BudgetEnforcement {
-        let (current_usd, limit_usd, period) = match check {
+        // `overage` is a human-readable description of what was exceeded, shared
+        // by every mode's reason string; `block` is the variant-specific
+        // hard-stop directive (USD vs. token overage).
+        let (overage, block): (String, Box<dyn Fn() -> BudgetEnforcement>) = match check {
             BudgetCheck::Allowed | BudgetCheck::Warning { .. } => {
                 return BudgetEnforcement::Proceed;
             }
@@ -131,36 +157,54 @@ impl CostTracker {
                 current_usd,
                 limit_usd,
                 period,
-            } => (*current_usd, *limit_usd, *period),
+            } => {
+                let (current_usd, limit_usd, period) = (*current_usd, *limit_usd, *period);
+                (
+                    format!(
+                        "budget exceeded (${current_usd:.4} of ${limit_usd:.2} {period:?} limit)"
+                    ),
+                    Box::new(move || BudgetEnforcement::Block {
+                        current_usd,
+                        limit_usd,
+                        period,
+                    }),
+                )
+            }
+            BudgetCheck::TokensExceeded {
+                current_tokens,
+                limit_tokens,
+                period,
+            } => {
+                let (current_tokens, limit_tokens, period) =
+                    (*current_tokens, *limit_tokens, *period);
+                (
+                    format!(
+                        "token budget exceeded ({current_tokens} of {limit_tokens} {period:?} token limit)"
+                    ),
+                    Box::new(move || BudgetEnforcement::BlockTokens {
+                        current_tokens,
+                        limit_tokens,
+                        period,
+                    }),
+                )
+            }
         };
 
         // A per-request override bypasses enforcement entirely.
         if self.config.allow_override {
             return BudgetEnforcement::Warn {
-                reason: format!(
-                    "budget exceeded (${current_usd:.4} of ${limit_usd:.2} {period:?} limit) but allow_override is set; proceeding"
-                ),
+                reason: format!("{overage} but allow_override is set; proceeding"),
             };
         }
 
-        let block = || BudgetEnforcement::Block {
-            current_usd,
-            limit_usd,
-            period,
-        };
-
         match self.config.enforcement.mode.as_str() {
             "warn" => BudgetEnforcement::Warn {
-                reason: format!(
-                    "budget exceeded (${current_usd:.4} of ${limit_usd:.2} {period:?} limit); enforcement mode is 'warn', proceeding"
-                ),
+                reason: format!("{overage}; enforcement mode is 'warn', proceeding"),
             },
             "route_down" => match self.config.enforcement.route_down_model.as_deref() {
                 Some(model) if !model.is_empty() => BudgetEnforcement::RouteDown {
                     model: model.to_string(),
-                    reason: format!(
-                        "budget exceeded (${current_usd:.4} of ${limit_usd:.2} {period:?} limit); routing down to '{model}'"
-                    ),
+                    reason: format!("{overage}; routing down to '{model}'"),
                 },
                 _ => {
                     tracing::warn!(
@@ -276,9 +320,11 @@ impl CostTracker {
 
     /// Get the current cost summary.
     pub fn get_summary(&self) -> Result<CostSummary> {
-        let (daily_cost, monthly_cost) = {
+        let (daily_cost, monthly_cost, daily_tokens, monthly_tokens) = {
             let mut storage = self.lock_storage();
-            storage.get_aggregated_costs()?
+            let (daily_cost, monthly_cost) = storage.get_aggregated_costs()?;
+            let (daily_tokens, monthly_tokens) = storage.get_aggregated_tokens()?;
+            (daily_cost, monthly_cost, daily_tokens, monthly_tokens)
         };
 
         let session_costs = self.lock_session_costs();
@@ -294,7 +340,7 @@ impl CostTracker {
         let by_model = build_session_model_stats(&session_costs);
         let by_agent = build_session_agent_stats(&session_costs);
         let by_source = build_session_source_stats(&session_costs);
-        let budget = self.budget_status(daily_cost, monthly_cost);
+        let budget = self.budget_status(daily_cost, monthly_cost, daily_tokens, monthly_tokens);
 
         Ok(CostSummary {
             session_cost_usd: session_cost,
@@ -309,7 +355,13 @@ impl CostTracker {
         })
     }
 
-    fn budget_status(&self, daily_cost: f64, monthly_cost: f64) -> BudgetStatus {
+    fn budget_status(
+        &self,
+        daily_cost: f64,
+        monthly_cost: f64,
+        daily_tokens: u64,
+        monthly_tokens: u64,
+    ) -> BudgetStatus {
         if !self.config.enabled {
             return BudgetStatus::default();
         }
@@ -327,7 +379,28 @@ impl CostTracker {
         let daily_percent = percent_used(daily_cost, daily_limit);
         let monthly_percent = percent_used(monthly_cost, monthly_limit);
         let warning_threshold = f64::from(warn_at_percent);
-        let state = if daily_cost > daily_limit || monthly_cost > monthly_limit {
+
+        // Token safety net (#454): unpriced models record $0.00, so a token
+        // breach never shows up on the dollar axis. check_budget hard-blocks
+        // via TokensExceeded once a configured token limit is reached, so the
+        // reported status must also flip to "exceeded" — otherwise the operator
+        // agent sees "ok" here, commits to spend, and the call dies at the gate.
+        let daily_tokens_exceeded = self
+            .config
+            .daily_token_limit
+            .filter(|limit| *limit > 0)
+            .is_some_and(|limit| daily_tokens >= limit);
+        let monthly_tokens_exceeded = self
+            .config
+            .monthly_token_limit
+            .filter(|limit| *limit > 0)
+            .is_some_and(|limit| monthly_tokens >= limit);
+
+        let state = if daily_cost > daily_limit
+            || monthly_cost > monthly_limit
+            || daily_tokens_exceeded
+            || monthly_tokens_exceeded
+        {
             "exceeded"
         } else if daily_percent >= warning_threshold || monthly_percent >= warning_threshold {
             "warning"
@@ -521,6 +594,8 @@ struct CostStorage {
     path: PathBuf,
     daily_cost_usd: f64,
     monthly_cost_usd: f64,
+    daily_tokens: u64,
+    monthly_tokens: u64,
     cached_day: NaiveDate,
     cached_year: i32,
     cached_month: u32,
@@ -539,6 +614,8 @@ impl CostStorage {
             path: path.to_path_buf(),
             daily_cost_usd: 0.0,
             monthly_cost_usd: 0.0,
+            daily_tokens: 0,
+            monthly_tokens: 0,
             cached_day: now.date_naive(),
             cached_year: now.year(),
             cached_month: now.month(),
@@ -597,21 +674,27 @@ impl CostStorage {
     fn rebuild_aggregates(&mut self, day: NaiveDate, year: i32, month: u32) -> Result<()> {
         let mut daily_cost = 0.0;
         let mut monthly_cost = 0.0;
+        let mut daily_tokens: u64 = 0;
+        let mut monthly_tokens: u64 = 0;
 
         self.for_each_record(|record| {
             let timestamp = record.usage.timestamp.naive_utc();
 
             if timestamp.date() == day {
                 daily_cost += record.usage.cost_usd;
+                daily_tokens = daily_tokens.saturating_add(record.usage.total_tokens);
             }
 
             if timestamp.year() == year && timestamp.month() == month {
                 monthly_cost += record.usage.cost_usd;
+                monthly_tokens = monthly_tokens.saturating_add(record.usage.total_tokens);
             }
         })?;
 
         self.daily_cost_usd = daily_cost;
         self.monthly_cost_usd = monthly_cost;
+        self.daily_tokens = daily_tokens;
+        self.monthly_tokens = monthly_tokens;
         self.cached_day = day;
         self.cached_year = year;
         self.cached_month = month;
@@ -650,9 +733,13 @@ impl CostStorage {
         let timestamp = record.usage.timestamp.naive_utc();
         if timestamp.date() == self.cached_day {
             self.daily_cost_usd += record.usage.cost_usd;
+            self.daily_tokens = self.daily_tokens.saturating_add(record.usage.total_tokens);
         }
         if timestamp.year() == self.cached_year && timestamp.month() == self.cached_month {
             self.monthly_cost_usd += record.usage.cost_usd;
+            self.monthly_tokens = self
+                .monthly_tokens
+                .saturating_add(record.usage.total_tokens);
         }
 
         Ok(())
@@ -662,6 +749,12 @@ impl CostStorage {
     fn get_aggregated_costs(&mut self) -> Result<(f64, f64)> {
         self.ensure_period_cache_current()?;
         Ok((self.daily_cost_usd, self.monthly_cost_usd))
+    }
+
+    /// Get aggregated token totals for current day and month.
+    fn get_aggregated_tokens(&mut self) -> Result<(u64, u64)> {
+        self.ensure_period_cache_current()?;
+        Ok((self.daily_tokens, self.monthly_tokens))
     }
 
     /// Get cost for a specific date.
@@ -801,6 +894,124 @@ mod tests {
 
         let check = tracker.check_budget(0.01).unwrap();
         assert!(matches!(check, BudgetCheck::Exceeded { .. }));
+    }
+
+    #[test]
+    fn token_limit_bounds_unpriced_models() {
+        // Regression for #454: a model with no pricing entry records $0.00 cost,
+        // so the dollar limit never trips. The token-based safety net must still
+        // bound it once the daily token limit is reached.
+        let tmp = TempDir::new().unwrap();
+        let config = CostConfig {
+            enabled: true,
+            daily_limit_usd: 1_000_000.0, // effectively unbounded by dollars
+            monthly_limit_usd: 1_000_000.0,
+            daily_token_limit: Some(1_000),
+            ..Default::default()
+        };
+        let tracker = CostTracker::new(config, tmp.path()).unwrap();
+
+        // Unpriced model: zero input/output price => cost_usd == 0.0.
+        tracker
+            .record_usage(TokenUsage::new(
+                "openrouter/unknown-model",
+                800,
+                400,
+                0.0,
+                0.0,
+            ))
+            .unwrap();
+
+        let summary = tracker.get_summary().unwrap();
+        assert_eq!(summary.session_cost_usd, 0.0, "unpriced model costs $0.00");
+        assert_eq!(summary.total_tokens, 1_200);
+
+        let check = tracker.check_budget(0.0).unwrap();
+        match check {
+            BudgetCheck::TokensExceeded {
+                current_tokens,
+                limit_tokens,
+                period,
+            } => {
+                assert_eq!(current_tokens, 1_200);
+                assert_eq!(limit_tokens, 1_000);
+                assert_eq!(period, UsagePeriod::Day);
+            }
+            other => panic!("expected TokensExceeded, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn token_limit_monthly_trips_when_daily_unset() {
+        let tmp = TempDir::new().unwrap();
+        let config = CostConfig {
+            enabled: true,
+            daily_limit_usd: 1_000_000.0,
+            monthly_limit_usd: 1_000_000.0,
+            monthly_token_limit: Some(500),
+            ..Default::default()
+        };
+        let tracker = CostTracker::new(config, tmp.path()).unwrap();
+        tracker
+            .record_usage(TokenUsage::new("ollama/llama", 400, 200, 0.0, 0.0))
+            .unwrap();
+
+        let check = tracker.check_budget(0.0).unwrap();
+        assert!(
+            matches!(
+                check,
+                BudgetCheck::TokensExceeded {
+                    period: UsagePeriod::Month,
+                    ..
+                }
+            ),
+            "monthly token limit must trip independently of the daily one"
+        );
+    }
+
+    #[test]
+    fn token_limit_unset_does_not_trip() {
+        let tmp = TempDir::new().unwrap();
+        let tracker = CostTracker::new(enabled_config(), tmp.path()).unwrap();
+        tracker
+            .record_usage(TokenUsage::new(
+                "openrouter/unknown-model",
+                10_000,
+                10_000,
+                0.0,
+                0.0,
+            ))
+            .unwrap();
+
+        // No token limits configured (default None) => no token-based exceed.
+        let check = tracker.check_budget(0.0).unwrap();
+        assert!(matches!(check, BudgetCheck::Allowed));
+    }
+
+    #[test]
+    fn token_limit_block_mode_blocks_unpriced_model() {
+        let tmp = TempDir::new().unwrap();
+        let config = CostConfig {
+            enabled: true,
+            daily_limit_usd: 1_000_000.0,
+            monthly_limit_usd: 1_000_000.0,
+            daily_token_limit: Some(1_000),
+            enforcement: CostEnforcementConfig {
+                mode: "block".to_string(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let tracker = CostTracker::new(config, tmp.path()).unwrap();
+        tracker
+            .record_usage(TokenUsage::new("groq/unknown", 1_500, 0, 0.0, 0.0))
+            .unwrap();
+
+        let check = tracker.check_budget(0.0).unwrap();
+        assert!(matches!(
+            tracker.resolve_enforcement(&check),
+            BudgetEnforcement::BlockTokens { .. }
+        ));
     }
 
     #[test]
@@ -1042,5 +1253,53 @@ mod tests {
             budget.daily_limit_usd
         );
         assert_eq!(budget.daily_remaining_usd, 0.0);
+    }
+
+    #[test]
+    fn budget_status_reflects_token_limit() {
+        // #454 review: budget_status() must agree with the token gate in
+        // check_budget. An unpriced model records $0.00, so the dollar state
+        // stays "ok"; once the daily token limit is reached, check_budget
+        // hard-blocks via TokensExceeded, so get_summary().budget must also
+        // report "exceeded" — otherwise the operator agent sees green, spends,
+        // and then gets hard-blocked.
+        let tmp = TempDir::new().unwrap();
+        let config = CostConfig {
+            enabled: true,
+            daily_limit_usd: 1_000_000.0, // effectively unbounded by dollars
+            monthly_limit_usd: 1_000_000.0,
+            daily_token_limit: Some(1_000),
+            ..Default::default()
+        };
+        let tracker = CostTracker::new(config, tmp.path()).unwrap();
+
+        // Unpriced model: zero input/output price => cost_usd == 0.0, but 1_200
+        // tokens is over the 1_000 daily token limit.
+        tracker
+            .record_usage(TokenUsage::new(
+                "openrouter/unknown-model",
+                800,
+                400,
+                0.0,
+                0.0,
+            ))
+            .unwrap();
+
+        let summary = tracker.get_summary().unwrap();
+        assert_eq!(summary.session_cost_usd, 0.0, "unpriced model costs $0.00");
+
+        // The dollar gate would report "ok" on its own; the token breach must
+        // still flip the reported state to match check_budget's hard block.
+        assert!(
+            matches!(
+                tracker.check_budget(0.0).unwrap(),
+                BudgetCheck::TokensExceeded { .. }
+            ),
+            "precondition: token gate must trip"
+        );
+        assert_eq!(
+            summary.budget.state, "exceeded",
+            "status must match the token gate"
+        );
     }
 }

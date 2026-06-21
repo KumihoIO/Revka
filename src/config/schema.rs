@@ -2119,6 +2119,18 @@ pub struct CostConfig {
     #[serde(default = "default_warn_percent")]
     pub warn_at_percent: u8,
 
+    /// Optional daily token limit (total input + output tokens). Enforced
+    /// independently of `daily_limit_usd` so that models with no pricing entry
+    /// — which record `$0.00` — are still bounded. `None`/`0` disables it.
+    #[serde(default)]
+    pub daily_token_limit: Option<u64>,
+
+    /// Optional monthly token limit (total input + output tokens). Enforced
+    /// independently of `monthly_limit_usd`; see `daily_token_limit`.
+    /// `None`/`0` disables it.
+    #[serde(default)]
+    pub monthly_token_limit: Option<u64>,
+
     /// Allow requests to proceed even when the budget is exceeded, bypassing
     /// the `enforcement.mode` block (default: false)
     #[serde(default)]
@@ -2200,6 +2212,8 @@ impl Default for CostConfig {
             daily_limit_usd: default_daily_limit(),
             monthly_limit_usd: default_monthly_limit(),
             warn_at_percent: default_warn_percent(),
+            daily_token_limit: None,
+            monthly_token_limit: None,
             allow_override: false,
             prices: get_default_pricing(),
             enforcement: CostEnforcementConfig::default(),
