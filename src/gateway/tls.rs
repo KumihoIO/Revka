@@ -269,6 +269,23 @@ mod tests {
     }
 
     #[test]
+    fn test_load_private_key_fails_closed_when_no_key_present() {
+        // A PEM file with only a certificate (no key section) must error, not
+        // silently succeed — preserving the previous rustls_pemfile fail-closed
+        // behavior after the rustls-pki-types migration.
+        let (ca_cert_pem, _ca_key_pem, ca_key) = test_ca();
+        let (server_cert_pem, _server_key_pem) = test_server_cert(&ca_cert_pem, &ca_key);
+        let file = write_temp_file(&server_cert_pem);
+
+        let err = load_private_key(file.path().to_str().unwrap()).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("failed to parse private key"),
+            "unexpected error: {msg}"
+        );
+    }
+
+    #[test]
     fn test_invalid_cert_path_produces_clear_error() {
         let err = load_certs("/nonexistent/path/cert.pem").unwrap_err();
         let msg = format!("{err:#}");

@@ -40,7 +40,7 @@ Current maintainers with PR approval authority: `kaveone`.
    - `lint` job: runs `cargo fmt --check` and `cargo clippy -D warnings`.
    - `test` job: runs `cargo nextest run --locked` on `ubuntu-latest` with Rust 1.93.0 and mold linker.
    - `build` job (matrix): compiles release binary on `x86_64-unknown-linux-gnu` and `aarch64-apple-darwin`.
-   - `security` job: runs `cargo audit` and `cargo deny check licenses sources`.
+   - `security` job: runs `cargo audit` and `cargo deny check all` (advisories + bans + licenses + sources).
    - Concurrency group cancels in-progress runs for the same PR on new pushes.
 3. All jobs must pass before merge.
 4. Maintainer (`kaveone`) merges PR once checks and review policy are satisfied.
