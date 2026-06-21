@@ -1709,6 +1709,21 @@ pub struct AgentConfig {
     /// behavior). Default: `2`.
     #[serde(default = "default_keep_tool_context_turns")]
     pub keep_tool_context_turns: usize,
+
+    /// Dispatch-level backstop timeout (seconds) applied to every individual
+    /// tool call. Each tool's own internal timeout (e.g. `shell`, `codex_cli`,
+    /// HTTP tools) remains the first line of defense; this is a generous outer
+    /// ceiling so a tool that omits an internal bound — or blocks before one
+    /// arms — cannot hang the agent loop indefinitely. On elapse the call
+    /// returns a failed result ("tool X timed out after Ns") instead of
+    /// stalling the turn. Set to `0` to disable the backstop. Default: `1800`
+    /// (30 minutes — well above the longest legitimate per-tool bound).
+    #[serde(default = "default_tool_call_timeout_secs")]
+    pub tool_call_timeout_secs: u64,
+}
+
+fn default_tool_call_timeout_secs() -> u64 {
+    1800
 }
 
 fn default_max_tool_result_chars() -> usize {
@@ -1766,6 +1781,7 @@ impl Default for AgentConfig {
                 crate::agent::context_compressor::ContextCompressionConfig::default(),
             max_tool_result_chars: default_max_tool_result_chars(),
             keep_tool_context_turns: default_keep_tool_context_turns(),
+            tool_call_timeout_secs: default_tool_call_timeout_secs(),
         }
     }
 }
@@ -12529,6 +12545,7 @@ reasoning_effort = "turbo"
         assert_eq!(cfg.max_context_tokens, 1_050_000);
         assert!(cfg.parallel_tools);
         assert_eq!(cfg.tool_dispatcher, "auto");
+        assert_eq!(cfg.tool_call_timeout_secs, 1800);
     }
 
     #[test]
