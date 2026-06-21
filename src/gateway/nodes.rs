@@ -240,7 +240,7 @@ pub async fn handle_ws_nodes(
     let nodes_config = state.config.lock().nodes.clone();
     if let Some(ref expected_token) = nodes_config.auth_token {
         let token = extract_node_ws_token(&headers, params.token.as_deref()).unwrap_or("");
-        if token != expected_token {
+        if !crate::security::pairing::constant_time_eq(token, expected_token) {
             return (
                 axum::http::StatusCode::UNAUTHORIZED,
                 "Unauthorized — provide a valid node auth token",
