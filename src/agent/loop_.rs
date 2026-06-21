@@ -2451,7 +2451,14 @@ pub(crate) async fn run_tool_call_loop(
             .map(|tool| tool.spec())
             .collect();
         if let Some(at) = activated_tools {
-            for spec in at.lock().unwrap().tool_specs() {
+            // Recover from a poisoned lock rather than panicking: a prior panic
+            // under the guard (e.g. a faulty `Tool::spec()`) must not permanently
+            // disable deferred-tool resolution for the rest of the process.
+            for spec in at
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .tool_specs()
+            {
                 if !is_tool_excluded(&spec.name, excluded_tools) {
                     tool_specs.push(spec);
                 }

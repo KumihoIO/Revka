@@ -51,7 +51,13 @@ pub(crate) async fn execute_one_tool(
 
     let static_tool = find_tool(tools_registry, call_name);
     let activated_arc = if static_tool.is_none() {
-        activated_tools.and_then(|at| at.lock().unwrap().get_resolved(call_name))
+        // Recover from a poisoned lock rather than panicking, so a prior panic
+        // under the guard does not cascade into every later dynamic-tool lookup.
+        activated_tools.and_then(|at| {
+            at.lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .get_resolved(call_name)
+        })
     } else {
         None
     };
