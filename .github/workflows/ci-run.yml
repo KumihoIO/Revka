@@ -283,6 +283,27 @@ jobs:
             flags: "--no-default-features --features plugins-wasm"
           - feature: rag-pdf
             flags: "--no-default-features --features rag-pdf"
+          # Features below only ever compiled inside `ci-all` (with defaults on),
+          # so an isolated `--no-default-features` build was never exercised (#436).
+          - feature: hardware
+            flags: "--no-default-features --features hardware"
+            apt: libudev-dev
+          - feature: peripheral-rpi
+            flags: "--no-default-features --features peripheral-rpi"
+          - feature: probe
+            flags: "--no-default-features --features probe"
+            apt: libudev-dev
+          - feature: sandbox-landlock
+            flags: "--no-default-features --features sandbox-landlock"
+          - feature: sandbox-bubblewrap
+            flags: "--no-default-features --features sandbox-bubblewrap"
+          - feature: webauthn
+            flags: "--no-default-features --features webauthn"
+          # voice-wake (cpal/ALSA) is excluded from `ci-all` because standard
+          # runners lack libasound2-dev; install it here so it gets coverage (#436).
+          - feature: voice-wake
+            flags: "--no-default-features --features voice-wake"
+            apt: libasound2-dev
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
@@ -292,6 +313,10 @@ jobs:
         with:
           prefix-key: feature-matrix-${{ matrix.feature }}
           cache-bin: false
+
+      - name: Install system dependencies
+        if: matrix.apt != ''
+        run: sudo apt-get update -qq && sudo apt-get install -y ${{ matrix.apt }}
 
       - name: Ensure web/dist placeholder exists
         run: mkdir -p web/dist && touch web/dist/.gitkeep
