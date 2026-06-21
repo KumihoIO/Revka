@@ -426,6 +426,47 @@ def test_mark_stale_checkpoint_preserves_retry_state(tmp_path, monkeypatch) -> N
     assert loaded.step_results["done"].status == "completed"
 
 
+@pytest.mark.asyncio
+async def test_terminal_run_deletes_checkpoint(tmp_path, monkeypatch) -> None:
+    """A checkpoint-enabled run that reaches a terminal status must delete its
+    on-disk checkpoint via _cleanup_checkpoint (regression for the dead-code
+    cleanup helper) instead of leaving the WorkflowState dump on disk."""
+    checkpoint_dir = tmp_path / "workflow_checkpoints"
+    checkpoint_dir.mkdir(parents=True)
+    monkeypatch.setattr(executor, "_CHECKPOINT_DIR", str(checkpoint_dir))
+
+    saved: list[str] = []
+    real_save = executor._save_checkpoint
+
+    def spy_save(state: WorkflowState) -> str:
+        path = real_save(state)
+        saved.append(path)
+        return path
+
+    monkeypatch.setattr(executor, "_save_checkpoint", spy_save)
+
+    wf = WorkflowDef(
+        name="terminal-cleanup",
+        steps=[
+            StepDef(
+                id="s1",
+                type=StepType.SHELL,
+                shell=ShellStepConfig(command="true", timeout=5),
+            ),
+        ],
+        checkpoint=True,
+    )
+
+    final = await executor.execute_workflow(wf, inputs={}, cwd=str(tmp_path))
+
+    assert final.status == WorkflowStatus.COMPLETED
+    # A checkpoint was written at least once during the run (post-wave persist)…
+    assert saved, "expected the run to write a checkpoint during execution"
+    # …but the terminal run cleaned it up — no file left behind.
+    leftover = checkpoint_dir / f"{final.run_id}.json"
+    assert not leftover.exists(), "terminal run left its checkpoint on disk"
+
+
 def test_workflow_progress_snapshot_splits_loop_instances() -> None:
     state = _state_for("loop-progress")
     state.steps_total = 2

@@ -6232,7 +6232,13 @@ async def execute_workflow(
         state.completed_at = datetime.now(timezone.utc).isoformat()
         state.current_step = None
 
-        if wf.checkpoint:
+        # Terminal runs don't need a persisted checkpoint — the finally block
+        # deletes it. Only re-write here if the run is still resumable.
+        if wf.checkpoint and state.status not in (
+            WorkflowStatus.COMPLETED,
+            WorkflowStatus.FAILED,
+            WorkflowStatus.CANCELLED,
+        ):
             _save_checkpoint(state)
 
         # Persist to Kumiho memory (best-effort, fire-and-forget)
@@ -6288,6 +6294,10 @@ async def execute_workflow(
             WorkflowStatus.CANCELLED,
         ):
             ACTIVE_WORKFLOWS.pop(state.run_id, None)
+            # Terminal runs have no resume path — delete the on-disk checkpoint
+            # so it doesn't linger indefinitely with the run's interpolated
+            # inputs/step outputs. PAUSED runs keep their checkpoint for resume.
+            _cleanup_checkpoint(state.run_id)
         else:
             ACTIVE_WORKFLOWS[state.run_id] = state
 
