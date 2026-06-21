@@ -20,15 +20,13 @@ const TELEGRAM_CONTINUATION_OVERHEAD: usize = 30;
 const TELEGRAM_ACK_REACTIONS: &[&str] = &["⚡️", "👌", "👀", "🔥", "👍"];
 
 /// Maximum number of attempts (initial + retries) for an outbound send before
-/// giving up when the Bot API rate-limits (429) or returns a server error (5xx).
+/// giving up when the Bot API rate-limits (429).
 const TELEGRAM_MAX_SEND_ATTEMPTS: u32 = 4;
 /// Upper bound on how long to wait for a single backoff, so a hostile/large
 /// `retry_after` can't stall a send indefinitely.
 const TELEGRAM_MAX_BACKOFF_SECS: u64 = 60;
 /// Fallback wait when a 429 body has no parseable `parameters.retry_after`.
 const TELEGRAM_DEFAULT_RETRY_AFTER_SECS: u64 = 5;
-/// Base delay for 5xx retries (scaled by attempt number).
-const TELEGRAM_SERVER_ERROR_BASE_DELAY_SECS: u64 = 1;
 /// Maximum random jitter added to each backoff to avoid synchronized retries.
 const TELEGRAM_RETRY_JITTER_MS: u64 = 500;
 
@@ -726,70 +724,60 @@ impl TelegramChannel {
     }
 
     /// Compute how long to wait before the next retry: the API-provided
-    /// `retry_after` (or a fallback for 5xx), capped to a sane maximum, plus a
-    /// small random jitter to avoid synchronized retries.
+    /// `retry_after` (or a fallback when the 429 body has none), capped to a sane
+    /// maximum, plus a small random jitter to avoid synchronized retries.
     fn compute_retry_delay(retry_after_secs: u64) -> Duration {
         let capped = retry_after_secs.min(TELEGRAM_MAX_BACKOFF_SECS);
         let jitter_ms = rand::random::<u64>() % (TELEGRAM_RETRY_JITTER_MS + 1);
         Duration::from_secs(capped) + Duration::from_millis(jitter_ms)
     }
 
-    /// Send a request with bounded retry on rate-limit (429) and server errors
-    /// (5xx). On 429 the Bot API's `parameters.retry_after` is honored; on 5xx a
-    /// fixed base delay is used. The `build` closure is invoked once per attempt
-    /// so it can reconstruct the request body (JSON value or multipart form).
-    /// The first response with a non-retryable status (including success) is
-    /// returned so callers keep their existing status/body handling.
+    /// Send a request with bounded retry on rate-limit (429) only, honoring the
+    /// Bot API's `parameters.retry_after`. The `build` closure is invoked once
+    /// per attempt so it can reconstruct the request body (JSON value or
+    /// multipart form). Any other outcome — success, 5xx, transport error — is
+    /// returned/surfaced on the first attempt without retrying: Telegram's send
+    /// methods have no idempotency key, so a 5xx or transport error can occur
+    /// after the message was already accepted, and retrying would risk a
+    /// duplicate message. A 429 is safe to retry because Telegram rejected the
+    /// request outright. The first response with a non-429 status (including
+    /// success) is returned so callers keep their existing status/body handling.
     async fn send_with_retry<F>(&self, method: &str, build: F) -> anyhow::Result<reqwest::Response>
     where
         F: Fn() -> reqwest::RequestBuilder,
     {
         let mut last_err: Option<anyhow::Error> = None;
         for attempt in 0..TELEGRAM_MAX_SEND_ATTEMPTS {
-            match build().send().await {
-                Ok(resp) => {
-                    let status = resp.status();
-                    let is_rate_limited = status.as_u16() == 429;
-                    if !is_rate_limited && !status.is_server_error() {
-                        return Ok(resp);
-                    }
-                    // Read the body so we can parse retry_after; on the final
-                    // attempt rebuild an equivalent response is impossible, so
-                    // surface a descriptive error the caller can bubble up.
-                    let body = resp.text().await.unwrap_or_default();
-                    let delay = if is_rate_limited {
-                        let retry_after = Self::parse_retry_after_secs(&body)
-                            .unwrap_or(TELEGRAM_DEFAULT_RETRY_AFTER_SECS);
-                        Self::compute_retry_delay(retry_after)
-                    } else {
-                        Self::compute_retry_delay(
-                            TELEGRAM_SERVER_ERROR_BASE_DELAY_SECS
-                                .saturating_mul(attempt as u64 + 1),
-                        )
-                    };
-                    tracing::warn!(
-                        attempt = attempt + 1,
-                        max_attempts = TELEGRAM_MAX_SEND_ATTEMPTS,
-                        ?status,
-                        delay_secs = delay.as_secs_f64(),
-                        "Telegram {method} rate-limited/5xx; backing off before retry"
-                    );
-                    last_err = Some(anyhow::anyhow!(
-                        "Telegram {method} failed: status={status}, body={body}"
-                    ));
-                    if attempt + 1 < TELEGRAM_MAX_SEND_ATTEMPTS {
-                        tokio::time::sleep(delay).await;
-                    }
-                }
-                Err(e) => {
-                    last_err = Some(anyhow::anyhow!("Telegram {method} request failed: {e}"));
-                    if attempt + 1 < TELEGRAM_MAX_SEND_ATTEMPTS {
-                        tokio::time::sleep(Self::compute_retry_delay(
-                            TELEGRAM_SERVER_ERROR_BASE_DELAY_SECS,
-                        ))
-                        .await;
-                    }
-                }
+            // Transport errors are not retried: the request body may have been
+            // fully sent and accepted before the error surfaced (e.g. read
+            // timeout), so a retry could duplicate a non-idempotent send.
+            let resp = build()
+                .send()
+                .await
+                .map_err(|e| anyhow::anyhow!("Telegram {method} request failed: {e}"))?;
+            let status = resp.status();
+            if status.as_u16() != 429 {
+                return Ok(resp);
+            }
+            // Read the body so we can parse retry_after; on the final attempt
+            // rebuilding an equivalent response is impossible, so surface a
+            // descriptive error the caller can bubble up.
+            let body = resp.text().await.unwrap_or_default();
+            let retry_after =
+                Self::parse_retry_after_secs(&body).unwrap_or(TELEGRAM_DEFAULT_RETRY_AFTER_SECS);
+            let delay = Self::compute_retry_delay(retry_after);
+            tracing::warn!(
+                attempt = attempt + 1,
+                max_attempts = TELEGRAM_MAX_SEND_ATTEMPTS,
+                ?status,
+                delay_secs = delay.as_secs_f64(),
+                "Telegram {method} rate-limited; backing off before retry"
+            );
+            last_err = Some(anyhow::anyhow!(
+                "Telegram {method} failed: status={status}, body={body}"
+            ));
+            if attempt + 1 < TELEGRAM_MAX_SEND_ATTEMPTS {
+                tokio::time::sleep(delay).await;
             }
         }
         Err(last_err.unwrap_or_else(|| anyhow::anyhow!("Telegram {method} failed after retries")))
