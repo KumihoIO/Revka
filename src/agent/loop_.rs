@@ -3635,11 +3635,21 @@ pub(crate) async fn run_tool_call_loop(
                 history.push(ChatMessage::user(format!("[Tool results]\n{tool_results}")));
             }
         } else {
-            for (native_call, (_, result)) in
-                native_tool_calls.iter().zip(individual_results.iter())
-            {
+            // Emit using the id each result already carries (set to
+            // Some(native_call.id) when the call was parsed), mirroring the
+            // non-native branch above. This keeps result→id pairing tied to the
+            // data rather than positional alignment between native_tool_calls
+            // and individual_results, so a future path that leaves a slot
+            // unfilled can't silently re-key results via zip truncation.
+            debug_assert_eq!(
+                individual_results.len(),
+                native_tool_calls.len(),
+                "native tool result count diverged from tool call count; \
+                 tool_call_id pairing would be wrong"
+            );
+            for (tool_call_id, result) in &individual_results {
                 let tool_msg = serde_json::json!({
-                    "tool_call_id": native_call.id,
+                    "tool_call_id": tool_call_id,
                     "content": result,
                 });
                 history.push(ChatMessage::tool(tool_msg.to_string()));
