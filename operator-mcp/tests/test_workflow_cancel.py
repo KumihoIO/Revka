@@ -467,6 +467,74 @@ async def test_terminal_run_deletes_checkpoint(tmp_path, monkeypatch) -> None:
     assert not leftover.exists(), "terminal run left its checkpoint on disk"
 
 
+@pytest.mark.asyncio
+async def test_failed_run_keeps_checkpoint_for_retry(tmp_path, monkeypatch) -> None:
+    """A run that FAILS while the executor is alive must keep its on-disk
+    checkpoint so the Retry feature still works.
+
+    Regression: the terminal-cleanup change must NOT delete FAILED checkpoints,
+    because tool_retry_workflow reloads the run via
+    ``ACTIVE_WORKFLOWS.get(run_id) or load_checkpoint(run_id)`` — after the
+    executor's finally block runs, ACTIVE_WORKFLOWS no longer holds the run, so
+    the on-disk checkpoint is the only remaining source. If it's deleted, Retry
+    returns "Run not found".
+    """
+    from operator_mcp.tool_handlers.workflows import tool_retry_workflow
+    import operator_mcp.workflow.loader as loader
+
+    checkpoint_dir = tmp_path / "workflow_checkpoints"
+    checkpoint_dir.mkdir(parents=True)
+    monkeypatch.setattr(executor, "_CHECKPOINT_DIR", str(checkpoint_dir))
+
+    wf = WorkflowDef(
+        name="fail-then-retry",
+        steps=[
+            StepDef(
+                id="s1",
+                type=StepType.SHELL,
+                shell=ShellStepConfig(
+                    command=f'"{sys.executable}" -c "import sys; sys.exit(1)"',
+                    timeout=5,
+                ),
+            ),
+        ],
+        checkpoint=True,
+    )
+
+    final = await executor.execute_workflow(wf, inputs={}, cwd=str(tmp_path))
+
+    assert final.status == WorkflowStatus.FAILED
+    # The executor's finally block evicts terminal runs from ACTIVE_WORKFLOWS…
+    assert final.run_id not in executor.ACTIVE_WORKFLOWS
+    # …so the on-disk checkpoint must survive for Retry to find it.
+    leftover = checkpoint_dir / f"{final.run_id}.json"
+    assert leftover.exists(), "FAILED run deleted its checkpoint — Retry breaks"
+
+    # tool_retry_workflow must still locate the FAILED run via load_checkpoint
+    # and start a retry (not return not-found).
+    async def _resolve(_name, *_args, **_kwargs):
+        return wf, "", ""
+
+    monkeypatch.setattr(loader, "resolve_workflow", _resolve)
+
+    result = await tool_retry_workflow({"run_id": final.run_id, "cwd": str(tmp_path)})
+
+    assert result.get("status") == "retrying", result
+    assert "not found" not in str(result.get("message", "")).lower()
+
+    # Clean up the background retry task so it doesn't leak past the test.
+    from operator_mcp.tool_handlers.workflows import _BACKGROUND_TASKS
+
+    task = _BACKGROUND_TASKS.get(final.run_id)
+    if task is not None:
+        task.cancel()
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):
+            pass
+    executor.ACTIVE_WORKFLOWS.pop(final.run_id, None)
+
+
 def test_workflow_progress_snapshot_splits_loop_instances() -> None:
     state = _state_for("loop-progress")
     state.steps_total = 2

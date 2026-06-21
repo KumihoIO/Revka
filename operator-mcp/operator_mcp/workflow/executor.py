@@ -6232,11 +6232,12 @@ async def execute_workflow(
         state.completed_at = datetime.now(timezone.utc).isoformat()
         state.current_step = None
 
-        # Terminal runs don't need a persisted checkpoint — the finally block
-        # deletes it. Only re-write here if the run is still resumable.
+        # COMPLETED/CANCELLED runs don't need a persisted checkpoint — the
+        # finally block deletes it. FAILED runs keep their checkpoint so the
+        # Retry feature (tool_retry_workflow) can reload and resume them, so
+        # they fall through and re-write here like resumable runs.
         if wf.checkpoint and state.status not in (
             WorkflowStatus.COMPLETED,
-            WorkflowStatus.FAILED,
             WorkflowStatus.CANCELLED,
         ):
             _save_checkpoint(state)
@@ -6294,10 +6295,16 @@ async def execute_workflow(
             WorkflowStatus.CANCELLED,
         ):
             ACTIVE_WORKFLOWS.pop(state.run_id, None)
-            # Terminal runs have no resume path — delete the on-disk checkpoint
-            # so it doesn't linger indefinitely with the run's interpolated
-            # inputs/step outputs. PAUSED runs keep their checkpoint for resume.
-            _cleanup_checkpoint(state.run_id)
+            # COMPLETED/CANCELLED runs have no resume path — delete the on-disk
+            # checkpoint so it doesn't linger indefinitely with the run's
+            # interpolated inputs/step outputs. FAILED runs keep their
+            # checkpoint so the Retry feature (tool_retry_workflow) can still
+            # reload and resume them; PAUSED runs keep theirs for resume too.
+            if state.status in (
+                WorkflowStatus.COMPLETED,
+                WorkflowStatus.CANCELLED,
+            ):
+                _cleanup_checkpoint(state.run_id)
         else:
             ACTIVE_WORKFLOWS[state.run_id] = state
 
