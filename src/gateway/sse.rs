@@ -215,14 +215,19 @@ pub async fn handle_api_daemon_logs(
 }
 
 /// Broadcast observer that forwards events to the SSE broadcast channel.
+///
+/// Holds its inner observer as an `Arc` so the gateway can wrap the
+/// process-global observer (see `observability::get_or_init_global`) — the same
+/// instance every other entry point records into — and `GET /metrics` then
+/// gathers the one registry all telemetry feeds.
 pub struct BroadcastObserver {
-    inner: Box<dyn crate::observability::Observer>,
+    inner: std::sync::Arc<dyn crate::observability::Observer>,
     tx: tokio::sync::broadcast::Sender<serde_json::Value>,
 }
 
 impl BroadcastObserver {
     pub fn new(
-        inner: Box<dyn crate::observability::Observer>,
+        inner: std::sync::Arc<dyn crate::observability::Observer>,
         tx: tokio::sync::broadcast::Sender<serde_json::Value>,
     ) -> Self {
         Self { inner, tx }

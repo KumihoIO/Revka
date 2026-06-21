@@ -23,6 +23,7 @@ pub use traits::{Observer, ObserverEvent};
 pub use verbose::VerboseObserver;
 
 use crate::config::ObservabilityConfig;
+use std::sync::{Arc, OnceLock};
 
 /// Factory: create the right observer from config
 pub fn create_observer(config: &ObservabilityConfig) -> Box<dyn Observer> {
@@ -80,6 +81,25 @@ pub fn create_observer(config: &ObservabilityConfig) -> Box<dyn Observer> {
             Box::new(NoopObserver)
         }
     }
+}
+
+// ── Process-global singleton ────────────────────────────────────────
+// Every entry point (gateway, agent, channels, daemon, interactive loop)
+// shares ONE observer so that all telemetry — LLM request/token counters,
+// tool-call counts/durations, agent durations, gauges — feeds the single
+// registry that `GET /metrics` scrapes. Without this, each path built its
+// own throwaway `PrometheusObserver` (a fresh `prometheus::Registry`) and
+// the scraped surface stayed near-empty. Mirrors `CostTracker::get_or_init_global`.
+
+static GLOBAL_OBSERVER: OnceLock<Arc<dyn Observer>> = OnceLock::new();
+
+/// Return the process-global `Observer`, building it from `config` on first
+/// call. Subsequent calls (from whichever entry point starts second) receive
+/// the same `Arc`, ignoring their `config` — the first caller wins.
+pub fn get_or_init_global(config: &ObservabilityConfig) -> Arc<dyn Observer> {
+    GLOBAL_OBSERVER
+        .get_or_init(|| Arc::from(create_observer(config)))
+        .clone()
 }
 
 #[cfg(test)]
@@ -209,5 +229,26 @@ mod tests {
             ..ObservabilityConfig::default()
         };
         assert_eq!(create_observer(&cfg).name(), "noop");
+    }
+
+    #[test]
+    fn global_observer_is_a_shared_singleton() {
+        // The first caller's config wins; every later caller — regardless of the
+        // config it passes — gets the SAME `Arc`, so all telemetry feeds one
+        // registry (#455).
+        let first = get_or_init_global(&ObservabilityConfig {
+            backend: "log".into(),
+            ..ObservabilityConfig::default()
+        });
+        let second = get_or_init_global(&ObservabilityConfig {
+            backend: "verbose".into(),
+            ..ObservabilityConfig::default()
+        });
+        assert!(
+            Arc::ptr_eq(&first, &second),
+            "expected the same global observer instance on every call"
+        );
+        assert_eq!(first.name(), "log");
+        assert_eq!(second.name(), "log");
     }
 }

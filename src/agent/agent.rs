@@ -731,8 +731,7 @@ impl Agent {
         let config = crate::agent::kumiho::inject_kumiho(config.clone(), false);
         let config = &crate::agent::operator::inject_operator(config, false);
 
-        let observer: Arc<dyn Observer> =
-            Arc::from(observability::create_observer(&config.observability));
+        let observer: Arc<dyn Observer> = observability::get_or_init_global(&config.observability);
         let runtime: Arc<dyn runtime::RuntimeAdapter> =
             Arc::from(runtime::create_runtime(&config.runtime)?);
         let security = Arc::new(SecurityPolicy::from_config(
