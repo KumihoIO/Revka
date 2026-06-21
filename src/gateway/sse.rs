@@ -216,13 +216,13 @@ pub async fn handle_api_daemon_logs(
 
 /// Broadcast observer that forwards events to the SSE broadcast channel.
 pub struct BroadcastObserver {
-    inner: Box<dyn crate::observability::Observer>,
+    inner: std::sync::Arc<dyn crate::observability::Observer>,
     tx: tokio::sync::broadcast::Sender<serde_json::Value>,
 }
 
 impl BroadcastObserver {
     pub fn new(
-        inner: Box<dyn crate::observability::Observer>,
+        inner: std::sync::Arc<dyn crate::observability::Observer>,
         tx: tokio::sync::broadcast::Sender<serde_json::Value>,
     ) -> Self {
         Self { inner, tx }
