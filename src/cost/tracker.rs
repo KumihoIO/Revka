@@ -1,6 +1,6 @@
 use super::types::{
-    AgentStats, BudgetCheck, BudgetStatus, CostRecord, CostRecordMetadata, CostSummary, ModelStats,
-    SourceStats, TokenUsage, UsagePeriod,
+    AgentStats, BudgetCheck, BudgetEnforcement, BudgetStatus, CostRecord, CostRecordMetadata,
+    CostSummary, ModelStats, SourceStats, TokenUsage, UsagePeriod,
 };
 use crate::config::schema::{CostConfig, ModelPricing};
 use anyhow::{Context, Result, anyhow};
@@ -65,9 +65,16 @@ impl CostTracker {
         let mut storage = self.lock_storage();
         let (daily_cost, monthly_cost) = storage.get_aggregated_costs()?;
 
+        // `reserve_percent` carves a soft buffer off the top of each limit so a
+        // request that would dip into the reserve is treated as exceeding the
+        // effective limit. Reported `limit_usd` stays the configured value.
+        let reserve_fraction = f64::from(self.config.enforcement.reserve_percent.min(100)) / 100.0;
+        let daily_effective_limit = self.config.daily_limit_usd * (1.0 - reserve_fraction);
+        let monthly_effective_limit = self.config.monthly_limit_usd * (1.0 - reserve_fraction);
+
         // Check daily limit
         let projected_daily = daily_cost + estimated_cost_usd;
-        if projected_daily > self.config.daily_limit_usd {
+        if projected_daily > daily_effective_limit {
             return Ok(BudgetCheck::Exceeded {
                 current_usd: daily_cost,
                 limit_usd: self.config.daily_limit_usd,
@@ -77,7 +84,7 @@ impl CostTracker {
 
         // Check monthly limit
         let projected_monthly = monthly_cost + estimated_cost_usd;
-        if projected_monthly > self.config.monthly_limit_usd {
+        if projected_monthly > monthly_effective_limit {
             return Ok(BudgetCheck::Exceeded {
                 current_usd: monthly_cost,
                 limit_usd: self.config.monthly_limit_usd,
@@ -107,6 +114,71 @@ impl CostTracker {
         }
 
         Ok(BudgetCheck::Allowed)
+    }
+
+    /// Map a budget check into an enforcement directive based on the configured
+    /// `[cost.enforcement] mode` and `allow_override`.
+    ///
+    /// Only `BudgetCheck::Exceeded` is mode-sensitive; `Allowed`/`Warning`
+    /// always `Proceed`. The previous behavior (always hard-block on exceed)
+    /// now corresponds only to `mode = "block"`.
+    pub fn resolve_enforcement(&self, check: &BudgetCheck) -> BudgetEnforcement {
+        let (current_usd, limit_usd, period) = match check {
+            BudgetCheck::Allowed | BudgetCheck::Warning { .. } => {
+                return BudgetEnforcement::Proceed;
+            }
+            BudgetCheck::Exceeded {
+                current_usd,
+                limit_usd,
+                period,
+            } => (*current_usd, *limit_usd, *period),
+        };
+
+        // A per-request override bypasses enforcement entirely.
+        if self.config.allow_override {
+            return BudgetEnforcement::Warn {
+                reason: format!(
+                    "budget exceeded (${current_usd:.4} of ${limit_usd:.2} {period:?} limit) but allow_override is set; proceeding"
+                ),
+            };
+        }
+
+        let block = || BudgetEnforcement::Block {
+            current_usd,
+            limit_usd,
+            period,
+        };
+
+        match self.config.enforcement.mode.as_str() {
+            "warn" => BudgetEnforcement::Warn {
+                reason: format!(
+                    "budget exceeded (${current_usd:.4} of ${limit_usd:.2} {period:?} limit); enforcement mode is 'warn', proceeding"
+                ),
+            },
+            "route_down" => match self.config.enforcement.route_down_model.as_deref() {
+                Some(model) if !model.is_empty() => BudgetEnforcement::RouteDown {
+                    model: model.to_string(),
+                    reason: format!(
+                        "budget exceeded (${current_usd:.4} of ${limit_usd:.2} {period:?} limit); routing down to '{model}'"
+                    ),
+                },
+                _ => {
+                    tracing::warn!(
+                        "cost enforcement mode is 'route_down' but no route_down_model is configured; blocking"
+                    );
+                    block()
+                }
+            },
+            // "block" and any unrecognized mode fall back to the safe hard-stop.
+            other => {
+                if other != "block" {
+                    tracing::warn!(
+                        "unknown cost enforcement mode '{other}'; defaulting to 'block'"
+                    );
+                }
+                block()
+            }
+        }
     }
 
     /// Record a usage event.
@@ -790,6 +862,143 @@ mod tests {
         assert!(
             err.to_string()
                 .contains("Estimated cost must be a finite, non-negative value")
+        );
+    }
+
+    use crate::config::schema::CostEnforcementConfig;
+    use crate::cost::types::BudgetEnforcement;
+
+    fn exceeded_config(enforcement: CostEnforcementConfig, allow_override: bool) -> CostConfig {
+        CostConfig {
+            enabled: true,
+            daily_limit_usd: 0.01,
+            allow_override,
+            enforcement,
+            ..Default::default()
+        }
+    }
+
+    fn tracker_over_budget(config: CostConfig, tmp: &TempDir) -> CostTracker {
+        let tracker = CostTracker::new(config, tmp.path()).unwrap();
+        // ~0.02 USD, over the 0.01 daily limit.
+        tracker
+            .record_usage(TokenUsage::new("test/model", 10000, 5000, 1.0, 2.0))
+            .unwrap();
+        tracker
+    }
+
+    #[test]
+    fn enforcement_proceeds_when_within_budget() {
+        let tmp = TempDir::new().unwrap();
+        let tracker = CostTracker::new(enabled_config(), tmp.path()).unwrap();
+        let check = tracker.check_budget(0.0).unwrap();
+        assert!(matches!(
+            tracker.resolve_enforcement(&check),
+            BudgetEnforcement::Proceed
+        ));
+    }
+
+    #[test]
+    fn enforcement_warn_mode_does_not_block() {
+        let tmp = TempDir::new().unwrap();
+        // Default enforcement mode is "warn".
+        let tracker = tracker_over_budget(
+            exceeded_config(CostEnforcementConfig::default(), false),
+            &tmp,
+        );
+        let check = tracker.check_budget(0.01).unwrap();
+        assert!(matches!(check, BudgetCheck::Exceeded { .. }));
+        assert!(matches!(
+            tracker.resolve_enforcement(&check),
+            BudgetEnforcement::Warn { .. }
+        ));
+    }
+
+    #[test]
+    fn enforcement_block_mode_blocks() {
+        let tmp = TempDir::new().unwrap();
+        let enforcement = CostEnforcementConfig {
+            mode: "block".to_string(),
+            ..Default::default()
+        };
+        let tracker = tracker_over_budget(exceeded_config(enforcement, false), &tmp);
+        let check = tracker.check_budget(0.01).unwrap();
+        assert!(matches!(
+            tracker.resolve_enforcement(&check),
+            BudgetEnforcement::Block { .. }
+        ));
+    }
+
+    #[test]
+    fn enforcement_route_down_uses_configured_model() {
+        let tmp = TempDir::new().unwrap();
+        let enforcement = CostEnforcementConfig {
+            mode: "route_down".to_string(),
+            route_down_model: Some("cheap/model".to_string()),
+            ..Default::default()
+        };
+        let tracker = tracker_over_budget(exceeded_config(enforcement, false), &tmp);
+        let check = tracker.check_budget(0.01).unwrap();
+        match tracker.resolve_enforcement(&check) {
+            BudgetEnforcement::RouteDown { model, .. } => assert_eq!(model, "cheap/model"),
+            other => panic!("expected RouteDown, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn enforcement_route_down_without_target_blocks() {
+        let tmp = TempDir::new().unwrap();
+        let enforcement = CostEnforcementConfig {
+            mode: "route_down".to_string(),
+            route_down_model: None,
+            ..Default::default()
+        };
+        let tracker = tracker_over_budget(exceeded_config(enforcement, false), &tmp);
+        let check = tracker.check_budget(0.01).unwrap();
+        assert!(matches!(
+            tracker.resolve_enforcement(&check),
+            BudgetEnforcement::Block { .. }
+        ));
+    }
+
+    #[test]
+    fn enforcement_allow_override_bypasses_block_mode() {
+        let tmp = TempDir::new().unwrap();
+        let enforcement = CostEnforcementConfig {
+            mode: "block".to_string(),
+            ..Default::default()
+        };
+        let tracker = tracker_over_budget(exceeded_config(enforcement, true), &tmp);
+        let check = tracker.check_budget(0.01).unwrap();
+        assert!(matches!(
+            tracker.resolve_enforcement(&check),
+            BudgetEnforcement::Warn { .. }
+        ));
+    }
+
+    #[test]
+    fn reserve_percent_lowers_effective_limit() {
+        let tmp = TempDir::new().unwrap();
+        let config = CostConfig {
+            enabled: true,
+            daily_limit_usd: 1.0,
+            monthly_limit_usd: 1000.0,
+            warn_at_percent: 100,
+            enforcement: CostEnforcementConfig {
+                reserve_percent: 50,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let tracker = CostTracker::new(config, tmp.path()).unwrap();
+        // 0.6 USD recorded; effective daily limit is 1.0 * (1 - 0.5) = 0.5.
+        tracker
+            .record_usage(TokenUsage::new("test/model", 600_000, 0, 1.0, 0.0))
+            .unwrap();
+        let check = tracker.check_budget(0.0).unwrap();
+        assert!(
+            matches!(check, BudgetCheck::Exceeded { .. }),
+            "spend past the reserved buffer should be treated as exceeded"
         );
     }
 }

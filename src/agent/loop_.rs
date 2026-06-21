@@ -1,6 +1,6 @@
 use crate::approval::{ApprovalManager, ApprovalRequest, ApprovalResponse};
 use crate::config::Config;
-use crate::cost::types::BudgetCheck;
+use crate::cost::types::BudgetEnforcement;
 use crate::i18n::ToolDescriptions;
 use crate::memory::{self, Memory, MemoryCategory, decay};
 use crate::multimodal;
@@ -2504,7 +2504,7 @@ pub(crate) async fn run_tool_call_loop(
             None
         };
 
-        let (active_provider, active_provider_name, active_model): (&dyn Provider, &str, &str) =
+        let (active_provider, active_provider_name, mut active_model): (&dyn Provider, &str, &str) =
             if let Some(ref vp_box) = vision_provider_box {
                 let vp_name = multimodal_config
                     .vision_provider
@@ -2555,19 +2555,33 @@ pub(crate) async fn run_tool_call_loop(
             hooks.fire_llm_input(history, model).await;
         }
 
-        // Budget enforcement — block if limit exceeded (no-op when not scoped)
-        if let Some(BudgetCheck::Exceeded {
-            current_usd,
-            limit_usd,
-            period,
-        }) = check_tool_loop_budget()
-        {
-            return Err(anyhow::anyhow!(
-                "Budget exceeded: ${:.4} of ${:.2} {:?} limit. Cannot make further API calls until the budget resets.",
+        // Budget enforcement — honor the configured `[cost.enforcement] mode`
+        // (no-op when cost tracking isn't scoped, e.g. tests/delegate/CLI).
+        // `route_down_holder` keeps the downgraded model string alive so
+        // `active_model` (a `&str`) can borrow it for the rest of this iteration.
+        let route_down_holder;
+        match check_tool_loop_budget() {
+            None | Some(BudgetEnforcement::Proceed) => {}
+            Some(BudgetEnforcement::Warn { reason }) => {
+                tracing::warn!("{reason}");
+            }
+            Some(BudgetEnforcement::RouteDown { model, reason }) => {
+                tracing::warn!("{reason}");
+                route_down_holder = model;
+                active_model = route_down_holder.as_str();
+            }
+            Some(BudgetEnforcement::Block {
                 current_usd,
                 limit_usd,
-                period
-            ));
+                period,
+            }) => {
+                return Err(anyhow::anyhow!(
+                    "Budget exceeded: ${:.4} of ${:.2} {:?} limit. Cannot make further API calls until the budget resets.",
+                    current_usd,
+                    limit_usd,
+                    period
+                ));
+            }
         }
 
         // Unified path via Provider::chat so provider-specific native tool logic
