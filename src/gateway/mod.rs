@@ -1014,10 +1014,12 @@ pub async fn run_gateway_with_mcp_registry(
         hooks.fire_gateway_start(host, actual_port).await;
     }
 
-    // Wrap observer with broadcast capability for SSE
+    // Wrap the process-global observer with broadcast capability for SSE.
+    // Sharing the global means `/metrics` gathers the one registry that every
+    // other entry point (channels, daemon, agent loop) also writes into.
     let broadcast_observer: Arc<dyn crate::observability::Observer> =
         Arc::new(sse::BroadcastObserver::new(
-            crate::observability::create_observer(&config.observability),
+            crate::observability::get_or_init_global(&config.observability),
             event_tx.clone(),
         ));
 
@@ -3496,7 +3498,7 @@ mod tests {
     async fn metrics_endpoint_renders_prometheus_output() {
         let event_tx = tokio::sync::broadcast::channel(16).0;
         let wrapped = sse::BroadcastObserver::new(
-            Box::new(crate::observability::PrometheusObserver::new()),
+            Arc::new(crate::observability::PrometheusObserver::new()),
             event_tx.clone(),
         );
         crate::observability::Observer::record_event(

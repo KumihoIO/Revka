@@ -23,6 +23,27 @@ pub use traits::{Observer, ObserverEvent};
 pub use verbose::VerboseObserver;
 
 use crate::config::ObservabilityConfig;
+use std::sync::{Arc, OnceLock};
+
+/// Process-global observer shared by every entry point.
+///
+/// A single shared observer guarantees that all telemetry — including
+/// Prometheus counters/gauges — feeds the one registry that the gateway's
+/// `GET /metrics` handler scrapes. Without this, each entry point
+/// (`agent::process_message`, the interactive loop, `Agent::from_config*`,
+/// the channel manager, the daemon) would call [`create_observer`] and write
+/// into its own throwaway registry that `/metrics` never gathers.
+static GLOBAL_OBSERVER: OnceLock<Arc<dyn Observer>> = OnceLock::new();
+
+/// Return the process-global [`Observer`], creating it from `config` on first
+/// call. Subsequent calls receive the same `Arc`, ignoring their `config`
+/// argument — the first caller wins, mirroring
+/// [`crate::cost::CostTracker::get_or_init_global`].
+pub fn get_or_init_global(config: &ObservabilityConfig) -> Arc<dyn Observer> {
+    GLOBAL_OBSERVER
+        .get_or_init(|| Arc::from(create_observer(config)))
+        .clone()
+}
 
 /// Factory: create the right observer from config
 pub fn create_observer(config: &ObservabilityConfig) -> Box<dyn Observer> {
