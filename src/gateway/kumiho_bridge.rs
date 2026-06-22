@@ -26,6 +26,42 @@ const CE_ENDPOINT_ENV: &str = "KUMIHO_LOCAL_SERVER_ENDPOINT";
 /// CE-only Redis URL exported alongside the CE endpoint; cleared in cloud mode.
 const CE_REDIS_ENV: &str = "KUMIHO_UPSTASH_REDIS_URL";
 
+/// Cloud-routing creds that must be shadowed to empty for the CE sidecar. A
+/// non-empty `KUMIHO_AUTH_TOKEN` makes the SDK take the cloud discovery path
+/// instead of the local CE probe, and an inherited `KUMIHO_CONTROL_PLANE_URL`
+/// would skew the bridge's cloud-path routing cache key. Mirrors the shadowing
+/// in `src/agent/kumiho.rs` (memory MCP) and `src/main.rs` (startup shim).
+const CE_SHADOWED_CLOUD_VARS: [&str; 3] = [
+    "KUMIHO_AUTH_TOKEN",
+    "KUMIHO_SERVICE_TOKEN",
+    "KUMIHO_CONTROL_PLANE_URL",
+];
+
+/// True when local self-hosted CE is configured, signalled by a non-empty
+/// `KUMIHO_LOCAL_SERVER_ENDPOINT`. This is the same signal `send_raw` keys its
+/// tokenless-CE routing decision on, set by both the daemon startup shim and the
+/// memory MCP path whenever CE is active.
+fn ce_configured() -> bool {
+    std::env::var(CE_ENDPOINT_ENV)
+        .map(|v| !v.trim().is_empty())
+        .unwrap_or(false)
+}
+
+/// When local CE is configured, shadow the inherited cloud-routing creds to
+/// empty on the spawned child so the loopback CE sidecar takes the tokenless CE
+/// probe path rather than cloud discovery. The daemon-CE startup shim already
+/// blanks these process-wide, but doing it here makes the bridge self-sufficient:
+/// child routing stays CE-correct regardless of how the gateway was launched,
+/// matching the shadowing the memory MCP path and the startup shim perform.
+/// See memory-6.
+fn apply_ce_cred_shadowing(cmd: &mut Command) {
+    if ce_configured() {
+        for var in CE_SHADOWED_CLOUD_VARS {
+            cmd.env(var, "");
+        }
+    }
+}
+
 /// Clear stale local-CE env vars so cloud mode is authoritative over routing.
 ///
 /// `send_raw` derives its tokenless-CE decision from the *presence* of
@@ -167,6 +203,8 @@ async fn start_bridge(client: &Client) -> Result<BridgeState> {
         .stdout(stdout.unwrap_or_else(Stdio::null))
         .stderr(stderr.unwrap_or_else(Stdio::null));
 
+    apply_ce_cred_shadowing(&mut cmd);
+
     #[cfg(windows)]
     {
         cmd.creation_flags(0x0800_0000);
@@ -283,10 +321,7 @@ pub async fn send_raw(
     // — CE serves gRPC (not JSON REST), so the hosted FastAPI `/api/v1` fallback
     // would receive an undecodable gRPC body. The bridge shim builds a tokenless
     // CE client from KUMIHO_LOCAL_SERVER_ENDPOINT.
-    let ce_configured = std::env::var(CE_ENDPOINT_ENV)
-        .map(|v| !v.trim().is_empty())
-        .unwrap_or(false);
-    if token.is_empty() && !ce_configured {
+    if token.is_empty() && !ce_configured() {
         return None;
     }
 
@@ -346,6 +381,12 @@ pub async fn send_raw(
 mod tests {
     use super::*;
 
+    /// Serializes the process-global env mutations across every test in this
+    /// module that touches `KUMIHO_LOCAL_SERVER_ENDPOINT` / the cloud-cred vars,
+    /// so they can't race each other's set/restore. A single shared guard is
+    /// required because separate function-local statics are distinct mutexes.
+    static ENV_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     /// Regression for the stale-`KUMIHO_LOCAL_SERVER_ENDPOINT` misroute
     /// (memory-3). Reproduces the leak the fix targets: a cloud-mode daemon
     /// starts with a *stale* `KUMIHO_LOCAL_SERVER_ENDPOINT` set and an empty
@@ -363,7 +404,6 @@ mod tests {
     #[allow(clippy::await_holding_lock)]
     #[tokio::test]
     async fn cloud_startup_clears_stale_ce_endpoint_so_empty_token_returns_none() {
-        static ENV_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
         let _guard = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
 
         let prev = std::env::var(CE_ENDPOINT_ENV).ok();
@@ -401,6 +441,108 @@ mod tests {
             result.is_none(),
             "after clearing the stale CE endpoint, a cloud-mode bridge call with \
              an empty token must return None to fall back to hosted FastAPI"
+        );
+    }
+
+    /// Regression for memory-6: the bridge launcher must self-guarantee
+    /// CE-correct child routing rather than relying on `main.rs` having blanked
+    /// the cloud creds process-wide. With CE configured (a non-empty
+    /// `KUMIHO_LOCAL_SERVER_ENDPOINT`), `apply_ce_cred_shadowing` must set the
+    /// three cloud-routing vars to empty on the spawned child even when the
+    /// parent process still carries non-empty inherited values — so an inherited
+    /// cloud token can't push the loopback CE sidecar onto the cloud discovery
+    /// path. The env is process-global, so the mutation is serialized and the
+    /// prior values restored.
+    #[test]
+    fn ce_mode_shadows_inherited_cloud_creds_on_spawned_child() {
+        let _guard = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+
+        let prev_endpoint = std::env::var(CE_ENDPOINT_ENV).ok();
+        let prev_creds: Vec<(&str, Option<String>)> = CE_SHADOWED_CLOUD_VARS
+            .iter()
+            .map(|&v| (v, std::env::var(v).ok()))
+            .collect();
+
+        // Simulate a CE-configured daemon whose process env still carries an
+        // inherited (non-empty) cloud token — the gap the fix closes. SAFETY:
+        // env mutation is serialized by ENV_GUARD and restored before returning.
+        unsafe {
+            std::env::set_var(CE_ENDPOINT_ENV, "127.0.0.1:9190");
+            for &var in &CE_SHADOWED_CLOUD_VARS {
+                std::env::set_var(var, "inherited-cloud-value");
+            }
+        }
+
+        let mut cmd = Command::new("python");
+        apply_ce_cred_shadowing(&mut cmd);
+
+        // The child env override must blank every cloud-routing var.
+        let overrides: std::collections::HashMap<String, Option<String>> = cmd
+            .as_std()
+            .get_envs()
+            .map(|(k, v)| {
+                (
+                    k.to_string_lossy().into_owned(),
+                    v.map(|v| v.to_string_lossy().into_owned()),
+                )
+            })
+            .collect();
+
+        // SAFETY: see above — restore prior state under the same guard.
+        unsafe {
+            match prev_endpoint {
+                Some(v) => std::env::set_var(CE_ENDPOINT_ENV, v),
+                None => std::env::remove_var(CE_ENDPOINT_ENV),
+            }
+            for (var, prev) in prev_creds {
+                match prev {
+                    Some(v) => std::env::set_var(var, v),
+                    None => std::env::remove_var(var),
+                }
+            }
+        }
+
+        for var in CE_SHADOWED_CLOUD_VARS {
+            assert_eq!(
+                overrides.get(var),
+                Some(&Some(String::new())),
+                "{var} must be shadowed to empty on the CE child env"
+            );
+        }
+    }
+
+    /// In cloud mode (no `KUMIHO_LOCAL_SERVER_ENDPOINT`), the bridge must NOT
+    /// shadow the cloud creds — the child needs the real token to route through
+    /// cloud discovery. Guards against the CE shadowing leaking into cloud mode.
+    #[test]
+    fn cloud_mode_does_not_shadow_cloud_creds_on_spawned_child() {
+        let _guard = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+
+        let prev_endpoint = std::env::var(CE_ENDPOINT_ENV).ok();
+
+        // Cloud mode: no CE endpoint signal in the env. SAFETY: serialized by
+        // ENV_GUARD; restored before returning.
+        unsafe { std::env::remove_var(CE_ENDPOINT_ENV) };
+
+        let mut cmd = Command::new("python");
+        apply_ce_cred_shadowing(&mut cmd);
+
+        let touched_cloud_var = cmd
+            .as_std()
+            .get_envs()
+            .any(|(k, _)| CE_SHADOWED_CLOUD_VARS.contains(&k.to_string_lossy().as_ref()));
+
+        // SAFETY: see above — restore prior state under the same guard.
+        unsafe {
+            match prev_endpoint {
+                Some(v) => std::env::set_var(CE_ENDPOINT_ENV, v),
+                None => std::env::remove_var(CE_ENDPOINT_ENV),
+            }
+        }
+
+        assert!(
+            !touched_cloud_var,
+            "cloud mode must leave the cloud-routing creds untouched on the child env"
         );
     }
 
