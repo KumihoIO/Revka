@@ -378,6 +378,20 @@ fn push_failure(
     ));
 }
 
+/// Apply bounded "equal jitter" to a backoff interval so concurrent retriers
+/// desynchronize instead of re-firing in lockstep (thundering-herd avoidance).
+///
+/// Returns a value in `[base/2, base]`: half the interval is fixed (preserving a
+/// lower bound so retries don't collapse toward zero) and half is randomized.
+fn jitter_backoff(base: u64) -> u64 {
+    let half = base / 2;
+    let span = base - half; // ceil(base/2); avoids a zero-modulus when base is odd
+    if span == 0 {
+        return base;
+    }
+    half + (rand::random::<u64>() % (span + 1))
+}
+
 // ── Resilient Provider Wrapper ────────────────────────────────────────────
 // Three-level failover strategy: model chain → provider chain → retry loop.
 //   Outer loop:  iterate model fallback chain (original model first, then
@@ -429,10 +443,15 @@ impl ReliableProvider {
     /// Compute backoff duration, respecting Retry-After if present.
     fn compute_backoff(&self, base: u64, err: &anyhow::Error) -> u64 {
         if let Some(retry_after) = parse_retry_after_ms(err) {
-            // Use Retry-After but cap at 30s to avoid indefinite waits
+            // Use Retry-After but cap at 30s to avoid indefinite waits.
+            // The server told us exactly when to retry, so honor it without jitter.
             retry_after.min(30_000).max(base)
         } else {
-            base
+            // No Retry-After: spread concurrent retriers out with bounded jitter so
+            // they don't re-fire in lockstep against an already-struggling provider
+            // (thundering-herd / retry-storm). Equal-jitter keeps a lower bound:
+            // wait ∈ [base/2, base].
+            jitter_backoff(base)
         }
     }
 }
@@ -1803,10 +1822,32 @@ mod tests {
     }
 
     #[test]
-    fn compute_backoff_falls_back_to_base() {
+    fn compute_backoff_jitters_when_no_retry_after() {
+        // Without a Retry-After, the wait is jittered into [base/2, base] so
+        // concurrent retriers desynchronize (thundering-herd avoidance, #428).
         let provider = ReliableProvider::new(vec![], 0, 500);
         let err = anyhow::anyhow!("500 Server Error");
-        assert_eq!(provider.compute_backoff(500, &err), 500);
+        for _ in 0..1_000 {
+            let wait = provider.compute_backoff(500, &err);
+            assert!(
+                (250..=500).contains(&wait),
+                "jittered backoff {wait} out of [base/2, base]"
+            );
+        }
+    }
+
+    #[test]
+    fn jitter_backoff_stays_within_equal_jitter_bounds() {
+        for base in [0u64, 1, 2, 3, 50, 999, 10_000] {
+            let lo = base / 2;
+            for _ in 0..1_000 {
+                let v = jitter_backoff(base);
+                assert!(
+                    (lo..=base).contains(&v),
+                    "jitter_backoff({base}) = {v} out of [{lo}, {base}]"
+                );
+            }
+        }
     }
 
     // ── §2.1 API auth error (401/403) tests ──────────────────
