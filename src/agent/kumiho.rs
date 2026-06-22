@@ -820,7 +820,15 @@ mod tests {
             memory_retrieval_limit: 7,
         };
         let server = kumiho_mcp_server_config(&kc);
-        assert_eq!(server.command, "python3");
+        // The command is the platform's default Python launcher ("python3" on
+        // Unix, "python" on Windows) — see `sidecars::python::default_python_command`.
+        // Assert against it rather than a hardcoded "python3" so the test holds on
+        // every host (a bare "python3" assertion regressed on Windows once the
+        // command stopped being hardcoded).
+        assert_eq!(
+            server.command,
+            crate::sidecars::python::default_python_command()
+        );
         assert_eq!(server.args, vec!["/opt/kumiho/run_kumiho_mcp.py"]);
         assert_eq!(
             server.env.get("KUMIHO_SPACE_PREFIX").map(|s| s.as_str()),
