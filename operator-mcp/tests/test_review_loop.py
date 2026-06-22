@@ -65,3 +65,81 @@ The code has several issues that need to be addressed.
 VERDICT: NEEDS_CHANGES
 """
         assert parse_verdict(text) == "needs_changes"
+
+
+# ── review_fix_loop now delegates to refinement_loop (#452) ──────────
+
+
+@pytest.mark.asyncio
+async def test_review_fix_loop_delegates_to_refinement(monkeypatch):
+    """review_fix_loop is deprecated and must delegate to refinement_loop, which
+    has the hardened subprocess fallback (MCP servers + system prompt + budget).
+    refinement already accepts coder_agent_id/reviewer_type/fixer_type aliases,
+    so the args pass through verbatim."""
+    import operator_mcp.patterns.refinement as refinement
+    from operator_mcp.review_loop import tool_review_fix_loop
+
+    captured: dict = {}
+
+    async def fake_refinement(args):
+        captured["args"] = args
+        return {
+            "creator_agent_id": "agent-1",
+            "total_rounds": 1,
+            "final_verdict": "approved",
+            "final_action": "accepted",
+            "rounds": [],
+        }
+
+    monkeypatch.setattr(refinement, "tool_refinement_loop", fake_refinement)
+
+    args = {
+        "coder_agent_id": "agent-1",
+        "cwd": "/x",
+        "reviewer_type": "codex",
+        "fixer_type": "claude",
+    }
+    result = await tool_review_fix_loop(args)
+
+    assert captured["args"] is args, "args must pass through to refinement verbatim"
+    assert result["final_verdict"] == "approved"
+    assert result["total_rounds"] == 1
+    # Legacy return key preserved for backwards-compatible callers.
+    assert result["coder_agent_id"] == "agent-1"
+
+
+@pytest.mark.asyncio
+async def test_review_fix_loop_preserves_explicit_coder_agent_id(monkeypatch):
+    """If refinement already returns coder_agent_id, the compat mirror must not
+    clobber it with creator_agent_id."""
+    import operator_mcp.patterns.refinement as refinement
+    from operator_mcp.review_loop import tool_review_fix_loop
+
+    async def fake_refinement(_args):
+        return {
+            "coder_agent_id": "explicit",
+            "creator_agent_id": "creator",
+            "final_verdict": "approved",
+        }
+
+    monkeypatch.setattr(refinement, "tool_refinement_loop", fake_refinement)
+
+    result = await tool_review_fix_loop({"coder_agent_id": "explicit", "cwd": "/x"})
+    assert result["coder_agent_id"] == "explicit"
+
+
+@pytest.mark.asyncio
+async def test_review_fix_loop_passes_through_error_results(monkeypatch):
+    """A non-success (e.g. validation error) result from refinement is returned
+    unchanged — no coder_agent_id is fabricated."""
+    import operator_mcp.patterns.refinement as refinement
+    from operator_mcp.review_loop import tool_review_fix_loop
+
+    async def fake_refinement(_args):
+        return {"error": "cwd is required for refinement_loop", "code": "missing_cwd"}
+
+    monkeypatch.setattr(refinement, "tool_refinement_loop", fake_refinement)
+
+    result = await tool_review_fix_loop({})
+    assert result["code"] == "missing_cwd"
+    assert "coder_agent_id" not in result
