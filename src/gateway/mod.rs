@@ -596,6 +596,21 @@ pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
     Box::pin(run_gateway_with_mcp_registry(host, port, config, None)).await
 }
 
+/// True when disabling pairing would expose unauthenticated endpoints off-host (#385).
+///
+/// `require_pairing = false` makes every per-handler auth check short-circuit to
+/// "allow", so it is only safe when the gateway is reachable from the local host
+/// alone — i.e. a loopback bind with no tunnel. A non-loopback bind or any
+/// configured tunnel makes those surfaces remotely reachable, so the combination
+/// is refused at startup.
+fn pairing_disabled_on_exposed_bind(
+    require_pairing: bool,
+    host: &str,
+    tunnel_provider: &str,
+) -> bool {
+    !require_pairing && (is_public_bind(host) || tunnel_provider != "none")
+}
+
 /// Run the HTTP gateway, optionally reusing a daemon-owned MCP registry.
 #[allow(clippy::too_many_lines)]
 pub async fn run_gateway_with_mcp_registry(
@@ -612,6 +627,35 @@ pub async fn run_gateway_with_mcp_registry(
              Suggestion: use --host 127.0.0.1 (default), configure a tunnel, or set\n\
              [gateway] allow_public_bind = true in config.toml to silence this warning.\n\n\
              Docker/VM: if you are running inside a container or VM, this is expected."
+        );
+    }
+
+    // ── Security: couple the pairing toggle to bind exposure (#385) ──
+    //
+    // `require_pairing = false` short-circuits every per-handler `require_auth`
+    // and `is_authenticated` check to "allow", so disabling pairing opens every
+    // gated surface — including high-value WS/SSE endpoints (agent chat, MCP
+    // events, node discovery, event stream). On a loopback-only bind that is the
+    // operator's deliberate local opt-out, but the two toggles are otherwise
+    // uncoupled: nothing stops an operator from pairing-disabling a gateway that
+    // is reachable off-host (a non-loopback bind, or any tunnel), which silently
+    // exposes those surfaces to the network with no auth. Refuse to start in
+    // that combination rather than ship an unauthenticated remote surface.
+    if pairing_disabled_on_exposed_bind(
+        config.gateway.require_pairing,
+        host,
+        &config.tunnel.provider,
+    ) {
+        anyhow::bail!(
+            "Refusing to start: [gateway] require_pairing = false leaves every endpoint \
+             unauthenticated, but the gateway is reachable off-host (bind {host}{}). \
+             Re-enable pairing (require_pairing = true) or bind to loopback (--host 127.0.0.1) \
+             with no tunnel.",
+            if config.tunnel.provider != "none" {
+                format!(", tunnel '{}'", config.tunnel.provider)
+            } else {
+                String::new()
+            }
         );
     }
     let config_state = Arc::new(Mutex::new(config.clone()));
@@ -3680,6 +3724,50 @@ mod tests {
             .expect("supervisor should exit on shutdown")
             .expect("supervisor task should not panic");
         assert_eq!(stop_calls.load(Ordering::SeqCst), 1);
+    }
+
+    // ── #385: refuse pairing-disable on an exposed bind ───────
+    #[test]
+    fn pairing_enabled_is_always_allowed() {
+        // require_pairing = true never trips the guard, regardless of exposure.
+        assert!(!pairing_disabled_on_exposed_bind(true, "0.0.0.0", "ngrok"));
+        assert!(!pairing_disabled_on_exposed_bind(true, "127.0.0.1", "none"));
+    }
+
+    #[test]
+    fn pairing_disabled_on_loopback_no_tunnel_is_allowed() {
+        // Local-only opt-out: loopback bind with no tunnel stays permitted.
+        assert!(!pairing_disabled_on_exposed_bind(
+            false,
+            "127.0.0.1",
+            "none"
+        ));
+        assert!(!pairing_disabled_on_exposed_bind(
+            false,
+            "localhost",
+            "none"
+        ));
+        assert!(!pairing_disabled_on_exposed_bind(false, "::1", "none"));
+    }
+
+    #[test]
+    fn pairing_disabled_on_public_bind_is_refused() {
+        assert!(pairing_disabled_on_exposed_bind(false, "0.0.0.0", "none"));
+        assert!(pairing_disabled_on_exposed_bind(
+            false,
+            "192.168.1.10",
+            "none"
+        ));
+    }
+
+    #[test]
+    fn pairing_disabled_with_tunnel_is_refused_even_on_loopback() {
+        // A tunnel makes a loopback bind remotely reachable.
+        assert!(pairing_disabled_on_exposed_bind(
+            false,
+            "127.0.0.1",
+            "cloudflare"
+        ));
     }
 
     #[tokio::test]
