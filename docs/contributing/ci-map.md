@@ -13,8 +13,7 @@ For event-by-event delivery behavior across PR, merge, push, and release, see [`
 
 | File | GitHub display name | Role |
 |---|---|---|
-| `ci-run.yml` | `CI` | Primary Rust + docs validation (fmt, clippy, test, release smoke, docs-quality) — merge-blocking |
-| `checks-on-pr.yml` | `Quality Gate` | Aggregated PR quality gate |
+| `ci-run.yml` | `CI` | Single consolidated PR gate — Rust + docs validation (fmt, clippy, test, build matrix, release smoke, docs-quality) plus security audit (`cargo deny check all`), 32-bit check, MSRV, and the feature matrix — merge-blocking (#432) |
 | `cross-platform-build-manual.yml` | `Cross-Platform Build` | Manual multi-OS release build |
 | `pr-path-labeler.yml` | `PR Path Labeler` | Apply scope labels based on changed paths |
 | `pub-homebrew-core.yml` | `Pub Homebrew Core` | Manual, bot-owned Homebrew core formula bump for tagged releases |
@@ -31,7 +30,7 @@ For event-by-event delivery behavior across PR, merge, push, and release, see [`
 The narrative descriptions below describe CI *intent and historical stages*.
 When a referenced file (for example `sec-audit.yml`, `pub-release.yml`,
 `pr-intake-checks.yml`) is not present in the tree above, treat the
-corresponding role as either folded into `ci-run.yml` / `checks-on-pr.yml` or
+corresponding role as either folded into `ci-run.yml` or
 as a not-yet-restored piece of the upstream pipeline — confirm against the
 canonical list before relying on it.
 

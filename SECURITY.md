@@ -85,9 +85,9 @@ docker inspect --format='{{.Config.User}}' revka
 docker run --read-only -v /path/to/workspace:/workspace revka gateway
 ```
 
-### CI Enforcement
+### Runtime Hardening
 
-The `docker` job in `.github/workflows/checks-on-pr.yml` automatically verifies:
+The production runtime image is built non-root, enforced by the `Dockerfile`:
 1. Container does not run as root (UID 0)
 2. Runtime stage uses `:nonroot` variant
 3. Explicit `USER` directive with numeric UID exists
