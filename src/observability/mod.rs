@@ -11,7 +11,6 @@ pub mod verbose;
 
 #[allow(unused_imports)]
 pub use self::log::LogObserver;
-#[allow(unused_imports)]
 pub use self::multi::MultiObserver;
 pub use noop::NoopObserver;
 #[cfg(feature = "observability-otel")]
@@ -25,9 +24,43 @@ pub use verbose::VerboseObserver;
 use crate::config::ObservabilityConfig;
 use std::sync::{Arc, OnceLock};
 
-/// Factory: create the right observer from config
+/// Factory: create the right observer from config.
+///
+/// `config.backend` may name a single backend (e.g. `"prometheus"`) or several
+/// comma-separated backends (e.g. `"prometheus,otel"`). When more than one is
+/// requested, each is built via the single-backend path and the results are
+/// fanned out through a [`MultiObserver`]; zero or one backend keeps the
+/// single-backend path unchanged for backward compatibility.
 pub fn create_observer(config: &ObservabilityConfig) -> Box<dyn Observer> {
-    match config.backend.as_str() {
+    let backends: Vec<&str> = config
+        .backend
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    match backends.as_slice() {
+        // No backend specified at all (empty string) — keep the historical
+        // fall-back to noop via the single-backend path.
+        [] => create_single_observer(&config.backend, config),
+        [single] => create_single_observer(single, config),
+        many => Box::new(MultiObserver::new(
+            many.iter()
+                .map(|b| create_single_observer(b, config))
+                .collect(),
+        )),
+    }
+}
+
+/// Build exactly one backend from its name. Unknown names fall back to noop.
+fn create_single_observer(
+    backend: &str,
+    // `config` is only read by the OTel arm; silence the unused warning when
+    // that feature is compiled out.
+    #[cfg_attr(not(feature = "observability-otel"), allow(unused_variables))]
+    config: &ObservabilityConfig,
+) -> Box<dyn Observer> {
+    match backend {
         "log" => Box::new(LogObserver::new()),
         "verbose" => Box::new(VerboseObserver::new()),
         "prometheus" => {
@@ -74,10 +107,7 @@ pub fn create_observer(config: &ObservabilityConfig) -> Box<dyn Observer> {
         }
         "none" | "noop" => Box::new(NoopObserver),
         _ => {
-            tracing::warn!(
-                "Unknown observability backend '{}', falling back to noop",
-                config.backend
-            );
+            tracing::warn!("Unknown observability backend '{backend}', falling back to noop");
             Box::new(NoopObserver)
         }
     }
@@ -202,6 +232,32 @@ mod tests {
             "noop"
         };
         assert_eq!(create_observer(&cfg).name(), expected);
+    }
+
+    #[test]
+    fn factory_multiple_backends_returns_multi() {
+        let cfg = ObservabilityConfig {
+            backend: "log,verbose".into(),
+            ..ObservabilityConfig::default()
+        };
+        assert_eq!(create_observer(&cfg).name(), "multi");
+    }
+
+    #[test]
+    fn factory_multiple_backends_trims_whitespace_and_ignores_empties() {
+        // Stray whitespace and empty segments must not split a single backend
+        // into a `MultiObserver`, nor inflate the backend count.
+        let single = ObservabilityConfig {
+            backend: " log , ".into(),
+            ..ObservabilityConfig::default()
+        };
+        assert_eq!(create_observer(&single).name(), "log");
+
+        let multi = ObservabilityConfig {
+            backend: " log , verbose ".into(),
+            ..ObservabilityConfig::default()
+        };
+        assert_eq!(create_observer(&multi).name(), "multi");
     }
 
     #[test]
