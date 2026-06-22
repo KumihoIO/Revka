@@ -27,7 +27,7 @@ use super::AppState;
 use super::mcp_discovery::read_revka_mcp;
 use axum::{
     extract::{
-        Query, State, WebSocketUpgrade,
+        ConnectInfo, Query, State, WebSocketUpgrade,
         ws::{Message, WebSocket},
     },
     http::{HeaderMap, StatusCode, header},
@@ -35,6 +35,7 @@ use axum::{
 };
 use futures_util::{SinkExt, StreamExt, stream::BoxStream};
 use serde::Deserialize;
+use std::net::SocketAddr;
 use std::time::Duration;
 
 const WS_PROTOCOL: &str = "revka.v1";
@@ -226,6 +227,7 @@ where
 /// GET /ws/mcp/events — WebSocket upgrade for session-wide MCP progress.
 pub async fn handle_ws_mcp_events(
     State(state): State<AppState>,
+    ConnectInfo(peer_addr): ConnectInfo<SocketAddr>,
     Query(params): Query<McpEventsQuery>,
     headers: HeaderMap,
     ws: WebSocketUpgrade,
@@ -239,9 +241,21 @@ pub async fn handle_ws_mcp_events(
             .into_response();
     }
 
+    // Rate-limited against bearer-token brute force (#384).
     if state.pairing.require_pairing() {
+        let limiter = super::api::WsAuthLimiter::new(&state, Some(peer_addr), &headers);
+        if let Err(retry_after) = limiter.check() {
+            return (
+                StatusCode::TOO_MANY_REQUESTS,
+                [(header::RETRY_AFTER, retry_after.to_string())],
+                "Too many auth attempts — try again later",
+            )
+                .into_response();
+        }
+
         let token = extract_ws_token(&headers, params.token.as_deref()).unwrap_or("");
         if !state.pairing.is_authenticated(token) {
+            limiter.record_failure();
             return (StatusCode::UNAUTHORIZED, "Unauthorized").into_response();
         }
     }

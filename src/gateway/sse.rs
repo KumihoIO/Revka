@@ -4,7 +4,7 @@
 
 use super::AppState;
 use axum::{
-    extract::State,
+    extract::{ConnectInfo, State},
     http::{HeaderMap, StatusCode, header},
     response::{
         IntoResponse,
@@ -12,6 +12,7 @@ use axum::{
     },
 };
 use std::convert::Infallible;
+use std::net::SocketAddr;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncSeekExt, BufReader, SeekFrom};
 use tokio_stream::StreamExt;
@@ -20,10 +21,21 @@ use tokio_stream::wrappers::{BroadcastStream, ReceiverStream};
 /// GET /api/events — SSE event stream
 pub async fn handle_sse_events(
     State(state): State<AppState>,
+    ConnectInfo(peer_addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
 ) -> impl IntoResponse {
-    // Auth check
+    // Auth check (rate-limited against bearer-token brute force, #384).
     if state.pairing.require_pairing() {
+        let limiter = super::api::WsAuthLimiter::new(&state, Some(peer_addr), &headers);
+        if let Err(retry_after) = limiter.check() {
+            return (
+                StatusCode::TOO_MANY_REQUESTS,
+                [(header::RETRY_AFTER, retry_after.to_string())],
+                "Too many auth attempts — try again later",
+            )
+                .into_response();
+        }
+
         let token = headers
             .get(header::AUTHORIZATION)
             .and_then(|v| v.to_str().ok())
@@ -31,6 +43,7 @@ pub async fn handle_sse_events(
             .unwrap_or("");
 
         if !state.pairing.is_authenticated(token) {
+            limiter.record_failure();
             return (
                 StatusCode::UNAUTHORIZED,
                 "Unauthorized — provide Authorization: Bearer <token>",
@@ -65,9 +78,20 @@ pub async fn handle_sse_events(
 /// Handles log rotation/truncation by resetting to file start when the file shrinks.
 pub async fn handle_api_daemon_logs(
     State(state): State<AppState>,
+    ConnectInfo(peer_addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
 ) -> impl IntoResponse {
     if state.pairing.require_pairing() {
+        let limiter = super::api::WsAuthLimiter::new(&state, Some(peer_addr), &headers);
+        if let Err(retry_after) = limiter.check() {
+            return (
+                StatusCode::TOO_MANY_REQUESTS,
+                [(header::RETRY_AFTER, retry_after.to_string())],
+                "Too many auth attempts — try again later",
+            )
+                .into_response();
+        }
+
         let token = headers
             .get(header::AUTHORIZATION)
             .and_then(|v| v.to_str().ok())
@@ -75,6 +99,7 @@ pub async fn handle_api_daemon_logs(
             .unwrap_or("");
 
         if !state.pairing.is_authenticated(token) {
+            limiter.record_failure();
             return (
                 StatusCode::UNAUTHORIZED,
                 "Unauthorized — provide Authorization: Bearer <token>",

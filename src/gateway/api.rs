@@ -140,6 +140,67 @@ pub(super) fn require_auth(
     ))
 }
 
+/// Per-connection handle to the auth brute-force limiter for the inline token
+/// checks in the WebSocket (`/ws/*`) and SSE (`/api/events`) handlers.
+///
+/// Those handlers each extract their credential from a different place
+/// (`Authorization` header, `Sec-WebSocket-Protocol` bearer sub-protocol,
+/// `?token=` query param, or the node auth token), so they cannot share a
+/// single validation routine. They *can* share the limiter plumbing: this
+/// guard captures the rate key and the loopback flag once, then exposes the
+/// same two-step `check` / `record_failure` dance the `/pair` and `/webhook`
+/// flows use (#384).
+///
+/// `peer_addr` MUST be the socket peer (from `ConnectInfo`), never a
+/// header-derived value: both the rate key and the loopback exemption trust
+/// only the real peer, so an attacker cannot spoof `X-Forwarded-For:
+/// 127.0.0.1` to dodge the lockout. Loopback peers are exempt — local
+/// administrators may retry freely — exactly as in the existing flows.
+pub(super) struct WsAuthLimiter<'a> {
+    limiter: &'a super::auth_rate_limit::AuthRateLimiter,
+    rate_key: String,
+    peer_is_loopback: bool,
+}
+
+impl<'a> WsAuthLimiter<'a> {
+    pub(super) fn new(
+        state: &'a AppState,
+        peer_addr: Option<std::net::SocketAddr>,
+        headers: &HeaderMap,
+    ) -> Self {
+        Self {
+            limiter: state.auth_limiter.as_ref(),
+            rate_key: super::client_key_from_request(
+                peer_addr,
+                headers,
+                state.trust_forwarded_headers,
+            ),
+            peer_is_loopback: peer_addr.map(|a| a.ip().is_loopback()).unwrap_or(false),
+        }
+    }
+
+    /// Reject a locked-out peer *before* any credential comparison.
+    ///
+    /// Returns `Err(retry_after_secs)` when the peer is currently locked out;
+    /// the caller should respond `429 Too Many Requests`.
+    pub(super) fn check(&self) -> Result<(), u64> {
+        self.limiter
+            .check_rate_limit(&self.rate_key, self.peer_is_loopback)
+            .map_err(|e| {
+                tracing::warn!("🔐 Auth rate limit exceeded for {}", self.rate_key);
+                e.retry_after_secs
+            })
+    }
+
+    /// Record a failed credential attempt so repeated invalid guesses
+    /// eventually trip the lockout. Call only on the authentication-failure
+    /// path.
+    pub(super) fn record_failure(&self) {
+        self.limiter
+            .record_attempt(&self.rate_key, self.peer_is_loopback);
+    }
+}
+
 // ── Query parameters ─────────────────────────────────────────────
 
 #[derive(Deserialize)]
@@ -3301,5 +3362,61 @@ mod tests {
         headers.insert(SERVICE_TOKEN_HEADER, "".parse().unwrap());
         let err = require_auth(&state, &headers).expect_err("empty config must reject");
         assert_eq!(err.0, StatusCode::UNAUTHORIZED);
+    }
+
+    // ── WsAuthLimiter (rate-limited WS/SSE token checks, #384) ──
+
+    use crate::gateway::auth_rate_limit::MAX_ATTEMPTS;
+    use std::net::SocketAddr;
+
+    /// A non-loopback peer that records a failed attempt per request eventually
+    /// trips the lockout, after which `check()` returns 429 (a retry-after).
+    #[test]
+    fn ws_auth_limiter_locks_out_non_loopback_after_repeated_failures() {
+        let state = auth_test_state();
+        let peer: SocketAddr = "203.0.113.7:54321".parse().unwrap();
+        let headers = HeaderMap::new();
+
+        // Each invalid attempt mirrors the handler failure path: check, then
+        // record the failure.
+        for _ in 0..MAX_ATTEMPTS {
+            let limiter = WsAuthLimiter::new(&state, Some(peer), &headers);
+            assert!(limiter.check().is_ok(), "should be allowed under the limit");
+            limiter.record_failure();
+        }
+
+        let limiter = WsAuthLimiter::new(&state, Some(peer), &headers);
+        let retry_after = limiter.check().expect_err("should be locked out");
+        assert!(retry_after > 0);
+    }
+
+    /// Loopback peers (local administrators) are never rate-limited, even past
+    /// the failure threshold — the limiter trusts only the socket peer.
+    #[test]
+    fn ws_auth_limiter_exempts_loopback_peer() {
+        let state = auth_test_state();
+        let peer: SocketAddr = "127.0.0.1:5000".parse().unwrap();
+        let headers = HeaderMap::new();
+
+        for _ in 0..(MAX_ATTEMPTS * 2) {
+            let limiter = WsAuthLimiter::new(&state, Some(peer), &headers);
+            assert!(limiter.check().is_ok(), "loopback must never lock out");
+            limiter.record_failure();
+        }
+    }
+
+    /// Successful attempts never call `record_failure`, so a client that always
+    /// authenticates is never locked out regardless of volume.
+    #[test]
+    fn ws_auth_limiter_does_not_count_successful_auth() {
+        let state = auth_test_state();
+        let peer: SocketAddr = "198.51.100.4:40000".parse().unwrap();
+        let headers = HeaderMap::new();
+
+        for _ in 0..(MAX_ATTEMPTS * 2) {
+            let limiter = WsAuthLimiter::new(&state, Some(peer), &headers);
+            assert!(limiter.check().is_ok());
+            // No record_failure() — the credential was valid.
+        }
     }
 }

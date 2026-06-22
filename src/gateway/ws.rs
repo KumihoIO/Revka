@@ -21,7 +21,7 @@
 use super::AppState;
 use axum::{
     extract::{
-        Query, State, WebSocketUpgrade,
+        ConnectInfo, Query, State, WebSocketUpgrade,
         ws::{Message, WebSocket},
     },
     http::{HeaderMap, header},
@@ -29,6 +29,7 @@ use axum::{
 };
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
+use std::net::SocketAddr;
 use tracing::debug;
 
 /// Optional connection parameters sent as the first WebSocket message.
@@ -234,6 +235,7 @@ fn host_is_loopback(host: &str) -> bool {
 /// GET /ws/chat — WebSocket upgrade for agent chat
 pub async fn handle_ws_chat(
     State(state): State<AppState>,
+    ConnectInfo(peer_addr): ConnectInfo<SocketAddr>,
     Query(params): Query<WsQuery>,
     headers: HeaderMap,
     ws: WebSocketUpgrade,
@@ -247,10 +249,22 @@ pub async fn handle_ws_chat(
             .into_response();
     }
 
-    // Auth: check header, subprotocol, then query param (precedence order)
+    // Auth: check header, subprotocol, then query param (precedence order).
+    // Rate-limited against bearer-token brute force (#384).
     if state.pairing.require_pairing() {
+        let limiter = super::api::WsAuthLimiter::new(&state, Some(peer_addr), &headers);
+        if let Err(retry_after) = limiter.check() {
+            return (
+                axum::http::StatusCode::TOO_MANY_REQUESTS,
+                [(header::RETRY_AFTER, retry_after.to_string())],
+                "Too many auth attempts — try again later",
+            )
+                .into_response();
+        }
+
         let token = extract_ws_token(&headers, params.token.as_deref()).unwrap_or("");
         if !state.pairing.is_authenticated(token) {
+            limiter.record_failure();
             return (
                 axum::http::StatusCode::UNAUTHORIZED,
                 "Unauthorized — provide Authorization header, Sec-WebSocket-Protocol bearer, or ?token= query param",
