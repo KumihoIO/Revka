@@ -345,8 +345,8 @@ def sweep_terminal_checkpoints(retention_days: float | None = None) -> int:
             try:
                 os.remove(path)
                 removed += 1
-            except OSError:
-                pass
+            except OSError as e:
+                _log(f"workflow: failed to remove stale checkpoint {path}: {e}")
     if removed:
         _log(f"workflow: swept {removed} stale terminal checkpoint(s)")
     return removed
