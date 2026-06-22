@@ -188,6 +188,32 @@ jobs:
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: clang
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: "-C link-arg=-fuse-ld=mold"
 
+  test-live-compile:
+    name: Compile Live Test Suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [lint]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
+        with:
+          toolchain: 1.93.0
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          cache-bin: false
+
+      - name: Ensure web/dist placeholder exists
+        run: mkdir -p web/dist && touch web/dist/.gitkeep
+
+      # The `live` test target's tests are all `#[ignore]`d (they need provider
+      # OAuth credentials), so the default `test` job never compiles them and they
+      # could silently rot — API/signature drift that breaks `tests/live/` would go
+      # undetected. This cheap, non-credentialed gate compiles the suite without
+      # running it, catching build breakage on every PR. The credentialed run still
+      # happens out-of-band via `dev/ci.sh test-live` (#435).
+      - name: Compile live test suite (no run)
+        run: cargo test --test live --no-run --locked
+
   build:
     name: Build ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
@@ -379,7 +405,7 @@ jobs:
   gate:
     name: CI Required Gate
     if: always()
-    needs: [lint, msrv, bench-compile, lint-strict-delta, test, test-features, build, docs-quality, check-all-features, feature-matrix, version-drift, session-manager]
+    needs: [lint, msrv, bench-compile, lint-strict-delta, test, test-features, test-live-compile, build, docs-quality, check-all-features, feature-matrix, version-drift, session-manager]
     runs-on: ubuntu-latest
     steps:
       - name: Check upstream job results
