@@ -28,32 +28,52 @@ def _uid(user: str) -> str:
     return user.split(":", 1)[0].strip()
 
 
+def _logical_lines(dockerfile_text: str):
+    """Yield logical Dockerfile instructions, joining backslash continuations and
+    skipping blank/comment lines.
+
+    Joining matters for correctness: a multi-line ``RUN`` / ``HEALTHCHECK`` /
+    ``COPY`` block becomes a single logical line whose first token is its own
+    keyword, so a continuation line that happens to start with ``USER`` (e.g.
+    a shell token inside a ``RUN``) or ``CMD`` (a ``HEALTHCHECK ... CMD``) is
+    never mistaken for a separate USER/CMD instruction — which could otherwise
+    mask a root stage (false negative) or spuriously mark runnability.
+    """
+    buf = ""
+    for raw in dockerfile_text.splitlines():
+        stripped = raw.strip()
+        if not buf and (not stripped or stripped.startswith("#")):
+            continue
+        cont = stripped.endswith("\\")
+        if cont:
+            stripped = stripped[:-1].rstrip()
+        buf = f"{buf} {stripped}".strip() if buf else stripped
+        if not cont:
+            if buf:
+                yield buf
+            buf = ""
+    if buf:
+        yield buf
+
+
 def parse_stages(dockerfile_text: str) -> list[dict]:
     """Parse the Dockerfile into stages.
 
     Returns a list of dicts: ``{name, base, users: [...], runnable: bool}``.
-    Instructions are single-line (FROM/USER/ENTRYPOINT/CMD), so line-by-line
-    parsing is sufficient — continuation lines of multi-line RUN blocks never
-    begin with a tracked instruction keyword.
     """
     stages: list[dict] = []
     cur: dict | None = None
-    for raw in dockerfile_text.splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
+    for line in _logical_lines(dockerfile_text):
         toks = line.split()
         instr = toks[0].upper()
         if instr == "FROM":
-            name = ""
-            if len(toks) >= 4 and toks[-2].upper() == "AS":
-                name = toks[-1]
-            cur = {
-                "name": name,
-                "base": toks[1] if len(toks) > 1 else "",
-                "users": [],
-                "runnable": False,
-            }
+            # FROM [--flag ...] <base> [AS <name>]
+            ftoks = toks[1:]
+            while ftoks and ftoks[0].startswith("--"):
+                ftoks = ftoks[1:]
+            base = ftoks[0] if ftoks else ""
+            name = ftoks[-1] if len(ftoks) >= 3 and ftoks[-2].upper() == "AS" else ""
+            cur = {"name": name, "base": base, "users": [], "runnable": False}
             stages.append(cur)
         elif cur is None:
             continue
