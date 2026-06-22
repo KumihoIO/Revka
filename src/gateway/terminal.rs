@@ -28,7 +28,7 @@ use super::AppState;
 use super::mcp_discovery::read_revka_mcp;
 use axum::{
     extract::{
-        Query, State, WebSocketUpgrade,
+        ConnectInfo, Query, State, WebSocketUpgrade,
         ws::{Message, WebSocket},
     },
     http::{HeaderMap, StatusCode, header},
@@ -39,6 +39,7 @@ use portable_pty::{CommandBuilder, NativePtySystem, PtySize, PtySystem};
 use serde::Deserialize;
 use serde_json::json;
 use std::io::{Read, Write};
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use tracing::{debug, error, warn};
 use uuid::Uuid;
@@ -432,6 +433,7 @@ fn resolve_cwd(raw: Option<&str>) -> Result<Option<PathBuf>, String> {
 /// GET /ws/terminal — WebSocket upgrade for PTY terminal
 pub async fn handle_ws_terminal(
     State(state): State<AppState>,
+    ConnectInfo(peer_addr): ConnectInfo<SocketAddr>,
     Query(params): Query<TerminalQuery>,
     headers: HeaderMap,
     ws: WebSocketUpgrade,
@@ -474,8 +476,19 @@ pub async fn handle_ws_terminal(
         )
             .into_response();
     }
+    // Rate-limited against bearer-token brute force (#384).
+    let limiter = super::api::WsAuthLimiter::new(&state, Some(peer_addr), &headers);
+    if let Err(retry_after) = limiter.check() {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            [(header::RETRY_AFTER, retry_after.to_string())],
+            "Too many auth attempts — try again later",
+        )
+            .into_response();
+    }
     let token = extract_ws_token(&headers, params.token.as_deref()).unwrap_or("");
     if !state.pairing.is_authenticated(token) {
+        limiter.record_failure();
         return (StatusCode::UNAUTHORIZED, "Unauthorized").into_response();
     }
 

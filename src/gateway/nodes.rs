@@ -16,7 +16,7 @@
 use super::AppState;
 use axum::{
     extract::{
-        Query, State, WebSocketUpgrade,
+        ConnectInfo, Query, State, WebSocketUpgrade,
         ws::{Message, WebSocket},
     },
     http::{HeaderMap, header},
@@ -26,6 +26,7 @@ use futures_util::{SinkExt, StreamExt};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot};
 
@@ -232,6 +233,7 @@ fn extract_node_ws_token<'a>(
 /// GET /ws/nodes — WebSocket upgrade for node connections
 pub async fn handle_ws_nodes(
     State(state): State<AppState>,
+    ConnectInfo(peer_addr): ConnectInfo<SocketAddr>,
     Query(params): Query<NodeWsQuery>,
     headers: HeaderMap,
     ws: WebSocketUpgrade,
@@ -247,11 +249,25 @@ pub async fn handle_ws_nodes(
             .into_response();
     }
 
+    // Auth (rate-limited against token brute force, #384). Reject locked-out
+    // peers before any credential comparison; record failures on either the
+    // node-token or pairing-fallback path so repeated guesses trip the lockout.
+    let limiter = super::api::WsAuthLimiter::new(&state, Some(peer_addr), &headers);
+    if let Err(retry_after) = limiter.check() {
+        return (
+            axum::http::StatusCode::TOO_MANY_REQUESTS,
+            [(header::RETRY_AFTER, retry_after.to_string())],
+            "Too many auth attempts — try again later",
+        )
+            .into_response();
+    }
+
     // Auth: check node auth token if configured
     let nodes_config = state.config.lock().nodes.clone();
     if let Some(ref expected_token) = nodes_config.auth_token {
         let token = extract_node_ws_token(&headers, params.token.as_deref()).unwrap_or("");
         if !crate::security::pairing::constant_time_eq(token, expected_token) {
+            limiter.record_failure();
             return (
                 axum::http::StatusCode::UNAUTHORIZED,
                 "Unauthorized — provide a valid node auth token",
@@ -264,6 +280,7 @@ pub async fn handle_ws_nodes(
     if nodes_config.auth_token.is_none() && state.pairing.require_pairing() {
         let token = extract_node_ws_token(&headers, params.token.as_deref()).unwrap_or("");
         if !state.pairing.is_authenticated(token) {
+            limiter.record_failure();
             return (
                 axum::http::StatusCode::UNAUTHORIZED,
                 "Unauthorized — provide Authorization header or ?token= query param",
