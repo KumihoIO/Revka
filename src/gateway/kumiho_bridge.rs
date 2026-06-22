@@ -20,6 +20,30 @@ use tokio::sync::Mutex;
 const BRIDGE_SCRIPT: &str = include_str!("../../resources/sidecars/kumiho_sdk_bridge.py");
 const BRIDGE_SCRIPT_NAME: &str = "kumiho_sdk_bridge.py";
 
+/// Process-env var the bridge reads to decide whether tokenless CE routing is
+/// allowed. Set by daemon startup only in local-CE mode; cleared in cloud mode.
+const CE_ENDPOINT_ENV: &str = "KUMIHO_LOCAL_SERVER_ENDPOINT";
+/// CE-only Redis URL exported alongside the CE endpoint; cleared in cloud mode.
+const CE_REDIS_ENV: &str = "KUMIHO_UPSTASH_REDIS_URL";
+
+/// Clear stale local-CE env vars so cloud mode is authoritative over routing.
+///
+/// `send_raw` derives its tokenless-CE decision from the *presence* of
+/// `KUMIHO_LOCAL_SERVER_ENDPOINT` in the process env. That var can leak into a
+/// cloud-mode daemon (workspace `.env` importer, a prior CE run, or a shell
+/// export); left set, a cloud daemon with an empty token would skip the token
+/// guard and route gateway traffic tokenlessly to a (typically dead) loopback
+/// CE endpoint instead of falling back to hosted FastAPI. Called once early in
+/// cloud-mode startup to remove that signal (mirrors how CE mode shadows cloud
+/// creds). See memory-3.
+pub fn clear_stale_ce_env() {
+    // SAFETY: called once early in main before worker threads are spawned.
+    unsafe {
+        std::env::remove_var(CE_ENDPOINT_ENV);
+        std::env::remove_var(CE_REDIS_ENV);
+    }
+}
+
 #[derive(Debug)]
 struct BridgeState {
     base_url: String,
@@ -234,7 +258,7 @@ pub async fn send_raw(
     // — CE serves gRPC (not JSON REST), so the hosted FastAPI `/api/v1` fallback
     // would receive an undecodable gRPC body. The bridge shim builds a tokenless
     // CE client from KUMIHO_LOCAL_SERVER_ENDPOINT.
-    let ce_configured = std::env::var("KUMIHO_LOCAL_SERVER_ENDPOINT")
+    let ce_configured = std::env::var(CE_ENDPOINT_ENV)
         .map(|v| !v.trim().is_empty())
         .unwrap_or(false);
     if token.is_empty() && !ce_configured {
@@ -287,4 +311,67 @@ pub async fn send_raw(
         }));
     }
     Some(Ok(BridgeResponse { status, body }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression for the stale-`KUMIHO_LOCAL_SERVER_ENDPOINT` misroute
+    /// (memory-3). Reproduces the leak the fix targets: a cloud-mode daemon
+    /// starts with a *stale* `KUMIHO_LOCAL_SERVER_ENDPOINT` set and an empty
+    /// service token. Pre-fix, `send_raw` would compute `ce_configured == true`
+    /// from that leaked var, skip the token guard, and route tokenlessly to a
+    /// dead loopback CE endpoint. The cloud-mode fix is `clear_stale_ce_env()`;
+    /// after it runs, the bridge guard must short-circuit to `None` so the
+    /// caller falls back to hosted FastAPI. Reverting the clear would leave the
+    /// var set and flip this assertion. The env is process-global, so the
+    /// mutation is serialized and the prior value restored.
+    // ENV_GUARD must stay held across the send_raw().await below to keep the
+    // process-global CE env stable while send_raw reads it; send_raw short-
+    // circuits to None before any real await and never touches ENV_GUARD, so
+    // there is no deadlock — the await_holding_lock lint is a false positive here.
+    #[allow(clippy::await_holding_lock)]
+    #[tokio::test]
+    async fn cloud_startup_clears_stale_ce_endpoint_so_empty_token_returns_none() {
+        static ENV_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+
+        let prev = std::env::var(CE_ENDPOINT_ENV).ok();
+
+        // Simulate the leak: a stale CE endpoint is present in the process env
+        // at cloud-mode startup. SAFETY: env mutation is serialized by
+        // ENV_GUARD for the duration of this test; restored before returning.
+        unsafe { std::env::set_var(CE_ENDPOINT_ENV, "http://127.0.0.1:1/stale") };
+
+        // Pre-condition: with the stale var set, the bridge would treat this as
+        // CE-configured and bypass the empty-token guard — the bug.
+        let ce_configured = std::env::var(CE_ENDPOINT_ENV)
+            .map(|v| !v.trim().is_empty())
+            .unwrap_or(false);
+        assert!(
+            ce_configured,
+            "test setup: stale CE endpoint should read as CE-configured before the fix runs"
+        );
+
+        // Apply the cloud-mode fix: clear the leaked CE env vars.
+        clear_stale_ce_env();
+
+        let client = Client::new();
+        let result = send_raw(&client, Method::GET, "/memory/recall", Vec::new(), "", None).await;
+
+        // SAFETY: see above — restore prior state under the same guard.
+        unsafe {
+            match prev {
+                Some(v) => std::env::set_var(CE_ENDPOINT_ENV, v),
+                None => std::env::remove_var(CE_ENDPOINT_ENV),
+            }
+        }
+
+        assert!(
+            result.is_none(),
+            "after clearing the stale CE endpoint, a cloud-mode bridge call with \
+             an empty token must return None to fall back to hosted FastAPI"
+        );
+    }
 }
