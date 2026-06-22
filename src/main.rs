@@ -1251,16 +1251,11 @@ async fn main() -> Result<()> {
     } else {
         // Cloud mode is authoritative over the env: clear any stale CE vars
         // that may have leaked in (workspace `.env` importer, a prior CE run,
-        // or a shell export). The Kumiho SDK bridge derives its tokenless-CE
-        // decision from `KUMIHO_LOCAL_SERVER_ENDPOINT`; left set, a cloud
-        // daemon with an empty token would silently route gateway traffic
-        // tokenlessly to a (typically dead) loopback CE endpoint instead of
-        // falling back to hosted FastAPI. Mirror the CE branch's env shadowing.
-        // SAFETY: called once early in main before worker threads are spawned.
-        unsafe {
-            std::env::remove_var("KUMIHO_LOCAL_SERVER_ENDPOINT");
-            std::env::remove_var("KUMIHO_UPSTASH_REDIS_URL");
-        }
+        // or a shell export). Left set, a cloud daemon with an empty token
+        // would silently route gateway traffic tokenlessly to a (typically
+        // dead) loopback CE endpoint instead of falling back to hosted FastAPI.
+        // Mirrors the CE branch's env shadowing.
+        gateway::kumiho_bridge::clear_stale_ce_env();
     }
 
     observability::runtime_trace::init_from_config(&config.observability, &config.workspace_dir);
