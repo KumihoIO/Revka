@@ -175,6 +175,7 @@ pub struct CanvasWsQuery {
 /// WS /ws/canvas/:id — real-time canvas updates.
 pub async fn handle_ws_canvas(
     State(state): State<AppState>,
+    ConnectInfo(peer_addr): ConnectInfo<std::net::SocketAddr>,
     Path(id): Path<String>,
     axum::extract::Query(params): axum::extract::Query<CanvasWsQuery>,
     headers: HeaderMap,
@@ -190,8 +191,19 @@ pub async fn handle_ws_canvas(
     }
 
     // Auth check — same precedence as ws::handle_ws_chat:
-    // 1. Authorization header, 2. Sec-WebSocket-Protocol bearer, 3. ?token= query param
+    // 1. Authorization header, 2. Sec-WebSocket-Protocol bearer, 3. ?token= query param.
+    // Rate-limited against bearer-token brute force (#384).
     if state.pairing.require_pairing() {
+        let limiter = super::api::WsAuthLimiter::new(&state, Some(peer_addr), &headers);
+        if let Err(retry_after) = limiter.check() {
+            return (
+                StatusCode::TOO_MANY_REQUESTS,
+                [(header::RETRY_AFTER, retry_after.to_string())],
+                "Too many auth attempts — try again later",
+            )
+                .into_response();
+        }
+
         let token = headers
             .get(header::AUTHORIZATION)
             .and_then(|v| v.to_str().ok())
@@ -211,6 +223,7 @@ pub async fn handle_ws_canvas(
             .unwrap_or("");
 
         if !state.pairing.is_authenticated(token) {
+            limiter.record_failure();
             return (
                 StatusCode::UNAUTHORIZED,
                 "Unauthorized — provide Authorization header or Sec-WebSocket-Protocol bearer",
