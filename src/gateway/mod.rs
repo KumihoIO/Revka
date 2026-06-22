@@ -2409,24 +2409,35 @@ fn prometheus_disabled_hint() -> String {
     )
 }
 
+/// Locate the active [`PrometheusObserver`] inside whatever observer the gateway
+/// installed at startup. The observer may be wrapped: `BroadcastObserver` wraps
+/// the process-global observer for SSE, and a multi-backend config
+/// (e.g. `backend = "prometheus,otel"`) builds a `MultiObserver` that fans out
+/// to several backends. The scrape target can therefore sit one or more layers
+/// deep (`BroadcastObserver` -> `MultiObserver` -> `PrometheusObserver`), so we
+/// descend through both wrappers recursively (#458).
 #[cfg(feature = "observability-prometheus")]
 fn prometheus_observer_from_state(
     observer: &dyn crate::observability::Observer,
 ) -> Option<&crate::observability::PrometheusObserver> {
-    observer
-        .as_any()
-        .downcast_ref::<crate::observability::PrometheusObserver>()
-        .or_else(|| {
-            observer
-                .as_any()
-                .downcast_ref::<sse::BroadcastObserver>()
-                .and_then(|broadcast| {
-                    broadcast
-                        .inner()
-                        .as_any()
-                        .downcast_ref::<crate::observability::PrometheusObserver>()
-                })
-        })
+    let any = observer.as_any();
+
+    if let Some(prom) = any.downcast_ref::<crate::observability::PrometheusObserver>() {
+        return Some(prom);
+    }
+
+    if let Some(broadcast) = any.downcast_ref::<sse::BroadcastObserver>() {
+        return prometheus_observer_from_state(broadcast.inner());
+    }
+
+    if let Some(multi) = any.downcast_ref::<crate::observability::MultiObserver>() {
+        return multi
+            .observers()
+            .iter()
+            .find_map(|inner| prometheus_observer_from_state(inner.as_ref()));
+    }
+
+    None
 }
 
 /// GET /metrics — Prometheus text exposition format
@@ -3886,6 +3897,87 @@ mod tests {
         let body = response.into_body().collect().await.unwrap().to_bytes();
         let text = String::from_utf8(body.to_vec()).unwrap();
         assert!(text.contains("revka_heartbeat_ticks_total 1"));
+    }
+
+    /// A multi-backend config (e.g. `backend = "prometheus,otel"`) builds a
+    /// `MultiObserver`, which the gateway then wraps in a `BroadcastObserver`.
+    /// `/metrics` must still find the nested `PrometheusObserver` and render the
+    /// real exposition rather than the "backend not enabled" hint (#458).
+    #[cfg(feature = "observability-prometheus")]
+    #[tokio::test]
+    async fn metrics_endpoint_renders_prometheus_output_when_nested_in_multi() {
+        let event_tx = tokio::sync::broadcast::channel(16).0;
+        // Mirror the startup wrapping for a multi config containing prometheus:
+        // BroadcastObserver { MultiObserver { [PrometheusObserver, <other>] } }.
+        let multi = crate::observability::MultiObserver::new(vec![
+            Box::new(crate::observability::PrometheusObserver::new()),
+            Box::new(crate::observability::NoopObserver),
+        ]);
+        let wrapped = sse::BroadcastObserver::new(Arc::new(multi), event_tx.clone());
+        crate::observability::Observer::record_event(
+            &wrapped,
+            &crate::observability::ObserverEvent::HeartbeatTick,
+        );
+
+        let observer: Arc<dyn crate::observability::Observer> = Arc::new(wrapped);
+        let state = AppState {
+            config: Arc::new(Mutex::new(Config::default())),
+            provider: Arc::new(MockProvider::default()),
+            model: "test-model".into(),
+            temperature: 0.0,
+            mem: Arc::new(MockMemory),
+            auto_save: false,
+            webhook_secret_hash: None,
+            pairing: Arc::new(PairingGuard::new(false, &[])),
+            trust_forwarded_headers: false,
+            rate_limiter: Arc::new(GatewayRateLimiter::new(100, 100, 100)),
+            auth_limiter: Arc::new(auth_rate_limit::AuthRateLimiter::new()),
+            idempotency_store: Arc::new(IdempotencyStore::new(Duration::from_secs(300), 1000)),
+            whatsapp: None,
+            whatsapp_app_secret: None,
+            linq: None,
+            linq_signing_secret: None,
+            nextcloud_talk: None,
+            nextcloud_talk_webhook_secret: None,
+            wati: None,
+            gmail_push: None,
+            observer,
+            tools_registry: Arc::new(Vec::new()),
+            cost_tracker: None,
+            audit_logger: None,
+            event_tx,
+            shutdown_tx: tokio::sync::watch::channel(false).0,
+            node_registry: Arc::new(nodes::NodeRegistry::new(16)),
+            path_prefix: String::new(),
+            session_backend: None,
+            session_queue: std::sync::Arc::new(
+                crate::gateway::session_queue::SessionActorQueue::new(8, 30, 600),
+            ),
+            device_registry: None,
+            pending_pairings: None,
+            canvas_store: CanvasStore::new(),
+            mcp_registry: Arc::new(parking_lot::RwLock::new(None)),
+            approval_registry: approval_registry::global(),
+            mcp_local_url: None,
+            auth_profiles: None,
+            service_token: Arc::<str>::from(""),
+            #[cfg(feature = "webauthn")]
+            webauthn: None,
+        };
+
+        let response = handle_metrics(State(state)).await.into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let text = String::from_utf8(body.to_vec()).unwrap();
+        assert!(
+            text.contains("revka_heartbeat_ticks_total 1"),
+            "expected real Prometheus exposition, got: {text}"
+        );
+        assert!(
+            !text.contains("Prometheus backend not enabled"),
+            "multi-config /metrics must not return the disabled hint"
+        );
     }
 
     #[test]
