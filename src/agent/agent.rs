@@ -1460,7 +1460,13 @@ impl Agent {
                 self.run_tool_with_timeout(tool.as_ref(), call, start).await
             } else if let Some(activated_arc) = self.activated_tools.as_ref() {
                 // Try to find in activated MCP tools.
-                let activated_opt = activated_arc.lock().unwrap().get_resolved(&call.name);
+                // Recover from a poisoned lock rather than panicking, so a prior
+                // panic under the guard does not cascade into every later
+                // dynamic-tool lookup on this Agent's dispatch path.
+                let activated_opt = activated_arc
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .get_resolved(&call.name);
                 if let Some(tool) = activated_opt {
                     self.run_tool_with_timeout(tool.as_ref(), call, start).await
                 } else {
@@ -1667,7 +1673,14 @@ impl Agent {
             // tools (via tool_search) appear in subsequent LLM calls.
             let mut iter_tool_specs: Vec<ToolSpec> = self.tools.iter().map(|t| t.spec()).collect();
             if let Some(at) = self.activated_tools.as_ref() {
-                for spec in at.lock().unwrap().tool_specs() {
+                // Recover from a poisoned lock rather than panicking: a prior
+                // panic under the guard (e.g. a faulty `Tool::spec()`) must not
+                // permanently break deferred-tool resolution for this turn loop.
+                for spec in at
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .tool_specs()
+                {
                     iter_tool_specs.push(spec);
                 }
             }
@@ -1941,7 +1954,14 @@ impl Agent {
             // run_tool_call_loop's pattern in loop_.rs.
             let mut iter_tool_specs: Vec<ToolSpec> = self.tools.iter().map(|t| t.spec()).collect();
             if let Some(at) = self.activated_tools.as_ref() {
-                for spec in at.lock().unwrap().tool_specs() {
+                // Recover from a poisoned lock rather than panicking: a prior
+                // panic under the guard (e.g. a faulty `Tool::spec()`) must not
+                // permanently break deferred-tool resolution for this turn loop.
+                for spec in at
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .tool_specs()
+                {
                     iter_tool_specs.push(spec);
                 }
             }
