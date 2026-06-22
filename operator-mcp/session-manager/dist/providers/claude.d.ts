@@ -7,6 +7,7 @@
  * - Supports multi-turn via query re-invocation
  */
 import type { AgentSessionConfig, AgentStreamEvent, AgentUsage } from "../types.js";
+import type { PermissionHandler } from "../permission-handler.js";
 /**
  * Detects if an error is a tool_use_id mismatch (orphaned tool_result after context truncation).
  */
@@ -49,9 +50,19 @@ export declare function createToolCallStreamState(): ToolCallStreamState;
  */
 export declare function translateMessage(message: any, turnId: string, state: ToolCallStreamState, stderrTail?: string): AgentStreamEvent[];
 /**
+ * Internal: build a Claude session handle with its query pump and follow-up
+ * `sendQuery` closure attached. Shared by `createClaudeSession` (starts a turn
+ * immediately) and `resumeClaudeSession` (leaves the handle dormant until the
+ * first follow-up).
+ */
+export interface ClaudePermissionContext {
+    permissions: PermissionHandler;
+    agentId: string;
+}
+/**
  * Create a Claude agent session and start the query pump immediately.
  */
-export declare function createClaudeSession(config: AgentSessionConfig, onEvent: (event: AgentStreamEvent) => void): ClaudeSessionHandle;
+export declare function createClaudeSession(config: AgentSessionConfig, onEvent: (event: AgentStreamEvent) => void, perm?: ClaudePermissionContext): ClaudeSessionHandle;
 /**
  * Rebuild a dormant, resumable Claude handle on sidecar restart.
  *
@@ -63,7 +74,7 @@ export declare function createClaudeSession(config: AgentSessionConfig, onEvent:
  * `buildClaudeOptions`), avoiding orphaned-`tool_result` 400s. `claudeSessionId`
  * is carried for reference only; it is not fed to the SDK.
  */
-export declare function resumeClaudeSession(config: AgentSessionConfig, persistedEvents: AgentStreamEvent[], onEvent: (event: AgentStreamEvent) => void, claudeSessionId: string | null): ClaudeSessionHandle;
+export declare function resumeClaudeSession(config: AgentSessionConfig, persistedEvents: AgentStreamEvent[], onEvent: (event: AgentStreamEvent) => void, claudeSessionId: string | null, perm?: ClaudePermissionContext): ClaudeSessionHandle;
 /**
  * Send a follow-up query to an existing session.
  */

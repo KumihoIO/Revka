@@ -7149,7 +7149,7 @@ dependencies = [
 
 [[package]]
 name = "revka"
-version = "2026.6.17"
+version = "2026.6.20"
 dependencies = [
  "aardvark-sys",
  "anyhow",

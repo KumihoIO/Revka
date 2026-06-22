@@ -19,7 +19,6 @@ formula = "revka"
 targets = [
     "x86_64-unknown-linux-gnu",
     "aarch64-unknown-linux-gnu",
-    "x86_64-apple-darwin",
     "aarch64-apple-darwin",
     "x86_64-pc-windows-msvc",
     "aarch64-pc-windows-msvc",
@@ -35,7 +34,7 @@ phf_generator = { path = "vendor/security-patches/phf_generator-0.8.0" }
 
 [package]
 name = "revka"
-version = "2026.6.17"
+version = "2026.6.20"
 edition = "2024"
 authors = ["Kumiho Inc."]
 license = "MIT OR Apache-2.0"

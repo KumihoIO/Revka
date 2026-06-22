@@ -11,8 +11,16 @@ import { createCodexSession, sendCodexQuery, closeCodexSession } from "./provide
 import { saveAgentState, removeAgentState, updateAgentStatus, getResumableStates } from "./persistence.js";
 const log = (msg) => process.stderr.write(`[session-mgr] ${msg}\n`);
 export class AgentManager {
+    permissions;
     sessions = new Map();
     emitter = new AgentEventEmitter();
+    /**
+     * @param permissions Shared permission handler used to gate tool calls from
+     * spawned (non-trusted) Claude agents. When omitted, agents are not gated.
+     */
+    constructor(permissions) {
+        this.permissions = permissions;
+    }
     /**
      * Create a new agent session.
      */
@@ -35,7 +43,7 @@ export class AgentManager {
         // Create provider session
         try {
             if (config.agentType === "claude") {
-                session.handle = createClaudeSession(config, onEvent);
+                session.handle = createClaudeSession(config, onEvent, this.permissions ? { permissions: this.permissions, agentId: id } : undefined);
             }
             else if (config.agentType === "codex" ||
                 config.agentType === "agy" ||
@@ -220,7 +228,10 @@ export class AgentManager {
                 // handle stays idle; the persisted timeline seeds the continuation
                 // context for the first follow-up.
                 const onEvent = this.makeOnEvent(state.id, session);
-                session.handle = resumeClaudeSession(config, session.events, onEvent, state.sessionId ?? null);
+                session.handle = resumeClaudeSession(config, session.events, onEvent, state.sessionId ?? null, 
+                // Keep resumed agents permission-gated (#449) — without this a
+                // sidecar restart would silently downgrade them to ungated.
+                this.permissions ? { permissions: this.permissions, agentId: state.id } : undefined);
                 resumed++;
                 updateAgentStatus(state.id, "idle");
                 log(`Resumed agent ${state.id} (idle, ready for queries)`);

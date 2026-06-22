@@ -2011,6 +2011,162 @@ async fn handle_runtime_command_if_needed(
     true
 }
 
+/// Resume a paused `human_approval` run when an incoming channel message is an
+/// unambiguous bare approve/reject keyword.
+///
+/// The channel adapters (Discord/Slack/Telegram) intercept *replies* to the
+/// prompt in their own listeners for precise, parallel-safe matching. This
+/// central hook adds a generic fallback for EVERY channel: a plain keyword (no
+/// reply) resumes the run when exactly one approval is pending for that chat
+/// (see [`ApprovalRegistry::match_any_channel_keyword`]). Returns `true` when
+/// handled, so the caller skips the agent turn for that message.
+/// Normalize a channel's `reply_target` to the conversation id the approval
+/// registry's scope was keyed on when the prompt was sent.
+///
+/// - matrix `reply_target` is `"<event>||<room>"`; the scope captured the room,
+///   so take the part AFTER `"||"` (room ids contain `:`, which must be kept).
+/// - mattermost `reply_target` is `"<channel>:<post>"`; the scope captured the
+///   channel, so take the part BEFORE the first `':'`.
+/// - every other channel uses the reply target verbatim.
+fn normalize_reply_target(base: &str, reply_target: &str) -> String {
+    match base {
+        "matrix" => reply_target
+            .split_once("||")
+            .map(|(_, room)| room)
+            .unwrap_or(reply_target)
+            .to_string(),
+        "mattermost" => reply_target
+            .split_once(':')
+            .map(|(channel, _)| channel)
+            .unwrap_or(reply_target)
+            .to_string(),
+        _ => reply_target.to_string(),
+    }
+}
+
+async fn handle_approval_if_needed(
+    ctx: &ChannelRuntimeContext,
+    msg: &traits::ChannelMessage,
+    target_channel: Option<&Arc<dyn Channel>>,
+) -> bool {
+    let base = msg
+        .channel
+        .split_once(':')
+        .map(|(b, _)| b)
+        .unwrap_or(&msg.channel);
+
+    // Bare-keyword fallback for every channel that flows through this central
+    // receive path — including discord/slack/telegram. Those three also run
+    // strict reply/thread listeners in their own receive loops, but a strict
+    // listener only fires on an explicit reply/thread and short-circuits
+    // forwarding when it does — so any message that reaches here was NOT a reply,
+    // and this fallback is the only path that can resume a run on a plain
+    // "approve"/"reject". The two paths are mutually exclusive per message, so no
+    // double-handling results. `match_any_channel_keyword` still requires exactly
+    // one pending approval in the chat, so parallel approvals stay safe and fall
+    // back to reply/thread.
+    //
+    // NOT covered: webhook-inbound channels (whatsapp/linq/wati/nextcloud_talk)
+    // enter via the gateway and call the agent directly, bypassing this hook —
+    // bare-keyword resume there is a tracked follow-up.
+    let conv_id = normalize_reply_target(base, &msg.reply_target);
+
+    let registry = crate::gateway::approval_registry::global();
+    let Some((run_id, approved, feedback)) =
+        registry.match_any_channel_keyword(base, &conv_id, &msg.content)
+    else {
+        return false;
+    };
+
+    // Claim the approval here so duplicate or redelivered keywords are deduped:
+    // a second message finds no pending and is forwarded to the agent instead of
+    // resuming again. The captured cwd is passed to the `/approve` endpoint in
+    // the body, since the endpoint's own `try_claim` now returns None. The
+    // endpoint still performs the resume + audit + cache invalidation + SSE
+    // broadcast, keeping bare-keyword resume uniform with the
+    // discord/slack/telegram reply listeners (which claim + POST the same way).
+    let Some(pending) = registry.try_claim(&run_id) else {
+        return false;
+    };
+
+    let port = ctx.prompt_config.gateway.port;
+    let service_token = crate::auth::read_service_token(&ctx.prompt_config);
+    let target_channel = target_channel.cloned();
+    let reply_target = msg.reply_target.clone();
+    let thread_ts = msg.thread_ts.clone();
+    let sender = msg.sender.clone();
+    let channel_label = msg.channel.clone();
+    let wf = pending.workflow_name;
+    let cwd = pending.cwd;
+
+    tokio::spawn(async move {
+        let url = format!("http://127.0.0.1:{port}/api/workflows/runs/{run_id}/approve");
+        let client = reqwest::Client::new();
+        let mut req = client.post(&url).json(&serde_json::json!({
+            "approved": approved,
+            "feedback": feedback,
+            "cwd": cwd,
+        }));
+        if let Some(ref svc) = service_token {
+            req = req.header(crate::gateway::api::SERVICE_TOKEN_HEADER, svc);
+        }
+
+        // The decision text to relay back to the chat: a confirmation on
+        // success, or a failure notice describing why the resume did not land.
+        let notice = match req.send().await {
+            Ok(resp) if resp.status().is_success() => {
+                tracing::info!(
+                    run_id = %run_id,
+                    channel = %channel_label,
+                    approved,
+                    "approval resumed via bare keyword"
+                );
+                if approved {
+                    format!("✅ Workflow `{wf}` approved by {sender}")
+                } else if feedback.is_empty() {
+                    format!("❌ Workflow `{wf}` rejected by {sender}")
+                } else {
+                    format!("❌ Workflow `{wf}` rejected by {sender}. Feedback: {feedback}")
+                }
+            }
+            Ok(resp) => {
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                tracing::error!(
+                    run_id = %run_id,
+                    channel = %channel_label,
+                    %status,
+                    "approval resume endpoint returned error: {body}"
+                );
+                format!("⚠️ Failed to resume workflow `{wf}` (status {status}).")
+            }
+            Err(e) => {
+                tracing::error!(
+                    run_id = %run_id,
+                    channel = %channel_label,
+                    error = %e,
+                    "failed to call approval resume endpoint"
+                );
+                format!("⚠️ Failed to resume workflow `{wf}`: {e}")
+            }
+        };
+
+        if let Some(channel) = target_channel {
+            if let Err(send_err) = channel
+                .send(&SendMessage::new(notice, &reply_target).in_thread(thread_ts))
+                .await
+            {
+                tracing::warn!(
+                    "Failed to send approval notice on {}: {send_err}",
+                    channel.name()
+                );
+            }
+        }
+    });
+
+    true
+}
+
 /// Call `kumiho_memory_engage` via MCP before the LLM turn.
 ///
 /// Returns a formatted memory context string to inject into the system prompt,
@@ -2868,6 +3024,13 @@ async fn process_channel_message(
         .unwrap_or_else(|e| e.into_inner())
         .get(&history_key)
         .is_some_and(|turns| !turns.is_empty());
+
+    // Resume a paused human_approval run on a bare keyword BEFORE the casual
+    // fast-path reply and before media/link enrichment mutate `msg.content`,
+    // so the raw user text is matched against the approval keywords.
+    if handle_approval_if_needed(ctx.as_ref(), &msg, target_channel.as_ref()).await {
+        return;
+    }
 
     if let (Some(reply), Some(channel)) = (
         casual_fast_path_reply(
@@ -4885,6 +5048,7 @@ fn collect_configured_channels(
                 .with_approval_registry(
                     crate::gateway::approval_registry::global(),
                     config.gateway.port,
+                    crate::auth::read_service_token(config),
                 ),
             ),
         });
@@ -4911,6 +5075,7 @@ fn collect_configured_channels(
                 .with_approval_registry(
                     crate::gateway::approval_registry::global(),
                     config.gateway.port,
+                    crate::auth::read_service_token(config),
                 ),
             ),
         });
@@ -4946,6 +5111,7 @@ fn collect_configured_channels(
                 .with_approval_registry(
                     crate::gateway::approval_registry::global(),
                     config.gateway.port,
+                    crate::auth::read_service_token(config),
                 ),
             ),
         });
@@ -6307,6 +6473,30 @@ mod tests {
                 CHANNEL_MESSAGE_TIMEOUT_SCALE_CAP
             ),
             300 * CHANNEL_MESSAGE_TIMEOUT_SCALE_CAP
+        );
+    }
+
+    #[test]
+    fn normalize_reply_target_per_channel() {
+        // matrix: take the room AFTER "||" — room ids legitimately contain ':'.
+        assert_eq!(
+            normalize_reply_target("matrix", "$evt123||!room:matrix.org"),
+            "!room:matrix.org"
+        );
+        // matrix without the separator falls back to the verbatim target.
+        assert_eq!(
+            normalize_reply_target("matrix", "!room:matrix.org"),
+            "!room:matrix.org"
+        );
+        // mattermost: take the channel BEFORE the first ':'.
+        assert_eq!(
+            normalize_reply_target("mattermost", "chan123:post456"),
+            "chan123"
+        );
+        // default: identity.
+        assert_eq!(
+            normalize_reply_target("signal", "+15551234567"),
+            "+15551234567"
         );
     }
 

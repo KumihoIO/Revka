@@ -257,9 +257,10 @@ detect_release_target() {
     Linux:armv6l)
       echo "arm-unknown-linux-gnueabihf"
       ;;
-    Darwin:x86_64)
-      echo "x86_64-apple-darwin"
-      ;;
+    # Intel macOS (x86_64-apple-darwin) is intentionally unsupported: no
+    # pre-built binary is published for it. Falling through to `*)` makes
+    # install_prebuilt_binary report "no target mapping" and (unless
+    # --prebuilt-only) fall back to a source build.
     Darwin:arm64|Darwin:aarch64)
       echo "aarch64-apple-darwin"
       ;;

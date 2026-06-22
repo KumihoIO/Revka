@@ -9,6 +9,7 @@
 
 import { query as claudeQuery, type Options as ClaudeOptions } from "@anthropic-ai/claude-agent-sdk";
 import type { AgentSessionConfig, AgentStreamEvent, AgentUsage, McpServerConfig, TimelineItem } from "../types.js";
+import type { PermissionHandler } from "../permission-handler.js";
 
 type SDKMessage = Awaited<ReturnType<typeof claudeQuery>> extends AsyncGenerator<infer T> ? T : never;
 
@@ -201,10 +202,16 @@ function normalizeMcpServers(
 /**
  * Build Claude SDK options from a Revka session config.
  */
-function buildClaudeOptions(config: AgentSessionConfig, onStderr?: (data: string) => void): ClaudeOptions {
+function buildClaudeOptions(
+  config: AgentSessionConfig,
+  onStderr?: (data: string) => void,
+  canUseTool?: ClaudeOptions["canUseTool"],
+): ClaudeOptions {
   const opts: ClaudeOptions = {
     cwd: config.cwd,
-    permissionMode: "bypassPermissions" as any,
+    // With a permission gate wired in (canUseTool), run in "default" mode so the
+    // SDK consults the callback. Trusted / ungated spawns keep bypassing.
+    permissionMode: (canUseTool ? "default" : "bypassPermissions") as any,
     includePartialMessages: true,
     env: {
       ...process.env,
@@ -253,6 +260,10 @@ function buildClaudeOptions(config: AgentSessionConfig, onStderr?: (data: string
   // Limit max turns to prevent runaway agents
   if (config.maxTurns) {
     (opts as any).maxTurns = config.maxTurns;
+  }
+
+  if (canUseTool) {
+    (opts as any).canUseTool = canUseTool;
   }
 
   return opts;
@@ -442,10 +453,16 @@ const MAX_RECOVERY_ATTEMPTS = 2;
  * immediately) and `resumeClaudeSession` (leaves the handle dormant until the
  * first follow-up).
  */
+export interface ClaudePermissionContext {
+  permissions: PermissionHandler;
+  agentId: string;
+}
+
 function buildClaudeHandle(
   config: AgentSessionConfig,
   onEvent: (event: AgentStreamEvent) => void,
   opts: { startImmediately: boolean; seedEvents?: AgentStreamEvent[]; resumedSessionId?: string | null },
+  perm?: ClaudePermissionContext,
 ): ClaudeSessionHandle {
   const handle: ClaudeSessionHandle = {
     id: config.title ?? "claude-session",
@@ -467,6 +484,32 @@ function buildClaudeHandle(
   // is empty, so fall back to the first user message in the persisted timeline.
   const originalPrompt = config.prompt || firstUserMessageText(accumulatedEvents);
 
+  // Permission gate: when a handler is wired in and the spawn isn't trusted,
+  // each tool call is evaluated; risky ones escalate to the operator via
+  // createPendingRequest (which emits the channel event + 5-min auto-deny).
+  const gated = !!perm && config.trusted !== true;
+  const canUseTool = gated
+    ? async (toolName: string, input: Record<string, unknown>) => {
+        const role = config.role ?? "coder";
+        const verdict = perm!.permissions.evaluate(toolName, input as Record<string, any>, config.cwd, role);
+        if (verdict === "approve") {
+          return { behavior: "allow" as const, updatedInput: input };
+        }
+        const action = await perm!.permissions.createPendingRequest(
+          perm!.agentId,
+          config.title ?? "agent",
+          toolName,
+          input as Record<string, any>,
+          config.cwd,
+          role,
+          onEvent,
+        );
+        return action === "approve"
+          ? { behavior: "allow" as const, updatedInput: input }
+          : { behavior: "deny" as const, message: "Denied by the operator permission policy (or timed out)." };
+      }
+    : undefined;
+
   const startPump = (prompt: string) => {
     const input = createAsyncInput<any>();
     handle.input = input;
@@ -480,7 +523,7 @@ function buildClaudeHandle(
       if (handle.stderr.length > 8000) {
         handle.stderr = handle.stderr.slice(-8000);
       }
-    });
+    }, canUseTool as any);
     const q = claudeQuery({ prompt: input.iterable, options });
     handle.query = q;
 
@@ -616,8 +659,9 @@ function buildClaudeHandle(
 export function createClaudeSession(
   config: AgentSessionConfig,
   onEvent: (event: AgentStreamEvent) => void,
+  perm?: ClaudePermissionContext,
 ): ClaudeSessionHandle {
-  return buildClaudeHandle(config, onEvent, { startImmediately: true });
+  return buildClaudeHandle(config, onEvent, { startImmediately: true }, perm);
 }
 
 /**
@@ -636,12 +680,18 @@ export function resumeClaudeSession(
   persistedEvents: AgentStreamEvent[],
   onEvent: (event: AgentStreamEvent) => void,
   claudeSessionId: string | null,
+  perm?: ClaudePermissionContext,
 ): ClaudeSessionHandle {
-  return buildClaudeHandle(config, onEvent, {
-    startImmediately: false,
-    seedEvents: persistedEvents,
-    resumedSessionId: claudeSessionId,
-  });
+  return buildClaudeHandle(
+    config,
+    onEvent,
+    {
+      startImmediately: false,
+      seedEvents: persistedEvents,
+      resumedSessionId: claudeSessionId,
+    },
+    perm,
+  );
 }
 
 /**

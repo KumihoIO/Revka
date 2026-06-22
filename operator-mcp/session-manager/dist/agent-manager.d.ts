@@ -6,9 +6,16 @@
  */
 import type { AgentSessionConfig, AgentSessionInfo, AgentStreamEvent } from "./types.js";
 import { AgentEventEmitter } from "./event-emitter.js";
+import type { PermissionHandler } from "./permission-handler.js";
 export declare class AgentManager {
+    private readonly permissions?;
     private sessions;
     readonly emitter: AgentEventEmitter;
+    /**
+     * @param permissions Shared permission handler used to gate tool calls from
+     * spawned (non-trusted) Claude agents. When omitted, agents are not gated.
+     */
+    constructor(permissions?: PermissionHandler | undefined);
     /**
      * Create a new agent session.
      */
