@@ -288,3 +288,43 @@ pub async fn send_raw(
     }
     Some(Ok(BridgeResponse { status, body }))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression for the stale-`KUMIHO_LOCAL_SERVER_ENDPOINT` misroute
+    /// (memory-3): a cloud-mode daemon runs with an empty service token, and
+    /// the fix in `main.rs` clears any leaked CE endpoint from the process env.
+    /// In that state the bridge guard must short-circuit to `None` (without
+    /// touching the network) so the caller falls back to hosted FastAPI, rather
+    /// than routing tokenlessly to a loopback CE target. This serializes the env
+    /// mutation since `KUMIHO_LOCAL_SERVER_ENDPOINT` is process-global.
+    #[tokio::test]
+    async fn empty_token_without_ce_endpoint_returns_none() {
+        static ENV_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+
+        let prev = std::env::var("KUMIHO_LOCAL_SERVER_ENDPOINT").ok();
+        // SAFETY: env mutation is serialized by ENV_GUARD for the duration of
+        // this test, and the value is restored before returning.
+        unsafe { std::env::remove_var("KUMIHO_LOCAL_SERVER_ENDPOINT") };
+
+        let client = Client::new();
+        let result = send_raw(&client, Method::GET, "/memory/recall", Vec::new(), "", None).await;
+
+        // SAFETY: see above — restore prior state under the same guard.
+        unsafe {
+            match prev {
+                Some(v) => std::env::set_var("KUMIHO_LOCAL_SERVER_ENDPOINT", v),
+                None => std::env::remove_var("KUMIHO_LOCAL_SERVER_ENDPOINT"),
+            }
+        }
+
+        assert!(
+            result.is_none(),
+            "cloud-mode bridge call with empty token and no CE endpoint must \
+             return None to fall back to hosted FastAPI"
+        );
+    }
+}
