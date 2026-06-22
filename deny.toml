@@ -15,6 +15,7 @@ ignore = [
     { id = "RUSTSEC-2024-0388", reason = "derivative via wasm_evt_listener transitive dep" },
     { id = "RUSTSEC-2025-0057", reason = "fxhash via selectors transitive dep" },
     { id = "RUSTSEC-2025-0119", reason = "number_prefix via indicatif — cosmetic dep" },
+    { id = "RUSTSEC-2024-0370", reason = "proc-macro-error (build-time) via glib-macros/gtk3-macros 0.18; remove once gtk-rs stack is bumped" },
 ]
 
 [licenses]
