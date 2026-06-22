@@ -226,6 +226,31 @@ async fn mark_dead() {
     }
 }
 
+/// Decide whether a failed bridge request means the sidecar is actually gone.
+///
+/// A `reqwest` failure is *not* proof the process died: a per-request timeout or
+/// a transient blip can fire against an otherwise-healthy sidecar. Tearing the
+/// child down on those forces every subsequent caller to pay the cold-start cost
+/// (process spawn + up to a 10s health poll). Only treat the sidecar as dead
+/// when the error indicates the listener is gone (`is_connect()`) or when
+/// `try_wait()` confirms the child has actually exited. See memory-5.
+async fn bridge_is_dead(err: &reqwest::Error) -> bool {
+    if err.is_connect() {
+        return true;
+    }
+    if err.is_timeout() {
+        return false;
+    }
+    let Some(lock) = BRIDGE.get() else {
+        return false;
+    };
+    let mut guard = lock.lock().await;
+    match guard.as_mut() {
+        Some(state) => matches!(state.child.try_wait(), Ok(Some(_)) | Err(_)),
+        None => false,
+    }
+}
+
 fn is_unsupported_bridge_response(status: StatusCode, body: &str) -> bool {
     if status != StatusCode::NOT_IMPLEMENTED {
         return false;
@@ -285,8 +310,12 @@ pub async fn send_raw(
     let resp = match req.send().await {
         Ok(resp) => resp,
         Err(err) => {
-            tracing::warn!(error = %err, path = %path, "Kumiho SDK bridge request failed");
-            mark_dead().await;
+            if bridge_is_dead(&err).await {
+                tracing::warn!(error = %err, path = %path, "Kumiho SDK bridge request failed; sidecar appears dead, tearing down");
+                mark_dead().await;
+            } else {
+                tracing::warn!(error = %err, path = %path, "Kumiho SDK bridge request failed transiently; leaving sidecar running and falling back to FastAPI");
+            }
             return None;
         }
     };
@@ -372,6 +401,62 @@ mod tests {
             result.is_none(),
             "after clearing the stale CE endpoint, a cloud-mode bridge call with \
              an empty token must return None to fall back to hosted FastAPI"
+        );
+    }
+
+    /// Regression for memory-5: a transient request error must not tear down an
+    /// otherwise-healthy sidecar. A connection refusal (`is_connect()`) means
+    /// the listener is gone and should mark the bridge dead; a timeout
+    /// (`is_timeout()`) is a transient blip against a possibly-healthy process
+    /// and must *not*. These two `bridge_is_dead` branches return before
+    /// touching the global `BRIDGE` state, so they can be exercised with real
+    /// `reqwest::Error`s without a live sidecar.
+    #[tokio::test]
+    async fn timeout_does_not_mark_bridge_dead_but_connect_refused_does() {
+        // Connect error: nothing is listening on this freshly-released port.
+        let port = reserve_loopback_port().expect("reserve loopback port");
+        let client = Client::new();
+        let connect_err = client
+            .get(format!("http://127.0.0.1:{port}/health"))
+            .send()
+            .await
+            .expect_err("connecting to an unbound loopback port must fail");
+        assert!(
+            connect_err.is_connect(),
+            "expected a connect error, got: {connect_err}"
+        );
+        assert!(
+            bridge_is_dead(&connect_err).await,
+            "a connection refusal indicates the sidecar listener is gone"
+        );
+
+        // Timeout error: a real loopback listener accepts the connection but
+        // never sends a response, so the connect succeeds and the per-request
+        // timeout fires while awaiting the reply. This keeps the test
+        // deterministic and free of any external-network dependency.
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind black-hole listener");
+        let addr = listener.local_addr().expect("listener addr");
+        // Hold the listener open without accepting/responding for the test.
+        let _accept = std::thread::spawn(move || {
+            // Accept the single connection so it doesn't get refused, then sit
+            // on it; the OS keeps the accepted socket alive until the thread or
+            // process ends.
+            let _conn = listener.accept();
+            std::thread::sleep(Duration::from_secs(2));
+        });
+        let timeout_err = client
+            .get(format!("http://{addr}/health"))
+            .timeout(Duration::from_millis(100))
+            .send()
+            .await
+            .expect_err("a request to a non-responding listener must time out");
+        assert!(
+            timeout_err.is_timeout(),
+            "expected a timeout error, got: {timeout_err}"
+        );
+        assert!(
+            !bridge_is_dead(&timeout_err).await,
+            "a transient timeout must not tear down an otherwise-healthy sidecar"
         );
     }
 }
