@@ -165,11 +165,48 @@ fn primary_http_status(msg: &str) -> Option<u16> {
             return Some(code);
         }
     }
-    // No status-context anchor found: fall back to the *first* status-looking
-    // token (100–599) so the leading status wins over later digits.
-    msg.split(|c: char| !c.is_ascii_digit())
-        .filter_map(|word| word.parse::<u16>().ok())
-        .find(|&code| (100..600).contains(&code))
+    // No status-context anchor found: fall back to the first *standalone* 3-digit
+    // status token (100–599) so the leading status wins over later digits. A
+    // digit run glued to a URL on its left — a non-default port (`:456`), or a
+    // host/path segment — is NOT a status and must be skipped, or a transient
+    // transport error like `error sending request for url
+    // (https://host:456/v1): connection refused` (whose only 4xx-band digits are
+    // the port) would be misread as a 4xx and wrongly classified non-retryable.
+    // Real status tokens in these messages are delimited by whitespace/`(`,
+    // never glued to `:` / `/` / `.` / `-` / an identifier character. (Default
+    // ports 80/443 are stripped by the `url` crate, so only non-default ports in
+    // the 4xx band ever triggered the false positive.)
+    let bytes = msg.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if !bytes[i].is_ascii_digit() {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < bytes.len() && bytes[i].is_ascii_digit() {
+            i += 1;
+        }
+        // Only a 3-digit run can be an HTTP status (a longer run is a port,
+        // id, or count).
+        if i - start != 3 {
+            continue;
+        }
+        // Skip runs glued to a URL/identifier character on the left.
+        let glued_left = msg[..start]
+            .chars()
+            .next_back()
+            .is_some_and(|c| c.is_ascii_alphanumeric() || matches!(c, ':' | '/' | '.' | '-' | '_'));
+        if glued_left {
+            continue;
+        }
+        if let Ok(code) = msg[start..i].parse::<u16>() {
+            if (100..600).contains(&code) {
+                return Some(code);
+            }
+        }
+    }
+    None
 }
 
 /// Parse a leading 3-digit HTTP status (100–599) at the start of `s`, requiring
@@ -2149,6 +2186,50 @@ mod tests {
             is_non_retryable(&err),
             "canonical 4xx error shape must be treated as non-retryable"
         );
+    }
+
+    #[test]
+    fn non_retryable_does_not_flag_transport_error_with_4xx_port() {
+        // A connect-time transport failure carries no real HTTP status; its
+        // Display is `error sending request for url (https://host:PORT/path):
+        // <cause>`. A non-default port in the 4xx band must NOT be mistaken for a
+        // status, or the transient error (connection refused / DNS / timeout /
+        // TLS) would be classified non-retryable and skip retry/backoff. Default
+        // ports 80/443 are stripped by the `url` crate, so only non-default ports
+        // ever reproduced this.
+        for url in [
+            "error sending request for url (https://host:456/v1): connection refused",
+            "error sending request for url (https://api.example.com:404/v1/chat): dns error",
+            "error sending request for url (http://10.0.0.5:480/x): operation timed out",
+        ] {
+            let err = anyhow::anyhow!("{url}");
+            assert!(
+                !is_non_retryable(&err),
+                "transport error with a 4xx-band URL port must be retryable: {url}"
+            );
+        }
+    }
+
+    #[test]
+    fn primary_http_status_skips_url_ports_but_keeps_real_status() {
+        // A URL-glued digit run (port / host / path segment) is not a status.
+        assert_eq!(
+            primary_http_status("error sending request for url (https://host:456/v1): refused"),
+            None
+        );
+        // …but a genuine standalone status token is still found even when a URL
+        // with a 4xx-band port precedes it.
+        assert_eq!(
+            primary_http_status("url (https://host:456/v1) returned 503 Service Unavailable"),
+            Some(503)
+        );
+        // Canonical anchored / keyword / leading shapes still resolve.
+        assert_eq!(
+            primary_http_status("API error (404 Not Found): x"),
+            Some(404)
+        );
+        assert_eq!(primary_http_status("HTTP 500 upstream"), Some(500));
+        assert_eq!(primary_http_status("429 Too Many Requests"), Some(429));
     }
 
     // ── §2.2 Rate limit Retry-After edge cases ───────────────
