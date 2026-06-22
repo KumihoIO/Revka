@@ -61,6 +61,7 @@ Commands:
   deny          Run cargo deny check (container only)
   security      Run cargo deny full policy check (container only)
   docker-smoke  Build and verify runtime image (host docker daemon)
+  docker-nonroot Build the production image and assert it runs non-root (USER != 0)
   all           Run lint, test, build, security, docker-smoke
   clean         Remove local CI containers and volumes
 EOF
@@ -142,6 +143,21 @@ case "$1" in
   docker-smoke)
     build_smoke_image
     docker run --rm revka-local-smoke:latest --version
+    ;;
+
+  docker-nonroot)
+    # Runtime assertion: build the production image and verify it ships non-root.
+    # Complements the static, merge-blocking scripts/ci/check_docker_nonroot.py
+    # gate with a real `docker inspect` against the built image.
+    DOCKER_BUILDKIT=1 docker build --target release -t revka-nonroot-check:latest .
+    user="$(docker inspect --format '{{.Config.User}}' revka-nonroot-check:latest)"
+    uid="${user%%:*}"
+    echo "production (release) image USER = '${user}'"
+    if [ -z "$user" ] || [ "$uid" = "0" ] || [ "$uid" = "root" ]; then
+      echo "❌ production image runs as root (USER='${user}')"
+      exit 1
+    fi
+    echo "✅ production image is non-root (USER='${user}')"
     ;;
 
   all)
