@@ -266,15 +266,41 @@ fn is_non_retryable_rate_limit(err: &anyhow::Error) -> bool {
     }
 
     // Known provider business codes observed for 429 where retry is futile.
-    for token in lower.split(|c: char| !c.is_ascii_digit()) {
-        if let Ok(code) = token.parse::<u16>() {
-            if matches!(code, 1113 | 1311) {
-                return true;
-            }
+    // Anchor to the provider's JSON `"code"` field (e.g. Z.AI emits
+    // `{"code":1311,...}`) rather than scanning every digit token in the whole
+    // message — a trace/request-id, count, or model fragment that happens to be
+    // 1113/1311 must not flag an otherwise-transient 429 as non-retryable.
+    if let Some(code) = json_code_field(&lower) {
+        if matches!(code, 1113 | 1311) {
+            return true;
         }
     }
 
     false
+}
+
+/// Extract the numeric value of a JSON `"code"` field from a stringified
+/// provider error body, e.g. `{"code":1311,...}` → `Some(1311)`. Tolerates
+/// optional whitespace around the colon. Returns the first such field only;
+/// numbers elsewhere in the message (ids, counts, model fragments) are ignored.
+fn json_code_field(msg: &str) -> Option<u32> {
+    let mut search = msg;
+    while let Some(rel) = search.find("\"code\"") {
+        let after = &search[rel + "\"code\"".len()..];
+        let after = after.trim_start();
+        if let Some(rest) = after.strip_prefix(':') {
+            let digits: String = rest
+                .trim_start()
+                .chars()
+                .take_while(|c| c.is_ascii_digit())
+                .collect();
+            if let Ok(code) = digits.parse::<u32>() {
+                return Some(code);
+            }
+        }
+        search = after;
+    }
+    None
 }
 
 /// Try to extract a Retry-After value (in milliseconds) from an error message.
@@ -1804,6 +1830,34 @@ mod tests {
         assert!(
             !is_non_retryable_rate_limit(&err),
             "generic rate-limit 429 should remain retryable"
+        );
+    }
+
+    #[test]
+    fn non_retryable_rate_limit_ignores_business_code_outside_code_field() {
+        // A transient 429 whose body merely *contains* the digits 1311/1113 in
+        // an unrelated field (request id, count, model fragment) must NOT be
+        // misclassified as non-retryable — only the JSON `"code"` field counts.
+        let err = anyhow::anyhow!(
+            "{}",
+            "API error (429 Too Many Requests): {\"request_id\":\"req-1311-abc\",\"retries\":1113,\"message\":\"rate limit exceeded, slow down\"}"
+        );
+        assert!(
+            !is_non_retryable_rate_limit(&err),
+            "an unrelated 1311/1113 number must not flag a transient 429 as non-retryable"
+        );
+    }
+
+    #[test]
+    fn non_retryable_rate_limit_detects_business_code_with_spacing() {
+        // The `"code"` anchor tolerates whitespace around the colon.
+        let err = anyhow::anyhow!(
+            "{}",
+            "API error (429 Too Many Requests): { \"code\" : 1113, \"message\":\"insufficient balance\" }"
+        );
+        assert!(
+            is_non_retryable_rate_limit(&err),
+            "spaced `\"code\": 1113` should still skip retries"
         );
     }
 
