@@ -150,7 +150,12 @@ impl Tool for ToolSearchTool {
         // Activate and return full specs
         let mut output = String::from("<functions>\n");
         let mut activated_count = 0;
-        let mut guard = self.activated.lock().unwrap();
+        // Recover from a poisoned lock so a prior panic under the guard does not
+        // permanently break deferred-tool activation.
+        let mut guard = self
+            .activated
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
 
         for stub in &results {
             if let Some(spec) = self.deferred.tool_spec(&stub.prefixed_name) {
@@ -185,7 +190,12 @@ impl ToolSearchTool {
         let mut output = String::from("<functions>\n");
         let mut not_found = Vec::new();
         let mut activated_count = 0;
-        let mut guard = self.activated.lock().unwrap();
+        // Recover from a poisoned lock so a prior panic under the guard does not
+        // permanently break deferred-tool activation.
+        let mut guard = self
+            .activated
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
 
         for name in names {
             if name.is_empty() {
