@@ -88,6 +88,16 @@ docker run --read-only -v /path/to/workspace:/workspace revka gateway
 ### Runtime Hardening
 
 The production runtime image is built non-root, enforced by the `Dockerfile`:
-1. Container does not run as root (UID 0)
-2. Runtime stage uses `:nonroot` variant
-3. Explicit `USER` directive with numeric UID exists
+1. Container does not run as root (UID 0) — `USER 65534:65534`
+2. Runtime stage uses the `:nonroot` distroless variant
+3. Explicit `USER` directive with a numeric UID exists
+
+### CI Enforcement
+
+`scripts/ci/check_docker_nonroot.py` (the `docker-hardening` job in
+`.github/workflows/ci-run.yml`, required by `CI Required Gate`) parses the
+`Dockerfile` on every PR and fails if any runnable stage (`release`, `cloudrun`,
+`dev`) drops to root or omits its `USER` directive — so the hardening above
+cannot silently regress. For a runtime assertion against the actual built image,
+`./dev/ci.sh docker-nonroot` builds the `release` target and verifies
+`docker inspect --format '{{.Config.User}}'` is non-root.
