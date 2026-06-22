@@ -139,6 +139,31 @@ impl CostTracker {
         Ok(BudgetCheck::Allowed)
     }
 
+    /// Estimate the USD cost of an upcoming request so the budget gate can be
+    /// predictive rather than reactive (see #456). `input_tokens` is an estimate
+    /// of the prepared request; `output_reserve_tokens` is an allowance for the
+    /// generation that hasn't happened yet, priced at the model's output rate.
+    ///
+    /// Returns `0.0` when no pricing entry is found for the model, which makes
+    /// the budget check gracefully degrade to its prior reactive behavior rather
+    /// than erroring.
+    pub fn estimate_request_cost(
+        &self,
+        provider_name: &str,
+        model: &str,
+        input_tokens: u64,
+        output_reserve_tokens: u64,
+    ) -> f64 {
+        match self.pricing_for(provider_name, model) {
+            // Same per-1M-token convention as `TokenUsage::new`.
+            Some(pricing) => {
+                (input_tokens as f64 / 1_000_000.0) * pricing.input
+                    + (output_reserve_tokens as f64 / 1_000_000.0) * pricing.output
+            }
+            None => 0.0,
+        }
+    }
+
     /// Map a budget check into an enforcement directive based on the configured
     /// `[cost.enforcement] mode` and `allow_override`.
     ///
@@ -894,6 +919,74 @@ mod tests {
 
         let check = tracker.check_budget(0.01).unwrap();
         assert!(matches!(check, BudgetCheck::Exceeded { .. }));
+    }
+
+    #[test]
+    fn estimate_request_cost_prices_input_and_output_reserve() {
+        // Same per-1M-token convention as `TokenUsage::new`.
+        let tmp = TempDir::new().unwrap();
+        let mut config = enabled_config();
+        config.prices = HashMap::from([(
+            "openai/gpt-5".to_string(),
+            ModelPricing {
+                input: 1.25,
+                output: 10.0,
+            },
+        )]);
+        let tracker = CostTracker::new(config, tmp.path()).unwrap();
+
+        // (10_000/1M)*1.25 + (4_096/1M)*10.0 = 0.0125 + 0.04096 = 0.05346
+        let estimate = tracker.estimate_request_cost("openai", "gpt-5", 10_000, 4_096);
+        assert!((estimate - 0.05346).abs() < 1e-9, "got {estimate}");
+    }
+
+    #[test]
+    fn estimate_request_cost_degrades_to_zero_without_pricing() {
+        // #456: a missing pricing entry must reduce to the prior reactive
+        // behavior (zero estimate) rather than erroring.
+        let tmp = TempDir::new().unwrap();
+        let tracker = CostTracker::new(enabled_config(), tmp.path()).unwrap();
+        let estimate = tracker.estimate_request_cost("ollama", "unknown-model", 10_000, 4_096);
+        assert_eq!(estimate, 0.0);
+    }
+
+    #[test]
+    fn estimate_blocks_request_before_breaching_limit() {
+        // #456: the request that would push spend over the limit is blocked by
+        // its own estimated cost, before it is sent — not just the next one.
+        let tmp = TempDir::new().unwrap();
+        let mut config = CostConfig {
+            enabled: true,
+            daily_limit_usd: 0.05,
+            ..Default::default()
+        };
+        config.prices = HashMap::from([(
+            "openai/gpt-5".to_string(),
+            ModelPricing {
+                input: 1.0,
+                output: 1.0,
+            },
+        )]);
+        let tracker = CostTracker::new(config, tmp.path()).unwrap();
+
+        // No spend yet, so a zero estimate is allowed (prior reactive behavior).
+        assert!(matches!(
+            tracker.check_budget(0.0).unwrap(),
+            BudgetCheck::Allowed
+        ));
+
+        // A request whose own estimated cost exceeds the effective limit is
+        // pre-empted even though recorded spend is still $0.00. With the default
+        // 10% reserve the effective daily limit is $0.045; 100_000 tokens priced
+        // at $1/1M = $0.10 projects past it.
+        let estimate = tracker.estimate_request_cost("openai", "gpt-5", 100_000, 0);
+        assert!(matches!(
+            tracker.check_budget(estimate).unwrap(),
+            BudgetCheck::Exceeded {
+                period: UsagePeriod::Day,
+                ..
+            }
+        ));
     }
 
     #[test]
