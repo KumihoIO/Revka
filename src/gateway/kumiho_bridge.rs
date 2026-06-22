@@ -327,6 +327,11 @@ mod tests {
     /// caller falls back to hosted FastAPI. Reverting the clear would leave the
     /// var set and flip this assertion. The env is process-global, so the
     /// mutation is serialized and the prior value restored.
+    // ENV_GUARD must stay held across the send_raw().await below to keep the
+    // process-global CE env stable while send_raw reads it; send_raw short-
+    // circuits to None before any real await and never touches ENV_GUARD, so
+    // there is no deadlock — the await_holding_lock lint is a false positive here.
+    #[allow(clippy::await_holding_lock)]
     #[tokio::test]
     async fn cloud_startup_clears_stale_ce_endpoint_so_empty_token_returns_none() {
         static ENV_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
