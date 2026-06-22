@@ -18,7 +18,7 @@ Current maintainers with PR approval authority: `kaveone`.
 
 | File | Trigger | Purpose |
 | --- | --- | --- |
-| `checks-on-pr.yml` | `pull_request` → `main` | Lint + test + build + security audit on every PR |
+| `ci-run.yml` | `pull_request` → `main` | Single consolidated PR gate: lint, test, build matrix, security audit, 32-bit check, MSRV, feature matrix, docs quality, version drift, session-manager (#432) |
 | `cross-platform-build-manual.yml` | `workflow_dispatch` | Full platform build matrix (manual) |
 | `release-beta-on-push.yml` | `push` → `main` | Beta release on every main commit |
 | `release-stable-manual.yml` | `workflow_dispatch` | Stable release (manual, version-gated) |
@@ -27,7 +27,7 @@ Current maintainers with PR approval authority: `kaveone`.
 
 | Event | Workflows triggered |
 | --- | --- |
-| PR opened or updated against `main` | `checks-on-pr.yml` |
+| PR opened or updated against `main` | `ci-run.yml` |
 | Push to `main` (including after merge) | `release-beta-on-push.yml` |
 | Manual dispatch | `cross-platform-build-manual.yml`, `release-stable-manual.yml` |
 
@@ -36,7 +36,7 @@ Current maintainers with PR approval authority: `kaveone`.
 ### 1) PR → `main`
 
 1. Contributor opens or updates a PR against `main`.
-2. `checks-on-pr.yml` starts:
+2. `ci-run.yml` starts:
    - `lint` job: runs `cargo fmt --check` and `cargo clippy -D warnings`.
    - `test` job: runs `cargo nextest run --locked` on `ubuntu-latest` with Rust 1.93.0 and mold linker.
    - `build` job (matrix): compiles release binary on `x86_64-unknown-linux-gnu` and `aarch64-apple-darwin`.
@@ -71,11 +71,11 @@ Current maintainers with PR approval authority: `kaveone`.
 
 1. Maintainer runs `cross-platform-build-manual.yml` via `workflow_dispatch`.
 2. `build` job (matrix, 3 targets): `aarch64-linux-gnu`, `x86_64-darwin` (macOS 15 Intel), `x86_64-windows-msvc`.
-3. Build-only, no tests, no publish. Used to verify cross-compilation on platforms not covered by `checks-on-pr.yml`.
+3. Build-only, no tests, no publish. Used to verify cross-compilation on platforms not covered by `ci-run.yml`.
 
 ## Build Targets by Workflow
 
-| Target | `checks-on-pr.yml` | `cross-platform-build-manual.yml` | `release-beta-on-push.yml` | `release-stable-manual.yml` |
+| Target | `ci-run.yml` | `cross-platform-build-manual.yml` | `release-beta-on-push.yml` | `release-stable-manual.yml` |
 | --- | :---: | :---: | :---: | :---: |
 | `x86_64-unknown-linux-gnu` | ✓ | | ✓ | ✓ |
 | `aarch64-unknown-linux-gnu` | | ✓ | ✓ | ✓ |
@@ -92,7 +92,7 @@ Current maintainers with PR approval authority: `kaveone`.
 
 ```mermaid
 flowchart TD
-  A["PR opened or updated → main"] --> B["checks-on-pr.yml"]
+  A["PR opened or updated → main"] --> B["ci-run.yml"]
   B --> B0["lint: fmt + clippy"]
   B --> B1["test: cargo nextest (ubuntu-latest)"]
   B --> B2["build: x86_64-linux + aarch64-darwin"]
