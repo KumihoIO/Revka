@@ -89,9 +89,9 @@
     },
     // ── Security ──────────────────────────────────────────
     {
-      "label": "Security: Audit",
+      "label": "Security: Audit (advisories)",
       "type": "shell",
-      "command": "cargo audit --version >/dev/null 2>&1 || cargo install cargo-audit && cargo audit",
+      "command": "cargo deny --version >/dev/null 2>&1 || cargo install cargo-deny && cargo deny check advisories",
       "problemMatcher": []
     },
     {

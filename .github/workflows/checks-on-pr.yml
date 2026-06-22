@@ -126,25 +126,16 @@ jobs:
         with:
           cache-bin: false
 
-      - name: Install cargo-audit
-        run: cargo install cargo-audit --locked
-
       - name: Install cargo-deny
         run: cargo install cargo-deny --locked
 
-      - name: Audit dependencies
-        # cargo-audit 0.22 does not auto-load repo-local config files, so we
-        # translate the ignore list in .cargo/audit.toml into CLI `--ignore`
-        # flags. See that file for rationale on each entry.
-        run: |
-          ignores=$(grep -Eo 'RUSTSEC-[0-9]+-[0-9]+' .cargo/audit.toml \
-            | awk '{ printf "--ignore %s ", $0 }')
-          cargo audit $ignores
-
       - name: Run cargo-deny policy (advisories, bans, licenses, sources)
-        # `all` runs every check kind, so the [advisories] (unmaintained/yanked)
-        # and [bans] policy in deny.toml is actually enforced — not just licenses
-        # and sources. See #443.
+        # cargo-deny is the single source of truth for the advisory/ban/license/
+        # source policy (deny.toml). `all` runs every check kind, so the
+        # [advisories] (unmaintained/yanked) and [bans] policy is enforced.
+        # cargo-audit + .cargo/audit.toml were removed (#445): cargo-deny's
+        # advisories check covers the same RUSTSEC database, so a second tool
+        # with its own divergent ignore list is redundant. See #443.
         run: cargo deny check all
 
   check-32bit:

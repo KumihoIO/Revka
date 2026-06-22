@@ -106,7 +106,6 @@ This runs inside a container:
 - `cargo test --locked --verbose`
 - `cargo build --release --locked --verbose`
 - `cargo deny check all`
-- `cargo audit`
 - Docker smoke build (`docker build --target dev ...` + `--version` check)
 
 To run an opt-in strict lint audit locally:
