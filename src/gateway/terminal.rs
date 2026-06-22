@@ -694,7 +694,7 @@ async fn handle_terminal_socket(socket: WebSocket, params: TerminalQuery) {
     };
 
     let SpawnPlan { cmd, _temp } = plan;
-    let _child = match pair.slave.spawn_command(cmd) {
+    let child = match pair.slave.spawn_command(cmd) {
         Ok(child) => child,
         Err(e) => {
             error!(error = %e, "Failed to spawn child");
@@ -725,6 +725,7 @@ async fn handle_terminal_socket(socket: WebSocket, params: TerminalQuery) {
 
     // Channels to bridge blocking PTY I/O with async WebSocket
     let (pty_out_tx, mut pty_out_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(64);
+    let (pty_in_tx, mut pty_in_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(64);
     let (resize_tx, mut resize_rx) = tokio::sync::mpsc::channel::<(u16, u16)>(4);
 
     // Blocking task: PTY stdout -> mpsc channel
@@ -743,8 +744,19 @@ async fn handle_terminal_socket(socket: WebSocket, params: TerminalQuery) {
         }
     });
 
-    // Async task: handle resize requests
-    tokio::spawn(async move {
+    // Blocking task: mpsc channel -> PTY stdin. Writes can block on a full PTY
+    // input buffer, so they must not run inside the async select loop.
+    tokio::task::spawn_blocking(move || {
+        while let Some(data) = pty_in_rx.blocking_recv() {
+            if pty_writer.write_all(&data).is_err() {
+                break;
+            }
+        }
+    });
+
+    // Async task: handle resize requests. Hold the JoinHandle so we can stop it
+    // (and thus drop `master`) deterministically on session end.
+    let resize_task = tokio::spawn(async move {
         while let Some((cols, rows)) = resize_rx.recv().await {
             let _ = master.resize(PtySize {
                 rows,
@@ -785,12 +797,12 @@ async fn handle_terminal_socket(socket: WebSocket, params: TerminalQuery) {
                             }
                         }
                         // Raw keystroke input
-                        if pty_writer.write_all(text.as_bytes()).is_err() {
+                        if pty_in_tx.send(text.as_bytes().to_vec()).await.is_err() {
                             break;
                         }
                     }
                     Some(Ok(Message::Binary(data))) => {
-                        if pty_writer.write_all(&data).is_err() {
+                        if pty_in_tx.send(data.to_vec()).await.is_err() {
                             break;
                         }
                     }
@@ -813,6 +825,24 @@ async fn handle_terminal_socket(socket: WebSocket, params: TerminalQuery) {
             }
         }
     }
+
+    // Tear down deterministically rather than relying on PTY-master-drop
+    // SIGHUP semantics (best-effort, and absent on Windows/ConPTY).
+    //
+    // Stop the resize task so `master` is dropped now (not whenever the task
+    // happens to be scheduled), then kill and reap the child to avoid leaked /
+    // zombie processes that outlive the session.
+    resize_task.abort();
+    let _ = tokio::task::spawn_blocking(move || {
+        let mut child = child;
+        if let Err(e) = child.kill() {
+            warn!(error = %e, "Failed to kill terminal child");
+        }
+        if let Err(e) = child.wait() {
+            warn!(error = %e, "Failed to reap terminal child");
+        }
+    })
+    .await;
 
     // `_temp` drops here, removing the per-session config dir.
     drop(_temp);
