@@ -573,6 +573,36 @@ async def tool_create_workflow(args: dict[str, Any]) -> dict[str, Any]:
 # resume_workflow (for human_approval pauses)
 # ---------------------------------------------------------------------------
 
+async def _persist_cancelled_run(state: Any) -> None:
+    """Record a terminal CANCELLED status for ``state`` in the Kumiho DB.
+
+    The resume-rejection paths cancel a run WITHOUT re-entering the executor, so
+    they bypass the finalize DB persist. Without this, the run stays at
+    "running"/"paused" in the DB; the startup stale-run scan then reclassifies it
+    as failed and its checkpoint cannot be safely swept (#394). Best-effort,
+    mirroring the executor finalize persist.
+    """
+    try:
+        from datetime import datetime, timezone
+        from ..workflow.memory import persist_workflow_run
+
+        step_dicts = {sid: sr.model_dump() for sid, sr in state.step_results.items()}
+        await persist_workflow_run(
+            workflow_name=state.workflow_name,
+            run_id=state.run_id,
+            status="cancelled",
+            inputs=state.inputs,
+            step_results=step_dicts,
+            started_at=state.started_at,
+            completed_at=datetime.now(timezone.utc).isoformat(),
+            error="Cancelled by user (rejected at human approval)",
+            workflow_item_kref=getattr(state, "workflow_item_kref", "") or "",
+            workflow_revision_kref=getattr(state, "workflow_revision_kref", "") or "",
+        )
+    except Exception as exc:
+        _log(f"tool_resume_workflow: failed to persist cancelled status: {exc}")
+
+
 async def tool_resume_workflow(args: dict[str, Any]) -> dict[str, Any]:
     """Resume a paused workflow (e.g. after human approval or human input).
 
@@ -628,6 +658,7 @@ async def tool_resume_workflow(args: dict[str, Any]) -> dict[str, Any]:
         if not reject_goto:
             # No revision loop configured — cancel as before
             state.status = WorkflowStatus.CANCELLED
+            await _persist_cancelled_run(state)
             ACTIVE_WORKFLOWS.pop(run_id, None)
             return {"run_id": run_id, "status": "cancelled", "message": "Human rejected"}
 
@@ -636,6 +667,7 @@ async def tool_resume_workflow(args: dict[str, Any]) -> dict[str, Any]:
         if reject_goto not in execution_order:
             _log(f"tool_resume_workflow: on_reject_goto='{reject_goto}' not found in workflow steps, cancelling")
             state.status = WorkflowStatus.CANCELLED
+            await _persist_cancelled_run(state)
             ACTIVE_WORKFLOWS.pop(run_id, None)
             return {
                 "run_id": run_id,
@@ -648,6 +680,7 @@ async def tool_resume_workflow(args: dict[str, Any]) -> dict[str, Any]:
         reject_count = state.inputs.get(reject_key, 0) + 1
         if reject_count > reject_max:
             state.status = WorkflowStatus.CANCELLED
+            await _persist_cancelled_run(state)
             ACTIVE_WORKFLOWS.pop(run_id, None)
             return {
                 "run_id": run_id,

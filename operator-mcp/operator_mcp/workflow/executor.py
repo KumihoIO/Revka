@@ -297,6 +297,61 @@ def _cleanup_checkpoint(run_id: str) -> None:
         pass
 
 
+# Terminal statuses whose checkpoint is a disposable cache: nothing resumes or
+# retries from them, so the Kumiho DB (which now records CANCELLED too, see
+# finalize) is the authoritative record. FAILED is intentionally excluded —
+# tool_retry_workflow reloads it — as are RUNNING/PAUSED (resume needs them).
+_SWEEPABLE_CHECKPOINT_STATUSES = frozenset(
+    {WorkflowStatus.COMPLETED.value, WorkflowStatus.CANCELLED.value}
+)
+
+
+def sweep_terminal_checkpoints(retention_days: float | None = None) -> int:
+    """Delete stale checkpoints for terminal (completed/cancelled) runs.
+
+    Each checkpoint is a full ``WorkflowState`` dump holding interpolated step
+    inputs/outputs, so leaving completed/cancelled checkpoints on disk forever
+    is both unbounded growth and an indefinite at-rest exposure (#394). This
+    removes completed/cancelled checkpoints older than the retention window
+    (``REVKA_WORKFLOW_CHECKPOINT_RETENTION_DAYS``, default 7). Recent terminal
+    checkpoints are kept so a status check right after a run finishes still
+    resolves locally; FAILED checkpoints are kept for retry; RUNNING/PAUSED are
+    kept for resume. Returns the number of files removed.
+    """
+    if retention_days is None:
+        try:
+            retention_days = float(
+                os.getenv("REVKA_WORKFLOW_CHECKPOINT_RETENTION_DAYS", "7")
+            )
+        except ValueError:
+            retention_days = 7.0
+    if not os.path.isdir(_CHECKPOINT_DIR):
+        return 0
+
+    cutoff = time.time() - max(0.0, retention_days) * 86_400.0
+    removed = 0
+    for name in os.listdir(_CHECKPOINT_DIR):
+        if not name.endswith(".json"):
+            continue
+        path = os.path.join(_CHECKPOINT_DIR, name)
+        try:
+            if os.path.getmtime(path) > cutoff:
+                continue  # too recent — keep for status lookups
+            with open(path, "r") as f:
+                status = json.load(f).get("status", "")
+        except (OSError, ValueError):
+            continue  # unreadable/corrupt — leave for manual inspection
+        if status in _SWEEPABLE_CHECKPOINT_STATUSES:
+            try:
+                os.remove(path)
+                removed += 1
+            except OSError:
+                pass
+    if removed:
+        _log(f"workflow: swept {removed} stale terminal checkpoint(s)")
+    return removed
+
+
 # ---------------------------------------------------------------------------
 # Condition evaluation
 # ---------------------------------------------------------------------------
@@ -6235,8 +6290,16 @@ async def execute_workflow(
         if wf.checkpoint:
             _save_checkpoint(state)
 
-        # Persist to Kumiho memory (best-effort, fire-and-forget)
-        if state.status in (WorkflowStatus.COMPLETED, WorkflowStatus.FAILED):
+        # Persist to Kumiho memory (best-effort, fire-and-forget).
+        # CANCELLED is persisted too so the DB holds the authoritative terminal
+        # status: otherwise a cancelled run stays at "running"/"paused" in the DB
+        # and the startup stale-run scan reclassifies it as failed, and its
+        # checkpoint (the only "cancelled" record) cannot be safely cleaned (#394).
+        if state.status in (
+            WorkflowStatus.COMPLETED,
+            WorkflowStatus.FAILED,
+            WorkflowStatus.CANCELLED,
+        ):
             try:
                 from .memory import persist_workflow_run, link_agents_to_run
                 step_dicts = {
