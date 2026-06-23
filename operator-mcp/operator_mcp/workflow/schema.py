@@ -107,6 +107,10 @@ class AgentStepConfig(BaseModel):
     required_tools: list[str] = Field(default_factory=list)  # Preflight visibility guard
     output_fields: list[str] = Field(default_factory=list)  # Required structured output_data fields
     quality_check: QualityCheckConfig | None = None
+    # When False, refuse to spawn a permission-bypassing CLI for this step
+    # (codex/claude/agy/agent run with danger-full-access /
+    # --dangerously-skip-permissions, ungateable mid-run). Default True. #459.
+    trusted: bool = True
     # Auth profile binding (encrypted credential, resolved at runtime via the
     # gateway's auth-profiles resolve endpoint). Format: "<provider>:<profile_name>".
     # Agent steps see this only via the get_auth_token MCP tool — never injected

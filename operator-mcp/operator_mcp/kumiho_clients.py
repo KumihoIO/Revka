@@ -1033,6 +1033,7 @@ class KumihoTeamClient:
                     "kref": ik, "name": name_part,
                     "role": meta.get("role", ""), "agent_type": meta.get("agent_type", "codex"),
                     "expertise": expertise, "identity": meta.get("identity", ""),
+                    "trusted": meta.get("trusted", True),
                     "rev_kref": rev.get("kref", "") if rev else "",
                 }
                 if meta.get("model"):
@@ -1110,7 +1111,7 @@ class KumihoTeamClient:
                             name_part = item_kref.rsplit("/", 1)[-1] if "/" in item_kref else item_kref
                             if "." in name_part:
                                 name_part = name_part.rsplit(".", 1)[0]
-                            info.update({"name": name_part, "role": meta.get("role", ""), "agent_type": meta.get("agent_type", "codex"), "expertise": expertise, "identity": meta.get("identity", ""), "rev_kref": rev_data.get("kref", "")})
+                            info.update({"name": name_part, "role": meta.get("role", ""), "agent_type": meta.get("agent_type", "codex"), "expertise": expertise, "identity": meta.get("identity", ""), "trusted": meta.get("trusted", True), "rev_kref": rev_data.get("kref", "")})
                     except Exception as e:
                         _log(f"Failed to enrich member {item_kref}: {e}")
                     return info

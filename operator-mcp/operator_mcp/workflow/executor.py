@@ -1430,6 +1430,7 @@ async def _exec_agent(step: StepDef, state: WorkflowState, cwd: str) -> StepResu
         include_operator=include_operator,
         include_google_agentops=include_google_agentops,
         env_extra=agent_env_extra or None,
+        trusted=cfg.trusted,
         cancel_check=lambda: state.cancel_requested,
     )
 

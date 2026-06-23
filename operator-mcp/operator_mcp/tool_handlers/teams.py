@@ -19,7 +19,7 @@ from ..failure_classification import (
     upstream_stage_failed, classified_error, policy_denied,
     VALIDATION_ERROR, RUNTIME_ENV_ERROR,
 )
-from .agents import _try_sidecar_create, _event_consumer
+from .agents import _try_sidecar_create, _event_consumer, _coerce_trusted
 from ..journal import SessionJournal
 from ..kumiho_clients import KumihoTeamClient, KumihoAgentPoolClient, resolve_agent_krefs, _get_sdk
 from ..spawn_tracker import get_or_create_tracker, get_tracker, list_trackers
@@ -1067,6 +1067,7 @@ async def tool_spawn_team(args: dict[str, Any], team_client: KumihoTeamClient, j
                 expertise = member.get("expertise", [])
                 member_kref = member.get("kref", "")
                 model = member.get("model")  # Model from Kumiho agent metadata
+                trusted = _coerce_trusted(member.get("trusted", True))
 
                 # Role-specific subtask
                 subtask = _decompose_task_for_role(role, task, team_context)
@@ -1105,6 +1106,7 @@ async def tool_spawn_team(args: dict[str, Any], team_client: KumihoTeamClient, j
                     title=title,
                     cwd=expanded_cwd,
                     status="idle",
+                    trusted=trusted,
                 )
                 AGENTS[agent_id] = agent
 
@@ -1118,6 +1120,7 @@ async def tool_spawn_team(args: dict[str, Any], team_client: KumihoTeamClient, j
                     sidecar_info = await _try_sidecar_create(
                         agent_id, agent_type, title, expanded_cwd, adapted_prompt,
                         model=model,
+                        trusted=trusted,
                     )
                 except BudgetGateError as exc:
                     agent.status = "error"

@@ -122,7 +122,7 @@ class A2ATaskHandler:
             skill_id = params["skill"]
 
         # Spawn a Revka agent
-        from ..tool_handlers.agents import _try_sidecar_create, _event_consumer
+        from ..tool_handlers.agents import _try_sidecar_create, _event_consumer, _coerce_trusted
         from ..agent_subprocess import compose_agent_prompt, spawn_agent
 
         # Select agent type based on skill or default
@@ -133,6 +133,7 @@ class A2ATaskHandler:
         # Default cwd — A2A tasks get a temp workspace
         import tempfile
         cwd = config.get("cwd", tempfile.gettempdir())
+        trusted = _coerce_trusted(config.get("trusted", True))
 
         agent = ManagedAgent(
             id=agent_id,
@@ -140,6 +141,7 @@ class A2ATaskHandler:
             title=title,
             cwd=cwd,
             status="idle",
+            trusted=trusted,
         )
         AGENTS[agent_id] = agent
 
@@ -153,6 +155,7 @@ class A2ATaskHandler:
         try:
             sidecar_info = await _try_sidecar_create(
                 agent_id, agent_type, title, cwd, full_prompt,
+                trusted=trusted,
             )
         except BudgetGateError as exc:
             agent.status = "error"
