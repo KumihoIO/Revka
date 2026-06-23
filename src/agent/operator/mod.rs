@@ -121,6 +121,39 @@ pub fn operator_mcp_server_config(cfg: &OperatorConfig) -> McpServerConfig {
     }
 }
 
+/// Decide whether to auto-supply `ANTHROPIC_API_KEY` to spawned `claude` agents.
+///
+/// Workflow `agent` steps spawn the `claude` CLI as a subprocess, which
+/// authenticates against `api.anthropic.com` with its **own** credential
+/// (`ANTHROPIC_API_KEY` env var or a Claude subscription OAuth token) — *not*
+/// revka's in-process provider client. So a daemon with a perfectly good
+/// configured Anthropic key still yields `401 Invalid authentication credentials`
+/// in agent steps unless the operator manually exports a credential. We bridge
+/// that gap by handing the spawned process revka's already-decrypted Anthropic
+/// key.
+///
+/// Guards (returns `None` — leave auth to the spawned CLI — when any holds):
+/// - the configured key isn't an Anthropic key (`sk-ant-…`); setting a non-Anthropic
+///   key (e.g. an OpenRouter `sk-or-…`) as `ANTHROPIC_API_KEY` would *break* the spawn;
+/// - an `ANTHROPIC_API_KEY` is already present in the environment (respect it);
+/// - a `CLAUDE_CODE_OAUTH_TOKEN` is present (the user chose subscription auth —
+///   an injected API key would take precedence over it, so don't).
+fn anthropic_key_for_spawned_agents(
+    config_api_key: Option<&str>,
+    env_has_anthropic_api_key: bool,
+    env_has_oauth_token: bool,
+) -> Option<String> {
+    if env_has_anthropic_api_key || env_has_oauth_token {
+        return None;
+    }
+    let key = config_api_key?.trim();
+    if key.starts_with("sk-ant-") {
+        Some(key.to_string())
+    } else {
+        None
+    }
+}
+
 // -- Injection ---------------------------------------------------------------
 
 /// Inject the Operator MCP server into `config`.
@@ -227,6 +260,35 @@ pub fn inject_operator(mut config: Config, is_internal: bool) -> Config {
         // Auth uses the service token at ~/.revka/service-token (written
         // by the gateway at startup, read directly by operator-mcp's
         // gateway_client). No token env-forwarding required.
+        // Auto-supply revka's Anthropic key to spawned `claude` agents so
+        // workflow agent steps authenticate out-of-the-box (they spawn the
+        // `claude` CLI, which needs its own ANTHROPIC_API_KEY / subscription
+        // token — see `anthropic_key_for_spawned_agents`).
+        //
+        // Delivered under a DEDICATED name (`REVKA_SPAWN_ANTHROPIC_API_KEY`),
+        // never `ANTHROPIC_API_KEY` directly: operator-mcp's `_kumiho_forward_env`
+        // copies `ANTHROPIC_API_KEY` into the kumiho-memory MCP config, and
+        // codex-family agents serialize MCP-config env onto the command line
+        // (`_codex_mcp_overrides`) — which would leak the key into process
+        // listings. operator-mcp translates this var into `ANTHROPIC_API_KEY` in
+        // the child process env for `claude` agents only (agent_subprocess.py),
+        // where it is never placed on a command line.
+        if !server.env.contains_key("REVKA_SPAWN_ANTHROPIC_API_KEY") {
+            let env_has = |k: &str| {
+                std::env::var(k)
+                    .map(|v| !v.trim().is_empty())
+                    .unwrap_or(false)
+            };
+            if let Some(key) = anthropic_key_for_spawned_agents(
+                config.api_key.as_deref(),
+                env_has("ANTHROPIC_API_KEY"),
+                env_has("CLAUDE_CODE_OAUTH_TOKEN"),
+            ) {
+                server
+                    .env
+                    .insert("REVKA_SPAWN_ANTHROPIC_API_KEY".to_string(), key);
+            }
+        }
         // Prepend so Operator tools appear early in deferred tool listings.
         config.mcp.servers.insert(0, server);
     }
@@ -556,6 +618,50 @@ mod tests {
         assert!(
             !entry.env.contains_key("KUMIHO_LOCAL_SERVER_ENDPOINT"),
             "cloud mode must not set the CE loopback endpoint"
+        );
+    }
+
+    #[test]
+    fn anthropic_key_injected_for_spawned_agents_when_anthropic_and_no_explicit_creds() {
+        assert_eq!(
+            anthropic_key_for_spawned_agents(Some("sk-ant-abc123"), false, false),
+            Some("sk-ant-abc123".to_string()),
+            "an Anthropic key must be supplied to spawned agents when no explicit credential is set"
+        );
+        // Whitespace is trimmed.
+        assert_eq!(
+            anthropic_key_for_spawned_agents(Some("  sk-ant-xyz  "), false, false),
+            Some("sk-ant-xyz".to_string())
+        );
+    }
+
+    #[test]
+    fn anthropic_key_skipped_for_non_anthropic_key() {
+        // An OpenRouter (or any non-`sk-ant-`) key must NOT be set as
+        // ANTHROPIC_API_KEY — it would break the spawned claude against
+        // api.anthropic.com.
+        assert_eq!(
+            anthropic_key_for_spawned_agents(Some("sk-or-v1-deadbeef"), false, false),
+            None
+        );
+        assert_eq!(anthropic_key_for_spawned_agents(None, false, false), None);
+        assert_eq!(
+            anthropic_key_for_spawned_agents(Some("   "), false, false),
+            None
+        );
+    }
+
+    #[test]
+    fn anthropic_key_skipped_when_explicit_credential_present() {
+        // Respect an explicitly exported ANTHROPIC_API_KEY...
+        assert_eq!(
+            anthropic_key_for_spawned_agents(Some("sk-ant-abc"), true, false),
+            None
+        );
+        // ...and a Claude subscription token (don't let an injected key override it).
+        assert_eq!(
+            anthropic_key_for_spawned_agents(Some("sk-ant-abc"), false, true),
+            None
         );
     }
 }

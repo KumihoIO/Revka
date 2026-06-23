@@ -1,13 +1,18 @@
 //! Bindings for the Total Phase Aardvark I2C/SPI/GPIO USB adapter.
 //!
-//! Uses [`libloading`] to load `aardvark.so` at runtime — the same pattern
-//! the official Total Phase C stub (`aardvark.c`) uses internally.
+//! Uses [`libloading`] to load the Aardvark shared library at runtime — the
+//! same pattern the official Total Phase C stub (`aardvark.c`) uses internally.
+//! The library filename is platform-specific: `aardvark.so` on Linux,
+//! `aardvark.dll` on Windows, and `aardvark.dylib` on macOS.
 //!
 //! # Library search order
 //!
-//! 1. `REVKA_AARDVARK_LIB` environment variable (full path to `aardvark.so`)
-//! 2. `<workspace>/crates/aardvark-sys/vendor/aardvark.so` (development default)
-//! 3. `./aardvark.so` (next to the binary, for deployment)
+//! 1. `REVKA_AARDVARK_LIB` environment variable (full path to the library)
+//! 2. `<workspace>/crates/aardvark-sys/vendor/<lib>` (development default)
+//! 3. `<exe dir>/<lib>` (next to the binary, for deployment)
+//! 4. `./<lib>` (current working directory)
+//!
+//! where `<lib>` is the platform-specific filename above.
 //!
 //! If none resolve, every method returns
 //! [`Err(AardvarkError::LibraryNotFound)`](AardvarkError::LibraryNotFound).
@@ -39,6 +44,17 @@ const AA_I2C_PULLUP_BOTH: u8 = 0x03;
 
 // ── Library loading ───────────────────────────────────────────────────────
 
+/// Platform-appropriate Total Phase shared-library filename. Total Phase ships
+/// the SDK as `aardvark.so` on Linux, `aardvark.dll` on Windows, and
+/// `aardvark.dylib` on macOS — note the macOS file has no `lib` prefix, so we
+/// select the exact name rather than deriving it from `DLL_PREFIX`/`DLL_SUFFIX`.
+#[cfg(target_os = "windows")]
+const AARDVARK_LIB_NAME: &str = "aardvark.dll";
+#[cfg(target_os = "macos")]
+const AARDVARK_LIB_NAME: &str = "aardvark.dylib";
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+const AARDVARK_LIB_NAME: &str = "aardvark.so";
+
 static AARDVARK_LIB: OnceLock<Option<Library>> = OnceLock::new();
 
 fn lib() -> Option<&'static Library> {
@@ -53,16 +69,17 @@ fn lib() -> Option<&'static Library> {
                 // 2. Vendor directory shipped with this crate (dev default)
                 {
                     let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-                    p.push("vendor/aardvark.so");
+                    p.push("vendor");
+                    p.push(AARDVARK_LIB_NAME);
                     p
                 },
                 // 3. Next to the running binary (deployment)
                 std::env::current_exe()
                     .ok()
-                    .and_then(|e| e.parent().map(|d| d.join("aardvark.so")))
+                    .and_then(|e| e.parent().map(|d| d.join(AARDVARK_LIB_NAME)))
                     .unwrap_or_default(),
                 // 4. Current working directory
-                PathBuf::from("aardvark.so"),
+                PathBuf::from(AARDVARK_LIB_NAME),
             ];
             let mut tried_any = false;
             for path in &candidates {
@@ -96,12 +113,13 @@ fn lib() -> Option<&'static Library> {
                         if msg.contains("incompatible architecture") || msg.contains("mach-o file") {
                             eprintln!(
                                 "[aardvark-sys] ARCHITECTURE MISMATCH loading {}: {}\n\
-                                 [aardvark-sys] The vendored aardvark.so is x86_64 but this \
+                                 [aardvark-sys] The {} is x86_64 but this \
                                  binary is {}.\n\
                                  [aardvark-sys] Download the arm64 SDK from https://www.totalphase.com/downloads/ \
                                  or build with --target x86_64-apple-darwin.",
                                 path.display(),
                                 msg,
+                                AARDVARK_LIB_NAME,
                                 std::env::consts::ARCH,
                             );
                         } else {
@@ -115,7 +133,7 @@ fn lib() -> Option<&'static Library> {
                 }
             }
             if !tried_any {
-                eprintln!("[aardvark-sys] no library candidates found; set REVKA_AARDVARK_LIB or place aardvark.so next to the binary");
+                eprintln!("[aardvark-sys] no library candidates found; set REVKA_AARDVARK_LIB or place {AARDVARK_LIB_NAME} next to the binary");
             }
             None
         })
@@ -143,8 +161,15 @@ pub enum AardvarkError {
     /// GPIO operation returned a negative status code.
     #[error("GPIO error (code {0})")]
     GpioError(i32),
-    /// `aardvark.so` could not be found or loaded.
-    #[error("aardvark.so not found — set REVKA_AARDVARK_LIB or place it next to the binary")]
+    /// A bus-configuration call (`configure`/`pullup`/`bitrate`/`spi_configure`)
+    /// returned a negative status code.
+    #[error("bus configuration failed (code {0})")]
+    ConfigFailed(i32),
+    /// The Aardvark shared library could not be found or loaded.
+    #[error(
+        "{lib} not found — set REVKA_AARDVARK_LIB or place it next to the binary",
+        lib = AARDVARK_LIB_NAME
+    )]
     LibraryNotFound,
 }
 
@@ -192,7 +217,7 @@ impl AardvarkHandle {
     /// Return the port numbers of all **free** connected adapters.
     ///
     /// Ports in-use by another process are filtered out.
-    /// Returns an empty `Vec` when `aardvark.so` cannot be loaded.
+    /// Returns an empty `Vec` when the Aardvark library cannot be loaded.
     pub fn find_devices() -> Vec<u16> {
         let Some(lib) = lib() else {
             eprintln!("[aardvark-sys] find_devices: library not loaded");
@@ -235,15 +260,25 @@ impl AardvarkHandle {
             let configure: Symbol<unsafe extern "C" fn(i32, i32) -> i32> = lib
                 .get(b"c_aa_configure\0")
                 .map_err(|_| AardvarkError::LibraryNotFound)?;
-            configure(self.handle, AA_CONFIG_GPIO_I2C);
+            let ret = configure(self.handle, AA_CONFIG_GPIO_I2C);
+            if ret < 0 {
+                return Err(AardvarkError::ConfigFailed(ret));
+            }
             let pullup: Symbol<unsafe extern "C" fn(i32, u8) -> i32> = lib
                 .get(b"c_aa_i2c_pullup\0")
                 .map_err(|_| AardvarkError::LibraryNotFound)?;
-            pullup(self.handle, AA_I2C_PULLUP_BOTH);
+            let ret = pullup(self.handle, AA_I2C_PULLUP_BOTH);
+            if ret < 0 {
+                return Err(AardvarkError::ConfigFailed(ret));
+            }
             let bitrate: Symbol<unsafe extern "C" fn(i32, i32) -> i32> = lib
                 .get(b"c_aa_i2c_bitrate\0")
                 .map_err(|_| AardvarkError::LibraryNotFound)?;
-            bitrate(self.handle, bitrate_khz as i32);
+            // Returns the actual bitrate set (non-negative); only < 0 is an error.
+            let ret = bitrate(self.handle, bitrate_khz as i32);
+            if ret < 0 {
+                return Err(AardvarkError::ConfigFailed(ret));
+            }
         }
         Ok(())
     }
@@ -335,16 +370,26 @@ impl AardvarkHandle {
             let configure: Symbol<unsafe extern "C" fn(i32, i32) -> i32> = lib
                 .get(b"c_aa_configure\0")
                 .map_err(|_| AardvarkError::LibraryNotFound)?;
-            configure(self.handle, AA_CONFIG_SPI_GPIO);
+            let ret = configure(self.handle, AA_CONFIG_SPI_GPIO);
+            if ret < 0 {
+                return Err(AardvarkError::ConfigFailed(ret));
+            }
             // SPI mode 0: polarity=rising/falling(0), phase=sample/setup(0), MSB first(0)
             let spi_cfg: Symbol<unsafe extern "C" fn(i32, i32, i32, i32) -> i32> = lib
                 .get(b"c_aa_spi_configure\0")
                 .map_err(|_| AardvarkError::LibraryNotFound)?;
-            spi_cfg(self.handle, 0, 0, 0);
+            let ret = spi_cfg(self.handle, 0, 0, 0);
+            if ret < 0 {
+                return Err(AardvarkError::ConfigFailed(ret));
+            }
             let bitrate: Symbol<unsafe extern "C" fn(i32, i32) -> i32> = lib
                 .get(b"c_aa_spi_bitrate\0")
                 .map_err(|_| AardvarkError::LibraryNotFound)?;
-            bitrate(self.handle, bitrate_khz as i32);
+            // Returns the actual bitrate set (non-negative); only < 0 is an error.
+            let ret = bitrate(self.handle, bitrate_khz as i32);
+            if ret < 0 {
+                return Err(AardvarkError::ConfigFailed(ret));
+            }
         }
         Ok(())
     }
@@ -475,9 +520,16 @@ mod tests {
                 .contains("SPI")
         );
         assert!(
+            AardvarkError::ConfigFailed(-3)
+                .to_string()
+                .contains("configuration")
+        );
+        // The message must name the platform-correct library file (#440), so the
+        // diagnostic points Windows/macOS users at aardvark.dll / aardvark.dylib.
+        assert!(
             AardvarkError::LibraryNotFound
                 .to_string()
-                .contains("aardvark.so")
+                .contains(AARDVARK_LIB_NAME)
         );
     }
 }

@@ -375,6 +375,8 @@ Notes:
 | `daily_limit_usd` | `10.00` | Daily spending limit in USD |
 | `monthly_limit_usd` | `100.00` | Monthly spending limit in USD |
 | `warn_at_percent` | `80` | Warn when spending reaches this percentage of limit |
+| `daily_token_limit` | unset | Optional daily total-token limit, enforced independently of `daily_limit_usd` |
+| `monthly_token_limit` | unset | Optional monthly total-token limit, enforced independently of `monthly_limit_usd` |
 | `allow_override` | `false` | Allow requests to exceed budget with `--override` flag |
 
 Notes:
@@ -382,6 +384,7 @@ Notes:
 - When `enabled = true`, the runtime tracks per-request cost estimates and enforces daily/monthly limits.
 - At `warn_at_percent` threshold, a warning is emitted but requests continue.
 - When a limit is reached, requests are rejected unless `allow_override = true` and the `--override` flag is passed.
+- Models with no matching `[cost.prices]` entry record `$0.00` and therefore never trip the USD limits. Set `daily_token_limit` / `monthly_token_limit` to bound such models by total tokens regardless of pricing; the same `enforcement.mode` applies to a token-limit breach as to a dollar-limit breach.
 
 ## `[identity]`
 

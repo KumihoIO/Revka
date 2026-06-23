@@ -28,7 +28,7 @@ use super::AppState;
 use super::mcp_discovery::read_revka_mcp;
 use axum::{
     extract::{
-        Query, State, WebSocketUpgrade,
+        ConnectInfo, Query, State, WebSocketUpgrade,
         ws::{Message, WebSocket},
     },
     http::{HeaderMap, StatusCode, header},
@@ -39,6 +39,7 @@ use portable_pty::{CommandBuilder, NativePtySystem, PtySize, PtySystem};
 use serde::Deserialize;
 use serde_json::json;
 use std::io::{Read, Write};
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use tracing::{debug, error, warn};
 use uuid::Uuid;
@@ -432,16 +433,63 @@ fn resolve_cwd(raw: Option<&str>) -> Result<Option<PathBuf>, String> {
 /// GET /ws/terminal — WebSocket upgrade for PTY terminal
 pub async fn handle_ws_terminal(
     State(state): State<AppState>,
+    ConnectInfo(peer_addr): ConnectInfo<SocketAddr>,
     Query(params): Query<TerminalQuery>,
     headers: HeaderMap,
     ws: WebSocketUpgrade,
 ) -> impl IntoResponse {
-    // Auth check
-    if state.pairing.require_pairing() {
-        let token = extract_ws_token(&headers, params.token.as_deref()).unwrap_or("");
-        if !state.pairing.is_authenticated(token) {
-            return (StatusCode::UNAUTHORIZED, "Unauthorized").into_response();
+    // Defense-in-depth: reject cross-site WebSocket handshakes (#383). The PTY
+    // is the highest-value target, so close the cross-origin handshake hole the
+    // same-origin policy leaves open before any other check.
+    if !super::ws::check_ws_origin(&headers) {
+        if let Some(ref logger) = state.audit_logger {
+            let _ = logger.log_security_event(
+                "dashboard",
+                "WebSocket terminal upgrade refused: cross-origin handshake",
+            );
         }
+        return (
+            StatusCode::FORBIDDEN,
+            "Forbidden — cross-origin WebSocket upgrade rejected",
+        )
+            .into_response();
+    }
+
+    // Auth check.
+    //
+    // The terminal is the single most dangerous endpoint in the gateway: it
+    // upgrades to an interactive PTY running the daemon user's shell with full
+    // local command execution. Unlike a read-only dashboard route, it must NOT
+    // ride the all-or-nothing pairing switch. When `require_pairing` is off
+    // (an explicit operator opt-out that opens every other endpoint), refuse
+    // to upgrade the terminal rather than handing out an unauthenticated shell.
+    if !state.pairing.require_pairing() {
+        if let Some(ref logger) = state.audit_logger {
+            let _ = logger.log_security_event(
+                "dashboard",
+                "WebSocket terminal upgrade refused: pairing is disabled",
+            );
+        }
+        return (
+            StatusCode::FORBIDDEN,
+            "Terminal is disabled while pairing is off",
+        )
+            .into_response();
+    }
+    // Rate-limited against bearer-token brute force (#384).
+    let limiter = super::api::WsAuthLimiter::new(&state, Some(peer_addr), &headers);
+    if let Err(retry_after) = limiter.check() {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            [(header::RETRY_AFTER, retry_after.to_string())],
+            "Too many auth attempts — try again later",
+        )
+            .into_response();
+    }
+    let token = extract_ws_token(&headers, params.token.as_deref()).unwrap_or("");
+    if !state.pairing.is_authenticated(token) {
+        limiter.record_failure();
+        return (StatusCode::UNAUTHORIZED, "Unauthorized").into_response();
     }
 
     // Echo sub-protocol if client requests it
@@ -646,7 +694,7 @@ async fn handle_terminal_socket(socket: WebSocket, params: TerminalQuery) {
     };
 
     let SpawnPlan { cmd, _temp } = plan;
-    let _child = match pair.slave.spawn_command(cmd) {
+    let child = match pair.slave.spawn_command(cmd) {
         Ok(child) => child,
         Err(e) => {
             error!(error = %e, "Failed to spawn child");
@@ -677,6 +725,7 @@ async fn handle_terminal_socket(socket: WebSocket, params: TerminalQuery) {
 
     // Channels to bridge blocking PTY I/O with async WebSocket
     let (pty_out_tx, mut pty_out_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(64);
+    let (pty_in_tx, mut pty_in_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(64);
     let (resize_tx, mut resize_rx) = tokio::sync::mpsc::channel::<(u16, u16)>(4);
 
     // Blocking task: PTY stdout -> mpsc channel
@@ -695,8 +744,19 @@ async fn handle_terminal_socket(socket: WebSocket, params: TerminalQuery) {
         }
     });
 
-    // Async task: handle resize requests
-    tokio::spawn(async move {
+    // Blocking task: mpsc channel -> PTY stdin. Writes can block on a full PTY
+    // input buffer, so they must not run inside the async select loop.
+    tokio::task::spawn_blocking(move || {
+        while let Some(data) = pty_in_rx.blocking_recv() {
+            if pty_writer.write_all(&data).is_err() {
+                break;
+            }
+        }
+    });
+
+    // Async task: handle resize requests. Hold the JoinHandle so we can stop it
+    // (and thus drop `master`) deterministically on session end.
+    let resize_task = tokio::spawn(async move {
         while let Some((cols, rows)) = resize_rx.recv().await {
             let _ = master.resize(PtySize {
                 rows,
@@ -737,12 +797,12 @@ async fn handle_terminal_socket(socket: WebSocket, params: TerminalQuery) {
                             }
                         }
                         // Raw keystroke input
-                        if pty_writer.write_all(text.as_bytes()).is_err() {
+                        if pty_in_tx.send(text.as_bytes().to_vec()).await.is_err() {
                             break;
                         }
                     }
                     Some(Ok(Message::Binary(data))) => {
-                        if pty_writer.write_all(&data).is_err() {
+                        if pty_in_tx.send(data.to_vec()).await.is_err() {
                             break;
                         }
                     }
@@ -765,6 +825,24 @@ async fn handle_terminal_socket(socket: WebSocket, params: TerminalQuery) {
             }
         }
     }
+
+    // Tear down deterministically rather than relying on PTY-master-drop
+    // SIGHUP semantics (best-effort, and absent on Windows/ConPTY).
+    //
+    // Stop the resize task so `master` is dropped now (not whenever the task
+    // happens to be scheduled), then kill and reap the child to avoid leaked /
+    // zombie processes that outlive the session.
+    resize_task.abort();
+    let _ = tokio::task::spawn_blocking(move || {
+        let mut child = child;
+        if let Err(e) = child.kill() {
+            warn!(error = %e, "Failed to kill terminal child");
+        }
+        if let Err(e) = child.wait() {
+            warn!(error = %e, "Failed to reap terminal child");
+        }
+    })
+    .await;
 
     // `_temp` drops here, removing the per-session config dir.
     drop(_temp);

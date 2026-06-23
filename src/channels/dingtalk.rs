@@ -3,11 +3,28 @@ use async_trait::async_trait;
 use futures_util::{SinkExt, StreamExt};
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use tokio_tungstenite::tungstenite::Message;
 use uuid::Uuid;
 
 const DINGTALK_BOT_CALLBACK_TOPIC: &str = "/v1.0/im/bot/messages/get";
+
+/// Fallback validity window for a session webhook when DingTalk does not provide
+/// an explicit `sessionWebhookExpiredTime`. DingTalk session webhooks are valid
+/// for roughly two hours after the inbound message.
+const DEFAULT_SESSION_WEBHOOK_TTL: Duration = Duration::from_secs(2 * 60 * 60);
+
+/// Upper bound on stored session webhooks so the map cannot grow without limit.
+/// When full, the entry expiring soonest is evicted to make room.
+const MAX_SESSION_WEBHOOKS: usize = 1024;
+
+/// A session webhook URL together with the instant at which it expires.
+#[derive(Clone)]
+struct SessionWebhook {
+    url: String,
+    expires_at: Instant,
+}
 
 /// DingTalk channel — connects via Stream Mode WebSocket for real-time messages.
 /// Replies are sent through per-message session webhook URLs.
@@ -15,9 +32,10 @@ pub struct DingTalkChannel {
     client_id: String,
     client_secret: String,
     allowed_users: Vec<String>,
-    /// Per-chat session webhooks for sending replies (chatID -> webhook URL).
-    /// DingTalk provides a unique webhook URL with each incoming message.
-    session_webhooks: Arc<RwLock<HashMap<String, String>>>,
+    /// Per-chat session webhooks for sending replies (chatID -> webhook).
+    /// DingTalk provides a unique, short-lived webhook URL with each incoming
+    /// message; entries carry an expiry and the map is capped in size.
+    session_webhooks: Arc<RwLock<HashMap<String, SessionWebhook>>>,
     /// Per-channel proxy URL override.
     proxy_url: Option<String>,
 }
@@ -83,6 +101,54 @@ impl DingTalkChannel {
         }
     }
 
+    /// Compute when a session webhook should be treated as expired.
+    ///
+    /// Prefers DingTalk's authoritative `sessionWebhookExpiredTime` (epoch ms);
+    /// falls back to [`DEFAULT_SESSION_WEBHOOK_TTL`] when it is absent or in the
+    /// past relative to `now`.
+    fn webhook_expiry(data: &serde_json::Value, now: Instant) -> Instant {
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64;
+
+        let remaining = data
+            .get("sessionWebhookExpiredTime")
+            .and_then(|v| {
+                v.as_i64()
+                    .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+            })
+            .map(|expired_ms| expired_ms - now_ms)
+            .filter(|&remaining_ms| remaining_ms > 0)
+            .map(|remaining_ms| Duration::from_millis(remaining_ms as u64))
+            .unwrap_or(DEFAULT_SESSION_WEBHOOK_TTL);
+
+        now + remaining
+    }
+
+    /// Insert a session webhook under `key`, dropping already-expired entries and
+    /// enforcing [`MAX_SESSION_WEBHOOKS`] by evicting the soonest-to-expire entry.
+    fn store_webhook(
+        webhooks: &mut HashMap<String, SessionWebhook>,
+        key: String,
+        webhook: SessionWebhook,
+        now: Instant,
+    ) {
+        webhooks.retain(|_, entry| entry.expires_at > now);
+
+        if !webhooks.contains_key(&key) && webhooks.len() >= MAX_SESSION_WEBHOOKS {
+            if let Some(soonest) = webhooks
+                .iter()
+                .min_by_key(|(_, entry)| entry.expires_at)
+                .map(|(k, _)| k.clone())
+            {
+                webhooks.remove(&soonest);
+            }
+        }
+
+        webhooks.insert(key, webhook);
+    }
+
     /// Register a connection with DingTalk's gateway to get a WebSocket endpoint.
     async fn register_connection(&self) -> anyhow::Result<GatewayResponse> {
         let body = serde_json::json!({
@@ -126,13 +192,18 @@ impl Channel for DingTalkChannel {
 
     async fn send(&self, message: &SendMessage) -> anyhow::Result<()> {
         let webhooks = self.session_webhooks.read().await;
-        let webhook_url = webhooks.get(&message.recipient).ok_or_else(|| {
-            anyhow::anyhow!(
-                "No session webhook found for chat {}. \
-                 The user must send a message first to establish a session.",
-                message.recipient
-            )
-        })?;
+        let webhook_url = webhooks
+            .get(&message.recipient)
+            .filter(|entry| entry.expires_at > Instant::now())
+            .map(|entry| entry.url.clone())
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "No active session webhook found for chat {}. \
+                     The user must send a message first to establish a session.",
+                    message.recipient
+                )
+            })?;
+        drop(webhooks);
 
         let title = message.subject.as_deref().unwrap_or("Revka");
         let body = serde_json::json!({
@@ -255,13 +326,18 @@ impl Channel for DingTalkChannel {
                     // Private chat uses sender ID, group chat uses conversation ID.
                     let chat_id = Self::resolve_chat_id(&data, sender_id);
 
-                    // Store session webhook for later replies
+                    // Store session webhook for later replies, recording its
+                    // expiry so stale URLs are not used and the map stays bounded.
                     if let Some(webhook) = data.get("sessionWebhook").and_then(|w| w.as_str()) {
-                        let webhook = webhook.to_string();
+                        let now = Instant::now();
+                        let entry = SessionWebhook {
+                            url: webhook.to_string(),
+                            expires_at: Self::webhook_expiry(&data, now),
+                        };
                         let mut webhooks = self.session_webhooks.write().await;
                         // Use both keys so reply routing works for both group and private flows.
-                        webhooks.insert(chat_id.clone(), webhook.clone());
-                        webhooks.insert(sender_id.to_string(), webhook);
+                        Self::store_webhook(&mut webhooks, chat_id.clone(), entry.clone(), now);
+                        Self::store_webhook(&mut webhooks, sender_id.to_string(), entry, now);
                     }
 
                     // Acknowledge the event
@@ -398,5 +474,92 @@ client_secret = "secret"
         });
         let chat_id = DingTalkChannel::resolve_chat_id(&data, "staff-1");
         assert_eq!(chat_id, "cid-group");
+    }
+
+    #[test]
+    fn webhook_expiry_falls_back_to_default_without_field() {
+        let now = Instant::now();
+        let expiry = DingTalkChannel::webhook_expiry(&serde_json::json!({}), now);
+        // Allow a little slack for the wall-clock read inside the function.
+        assert!(expiry > now + DEFAULT_SESSION_WEBHOOK_TTL - Duration::from_secs(5));
+        assert!(expiry <= now + DEFAULT_SESSION_WEBHOOK_TTL + Duration::from_secs(5));
+    }
+
+    #[test]
+    fn webhook_expiry_honors_authoritative_field() {
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        // Expires in ~10 minutes — well under the 2h default.
+        let data = serde_json::json!({ "sessionWebhookExpiredTime": now_ms + 10 * 60 * 1000 });
+        let now = Instant::now();
+        let expiry = DingTalkChannel::webhook_expiry(&data, now);
+        assert!(expiry < now + DEFAULT_SESSION_WEBHOOK_TTL);
+        assert!(expiry > now + Duration::from_secs(9 * 60));
+    }
+
+    #[test]
+    fn webhook_expiry_falls_back_when_field_in_past() {
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        let data = serde_json::json!({ "sessionWebhookExpiredTime": now_ms - 1000 });
+        let now = Instant::now();
+        let expiry = DingTalkChannel::webhook_expiry(&data, now);
+        assert!(expiry > now + DEFAULT_SESSION_WEBHOOK_TTL - Duration::from_secs(5));
+    }
+
+    #[test]
+    fn store_webhook_evicts_expired_entries() {
+        let now = Instant::now();
+        let mut webhooks = HashMap::new();
+        webhooks.insert(
+            "stale".to_string(),
+            SessionWebhook {
+                url: "https://old".into(),
+                expires_at: now - Duration::from_secs(1),
+            },
+        );
+        let fresh = SessionWebhook {
+            url: "https://new".into(),
+            expires_at: now + Duration::from_secs(60),
+        };
+        DingTalkChannel::store_webhook(&mut webhooks, "fresh".into(), fresh, now);
+
+        assert!(!webhooks.contains_key("stale"));
+        assert_eq!(
+            webhooks.get("fresh").map(|e| e.url.as_str()),
+            Some("https://new")
+        );
+    }
+
+    #[test]
+    fn store_webhook_enforces_capacity_cap() {
+        let now = Instant::now();
+        let mut webhooks = HashMap::new();
+        for i in 0..MAX_SESSION_WEBHOOKS {
+            webhooks.insert(
+                format!("chat-{i}"),
+                SessionWebhook {
+                    url: format!("https://w/{i}"),
+                    // Strictly increasing expiry; chat-0 expires soonest.
+                    expires_at: now + Duration::from_secs(60 + i as u64),
+                },
+            );
+        }
+        assert_eq!(webhooks.len(), MAX_SESSION_WEBHOOKS);
+
+        let newcomer = SessionWebhook {
+            url: "https://w/new".into(),
+            expires_at: now + Duration::from_secs(10_000),
+        };
+        DingTalkChannel::store_webhook(&mut webhooks, "newcomer".into(), newcomer, now);
+
+        assert_eq!(webhooks.len(), MAX_SESSION_WEBHOOKS);
+        assert!(webhooks.contains_key("newcomer"));
+        // The soonest-to-expire entry was evicted to make room.
+        assert!(!webhooks.contains_key("chat-0"));
     }
 }

@@ -20,6 +20,66 @@ use tokio::sync::Mutex;
 const BRIDGE_SCRIPT: &str = include_str!("../../resources/sidecars/kumiho_sdk_bridge.py");
 const BRIDGE_SCRIPT_NAME: &str = "kumiho_sdk_bridge.py";
 
+/// Process-env var the bridge reads to decide whether tokenless CE routing is
+/// allowed. Set by daemon startup only in local-CE mode; cleared in cloud mode.
+const CE_ENDPOINT_ENV: &str = "KUMIHO_LOCAL_SERVER_ENDPOINT";
+/// CE-only Redis URL exported alongside the CE endpoint; cleared in cloud mode.
+const CE_REDIS_ENV: &str = "KUMIHO_UPSTASH_REDIS_URL";
+
+/// Cloud-routing creds that must be shadowed to empty for the CE sidecar. A
+/// non-empty `KUMIHO_AUTH_TOKEN` makes the SDK take the cloud discovery path
+/// instead of the local CE probe, and an inherited `KUMIHO_CONTROL_PLANE_URL`
+/// would skew the bridge's cloud-path routing cache key. Mirrors the shadowing
+/// in `src/agent/kumiho.rs` (memory MCP) and `src/main.rs` (startup shim).
+const CE_SHADOWED_CLOUD_VARS: [&str; 3] = [
+    "KUMIHO_AUTH_TOKEN",
+    "KUMIHO_SERVICE_TOKEN",
+    "KUMIHO_CONTROL_PLANE_URL",
+];
+
+/// True when local self-hosted CE is configured, signalled by a non-empty
+/// `KUMIHO_LOCAL_SERVER_ENDPOINT`. This is the same signal `send_raw` keys its
+/// tokenless-CE routing decision on, set by both the daemon startup shim and the
+/// memory MCP path whenever CE is active.
+fn ce_configured() -> bool {
+    std::env::var(CE_ENDPOINT_ENV)
+        .map(|v| !v.trim().is_empty())
+        .unwrap_or(false)
+}
+
+/// When local CE is configured, shadow the inherited cloud-routing creds to
+/// empty on the spawned child so the loopback CE sidecar takes the tokenless CE
+/// probe path rather than cloud discovery. The daemon-CE startup shim already
+/// blanks these process-wide, but doing it here makes the bridge self-sufficient:
+/// child routing stays CE-correct regardless of how the gateway was launched,
+/// matching the shadowing the memory MCP path and the startup shim perform.
+/// See memory-6.
+fn apply_ce_cred_shadowing(cmd: &mut Command) {
+    if ce_configured() {
+        for var in CE_SHADOWED_CLOUD_VARS {
+            cmd.env(var, "");
+        }
+    }
+}
+
+/// Clear stale local-CE env vars so cloud mode is authoritative over routing.
+///
+/// `send_raw` derives its tokenless-CE decision from the *presence* of
+/// `KUMIHO_LOCAL_SERVER_ENDPOINT` in the process env. That var can leak into a
+/// cloud-mode daemon (workspace `.env` importer, a prior CE run, or a shell
+/// export); left set, a cloud daemon with an empty token would skip the token
+/// guard and route gateway traffic tokenlessly to a (typically dead) loopback
+/// CE endpoint instead of falling back to hosted FastAPI. Called once early in
+/// cloud-mode startup to remove that signal (mirrors how CE mode shadows cloud
+/// creds). See memory-3.
+pub fn clear_stale_ce_env() {
+    // SAFETY: called once early in main before worker threads are spawned.
+    unsafe {
+        std::env::remove_var(CE_ENDPOINT_ENV);
+        std::env::remove_var(CE_REDIS_ENV);
+    }
+}
+
 #[derive(Debug)]
 struct BridgeState {
     base_url: String,
@@ -143,6 +203,8 @@ async fn start_bridge(client: &Client) -> Result<BridgeState> {
         .stdout(stdout.unwrap_or_else(Stdio::null))
         .stderr(stderr.unwrap_or_else(Stdio::null));
 
+    apply_ce_cred_shadowing(&mut cmd);
+
     #[cfg(windows)]
     {
         cmd.creation_flags(0x0800_0000);
@@ -202,6 +264,31 @@ async fn mark_dead() {
     }
 }
 
+/// Decide whether a failed bridge request means the sidecar is actually gone.
+///
+/// A `reqwest` failure is *not* proof the process died: a per-request timeout or
+/// a transient blip can fire against an otherwise-healthy sidecar. Tearing the
+/// child down on those forces every subsequent caller to pay the cold-start cost
+/// (process spawn + up to a 10s health poll). Only treat the sidecar as dead
+/// when the error indicates the listener is gone (`is_connect()`) or when
+/// `try_wait()` confirms the child has actually exited. See memory-5.
+async fn bridge_is_dead(err: &reqwest::Error) -> bool {
+    if err.is_connect() {
+        return true;
+    }
+    if err.is_timeout() {
+        return false;
+    }
+    let Some(lock) = BRIDGE.get() else {
+        return false;
+    };
+    let mut guard = lock.lock().await;
+    match guard.as_mut() {
+        Some(state) => matches!(state.child.try_wait(), Ok(Some(_)) | Err(_)),
+        None => false,
+    }
+}
+
 fn is_unsupported_bridge_response(status: StatusCode, body: &str) -> bool {
     if status != StatusCode::NOT_IMPLEMENTED {
         return false;
@@ -234,10 +321,7 @@ pub async fn send_raw(
     // — CE serves gRPC (not JSON REST), so the hosted FastAPI `/api/v1` fallback
     // would receive an undecodable gRPC body. The bridge shim builds a tokenless
     // CE client from KUMIHO_LOCAL_SERVER_ENDPOINT.
-    let ce_configured = std::env::var("KUMIHO_LOCAL_SERVER_ENDPOINT")
-        .map(|v| !v.trim().is_empty())
-        .unwrap_or(false);
-    if token.is_empty() && !ce_configured {
+    if token.is_empty() && !ce_configured() {
         return None;
     }
 
@@ -261,8 +345,12 @@ pub async fn send_raw(
     let resp = match req.send().await {
         Ok(resp) => resp,
         Err(err) => {
-            tracing::warn!(error = %err, path = %path, "Kumiho SDK bridge request failed");
-            mark_dead().await;
+            if bridge_is_dead(&err).await {
+                tracing::warn!(error = %err, path = %path, "Kumiho SDK bridge request failed; sidecar appears dead, tearing down");
+                mark_dead().await;
+            } else {
+                tracing::warn!(error = %err, path = %path, "Kumiho SDK bridge request failed transiently; leaving sidecar running and falling back to FastAPI");
+            }
             return None;
         }
     };
@@ -287,4 +375,230 @@ pub async fn send_raw(
         }));
     }
     Some(Ok(BridgeResponse { status, body }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Serializes the process-global env mutations across every test in this
+    /// module that touches `KUMIHO_LOCAL_SERVER_ENDPOINT` / the cloud-cred vars,
+    /// so they can't race each other's set/restore. A single shared guard is
+    /// required because separate function-local statics are distinct mutexes.
+    static ENV_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Regression for the stale-`KUMIHO_LOCAL_SERVER_ENDPOINT` misroute
+    /// (memory-3). Reproduces the leak the fix targets: a cloud-mode daemon
+    /// starts with a *stale* `KUMIHO_LOCAL_SERVER_ENDPOINT` set and an empty
+    /// service token. Pre-fix, `send_raw` would compute `ce_configured == true`
+    /// from that leaked var, skip the token guard, and route tokenlessly to a
+    /// dead loopback CE endpoint. The cloud-mode fix is `clear_stale_ce_env()`;
+    /// after it runs, the bridge guard must short-circuit to `None` so the
+    /// caller falls back to hosted FastAPI. Reverting the clear would leave the
+    /// var set and flip this assertion. The env is process-global, so the
+    /// mutation is serialized and the prior value restored.
+    // ENV_GUARD must stay held across the send_raw().await below to keep the
+    // process-global CE env stable while send_raw reads it; send_raw short-
+    // circuits to None before any real await and never touches ENV_GUARD, so
+    // there is no deadlock — the await_holding_lock lint is a false positive here.
+    #[allow(clippy::await_holding_lock)]
+    #[tokio::test]
+    async fn cloud_startup_clears_stale_ce_endpoint_so_empty_token_returns_none() {
+        let _guard = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+
+        let prev = std::env::var(CE_ENDPOINT_ENV).ok();
+
+        // Simulate the leak: a stale CE endpoint is present in the process env
+        // at cloud-mode startup. SAFETY: env mutation is serialized by
+        // ENV_GUARD for the duration of this test; restored before returning.
+        unsafe { std::env::set_var(CE_ENDPOINT_ENV, "http://127.0.0.1:1/stale") };
+
+        // Pre-condition: with the stale var set, the bridge would treat this as
+        // CE-configured and bypass the empty-token guard — the bug.
+        let ce_configured = std::env::var(CE_ENDPOINT_ENV)
+            .map(|v| !v.trim().is_empty())
+            .unwrap_or(false);
+        assert!(
+            ce_configured,
+            "test setup: stale CE endpoint should read as CE-configured before the fix runs"
+        );
+
+        // Apply the cloud-mode fix: clear the leaked CE env vars.
+        clear_stale_ce_env();
+
+        let client = Client::new();
+        let result = send_raw(&client, Method::GET, "/memory/recall", Vec::new(), "", None).await;
+
+        // SAFETY: see above — restore prior state under the same guard.
+        unsafe {
+            match prev {
+                Some(v) => std::env::set_var(CE_ENDPOINT_ENV, v),
+                None => std::env::remove_var(CE_ENDPOINT_ENV),
+            }
+        }
+
+        assert!(
+            result.is_none(),
+            "after clearing the stale CE endpoint, a cloud-mode bridge call with \
+             an empty token must return None to fall back to hosted FastAPI"
+        );
+    }
+
+    /// Regression for memory-6: the bridge launcher must self-guarantee
+    /// CE-correct child routing rather than relying on `main.rs` having blanked
+    /// the cloud creds process-wide. With CE configured (a non-empty
+    /// `KUMIHO_LOCAL_SERVER_ENDPOINT`), `apply_ce_cred_shadowing` must set the
+    /// three cloud-routing vars to empty on the spawned child even when the
+    /// parent process still carries non-empty inherited values — so an inherited
+    /// cloud token can't push the loopback CE sidecar onto the cloud discovery
+    /// path. The env is process-global, so the mutation is serialized and the
+    /// prior values restored.
+    #[test]
+    fn ce_mode_shadows_inherited_cloud_creds_on_spawned_child() {
+        let _guard = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+
+        let prev_endpoint = std::env::var(CE_ENDPOINT_ENV).ok();
+        let prev_creds: Vec<(&str, Option<String>)> = CE_SHADOWED_CLOUD_VARS
+            .iter()
+            .map(|&v| (v, std::env::var(v).ok()))
+            .collect();
+
+        // Simulate a CE-configured daemon whose process env still carries an
+        // inherited (non-empty) cloud token — the gap the fix closes. SAFETY:
+        // env mutation is serialized by ENV_GUARD and restored before returning.
+        unsafe {
+            std::env::set_var(CE_ENDPOINT_ENV, "127.0.0.1:9190");
+            for &var in &CE_SHADOWED_CLOUD_VARS {
+                std::env::set_var(var, "inherited-cloud-value");
+            }
+        }
+
+        let mut cmd = Command::new("python");
+        apply_ce_cred_shadowing(&mut cmd);
+
+        // The child env override must blank every cloud-routing var.
+        let overrides: std::collections::HashMap<String, Option<String>> = cmd
+            .as_std()
+            .get_envs()
+            .map(|(k, v)| {
+                (
+                    k.to_string_lossy().into_owned(),
+                    v.map(|v| v.to_string_lossy().into_owned()),
+                )
+            })
+            .collect();
+
+        // SAFETY: see above — restore prior state under the same guard.
+        unsafe {
+            match prev_endpoint {
+                Some(v) => std::env::set_var(CE_ENDPOINT_ENV, v),
+                None => std::env::remove_var(CE_ENDPOINT_ENV),
+            }
+            for (var, prev) in prev_creds {
+                match prev {
+                    Some(v) => std::env::set_var(var, v),
+                    None => std::env::remove_var(var),
+                }
+            }
+        }
+
+        for var in CE_SHADOWED_CLOUD_VARS {
+            assert_eq!(
+                overrides.get(var),
+                Some(&Some(String::new())),
+                "{var} must be shadowed to empty on the CE child env"
+            );
+        }
+    }
+
+    /// In cloud mode (no `KUMIHO_LOCAL_SERVER_ENDPOINT`), the bridge must NOT
+    /// shadow the cloud creds — the child needs the real token to route through
+    /// cloud discovery. Guards against the CE shadowing leaking into cloud mode.
+    #[test]
+    fn cloud_mode_does_not_shadow_cloud_creds_on_spawned_child() {
+        let _guard = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+
+        let prev_endpoint = std::env::var(CE_ENDPOINT_ENV).ok();
+
+        // Cloud mode: no CE endpoint signal in the env. SAFETY: serialized by
+        // ENV_GUARD; restored before returning.
+        unsafe { std::env::remove_var(CE_ENDPOINT_ENV) };
+
+        let mut cmd = Command::new("python");
+        apply_ce_cred_shadowing(&mut cmd);
+
+        let touched_cloud_var = cmd
+            .as_std()
+            .get_envs()
+            .any(|(k, _)| CE_SHADOWED_CLOUD_VARS.contains(&k.to_string_lossy().as_ref()));
+
+        // SAFETY: see above — restore prior state under the same guard.
+        unsafe {
+            match prev_endpoint {
+                Some(v) => std::env::set_var(CE_ENDPOINT_ENV, v),
+                None => std::env::remove_var(CE_ENDPOINT_ENV),
+            }
+        }
+
+        assert!(
+            !touched_cloud_var,
+            "cloud mode must leave the cloud-routing creds untouched on the child env"
+        );
+    }
+
+    /// Regression for memory-5: a transient request error must not tear down an
+    /// otherwise-healthy sidecar. A connection refusal (`is_connect()`) means
+    /// the listener is gone and should mark the bridge dead; a timeout
+    /// (`is_timeout()`) is a transient blip against a possibly-healthy process
+    /// and must *not*. These two `bridge_is_dead` branches return before
+    /// touching the global `BRIDGE` state, so they can be exercised with real
+    /// `reqwest::Error`s without a live sidecar.
+    #[tokio::test]
+    async fn timeout_does_not_mark_bridge_dead_but_connect_refused_does() {
+        // Connect error: nothing is listening on this freshly-released port.
+        let port = reserve_loopback_port().expect("reserve loopback port");
+        let client = Client::new();
+        let connect_err = client
+            .get(format!("http://127.0.0.1:{port}/health"))
+            .send()
+            .await
+            .expect_err("connecting to an unbound loopback port must fail");
+        assert!(
+            connect_err.is_connect(),
+            "expected a connect error, got: {connect_err}"
+        );
+        assert!(
+            bridge_is_dead(&connect_err).await,
+            "a connection refusal indicates the sidecar listener is gone"
+        );
+
+        // Timeout error: a real loopback listener accepts the connection but
+        // never sends a response, so the connect succeeds and the per-request
+        // timeout fires while awaiting the reply. This keeps the test
+        // deterministic and free of any external-network dependency.
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind black-hole listener");
+        let addr = listener.local_addr().expect("listener addr");
+        // Hold the listener open without accepting/responding for the test.
+        let _accept = std::thread::spawn(move || {
+            // Accept the single connection so it doesn't get refused, then sit
+            // on it; the OS keeps the accepted socket alive until the thread or
+            // process ends.
+            let _conn = listener.accept();
+            std::thread::sleep(Duration::from_secs(2));
+        });
+        let timeout_err = client
+            .get(format!("http://{addr}/health"))
+            .timeout(Duration::from_millis(100))
+            .send()
+            .await
+            .expect_err("a request to a non-responding listener must time out");
+        assert!(
+            timeout_err.is_timeout(),
+            "expected a timeout error, got: {timeout_err}"
+        );
+        assert!(
+            !bridge_is_dead(&timeout_err).await,
+            "a transient timeout must not tear down an otherwise-healthy sidecar"
+        );
+    }
 }

@@ -181,6 +181,49 @@ fn click_secret() -> Option<String> {
     }
 }
 
+/// Optional comma-separated allow-list of destination hosts, from
+/// `CLICK_TRACKING_ALLOWED_HOSTS`. When set, only redirects to these hosts (or
+/// their subdomains) are permitted. When unset, any `http`/`https` host is
+/// allowed — the scheme/host check in [`is_safe_redirect_dest`] still blocks
+/// dangerous schemes. Mirrors the `CLICK_TRACKING_SECRET` env pattern.
+fn click_allowed_hosts() -> Vec<String> {
+    std::env::var("CLICK_TRACKING_ALLOWED_HOSTS")
+        .ok()
+        .map(|v| {
+            v.split(',')
+                .map(|h| h.trim().to_ascii_lowercase())
+                .filter(|h| !h.is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Validate a redirect destination to prevent open-redirect abuse.
+///
+/// Requires an absolute `http`/`https` URL with a non-empty host, which rejects
+/// `javascript:`, `data:`, `file:`, scheme-relative `//evil.com`, and relative
+/// paths. When `allowed_hosts` is non-empty the host must equal one of them or
+/// be a dot-boundary subdomain of one. Cheap (single parse) to honor the
+/// sub-200ms redirect budget.
+fn is_safe_redirect_dest(dest: &str, allowed_hosts: &[String]) -> bool {
+    let Ok(url) = reqwest::Url::parse(dest) else {
+        return false;
+    };
+    if !matches!(url.scheme(), "http" | "https") {
+        return false;
+    }
+    let host = match url.host_str() {
+        Some(h) if !h.is_empty() => h.to_ascii_lowercase(),
+        _ => return false,
+    };
+    if allowed_hosts.is_empty() {
+        return true;
+    }
+    allowed_hosts
+        .iter()
+        .any(|a| host == *a || host.ends_with(&format!(".{a}")))
+}
+
 /// `GET /track/c/:encoded?u=<dest>` — log a click and 302-redirect.
 ///
 /// Errors (bad token, missing destination) return a small HTML page
@@ -207,7 +250,19 @@ pub async fn handle_click(
         }
     };
 
-    match decoded {
+    // Open-redirect guard: only forward to an absolute http/https URL (and, if
+    // CLICK_TRACKING_ALLOWED_HOSTS is set, an allow-listed host). Rejects
+    // javascript:/data:/file:, scheme-relative //evil, and relative paths so the
+    // trusted Revka origin can't be used to launder phishing redirects.
+    if !is_safe_redirect_dest(&dest, &click_allowed_hosts()) {
+        warn!(
+            "click_tracking: refusing unsafe redirect destination for token {}",
+            truncate(&encoded, 40)
+        );
+        return (StatusCode::BAD_REQUEST, "click tracker invalid destination").into_response();
+    }
+
+    let redirect_allowed = match decoded {
         Ok(DecodedClickRef { kref, verified }) => {
             // Synchronous structured log — visible in `tracing` output.
             // Persistence (Kumiho tag + Supabase mirror) lands in a
@@ -220,16 +275,30 @@ pub async fn handle_click(
                 dest = %dest,
                 "click received"
             );
+            // When a secret is configured, only a token whose HMAC verified may
+            // drive a redirect — a forged/unsigned token must not. With no
+            // secret set, preserve the unsigned analytics path (redirect after
+            // logging; the destination is already validated above).
+            secret.is_none() || verified
         }
         Err(err) => {
-            // Bad token still redirects — losing the click is worse
-            // than losing the analytics for a malformed ref code.
             warn!(
                 "click_tracking: failed to decode token {}: {}",
                 truncate(&encoded, 40),
                 err
             );
+            // A token that won't even decode never redirects when a secret is
+            // configured; without a secret, don't break the user's click.
+            secret.is_none()
         }
+    };
+
+    if !redirect_allowed {
+        return (
+            StatusCode::BAD_REQUEST,
+            "click tracker invalid or unverified token",
+        )
+            .into_response();
     }
 
     Redirect::to(&dest).into_response()
@@ -247,6 +316,42 @@ fn truncate(s: &str, max: usize) -> String {
 mod tests {
     use super::*;
     use base64::Engine;
+
+    #[test]
+    fn safe_redirect_accepts_http_and_https() {
+        assert!(is_safe_redirect_dest("https://example.com/path?q=1", &[]));
+        assert!(is_safe_redirect_dest("http://example.com", &[]));
+    }
+
+    #[test]
+    fn safe_redirect_rejects_dangerous_schemes_and_relative() {
+        for bad in [
+            "javascript:alert(1)",
+            "data:text/html,<script>alert(1)</script>",
+            "file:///etc/passwd",
+            "//evil.com",        // scheme-relative
+            "/local/path",       // relative path
+            "evil.com",          // no scheme
+            "",                  // empty
+            "ftp://example.com", // non-http(s) scheme
+        ] {
+            assert!(
+                !is_safe_redirect_dest(bad, &[]),
+                "should reject unsafe dest: {bad:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn safe_redirect_enforces_host_allow_list() {
+        let allow = vec!["example.com".to_string()];
+        assert!(is_safe_redirect_dest("https://example.com/x", &allow));
+        assert!(is_safe_redirect_dest("https://mail.example.com/x", &allow)); // subdomain
+        assert!(!is_safe_redirect_dest("https://evil.com/x", &allow));
+        // suffix that is not a dot-boundary subdomain must NOT match
+        assert!(!is_safe_redirect_dest("https://notexample.com/x", &allow));
+        assert!(!is_safe_redirect_dest("https://evilexample.com/x", &allow));
+    }
 
     /// Reference values from running the Python encoder so the Rust
     /// decoder is pinned to the same wire format. Regenerate via:

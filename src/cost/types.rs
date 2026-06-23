@@ -137,6 +137,42 @@ pub enum BudgetCheck {
         limit_usd: f64,
         period: UsagePeriod,
     },
+    /// Token limit exceeded, request blocked. Tracked independently of cost so
+    /// that models with no pricing entry (which record `$0.00`) are still
+    /// bounded.
+    TokensExceeded {
+        current_tokens: u64,
+        limit_tokens: u64,
+        period: UsagePeriod,
+    },
+}
+
+/// Action the agent loop should take after a budget check, derived from the
+/// configured `[cost.enforcement] mode` (and `allow_override`).
+#[derive(Debug, Clone)]
+pub enum BudgetEnforcement {
+    /// Within budget (or only a warning) — proceed normally.
+    Proceed,
+    /// Budget exceeded but configured `mode` (or `allow_override`) permits the
+    /// call to continue. Carries a human-readable reason for logging.
+    Warn { reason: String },
+    /// Budget exceeded and `mode = "route_down"` — continue, but downgrade the
+    /// model to the configured `route_down_model`.
+    RouteDown { model: String, reason: String },
+    /// Budget exceeded and `mode = "block"` (or `route_down` without a target) —
+    /// hard-stop the call. Carries the overage details for the error message.
+    Block {
+        current_usd: f64,
+        limit_usd: f64,
+        period: UsagePeriod,
+    },
+    /// Token limit exceeded and `mode = "block"` (or `route_down` without a
+    /// target) — hard-stop the call. Carries the token overage details.
+    BlockTokens {
+        current_tokens: u64,
+        limit_tokens: u64,
+        period: UsagePeriod,
+    },
 }
 
 /// Cost summary for reporting.

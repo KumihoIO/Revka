@@ -7,7 +7,7 @@ use crate::tools::traits::{Tool, ToolResult};
 use async_trait::async_trait;
 use serde_json::{Value, json};
 use std::time::Duration;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
 
 const BRIDGE_HOST: &str = "127.0.0.1";
@@ -22,11 +22,15 @@ async fn bridge_request(cmd: &str, args: &[String]) -> anyhow::Result<String> {
     let msg = format!("{} {}\n", cmd, args.join(" "));
     stream.write_all(msg.as_bytes()).await?;
 
-    let mut buf = vec![0u8; 64];
-    let n = tokio::time::timeout(Duration::from_secs(3), stream.read(&mut buf))
+    // TCP has no message framing: assemble the full newline-delimited reply
+    // before parsing (matching the serial transport convention), applying the
+    // 3s timeout to the framed read rather than a single packet.
+    let mut reader = BufReader::new(stream);
+    let mut buf = Vec::new();
+    tokio::time::timeout(Duration::from_secs(3), reader.read_until(b'\n', &mut buf))
         .await
         .map_err(|_| anyhow::anyhow!("Bridge response timed out"))??;
-    let resp = String::from_utf8_lossy(&buf[..n]).trim().to_string();
+    let resp = String::from_utf8_lossy(&buf).trim().to_string();
     Ok(resp)
 }
 

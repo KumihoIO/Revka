@@ -14,7 +14,7 @@
 | `actions/checkout@v4` | 所有工作流 | 仓库检出 |
 | `actions/upload-artifact@v4` | release、promote-release | 上传构建产物 |
 | `actions/download-artifact@v4` | release、promote-release | 下载构建产物用于打包 |
-| `dtolnay/rust-toolchain@stable` | 所有工作流 | 安装 Rust 工具链（1.92.0） |
+| `dtolnay/rust-toolchain@stable` | 所有工作流 | 安装 Rust 工具链（1.93.0） |
 | `Swatinem/rust-cache@v2` | 所有工作流 | Cargo 构建/依赖缓存 |
 | `softprops/action-gh-release@v2` | release、promote-release | 创建 GitHub Releases |
 | `docker/setup-buildx-action@v3` | release、promote-release | Docker Buildx 设置 |
@@ -33,7 +33,7 @@
 
 | 工作流 | 文件 | 触发条件 |
 |----------|------|---------|
-| 质量门控 | `.github/workflows/checks-on-pr.yml` | 指向 `main` 的拉取请求 |
+| CI | `.github/workflows/ci-run.yml` | 指向 `main` 的拉取请求 |
 | Beta 发布 | `.github/workflows/release-beta-on-push.yml` | 推送到 `main` |
 | 稳定发布 | `.github/workflows/release-stable-manual.yml` | 手动 `workflow_dispatch` |
 
@@ -62,6 +62,7 @@ gh api repos/KumihoIO/Revka/actions/permissions/selected-actions
 
 ## 变更日志
 
+- 2026-06-22：合并两个 PR 工作流 — 将 `质量门控`（`checks-on-pr.yml`）的 `security`/`check-32bit`/`Security Required Gate` 作业并入 `CI`（`ci-run.yml`）并删除 `checks-on-pr.yml`，使 `lint`/`test`/`build` 每个 PR 只运行一次而非两次（#432）。白名单无变更 — 仍使用相同的固定版本 Action。
 - 2026-03-10：重命名工作流 — CI → 质量门控（`checks-on-pr.yml`）、Beta 发布 → Release Beta（`release-beta-on-push.yml`）、升级发布 → Release Stable（`release-stable-manual.yml`）。向质量门控添加了 `lint` 和 `security` 作业。添加了跨平台构建（`cross-platform-build-manual.yml`）。
 - 2026-03-05：完整工作流重构 — 将 22 个工作流替换为 3 个（CI、Beta 发布、升级发布）
     - 移除不再使用的模式：`DavidAnson/markdownlint-cli2-action@*`、`lycheeverse/lychee-action@*`、`EmbarkStudios/cargo-deny-action@*`、`rustsec/audit-check@*`、`rhysd/actionlint@*`、`sigstore/cosign-installer@*`、`Checkmarx/vorpal-reviewdog-github-action@*`、`useblacksmith/*`

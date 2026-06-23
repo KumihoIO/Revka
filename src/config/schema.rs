@@ -1709,6 +1709,21 @@ pub struct AgentConfig {
     /// behavior). Default: `2`.
     #[serde(default = "default_keep_tool_context_turns")]
     pub keep_tool_context_turns: usize,
+
+    /// Dispatch-level backstop timeout (seconds) applied to every individual
+    /// tool call. Each tool's own internal timeout (e.g. `shell`, `codex_cli`,
+    /// HTTP tools) remains the first line of defense; this is a generous outer
+    /// ceiling so a tool that omits an internal bound — or blocks before one
+    /// arms — cannot hang the agent loop indefinitely. On elapse the call
+    /// returns a failed result ("tool X timed out after Ns") instead of
+    /// stalling the turn. Set to `0` to disable the backstop. Default: `1800`
+    /// (30 minutes — well above the longest legitimate per-tool bound).
+    #[serde(default = "default_tool_call_timeout_secs")]
+    pub tool_call_timeout_secs: u64,
+}
+
+fn default_tool_call_timeout_secs() -> u64 {
+    1800
 }
 
 fn default_max_tool_result_chars() -> usize {
@@ -1766,6 +1781,7 @@ impl Default for AgentConfig {
                 crate::agent::context_compressor::ContextCompressionConfig::default(),
             max_tool_result_chars: default_max_tool_result_chars(),
             keep_tool_context_turns: default_keep_tool_context_turns(),
+            tool_call_timeout_secs: default_tool_call_timeout_secs(),
         }
     }
 }
@@ -2119,7 +2135,20 @@ pub struct CostConfig {
     #[serde(default = "default_warn_percent")]
     pub warn_at_percent: u8,
 
-    /// Allow requests to exceed budget with --override flag (default: false)
+    /// Optional daily token limit (total input + output tokens). Enforced
+    /// independently of `daily_limit_usd` so that models with no pricing entry
+    /// — which record `$0.00` — are still bounded. `None`/`0` disables it.
+    #[serde(default)]
+    pub daily_token_limit: Option<u64>,
+
+    /// Optional monthly token limit (total input + output tokens). Enforced
+    /// independently of `monthly_limit_usd`; see `daily_token_limit`.
+    /// `None`/`0` disables it.
+    #[serde(default)]
+    pub monthly_token_limit: Option<u64>,
+
+    /// Allow requests to proceed even when the budget is exceeded, bypassing
+    /// the `enforcement.mode` block (default: false)
     #[serde(default)]
     pub allow_override: bool,
 
@@ -2199,6 +2228,8 @@ impl Default for CostConfig {
             daily_limit_usd: default_daily_limit(),
             monthly_limit_usd: default_monthly_limit(),
             warn_at_percent: default_warn_percent(),
+            daily_token_limit: None,
+            monthly_token_limit: None,
             allow_override: false,
             prices: get_default_pricing(),
             enforcement: CostEnforcementConfig::default(),
@@ -4643,6 +4674,44 @@ pub fn build_runtime_proxy_client_with_timeouts(
     client
 }
 
+/// Build a client tuned for *streaming* (SSE) requests: a per-read **idle**
+/// timeout instead of a total request timeout, so a long generation is not
+/// aborted while tokens are actively arriving — the timeout only fires on
+/// genuine inactivity. Mirrors the streaming-client shape in `openai_codex.rs`.
+/// Use [`build_runtime_proxy_client_with_timeouts`] for non-streaming calls
+/// where a bounded total request time is appropriate.
+pub fn build_runtime_proxy_streaming_client_with_timeouts(
+    service_key: &str,
+    read_timeout_secs: u64,
+    connect_timeout_secs: u64,
+) -> reqwest::Client {
+    // Distinct cache key: `read_timeout=` vs `timeout=` cannot collide with the
+    // total-timeout client built for the same service/numbers.
+    let cache_key = format!(
+        "{}|read_timeout={}|connect_timeout={}",
+        service_key.trim().to_ascii_lowercase(),
+        read_timeout_secs,
+        connect_timeout_secs
+    );
+    if let Some(client) = runtime_proxy_cached_client(&cache_key) {
+        return client;
+    }
+
+    let builder = reqwest::Client::builder()
+        .read_timeout(std::time::Duration::from_secs(read_timeout_secs))
+        .connect_timeout(std::time::Duration::from_secs(connect_timeout_secs));
+    let builder = apply_runtime_proxy_to_builder(builder, service_key);
+    let client = builder.build().unwrap_or_else(|error| {
+        tracing::warn!(
+            service_key,
+            "Failed to build proxied streaming client: {error}"
+        );
+        reqwest::Client::new()
+    });
+    set_runtime_proxy_cached_client(cache_key, client.clone());
+    client
+}
+
 /// Build an HTTP client for a channel, using an explicit per-channel proxy URL
 /// when configured.  Falls back to the global runtime proxy when `proxy_url` is
 /// `None` or empty.
@@ -5608,6 +5677,39 @@ fn is_valid_env_var_name(name: &str) -> bool {
     chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
 }
 
+/// Collect every unknown config key (full dotted path, e.g. `gateway.portt`) in
+/// the raw TOML by running a **diagnostics-only** deserialization through
+/// `serde_ignored`.
+///
+/// This drives `Config`'s real `Deserialize` impl, so it honors
+/// `#[serde(alias/rename/rename_all)]` and config types defined in other
+/// modules automatically — a typo at any depth is reported while every
+/// legitimate (even aliased, even cross-module) key stays silent.
+///
+/// Note: a typo inside a `#[serde(deny_unknown_fields)]` struct (the `[security]`
+/// tables) does not surface *here* — it makes the earlier real `toml::from_str`
+/// in `load_or_init` fail with a fatal, line-pointed error before this runs, so
+/// the typo is still caught (more loudly). This pass only reports keys the real
+/// deserialize *ignored*.
+///
+/// The deserialized value is discarded: the real config is loaded separately
+/// via `toml::from_str`. Per #4171, `serde_ignored` must NOT be used for the
+/// real deserialization because it drops user values inside `#[serde(default)]`
+/// nested structs — but that is irrelevant here since we only keep the set of
+/// ignored key paths, not the value.
+fn collect_unknown_config_keys(contents: &str) -> Vec<String> {
+    let mut unknown = Vec::new();
+    // The same `contents` already deserialized successfully via `toml::from_str`
+    // before this runs, so the parse + this pass also succeed; ignore the
+    // (discarded) value and only keep the ignored key paths.
+    if let Ok(de) = toml::Deserializer::parse(contents) {
+        let _ = serde_ignored::deserialize::<_, _, Config>(de, |path| {
+            unknown.push(path.to_string());
+        });
+    }
+    unknown
+}
+
 impl Default for AutonomyConfig {
     fn default() -> Self {
         Self {
@@ -5770,7 +5872,7 @@ impl Default for RuntimeConfig {
 
 /// Reliability and supervision configuration (`[reliability]` section).
 ///
-/// Controls provider retries, fallback chains, API key rotation, and channel restart backoff.
+/// Controls provider retries, fallback chains, model failover, and channel restart backoff.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ReliabilityConfig {
     /// Retries per provider before failing over.
@@ -5782,10 +5884,6 @@ pub struct ReliabilityConfig {
     /// Fallback provider chain (e.g. `["anthropic", "openai"]`).
     #[serde(default)]
     pub fallback_providers: Vec<String>,
-    /// Additional API keys for round-robin rotation on rate-limit (429) errors.
-    /// The primary `api_key` is always tried first; these are extras.
-    #[serde(default)]
-    pub api_keys: Vec<String>,
     /// Per-model fallback chains. When a model fails, try these alternatives in order.
     /// Example: `{ "claude-opus-4-20250514" = ["claude-sonnet-4-20250514", "gpt-4o"] }`
     #[serde(default)]
@@ -5834,7 +5932,6 @@ impl Default for ReliabilityConfig {
             provider_retries: default_provider_retries(),
             provider_backoff_ms: default_provider_backoff_ms(),
             fallback_providers: Vec::new(),
-            api_keys: Vec::new(),
             model_fallbacks: std::collections::HashMap::new(),
             channel_initial_backoff_secs: default_channel_backoff_secs(),
             channel_max_backoff_secs: default_channel_backoff_max_secs(),
@@ -6962,6 +7059,22 @@ pub struct WebhookConfig {
     pub auth_header: Option<String>,
     /// Optional shared secret for webhook signature verification (HMAC-SHA256).
     pub secret: Option<String>,
+    /// Explicitly accept unsigned requests when no `secret` is set. Without this,
+    /// an enabled webhook channel with no secret fails closed (refuses to start)
+    /// rather than silently accepting unauthenticated requests that trigger the
+    /// agent. Set this to `true` to deliberately run the endpoint unauthenticated.
+    #[serde(default)]
+    pub allow_unsigned: bool,
+    /// Address to bind the listener to. Defaults to `127.0.0.1` (loopback only).
+    /// Set a non-loopback address (e.g. `0.0.0.0`) only together with
+    /// `allow_public_bind = true`.
+    #[serde(default)]
+    pub host: Option<String>,
+    /// Opt-in to bind a non-loopback (network-exposed) address. Defaults to
+    /// `false`; a non-loopback `host` without this makes the channel fail closed
+    /// at startup rather than silently exposing the endpoint on all interfaces.
+    #[serde(default)]
+    pub allow_public_bind: bool,
 }
 
 impl ChannelConfig for WebhookConfig {
@@ -7289,6 +7402,14 @@ pub struct WatiConfig {
     /// Overrides the global `[proxy]` setting for this channel only.
     #[serde(default)]
     pub proxy_url: Option<String>,
+    /// Optional inbound shared secret. When set, the `/wati` webhook requires a
+    /// matching `X-Revka-Webhook-Secret` header (constant-time compared) and
+    /// rejects mismatches with 401. WATI has no native HMAC, so without this the
+    /// only authn is the spoofable `waId` payload field — note `allowed_numbers`
+    /// is an authorization filter, NOT authentication. Configure your WATI/proxy
+    /// to send this header.
+    #[serde(default)]
+    pub webhook_secret: Option<String>,
     /// Target identifier for workflow notifications and one-off sends.
     #[serde(default)]
     pub notification_target: Option<String>,
@@ -7647,7 +7768,11 @@ pub struct OtpConfig {
     #[serde(default = "default_otp_token_ttl_secs")]
     pub token_ttl_secs: u64,
 
-    /// Reuse window for recently validated OTP codes.
+    /// How long a validated OTP code is remembered as consumed (seconds).
+    /// Codes are single-use: once accepted, a code is rejected on every later
+    /// presentation until this window elapses, so it bounds how long replays of
+    /// an intercepted code keep being blocked rather than how long it stays
+    /// reusable.
     #[serde(default = "default_otp_cache_valid_secs")]
     pub cache_valid_secs: u64,
 
@@ -9354,8 +9479,9 @@ impl Config {
             // `[autonomy]` table), causing user-supplied values to be
             // replaced by defaults.  See #4171.
             //
-            // We now deserialize with `toml::from_str` (which is correct)
-            // and run `serde_ignored` separately just for diagnostics.
+            // We now deserialize with `toml::from_str` (which is correct) and
+            // run a separate `serde_ignored` pass purely for diagnostics (see
+            // the unknown-key detection below).
             let mut config: Config =
                 toml::from_str(&contents).context("Failed to deserialize config file")?;
 
@@ -9378,33 +9504,17 @@ impl Config {
             // config — the warning is advisory.
             warn_on_legacy_memory_tool_names(&config);
 
-            // Detect unknown top-level config keys by comparing the raw
-            // TOML table keys against the JSON schema for `Config`.
-            //
-            // Earlier versions built the known-key set from a default `Config`
-            // round-tripped through TOML, but any field marked
-            // `#[serde(skip_serializing_if = "Option::is_none")]` is dropped
-            // when its default is `None` — so legitimate top-level keys like
-            // `language` were warned about as unknown. The JSON schema from
-            // `schemars` reflects every declared field regardless of default.
-            if let Ok(raw) = contents.parse::<toml::Table>() {
-                static KNOWN_KEYS: OnceLock<Vec<String>> = OnceLock::new();
-                let known = KNOWN_KEYS.get_or_init(|| {
-                    let schema = schemars::schema_for!(Config);
-                    serde_json::to_value(&schema)
-                        .ok()
-                        .and_then(|v| v.get("properties").cloned())
-                        .and_then(|props| props.as_object().cloned())
-                        .map(|obj| obj.keys().cloned().collect())
-                        .unwrap_or_default()
-                });
-                for key in raw.keys() {
-                    if !known.contains(key) {
-                        tracing::warn!(
-                            "Unknown config key ignored: \"{key}\". Check config.toml for typos or deprecated options.",
-                        );
-                    }
-                }
+            // Detect unknown config keys at *any* depth. A typo inside a nested
+            // table (e.g. `[gateway] portt = 99`) is silently dropped by serde
+            // during deserialization, leaving the field at its default; a
+            // top-level-only check missed these. `collect_unknown_config_keys`
+            // re-runs the deserialization through `serde_ignored` purely to
+            // gather the ignored key paths (aliases and cross-module config
+            // types are honored, so legitimate keys are never flagged).
+            for key in collect_unknown_config_keys(&contents) {
+                tracing::warn!(
+                    "Unknown config key ignored: \"{key}\". Check config.toml for typos or deprecated options.",
+                );
             }
             // Set computed paths that are skipped during serialization
             config.config_path = config_path.clone();
@@ -10001,6 +10111,14 @@ impl Config {
             anyhow::bail!("scheduler.max_tasks must be greater than 0");
         }
 
+        // Provider HTTP timeout: a zero deadline aborts every provider call
+        // immediately (reqwest treats Duration::ZERO as an instantly-firing
+        // timeout). Reject for parity with the REVKA_PROVIDER_TIMEOUT_SECS env
+        // path and the sibling timeout fields.
+        if self.provider_timeout_secs == 0 {
+            anyhow::bail!("provider_timeout_secs must be greater than 0");
+        }
+
         // Model routes
         for (i, route) in self.model_routes.iter().enumerate() {
             if route.hint.trim().is_empty() {
@@ -10134,47 +10252,6 @@ impl Config {
             {
                 anyhow::bail!(
                     "microsoft365.client_secret must not be empty when auth_flow is 'client_credentials'"
-                );
-            }
-        }
-
-        // Microsoft 365
-        if self.microsoft365.enabled {
-            let tenant = self
-                .microsoft365
-                .tenant_id
-                .as_deref()
-                .map(str::trim)
-                .filter(|s| !s.is_empty());
-            if tenant.is_none() {
-                anyhow::bail!(
-                    "microsoft365.tenant_id must not be empty when microsoft365 is enabled"
-                );
-            }
-            let client = self
-                .microsoft365
-                .client_id
-                .as_deref()
-                .map(str::trim)
-                .filter(|s| !s.is_empty());
-            if client.is_none() {
-                anyhow::bail!(
-                    "microsoft365.client_id must not be empty when microsoft365 is enabled"
-                );
-            }
-            let flow = self.microsoft365.auth_flow.trim();
-            if flow != "client_credentials" && flow != "device_code" {
-                anyhow::bail!("microsoft365.auth_flow must be client_credentials or device_code");
-            }
-            if flow == "client_credentials"
-                && self
-                    .microsoft365
-                    .client_secret
-                    .as_deref()
-                    .map_or(true, |s| s.trim().is_empty())
-            {
-                anyhow::bail!(
-                    "microsoft365.client_secret must not be empty when auth_flow is client_credentials"
                 );
             }
         }
@@ -11372,8 +11449,9 @@ pub struct SopConfig {
     pub max_concurrent_total: usize,
 
     /// Approval timeout in seconds. When a run waits for approval longer than
-    /// this, Critical/High-priority SOPs auto-approve; others stay waiting.
-    /// Set to 0 to disable timeout.
+    /// this, it is held for a human (fail-safe — never auto-executed) and
+    /// surfaced for escalation, regardless of priority. Set to 0 to disable the
+    /// timeout check.
     #[serde(default = "default_sop_approval_timeout_secs")]
     pub approval_timeout_secs: u64,
 
@@ -11509,6 +11587,127 @@ mod tests {
             .gated_actions
             .push("memory_forget".to_string());
         warn_on_legacy_memory_tool_names(&cfg);
+    }
+
+    // ── Unknown config key detection (#416) ───────────────────
+
+    fn unknown_keys(toml_src: &str) -> Vec<String> {
+        collect_unknown_config_keys(toml_src)
+    }
+
+    #[test]
+    async fn unknown_top_level_key_is_flagged() {
+        let keys = unknown_keys("definitely_not_a_real_key = 1\n");
+        assert_eq!(keys, vec!["definitely_not_a_real_key".to_string()]);
+    }
+
+    #[test]
+    async fn known_top_level_key_is_not_flagged() {
+        // `language` is a real top-level Config field (an `Option` with a
+        // `skip_serializing_if`, the case the schema-based check exists to keep
+        // from being false-flagged).
+        let keys = unknown_keys("language = \"en\"\n");
+        assert!(keys.is_empty(), "expected no unknown keys, got {keys:?}");
+    }
+
+    #[test]
+    async fn nested_typo_in_gateway_is_flagged_with_dotted_path() {
+        let keys = unknown_keys("[gateway]\nportt = 99\n");
+        assert_eq!(keys, vec!["gateway.portt".to_string()]);
+    }
+
+    #[test]
+    async fn valid_nested_gateway_key_is_not_flagged() {
+        let keys = unknown_keys("[gateway]\nport = 99\nrequire_pairing = false\n");
+        assert!(keys.is_empty(), "expected no unknown keys, got {keys:?}");
+    }
+
+    #[test]
+    async fn nested_typo_in_defaulted_autonomy_table_is_flagged() {
+        // `[autonomy]` carries a container-level `#[serde(default)]`, the exact
+        // case that previously hid the typo behind the whole-struct default.
+        let keys = unknown_keys("[autonomy]\nmax_actions_per_hourr = 5\n");
+        assert_eq!(keys, vec!["autonomy.max_actions_per_hourr".to_string()]);
+    }
+
+    #[test]
+    async fn hashmap_entry_key_is_not_flagged() {
+        // `model_providers` is a HashMap; the entry name is user-chosen and must
+        // not be treated as a typo, and valid fields inside are accepted.
+        let keys =
+            unknown_keys("[model_providers.myprovider]\nbase_url = \"https://example.com\"\n");
+        assert!(keys.is_empty(), "expected no unknown keys, got {keys:?}");
+    }
+
+    #[test]
+    async fn typo_inside_hashmap_value_is_flagged_with_full_path() {
+        let keys =
+            unknown_keys("[model_providers.myprovider]\nbase_urll = \"https://example.com\"\n");
+        assert_eq!(
+            keys,
+            vec!["model_providers.myprovider.base_urll".to_string()]
+        );
+    }
+
+    #[test]
+    async fn free_form_string_map_keys_are_not_flagged() {
+        // `extra_headers` is a HashMap<String, String> — arbitrary header names.
+        let keys = unknown_keys("[extra_headers]\nX-Custom-Header = \"value\"\n");
+        assert!(keys.is_empty(), "expected no unknown keys, got {keys:?}");
+    }
+
+    #[test]
+    async fn serde_aliases_are_not_flagged() {
+        // Serde aliases deserialize correctly but are absent from the schema.
+        // Because detection runs through the real Deserialize impl
+        // (serde_ignored), every alias is honored automatically — no manual
+        // allow-list. `[heartbeat] channel`/`recipient` alias target/to.
+        assert!(
+            unknown_keys("[heartbeat]\nchannel = \"telegram\"\nrecipient = \"123\"\n").is_empty()
+        );
+        // `[composio] enable` aliases `enabled` (same-module config type).
+        assert!(unknown_keys("[composio]\nenable = true\n").is_empty());
+    }
+
+    #[test]
+    async fn cross_module_serde_alias_is_not_flagged() {
+        // `channels_config.email` is `crate::channels::email_channel::EmailConfig`,
+        // defined in another module, whose `idle_timeout_secs` field aliases
+        // `poll_interval_secs`. Driving the real Deserialize impl honors aliases
+        // on cross-module config types automatically — a schema/text-scan
+        // approach could not. (#416 review regression guard.)
+        let keys = unknown_keys("[channels_config.email]\npoll_interval_secs = 300\n");
+        assert!(
+            !keys.iter().any(|k| k.contains("poll_interval_secs")),
+            "the poll_interval_secs alias must not be flagged, got {keys:?}"
+        );
+    }
+
+    #[test]
+    async fn typo_in_deny_unknown_fields_security_table_fails_load() {
+        // The `[security]` tables (OtpConfig/EstopConfig/Nevis*) carry
+        // `#[serde(deny_unknown_fields)]`, so a typo there is caught *fatally* by
+        // the real `toml::from_str` in load_or_init (before the advisory
+        // serde_ignored pass) — strictly louder than a warning. Pin that.
+        let err = toml::from_str::<Config>("[security.otp]\nenabledd = true\n");
+        assert!(
+            err.is_err(),
+            "a typo in a deny_unknown_fields security table must fail deserialization"
+        );
+    }
+
+    #[test]
+    async fn default_config_round_trip_has_no_unknown_keys() {
+        // Critical false-positive guard: a fully-populated default Config,
+        // serialized and re-checked, must produce zero unknown keys. A failure
+        // here means the diagnostic would wrongly warn on a legitimate config.
+        let cfg = Config::default();
+        let serialized = toml::to_string(&cfg).expect("default config should serialize to TOML");
+        let keys = unknown_keys(&serialized);
+        assert!(
+            keys.is_empty(),
+            "default config produced false-positive unknown keys: {keys:?}"
+        );
     }
 
     // ── Tilde expansion ───────────────────────────────────────
@@ -12190,6 +12389,17 @@ provider_timeout_secs = 300
     }
 
     #[test]
+    async fn provider_timeout_secs_zero_is_rejected() {
+        let mut config = Config::default();
+        config.provider_timeout_secs = 0;
+        let err = config.validate().unwrap_err().to_string();
+        assert!(
+            err.contains("provider_timeout_secs must be greater than 0"),
+            "expected provider_timeout_secs zero-guard error, got: {err}"
+        );
+    }
+
+    #[test]
     async fn parse_extra_headers_env_basic() {
         let headers = parse_extra_headers_env("User-Agent:MyApp/1.0,X-Title:revka");
         assert_eq!(headers.len(), 2);
@@ -12354,6 +12564,7 @@ reasoning_effort = "turbo"
         assert_eq!(cfg.max_context_tokens, 1_050_000);
         assert!(cfg.parallel_tools);
         assert_eq!(cfg.tool_dispatcher, "auto");
+        assert_eq!(cfg.tool_call_timeout_secs, 1800);
     }
 
     #[test]
@@ -15175,6 +15386,34 @@ default_model = "persisted-profile"
 
         let _ = build_runtime_proxy_client(&service_key);
         assert!(runtime_proxy_cache_contains(&cache_key));
+    }
+
+    #[test]
+    async fn streaming_client_cache_key_does_not_collide_with_total_timeout() {
+        // #407: the streaming (read/idle timeout) client must be cached under a
+        // distinct key so it never aliases the total-timeout client built for
+        // the same service/timeouts.
+        let service_key = format!(
+            "provider.stream_cache_test.{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock should be after unix epoch")
+                .as_nanos()
+        );
+        let total_key = runtime_proxy_cache_key(&service_key, Some(30), Some(5));
+        let stream_key = format!("{service_key}|read_timeout=30|connect_timeout=5");
+        assert_ne!(total_key, stream_key);
+
+        clear_runtime_proxy_client_cache();
+        let _ = build_runtime_proxy_streaming_client_with_timeouts(&service_key, 30, 5);
+        assert!(runtime_proxy_cache_contains(&stream_key));
+        // The total-timeout entry must not have been created by the streaming build.
+        assert!(!runtime_proxy_cache_contains(&total_key));
+
+        // Building the total-timeout client adds a separate entry; both coexist.
+        let _ = build_runtime_proxy_client_with_timeouts(&service_key, 30, 5);
+        assert!(runtime_proxy_cache_contains(&total_key));
+        assert!(runtime_proxy_cache_contains(&stream_key));
     }
 
     #[test]

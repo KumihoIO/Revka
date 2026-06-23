@@ -1,6 +1,6 @@
 use crate::approval::{ApprovalManager, ApprovalRequest, ApprovalResponse};
 use crate::config::Config;
-use crate::cost::types::BudgetCheck;
+use crate::cost::types::BudgetEnforcement;
 use crate::i18n::ToolDescriptions;
 use crate::memory::{self, Memory, MemoryCategory, decay};
 use crate::multimodal;
@@ -39,6 +39,13 @@ const STREAM_TOOL_MARKER_WINDOW_CHARS: usize = 512;
 /// Default maximum agentic tool-use iterations per user message to prevent runaway loops.
 /// Used as a safe fallback when `max_tool_iterations` is unset or configured as zero.
 const DEFAULT_MAX_TOOL_ITERATIONS: usize = 10;
+
+/// Output-token allowance added to the pre-call budget estimate so the projected
+/// cost accounts for generation, not just the prepared input (see #456). A fixed
+/// conservative reserve — the loop has no configured per-request output cap to
+/// borrow — biases the estimate toward blocking a request that would breach the
+/// limit before it is sent.
+const BUDGET_OUTPUT_RESERVE_TOKENS: u64 = 4_096;
 
 /// Resolve the effective max tool iterations.
 ///
@@ -2451,7 +2458,14 @@ pub(crate) async fn run_tool_call_loop(
             .map(|tool| tool.spec())
             .collect();
         if let Some(at) = activated_tools {
-            for spec in at.lock().unwrap().tool_specs() {
+            // Recover from a poisoned lock rather than panicking: a prior panic
+            // under the guard (e.g. a faulty `Tool::spec()`) must not permanently
+            // disable deferred-tool resolution for the rest of the process.
+            for spec in at
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .tool_specs()
+            {
                 if !is_tool_excluded(&spec.name, excluded_tools) {
                     tool_specs.push(spec);
                 }
@@ -2504,7 +2518,7 @@ pub(crate) async fn run_tool_call_loop(
             None
         };
 
-        let (active_provider, active_provider_name, active_model): (&dyn Provider, &str, &str) =
+        let (active_provider, active_provider_name, mut active_model): (&dyn Provider, &str, &str) =
             if let Some(ref vp_box) = vision_provider_box {
                 let vp_name = multimodal_config
                     .vision_provider
@@ -2555,19 +2569,51 @@ pub(crate) async fn run_tool_call_loop(
             hooks.fire_llm_input(history, model).await;
         }
 
-        // Budget enforcement — block if limit exceeded (no-op when not scoped)
-        if let Some(BudgetCheck::Exceeded {
-            current_usd,
-            limit_usd,
-            period,
-        }) = check_tool_loop_budget()
-        {
-            return Err(anyhow::anyhow!(
-                "Budget exceeded: ${:.4} of ${:.2} {:?} limit. Cannot make further API calls until the budget resets.",
+        // Budget enforcement — honor the configured `[cost.enforcement] mode`
+        // (no-op when cost tracking isn't scoped, e.g. tests/delegate/CLI).
+        // `route_down_holder` keeps the downgraded model string alive so
+        // `active_model` (a `&str`) can borrow it for the rest of this iteration.
+        let route_down_holder;
+        let estimated_input_tokens = estimate_history_tokens(history) as u64;
+        match check_tool_loop_budget(
+            active_provider_name,
+            active_model,
+            estimated_input_tokens,
+            BUDGET_OUTPUT_RESERVE_TOKENS,
+        ) {
+            None | Some(BudgetEnforcement::Proceed) => {}
+            Some(BudgetEnforcement::Warn { reason }) => {
+                tracing::warn!("{reason}");
+            }
+            Some(BudgetEnforcement::RouteDown { model, reason }) => {
+                tracing::warn!("{reason}");
+                route_down_holder = model;
+                active_model = route_down_holder.as_str();
+            }
+            Some(BudgetEnforcement::Block {
                 current_usd,
                 limit_usd,
-                period
-            ));
+                period,
+            }) => {
+                return Err(anyhow::anyhow!(
+                    "Budget exceeded: ${:.4} of ${:.2} {:?} limit. Cannot make further API calls until the budget resets.",
+                    current_usd,
+                    limit_usd,
+                    period
+                ));
+            }
+            Some(BudgetEnforcement::BlockTokens {
+                current_tokens,
+                limit_tokens,
+                period,
+            }) => {
+                return Err(anyhow::anyhow!(
+                    "Token budget exceeded: {} of {} {:?} token limit. Cannot make further API calls until the budget resets.",
+                    current_tokens,
+                    limit_tokens,
+                    period
+                ));
+            }
         }
 
         // Unified path via Provider::chat so provider-specific native tool logic
@@ -3460,11 +3506,31 @@ pub(crate) async fn run_tool_call_loop(
                     }
                     crate::agent::loop_detector::LoopDetectionResult::Block(ref msg) => {
                         tracing::warn!(tool = %tool_name, %msg, "loop detector blocked tool call");
-                        // Replace the tool output with the block message.
-                        // We still continue the loop so the LLM sees the block feedback.
-                        history.push(ChatMessage::system(format!(
-                            "[Loop Detection — BLOCKED] {msg}"
-                        )));
+                        runtime_trace::record_event(
+                            "loop_detector_block",
+                            Some(channel_name),
+                            Some(provider_name),
+                            Some(model),
+                            Some(&turn_id),
+                            Some(false),
+                            Some(msg.as_str()),
+                            serde_json::json!({
+                                "iteration": iteration + 1,
+                                "tool": tool_name.as_str(),
+                            }),
+                        );
+                        let block_output = format!("[Loop Detection — BLOCKED] {msg}");
+                        history.push(ChatMessage::system(block_output.clone()));
+                        // Refuse the offending call: replace the real tool output
+                        // with the block message so the repeated output never
+                        // reaches the model, and skip the compression/append below.
+                        individual_results.push((tool_call_id, block_output.clone()));
+                        let _ = writeln!(
+                            tool_results,
+                            "<tool_result name=\"{}\">\n{}\n</tool_result>",
+                            tool_name, block_output
+                        );
+                        continue;
                     }
                     crate::agent::loop_detector::LoopDetectionResult::Break(msg) => {
                         runtime_trace::record_event(
@@ -3589,11 +3655,21 @@ pub(crate) async fn run_tool_call_loop(
                 history.push(ChatMessage::user(format!("[Tool results]\n{tool_results}")));
             }
         } else {
-            for (native_call, (_, result)) in
-                native_tool_calls.iter().zip(individual_results.iter())
-            {
+            // Emit using the id each result already carries (set to
+            // Some(native_call.id) when the call was parsed), mirroring the
+            // non-native branch above. This keeps result→id pairing tied to the
+            // data rather than positional alignment between native_tool_calls
+            // and individual_results, so a future path that leaves a slot
+            // unfilled can't silently re-key results via zip truncation.
+            debug_assert_eq!(
+                individual_results.len(),
+                native_tool_calls.len(),
+                "native tool result count diverged from tool call count; \
+                 tool_call_id pairing would be wrong"
+            );
+            for (tool_call_id, result) in &individual_results {
                 let tool_msg = serde_json::json!({
-                    "tool_call_id": native_call.id,
+                    "tool_call_id": tool_call_id,
                     "content": result,
                 });
                 history.push(ChatMessage::tool(tool_msg.to_string()));
@@ -3695,7 +3771,7 @@ pub(crate) fn build_tool_instructions(
 
 #[allow(clippy::too_many_lines)]
 pub async fn run(
-    config: Config,
+    mut config: Config,
     message: Option<String>,
     provider_override: Option<String>,
     model_override: Option<String>,
@@ -3706,8 +3782,7 @@ pub async fn run(
     allowed_tools: Option<Vec<String>>,
 ) -> Result<String> {
     // ── Wire up agnostic subsystems ──────────────────────────────
-    let base_observer = observability::create_observer(&config.observability);
-    let observer: Arc<dyn Observer> = Arc::from(base_observer);
+    let observer: Arc<dyn Observer> = observability::get_or_init_global(&config.observability);
     let runtime: Arc<dyn runtime::RuntimeAdapter> =
         Arc::from(runtime::create_runtime(&config.runtime)?);
     let security = Arc::new(SecurityPolicy::from_config(
@@ -3725,13 +3800,10 @@ pub async fn run(
     )?);
     tracing::info!(backend = mem.name(), "Memory initialized");
 
-    // ── Peripherals (merge peripheral tools into registry) ─
-    if !peripheral_overrides.is_empty() {
-        tracing::info!(
-            peripherals = ?peripheral_overrides,
-            "Peripheral overrides from CLI (config boards take precedence)"
-        );
-    }
+    // ── Peripherals: merge `--peripheral board:path` CLI overrides into config
+    // (config-defined boards take precedence) before the tool registry is built,
+    // so the flag actually attaches boards instead of being a documented no-op.
+    crate::peripherals::apply_peripheral_overrides(&mut config.peripherals, &peripheral_overrides)?;
 
     // ── Tools (including memory tools and peripherals) ────────────
     let (composio_key, composio_entity_id) = if config.composio.enabled {
@@ -3801,6 +3873,14 @@ pub async fn run(
     // filter is not appropriate for them and would silently drop all MCP tools when
     // a restrictive allowlist is configured. Keep this block after any such filter call.
     //
+    // The run-level `allowed_tools` capability allowlist is a DISTINCT mechanism
+    // from the built-in allow/deny filter above. It DOES bound the deferred MCP
+    // surface: the `tool_search` built-in below is constructed with
+    // `with_allowed_tools` so it cannot search, select, activate, or (therefore)
+    // dispatch MCP tools whose prefixed name is not in the allowlist. The small
+    // curated eager set (operator essentials + Kumiho memory reflexes) is also
+    // gated by the same allowlist when one is configured.
+    //
     // When `deferred_loading` is enabled, MCP tools are NOT added to the registry
     // eagerly. Instead, a `tool_search` built-in is registered so the LLM can
     // fetch schemas on demand. This reduces context window waste.
@@ -3846,11 +3926,21 @@ pub async fn run(
                         }
                     };
 
+                    // Eager MCP tools are pushed after the registry `retain`
+                    // above, so they must honor the run-level capability
+                    // allowlist explicitly or they would escape it.
+                    let is_mcp_allowed = |name: &str| -> bool {
+                        match allowed_tools {
+                            None => true,
+                            Some(ref list) => list.iter().any(|n| n == name),
+                        }
+                    };
+
                     let all_names = registry.tool_names();
                     let mut eager_count = 0usize;
 
                     for name in &all_names {
-                        if is_eager_tool(name) {
+                        if is_eager_tool(name) && is_mcp_allowed(name) {
                             if let Some(def) = registry.get_tool_def(name).await {
                                 let wrapper: std::sync::Arc<dyn Tool> =
                                     std::sync::Arc::new(crate::tools::McpToolWrapper::new(
@@ -3896,15 +3986,30 @@ pub async fn run(
                         crate::tools::ActivatedToolSet::new(),
                     ));
                     activated_handle = Some(std::sync::Arc::clone(&activated));
-                    tools_registry.push(Box::new(crate::tools::ToolSearchTool::new(
-                        deferred_set,
-                        activated,
-                    )));
+                    // Bound MCP exposure by the same capability allowlist that
+                    // filtered the static registry above, so a restricted run
+                    // cannot reach arbitrary MCP tools via `tool_search`.
+                    tools_registry.push(Box::new(
+                        crate::tools::ToolSearchTool::new(deferred_set, activated)
+                            .with_allowed_tools(allowed_tools.clone()),
+                    ));
                 } else {
-                    // Eager path: register all MCP tools directly
+                    // Eager path: register all MCP tools directly. This runs
+                    // after the registry `retain` above, so honor the run-level
+                    // capability allowlist here too — otherwise MCP tools would
+                    // escape a restricted run.
+                    let is_mcp_allowed = |name: &str| -> bool {
+                        match allowed_tools {
+                            None => true,
+                            Some(ref list) => list.iter().any(|n| n == name),
+                        }
+                    };
                     let names = registry.tool_names();
                     let mut registered = 0usize;
                     for name in names {
+                        if !is_mcp_allowed(&name) {
+                            continue;
+                        }
                         if let Some(def) = registry.get_tool_def(&name).await {
                             let wrapper: std::sync::Arc<dyn Tool> =
                                 std::sync::Arc::new(crate::tools::McpToolWrapper::new(
@@ -4777,8 +4882,7 @@ pub async fn process_message(
     message: &str,
     session_id: Option<&str>,
 ) -> Result<String> {
-    let observer: Arc<dyn Observer> =
-        Arc::from(observability::create_observer(&config.observability));
+    let observer: Arc<dyn Observer> = observability::get_or_init_global(&config.observability);
     let runtime: Arc<dyn runtime::RuntimeAdapter> =
         Arc::from(runtime::create_runtime(&config.runtime)?);
     let security = Arc::new(SecurityPolicy::from_config(
@@ -10023,6 +10127,12 @@ Let me check the result."#;
         let cost_config = crate::config::CostConfig {
             enabled: true,
             daily_limit_usd: 0.001, // very low limit
+            // The default enforcement mode is "warn"; opt into the hard-stop
+            // path explicitly so this test exercises Block end-to-end.
+            enforcement: crate::config::schema::CostEnforcementConfig {
+                mode: "block".to_string(),
+                ..crate::config::schema::CostEnforcementConfig::default()
+            },
             ..crate::config::CostConfig::default()
         };
         let tracker = Arc::new(CostTracker::new(cost_config.clone(), workspace.path()).unwrap());
@@ -10077,6 +10187,78 @@ Let me check the result."#;
             err.to_string().contains("Budget exceeded"),
             "error should mention budget: {err}"
         );
+    }
+
+    #[tokio::test]
+    async fn cost_tracking_warn_mode_proceeds_when_over_budget() {
+        use super::{
+            TOOL_LOOP_COST_TRACKING_CONTEXT, ToolLoopCostTrackingContext, run_tool_call_loop,
+        };
+        use crate::cost::CostTracker;
+        use crate::observability::noop::NoopObserver;
+
+        // Same over-budget setup as `cost_tracking_enforces_budget`, but with
+        // the default enforcement mode ("warn") — the loop must proceed and
+        // return the provider's response instead of hard-blocking.
+        let provider = ScriptedProvider::from_text_responses(vec!["proceeded over budget"]);
+        let observer = NoopObserver;
+        let workspace = tempfile::TempDir::new().unwrap();
+        let cost_config = crate::config::CostConfig {
+            enabled: true,
+            daily_limit_usd: 0.001, // very low limit
+            // Default mode is "warn"; assert it does not block.
+            ..crate::config::CostConfig::default()
+        };
+        assert_eq!(cost_config.enforcement.mode, "warn");
+        let tracker = Arc::new(CostTracker::new(cost_config, workspace.path()).unwrap());
+        // Record a usage that already exceeds the limit.
+        tracker
+            .record_usage(crate::cost::types::TokenUsage::new(
+                "mock-model",
+                100_000,
+                50_000,
+                1.0,
+                1.0,
+            ))
+            .unwrap();
+
+        let ctx = ToolLoopCostTrackingContext::new(Arc::clone(&tracker), "test");
+        let mut history = vec![ChatMessage::system("test"), ChatMessage::user("hello")];
+
+        let result = TOOL_LOOP_COST_TRACKING_CONTEXT
+            .scope(
+                Some(ctx),
+                run_tool_call_loop(
+                    &provider,
+                    &mut history,
+                    &[],
+                    &observer,
+                    "mock-provider",
+                    "mock-model",
+                    0.0,
+                    true,
+                    None,
+                    "test",
+                    None,
+                    &crate::config::MultimodalConfig::default(),
+                    2,
+                    None,
+                    None,
+                    None,
+                    &[],
+                    &[],
+                    None,
+                    None,
+                    &crate::config::PacingConfig::default(),
+                    0,
+                    0,
+                    None,
+                ),
+            )
+            .await
+            .expect("warn mode should proceed past the budget gate");
+
+        assert_eq!(result, "proceeded over budget");
     }
 
     #[tokio::test]

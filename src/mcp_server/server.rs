@@ -49,13 +49,14 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::OnceLock;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio::net::TcpListener;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::wrappers::UnboundedReceiverStream;
+use tokio_util::sync::CancellationToken;
 
 // ── Router state ───────────────────────────────────────────────────────────
 
@@ -513,6 +514,29 @@ fn plain_err(id: Option<Value>, code: i32, msg: &str) -> Response {
     (StatusCode::OK, Json(body)).into_response()
 }
 
+/// Upper bound on how long a single `tools/call` invocation may run before it
+/// is cancelled and a terminal JSON-RPC error is emitted. Tools that reach out
+/// to external services (notion/jira/google_workspace, …) can legitimately take
+/// a while, so the ceiling is generous; its purpose is to stop a hung or
+/// runaway tool from consuming resources forever, not to police normal latency.
+const TOOL_EXECUTION_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// Drop guard that ties a spawned tool task's lifetime to the SSE stream it
+/// feeds. When the stream is dropped — e.g. the HTTP/SSE client disconnects —
+/// this cancels the task's [`CancellationToken`] and aborts its `JoinHandle`,
+/// so the underlying tool work actually stops instead of running to completion.
+struct TaskAbortGuard {
+    handle: tokio::task::JoinHandle<()>,
+    token: CancellationToken,
+}
+
+impl Drop for TaskAbortGuard {
+    fn drop(&mut self) {
+        self.token.cancel();
+        self.handle.abort();
+    }
+}
+
 fn stream_tool_call(
     state: AppState,
     session_events: broadcast::Sender<ProgressEvent>,
@@ -543,41 +567,71 @@ fn stream_tool_call(
     ));
 
     // Kick off the tool in the background; the task pushes the terminal
-    // JSON-RPC response onto `tx` once finished.
+    // JSON-RPC response onto `tx` once finished. The task's lifetime is tied to
+    // the SSE stream via `TaskAbortGuard` below: a client disconnect cancels
+    // `token`, and execution is additionally bounded by `TOOL_EXECUTION_TIMEOUT`.
     let tx_final = tx.clone();
     let id_for_task = id.clone();
-    tokio::spawn(async move {
-        let result = tool.execute_with_progress(args, sink.as_ref()).await;
-        let final_msg = match result {
-            Ok(tool_result) => {
-                let content = tool_result_to_content(&tool_result);
-                let payload = json!({
-                    "content": content,
-                    "isError": !tool_result.success,
-                });
-                json!({
-                    "jsonrpc": JSONRPC_VERSION,
-                    "id": id_for_task.unwrap_or(Value::Null),
-                    "result": payload,
-                })
-            }
-            Err(err) => {
-                json!({
-                    "jsonrpc": JSONRPC_VERSION,
-                    "id": id_for_task.unwrap_or(Value::Null),
-                    "error": {
-                        "code": INTERNAL_ERROR,
-                        "message": err.to_string(),
-                    }
-                })
-            }
+    let token = CancellationToken::new();
+    let task_token = token.clone();
+    let handle = tokio::spawn(async move {
+        let final_msg = tokio::select! {
+            biased;
+            // Client disconnected — the stream (and its guard) was dropped.
+            // Stop without sending: nobody is listening anyway.
+            () = task_token.cancelled() => return,
+            outcome = tokio::time::timeout(
+                TOOL_EXECUTION_TIMEOUT,
+                tool.execute_with_progress(args, sink.as_ref()),
+            ) => match outcome {
+                Ok(Ok(tool_result)) => {
+                    let content = tool_result_to_content(&tool_result);
+                    let payload = json!({
+                        "content": content,
+                        "isError": !tool_result.success,
+                    });
+                    json!({
+                        "jsonrpc": JSONRPC_VERSION,
+                        "id": id_for_task.unwrap_or(Value::Null),
+                        "result": payload,
+                    })
+                }
+                Ok(Err(err)) => {
+                    json!({
+                        "jsonrpc": JSONRPC_VERSION,
+                        "id": id_for_task.unwrap_or(Value::Null),
+                        "error": {
+                            "code": INTERNAL_ERROR,
+                            "message": err.to_string(),
+                        }
+                    })
+                }
+                Err(_elapsed) => {
+                    json!({
+                        "jsonrpc": JSONRPC_VERSION,
+                        "id": id_for_task.unwrap_or(Value::Null),
+                        "error": {
+                            "code": INTERNAL_ERROR,
+                            "message": format!(
+                                "tool execution timed out after {}s",
+                                TOOL_EXECUTION_TIMEOUT.as_secs()
+                            ),
+                        }
+                    })
+                }
+            },
         };
         let _ = tx_final.send(final_msg);
         // Dropping the last sender will close `rx` for the SSE stream.
     });
 
-    let event_stream = UnboundedReceiverStream::new(rx)
-        .map(|msg| Ok::<_, Infallible>(Event::default().data(msg.to_string())));
+    // Tie the task to the stream: dropping the stream drops this guard, which
+    // cancels the token and aborts the task so a disconnect stops the work.
+    let guard = TaskAbortGuard { handle, token };
+    let event_stream = UnboundedReceiverStream::new(rx).map(move |msg| {
+        let _ = &guard;
+        Ok::<_, Infallible>(Event::default().data(msg.to_string()))
+    });
 
     Sse::new(event_stream)
         .keep_alive(KeepAlive::default())
@@ -711,5 +765,166 @@ mod tests {
         let got = rx.recv().await.expect("recv ok");
         assert_eq!(got.progress, 2);
         assert_eq!(got.tool.as_deref(), Some("notion"));
+    }
+
+    // ── tools/call cancellation on SSE client disconnect ──────────────────
+
+    use crate::tools::Tool;
+    use crate::tools::traits::ToolResult;
+    use async_trait::async_trait;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    /// Flips an [`AtomicBool`] when dropped. Held across the tool's sleep so the
+    /// test can observe the tool's future actually being dropped (cancelled),
+    /// rather than merely "not yet finished".
+    struct DropSentinel {
+        dropped: Arc<AtomicBool>,
+    }
+
+    impl Drop for DropSentinel {
+        fn drop(&mut self) {
+            self.dropped.store(true, Ordering::SeqCst);
+        }
+    }
+
+    /// Tool that sleeps a long time before "finishing". It holds a
+    /// [`DropSentinel`] across the sleep and only flips `finished` if it runs to
+    /// completion, so a test can prove cancellation by observing either the
+    /// sentinel drop (future was cancelled) or that `finished` never flips.
+    struct SlowTool {
+        started: Arc<tokio::sync::Notify>,
+        finished: Arc<AtomicBool>,
+        sentinel_dropped: Arc<AtomicBool>,
+    }
+
+    #[async_trait]
+    impl Tool for SlowTool {
+        fn name(&self) -> &str {
+            "slow_tool"
+        }
+        fn description(&self) -> &str {
+            "Sleeps before finishing; used to test cancellation."
+        }
+        fn parameters_schema(&self) -> Value {
+            json!({ "type": "object", "properties": {} })
+        }
+        async fn execute(&self, _args: Value) -> anyhow::Result<ToolResult> {
+            // Live across the await; its Drop fires iff this future is dropped
+            // before completing (i.e. the task was actually cancelled/aborted).
+            let _sentinel = DropSentinel {
+                dropped: self.sentinel_dropped.clone(),
+            };
+            self.started.notify_one();
+            // Far longer than the test waits; only completes if not cancelled.
+            tokio::time::sleep(Duration::from_secs(30)).await;
+            self.finished.store(true, Ordering::SeqCst);
+            Ok(ToolResult {
+                success: true,
+                output: "done".into(),
+                error: None,
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn disconnect_cancels_in_flight_tool() {
+        let started = Arc::new(tokio::sync::Notify::new());
+        let finished = Arc::new(AtomicBool::new(false));
+        let sentinel_dropped = Arc::new(AtomicBool::new(false));
+        let tool = Arc::new(SlowTool {
+            started: started.clone(),
+            finished: finished.clone(),
+            sentinel_dropped: sentinel_dropped.clone(),
+        });
+        let state = state_with_tools(vec![tool as Arc<dyn Tool>]);
+        let (bus, _bus_rx) = broadcast::channel(8);
+
+        let resp = stream_tool_call(
+            state,
+            bus,
+            Some(json!(1)),
+            json!({ "name": "slow_tool", "arguments": {} }),
+        );
+
+        // Wait until the tool has actually begun executing.
+        started.notified().await;
+        assert!(
+            !sentinel_dropped.load(Ordering::SeqCst),
+            "sentinel must still be live while the tool is mid-flight"
+        );
+
+        // Simulate the SSE client disconnecting: drop the response (and with it
+        // the stream and its TaskAbortGuard).
+        drop(resp);
+
+        // The disconnect must abort the spawned task, which drops the in-flight
+        // tool future and therefore the sentinel. Poll briefly: if cancellation
+        // is a no-op the future keeps sleeping (30s), the sentinel is never
+        // dropped, and this loop times out -> the assertion below fails.
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while !sentinel_dropped.load(Ordering::SeqCst) && std::time::Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(
+            sentinel_dropped.load(Ordering::SeqCst),
+            "disconnect must drop (cancel) the in-flight tool future"
+        );
+        // And it certainly must not have run to completion.
+        assert!(
+            !finished.load(Ordering::SeqCst),
+            "tool should have been cancelled on disconnect, not run to completion"
+        );
+    }
+
+    /// Tool that returns immediately; used to verify the happy path still works
+    /// after wrapping the spawned task with timeout + cancellation.
+    struct FastTool;
+
+    #[async_trait]
+    impl Tool for FastTool {
+        fn name(&self) -> &str {
+            "fast_tool"
+        }
+        fn description(&self) -> &str {
+            "Returns immediately."
+        }
+        fn parameters_schema(&self) -> Value {
+            json!({ "type": "object", "properties": {} })
+        }
+        async fn execute(&self, _args: Value) -> anyhow::Result<ToolResult> {
+            Ok(ToolResult {
+                success: true,
+                output: "ok".into(),
+                error: None,
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn happy_path_streams_terminal_response() {
+        use http_body_util::BodyExt;
+
+        let state = state_with_tools(vec![Arc::new(FastTool) as Arc<dyn Tool>]);
+        let (bus, _bus_rx) = broadcast::channel(8);
+
+        let resp = stream_tool_call(
+            state,
+            bus,
+            Some(json!(7)),
+            json!({ "name": "fast_tool", "arguments": {} }),
+        );
+
+        // Collect the SSE body and confirm the terminal JSON-RPC result event
+        // made it through the refactored stream.
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let text = String::from_utf8(body.to_vec()).unwrap();
+        assert!(
+            text.contains("\"id\":7"),
+            "expected terminal result for id 7, got: {text}"
+        );
+        assert!(
+            text.contains("\"isError\":false"),
+            "expected a successful tool result, got: {text}"
+        );
     }
 }

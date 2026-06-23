@@ -360,6 +360,57 @@ async def _monitor_agent(
         _log(f"Agent {agent.id} stderr: {agent.stderr_buffer.strip()[-300:]}")
 
 
+def _claude_spawn_anthropic_key(
+    agent_type: str,
+    env: dict[str, str],
+    spawn_key: str | None,
+) -> str | None:
+    """Value to set as ``ANTHROPIC_API_KEY`` for a spawned agent, or ``None``.
+
+    The Rust daemon hands the operator the decrypted Anthropic key under the
+    dedicated ``REVKA_SPAWN_ANTHROPIC_API_KEY`` name (never ``ANTHROPIC_API_KEY``)
+    so it is never copied into an MCP-server config and serialized onto a codex
+    command line (see ``_kumiho_forward_env`` / ``_codex_mcp_overrides``, which
+    would expose it in process listings). We translate it back to
+    ``ANTHROPIC_API_KEY`` only for ``claude`` agents — which authenticate against
+    api.anthropic.com via that var — and only when the child has no explicit
+    credential already (an inherited ``ANTHROPIC_API_KEY`` or a
+    ``CLAUDE_CODE_OAUTH_TOKEN`` subscription token both take precedence).
+    """
+    if not spawn_key or agent_type != "claude":
+        return None
+    if env.get("ANTHROPIC_API_KEY") or env.get("CLAUDE_CODE_OAUTH_TOKEN"):
+        return None
+    return spawn_key
+
+
+# Agent types whose CLI launches with permissions fully bypassed
+# (codex: --sandbox danger-full-access; claude/agy/agent:
+# --dangerously-skip-permissions). Those flags can't be revoked once the
+# process is running, so an untrusted spawn of one is refused at spawn time
+# (#459). opencode has no such flag and is never refused.
+_BYPASS_PERMISSION_AGENTS = frozenset({"codex", "claude", "agy", "agent"})
+
+
+def cli_spawn_refusal(agent_type: str, trusted: bool) -> str | None:
+    """Reason to refuse an untrusted permission-bypassing CLI spawn, or None.
+
+    Trusted spawns (the default) always proceed. An untrusted spawn is refused
+    only for CLIs we would otherwise launch with permissions bypassed — there
+    is no headless-safe sandbox/approval flag to downgrade to, so the spawn is
+    refused rather than run ungated.
+    """
+    if trusted:
+        return None
+    if agent_type in _BYPASS_PERMISSION_AGENTS:
+        return (
+            f"Refusing to spawn untrusted '{agent_type}' agent: it would run with "
+            "permissions bypassed and cannot be gated after launch. Mark the spawn "
+            "trusted to allow it."
+        )
+    return None
+
+
 async def spawn_agent(
     agent: ManagedAgent,
     prompt: str,
@@ -382,6 +433,13 @@ async def spawn_agent(
       - Claude: serialize to a temp JSON file and pass `--mcp-config <path>`
       - Codex: emit `-c mcp_servers.<name>.<field>=<toml-value>` overrides
     """
+    refusal = cli_spawn_refusal(agent.agent_type, agent.trusted)
+    if refusal:
+        agent.status = "error"
+        agent.stderr_buffer += refusal + "\n"
+        _log(f"Agent {agent.id}: {refusal}")
+        return
+
     # Claude consumes MCP config from a JSON file; codex doesn't read
     # files (only `-c` overrides) so we skip the write for codex agents.
     mcp_config_path: str | None = None
@@ -405,6 +463,16 @@ async def spawn_agent(
     merged_env_extra = dict(env_extra) if env_extra else {}
     merged_env_extra.update(home_env)
     env = build_agent_env(clean_build=clean_build, node_env=node_env, extra=merged_env_extra)
+
+    # The Rust daemon supplies revka's decrypted Anthropic key under a dedicated,
+    # non-forwarded name so it never lands on a codex command line. Pop that
+    # transport var (so no child carries it) and, for `claude` agents only,
+    # expose it as ANTHROPIC_API_KEY in the child *process env* (never a CLI arg).
+    _spawn_anthropic_key = os.environ.get("REVKA_SPAWN_ANTHROPIC_API_KEY")
+    env.pop("REVKA_SPAWN_ANTHROPIC_API_KEY", None)
+    _claude_key = _claude_spawn_anthropic_key(agent.agent_type, env, _spawn_anthropic_key)
+    if _claude_key:
+        env["ANTHROPIC_API_KEY"] = _claude_key
 
     # Optionally clean build caches before spawning
     if clean_build:
@@ -467,6 +535,12 @@ _TEAM_MAX_CONCURRENT = 3
 
 async def spawn_with_retry(agent: ManagedAgent, prompt: str, journal: SessionJournal, max_retries: int = 2) -> bool:
     """Spawn agent with retry on immediate failure. Returns True on success."""
+    # A spawn refusal (e.g. untrusted permission-bypassing CLI, #459) is
+    # deterministic — retrying just burns backoff and overwrites the refusal
+    # message. Surface it once via spawn_agent and fail fast, non-retriably.
+    if cli_spawn_refusal(agent.agent_type, agent.trusted):
+        await spawn_agent(agent, prompt, journal)
+        return False
     for attempt in range(max_retries + 1):
         await spawn_agent(agent, prompt, journal)
 

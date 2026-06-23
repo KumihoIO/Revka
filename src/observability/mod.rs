@@ -11,7 +11,6 @@ pub mod verbose;
 
 #[allow(unused_imports)]
 pub use self::log::LogObserver;
-#[allow(unused_imports)]
 pub use self::multi::MultiObserver;
 pub use noop::NoopObserver;
 #[cfg(feature = "observability-otel")]
@@ -23,10 +22,45 @@ pub use traits::{Observer, ObserverEvent};
 pub use verbose::VerboseObserver;
 
 use crate::config::ObservabilityConfig;
+use std::sync::{Arc, OnceLock};
 
-/// Factory: create the right observer from config
+/// Factory: create the right observer from config.
+///
+/// `config.backend` may name a single backend (e.g. `"prometheus"`) or several
+/// comma-separated backends (e.g. `"prometheus,otel"`). When more than one is
+/// requested, each is built via the single-backend path and the results are
+/// fanned out through a [`MultiObserver`]; zero or one backend keeps the
+/// single-backend path unchanged for backward compatibility.
 pub fn create_observer(config: &ObservabilityConfig) -> Box<dyn Observer> {
-    match config.backend.as_str() {
+    let backends: Vec<&str> = config
+        .backend
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    match backends.as_slice() {
+        // No backend specified at all (empty string) — keep the historical
+        // fall-back to noop via the single-backend path.
+        [] => create_single_observer(&config.backend, config),
+        [single] => create_single_observer(single, config),
+        many => Box::new(MultiObserver::new(
+            many.iter()
+                .map(|b| create_single_observer(b, config))
+                .collect(),
+        )),
+    }
+}
+
+/// Build exactly one backend from its name. Unknown names fall back to noop.
+fn create_single_observer(
+    backend: &str,
+    // `config` is only read by the OTel arm; silence the unused warning when
+    // that feature is compiled out.
+    #[cfg_attr(not(feature = "observability-otel"), allow(unused_variables))]
+    config: &ObservabilityConfig,
+) -> Box<dyn Observer> {
+    match backend {
         "log" => Box::new(LogObserver::new()),
         "verbose" => Box::new(VerboseObserver::new()),
         "prometheus" => {
@@ -73,13 +107,29 @@ pub fn create_observer(config: &ObservabilityConfig) -> Box<dyn Observer> {
         }
         "none" | "noop" => Box::new(NoopObserver),
         _ => {
-            tracing::warn!(
-                "Unknown observability backend '{}', falling back to noop",
-                config.backend
-            );
+            tracing::warn!("Unknown observability backend '{backend}', falling back to noop");
             Box::new(NoopObserver)
         }
     }
+}
+
+// ── Process-global singleton ────────────────────────────────────────
+// Every entry point (gateway, agent, channels, daemon, interactive loop)
+// shares ONE observer so that all telemetry — LLM request/token counters,
+// tool-call counts/durations, agent durations, gauges — feeds the single
+// registry that `GET /metrics` scrapes. Without this, each path built its
+// own throwaway `PrometheusObserver` (a fresh `prometheus::Registry`) and
+// the scraped surface stayed near-empty. Mirrors `CostTracker::get_or_init_global`.
+
+static GLOBAL_OBSERVER: OnceLock<Arc<dyn Observer>> = OnceLock::new();
+
+/// Return the process-global `Observer`, building it from `config` on first
+/// call. Subsequent calls (from whichever entry point starts second) receive
+/// the same `Arc`, ignoring their `config` — the first caller wins.
+pub fn get_or_init_global(config: &ObservabilityConfig) -> Arc<dyn Observer> {
+    GLOBAL_OBSERVER
+        .get_or_init(|| Arc::from(create_observer(config)))
+        .clone()
 }
 
 #[cfg(test)]
@@ -185,6 +235,32 @@ mod tests {
     }
 
     #[test]
+    fn factory_multiple_backends_returns_multi() {
+        let cfg = ObservabilityConfig {
+            backend: "log,verbose".into(),
+            ..ObservabilityConfig::default()
+        };
+        assert_eq!(create_observer(&cfg).name(), "multi");
+    }
+
+    #[test]
+    fn factory_multiple_backends_trims_whitespace_and_ignores_empties() {
+        // Stray whitespace and empty segments must not split a single backend
+        // into a `MultiObserver`, nor inflate the backend count.
+        let single = ObservabilityConfig {
+            backend: " log , ".into(),
+            ..ObservabilityConfig::default()
+        };
+        assert_eq!(create_observer(&single).name(), "log");
+
+        let multi = ObservabilityConfig {
+            backend: " log , verbose ".into(),
+            ..ObservabilityConfig::default()
+        };
+        assert_eq!(create_observer(&multi).name(), "multi");
+    }
+
+    #[test]
     fn factory_unknown_falls_back_to_noop() {
         let cfg = ObservabilityConfig {
             backend: "xyzzy_unknown".into(),
@@ -209,5 +285,28 @@ mod tests {
             ..ObservabilityConfig::default()
         };
         assert_eq!(create_observer(&cfg).name(), "noop");
+    }
+
+    #[test]
+    fn global_observer_is_a_shared_singleton() {
+        // The first caller's config wins; every later caller — regardless of the
+        // config it passes — gets the SAME `Arc`, so all telemetry feeds one
+        // registry (#455). `GLOBAL_OBSERVER` is a process-global `OnceLock`
+        // shared across the whole test binary, so whichever test touches it
+        // first decides the backend — we therefore assert only the pointer
+        // identity, which holds regardless of initialization order, and avoid
+        // any backend-name assertion that would race other unit tests.
+        let first = get_or_init_global(&ObservabilityConfig {
+            backend: "log".into(),
+            ..ObservabilityConfig::default()
+        });
+        let second = get_or_init_global(&ObservabilityConfig {
+            backend: "verbose".into(),
+            ..ObservabilityConfig::default()
+        });
+        assert!(
+            Arc::ptr_eq(&first, &second),
+            "expected the same global observer instance on every call"
+        );
     }
 }

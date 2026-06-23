@@ -43,6 +43,34 @@ jobs:
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
 
+  msrv:
+    name: MSRV (rust-version)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      # Derive the toolchain from Cargo.toml's `rust-version` so this job always
+      # enforces the declared MSRV and can never drift from it (#431).
+      - name: Read MSRV from Cargo.toml
+        id: msrv
+        run: echo "version=$(grep -m1 '^rust-version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          cache-bin: false
+
+      - name: Ensure web/dist placeholder exists
+        run: mkdir -p web/dist && touch web/dist/.gitkeep
+
+      # Scoped to the `revka` package (the one whose `rust-version` we enforce);
+      # the desktop/tauri crate has its own toolchain needs. If this fails, the
+      # real floor is higher than declared — bump `rust-version` in Cargo.toml
+      # (the setup scripts and docs derive their floor from it).
+      - name: Check revka builds on the declared MSRV
+        run: cargo check --locked -p revka
+
   bench-compile:
     name: Verify Benchmarks Compile
     runs-on: ubuntu-latest
@@ -121,6 +149,70 @@ jobs:
         env:
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: clang
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: "-C link-arg=-fuse-ld=mold"
+
+  test-features:
+    name: Test (feature-gated channels)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    needs: [lint]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
+        with:
+          toolchain: 1.93.0
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          prefix-key: test-features
+          cache-bin: false
+
+      - name: Ensure web/dist placeholder exists
+        run: mkdir -p web/dist && touch web/dist/.gitkeep
+
+      - name: Install system dependencies
+        # mold: linker (matches the default test job).
+        # libasound2-dev: voice-wake (cpal/ALSA); ci-all omits voice-wake
+        # precisely because standard runners lack this lib, so install it here.
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y mold libasound2-dev
+
+      - name: Install cargo-nextest
+        run: curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C ${CARGO_HOME:-~/.cargo}/bin
+
+      # Runs the ~167 inline tests in the feature-gated channel modules
+      # (matrix, lark, nostr, whatsapp-web — incl. its whatsapp_storage backend —
+      # and voice-wake) that the default-only `test` job never executes (#433).
+      - name: Run feature-gated channel tests
+        run: cargo nextest run --locked --features channel-matrix,channel-lark,channel-nostr,whatsapp-web,voice-wake
+        env:
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: clang
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: "-C link-arg=-fuse-ld=mold"
+
+  test-live-compile:
+    name: Compile Live Test Suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [lint]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
+        with:
+          toolchain: 1.93.0
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          cache-bin: false
+
+      - name: Ensure web/dist placeholder exists
+        run: mkdir -p web/dist && touch web/dist/.gitkeep
+
+      # The `live` test target's tests are all `#[ignore]`d (they need provider
+      # OAuth credentials), so the default `test` job never compiles them and they
+      # could silently rot — API/signature drift that breaks `tests/live/` would go
+      # undetected. This cheap, non-credentialed gate compiles the suite without
+      # running it, catching build breakage on every PR. The credentialed run still
+      # happens out-of-band via `dev/ci.sh test-live` (#435).
+      - name: Compile live test suite (no run)
+        run: cargo test --test live --no-run --locked
 
   build:
     name: Build ${{ matrix.target }}
@@ -217,6 +309,27 @@ jobs:
             flags: "--no-default-features --features plugins-wasm"
           - feature: rag-pdf
             flags: "--no-default-features --features rag-pdf"
+          # Features below only ever compiled inside `ci-all` (with defaults on),
+          # so an isolated `--no-default-features` build was never exercised (#436).
+          - feature: hardware
+            flags: "--no-default-features --features hardware"
+            apt: libudev-dev
+          - feature: peripheral-rpi
+            flags: "--no-default-features --features peripheral-rpi"
+          - feature: probe
+            flags: "--no-default-features --features probe"
+            apt: libudev-dev
+          - feature: sandbox-landlock
+            flags: "--no-default-features --features sandbox-landlock"
+          - feature: sandbox-bubblewrap
+            flags: "--no-default-features --features sandbox-bubblewrap"
+          - feature: webauthn
+            flags: "--no-default-features --features webauthn"
+          # voice-wake (cpal/ALSA) is excluded from `ci-all` because standard
+          # runners lack libasound2-dev; install it here so it gets coverage (#436).
+          - feature: voice-wake
+            flags: "--no-default-features --features voice-wake"
+            apt: libasound2-dev
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
@@ -226,6 +339,10 @@ jobs:
         with:
           prefix-key: feature-matrix-${{ matrix.feature }}
           cache-bin: false
+
+      - name: Install system dependencies
+        if: matrix.apt != ''
+        run: sudo apt-get update -qq && sudo apt-get install -y ${{ matrix.apt }}
 
       - name: Ensure web/dist placeholder exists
         run: mkdir -p web/dist && touch web/dist/.gitkeep
@@ -262,11 +379,91 @@ jobs:
       - name: Check version alignment
         run: bash scripts/ci/check_version_drift.sh
 
-  # Composite status check — branch protection requires this single job.
+  docker-hardening:
+    name: Docker Non-Root Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      # Static Dockerfile guard (no image build): every runnable stage must ship
+      # non-root. Cheap + deterministic, so it can gate every PR; for a runtime
+      # assertion against a built image see `dev/ci.sh docker-nonroot`.
+      - name: Assert all runnable Docker stages are non-root
+        run: python3 scripts/ci/check_docker_nonroot.py
+
+  session-manager:
+    name: Session Manager (TS)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: operator-mcp/session-manager
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a # v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Typecheck (tsc)
+        run: npm run build
+
+      - name: Test
+        run: npm test
+
+  security:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
+        with:
+          toolchain: 1.93.0
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          cache-bin: false
+
+      - name: Install cargo-deny
+        run: cargo install cargo-deny --locked
+
+      - name: Run cargo-deny policy (advisories, bans, licenses, sources)
+        # cargo-deny is the single source of truth for the advisory/ban/license/
+        # source policy (deny.toml). `all` runs every check kind, so the
+        # [advisories] (unmaintained/yanked) and [bans] policy is enforced.
+        # cargo-audit + .cargo/audit.toml were removed (#445): cargo-deny's
+        # advisories check covers the same RUSTSEC database, so a second tool
+        # with its own divergent ignore list is redundant. See #443.
+        run: cargo deny check all
+
+  check-32bit:
+    name: "Check (32-bit)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
+        with:
+          toolchain: 1.93.0
+          targets: i686-unknown-linux-gnu
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          cache-bin: false
+      - name: Install 32-bit libs
+        run: sudo apt-get update && sudo apt-get install -y gcc-multilib
+      - name: Ensure web/dist placeholder exists
+        run: mkdir -p web/dist && touch web/dist/.gitkeep
+      - name: Cargo check (32-bit, no default features)
+        run: cargo check --target i686-unknown-linux-gnu --no-default-features
+
+  # Composite status check — branch protection only needs to require this
+  # single job instead of tracking every matrix leg individually.
   gate:
     name: CI Required Gate
     if: always()
-    needs: [lint, bench-compile, lint-strict-delta, test, build, docs-quality, check-all-features, feature-matrix, version-drift]
+    needs: [lint, msrv, bench-compile, lint-strict-delta, test, test-features, test-live-compile, build, docs-quality, check-all-features, feature-matrix, version-drift, docker-hardening, session-manager, security, check-32bit]
     runs-on: ubuntu-latest
     steps:
       - name: Check upstream job results
@@ -275,5 +472,18 @@ jobs:
         run: |
           if [[ "$HAS_FAILURE" == "true" ]]; then
             echo "::error::One or more upstream jobs failed or were cancelled"
+            exit 1
+          fi
+
+  security-gate:
+    name: Security Required Gate
+    if: always()
+    needs: [security]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check security job result
+        run: |
+          if [[ "${{ needs.security.result }}" != "success" ]]; then
+            echo "::error::Security audit failed or was cancelled"
             exit 1
           fi

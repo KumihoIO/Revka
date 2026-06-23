@@ -8,6 +8,14 @@
  */
 import type { AgentSessionConfig, AgentStreamEvent, AgentUsage } from "../types.js";
 import type { PermissionHandler } from "../permission-handler.js";
+/**
+ * Detects if an error is a tool_use_id mismatch (orphaned tool_result after context truncation).
+ */
+export declare function isToolIdMismatchError(err: unknown): boolean;
+/**
+ * Build a continuation summary from session events for recovery after context corruption.
+ */
+export declare function buildContinuationSummary(events: AgentStreamEvent[], originalPrompt?: string): string;
 export interface ClaudeSessionHandle {
     id: string;
     claudeSessionId: string | null;
@@ -23,13 +31,50 @@ export interface ClaudeSessionHandle {
     stderr: string;
 }
 /**
- * Create a Claude agent session and start the query pump.
+ * Per-session state for tracking in-flight tool calls across stream events.
+ * Accumulates input_json_delta chunks so the emitted tool_call has full args.
+ */
+interface ToolCallStreamState {
+    /** content_block index → pending tool call info */
+    pending: Map<number, {
+        id: string;
+        name: string;
+        inputChunks: string[];
+    }>;
+    /** tool_use_id → tool name, for resolving tool_result blocks */
+    idToName: Map<string, string>;
+}
+export declare function createToolCallStreamState(): ToolCallStreamState;
+/**
+ * Translate a raw SDK message into zero or more AgentStreamEvents.
+ */
+export declare function translateMessage(message: any, turnId: string, state: ToolCallStreamState, stderrTail?: string): AgentStreamEvent[];
+/**
+ * Internal: build a Claude session handle with its query pump and follow-up
+ * `sendQuery` closure attached. Shared by `createClaudeSession` (starts a turn
+ * immediately) and `resumeClaudeSession` (leaves the handle dormant until the
+ * first follow-up).
  */
 export interface ClaudePermissionContext {
     permissions: PermissionHandler;
     agentId: string;
 }
+/**
+ * Create a Claude agent session and start the query pump immediately.
+ */
 export declare function createClaudeSession(config: AgentSessionConfig, onEvent: (event: AgentStreamEvent) => void, perm?: ClaudePermissionContext): ClaudeSessionHandle;
+/**
+ * Rebuild a dormant, resumable Claude handle on sidecar restart.
+ *
+ * The handle carries the persisted timeline (`persistedEvents`) as recovery
+ * context and stays idle (no pump) until the first follow-up, at which point
+ * `sendQuery` starts a fresh pump seeded with a continuation summary — the same
+ * path `createClaudeSession` uses after its pump dies. This matches the
+ * provider's deliberate choice NOT to use the SDK `resume` option (see
+ * `buildClaudeOptions`), avoiding orphaned-`tool_result` 400s. `claudeSessionId`
+ * is carried for reference only; it is not fed to the SDK.
+ */
+export declare function resumeClaudeSession(config: AgentSessionConfig, persistedEvents: AgentStreamEvent[], onEvent: (event: AgentStreamEvent) => void, claudeSessionId: string | null, perm?: ClaudePermissionContext): ClaudeSessionHandle;
 /**
  * Send a follow-up query to an existing session.
  */
@@ -38,3 +83,4 @@ export declare function sendClaudeQuery(handle: ClaudeSessionHandle, prompt: str
  * Close a Claude session.
  */
 export declare function closeClaudeSession(handle: ClaudeSessionHandle): Promise<void>;
+export {};

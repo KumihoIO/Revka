@@ -38,6 +38,10 @@ class ManagedAgent:
     stdout_buffer: str = ""
     stderr_buffer: str = ""
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    # When False, refuse to spawn this agent if its CLI launches with
+    # permissions bypassed (codex/claude/agy/agent run with danger-full-access
+    # / --dangerously-skip-permissions, which can't be revoked mid-run). #459.
+    trusted: bool = True
     _reader_task: asyncio.Task | None = field(default=None, repr=False)
     _sidecar_id: str | None = field(default=None, repr=False)
     _cached_params: CacheSafeParams | None = field(default=None, repr=False)

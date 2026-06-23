@@ -120,6 +120,11 @@ async def list_tools() -> list[Tool]:
                         "description": "NODE_ENV value for the agent process. Default: 'development'.",
                         "default": "development",
                     },
+                    "trusted": {
+                        "type": "boolean",
+                        "description": "If false, refuse to spawn permission-bypassing CLIs (codex/claude/agy/agent) whose danger flags can't be revoked after launch. Default true.",
+                        "default": True,
+                    },
                 },
                 "required": ["title", "cwd"],
             },
@@ -3380,6 +3385,18 @@ async def _mark_stale_runs_on_startup() -> None:
             )
     except Exception as exc:
         _log(f"Workflow stale-run scan failed (non-fatal): {exc}")
+
+    # Bound checkpoint disk growth + at-rest exposure: remove stale terminal
+    # checkpoints (completed/cancelled past the retention window) once the DB
+    # holds their authoritative status. Runs AFTER the stale scan so any
+    # running/paused orphan it just rewrote to failed is kept for retry (#394).
+    try:
+        from .workflow.executor import sweep_terminal_checkpoints
+        swept = await asyncio.to_thread(sweep_terminal_checkpoints)
+        if swept:
+            _log(f"Workflow startup: swept {swept} stale terminal checkpoint(s)")
+    except Exception as exc:
+        _log(f"Workflow checkpoint sweep failed (non-fatal): {exc}")
 
 
 async def _background_init() -> None:

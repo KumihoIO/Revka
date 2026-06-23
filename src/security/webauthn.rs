@@ -449,6 +449,33 @@ impl WebAuthnManager {
             .decode(&response.authenticator_data)
             .context("Invalid base64url in authenticator_data")?;
 
+        // authenticatorData layout: rpIdHash(32) || flags(1) || signCount(4).
+        // Enforce the minimum length *before* signature verification so a client
+        // cannot truncate the counter region to skip clone detection, and so the
+        // rpIdHash / flags slices below are always in bounds.
+        anyhow::ensure!(
+            auth_data_bytes.len() >= 37,
+            "authenticatorData too short ({} bytes, need >= 37)",
+            auth_data_bytes.len()
+        );
+
+        // Bind the assertion to this Relying Party at the authenticatorData layer:
+        // the leading 32 bytes must equal SHA-256(rpId) (WebAuthn §7.2).
+        let rp_id_hash = ring::digest::digest(&ring::digest::SHA256, self.config.rp_id.as_bytes());
+        anyhow::ensure!(
+            auth_data_bytes[0..32] == *rp_id_hash.as_ref(),
+            "rpIdHash mismatch: assertion not bound to rp_id '{}'",
+            self.config.rp_id
+        );
+
+        // Require User Presence: the authenticator must report a user gesture
+        // (WebAuthn §7.2). User Verification is requested as "preferred" in
+        // start_authentication, so it is not treated as mandatory here.
+        anyhow::ensure!(
+            auth_data_bytes[32] & 0x01 != 0,
+            "User Presence flag not set in authenticatorData"
+        );
+
         // The signed message is: authenticatorData || SHA-256(clientDataJSON)
         let client_data_hash = ring::digest::digest(&ring::digest::SHA256, &client_data_bytes);
         let mut signed_data = auth_data_bytes.clone();
@@ -464,33 +491,33 @@ impl WebAuthnManager {
 
         verify_es256_signature(&public_key_bytes, &signed_data, &sig_bytes)?;
 
-        // 5. Verify and update sign counter (clone detection)
-        if auth_data_bytes.len() >= 37 {
-            let new_count = u32::from_be_bytes([
-                auth_data_bytes[33],
-                auth_data_bytes[34],
-                auth_data_bytes[35],
-                auth_data_bytes[36],
-            ]);
-            if new_count > 0 || credential.sign_count > 0 {
-                anyhow::ensure!(
-                    new_count > credential.sign_count,
-                    "Sign counter did not increase ({new_count} <= {}). Possible cloned authenticator.",
-                    credential.sign_count
-                );
-            }
-
-            // Update the sign counter
-            if let Some(user_creds) = all_credentials.get_mut(&credential.user_id) {
-                if let Some(cred) = user_creds
-                    .iter_mut()
-                    .find(|c| c.credential_id == response.id)
-                {
-                    cred.sign_count = new_count;
-                }
-            }
-            self.save_all_credentials(&all_credentials)?;
+        // 5. Verify and update sign counter (clone detection). authenticatorData
+        // length is guaranteed >= 37 above, so this always runs — a truncated
+        // assertion can no longer skip clone detection.
+        let new_count = u32::from_be_bytes([
+            auth_data_bytes[33],
+            auth_data_bytes[34],
+            auth_data_bytes[35],
+            auth_data_bytes[36],
+        ]);
+        if new_count > 0 || credential.sign_count > 0 {
+            anyhow::ensure!(
+                new_count > credential.sign_count,
+                "Sign counter did not increase ({new_count} <= {}). Possible cloned authenticator.",
+                credential.sign_count
+            );
         }
+
+        // Update the sign counter
+        if let Some(user_creds) = all_credentials.get_mut(&credential.user_id) {
+            if let Some(cred) = user_creds
+                .iter_mut()
+                .find(|c| c.credential_id == response.id)
+            {
+                cred.sign_count = new_count;
+            }
+        }
+        self.save_all_credentials(&all_credentials)?;
 
         Ok(())
     }
@@ -1189,6 +1216,146 @@ mod tests {
         // Verify sign count was updated
         let creds = mgr.list_credentials("user1").unwrap();
         assert_eq!(creds[0].sign_count, 1);
+    }
+
+    /// Register a credential for "user1" and return the signing material needed
+    /// to forge assertions in the authenticatorData-validation tests below.
+    fn register_user1(
+        tmp: &TempDir,
+    ) -> (
+        WebAuthnManager,
+        String,
+        signature::EcdsaKeyPair,
+        ring::rand::SystemRandom,
+    ) {
+        let mgr = test_manager(tmp);
+        let (_, reg_state) = mgr.start_registration("user1", "Alice").unwrap();
+        let rng = ring::rand::SystemRandom::new();
+        let pkcs8 = signature::EcdsaKeyPair::generate_pkcs8(
+            &signature::ECDSA_P256_SHA256_ASN1_SIGNING,
+            &rng,
+        )
+        .unwrap();
+        let key_pair = signature::EcdsaKeyPair::from_pkcs8(
+            &signature::ECDSA_P256_SHA256_ASN1_SIGNING,
+            pkcs8.as_ref(),
+            &rng,
+        )
+        .unwrap();
+        let cred_id = URL_SAFE_NO_PAD.encode(b"test-cred");
+        let client_data = serde_json::json!({
+            "type": "webauthn.create",
+            "challenge": reg_state.challenge,
+            "origin": "http://localhost:42617"
+        });
+        let attestation = serde_json::json!({
+            "public_key": URL_SAFE_NO_PAD.encode(key_pair.public_key().as_ref()),
+            "sign_count": 0
+        });
+        mgr.finish_registration(
+            &reg_state,
+            &RegisterCredentialResponse {
+                id: cred_id.clone(),
+                attestation_object: URL_SAFE_NO_PAD
+                    .encode(serde_json::to_vec(&attestation).unwrap()),
+                client_data_json: URL_SAFE_NO_PAD.encode(serde_json::to_vec(&client_data).unwrap()),
+                label: Some("Test Key".into()),
+            },
+        )
+        .unwrap();
+        (mgr, cred_id, key_pair, rng)
+    }
+
+    /// Build a correctly-signed `webauthn.get` assertion over arbitrary
+    /// `auth_data`, so the tests exercise authenticatorData validation with a
+    /// signature that is itself always valid.
+    fn signed_get_assertion(
+        cred_id: &str,
+        key_pair: &signature::EcdsaKeyPair,
+        rng: &ring::rand::SystemRandom,
+        challenge: &str,
+        auth_data: &[u8],
+    ) -> AuthenticateCredentialResponse {
+        let client_data = serde_json::json!({
+            "type": "webauthn.get",
+            "challenge": challenge,
+            "origin": "http://localhost:42617"
+        });
+        let client_data_bytes = serde_json::to_vec(&client_data).unwrap();
+        let client_data_hash = ring::digest::digest(&ring::digest::SHA256, &client_data_bytes);
+        let mut signed = auth_data.to_vec();
+        signed.extend_from_slice(client_data_hash.as_ref());
+        let sig = key_pair.sign(rng, &signed).unwrap();
+        AuthenticateCredentialResponse {
+            id: cred_id.to_string(),
+            authenticator_data: URL_SAFE_NO_PAD.encode(auth_data),
+            client_data_json: URL_SAFE_NO_PAD.encode(&client_data_bytes),
+            signature: URL_SAFE_NO_PAD.encode(sig.as_ref()),
+        }
+    }
+
+    /// Standard valid 37-byte authenticatorData for rp_id "localhost".
+    fn auth_data_for_localhost(flags: u8, sign_count: u32) -> Vec<u8> {
+        let rp_id_hash = ring::digest::digest(&ring::digest::SHA256, b"localhost");
+        let mut d = Vec::with_capacity(37);
+        d.extend_from_slice(rp_id_hash.as_ref());
+        d.push(flags);
+        d.extend_from_slice(&sign_count.to_be_bytes());
+        d
+    }
+
+    #[test]
+    fn authentication_rejects_cleared_user_presence_flag() {
+        // #375: an assertion with User Presence cleared (no user gesture) must be
+        // rejected even though the signature is valid.
+        let tmp = TempDir::new().unwrap();
+        let (mgr, cred_id, key_pair, rng) = register_user1(&tmp);
+        let (_, auth_state) = mgr.start_authentication("user1").unwrap();
+        let auth_data = auth_data_for_localhost(0x00, 1); // UP bit cleared
+        let resp =
+            signed_get_assertion(&cred_id, &key_pair, &rng, &auth_state.challenge, &auth_data);
+        let err = mgr.finish_authentication(&auth_state, &resp).unwrap_err();
+        assert!(
+            err.to_string().contains("User Presence"),
+            "expected User Presence rejection, got: {err}"
+        );
+    }
+
+    #[test]
+    fn authentication_rejects_wrong_rp_id_hash() {
+        // #375: an assertion whose rpIdHash != SHA-256(rp_id) must be rejected
+        // (authenticatorData not bound to this Relying Party).
+        let tmp = TempDir::new().unwrap();
+        let (mgr, cred_id, key_pair, rng) = register_user1(&tmp);
+        let (_, auth_state) = mgr.start_authentication("user1").unwrap();
+        let wrong_hash = ring::digest::digest(&ring::digest::SHA256, b"evil.example");
+        let mut auth_data = Vec::with_capacity(37);
+        auth_data.extend_from_slice(wrong_hash.as_ref());
+        auth_data.push(0x01); // UP set, so only the rpIdHash is wrong
+        auth_data.extend_from_slice(&1u32.to_be_bytes());
+        let resp =
+            signed_get_assertion(&cred_id, &key_pair, &rng, &auth_state.challenge, &auth_data);
+        let err = mgr.finish_authentication(&auth_state, &resp).unwrap_err();
+        assert!(
+            err.to_string().contains("rpIdHash"),
+            "expected rpIdHash rejection, got: {err}"
+        );
+    }
+
+    #[test]
+    fn authentication_rejects_short_authenticator_data() {
+        // #376: a validly-signed but truncated (<37 byte) authenticatorData must be
+        // rejected, so sign-counter clone detection cannot be skipped.
+        let tmp = TempDir::new().unwrap();
+        let (mgr, cred_id, key_pair, rng) = register_user1(&tmp);
+        let (_, auth_state) = mgr.start_authentication("user1").unwrap();
+        let short = auth_data_for_localhost(0x01, 1)[..36].to_vec(); // 36 bytes
+        let resp = signed_get_assertion(&cred_id, &key_pair, &rng, &auth_state.challenge, &short);
+        let err = mgr.finish_authentication(&auth_state, &resp).unwrap_err();
+        assert!(
+            err.to_string().contains("too short"),
+            "expected length rejection, got: {err}"
+        );
     }
 
     #[test]

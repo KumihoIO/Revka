@@ -10,6 +10,12 @@ impl MultiObserver {
     pub fn new(observers: Vec<Box<dyn Observer>>) -> Self {
         Self { observers }
     }
+
+    /// Borrow the contained observers so callers can locate a specific backend
+    /// (e.g. the `/metrics` handler unwrapping the nested `PrometheusObserver`).
+    pub fn observers(&self) -> &[Box<dyn Observer>] {
+        &self.observers
+    }
 }
 
 impl Observer for MultiObserver {

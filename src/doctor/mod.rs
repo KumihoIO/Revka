@@ -682,18 +682,22 @@ fn check_workspace(config: &Config, items: &mut Vec<DiagItem>) {
         }
     }
 
-    // Disk space (best-effort via `df`)
-    if let Some(avail_mb) = disk_available_mb(ws) {
-        if avail_mb >= 100 {
+    // Disk space (best-effort, cross-platform)
+    match disk_available_mb(ws) {
+        Some(avail_mb) if avail_mb >= 100 => {
             items.push(DiagItem::ok(
                 cat,
                 format!("disk space: {avail_mb} MB available"),
             ));
-        } else {
+        }
+        Some(avail_mb) => {
             items.push(DiagItem::warn(
                 cat,
                 format!("low disk space: only {avail_mb} MB available"),
             ));
+        }
+        None => {
+            items.push(DiagItem::warn(cat, "could not determine disk space"));
         }
     }
 
@@ -719,6 +723,7 @@ fn check_file_exists(
     }
 }
 
+#[cfg(not(target_os = "windows"))]
 fn disk_available_mb(path: &Path) -> Option<u64> {
     let output = std::process::Command::new("df")
         .arg("-m")
@@ -732,10 +737,38 @@ fn disk_available_mb(path: &Path) -> Option<u64> {
     parse_df_available_mb(&stdout)
 }
 
+#[cfg(not(target_os = "windows"))]
 fn parse_df_available_mb(stdout: &str) -> Option<u64> {
     let line = stdout.lines().rev().find(|line| !line.trim().is_empty())?;
     let avail = line.split_whitespace().nth(3)?;
     avail.parse::<u64>().ok()
+}
+
+#[cfg(target_os = "windows")]
+fn disk_available_mb(path: &Path) -> Option<u64> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
+
+    // GetDiskFreeSpaceExW accepts a directory path and reports the free space on
+    // the volume that contains it. Build a NUL-terminated wide string.
+    let mut wide: Vec<u16> = path.as_os_str().encode_wide().collect();
+    wide.push(0);
+
+    let mut free_bytes_available: u64 = 0;
+    // SAFETY: `wide` is a valid NUL-terminated UTF-16 string for the duration of
+    // the call, and the out-pointers reference live stack storage.
+    let ok = unsafe {
+        GetDiskFreeSpaceExW(
+            wide.as_ptr(),
+            &raw mut free_bytes_available,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    };
+    if ok == 0 {
+        return None;
+    }
+    Some(free_bytes_available / (1024 * 1024))
 }
 
 fn workspace_probe_path(workspace_dir: &Path) -> std::path::PathBuf {
@@ -1409,11 +1442,23 @@ mod tests {
         assert_eq!(git_item.unwrap().severity, Severity::Ok);
     }
 
+    #[cfg(not(target_os = "windows"))]
     #[test]
     fn parse_df_available_mb_uses_last_data_line() {
         let stdout =
             "Filesystem 1M-blocks Used Available Use% Mounted on\n/dev/sda1 1000 500 500 50% /\n";
         assert_eq!(parse_df_available_mb(stdout), Some(500));
+    }
+
+    #[test]
+    fn disk_available_mb_reports_space_for_existing_dir() {
+        // The probe should succeed for a real directory on every supported
+        // platform (Unix via `df`, Windows via GetDiskFreeSpaceExW); a freshly
+        // created temp dir's volume always has at least some free space.
+        let tmp = TempDir::new().unwrap();
+        let avail = disk_available_mb(tmp.path());
+        assert!(avail.is_some(), "disk space probe returned None");
+        assert!(avail.unwrap() > 0, "expected non-zero free space");
     }
 
     #[test]

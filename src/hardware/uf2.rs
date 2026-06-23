@@ -25,6 +25,51 @@ pub const PICO_MAIN_PY: &[u8] = include_bytes!("../../firmware/pico/main.py");
 /// UF2 magic word 1 (little-endian bytes at offset 0 of every UF2 block).
 const UF2_MAGIC1: [u8; 4] = [0x55, 0x46, 0x32, 0x0A];
 
+/// Minimum plausible size for a real MicroPython RPI_PICO UF2. A real image is
+/// hundreds of KB; the bundled placeholder is a single 512-byte block with a
+/// zeroed payload, so this floor reliably rejects the stub (#438). A
+/// magic-only check is not enough — a structurally-valid empty UF2 has correct
+/// magic and would flash zeros over the Pico's flash, bricking the runtime.
+const MIN_REAL_UF2_BYTES: usize = 100 * 1024;
+
+/// Validate that `data` is a *real* UF2 image, not a placeholder: correct magic
+/// AND a plausible size. Returns a clear "supply the real UF2" error otherwise,
+/// so a stub is never written to a Pico (#438).
+fn validate_real_uf2(data: &[u8], source: &str) -> Result<()> {
+    if data.len() < 8 || data[..4] != UF2_MAGIC1 {
+        bail!(
+            "{source} is not a valid UF2 file (magic mismatch). Download the real \
+             MicroPython UF2 from https://micropython.org/download/RPI_PICO/."
+        );
+    }
+    if data.len() < MIN_REAL_UF2_BYTES {
+        bail!(
+            "{source} is a {len}-byte placeholder, not real MicroPython firmware \
+             (a real RPI_PICO UF2 is hundreds of KB). Flashing it would brick the \
+             Pico's runtime. Download the real UF2 from \
+             https://micropython.org/download/RPI_PICO/ and place it at \
+             ~/.revka/firmware/pico/revka-pico.uf2 (existing files are never \
+             overwritten), or replace firmware/pico/revka-pico.uf2 and rebuild Revka.",
+            len = data.len()
+        );
+    }
+    Ok(())
+}
+
+/// True if `main.py` is the placeholder stub — valid UTF-8 whose every non-blank
+/// line is a comment, i.e. it carries no executable serial-protocol handler
+/// (#438). Non-UTF-8 input is not treated as our placeholder.
+fn main_py_is_placeholder(data: &[u8]) -> bool {
+    match std::str::from_utf8(data) {
+        Ok(src) => src
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .all(|line| line.starts_with('#')),
+        Err(_) => false,
+    }
+}
+
 // ── Volume detection ──────────────────────────────────────────────────────────
 
 /// Find the RPI-RP2 mount point if a Pico is connected in BOOTSEL mode.
@@ -70,24 +115,29 @@ pub fn ensure_firmware_dir() -> Result<PathBuf> {
     let firmware_dir = base.home_dir().join(".revka").join("firmware").join("pico");
     std::fs::create_dir_all(&firmware_dir)?;
 
-    // UF2 — validate magic before writing so a broken stub is caught early.
+    // UF2 — only write a real image. The bundled UF2 is a placeholder stub, so
+    // this fails loudly (rather than extracting a brick) until a real UF2 is
+    // dropped in at `uf2_path` (#438).
     let uf2_path = firmware_dir.join("revka-pico.uf2");
     if !uf2_path.exists() {
-        if PICO_UF2.len() < 8 || PICO_UF2[..4] != UF2_MAGIC1 {
-            bail!(
-                "Bundled UF2 is a placeholder — download the real MicroPython UF2 from \
-                 https://micropython.org/download/RPI_PICO/ and place it at \
-                 src/firmware/pico/revka-pico.uf2, then rebuild Revka."
-            );
-        }
+        validate_real_uf2(PICO_UF2, "the bundled UF2")?;
         std::fs::write(&uf2_path, PICO_UF2)?;
         tracing::info!(path = %uf2_path.display(), "extracted bundled UF2");
     }
 
-    // main.py — always check UF2 magic even if path already exists (user may
-    // have placed a stub). main.py has no such check — it's just text.
+    // main.py — only write a real handler. The bundled main.py is a placeholder
+    // stub (comments only), so refuse to extract it until a real serial-protocol
+    // handler is dropped in at `main_py_path` (#438).
     let main_py_path = firmware_dir.join("main.py");
     if !main_py_path.exists() {
+        if main_py_is_placeholder(PICO_MAIN_PY) {
+            bail!(
+                "The bundled main.py is a placeholder with no serial-protocol handler. \
+                 Provide a real MicroPython main.py at {} (existing files are never \
+                 overwritten), or replace firmware/pico/main.py and rebuild Revka.",
+                main_py_path.display()
+            );
+        }
         std::fs::write(&main_py_path, PICO_MAIN_PY)?;
         tracing::info!(path = %main_py_path.display(), "extracted bundled main.py");
     }
@@ -119,16 +169,10 @@ pub async fn flash_uf2(mount_point: &Path, firmware_dir: &Path) -> Result<()> {
         "flashing UF2"
     );
 
-    // Validate UF2 magic before any copy attempt — prevents flashing a stub.
+    // Validate magic AND size before any copy attempt — prevents flashing a
+    // structurally-valid-but-empty placeholder that would brick the Pico (#438).
     let data = std::fs::read(&uf2_src)?;
-    if data.len() < 8 || data[..4] != UF2_MAGIC1 {
-        bail!(
-            "UF2 at {} does not look like a valid UF2 file (magic mismatch). \
-             Download from https://micropython.org/download/RPI_PICO/ and delete \
-             the existing file so Revka can re-extract it.",
-            uf2_src.display()
-        );
-    }
+    validate_real_uf2(&data, &format!("UF2 at {}", uf2_src.display()))?;
 
     // ── Attempt 1: std::fs::copy (works on Linux, sometimes blocked on macOS) ─
     {
@@ -231,7 +275,7 @@ pub async fn wait_for_serial_port(
     let deadline = tokio::time::Instant::now() + timeout;
 
     loop {
-        for pattern in *patterns {
+        for pattern in patterns {
             if let Ok(mut hits) = glob::glob(pattern) {
                 if let Some(Ok(path)) = hits.next() {
                     return Some(path);
@@ -265,6 +309,16 @@ pub async fn deploy_main_py(port: &Path, firmware_dir: &Path) -> Result<()> {
     if !main_py_src.exists() {
         bail!(
             "main.py not found at {} — run ensure_firmware_dir() first",
+            main_py_src.display()
+        );
+    }
+
+    // Refuse to deploy a placeholder stub — it would leave the Pico without a
+    // working serial-protocol handler (#438).
+    if main_py_is_placeholder(&std::fs::read(&main_py_src)?) {
+        bail!(
+            "main.py at {} is a placeholder with no serial-protocol handler. \
+             Replace it with a real MicroPython handler before deploying.",
             main_py_src.display()
         );
     }
@@ -311,17 +365,37 @@ mod tests {
     use super::*;
 
     #[test]
-    fn pico_uf2_has_valid_magic() {
+    fn validate_real_uf2_accepts_real_sized_image() {
+        let mut img = UF2_MAGIC1.to_vec();
+        img.resize(MIN_REAL_UF2_BYTES, 0);
+        assert!(validate_real_uf2(&img, "test").is_ok());
+    }
+
+    #[test]
+    fn validate_real_uf2_rejects_wrong_magic() {
+        let img = vec![0u8; MIN_REAL_UF2_BYTES];
+        let err = validate_real_uf2(&img, "test").unwrap_err().to_string();
+        assert!(err.contains("magic"), "got: {err}");
+    }
+
+    #[test]
+    fn validate_real_uf2_rejects_placeholder_sized_image() {
+        // Correct magic, but only a single 512-byte block — the placeholder shape.
+        let mut img = UF2_MAGIC1.to_vec();
+        img.resize(512, 0);
+        let err = validate_real_uf2(&img, "test").unwrap_err().to_string();
+        assert!(err.contains("placeholder"), "got: {err}");
+    }
+
+    #[test]
+    fn bundled_uf2_is_currently_a_placeholder() {
+        // Tripwire (#438): the bundled UF2 is a zeroed placeholder, so the guard
+        // MUST reject it (it can never be flashed). When a real MicroPython UF2
+        // is bundled, this assertion flips — update it to assert the image is
+        // real (validate_real_uf2(PICO_UF2, ..).is_ok()).
         assert!(
-            PICO_UF2.len() >= 8,
-            "bundled UF2 too small ({} bytes) — replace with real MicroPython UF2",
-            PICO_UF2.len()
-        );
-        assert_eq!(
-            &PICO_UF2[..4],
-            &UF2_MAGIC1,
-            "bundled UF2 has wrong magic — replace with real MicroPython UF2 from \
-             https://micropython.org/download/RPI_PICO/"
+            validate_real_uf2(PICO_UF2, "bundled").is_err(),
+            "bundled UF2 now looks real — replace this tripwire with an is_ok() check"
         );
     }
 
@@ -331,13 +405,22 @@ mod tests {
     }
 
     #[test]
-    fn pico_main_py_contains_revka_marker() {
-        let src = std::str::from_utf8(PICO_MAIN_PY).expect("main.py is not valid UTF-8");
-        let lower = src.to_lowercase();
+    fn bundled_main_py_is_currently_a_placeholder() {
+        // Tripwire (#438): the bundled main.py is a comment-only stub, so the
+        // guard MUST flag it. When a real handler is bundled, flip this to assert
+        // !main_py_is_placeholder(PICO_MAIN_PY).
         assert!(
-            lower.contains("revka"),
-            "main.py should contain 'revka' firmware marker (case-insensitive)"
+            main_py_is_placeholder(PICO_MAIN_PY),
+            "bundled main.py now has executable code — replace this tripwire"
         );
+    }
+
+    #[test]
+    fn main_py_is_placeholder_detects_real_code() {
+        assert!(!main_py_is_placeholder(
+            b"# comment\nimport sys\nprint('hi')\n"
+        ));
+        assert!(main_py_is_placeholder(b"# only\n# comments\n\n"));
     }
 
     #[test]
@@ -405,6 +488,44 @@ mod tests {
         let mount = tempfile::tempdir().expect("create mount dir");
         let result = flash_uf2(mount.path(), firmware_dir).await;
         assert!(result.is_err(), "flash_uf2 should reject too-small UF2");
+    }
+
+    #[tokio::test]
+    async fn flash_uf2_rejects_placeholder_sized_uf2() {
+        // Valid magic but a single 512-byte block (the placeholder shape) must
+        // be rejected on size before any copy attempt (#438).
+        let tmp = tempfile::tempdir().expect("create temp dir");
+        let firmware_dir = tmp.path();
+        let mut stub = UF2_MAGIC1.to_vec();
+        stub.resize(512, 0);
+        std::fs::write(firmware_dir.join("revka-pico.uf2"), &stub).unwrap();
+
+        let mount = tempfile::tempdir().expect("create mount dir");
+        let err = flash_uf2(mount.path(), firmware_dir)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("placeholder"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn deploy_main_py_rejects_placeholder() {
+        // A comment-only main.py must fail loudly rather than deploying a no-op
+        // handler to the Pico (#438).
+        let tmp = tempfile::tempdir().expect("create temp dir");
+        let firmware_dir = tmp.path();
+        std::fs::write(
+            firmware_dir.join("main.py"),
+            b"# Placeholder: replace with real firmware\n",
+        )
+        .unwrap();
+
+        let port = std::path::Path::new("/dev/ttyACM_fake_test");
+        let err = deploy_main_py(port, firmware_dir)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("placeholder"), "got: {err}");
     }
 
     #[tokio::test]

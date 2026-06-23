@@ -89,6 +89,23 @@ async def _check_gateway_budget_before_spawn() -> dict[str, Any] | None:
     return await check_agent_budget(REVKA_GW)
 
 
+def _coerce_trusted(value: Any) -> bool:
+    """Resolve the ``trusted`` flag: trusted unless explicitly falsy.
+
+    JSON booleans pass through. A stringified ``"false"``/``"0"``/``"no"``
+    (a common client mistake) is treated as untrusted rather than silently
+    coerced to True by ``bool("false")`` — this gates a security control, so
+    a malformed negative must not fail open.
+    """
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return value.strip().lower() not in {"false", "0", "no", ""}
+    return bool(value)
+
+
 async def _try_sidecar_create(
     agent_id: str,
     agent_type: str,
@@ -96,6 +113,7 @@ async def _try_sidecar_create(
     cwd: str,
     prompt: str,
     *,
+    trusted: bool = True,
     parent_id: str | None = None,
     role_identity: str = "",
     template_hint: str = "",
@@ -179,6 +197,13 @@ async def _try_sidecar_create(
         config["allowedTools"] = allowed_tools
     if max_turns != 200:
         config["maxTurns"] = max_turns
+
+    # #459: forward an explicit untrusted marker so the session-manager spawn
+    # gate (codexSpawnRefusal) can refuse permission-bypassing CLIs. Sent only
+    # when False — leaving it absent preserves the Claude SDK gate (claude.ts
+    # gates on trusted !== true) and the non-breaking trusted-by-default.
+    if not trusted:
+        config["trusted"] = False
 
     # Inject clean env overrides for sidecar-spawned processes
     if clean_build or node_env != "development":
@@ -309,6 +334,7 @@ async def tool_create_agent(args: dict[str, Any], journal: SessionJournal, pool_
         title=title,
         cwd=cwd,
         status="idle",
+        trusted=_coerce_trusted(args.get("trusted", True)),
     )
     AGENTS[agent_id] = agent
 
@@ -379,6 +405,7 @@ async def tool_create_agent(args: dict[str, Any], journal: SessionJournal, pool_
             clean_build=clean_build,
             node_env=node_env,
             skip_budget_check=True,
+            trusted=agent.trusted,
         )
         if sidecar_info:
             agent.status = "running"
