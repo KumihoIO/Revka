@@ -1,0 +1,7 @@
+# Dependencies (installed via npm; not vendored)
+node_modules/
+
+# Throwaway test build output (see tsconfig.test.json). The production build
+# output in dist/ IS committed and shipped (see Dockerfile), so tests are
+# compiled to a separate, ignored directory to keep dist/ clean.
+dist-test/

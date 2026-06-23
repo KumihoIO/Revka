@@ -17,6 +17,8 @@ pub struct WatiChannel {
     allowed_numbers: Vec<String>,
     client: reqwest::Client,
     transcription_manager: Option<std::sync::Arc<super::transcription::TranscriptionManager>>,
+    /// Optional inbound shared secret for `/wati` webhook verification (#403).
+    webhook_secret: Option<String>,
 }
 
 impl WatiChannel {
@@ -43,7 +45,27 @@ impl WatiChannel {
             allowed_numbers,
             client: crate::config::build_channel_proxy_client("channel.wati", proxy_url.as_deref()),
             transcription_manager: None,
+            webhook_secret: None,
         }
+    }
+
+    /// Set an inbound shared secret for `/wati` webhook verification (#403).
+    /// Empty/whitespace secrets are treated as unset.
+    pub fn with_webhook_secret(mut self, secret: Option<String>) -> Self {
+        self.webhook_secret = secret.filter(|s| !s.trim().is_empty());
+        self
+    }
+
+    /// Verify an inbound webhook request's shared secret. WATI has no native
+    /// HMAC: when a secret is configured we require a matching
+    /// `X-Revka-Webhook-Secret` header (constant-time compared); when none is
+    /// configured this returns `true` (unauthenticated — surfaced by a startup
+    /// warning), since `allowed_numbers` is authorization, not authentication.
+    pub fn verify_inbound_secret(&self, provided: Option<&str>) -> bool {
+        let Some(ref expected) = self.webhook_secret else {
+            return true;
+        };
+        provided.is_some_and(|p| crate::security::pairing::constant_time_eq(p, expected.as_str()))
     }
 
     pub fn with_transcription(mut self, config: crate::config::TranscriptionConfig) -> Self {
@@ -445,6 +467,7 @@ mod tests {
             allowed_numbers: vec!["+1234567890".into()],
             client: reqwest::Client::new(),
             transcription_manager: None,
+            webhook_secret: None,
         }
     }
 
@@ -456,6 +479,7 @@ mod tests {
             allowed_numbers: vec!["*".into()],
             client: reqwest::Client::new(),
             transcription_manager: None,
+            webhook_secret: None,
         }
     }
 
@@ -488,6 +512,7 @@ mod tests {
             allowed_numbers: vec![],
             client: reqwest::Client::new(),
             transcription_manager: None,
+            webhook_secret: None,
         };
         assert!(!ch.is_number_allowed("+1234567890"));
     }
@@ -501,6 +526,7 @@ mod tests {
             allowed_numbers: vec![],
             client: reqwest::Client::new(),
             transcription_manager: None,
+            webhook_secret: None,
         };
         assert_eq!(ch.build_target("+1234567890"), "tenant1:1234567890");
     }
@@ -520,6 +546,7 @@ mod tests {
             allowed_numbers: vec![],
             client: reqwest::Client::new(),
             transcription_manager: None,
+            webhook_secret: None,
         };
         // If the phone already has the tenant prefix, don't double it
         assert_eq!(ch.build_target("tenant1:1234567890"), "tenant1:1234567890");
@@ -635,6 +662,7 @@ mod tests {
             allowed_numbers: vec!["+1234567890".into()],
             client: reqwest::Client::new(),
             transcription_manager: None,
+            webhook_secret: None,
         };
 
         // Phone without + prefix
@@ -1061,5 +1089,40 @@ mod tests {
 
         let result = ch.try_transcribe_audio(&payload).await;
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn wati_verify_inbound_secret_unset_accepts_anything() {
+        // No secret configured -> inbound verification is a pass-through
+        // (authentication is opt-in; allowed_numbers still authorizes).
+        let ch = make_channel();
+        assert!(ch.verify_inbound_secret(None));
+        assert!(ch.verify_inbound_secret(Some("anything")));
+        assert!(ch.verify_inbound_secret(Some("")));
+    }
+
+    #[test]
+    fn wati_verify_inbound_secret_set_requires_match() {
+        let ch = make_channel().with_webhook_secret(Some("s3cr3t".into()));
+        // Matching header passes; wrong/missing header is rejected.
+        assert!(ch.verify_inbound_secret(Some("s3cr3t")));
+        assert!(!ch.verify_inbound_secret(Some("wrong")));
+        assert!(!ch.verify_inbound_secret(Some("")));
+        assert!(!ch.verify_inbound_secret(None));
+    }
+
+    #[test]
+    fn wati_with_webhook_secret_treats_blank_as_unset() {
+        // Empty and whitespace-only secrets are normalized to "no secret",
+        // so verification stays in pass-through mode rather than rejecting
+        // every request against a degenerate key.
+        let ch_empty = make_channel().with_webhook_secret(Some(String::new()));
+        assert!(ch_empty.verify_inbound_secret(None));
+
+        let ch_ws = make_channel().with_webhook_secret(Some("   ".into()));
+        assert!(ch_ws.verify_inbound_secret(None));
+
+        let ch_none = make_channel().with_webhook_secret(None);
+        assert!(ch_none.verify_inbound_secret(None));
     }
 }

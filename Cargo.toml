@@ -34,7 +34,7 @@ phf_generator = { path = "vendor/security-patches/phf_generator-0.8.0" }
 
 [package]
 name = "revka"
-version = "2026.6.20"
+version = "2026.6.22"
 edition = "2024"
 authors = ["Kumiho Inc."]
 license = "MIT OR Apache-2.0"
@@ -96,6 +96,9 @@ serde_json = { version = "1.0", default-features = false, features = ["std"] }
 directories = "6.0"
 toml = "1.0"
 shellexpand = "3.1"
+# Diagnostics-only: report unknown/typo'd config keys (#416). Drives the real
+# Deserialize impl, so it honors serde alias/rename/deny_unknown_fields.
+serde_ignored = "0.1"
 
 # JSON Schema generation for config export
 schemars = "1.2"
@@ -210,7 +213,6 @@ nostr-sdk = { version = "0.44", default-features = false, features = ["nip04", "
 regex = "1.10"
 hostname = "0.4.2"
 rustls = "0.23"
-rustls-pemfile = "2"
 rustls-pki-types = "1.14.1"
 tokio-rustls = "0.26.4"
 webpki-roots = "1.0.6"
@@ -277,6 +279,10 @@ landlock = { version = "0.4", optional = true }
 # Unix-specific dependencies (for root check, etc.)
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+# Windows-specific dependencies (free-disk-space query for `revka doctor`, etc.)
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
 
 [features]
 default = ["observability-prometheus", "skill-creation"]

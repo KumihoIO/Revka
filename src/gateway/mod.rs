@@ -106,6 +106,13 @@ pub const RATE_LIMIT_MAX_KEYS_DEFAULT: usize = 10_000;
 /// Fallback max distinct idempotency keys retained in gateway memory.
 pub const IDEMPOTENCY_MAX_KEYS_DEFAULT: usize = 10_000;
 
+/// Idle TTL for per-session serialization slots. Slots untouched for this long
+/// (with no in-flight turn) are reclaimed by the background sweeper.
+pub const SESSION_QUEUE_IDLE_TTL_SECS: u64 = 600;
+/// How often the background sweeper calls `evict_idle()` to reclaim leaked
+/// session slots. Half the idle TTL keeps reclamation timely without churn.
+pub const SESSION_QUEUE_SWEEP_INTERVAL_SECS: u64 = SESSION_QUEUE_IDLE_TTL_SECS / 2;
+
 fn webhook_memory_key() -> String {
     format!("webhook_msg_{}", Uuid::new_v4())
 }
@@ -483,9 +490,125 @@ impl AppState {
     }
 }
 
+/// How often the tunnel supervisor probes `health_check()` (#427).
+const TUNNEL_HEALTH_CHECK_INTERVAL_SECS: u64 = 30;
+
+/// Supervise an already-started tunnel for the lifetime of the gateway (#427).
+///
+/// The tunnel was previously fire-and-forget: started once and never monitored,
+/// so a post-startup crash of `cloudflared`/`ngrok`/etc. silently took the
+/// public URL offline with no restart and no health signal, and it was never
+/// stopped on shutdown. This mirrors the channel supervisor: it probes
+/// `health_check()` on an interval, restarts (`stop()` then `start()`) with
+/// exponential backoff on failure, and feeds status into `crate::health`.
+///
+/// On shutdown (the watch flips to `true`, or the sender is dropped) it stops
+/// the tunnel and exits — including from inside the backoff wait, so it never
+/// lingers for a full backoff. The caller awaits the returned handle on the
+/// gateway's own (HTTP-admin) shutdown path (as it does for the MCP task) so
+/// the async `stop()` completes cleanly.
+///
+/// On abrupt paths the gateway future is cancelled before that await runs
+/// (notably `revka daemon` SIGTERM, which `abort()`s components). Teardown then
+/// falls to the tunnel backend's `Drop`: child-process backends are reaped via
+/// `kill_on_drop`, and `TailscaleTunnel::drop` resets its funnel synchronously
+/// (its exposure lives in `tailscaled`, so `kill_on_drop` alone is insufficient).
+fn spawn_tunnel_supervisor(
+    tunnel: Box<dyn crate::tunnel::Tunnel>,
+    host: String,
+    port: u16,
+    check_interval: Duration,
+    initial_backoff_secs: u64,
+    max_backoff_secs: u64,
+    mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
+) -> tokio::task::JoinHandle<()> {
+    let check_interval = if check_interval.is_zero() {
+        Duration::from_secs(TUNNEL_HEALTH_CHECK_INTERVAL_SECS)
+    } else {
+        check_interval
+    };
+
+    tokio::spawn(async move {
+        let component = format!("tunnel:{}", tunnel.name());
+        let mut backoff = initial_backoff_secs.max(1);
+        let max_backoff = max_backoff_secs.max(backoff);
+        crate::health::mark_component_ok(&component);
+
+        loop {
+            // Wait for the next health probe, but wake immediately on shutdown.
+            tokio::select! {
+                changed = shutdown_rx.changed() => {
+                    // `Err` means the gateway dropped the sender (it is going
+                    // away); `Ok` with a `true` value is an explicit shutdown.
+                    if changed.is_err() || *shutdown_rx.borrow() {
+                        match tunnel.stop().await {
+                            Ok(()) => tracing::info!(component = %component, "Tunnel stopped on shutdown"),
+                            Err(e) => tracing::warn!(component = %component, error = %e, "Tunnel stop on shutdown failed"),
+                        }
+                        return;
+                    }
+                    continue;
+                }
+                () = tokio::time::sleep(check_interval) => {}
+            }
+
+            if tunnel.health_check().await {
+                crate::health::mark_component_ok(&component);
+                backoff = initial_backoff_secs.max(1);
+                continue;
+            }
+
+            tracing::warn!(component = %component, "Tunnel health check failed; restarting");
+            crate::health::mark_component_error(&component, "tunnel health check failed");
+            let _ = tunnel.stop().await;
+            crate::health::bump_component_restart(&component);
+
+            // Back off before restarting, but stay responsive to shutdown. The
+            // tunnel is already stopped here, so a shutdown just exits.
+            tokio::select! {
+                changed = shutdown_rx.changed() => {
+                    if changed.is_err() || *shutdown_rx.borrow() {
+                        tracing::info!(component = %component, "Tunnel stopped on shutdown");
+                        return;
+                    }
+                }
+                () = tokio::time::sleep(Duration::from_secs(backoff)) => {}
+            }
+
+            match tunnel.start(&host, port).await {
+                Ok(url) => {
+                    tracing::info!(component = %component, url = %url, "Tunnel restarted");
+                    crate::health::mark_component_ok(&component);
+                    backoff = initial_backoff_secs.max(1);
+                }
+                Err(e) => {
+                    tracing::error!(component = %component, error = %e, "Tunnel restart failed; will retry");
+                    crate::health::mark_component_error(&component, e.to_string());
+                    backoff = backoff.saturating_mul(2).min(max_backoff);
+                }
+            }
+        }
+    })
+}
+
 /// Run the HTTP gateway using axum with proper HTTP/1.1 compliance.
 pub async fn run_gateway(host: &str, port: u16, config: Config) -> Result<()> {
     Box::pin(run_gateway_with_mcp_registry(host, port, config, None)).await
+}
+
+/// True when disabling pairing would expose unauthenticated endpoints off-host (#385).
+///
+/// `require_pairing = false` makes every per-handler auth check short-circuit to
+/// "allow", so it is only safe when the gateway is reachable from the local host
+/// alone — i.e. a loopback bind with no tunnel. A non-loopback bind or any
+/// configured tunnel makes those surfaces remotely reachable, so the combination
+/// is refused at startup.
+fn pairing_disabled_on_exposed_bind(
+    require_pairing: bool,
+    host: &str,
+    tunnel_provider: &str,
+) -> bool {
+    !require_pairing && (is_public_bind(host) || tunnel_provider != "none")
 }
 
 /// Run the HTTP gateway, optionally reusing a daemon-owned MCP registry.
@@ -504,6 +627,35 @@ pub async fn run_gateway_with_mcp_registry(
              Suggestion: use --host 127.0.0.1 (default), configure a tunnel, or set\n\
              [gateway] allow_public_bind = true in config.toml to silence this warning.\n\n\
              Docker/VM: if you are running inside a container or VM, this is expected."
+        );
+    }
+
+    // ── Security: couple the pairing toggle to bind exposure (#385) ──
+    //
+    // `require_pairing = false` short-circuits every per-handler `require_auth`
+    // and `is_authenticated` check to "allow", so disabling pairing opens every
+    // gated surface — including high-value WS/SSE endpoints (agent chat, MCP
+    // events, node discovery, event stream). On a loopback-only bind that is the
+    // operator's deliberate local opt-out, but the two toggles are otherwise
+    // uncoupled: nothing stops an operator from pairing-disabling a gateway that
+    // is reachable off-host (a non-loopback bind, or any tunnel), which silently
+    // exposes those surfaces to the network with no auth. Refuse to start in
+    // that combination rather than ship an unauthenticated remote surface.
+    if pairing_disabled_on_exposed_bind(
+        config.gateway.require_pairing,
+        host,
+        &config.tunnel.provider,
+    ) {
+        anyhow::bail!(
+            "Refusing to start: [gateway] require_pairing = false leaves every endpoint \
+             unauthenticated, but the gateway is reachable off-host (bind {host}{}). \
+             Re-enable pairing (require_pairing = true) or bind to loopback (--host 127.0.0.1) \
+             with no tunnel.",
+            if config.tunnel.provider != "none" {
+                format!(", tunnel '{}'", config.tunnel.provider)
+            } else {
+                String::new()
+            }
         );
     }
     let config_state = Arc::new(Mutex::new(config.clone()));
@@ -770,6 +922,24 @@ pub async fn run_gateway_with_mcp_registry(
         })
         .map(Arc::from);
 
+    // #403: surface the unsigned-acceptance state. A Cloud-API WhatsApp webhook
+    // (verify_token set) with no app_secret accepts unverified inbound POSTs that
+    // flow into the agent — make that a loud, visible choice rather than silent.
+    if config
+        .channels_config
+        .whatsapp
+        .as_ref()
+        .is_some_and(|wa| wa.is_cloud_config())
+        && whatsapp_app_secret.is_none()
+    {
+        tracing::warn!(
+            "WhatsApp Cloud webhook is configured (verify_token set) but no app_secret \
+             (REVKA_WHATSAPP_APP_SECRET or [channels_config.whatsapp].app_secret) — inbound \
+             webhooks are NOT signature-verified; any caller can POST messages that trigger the \
+             agent. Set app_secret to require X-Hub-Signature-256 verification."
+        );
+    }
+
     // Linq channel (if configured)
     let linq_channel: Option<Arc<LinqChannel>> = config.channels_config.linq.as_ref().map(|lq| {
         Arc::new(LinqChannel::new(
@@ -808,9 +978,24 @@ pub async fn run_gateway_with_mcp_registry(
                     wati_cfg.tenant_id.clone(),
                     wati_cfg.allowed_numbers.clone(),
                 )
-                .with_transcription(config.transcription.clone()),
+                .with_transcription(config.transcription.clone())
+                .with_webhook_secret(wati_cfg.webhook_secret.clone()),
             )
         });
+
+    // #403: surface the unsigned-acceptance state for WATI (no native HMAC).
+    if config.channels_config.wati.as_ref().is_some_and(|w| {
+        w.webhook_secret
+            .as_deref()
+            .is_none_or(|s| s.trim().is_empty())
+    }) {
+        tracing::warn!(
+            "WATI channel enabled without webhook_secret — inbound /wati webhooks are \
+             UNAUTHENTICATED (only the spoofable waId / allowed_numbers filter applies). Set \
+             [channels_config.wati].webhook_secret and have your WATI/proxy send the \
+             X-Revka-Webhook-Secret header."
+        );
+    }
 
     // Nextcloud Talk channel (if configured)
     let nextcloud_talk_channel: Option<Arc<NextcloudTalkChannel>> =
@@ -946,13 +1131,19 @@ pub async fn run_gateway_with_mcp_registry(
     // ── Tunnel ────────────────────────────────────────────────
     let tunnel = crate::tunnel::create_tunnel(&config.tunnel)?;
     let mut tunnel_url: Option<String> = None;
+    // Holds the successfully-started tunnel so it can be moved into the
+    // supervisor task below (started once a shutdown channel exists). A tunnel
+    // whose initial start failed is dropped here, preserving the prior
+    // local-only fallback.
+    let mut running_tunnel: Option<Box<dyn crate::tunnel::Tunnel>> = None;
 
-    if let Some(ref tun) = tunnel {
+    if let Some(tun) = tunnel {
         println!("🔗 Starting {} tunnel...", tun.name());
         match tun.start(host, actual_port).await {
             Ok(url) => {
                 println!("🌐 Tunnel active: {url}");
                 tunnel_url = Some(url);
+                running_tunnel = Some(tun);
             }
             Err(e) => {
                 println!("⚠️  Tunnel failed to start: {e}");
@@ -1014,14 +1205,33 @@ pub async fn run_gateway_with_mcp_registry(
         hooks.fire_gateway_start(host, actual_port).await;
     }
 
-    // Wrap observer with broadcast capability for SSE
+    // Wrap the process-global observer with broadcast capability for SSE.
+    // Every other entry point (agent, channels, daemon, interactive loop)
+    // records into this same shared observer, so `/metrics` gathers the one
+    // registry all telemetry feeds (#455).
     let broadcast_observer: Arc<dyn crate::observability::Observer> =
         Arc::new(sse::BroadcastObserver::new(
-            crate::observability::create_observer(&config.observability),
+            crate::observability::get_or_init_global(&config.observability),
             event_tx.clone(),
         ));
 
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
+
+    // Supervise the running tunnel: health-check + restart with backoff, and a
+    // graceful stop on shutdown (#427). Reuses the channel-restart backoff
+    // bounds for consistency with the channel supervisor. The handle is awaited
+    // on the shutdown path below (like `mcp_task`) so the tunnel stop completes.
+    let tunnel_task = running_tunnel.take().map(|tun| {
+        spawn_tunnel_supervisor(
+            tun,
+            host.to_string(),
+            actual_port,
+            Duration::from_secs(TUNNEL_HEALTH_CHECK_INTERVAL_SECS),
+            config.reliability.channel_initial_backoff_secs,
+            config.reliability.channel_max_backoff_secs,
+            shutdown_tx.subscribe(),
+        )
+    });
 
     // Node registry for dynamic node discovery
     let node_registry = Arc::new(nodes::NodeRegistry::new(config.nodes.max_nodes));
@@ -1239,7 +1449,7 @@ pub async fn run_gateway_with_mcp_registry(
         session_queue: Arc::new(session_queue::SessionActorQueue::new(
             8,
             session_queue::session_lock_timeout_secs(),
-            600,
+            SESSION_QUEUE_IDLE_TTL_SECS,
         )),
         device_registry,
         pending_pairings,
@@ -1276,6 +1486,43 @@ pub async fn run_gateway_with_mcp_registry(
             None
         },
     };
+
+    // ── Session-queue idle sweeper ──────────────────────────────────────
+    //
+    // `SessionActorQueue` lazily mints one slot per distinct session key and
+    // never reclaims it on its own — `evict_idle()` exists but has no caller in
+    // the runtime, so the map grows unbounded over the daemon's lifetime as new
+    // chat/channel/user pairings churn through. Spawn a periodic sweeper tied to
+    // the shutdown signal that reclaims slots idle past their TTL.
+    {
+        let session_queue = Arc::clone(&state.session_queue);
+        let mut shutdown_rx = state.shutdown_tx.subscribe();
+        drop(tokio::spawn(async move {
+            let interval = Duration::from_secs(SESSION_QUEUE_SWEEP_INTERVAL_SECS);
+            loop {
+                tokio::select! {
+                    changed = shutdown_rx.changed() => {
+                        // `Err` means the sender was dropped (gateway going
+                        // away); `Ok` with `true` is an explicit shutdown.
+                        if changed.is_err() || *shutdown_rx.borrow() {
+                            return;
+                        }
+                        continue;
+                    }
+                    () = tokio::time::sleep(interval) => {}
+                }
+
+                let reclaimed = session_queue.evict_idle().await;
+                if reclaimed > 0 {
+                    tracing::debug!(
+                        target: "gateway",
+                        reclaimed,
+                        "reclaimed idle session-queue slots"
+                    );
+                }
+            }
+        }));
+    }
 
     // ── Skill effectiveness cache ───────────────────────────────────────
     //
@@ -2172,6 +2419,13 @@ pub async fn run_gateway_with_mcp_registry(
         let _ = task.await;
     }
 
+    // Wait for the tunnel supervisor to stop the tunnel gracefully (#427). It
+    // watches the same `shutdown_tx`; awaiting it here guarantees `stop()`
+    // (e.g. Tailscale's `funnel reset`) completes before we return.
+    if let Some(task) = tunnel_task {
+        let _ = task.await;
+    }
+
     Ok(())
 }
 
@@ -2199,24 +2453,35 @@ fn prometheus_disabled_hint() -> String {
     )
 }
 
+/// Locate the active [`PrometheusObserver`] inside whatever observer the gateway
+/// installed at startup. The observer may be wrapped: `BroadcastObserver` wraps
+/// the process-global observer for SSE, and a multi-backend config
+/// (e.g. `backend = "prometheus,otel"`) builds a `MultiObserver` that fans out
+/// to several backends. The scrape target can therefore sit one or more layers
+/// deep (`BroadcastObserver` -> `MultiObserver` -> `PrometheusObserver`), so we
+/// descend through both wrappers recursively (#458).
 #[cfg(feature = "observability-prometheus")]
 fn prometheus_observer_from_state(
     observer: &dyn crate::observability::Observer,
 ) -> Option<&crate::observability::PrometheusObserver> {
-    observer
-        .as_any()
-        .downcast_ref::<crate::observability::PrometheusObserver>()
-        .or_else(|| {
-            observer
-                .as_any()
-                .downcast_ref::<sse::BroadcastObserver>()
-                .and_then(|broadcast| {
-                    broadcast
-                        .inner()
-                        .as_any()
-                        .downcast_ref::<crate::observability::PrometheusObserver>()
-                })
-        })
+    let any = observer.as_any();
+
+    if let Some(prom) = any.downcast_ref::<crate::observability::PrometheusObserver>() {
+        return Some(prom);
+    }
+
+    if let Some(broadcast) = any.downcast_ref::<sse::BroadcastObserver>() {
+        return prometheus_observer_from_state(broadcast.inner());
+    }
+
+    if let Some(multi) = any.downcast_ref::<crate::observability::MultiObserver>() {
+        return multi
+            .observers()
+            .iter()
+            .find_map(|inner| prometheus_observer_from_state(inner.as_ref()));
+    }
+
+    None
 }
 
 /// GET /metrics — Prometheus text exposition format
@@ -2958,13 +3223,30 @@ pub struct WatiVerifyQuery {
 }
 
 /// POST /wati — incoming WATI WhatsApp message webhook
-async fn handle_wati_webhook(State(state): State<AppState>, body: Bytes) -> impl IntoResponse {
+async fn handle_wati_webhook(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> impl IntoResponse {
     let Some(ref wati) = state.wati else {
         return (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({"error": "WATI not configured"})),
         );
     };
+
+    // #403: when an inbound webhook_secret is configured, require a matching
+    // X-Revka-Webhook-Secret header (WATI has no native HMAC).
+    let provided_secret = headers
+        .get("x-revka-webhook-secret")
+        .and_then(|v| v.to_str().ok());
+    if !wati.verify_inbound_secret(provided_secret) {
+        tracing::warn!("WATI webhook: missing/invalid X-Revka-Webhook-Secret, rejecting request");
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({"error": "Invalid or missing webhook secret"})),
+        );
+    }
 
     // Parse JSON body
     let Ok(payload) = serde_json::from_slice::<serde_json::Value>(&body) else {
@@ -3188,21 +3470,30 @@ async fn handle_gmail_push_webhook(
     }
 
     // Authenticate the webhook request using a shared secret.
+    // An unconfigured secret is a misconfiguration, not open access: reject so
+    // the endpoint is never silently unauthenticated.
     let secret = gmail_push.resolve_webhook_secret();
-    if !secret.is_empty() {
-        let provided = headers
-            .get(axum::http::header::AUTHORIZATION)
-            .and_then(|v| v.to_str().ok())
-            .and_then(|auth| auth.strip_prefix("Bearer "))
-            .unwrap_or("");
+    if secret.is_empty() {
+        tracing::error!(
+            "Gmail push webhook: no shared secret configured (set GMAIL_PUSH_WEBHOOK_SECRET); rejecting request"
+        );
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({"error": "Unauthorized"})),
+        );
+    }
+    let provided = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|auth| auth.strip_prefix("Bearer "))
+        .unwrap_or("");
 
-        if provided != secret {
-            tracing::warn!("Gmail push webhook: unauthorized request");
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(serde_json::json!({"error": "Unauthorized"})),
-            );
-        }
+    if !constant_time_eq(provided, &secret) {
+        tracing::warn!("Gmail push webhook: unauthorized request");
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({"error": "Unauthorized"})),
+        );
     }
 
     let body_str = String::from_utf8_lossy(&body);
@@ -3377,6 +3668,144 @@ mod tests {
     use parking_lot::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    // ── #427: tunnel supervisor ───────────────────────────────
+    struct MockTunnel {
+        healthy: std::sync::atomic::AtomicBool,
+        start_calls: Arc<AtomicUsize>,
+        stop_calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl crate::tunnel::Tunnel for MockTunnel {
+        fn name(&self) -> &str {
+            "mock"
+        }
+        async fn start(&self, _host: &str, _port: u16) -> Result<String> {
+            self.start_calls.fetch_add(1, Ordering::SeqCst);
+            // A successful (re)start makes the tunnel healthy again.
+            self.healthy.store(true, Ordering::SeqCst);
+            Ok("https://mock.tunnel.test".to_string())
+        }
+        async fn stop(&self) -> Result<()> {
+            self.stop_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+        async fn health_check(&self) -> bool {
+            self.healthy.load(Ordering::SeqCst)
+        }
+        fn public_url(&self) -> Option<String> {
+            Some("https://mock.tunnel.test".to_string())
+        }
+    }
+
+    #[tokio::test]
+    async fn tunnel_supervisor_stops_tunnel_on_shutdown() {
+        let stop_calls = Arc::new(AtomicUsize::new(0));
+        let tunnel = Box::new(MockTunnel {
+            healthy: std::sync::atomic::AtomicBool::new(true),
+            start_calls: Arc::new(AtomicUsize::new(0)),
+            stop_calls: stop_calls.clone(),
+        });
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        // Long health interval so the task parks on the shutdown arm.
+        let handle = spawn_tunnel_supervisor(
+            tunnel,
+            "127.0.0.1".to_string(),
+            8080,
+            Duration::from_secs(3600),
+            1,
+            60,
+            shutdown_rx,
+        );
+
+        shutdown_tx.send(true).unwrap();
+        tokio::time::timeout(Duration::from_secs(5), handle)
+            .await
+            .expect("supervisor should exit on shutdown")
+            .expect("supervisor task should not panic");
+        assert_eq!(stop_calls.load(Ordering::SeqCst), 1);
+    }
+
+    // ── #385: refuse pairing-disable on an exposed bind ───────
+    #[test]
+    fn pairing_enabled_is_always_allowed() {
+        // require_pairing = true never trips the guard, regardless of exposure.
+        assert!(!pairing_disabled_on_exposed_bind(true, "0.0.0.0", "ngrok"));
+        assert!(!pairing_disabled_on_exposed_bind(true, "127.0.0.1", "none"));
+    }
+
+    #[test]
+    fn pairing_disabled_on_loopback_no_tunnel_is_allowed() {
+        // Local-only opt-out: loopback bind with no tunnel stays permitted.
+        assert!(!pairing_disabled_on_exposed_bind(
+            false,
+            "127.0.0.1",
+            "none"
+        ));
+        assert!(!pairing_disabled_on_exposed_bind(
+            false,
+            "localhost",
+            "none"
+        ));
+        assert!(!pairing_disabled_on_exposed_bind(false, "::1", "none"));
+    }
+
+    #[test]
+    fn pairing_disabled_on_public_bind_is_refused() {
+        assert!(pairing_disabled_on_exposed_bind(false, "0.0.0.0", "none"));
+        assert!(pairing_disabled_on_exposed_bind(
+            false,
+            "192.168.1.10",
+            "none"
+        ));
+    }
+
+    #[test]
+    fn pairing_disabled_with_tunnel_is_refused_even_on_loopback() {
+        // A tunnel makes a loopback bind remotely reachable.
+        assert!(pairing_disabled_on_exposed_bind(
+            false,
+            "127.0.0.1",
+            "cloudflare"
+        ));
+    }
+
+    #[tokio::test]
+    async fn tunnel_supervisor_restarts_on_health_failure() {
+        let start_calls = Arc::new(AtomicUsize::new(0));
+        let stop_calls = Arc::new(AtomicUsize::new(0));
+        let tunnel = Box::new(MockTunnel {
+            healthy: std::sync::atomic::AtomicBool::new(false), // dead from the first check
+            start_calls: start_calls.clone(),
+            stop_calls: stop_calls.clone(),
+        });
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let handle = spawn_tunnel_supervisor(
+            tunnel,
+            "127.0.0.1".to_string(),
+            8080,
+            Duration::from_millis(10),
+            1,
+            1,
+            shutdown_rx,
+        );
+
+        // Wait for at least one restart: stop -> backoff(1s) -> start.
+        let mut restarted = false;
+        for _ in 0..40 {
+            if start_calls.load(Ordering::SeqCst) >= 1 {
+                restarted = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        assert!(restarted, "supervisor should restart a dead tunnel");
+        assert!(stop_calls.load(Ordering::SeqCst) >= 1);
+
+        shutdown_tx.send(true).unwrap();
+        let _ = tokio::time::timeout(Duration::from_secs(5), handle).await;
+    }
+
     /// Generate a random hex secret at runtime to avoid hard-coded cryptographic values.
     fn generate_test_secret() -> String {
         let bytes: [u8; 32] = rand::random();
@@ -3496,7 +3925,7 @@ mod tests {
     async fn metrics_endpoint_renders_prometheus_output() {
         let event_tx = tokio::sync::broadcast::channel(16).0;
         let wrapped = sse::BroadcastObserver::new(
-            Box::new(crate::observability::PrometheusObserver::new()),
+            Arc::new(crate::observability::PrometheusObserver::new()),
             event_tx.clone(),
         );
         crate::observability::Observer::record_event(
@@ -3556,6 +3985,87 @@ mod tests {
         let body = response.into_body().collect().await.unwrap().to_bytes();
         let text = String::from_utf8(body.to_vec()).unwrap();
         assert!(text.contains("revka_heartbeat_ticks_total 1"));
+    }
+
+    /// A multi-backend config (e.g. `backend = "prometheus,otel"`) builds a
+    /// `MultiObserver`, which the gateway then wraps in a `BroadcastObserver`.
+    /// `/metrics` must still find the nested `PrometheusObserver` and render the
+    /// real exposition rather than the "backend not enabled" hint (#458).
+    #[cfg(feature = "observability-prometheus")]
+    #[tokio::test]
+    async fn metrics_endpoint_renders_prometheus_output_when_nested_in_multi() {
+        let event_tx = tokio::sync::broadcast::channel(16).0;
+        // Mirror the startup wrapping for a multi config containing prometheus:
+        // BroadcastObserver { MultiObserver { [PrometheusObserver, <other>] } }.
+        let multi = crate::observability::MultiObserver::new(vec![
+            Box::new(crate::observability::PrometheusObserver::new()),
+            Box::new(crate::observability::NoopObserver),
+        ]);
+        let wrapped = sse::BroadcastObserver::new(Arc::new(multi), event_tx.clone());
+        crate::observability::Observer::record_event(
+            &wrapped,
+            &crate::observability::ObserverEvent::HeartbeatTick,
+        );
+
+        let observer: Arc<dyn crate::observability::Observer> = Arc::new(wrapped);
+        let state = AppState {
+            config: Arc::new(Mutex::new(Config::default())),
+            provider: Arc::new(MockProvider::default()),
+            model: "test-model".into(),
+            temperature: 0.0,
+            mem: Arc::new(MockMemory),
+            auto_save: false,
+            webhook_secret_hash: None,
+            pairing: Arc::new(PairingGuard::new(false, &[])),
+            trust_forwarded_headers: false,
+            rate_limiter: Arc::new(GatewayRateLimiter::new(100, 100, 100)),
+            auth_limiter: Arc::new(auth_rate_limit::AuthRateLimiter::new()),
+            idempotency_store: Arc::new(IdempotencyStore::new(Duration::from_secs(300), 1000)),
+            whatsapp: None,
+            whatsapp_app_secret: None,
+            linq: None,
+            linq_signing_secret: None,
+            nextcloud_talk: None,
+            nextcloud_talk_webhook_secret: None,
+            wati: None,
+            gmail_push: None,
+            observer,
+            tools_registry: Arc::new(Vec::new()),
+            cost_tracker: None,
+            audit_logger: None,
+            event_tx,
+            shutdown_tx: tokio::sync::watch::channel(false).0,
+            node_registry: Arc::new(nodes::NodeRegistry::new(16)),
+            path_prefix: String::new(),
+            session_backend: None,
+            session_queue: std::sync::Arc::new(
+                crate::gateway::session_queue::SessionActorQueue::new(8, 30, 600),
+            ),
+            device_registry: None,
+            pending_pairings: None,
+            canvas_store: CanvasStore::new(),
+            mcp_registry: Arc::new(parking_lot::RwLock::new(None)),
+            approval_registry: approval_registry::global(),
+            mcp_local_url: None,
+            auth_profiles: None,
+            service_token: Arc::<str>::from(""),
+            #[cfg(feature = "webauthn")]
+            webauthn: None,
+        };
+
+        let response = handle_metrics(State(state)).await.into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let text = String::from_utf8(body.to_vec()).unwrap();
+        assert!(
+            text.contains("revka_heartbeat_ticks_total 1"),
+            "expected real Prometheus exposition, got: {text}"
+        );
+        assert!(
+            !text.contains("Prometheus backend not enabled"),
+            "multi-config /metrics must not return the disabled hint"
+        );
     }
 
     #[test]

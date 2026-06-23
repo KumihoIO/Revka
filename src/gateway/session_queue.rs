@@ -117,9 +117,15 @@ impl SessionActorQueue {
     /// Acquire exclusive access to a session. Blocks until the session is free
     /// or the timeout expires. Returns a guard that releases on drop.
     pub async fn acquire(&self, session_id: &str) -> Result<SessionGuard, SessionQueueError> {
+        // Reserve our slot under the `slots` lock: get-or-insert the slot AND
+        // bump `pending` before releasing the lock. This makes the slot
+        // observably in-flight (`pending > 0`) the instant it becomes visible
+        // to `evict_idle`, closing the window where a concurrent eviction could
+        // drop a freshly-inserted slot out from under us and hand a later
+        // acquirer a different semaphore for the same session.
         let slot = {
             let mut slots = self.slots.lock().await;
-            slots
+            let slot = slots
                 .entry(session_id.to_string())
                 .or_insert_with(|| {
                     Arc::new(SessionSlot {
@@ -128,18 +134,20 @@ impl SessionActorQueue {
                         pending: AtomicUsize::new(0),
                     })
                 })
-                .clone()
-        };
+                .clone();
 
-        // Check queue depth before waiting
-        let current = slot.pending.fetch_add(1, Ordering::Relaxed);
-        if current >= self.max_queue_depth {
-            slot.pending.fetch_sub(1, Ordering::Relaxed);
-            return Err(SessionQueueError::QueueFull {
-                session_id: session_id.to_string(),
-                depth: current,
-            });
-        }
+            // Check queue depth and reserve a pending slot while still holding
+            // the `slots` lock so eviction can't race the reservation.
+            let current = slot.pending.fetch_add(1, Ordering::Relaxed);
+            if current >= self.max_queue_depth {
+                slot.pending.fetch_sub(1, Ordering::Relaxed);
+                return Err(SessionQueueError::QueueFull {
+                    session_id: session_id.to_string(),
+                    depth: current,
+                });
+            }
+            slot
+        };
 
         // Acquire owned permit with timeout
         let sem = slot.semaphore.clone();
@@ -273,6 +281,72 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(10)).await;
         let evicted = queue.evict_idle().await;
         assert_eq!(evicted, 1);
+    }
+
+    #[tokio::test]
+    async fn evict_skips_slot_with_in_flight_acquire() {
+        // A slot held by a live guard must never be evicted, even with a 0s
+        // TTL: its `pending` count is non-zero. This guards the lock-ordering
+        // fix — the reservation is visible to `evict_idle` before the `slots`
+        // lock is released.
+        let queue = SessionActorQueue::new(8, 5, 0); // 0s TTL
+        let guard = queue.acquire("s1").await.unwrap();
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        assert_eq!(queue.evict_idle().await, 0, "in-flight slot was evicted");
+        drop(guard);
+    }
+
+    #[tokio::test]
+    async fn concurrent_acquirers_share_one_semaphore_under_eviction() {
+        // Hammer acquire/evict for the same key with a 0s TTL. If eviction ever
+        // races a reservation and re-creates the slot under a fresh semaphore,
+        // two acquirers could hold the lock at once and `serialized` would
+        // exceed 1. The lock-ordering fix must keep every acquire mutually
+        // exclusive regardless of eviction.
+        // Queue depth comfortably above the worker count so acquires queue
+        // rather than getting rejected with QueueFull — the invariant under
+        // test is mutual exclusion, not the depth limit.
+        let queue = Arc::new(SessionActorQueue::new(64, 5, 0)); // 0s TTL
+        let in_critical = Arc::new(AtomicUsize::new(0));
+        let max_seen = Arc::new(AtomicUsize::new(0));
+
+        let mut handles = Vec::new();
+        for _ in 0..16 {
+            let q = queue.clone();
+            let in_critical = in_critical.clone();
+            let max_seen = max_seen.clone();
+            handles.push(tokio::spawn(async move {
+                for _ in 0..25 {
+                    let guard = q.acquire("s1").await.unwrap();
+                    let n = in_critical.fetch_add(1, Ordering::SeqCst) + 1;
+                    max_seen.fetch_max(n, Ordering::SeqCst);
+                    tokio::task::yield_now().await;
+                    in_critical.fetch_sub(1, Ordering::SeqCst);
+                    drop(guard);
+                }
+            }));
+        }
+        // Sweep concurrently with the acquirers.
+        let sweeper = {
+            let q = queue.clone();
+            tokio::spawn(async move {
+                for _ in 0..200 {
+                    q.evict_idle().await;
+                    tokio::task::yield_now().await;
+                }
+            })
+        };
+
+        for h in handles {
+            h.await.unwrap();
+        }
+        sweeper.await.unwrap();
+
+        assert_eq!(
+            max_seen.load(Ordering::SeqCst),
+            1,
+            "serialization broken: multiple acquirers entered the critical section concurrently"
+        );
     }
 
     #[test]

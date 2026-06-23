@@ -657,6 +657,18 @@ impl AnthropicProvider {
         crate::config::build_runtime_proxy_client_with_timeouts("provider.anthropic", 120, 10)
     }
 
+    /// Like [`Self::http_client`] but tuned for streaming (SSE): a per-read
+    /// **idle** timeout instead of a total request timeout, so a long
+    /// generation streaming for longer than the total budget is not aborted
+    /// mid-stream while tokens are still arriving (#407).
+    fn streaming_http_client(&self) -> Client {
+        crate::config::build_runtime_proxy_streaming_client_with_timeouts(
+            "provider.anthropic",
+            120,
+            10,
+        )
+    }
+
     /// Build a streaming request body from a `NativeChatRequest`.
     fn build_streaming_request(request: &NativeChatRequest<'_>) -> serde_json::Value {
         let mut body =
@@ -1141,7 +1153,7 @@ impl Provider for AnthropicProvider {
         };
 
         let body = Self::build_streaming_request(&native_request);
-        let client = self.http_client();
+        let client = self.streaming_http_client();
         let url = format!("{}/v1/messages", self.base_url);
         let is_oauth = Self::is_setup_token(&credential);
 

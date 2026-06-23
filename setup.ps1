@@ -45,7 +45,12 @@ $VersionMatch = if (Test-Path $CargoToml) {
     Select-String -Path $CargoToml -Pattern '^version\s*=\s*"([^"]+)"' -ErrorAction SilentlyContinue | Select-Object -First 1
 } else { $null }
 $ScriptVersion = if ($VersionMatch) { $VersionMatch.Matches.Groups[1].Value } else { 'unknown' }
-$RustMinVersion = '1.87'
+# Single-source the minimum Rust version from Cargo.toml's `rust-version` so it
+# can never drift from the real build floor (#431).
+$RustVersionMatch = if (Test-Path $CargoToml) {
+    Select-String -Path $CargoToml -Pattern '^rust-version\s*=\s*"([^"]+)"' -ErrorAction SilentlyContinue | Select-Object -First 1
+} else { $null }
+$RustMinVersion = if ($RustVersionMatch) { $RustVersionMatch.Matches.Groups[1].Value } else { '1.89' }
 $Target = 'x86_64-pc-windows-msvc'
 $Repo = 'https://github.com/KumihoIO/Revka'
 $InstallDir = Join-Path $env:USERPROFILE '.revka\bin'
@@ -292,7 +297,18 @@ catch { }   # CIM unavailable — skip silently, RAM check is informational only
 
 if (Test-Cmd 'cargo') {
     $rustVer = (& rustc --version) -replace '^rustc\s+', '' -replace '\s.*$', ''
-    Write-Ok "Rust $rustVer found"
+    # Gate on the real build floor before a 15-30 min source build (#431).
+    $rustOk = try {
+        [version]($rustVer -replace '-.*$', '') -ge [version]$RustMinVersion
+    } catch { $true }  # unparseable (e.g. custom build) — don't block
+    if ($rustOk) {
+        Write-Ok "Rust $rustVer found (>= $RustMinVersion required)"
+    }
+    else {
+        Write-Err "Rust $rustVer is too old. Revka requires Rust $RustMinVersion or newer (Cargo.toml rust-version)."
+        Write-Host "  Update with: rustup update stable"
+        exit 1
+    }
 }
 else {
     Write-Warn 'Rust not found.'

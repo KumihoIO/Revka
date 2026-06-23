@@ -731,8 +731,7 @@ impl Agent {
         let config = crate::agent::kumiho::inject_kumiho(config.clone(), false);
         let config = &crate::agent::operator::inject_operator(config, false);
 
-        let observer: Arc<dyn Observer> =
-            Arc::from(observability::create_observer(&config.observability));
+        let observer: Arc<dyn Observer> = observability::get_or_init_global(&config.observability);
         let runtime: Arc<dyn runtime::RuntimeAdapter> =
             Arc::from(runtime::create_runtime(&config.runtime)?);
         let security = Arc::new(SecurityPolicy::from_config(
@@ -1387,65 +1386,95 @@ impl Agent {
         Ok(prompt)
     }
 
+    /// Run a single tool's `execute` under a dispatch-level backstop timeout,
+    /// recording the `ToolCall` observer event and yielding `(output, success)`.
+    ///
+    /// Each tool's own internal timeout remains the first line of defense; this
+    /// outer ceiling (`agent.tool_call_timeout_secs`, default 1800s) guarantees
+    /// that a tool which omits an internal bound — or blocks before one arms —
+    /// cannot hang the agent loop indefinitely. On elapse the call is reported
+    /// as a failed `ToolCall` event and a failed result is returned instead of
+    /// stalling the turn. A configured value of `0` disables the backstop.
+    async fn run_tool_with_timeout(
+        &self,
+        tool: &dyn Tool,
+        call: &ParsedToolCall,
+        start: Instant,
+    ) -> (String, bool) {
+        let fut = tool.execute(call.arguments.clone());
+        let outcome = match self.config.tool_call_timeout_secs {
+            0 => Ok(fut.await),
+            secs => tokio::time::timeout(Duration::from_secs(secs), fut).await,
+        };
+        match outcome {
+            Ok(Ok(r)) => {
+                self.observer.record_event(&ObserverEvent::ToolCall {
+                    tool: call.name.clone(),
+                    duration: start.elapsed(),
+                    success: r.success,
+                });
+                let output = if r.success {
+                    r.output
+                } else {
+                    format!("Error: {}", r.error.unwrap_or(r.output))
+                };
+                (output, r.success)
+            }
+            Ok(Err(e)) => {
+                self.observer.record_event(&ObserverEvent::ToolCall {
+                    tool: call.name.clone(),
+                    duration: start.elapsed(),
+                    success: false,
+                });
+                (format!("Error executing {}: {e}", call.name), false)
+            }
+            Err(_elapsed) => {
+                let secs = self.config.tool_call_timeout_secs;
+                self.observer.record_event(&ObserverEvent::ToolCall {
+                    tool: call.name.clone(),
+                    duration: start.elapsed(),
+                    success: false,
+                });
+                tracing::warn!(
+                    tool = %call.name,
+                    timeout_secs = secs,
+                    "tool call exceeded dispatch-level timeout; aborting to protect the agent loop"
+                );
+                (
+                    format!("Error: tool {} timed out after {}s", call.name, secs),
+                    false,
+                )
+            }
+        }
+    }
+
     async fn execute_tool_call(&self, call: &ParsedToolCall) -> ToolExecutionResult {
         let start = Instant::now();
 
         // First try to find tool in static registry, then in activated MCP tools.
-        let result = if let Some(tool) = self.tools.iter().find(|t| t.name() == call.name) {
-            match tool.execute(call.arguments.clone()).await {
-                Ok(r) => {
-                    self.observer.record_event(&ObserverEvent::ToolCall {
-                        tool: call.name.clone(),
-                        duration: start.elapsed(),
-                        success: r.success,
-                    });
-                    if r.success {
-                        r.output
-                    } else {
-                        format!("Error: {}", r.error.unwrap_or(r.output))
-                    }
-                }
-                Err(e) => {
-                    self.observer.record_event(&ObserverEvent::ToolCall {
-                        tool: call.name.clone(),
-                        duration: start.elapsed(),
-                        success: false,
-                    });
-                    format!("Error executing {}: {e}", call.name)
-                }
-            }
-        } else if let Some(activated_arc) = self.activated_tools.as_ref() {
-            // Try to find in activated MCP tools.
-            let activated_opt = activated_arc.lock().unwrap().get_resolved(&call.name);
-            if let Some(tool) = activated_opt {
-                match tool.execute(call.arguments.clone()).await {
-                    Ok(r) => {
-                        self.observer.record_event(&ObserverEvent::ToolCall {
-                            tool: call.name.clone(),
-                            duration: start.elapsed(),
-                            success: r.success,
-                        });
-                        if r.success {
-                            r.output
-                        } else {
-                            format!("Error: {}", r.error.unwrap_or(r.output))
-                        }
-                    }
-                    Err(e) => {
-                        self.observer.record_event(&ObserverEvent::ToolCall {
-                            tool: call.name.clone(),
-                            duration: start.elapsed(),
-                            success: false,
-                        });
-                        format!("Error executing {}: {e}", call.name)
-                    }
+        // Each branch yields (output, success) so the real outcome is preserved
+        // — previously `success` was hardcoded `true`, making the XmlToolDispatcher
+        // report failed tools as status="ok".
+        let (result, success) =
+            if let Some(tool) = self.tools.iter().find(|t| t.name() == call.name) {
+                self.run_tool_with_timeout(tool.as_ref(), call, start).await
+            } else if let Some(activated_arc) = self.activated_tools.as_ref() {
+                // Try to find in activated MCP tools.
+                // Recover from a poisoned lock rather than panicking, so a prior
+                // panic under the guard does not cascade into every later
+                // dynamic-tool lookup on this Agent's dispatch path.
+                let activated_opt = activated_arc
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .get_resolved(&call.name);
+                if let Some(tool) = activated_opt {
+                    self.run_tool_with_timeout(tool.as_ref(), call, start).await
+                } else {
+                    (format!("Unknown tool: {}", call.name), false)
                 }
             } else {
-                format!("Unknown tool: {}", call.name)
-            }
-        } else {
-            format!("Unknown tool: {}", call.name)
-        };
+                (format!("Unknown tool: {}", call.name), false)
+            };
 
         let command_hint = call
             .arguments
@@ -1456,7 +1485,7 @@ impl Agent {
         ToolExecutionResult {
             name: call.name.clone(),
             output: result,
-            success: true,
+            success,
             tool_call_id: call.tool_call_id.clone(),
         }
     }
@@ -1644,7 +1673,14 @@ impl Agent {
             // tools (via tool_search) appear in subsequent LLM calls.
             let mut iter_tool_specs: Vec<ToolSpec> = self.tools.iter().map(|t| t.spec()).collect();
             if let Some(at) = self.activated_tools.as_ref() {
-                for spec in at.lock().unwrap().tool_specs() {
+                // Recover from a poisoned lock rather than panicking: a prior
+                // panic under the guard (e.g. a faulty `Tool::spec()`) must not
+                // permanently break deferred-tool resolution for this turn loop.
+                for spec in at
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .tool_specs()
+                {
                     iter_tool_specs.push(spec);
                 }
             }
@@ -1918,7 +1954,14 @@ impl Agent {
             // run_tool_call_loop's pattern in loop_.rs.
             let mut iter_tool_specs: Vec<ToolSpec> = self.tools.iter().map(|t| t.spec()).collect();
             if let Some(at) = self.activated_tools.as_ref() {
-                for spec in at.lock().unwrap().tool_specs() {
+                // Recover from a poisoned lock rather than panicking: a prior
+                // panic under the guard (e.g. a faulty `Tool::spec()`) must not
+                // permanently break deferred-tool resolution for this turn loop.
+                for spec in at
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .tool_specs()
+                {
                     iter_tool_specs.push(spec);
                 }
             }
@@ -2724,6 +2767,146 @@ mod tests {
                 error: None,
             })
         }
+    }
+
+    struct FailingTool;
+
+    #[async_trait]
+    impl Tool for FailingTool {
+        fn name(&self) -> &str {
+            "fail"
+        }
+        fn description(&self) -> &str {
+            "always fails"
+        }
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({"type": "object"})
+        }
+        async fn execute(&self, _args: serde_json::Value) -> Result<crate::tools::ToolResult> {
+            Ok(crate::tools::ToolResult {
+                success: false,
+                output: String::new(),
+                error: Some("boom".into()),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn execute_tool_call_propagates_real_success() {
+        // #396: the ToolExecutionResult.success must reflect the real outcome
+        // (it was previously hardcoded `true`, so the XML dispatcher reported
+        // failed tools as status="ok").
+        let provider = Box::new(MockProvider {
+            responses: Mutex::new(vec![]),
+        });
+        let memory_cfg = crate::config::MemoryConfig {
+            backend: "none".into(),
+            ..crate::config::MemoryConfig::default()
+        };
+        let mem: Arc<dyn Memory> = Arc::from(
+            crate::memory::create_memory(&memory_cfg, std::path::Path::new("/tmp"), None).unwrap(),
+        );
+        let observer: Arc<dyn Observer> = Arc::from(crate::observability::NoopObserver {});
+        let agent = Agent::builder()
+            .provider(provider)
+            .tools(vec![Box::new(MockTool), Box::new(FailingTool)])
+            .memory(mem)
+            .observer(observer)
+            .tool_dispatcher(Box::new(NativeToolDispatcher))
+            .workspace_dir(std::path::PathBuf::from("/tmp"))
+            .build()
+            .unwrap();
+
+        let call = |name: &str| ParsedToolCall {
+            name: name.into(),
+            arguments: serde_json::json!({}),
+            tool_call_id: None,
+        };
+
+        // Failing tool -> success=false, error surfaced in the output.
+        let failed = agent.execute_tool_call(&call("fail")).await;
+        assert!(!failed.success, "failing tool must report success=false");
+        assert!(failed.output.contains("boom"));
+
+        // Succeeding tool -> success=true.
+        let ok = agent.execute_tool_call(&call("echo")).await;
+        assert!(ok.success, "succeeding tool must report success=true");
+
+        // Unknown tool -> success=false.
+        let unknown = agent.execute_tool_call(&call("nope")).await;
+        assert!(!unknown.success, "unknown tool must report success=false");
+        assert!(unknown.output.contains("Unknown tool"));
+    }
+
+    struct HangingTool;
+
+    #[async_trait]
+    impl Tool for HangingTool {
+        fn name(&self) -> &str {
+            "hang"
+        }
+        fn description(&self) -> &str {
+            "sleeps far longer than the dispatch timeout"
+        }
+        fn parameters_schema(&self) -> serde_json::Value {
+            serde_json::json!({"type": "object"})
+        }
+        async fn execute(&self, _args: serde_json::Value) -> Result<crate::tools::ToolResult> {
+            tokio::time::sleep(Duration::from_secs(3600)).await;
+            unreachable!("dispatch timeout must abort before this completes");
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_timeout_aborts_a_hanging_tool() {
+        // #399: a tool with no internal bound must not be able to hang the agent
+        // loop — the dispatch-level backstop must abort it and surface a failed
+        // result instead of stalling the turn.
+        let provider = Box::new(MockProvider {
+            responses: Mutex::new(vec![]),
+        });
+        let memory_cfg = crate::config::MemoryConfig {
+            backend: "none".into(),
+            ..crate::config::MemoryConfig::default()
+        };
+        let mem: Arc<dyn Memory> = Arc::from(
+            crate::memory::create_memory(&memory_cfg, std::path::Path::new("/tmp"), None).unwrap(),
+        );
+        let observer: Arc<dyn Observer> = Arc::from(crate::observability::NoopObserver {});
+        let agent_config = crate::config::AgentConfig {
+            tool_call_timeout_secs: 1,
+            ..crate::config::AgentConfig::default()
+        };
+        let agent = Agent::builder()
+            .provider(provider)
+            .tools(vec![Box::new(HangingTool), Box::new(MockTool)])
+            .memory(mem)
+            .observer(observer)
+            .config(agent_config)
+            .tool_dispatcher(Box::new(NativeToolDispatcher))
+            .workspace_dir(std::path::PathBuf::from("/tmp"))
+            .build()
+            .unwrap();
+
+        let call = |name: &str| ParsedToolCall {
+            name: name.into(),
+            arguments: serde_json::json!({}),
+            tool_call_id: None,
+        };
+
+        // The hanging tool must be aborted by the backstop, not awaited forever.
+        let hung = agent.execute_tool_call(&call("hang")).await;
+        assert!(!hung.success, "timed-out tool must report success=false");
+        assert!(
+            hung.output.contains("timed out"),
+            "expected timeout message, got: {}",
+            hung.output
+        );
+
+        // A fast tool under the same short timeout still succeeds — the backstop
+        // only fires when a call actually exceeds the ceiling.
+        let ok = agent.execute_tool_call(&call("echo")).await;
+        assert!(ok.success, "fast tool must succeed under the backstop");
     }
 
     #[tokio::test]

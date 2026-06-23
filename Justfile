@@ -57,9 +57,9 @@ doc:
 update:
     cargo update
 
-# Run cargo audit to check for security vulnerabilities
+# Check advisories (unmaintained/yanked/vulns) via cargo-deny — the single source of truth
 audit:
-    cargo audit
+    cargo deny check advisories
 
 # Run cargo deny checks
 deny:

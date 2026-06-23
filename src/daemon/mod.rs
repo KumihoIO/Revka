@@ -145,9 +145,25 @@ pub async fn run(config: Config, host: String, port: u16) -> Result<()> {
         tracing::info!("Cron disabled; scheduler supervisor not started");
     }
 
+    if config.sop.sops_dir.is_some() {
+        let sop_cron_cfg = config.clone();
+        handles.push(spawn_component_supervisor(
+            "sop_cron",
+            initial_backoff,
+            max_backoff,
+            move || {
+                let cfg = sop_cron_cfg.clone();
+                async move { Box::pin(run_sop_cron_worker(cfg)).await }
+            },
+        ));
+    } else {
+        crate::health::mark_component_ok("sop_cron");
+        tracing::info!("No SOPs directory configured; SOP cron scheduler not started");
+    }
+
     println!("🧠 Revka daemon started");
     println!("   Gateway:  http://{host}:{port}");
-    println!("   Components: gateway, channels, heartbeat, scheduler");
+    println!("   Components: gateway, channels, heartbeat, scheduler, sop_cron");
     if config.gateway.require_pairing {
         println!("   Pairing:    enabled (code appears in gateway output above)");
     }
@@ -265,6 +281,22 @@ where
     })
 }
 
+/// Aborts the wrapped task when dropped, binding a spawned task's lifetime to
+/// the scope that holds the guard. Used so the heartbeat deadman watcher cannot
+/// outlive the worker invocation that owns it (#420) — including on the `?`
+/// early-return paths inside the worker loop.
+///
+/// `#[must_use]`: the guard must be bound for its whole scope; an unbound
+/// `AbortOnDrop(..)` statement would drop (and abort) it immediately.
+#[must_use]
+struct AbortOnDrop(tokio::task::JoinHandle<()>);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
 async fn run_heartbeat_worker(config: Config) -> Result<()> {
     use crate::heartbeat::engine::{
         HeartbeatEngine, HeartbeatTask, TaskPriority, TaskStatus, compute_adaptive_interval,
@@ -272,7 +304,7 @@ async fn run_heartbeat_worker(config: Config) -> Result<()> {
     use std::sync::Arc;
 
     let observer: std::sync::Arc<dyn crate::observability::Observer> =
-        std::sync::Arc::from(crate::observability::create_observer(&config.observability));
+        crate::observability::get_or_init_global(&config.observability);
     let engine = HeartbeatEngine::new(
         config.heartbeat.clone(),
         config.workspace_dir.clone(),
@@ -285,12 +317,18 @@ async fn run_heartbeat_worker(config: Config) -> Result<()> {
     let start_time = std::time::Instant::now();
 
     // ── Deadman watcher ──────────────────────────────────────────
+    // The watcher is bound to this worker invocation via `AbortOnDrop`: when the
+    // worker returns (including the `?` early-returns in the loop below), the
+    // guard drops and aborts the watcher. Otherwise the supervisor's restart
+    // loop would leak one watcher per restart, and any watcher whose worker had
+    // recorded a tick would keep a frozen `last_tick_at` that eventually fires a
+    // false dead-man's-switch alert every 60s (#420).
     let deadman_timeout = config.heartbeat.deadman_timeout_minutes;
-    if deadman_timeout > 0 {
+    let _deadman_watcher = (deadman_timeout > 0).then(|| {
         let dm_metrics = Arc::clone(&metrics);
         let dm_config = config.clone();
         let dm_delivery = delivery.clone();
-        tokio::spawn(async move {
+        AbortOnDrop(tokio::spawn(async move {
             let check_interval = Duration::from_secs(60);
             let timeout = chrono::Duration::minutes(i64::from(deadman_timeout));
             loop {
@@ -322,8 +360,8 @@ async fn run_heartbeat_worker(config: Config) -> Result<()> {
                     }
                 }
             }
-        });
-    }
+        }))
+    });
 
     let base_interval = config.heartbeat.interval_minutes.max(5);
     let mut sleep_mins = base_interval;
@@ -582,6 +620,63 @@ async fn run_heartbeat_worker(config: Config) -> Result<()> {
         } else {
             sleep_mins = base_interval;
         }
+    }
+}
+
+/// Poll interval for the SOP cron scheduler. Window-based evaluation in
+/// `check_sop_cron_triggers` guarantees ticks between polls are never missed,
+/// so this only bounds firing latency, not correctness.
+const SOP_CRON_POLL_SECONDS: u64 = 30;
+
+/// Long-running worker that fires cron-triggered SOPs.
+///
+/// Owns its own daemon-side `SopEngine` (loaded from the configured SOPs
+/// directory) plus an audit logger, mirroring how `run_mqtt_sop_listener` owns
+/// the engine handle for the headless MQTT fan-in path. On each tick it checks
+/// the pre-parsed cron cache for occurrences in the window since the last poll
+/// and dispatches a `SopEvent` for every firing, then disposes of the results
+/// through `process_headless_results` (no agent loop runs here).
+async fn run_sop_cron_worker(config: Config) -> Result<()> {
+    use crate::sop::dispatch::{SopCronCache, check_sop_cron_triggers, process_headless_results};
+    use crate::sop::{SopAuditLogger, SopEngine};
+    use std::sync::Mutex;
+
+    // Load the engine from disk once at startup.
+    let engine = {
+        let mut eng = SopEngine::new(config.sop.clone());
+        eng.reload(&config.workspace_dir);
+        Arc::new(Mutex::new(eng))
+    };
+
+    let memory: Arc<dyn crate::memory::Memory> =
+        Arc::from(crate::memory::create_memory_with_storage_and_routes(
+            &config.memory,
+            &config.embedding_routes,
+            Some(&config.storage.provider.config),
+            &config.workspace_dir,
+            config.api_key.as_deref(),
+        )?);
+    let audit = SopAuditLogger::new(memory);
+
+    // Pre-parse cron schedules once. Built after the initial load so newly
+    // authored cron triggers present at startup are picked up.
+    let cache = SopCronCache::from_engine(&engine);
+
+    let mut interval = tokio::time::interval(Duration::from_secs(SOP_CRON_POLL_SECONDS));
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+    // Start the window at "now" so we don't retroactively batch-fire schedules
+    // for downtime — at-most-once semantics begin from worker startup.
+    let mut last_check = chrono::Utc::now();
+
+    crate::health::mark_component_ok("sop_cron");
+
+    loop {
+        interval.tick().await;
+        crate::health::mark_component_ok("sop_cron");
+
+        let results = check_sop_cron_triggers(&engine, &audit, &cache, &mut last_check).await;
+        process_headless_results(&engine, &audit, &results).await;
     }
 }
 
@@ -927,6 +1022,34 @@ mod tests {
                 .as_str()
                 .unwrap_or("")
                 .contains("component exited unexpectedly")
+        );
+    }
+
+    #[tokio::test]
+    async fn abort_on_drop_aborts_watcher_task() {
+        // #420: dropping the guard must abort the spawned (otherwise infinite)
+        // task, so each worker restart cannot leak its deadman watcher.
+        let handle = tokio::spawn(async {
+            loop {
+                tokio::time::sleep(Duration::from_secs(3600)).await;
+            }
+        });
+        let abort_handle = handle.abort_handle();
+        assert!(!abort_handle.is_finished());
+
+        let guard = AbortOnDrop(handle);
+        drop(guard);
+
+        // Give the runtime a moment to process the abort.
+        for _ in 0..50 {
+            if abort_handle.is_finished() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(
+            abort_handle.is_finished(),
+            "watcher task should be aborted when its AbortOnDrop guard is dropped"
         );
     }
 

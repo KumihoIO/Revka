@@ -5919,11 +5919,20 @@ fn setup_channels() -> Result<ChannelsConfig> {
                     send_url: None,
                     send_method: None,
                     auth_header: None,
+                    // No secret entered = operator explicitly chose an unsigned
+                    // endpoint; honor it so the listener still starts (the
+                    // gateway logs a loud warning at startup).
+                    allow_unsigned: secret.is_empty(),
                     secret: if secret.is_empty() {
                         None
                     } else {
                         Some(secret)
                     },
+                    // Secure default: bind loopback only. Operators who need the
+                    // endpoint reachable off-host set host + allow_public_bind in
+                    // config.toml (#425).
+                    host: None,
+                    allow_public_bind: false,
                 });
                 println!(
                     "  {} {}",

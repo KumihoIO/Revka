@@ -214,6 +214,11 @@ const CHANNEL_PROGRESS_HEARTBEAT_DELAY_SECS: u64 = 5;
 const CHANNEL_PROGRESS_HEARTBEAT_TEXT: &str = "Working on it...";
 const CHANNEL_TYPING_REFRESH_INTERVAL_SECS: u64 = 4;
 const CHANNEL_HEALTH_HEARTBEAT_SECS: u64 = 30;
+/// Minimum uptime a supervised listener must accumulate before its restart
+/// backoff is reset to the floor. A listener that returns (cleanly or with an
+/// error) sooner than this is treated as a flap, so the backoff keeps
+/// escalating instead of busy-looping at the >=1s floor.
+const CHANNEL_HEALTHY_RUN_SECS: u64 = 10;
 const MODEL_CACHE_FILE: &str = "models_cache.json";
 const MODEL_CACHE_PREVIEW_LIMIT: usize = 10;
 const MEMORY_CONTEXT_MAX_ENTRIES: usize = 4;
@@ -2458,16 +2463,14 @@ fn sanitize_channel_response(response: &str, tools: &[Box<dyn Tool>]) -> String 
     let sanitized = strip_tool_narration(&stripped_json);
 
     // Scan for credential leaks before returning to caller
-    match crate::security::LeakDetector::new().scan(&sanitized) {
-        crate::security::LeakResult::Clean => sanitized,
-        crate::security::LeakResult::Detected { patterns, redacted } => {
-            tracing::warn!(
-                patterns = ?patterns,
-                "output guardrail: credential leak detected in outbound channel response"
-            );
-            redacted
-        }
+    let (redacted, leaked) = crate::security::redact_outbound(&sanitized);
+    if let Some(patterns) = leaked {
+        tracing::warn!(
+            patterns = ?patterns,
+            "output guardrail: credential leak detected in outbound channel response"
+        );
     }
+    redacted
 }
 
 /// Remove leading lines that narrate tool usage (e.g. "Let me check the weather for you.").
@@ -2717,6 +2720,7 @@ fn spawn_supervised_listener_with_health_interval(
             crate::health::mark_component_ok(&component);
             let mut health = tokio::time::interval(health_interval);
             health.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            let started_at = Instant::now();
             let result = {
                 let listen_future = ch.listen(tx.clone());
                 tokio::pin!(listen_future);
@@ -2730,6 +2734,7 @@ fn spawn_supervised_listener_with_health_interval(
                     }
                 }
             };
+            let uptime = started_at.elapsed();
 
             if tx.is_closed() {
                 break;
@@ -2739,13 +2744,18 @@ fn spawn_supervised_listener_with_health_interval(
                 Ok(()) => {
                     tracing::warn!("Channel {} exited unexpectedly; restarting", ch.name());
                     crate::health::mark_component_error(&component, "listener exited unexpectedly");
-                    // Clean exit — reset backoff since the listener ran successfully
-                    backoff = initial_backoff_secs.max(1);
                 }
                 Err(e) => {
                     tracing::error!("Channel {} error: {e}; restarting", ch.name());
                     crate::health::mark_component_error(&component, e.to_string());
                 }
+            }
+
+            // Only reset backoff when the listener actually stayed up for a
+            // healthy run; a near-instant exit (clean or erroring) is a flap, so
+            // leave backoff escalating to avoid busy-looping at the floor.
+            if uptime >= Duration::from_secs(CHANNEL_HEALTHY_RUN_SECS) {
+                backoff = initial_backoff_secs.max(1);
             }
 
             crate::health::bump_component_restart(&component);
@@ -5514,14 +5524,18 @@ fn collect_configured_channels(
     if let Some(ref wh) = config.channels_config.webhook {
         channels.push(ConfiguredChannel {
             display_name: "Webhook",
-            channel: Arc::new(WebhookChannel::new(
-                wh.port,
-                wh.listen_path.clone(),
-                wh.send_url.clone(),
-                wh.send_method.clone(),
-                wh.auth_header.clone(),
-                wh.secret.clone(),
-            )),
+            channel: Arc::new(
+                WebhookChannel::new(
+                    wh.port,
+                    wh.listen_path.clone(),
+                    wh.send_url.clone(),
+                    wh.send_method.clone(),
+                    wh.auth_header.clone(),
+                    wh.secret.clone(),
+                    wh.allow_unsigned,
+                )
+                .with_bind(wh.host.clone(), wh.allow_public_bind),
+            ),
         });
     }
 
@@ -5652,8 +5666,7 @@ pub async fn start_channels_with_mcp_registry(
         );
     }
 
-    let observer: Arc<dyn Observer> =
-        Arc::from(observability::create_observer(&config.observability));
+    let observer: Arc<dyn Observer> = observability::get_or_init_global(&config.observability);
     let runtime: Arc<dyn runtime::RuntimeAdapter> =
         Arc::from(runtime::create_runtime(&config.runtime)?);
     let security = Arc::new(SecurityPolicy::from_config(
@@ -10846,6 +10859,30 @@ This is an example JSON object for profile settings."#;
         calls: Arc<AtomicUsize>,
     }
 
+    struct InstantCleanExitChannel {
+        name: String,
+        calls: Arc<AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl Channel for InstantCleanExitChannel {
+        fn name(&self) -> &str {
+            &self.name
+        }
+
+        async fn send(&self, _message: &SendMessage) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn listen(
+            &self,
+            _tx: tokio::sync::mpsc::Sender<traits::ChannelMessage>,
+        ) -> anyhow::Result<()> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
     struct BlockUntilClosedChannel {
         name: String,
         calls: Arc<AtomicUsize>,
@@ -10962,6 +10999,45 @@ This is an example JSON object for profile settings."#;
         let join = tokio::time::timeout(Duration::from_secs(1), handle).await;
         assert!(join.is_ok(), "listener should stop after channel shutdown");
         assert!(calls.load(Ordering::SeqCst) >= 1);
+    }
+
+    #[tokio::test]
+    async fn supervised_listener_escalates_backoff_on_instant_clean_exits() {
+        // A listener that returns Ok(()) immediately must NOT have its backoff
+        // reset to the floor every iteration; otherwise it busy-loops at ~1/sec.
+        // With escalating backoff the restart schedule is 1s, 2s, 4s, ... so in a
+        // ~3.5s window we expect at most ~3 restarts, whereas a non-escalating
+        // floor-only loop would produce one per second.
+        let calls = Arc::new(AtomicUsize::new(0));
+        let channel_name = format!("test-supervised-flap-{}", uuid::Uuid::new_v4());
+        let component_name = format!("channel:{channel_name}");
+        let channel: Arc<dyn Channel> = Arc::new(InstantCleanExitChannel {
+            name: channel_name,
+            calls: Arc::clone(&calls),
+        });
+
+        let (tx, rx) = tokio::sync::mpsc::channel::<traits::ChannelMessage>(1);
+        // initial_backoff = 1s, large max so escalation is not clamped early.
+        let handle = spawn_supervised_listener(channel, tx, 1, 60);
+
+        tokio::time::sleep(Duration::from_millis(3500)).await;
+        drop(rx);
+        handle.abort();
+        let _ = handle.await;
+
+        let restart_count =
+            crate::health::snapshot_json()["components"][&component_name]["restart_count"]
+                .as_u64()
+                .unwrap_or(0);
+        assert!(
+            restart_count >= 1,
+            "listener should have restarted at least once"
+        );
+        assert!(
+            restart_count <= 3,
+            "instant clean exits must escalate backoff (1s,2s,4s,...), \
+             got {restart_count} restarts in ~3.5s (floor-only loop would be ~one per second)"
+        );
     }
 
     #[test]

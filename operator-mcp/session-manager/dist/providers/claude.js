@@ -11,7 +11,7 @@ const log = (msg) => process.stderr.write(`[session-mgr:claude] ${msg}\n`);
 /**
  * Detects if an error is a tool_use_id mismatch (orphaned tool_result after context truncation).
  */
-function isToolIdMismatchError(err) {
+export function isToolIdMismatchError(err) {
     // Check the error message, its cause chain, and stringified form
     const parts = [];
     if (err instanceof Error) {
@@ -31,7 +31,7 @@ function isToolIdMismatchError(err) {
 /**
  * Build a continuation summary from session events for recovery after context corruption.
  */
-function buildContinuationSummary(events, originalPrompt) {
+export function buildContinuationSummary(events, originalPrompt) {
     const parts = [
         "IMPORTANT: Your previous session was interrupted due to a context window issue.",
         "Here is a summary of what you accomplished so far. Continue from where you left off.\n",
@@ -85,6 +85,18 @@ function buildContinuationSummary(events, originalPrompt) {
     parts.push("Continue your work from where you left off. Do not repeat already-completed steps.");
     parts.push("Your primary task is described in the 'Original User Request' section above — do NOT ignore it.");
     return parts.join("\n");
+}
+/**
+ * Find the first user-message text in a timeline, used to recover the original
+ * prompt for a resumed session (whose live config.prompt is empty).
+ */
+function firstUserMessageText(events) {
+    for (const event of events) {
+        if (event.type === "timeline" && event.item.type === "user_message" && event.item.text) {
+            return event.item.text;
+        }
+    }
+    return undefined;
 }
 /**
  * Creates a reusable async message input channel (producer/consumer pair).
@@ -210,13 +222,13 @@ function buildClaudeOptions(config, onStderr, canUseTool) {
     }
     return opts;
 }
-function createToolCallStreamState() {
+export function createToolCallStreamState() {
     return { pending: new Map(), idToName: new Map() };
 }
 /**
  * Translate a raw SDK message into zero or more AgentStreamEvents.
  */
-function translateMessage(message, turnId, state, stderrTail = "") {
+export function translateMessage(message, turnId, state, stderrTail = "") {
     const events = [];
     switch (message.type) {
         case "assistant": {
@@ -374,10 +386,10 @@ function extractUsage(message) {
     };
 }
 const MAX_RECOVERY_ATTEMPTS = 2;
-export function createClaudeSession(config, onEvent, perm) {
+function buildClaudeHandle(config, onEvent, opts, perm) {
     const handle = {
         id: config.title ?? "claude-session",
-        claudeSessionId: null,
+        claudeSessionId: opts.resumedSessionId ?? null,
         query: null,
         input: null,
         closed: false,
@@ -386,10 +398,13 @@ export function createClaudeSession(config, onEvent, perm) {
         recoveryAttempts: 0,
         stderr: "",
     };
-    // Accumulate all events across pump restarts for recovery context
-    const accumulatedEvents = [];
-    // Store the original user prompt so recovery can re-inject it
-    const originalPrompt = config.prompt;
+    // Accumulate all events across pump restarts for recovery context. For a
+    // resumed session this is seeded with the persisted timeline so the first
+    // continuation summary carries the prior conversation.
+    const accumulatedEvents = opts.seedEvents ? [...opts.seedEvents] : [];
+    // Original user prompt so recovery can re-inject it. On resume config.prompt
+    // is empty, so fall back to the first user message in the persisted timeline.
+    const originalPrompt = config.prompt || firstUserMessageText(accumulatedEvents);
     // Permission gate: when a handler is wired in and the spawn isn't trusted,
     // each tool call is evaluated; risky ones escalate to the operator via
     // createPendingRequest (which emits the channel event + 5-min auto-deny).
@@ -510,11 +525,10 @@ export function createClaudeSession(config, onEvent, perm) {
             }
         })();
     };
-    // Start the first turn
-    onEvent({ type: "status_changed", status: "running" });
-    startPump(config.prompt);
     // Attach follow-up method — pushes into existing input stream if pump is alive,
-    // otherwise starts a fresh pump with continuation context.
+    // otherwise starts a fresh pump with continuation context. For a resumed
+    // (dormant) handle the pump is never started below, so the first follow-up
+    // takes the "start fresh with continuation summary" branch — exactly resume.
     handle.sendQuery = (prompt) => {
         if (handle.closed)
             throw new Error("Session is closed");
@@ -531,7 +545,37 @@ export function createClaudeSession(config, onEvent, perm) {
             startPump(continuationPrompt + "\n\n## New User Message\n" + prompt);
         }
     };
+    // A fresh session starts its first turn now; a resumed handle stays idle until
+    // the first follow-up arrives via sendQuery.
+    if (opts.startImmediately) {
+        onEvent({ type: "status_changed", status: "running" });
+        startPump(config.prompt);
+    }
     return handle;
+}
+/**
+ * Create a Claude agent session and start the query pump immediately.
+ */
+export function createClaudeSession(config, onEvent, perm) {
+    return buildClaudeHandle(config, onEvent, { startImmediately: true }, perm);
+}
+/**
+ * Rebuild a dormant, resumable Claude handle on sidecar restart.
+ *
+ * The handle carries the persisted timeline (`persistedEvents`) as recovery
+ * context and stays idle (no pump) until the first follow-up, at which point
+ * `sendQuery` starts a fresh pump seeded with a continuation summary — the same
+ * path `createClaudeSession` uses after its pump dies. This matches the
+ * provider's deliberate choice NOT to use the SDK `resume` option (see
+ * `buildClaudeOptions`), avoiding orphaned-`tool_result` 400s. `claudeSessionId`
+ * is carried for reference only; it is not fed to the SDK.
+ */
+export function resumeClaudeSession(config, persistedEvents, onEvent, claudeSessionId, perm) {
+    return buildClaudeHandle(config, onEvent, {
+        startImmediately: false,
+        seedEvents: persistedEvents,
+        resumedSessionId: claudeSessionId,
+    }, perm);
 }
 /**
  * Send a follow-up query to an existing session.

@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 from operator_mcp.agent_subprocess import (
     _build_command,
+    _claude_spawn_anthropic_key,
     _codex_mcp_overrides,
     _is_stderr_noise,
     _resolve_cli,
@@ -324,3 +325,46 @@ class TestAgentHomeConfigs:
                 data = json.load(f)
             assert "mcpServers" in data
             assert data["mcpServers"] == servers
+
+
+class TestClaudeSpawnAnthropicKey:
+    """The Rust daemon supplies the decrypted Anthropic key under the dedicated
+    REVKA_SPAWN_ANTHROPIC_API_KEY name (so it never lands on a codex command
+    line via MCP overrides). _claude_spawn_anthropic_key translates it back to
+    ANTHROPIC_API_KEY for `claude` agents only, and never overrides an explicit
+    credential the child already has."""
+
+    def test_supplies_key_for_claude_when_no_explicit_creds(self):
+        assert (
+            _claude_spawn_anthropic_key("claude", {}, "sk-ant-abc123")
+            == "sk-ant-abc123"
+        )
+
+    def test_skips_non_claude_agents(self):
+        # codex/agy/etc authenticate with their own provider — and giving them
+        # the key here is exactly what we must avoid (codex serializes env onto
+        # its command line).
+        for agent_type in ("codex", "agy", "agent", "opencode"):
+            assert (
+                _claude_spawn_anthropic_key(agent_type, {}, "sk-ant-abc123") is None
+            )
+
+    def test_skips_when_no_spawn_key(self):
+        assert _claude_spawn_anthropic_key("claude", {}, None) is None
+        assert _claude_spawn_anthropic_key("claude", {}, "") is None
+
+    def test_respects_existing_explicit_credentials(self):
+        # An inherited ANTHROPIC_API_KEY...
+        assert (
+            _claude_spawn_anthropic_key(
+                "claude", {"ANTHROPIC_API_KEY": "sk-ant-user"}, "sk-ant-spawn"
+            )
+            is None
+        )
+        # ...and a subscription OAuth token both take precedence.
+        assert (
+            _claude_spawn_anthropic_key(
+                "claude", {"CLAUDE_CODE_OAUTH_TOKEN": "tok"}, "sk-ant-spawn"
+            )
+            is None
+        )

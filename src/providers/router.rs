@@ -139,6 +139,22 @@ impl RouterProvider {
             if let Some((idx, resolved_model)) = self.routes.get(hint) {
                 return (*idx, resolved_model.clone());
             }
+
+            // Cost-optimized routing requires per-request pricing and capability
+            // data that the plain `resolve()` path does not carry (see
+            // `resolve_cost_optimized`). Forwarding the literal `hint:…` string to
+            // the upstream provider would be rejected as an unknown model, so fall
+            // back to the default model with a clear explanation instead.
+            if matches!(hint, "cost-optimized" | "cheapest") {
+                tracing::warn!(
+                    hint = hint,
+                    default_model = self.default_model.as_str(),
+                    "Cost-optimized routing is not wired into this request path; \
+                     falling back to the default model"
+                );
+                return (self.default_index, self.default_model.clone());
+            }
+
             tracing::warn!(
                 hint = hint,
                 "Unknown route hint, falling back to default provider"
@@ -957,6 +973,26 @@ mod tests {
             router.resolve_cost_optimized("hint:cost-optimized", &prices, false, false);
         assert_eq!(idx, 0);
         assert_eq!(model, "default-model");
+    }
+
+    #[test]
+    fn plain_resolve_maps_cost_hint_to_default_model() {
+        // When a cost-optimized hint reaches the plain `resolve()` path (which
+        // lacks pricing/capability data), it must fall back to the default model
+        // name rather than forwarding the literal `hint:…` string upstream.
+        for hint in ["hint:cost-optimized", "hint:cheapest"] {
+            let (router, _) = make_router(
+                vec![("default", "ok"), ("other", "ok")],
+                vec![("route-a", "other", "some-model")],
+            );
+
+            let (idx, model) = router.resolve(hint);
+            assert_eq!(idx, 0, "{hint} should resolve to the default provider");
+            assert_eq!(
+                model, "default-model",
+                "{hint} should fall back to the default model, not the literal hint"
+            );
+        }
     }
 
     #[test]

@@ -21,7 +21,7 @@
 use super::AppState;
 use axum::{
     extract::{
-        Query, State, WebSocketUpgrade,
+        ConnectInfo, Query, State, WebSocketUpgrade,
         ws::{Message, WebSocket},
     },
     http::{HeaderMap, header},
@@ -29,6 +29,7 @@ use axum::{
 };
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
+use std::net::SocketAddr;
 use tracing::debug;
 
 /// Optional connection parameters sent as the first WebSocket message.
@@ -57,6 +58,23 @@ const WS_PROTOCOL: &str = "revka.v1";
 
 /// Prefix used in `Sec-WebSocket-Protocol` to carry a bearer token.
 const BEARER_SUBPROTO_PREFIX: &str = "bearer.";
+
+/// Cap on how far the per-turn timeout budget scales with the configured tool
+/// iteration count, mirroring the channel dispatch path's
+/// `CHANNEL_MESSAGE_TIMEOUT_SCALE_CAP`. Keeps a large `max_tool_iterations`
+/// from producing an effectively unbounded turn ceiling.
+const WS_TURN_TIMEOUT_SCALE_CAP: u64 = 4;
+
+/// Overall wall-clock budget (seconds) for a single WS chat turn. Mirrors the
+/// channel path's `channel_message_timeout_budget_secs_with_cap`: the
+/// per-provider-call timeout scaled by the effective tool-iteration count,
+/// capped by [`WS_TURN_TIMEOUT_SCALE_CAP`]. This is an upper bound on how long
+/// a silent/stalled provider or tool can hold the per-session queue permit
+/// before the turn is force-stopped and the permit released.
+fn ws_turn_timeout_budget_secs(provider_timeout_secs: u64, max_tool_iterations: usize) -> u64 {
+    let iterations = (max_tool_iterations.max(1) as u64).min(WS_TURN_TIMEOUT_SCALE_CAP);
+    provider_timeout_secs.max(1).saturating_mul(iterations)
+}
 
 #[derive(Deserialize)]
 pub struct WsQuery {
@@ -113,17 +131,140 @@ fn extract_ws_token<'a>(headers: &'a HeaderMap, query_token: Option<&'a str>) ->
     None
 }
 
+/// Defense-in-depth check against cross-site WebSocket hijacking.
+///
+/// The browser same-origin policy does **not** block cross-origin WebSocket
+/// handshakes, so any page the user visits could otherwise open a socket to the
+/// gateway. We reject upgrades whose `Origin` header is a *cross-site* web
+/// origin while still allowing the gateway's own first-party origins — which
+/// matters because the dashboard is served same-origin by this very gateway and
+/// is reachable not only over loopback but also over a tunnel
+/// (ngrok/cloudflare/tailscale/pinggy) or a LAN/public bind (`allow_public_bind`).
+///
+/// Rules:
+/// - **No `Origin` header → allow.** Non-browser clients (the `revka` CLI,
+///   native apps, relay/node clients) do not send `Origin`; only browsers do.
+///   A genuine cross-site browser request always carries one, so absent is safe.
+/// - **Same-origin as the request `Host` → allow.** The first-party dashboard is
+///   served by this gateway, so the page's `Origin` host always equals the `Host`
+///   it connected to (loopback, tunnel host, LAN IP, public host — whatever the
+///   browser loaded the dashboard from). A cross-site attacker page carries its
+///   own `Origin` (e.g. `evil.com`) while `Host` stays the gateway's, so the two
+///   differ and the upgrade is rejected. `Host` is set by the browser to the
+///   gateway it is talking to and is not attacker-controllable cross-site.
+/// - **Loopback origin → allow.** Kept as an additional allow so the default
+///   loopback dashboard works even if the `Host` header is absent/unusual.
+/// - **Tauri webview origin → allow.** The Revka Desktop app (Tauri/WebView2)
+///   loads the dashboard from `tauri://localhost` (macOS custom scheme) or
+///   `http(s)://tauri.localhost` (Windows/Linux WebView2), neither of which
+///   matches the gateway `Host`.
+/// - **Anything else → reject** as a cross-site origin.
+///
+/// Shared by all WS upgrade handlers (`/ws/chat`, `/ws/terminal`,
+/// `/ws/mcp/events`, `/ws/nodes`, `/ws/canvas`) so the policy stays consistent.
+pub fn check_ws_origin(headers: &HeaderMap) -> bool {
+    let origin = match headers.get(header::ORIGIN).and_then(|v| v.to_str().ok()) {
+        // Absent Origin → non-browser client → allow.
+        None => return true,
+        Some(o) => o,
+    };
+
+    let parsed_origin_host = match origin_host(origin) {
+        Some(h) => h,
+        // Unparseable origin (e.g. the opaque "null") → reject.
+        None => return false,
+    };
+
+    // First-party dashboard: the served page's Origin host matches the Host it
+    // connected to (covers loopback, tunnel, and LAN/public-bind transparently).
+    if let Some(request_host) = headers.get(header::HOST).and_then(|v| v.to_str().ok()) {
+        if let Some(host) = host_only(request_host) {
+            if parsed_origin_host.eq_ignore_ascii_case(host) {
+                return true;
+            }
+        }
+    }
+
+    // Loopback origin (default dashboard) — allowed even without a Host match.
+    if host_is_loopback(parsed_origin_host) {
+        return true;
+    }
+
+    // Tauri/WebView2 desktop app origins.
+    matches!(
+        origin,
+        "tauri://localhost" | "http://tauri.localhost" | "https://tauri.localhost"
+    )
+}
+
+/// Parse the host out of a web origin (`scheme://host[:port]`), dropping the
+/// scheme, any path, and the port. Returns `None` if there is no `scheme://`.
+fn origin_host(origin: &str) -> Option<&str> {
+    let after_scheme = origin.split_once("://")?.1;
+    host_only(after_scheme)
+}
+
+/// Extract the bare host from an authority (`host[:port]` or `[ipv6]:port`),
+/// stripping any path suffix and the port while keeping IPv6 literals intact.
+fn host_only(authority: &str) -> Option<&str> {
+    // Drop any path component (`host:port/path` → `host:port`).
+    let authority = authority.split('/').next().unwrap_or("");
+    if authority.is_empty() {
+        return None;
+    }
+    let host = if let Some(rest) = authority.strip_prefix('[') {
+        // IPv6 literal: `[::1]:port` → `::1`
+        rest.split(']').next().unwrap_or("")
+    } else {
+        authority.split(':').next().unwrap_or("")
+    };
+    if host.is_empty() { None } else { Some(host) }
+}
+
+/// True when `host` is a loopback name/address (the gateway's own first-party
+/// loopback origin).
+fn host_is_loopback(host: &str) -> bool {
+    if host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    host.parse::<std::net::IpAddr>()
+        .map(|ip| ip.is_loopback())
+        .unwrap_or(false)
+}
+
 /// GET /ws/chat — WebSocket upgrade for agent chat
 pub async fn handle_ws_chat(
     State(state): State<AppState>,
+    ConnectInfo(peer_addr): ConnectInfo<SocketAddr>,
     Query(params): Query<WsQuery>,
     headers: HeaderMap,
     ws: WebSocketUpgrade,
 ) -> impl IntoResponse {
-    // Auth: check header, subprotocol, then query param (precedence order)
+    // Defense-in-depth: reject cross-site WebSocket handshakes (#383).
+    if !check_ws_origin(&headers) {
+        return (
+            axum::http::StatusCode::FORBIDDEN,
+            "Forbidden — cross-origin WebSocket upgrade rejected",
+        )
+            .into_response();
+    }
+
+    // Auth: check header, subprotocol, then query param (precedence order).
+    // Rate-limited against bearer-token brute force (#384).
     if state.pairing.require_pairing() {
+        let limiter = super::api::WsAuthLimiter::new(&state, Some(peer_addr), &headers);
+        if let Err(retry_after) = limiter.check() {
+            return (
+                axum::http::StatusCode::TOO_MANY_REQUESTS,
+                [(header::RETRY_AFTER, retry_after.to_string())],
+                "Too many auth attempts — try again later",
+            )
+                .into_response();
+        }
+
         let token = extract_ws_token(&headers, params.token.as_deref()).unwrap_or("");
         if !state.pairing.is_authenticated(token) {
+            limiter.record_failure();
             return (
                 axum::http::StatusCode::UNAUTHORIZED,
                 "Unauthorized — provide Authorization header, Sec-WebSocket-Protocol bearer, or ?token= query param",
@@ -820,6 +961,28 @@ fn parse_attachments(parsed: &serde_json::Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Overlap (in bytes) the streaming output guardrail re-scans into the
+/// already-scanned prefix when a new chunk arrives. Large enough to cover any
+/// single-line credential pattern that straddles a chunk boundary, while keeping
+/// the per-chunk scan cost bounded (no quadratic full-buffer re-scan per token).
+const STREAM_SCAN_WINDOW: usize = 4096;
+
+/// Return the slice of `buf` to scan for leaks after appending a chunk: EVERY
+/// newly-appended byte (from `prev_len` onward) plus a trailing
+/// `STREAM_SCAN_WINDOW` overlap into the previously-scanned text. Scanning the
+/// whole new chunk — not just a fixed trailing window of the cumulative buffer —
+/// is what catches a credential that arrives inside a single jumbo (>window)
+/// chunk; the overlap additionally catches one that straddles a chunk boundary.
+/// Cost is O(chunk + window) per chunk. The authoritative `done` redaction still
+/// runs over the complete response as the backstop.
+fn stream_scan_region(buf: &str, prev_len: usize) -> &str {
+    let mut start = prev_len.saturating_sub(STREAM_SCAN_WINDOW);
+    while start < buf.len() && !buf.is_char_boundary(start) {
+        start += 1;
+    }
+    &buf[start..]
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn process_chat_message(
     state: &AppState,
@@ -924,12 +1087,26 @@ async fn process_chat_message(
         .cost_tracker
         .clone()
         .map(|tracker| crate::agent::cost::ToolLoopCostTrackingContext::new(tracker, "gateway"));
+    // Overall turn timeout: a provider that opens a stream and then goes silent
+    // (or a stalled tool) would otherwise leave the turn awaiting indefinitely
+    // and keep the per-session queue permit (`_session_guard`) held for the
+    // whole life of the connection, blocking follow-up turns on this session.
+    // Bound it the same way the channel dispatch path bounds its tool-call loop.
+    let turn_timeout_secs = {
+        let config = state.config.lock();
+        ws_turn_timeout_budget_secs(
+            config.provider_timeout_secs,
+            crate::agent::loop_::effective_max_tool_iterations(&config),
+        )
+    };
     let turn_fut =
         crate::agent::loop_::TOOL_LOOP_COST_TRACKING_CONTEXT.scope(cost_tracking_context, async {
             agent
                 .turn_streamed_with_steering(&content_owned, event_tx, Some(steering_rx))
                 .await
         });
+    let turn_fut =
+        tokio::time::timeout(std::time::Duration::from_secs(turn_timeout_secs), turn_fut);
 
     // Drive the turn and relays in one select loop so the WebSocket can
     // receive a `stop` control frame while the agent is still working.
@@ -941,6 +1118,24 @@ async fn process_chat_message(
     ping_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     ping_interval.tick().await;
 
+    // Streaming output guardrail: accumulate streamed reply text and, on each
+    // chunk, scan every newly-appended byte plus a STREAM_SCAN_WINDOW overlap
+    // (see stream_scan_region) so a credential is caught whether it arrives
+    // inside one large chunk or straddles a chunk boundary. Once a leak is
+    // detected we stop forwarding raw chunks for the rest of the turn — the
+    // authoritative redacted `done.full_response` below delivers the clean text,
+    // and the client discards the streamed draft on `chunk_reset`.
+    //
+    // Cost is O(chunk + window) per chunk, not a quadratic full-buffer re-scan.
+    // It is best-effort for one narrow case: a secret whose matchable pattern is
+    // itself longer than STREAM_SCAN_WINDOW *and* is split across multiple chunks
+    // (e.g. a multi-line PEM block) can have its start scroll out of the overlap
+    // before its end arrives. The final `done` redaction over the complete
+    // response is authoritative and scrubs any such remnant before the reply is
+    // persisted or delivered.
+    let mut streamed_buf = String::new();
+    let mut chunk_redaction_active = false;
+
     tokio::pin!(turn_fut);
     let result = loop {
         tokio::select! {
@@ -949,24 +1144,47 @@ async fn process_chat_message(
                 if let Some(event) = event {
                     let ws_msg = match event {
                         TurnEvent::Chunk { delta } => {
-                            serde_json::json!({ "type": "chunk", "content": delta })
+                            let prev_len = streamed_buf.len();
+                            streamed_buf.push_str(&delta);
+                            if !chunk_redaction_active
+                                && crate::security::redact_outbound(
+                                    stream_scan_region(&streamed_buf, prev_len),
+                                )
+                                .1
+                                .is_some()
+                            {
+                                // Leak surfaced mid-stream: suppress this and all
+                                // subsequent chunks; the redacted `done` is authoritative.
+                                chunk_redaction_active = true;
+                                tracing::warn!(
+                                    session = %session_key,
+                                    "output guardrail: suppressing streamed chunks after credential leak detected"
+                                );
+                            }
+                            if chunk_redaction_active {
+                                None
+                            } else {
+                                Some(serde_json::json!({ "type": "chunk", "content": delta }))
+                            }
                         }
                         TurnEvent::Thinking { delta } => {
-                            serde_json::json!({ "type": "thinking", "content": delta })
+                            Some(serde_json::json!({ "type": "thinking", "content": delta }))
                         }
                         TurnEvent::ToolCall { name, args } => {
-                            serde_json::json!({ "type": "tool_call", "name": name, "args": args })
+                            Some(serde_json::json!({ "type": "tool_call", "name": name, "args": args }))
                         }
                         TurnEvent::ToolResult { name, output } => {
-                            serde_json::json!({ "type": "tool_result", "name": name, "output": output })
+                            Some(serde_json::json!({ "type": "tool_result", "name": name, "output": output }))
                         }
                         TurnEvent::OperatorStatus { phase, detail } => {
-                            serde_json::json!({ "type": "operator_status", "phase": phase, "detail": detail })
+                            Some(serde_json::json!({ "type": "operator_status", "phase": phase, "detail": detail }))
                         }
                     };
-                    if sender.send(Message::Text(ws_msg.to_string().into())).await.is_err() {
-                        tracing::warn!(session = %session_key, "WebSocket chat send failed during active turn");
-                        break None;
+                    if let Some(ws_msg) = ws_msg {
+                        if sender.send(Message::Text(ws_msg.to_string().into())).await.is_err() {
+                            tracing::warn!(session = %session_key, "WebSocket chat send failed during active turn");
+                            break None;
+                        }
                     }
                 }
             }
@@ -1078,8 +1296,53 @@ async fn process_chat_message(
         return;
     };
 
+    // Peel the overall-turn-timeout layer. On elapse the inner `turn_fut` is
+    // dropped, cancelling the stalled provider/tool future at its next await
+    // point. Mirror the `stop`/disconnect cleanup above so the per-session
+    // queue permit is released even when neither the provider nor the client
+    // ever signals completion.
+    let result = match result {
+        Ok(inner) => inner,
+        Err(_elapsed) => {
+            tracing::warn!(
+                session = %session_key,
+                timeout_secs = turn_timeout_secs,
+                "WebSocket chat turn exceeded its overall timeout budget; stopping turn"
+            );
+            if let Some(ref backend) = state.session_backend {
+                let _ = backend.set_session_state(session_key, "idle", None);
+            }
+            let stopped = serde_json::json!({
+                "type": "stopped",
+                "message": format!(
+                    "Stopped current Operator turn after {turn_timeout_secs}s with no response."
+                )
+            });
+            let _ = sender.send(Message::Text(stopped.to_string().into())).await;
+            let _ = state.event_tx.send(serde_json::json!({
+                "type": "agent_end",
+                "provider": provider_label,
+                "model": state.model,
+            }));
+            return;
+        }
+    };
+
     match result {
         Ok(response) => {
+            // Output guardrail: scrub credential leaks before the reply leaves
+            // the gateway. The redacted form is the authoritative text that gets
+            // both persisted (so the REST session-messages replay is clean at
+            // rest) and sent as `done.full_response`.
+            let (response, leaked) = crate::security::redact_outbound(&response);
+            if let Some(patterns) = leaked {
+                tracing::warn!(
+                    session = %session_key,
+                    patterns = ?patterns,
+                    "output guardrail: credential leak detected in gateway chat response"
+                );
+            }
+
             // Persist assistant response
             if let Some(ref backend) = state.session_backend {
                 let assistant_msg = crate::providers::ChatMessage::assistant(&response);
@@ -1156,6 +1419,21 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert("authorization", "Bearer rk_test123".parse().unwrap());
         assert_eq!(extract_ws_token(&headers, None), Some("rk_test123"));
+    }
+
+    #[test]
+    fn ws_turn_timeout_budget_scales_and_caps() {
+        // Scales with iterations: 120s × 3 iterations.
+        assert_eq!(ws_turn_timeout_budget_secs(120, 3), 360);
+        // Capped at WS_TURN_TIMEOUT_SCALE_CAP regardless of iteration count.
+        assert_eq!(
+            ws_turn_timeout_budget_secs(120, 80),
+            120 * WS_TURN_TIMEOUT_SCALE_CAP
+        );
+        // Zero iterations is treated as one (never an unbounded/zero budget).
+        assert_eq!(ws_turn_timeout_budget_secs(120, 0), 120);
+        // Zero provider timeout floors at one second of budget.
+        assert_eq!(ws_turn_timeout_budget_secs(0, 1), 1);
     }
 
     #[test]
@@ -1285,5 +1563,206 @@ mod tests {
         assert!(architect_instructions_block(page_context).is_none());
         assert!(architect_instructions_block("").is_none());
         assert!(architect_instructions_block("<architect-instructions>oops").is_none());
+    }
+
+    /// Mirrors the streaming output-guardrail policy in `process_chat_message`:
+    /// accumulate streamed deltas and scan every newly-appended byte (plus a
+    /// trailing overlap) so a credential is detected whether it arrives inside a
+    /// single jumbo chunk or straddles a chunk boundary, suppressing chunk
+    /// forwarding for the rest of the turn.
+    fn forwarded_chunks(deltas: &[&str]) -> Vec<String> {
+        let mut streamed_buf = String::new();
+        let mut chunk_redaction_active = false;
+        let mut forwarded = Vec::new();
+        for delta in deltas {
+            let prev_len = streamed_buf.len();
+            streamed_buf.push_str(delta);
+            if !chunk_redaction_active
+                && crate::security::redact_outbound(stream_scan_region(&streamed_buf, prev_len))
+                    .1
+                    .is_some()
+            {
+                chunk_redaction_active = true;
+            }
+            if !chunk_redaction_active {
+                forwarded.push((*delta).to_string());
+            }
+        }
+        forwarded
+    }
+
+    #[test]
+    fn streamed_chunks_forwarded_when_clean() {
+        let forwarded = forwarded_chunks(&["Hello ", "there, ", "how can I help?"]);
+        assert_eq!(forwarded, vec!["Hello ", "there, ", "how can I help?"]);
+    }
+
+    #[test]
+    fn streamed_chunks_suppressed_when_key_completes_in_a_chunk() {
+        // The Stripe pattern is `sk_(live|test)_[a-zA-Z0-9]{24,}`, so the key
+        // only matches once 24+ trailing alphanumerics are present. Here the
+        // chunk that arrives carries the full key, so detection fires on that
+        // chunk: the preceding clean prose is forwarded, but the chunk holding
+        // the key — and everything after — is suppressed, so no part of the key
+        // ever reaches the wire.
+        let forwarded = forwarded_chunks(&[
+            "Your key is ",
+            "sk_test_1234567890abcdefghijklmnop",
+            " — keep it safe",
+        ]);
+        assert_eq!(forwarded, vec!["Your key is "]);
+        assert!(
+            !forwarded.iter().any(|c| c.contains("sk_test_")),
+            "no chunk containing the leaked key may be forwarded"
+        );
+    }
+
+    #[test]
+    fn streamed_chunks_suppressed_after_key_split_across_boundaries() {
+        // The key is split so the matching 24-char suffix only completes on the
+        // second chunk. The cumulative-buffer scan catches it there and
+        // suppresses that chunk and all subsequent ones.
+        //
+        // NOTE: a *partial* prefix can still be streamed before the suffix
+        // completes — after delta 1 the buffer `...sk_test_1234567890` has only
+        // 10 trailing alphanumerics (< 24), so no pattern matches yet and that
+        // chunk is forwarded. The streaming guardrail is best-effort; the
+        // authoritative `done` redaction over the complete response scrubs the
+        // full key before it is persisted or delivered.
+        let forwarded = forwarded_chunks(&[
+            "Your key is sk_test_1234567890",
+            "abcdefghijklmnop",
+            " — keep it safe",
+        ]);
+        // Suppression begins exactly on the chunk that completes the key.
+        assert_eq!(forwarded, vec!["Your key is sk_test_1234567890"]);
+        assert!(
+            !forwarded.iter().any(|c| c.contains("abcdefghijklmnop")),
+            "the chunk completing the leaked key must be suppressed"
+        );
+    }
+
+    #[test]
+    fn streamed_chunks_suppressed_when_key_buried_in_a_jumbo_chunk() {
+        // Regression for the windowing gap: a credential that arrives inside a
+        // single chunk LARGER than STREAM_SCAN_WINDOW, positioned before the
+        // trailing window, must still be caught. The old trailing-window scan of
+        // the cumulative buffer missed it (the key was pushed out of the last
+        // 4 KB) and streamed the chunk raw; stream_scan_region scans the whole
+        // new chunk, so it is detected and suppressed.
+        let jumbo = format!(
+            "{}sk_test_1234567890abcdefghijklmnop{}",
+            "a".repeat(8192), // key sits ~8 KB before the chunk's end
+            "b".repeat(8192),
+        );
+        let forwarded = forwarded_chunks(&["Here is a long reply ", &jumbo, " trailing"]);
+        assert_eq!(forwarded, vec!["Here is a long reply "]);
+        assert!(
+            !forwarded.iter().any(|c| c.contains("sk_test_")),
+            "a key buried in a single jumbo chunk must never be forwarded"
+        );
+    }
+
+    #[test]
+    fn stream_scan_region_covers_new_bytes_on_char_boundary() {
+        // The scan region starts STREAM_SCAN_WINDOW bytes before prev_len, on a
+        // UTF-8 char boundary, and always includes every newly-appended byte.
+        let prefix = "é".repeat(STREAM_SCAN_WINDOW); // 2 bytes each, > window
+        let prev_len = prefix.len();
+        let buf = format!("{prefix}sk_test_1234567890abcdefghijklmnop");
+        let region = stream_scan_region(&buf, prev_len);
+        // Every newly-appended byte is in the region, so the trailing secret is
+        // always detectable regardless of how far it sits from the buffer end.
+        assert!(region.contains("sk_test_1234567890abcdefghijklmnop"));
+        // Short buffer (prev_len below the window) is returned whole.
+        assert_eq!(stream_scan_region("hello", 0), "hello");
+    }
+
+    #[test]
+    fn check_ws_origin_allows_absent_origin() {
+        // Non-browser clients (CLI, native, node) send no Origin → allow.
+        let headers = HeaderMap::new();
+        assert!(check_ws_origin(&headers));
+    }
+
+    #[test]
+    fn check_ws_origin_allows_loopback_origins() {
+        for origin in [
+            "http://127.0.0.1:42617",
+            "http://127.0.0.1",
+            "https://localhost:42617",
+            "http://localhost",
+            "http://[::1]:42617",
+            "http://LocalHost", // case-insensitive host
+        ] {
+            let mut headers = HeaderMap::new();
+            headers.insert("origin", origin.parse().unwrap());
+            assert!(check_ws_origin(&headers), "expected allow for {origin}");
+        }
+    }
+
+    #[test]
+    fn check_ws_origin_rejects_cross_site_origins() {
+        for origin in [
+            "https://evil.example.com",
+            "http://attacker.test:8080",
+            "https://127.0.0.1.evil.com", // loopback-looking but not loopback
+            "http://192.168.1.10",
+            "null",
+        ] {
+            let mut headers = HeaderMap::new();
+            headers.insert("origin", origin.parse().unwrap());
+            assert!(!check_ws_origin(&headers), "expected reject for {origin}");
+        }
+    }
+
+    #[test]
+    fn check_ws_origin_allows_first_party_same_host() {
+        // The dashboard is served same-origin by this gateway, so over a tunnel
+        // or public/LAN bind the browser's Origin host equals the Host it
+        // connected to. These first-party handshakes must pass.
+        for (origin, host) in [
+            ("https://foo.trycloudflare.com", "foo.trycloudflare.com"),
+            ("https://abc.ngrok-free.app", "abc.ngrok-free.app"),
+            ("http://192.168.1.50:42617", "192.168.1.50:42617"),
+            ("https://revka.example.com", "revka.example.com"),
+            // Port present on Origin but Host carries none (and vice versa):
+            // host comparison ignores the port.
+            ("http://192.168.1.50:42617", "192.168.1.50"),
+        ] {
+            let mut headers = HeaderMap::new();
+            headers.insert("origin", origin.parse().unwrap());
+            headers.insert("host", host.parse().unwrap());
+            assert!(
+                check_ws_origin(&headers),
+                "expected allow for same-origin {origin} / Host {host}"
+            );
+        }
+    }
+
+    #[test]
+    fn check_ws_origin_rejects_cross_site_even_with_host() {
+        // A cross-site attacker page carries its own Origin while Host stays the
+        // gateway's, so the two differ and the upgrade is rejected.
+        let mut headers = HeaderMap::new();
+        headers.insert("origin", "https://evil.example.com".parse().unwrap());
+        headers.insert("host", "foo.trycloudflare.com".parse().unwrap());
+        assert!(!check_ws_origin(&headers));
+    }
+
+    #[test]
+    fn check_ws_origin_allows_tauri_webview_origins() {
+        // Revka Desktop (Tauri/WebView2) loads the dashboard from these origins,
+        // none of which match the gateway Host.
+        for origin in [
+            "tauri://localhost",
+            "http://tauri.localhost",
+            "https://tauri.localhost",
+        ] {
+            let mut headers = HeaderMap::new();
+            headers.insert("origin", origin.parse().unwrap());
+            headers.insert("host", "127.0.0.1:42617".parse().unwrap());
+            assert!(check_ws_origin(&headers), "expected allow for {origin}");
+        }
     }
 }

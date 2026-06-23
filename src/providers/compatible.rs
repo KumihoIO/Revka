@@ -260,48 +260,88 @@ impl OpenAiCompatibleProvider {
         result
     }
 
-    fn http_client(&self) -> Client {
+    /// Build the `default_headers` map from the configured user-agent and any
+    /// extra headers, warning on (and skipping) invalid header names/values.
+    fn build_extra_headers(&self) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        if let Some(ua) = self.user_agent.as_deref() {
+            if let Ok(value) = HeaderValue::from_str(ua) {
+                headers.insert(USER_AGENT, value);
+            }
+        }
+        for (key, value) in &self.extra_headers {
+            match (
+                reqwest::header::HeaderName::from_bytes(key.as_bytes()),
+                HeaderValue::from_str(value),
+            ) {
+                (Ok(name), Ok(val)) => {
+                    headers.insert(name, val);
+                }
+                _ => {
+                    tracing::warn!(header = key, "Skipping invalid extra header name or value");
+                }
+            }
+        }
+        headers
+    }
+
+    /// Shared client builder for both [`Self::http_client`] and
+    /// [`Self::streaming_http_client`]. When `streaming` is true the configured
+    /// `timeout_secs` is applied as a per-read **idle** timeout
+    /// (`.read_timeout`) so long SSE generations are not aborted mid-stream;
+    /// otherwise it is applied as a total request timeout (`.timeout`).
+    fn build_http_client(&self, streaming: bool) -> Client {
         let timeout = self.timeout_secs;
         let has_user_agent = self.user_agent.is_some();
         let has_extra_headers = !self.extra_headers.is_empty();
 
         if has_user_agent || has_extra_headers {
-            let mut headers = HeaderMap::new();
-            if let Some(ua) = self.user_agent.as_deref() {
-                if let Ok(value) = HeaderValue::from_str(ua) {
-                    headers.insert(USER_AGENT, value);
-                }
+            let timeout = std::time::Duration::from_secs(timeout);
+            let builder = Client::builder().connect_timeout(std::time::Duration::from_secs(10));
+            let builder = if streaming {
+                builder.read_timeout(timeout)
+            } else {
+                builder.timeout(timeout)
             }
-            for (key, value) in &self.extra_headers {
-                match (
-                    reqwest::header::HeaderName::from_bytes(key.as_bytes()),
-                    HeaderValue::from_str(value),
-                ) {
-                    (Ok(name), Ok(val)) => {
-                        headers.insert(name, val);
-                    }
-                    _ => {
-                        tracing::warn!(header = key, "Skipping invalid extra header name or value");
-                    }
-                }
-            }
-
-            let builder = Client::builder()
-                .timeout(std::time::Duration::from_secs(timeout))
-                .connect_timeout(std::time::Duration::from_secs(10))
-                .default_headers(headers);
+            .default_headers(self.build_extra_headers());
             let builder =
                 crate::config::apply_runtime_proxy_to_builder(builder, "provider.compatible");
 
             return builder.build().unwrap_or_else(|error| {
+                let kind = if streaming { "streaming" } else { "timeout" };
                 tracing::warn!(
-                    "Failed to build proxied timeout client with custom headers: {error}"
+                    "Failed to build proxied {kind} client with custom headers: {error}"
                 );
                 Client::new()
             });
         }
 
-        crate::config::build_runtime_proxy_client_with_timeouts("provider.compatible", timeout, 10)
+        if streaming {
+            crate::config::build_runtime_proxy_streaming_client_with_timeouts(
+                "provider.compatible",
+                timeout,
+                10,
+            )
+        } else {
+            crate::config::build_runtime_proxy_client_with_timeouts(
+                "provider.compatible",
+                timeout,
+                10,
+            )
+        }
+    }
+
+    fn http_client(&self) -> Client {
+        self.build_http_client(false)
+    }
+
+    /// Like [`Self::http_client`] but tuned for streaming (SSE) requests: it uses
+    /// a per-read **idle** timeout instead of a total request timeout, so a
+    /// long generation streaming for longer than `timeout_secs` is not aborted
+    /// mid-stream while tokens are still arriving (#407). The configured
+    /// `timeout_secs` is reused as the idle threshold.
+    fn streaming_http_client(&self) -> Client {
+        self.build_http_client(true)
     }
 
     /// Build the full URL for chat completions, detecting if base_url already includes the path.
@@ -2224,7 +2264,7 @@ impl Provider for OpenAiCompatibleProvider {
         };
 
         let url = self.chat_completions_url();
-        let client = self.http_client();
+        let client = self.streaming_http_client();
         let auth_header = self.auth_header.clone();
         let count_tokens = options.count_tokens;
 
@@ -2324,7 +2364,7 @@ impl Provider for OpenAiCompatibleProvider {
         };
 
         let url = self.chat_completions_url();
-        let client = self.http_client();
+        let client = self.streaming_http_client();
         let auth_header = self.auth_header.clone();
 
         // Use a channel to bridge the async HTTP response to the stream
@@ -2436,7 +2476,7 @@ impl Provider for OpenAiCompatibleProvider {
         };
 
         let url = self.chat_completions_url();
-        let client = self.http_client();
+        let client = self.streaming_http_client();
         let auth_header = self.auth_header.clone();
 
         let (tx, rx) = tokio::sync::mpsc::channel::<StreamResult<StreamChunk>>(100);
@@ -3964,6 +4004,25 @@ mod tests {
         let p = make_provider("test", "https://example.com", None);
         // Should use the cached proxy client path
         let _client = p.http_client();
+    }
+
+    #[test]
+    fn streaming_http_client_with_extra_headers_builds_successfully() {
+        // #407: the streaming client (read/idle timeout) must build through the
+        // same custom-header + proxy path as http_client.
+        let mut headers = std::collections::HashMap::new();
+        headers.insert("X-Title".to_string(), "revka".to_string());
+        headers.insert("User-Agent".to_string(), "TestAgent/1.0".to_string());
+        let p = make_provider("test", "https://example.com", None).with_extra_headers(headers);
+        // Should not panic
+        let _client = p.streaming_http_client();
+    }
+
+    #[test]
+    fn streaming_http_client_without_extra_headers_or_user_agent() {
+        // #407: no-header path routes through the streaming builder helper.
+        let p = make_provider("test", "https://example.com", None);
+        let _client = p.streaming_http_client();
     }
 
     #[test]

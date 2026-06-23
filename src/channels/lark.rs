@@ -1829,6 +1829,27 @@ impl Channel for LarkChannel {
     }
 }
 
+/// Returns `true` when a webhook payload carries a verification token matching
+/// `verification_token` (constant-time comparison).
+///
+/// Lark/Feishu place the token at the top level for the URL-verification
+/// handshake and legacy (v1) event callbacks, and under `header.token` for v2
+/// event callbacks — both locations are accepted. An empty configured token, a
+/// missing request token, or a mismatch all return `false` (fail closed).
+fn webhook_token_matches(payload: &serde_json::Value, verification_token: &str) -> bool {
+    if verification_token.is_empty() {
+        return false;
+    }
+    let provided = payload
+        .get("token")
+        .and_then(|t| t.as_str())
+        .or_else(|| payload.pointer("/header/token").and_then(|t| t.as_str()));
+    match provided {
+        Some(token) => crate::security::pairing::constant_time_eq(token, verification_token),
+        None => false,
+    }
+}
+
 impl LarkChannel {
     /// HTTP callback server (legacy — requires a public endpoint).
     /// Use `listen()` (WS long-connection) for new deployments.
@@ -1853,18 +1874,30 @@ impl LarkChannel {
             use axum::http::StatusCode;
             use axum::response::IntoResponse;
 
+            // Fail closed: every callback (challenge handshake and event delivery
+            // alike) must carry the configured verification token. Without this an
+            // unauthenticated POST to the public webhook endpoint could drive the
+            // agent. Refuse outright when no token is configured.
+            if state.verification_token.is_empty() {
+                tracing::error!(
+                    "Lark webhook: rejecting request — no verification_token configured \
+                     ([channels_config.lark].verification_token is required for webhook mode)"
+                );
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    "verification token not configured",
+                )
+                    .into_response();
+            }
+            if !webhook_token_matches(&payload, &state.verification_token) {
+                tracing::warn!(
+                    "Lark webhook: rejecting request with missing/invalid verification token"
+                );
+                return (StatusCode::FORBIDDEN, "invalid token").into_response();
+            }
+
             // URL verification challenge
             if let Some(challenge) = payload.get("challenge").and_then(|c| c.as_str()) {
-                // Verify token if present
-                let token_ok = payload
-                    .get("token")
-                    .and_then(|t| t.as_str())
-                    .map_or(true, |t| t == state.verification_token);
-
-                if !token_ok {
-                    return (StatusCode::FORBIDDEN, "invalid token").into_response();
-                }
-
                 let resp = serde_json::json!({ "challenge": challenge });
                 return (StatusCode::OK, Json(resp)).into_response();
             }
@@ -2655,6 +2688,64 @@ mod tests {
         // Challenge payloads should not produce messages
         let msgs = ch.parse_event_payload(&payload).await;
         assert!(msgs.is_empty());
+    }
+
+    #[test]
+    fn webhook_token_accepts_top_level_token() {
+        // URL-verification handshake / v1 callbacks carry the token at top level.
+        let payload = serde_json::json!({
+            "challenge": "abc123",
+            "token": "secret",
+            "type": "url_verification"
+        });
+        assert!(webhook_token_matches(&payload, "secret"));
+    }
+
+    #[test]
+    fn webhook_token_accepts_header_token() {
+        // v2 event callbacks carry the token under header.token.
+        let payload = serde_json::json!({
+            "header": { "event_type": "im.message.receive_v1", "token": "secret" },
+            "event": {}
+        });
+        assert!(webhook_token_matches(&payload, "secret"));
+    }
+
+    #[test]
+    fn webhook_token_rejects_mismatch() {
+        let payload = serde_json::json!({ "token": "wrong" });
+        assert!(!webhook_token_matches(&payload, "secret"));
+    }
+
+    #[test]
+    fn webhook_token_rejects_missing() {
+        let payload = serde_json::json!({ "event": {} });
+        assert!(!webhook_token_matches(&payload, "secret"));
+    }
+
+    #[test]
+    fn webhook_token_rejects_when_unconfigured() {
+        // Empty configured token must fail closed even if the request omits one.
+        let payload = serde_json::json!({ "token": "" });
+        assert!(!webhook_token_matches(&payload, ""));
+        let payload = serde_json::json!({ "token": "anything" });
+        assert!(!webhook_token_matches(&payload, ""));
+    }
+
+    #[test]
+    fn webhook_token_rejects_non_string_token() {
+        // Non-string token values must coerce to "no token" and fail closed,
+        // never match. Guards against a future refactor weakening as_str().
+        for token in [
+            serde_json::json!(123),
+            serde_json::json!(true),
+            serde_json::json!(null),
+            serde_json::json!({ "nested": "secret" }),
+            serde_json::json!(["secret"]),
+        ] {
+            let payload = serde_json::json!({ "token": token });
+            assert!(!webhook_token_matches(&payload, "secret"));
+        }
     }
 
     #[tokio::test]

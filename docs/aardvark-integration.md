@@ -77,7 +77,7 @@ Drop(handle)
   → aa_close(handle._port)            // always close on drop
 ```
 
-**In stub mode** (no SDK): every method returns `Err(NotFound)` immediately. `find_devices()` returns `[]`. Nothing crashes.
+**In stub mode** (no SDK): every method that needs the library returns `Err(LibraryNotFound)` immediately. `find_devices()` returns `[]` and `open()` returns `Err(NotFound)` (no adapter). Nothing crashes.
 
 ---
 
@@ -318,7 +318,7 @@ Aardvark tools are appended.
 | | Stub mode (now) | Real hardware |
 |---|---|---|
 | `find_devices()` | returns `[]` | returns `[0]` |
-| `open_port(0)` | `Err(NotFound)` | opens USB, returns handle |
+| `open_port(0)` | `Err(LibraryNotFound)` | opens USB, returns handle |
 | `i2c_scan()` | `[]` | probes bus, returns addresses |
 | tools loaded | only the 6 Pico tools | 6 Pico + 6 Aardvark tools |
 | `has_aardvark()` | `false` | `true` |

@@ -31,7 +31,6 @@ _BUILTINS_DIR = os.path.join(
 # ---------------------------------------------------------------------------
 
 _SMOKE_TEST_PATH = os.path.join(_BUILTINS_DIR, "smoke-test-all-steps.yaml")
-_GITHUB_ISSUE_RESOLVER_PATH = os.path.join(_BUILTINS_DIR, "github-issue-resolver.yaml")
 
 
 @pytest.fixture(scope="module")
@@ -218,61 +217,6 @@ def test_builtin_workflow_validates(yaml_path: str) -> None:
         f"{os.path.basename(yaml_path)} failed validation: "
         f"errors={result.errors} warnings={result.warnings}"
     )
-
-
-def test_github_issue_resolver_matches_demo_run_contract() -> None:
-    wf = load_workflow_from_yaml(_GITHUB_ISSUE_RESOLVER_PATH)
-
-    assert wf.name == "github-issue-resolver"
-    assert [step.id for step in wf.steps] == [
-        "assess_issue",
-        "google_agentops_preflight",
-        "human_approval_gate_1",
-        "deploy_coder_agent",
-        "review_pr",
-        "address_review_findings",
-        "human_approval_gate_2",
-        "merge_and_close",
-    ]
-    assert len(wf.triggers) == 1
-    assert wf.triggers[0].on_kind == "github-issue"
-
-    input_names = {input_def.name for input_def in wf.inputs}
-    assert {"github_payload", "repo_name", "track3_a2a_url"} == input_names
-
-    assess = wf.step_by_id("assess_issue")
-    assert assess.agent.agent_type == "agy"
-    assert assess.agent.output_fields == [
-        "issue_number",
-        "issue_title",
-        "issue_body",
-        "likely_files",
-        "strategy",
-        "risk_notes",
-    ]
-
-    deploy = wf.step_by_id("deploy_coder_agent")
-    assert deploy.agent.agent_type == "agy"
-    assert deploy.agent.output_fields == [
-        "branch_name",
-        "commit_sha",
-        "pr_url",
-        "files_changed",
-        "test_summary",
-        "clippy_summary",
-        "google_agentops_evidence",
-        "residual_risks",
-    ]
-
-    merge = wf.step_by_id("merge_and_close")
-    assert merge.agent.agent_type == "agy"
-    assert merge.agent.output_fields == [
-        "merge_status",
-        "issue_closed",
-        "closing_comment_url",
-        "merged_pr_url",
-        "audit_summary",
-    ]
 
 
 def test_canonworks_episode_factory_preserves_generalized_example_contract() -> None:

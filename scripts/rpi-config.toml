@@ -301,7 +301,6 @@ system_prompt_prefix = ""
 provider_retries = 2
 provider_backoff_ms = 500
 fallback_providers = []
-api_keys = []
 channel_initial_backoff_secs = 2
 channel_max_backoff_secs = 60
 scheduler_poll_secs = 15
@@ -385,6 +384,11 @@ message_timeout_secs = 300
 [channels_config.webhook]
 port = 8080
 secret = "mytoken123"
+# The webhook listener now binds 127.0.0.1 (loopback) by default. To accept
+# webhooks from other hosts on your network, set a real `secret` above and
+# uncomment both lines below (a secret is required for any non-loopback bind):
+# host = "0.0.0.0"
+# allow_public_bind = true
 
 [channels_config.ack_reaction]
 

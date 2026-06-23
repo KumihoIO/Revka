@@ -140,6 +140,67 @@ pub(super) fn require_auth(
     ))
 }
 
+/// Per-connection handle to the auth brute-force limiter for the inline token
+/// checks in the WebSocket (`/ws/*`) and SSE (`/api/events`) handlers.
+///
+/// Those handlers each extract their credential from a different place
+/// (`Authorization` header, `Sec-WebSocket-Protocol` bearer sub-protocol,
+/// `?token=` query param, or the node auth token), so they cannot share a
+/// single validation routine. They *can* share the limiter plumbing: this
+/// guard captures the rate key and the loopback flag once, then exposes the
+/// same two-step `check` / `record_failure` dance the `/pair` and `/webhook`
+/// flows use (#384).
+///
+/// `peer_addr` MUST be the socket peer (from `ConnectInfo`), never a
+/// header-derived value: both the rate key and the loopback exemption trust
+/// only the real peer, so an attacker cannot spoof `X-Forwarded-For:
+/// 127.0.0.1` to dodge the lockout. Loopback peers are exempt — local
+/// administrators may retry freely — exactly as in the existing flows.
+pub(super) struct WsAuthLimiter<'a> {
+    limiter: &'a super::auth_rate_limit::AuthRateLimiter,
+    rate_key: String,
+    peer_is_loopback: bool,
+}
+
+impl<'a> WsAuthLimiter<'a> {
+    pub(super) fn new(
+        state: &'a AppState,
+        peer_addr: Option<std::net::SocketAddr>,
+        headers: &HeaderMap,
+    ) -> Self {
+        Self {
+            limiter: state.auth_limiter.as_ref(),
+            rate_key: super::client_key_from_request(
+                peer_addr,
+                headers,
+                state.trust_forwarded_headers,
+            ),
+            peer_is_loopback: peer_addr.map(|a| a.ip().is_loopback()).unwrap_or(false),
+        }
+    }
+
+    /// Reject a locked-out peer *before* any credential comparison.
+    ///
+    /// Returns `Err(retry_after_secs)` when the peer is currently locked out;
+    /// the caller should respond `429 Too Many Requests`.
+    pub(super) fn check(&self) -> Result<(), u64> {
+        self.limiter
+            .check_rate_limit(&self.rate_key, self.peer_is_loopback)
+            .map_err(|e| {
+                tracing::warn!("🔐 Auth rate limit exceeded for {}", self.rate_key);
+                e.retry_after_secs
+            })
+    }
+
+    /// Record a failed credential attempt so repeated invalid guesses
+    /// eventually trip the lockout. Call only on the authentication-failure
+    /// path.
+    pub(super) fn record_failure(&self) {
+        self.limiter
+            .record_attempt(&self.rate_key, self.peer_is_loopback);
+    }
+}
+
 // ── Query parameters ─────────────────────────────────────────────
 
 #[derive(Deserialize)]
@@ -1335,7 +1396,6 @@ fn mask_sensitive_fields(config: &crate::config::Config) -> crate::config::Confi
     let mut masked = config.clone();
 
     mask_optional_secret(&mut masked.api_key);
-    mask_vec_secrets(&mut masked.reliability.api_keys);
     mask_vec_secrets(&mut masked.gateway.paired_tokens);
     mask_optional_secret(&mut masked.composio.api_key);
     mask_optional_secret(&mut masked.browser.computer_use.api_key);
@@ -1439,10 +1499,6 @@ fn restore_masked_sensitive_fields(
     restore_vec_secrets(
         &mut incoming.gateway.paired_tokens,
         &current.gateway.paired_tokens,
-    );
-    restore_vec_secrets(
-        &mut incoming.reliability.api_keys,
-        &current.reliability.api_keys,
     );
     restore_optional_secret(&mut incoming.composio.api_key, &current.composio.api_key);
     restore_optional_secret(
@@ -2564,10 +2620,9 @@ mod tests {
     }
 
     #[test]
-    fn masking_keeps_toml_valid_and_preserves_api_keys_type() {
+    fn masking_keeps_toml_valid_and_preserves_vec_secret_type() {
         let mut cfg = crate::config::Config::default();
         cfg.api_key = Some("sk-live-123".to_string());
-        cfg.reliability.api_keys = vec!["rk-1".to_string(), "rk-2".to_string()];
         cfg.gateway.paired_tokens = vec!["pair-token-1".to_string()];
         cfg.tunnel.cloudflare = Some(crate::config::schema::CloudflareTunnelConfig {
             token: "cf-token".to_string(),
@@ -2579,6 +2634,7 @@ mod tests {
             tenant_id: None,
             allowed_numbers: vec![],
             proxy_url: None,
+            webhook_secret: None,
             notification_target: None,
         });
         cfg.channels_config.feishu = Some(crate::config::schema::FeishuConfig {
@@ -2626,10 +2682,6 @@ mod tests {
             toml::from_str(&toml).expect("masked config should remain valid TOML for Config");
 
         assert_eq!(parsed.api_key.as_deref(), Some(MASKED_SECRET));
-        assert_eq!(
-            parsed.reliability.api_keys,
-            vec![MASKED_SECRET.to_string(), MASKED_SECRET.to_string()]
-        );
         assert_eq!(
             parsed.gateway.paired_tokens,
             vec![MASKED_SECRET.to_string()]
@@ -2701,7 +2753,6 @@ mod tests {
         current.config_path = std::path::PathBuf::from("/tmp/current/config.toml");
         current.workspace_dir = std::path::PathBuf::from("/tmp/current/workspace");
         current.api_key = Some("real-key".to_string());
-        current.reliability.api_keys = vec!["r1".to_string(), "r2".to_string()];
         current.gateway.paired_tokens = vec!["pair-1".to_string(), "pair-2".to_string()];
         current.tunnel.cloudflare = Some(crate::config::schema::CloudflareTunnelConfig {
             token: "cf-token-real".to_string(),
@@ -2717,6 +2768,7 @@ mod tests {
             tenant_id: None,
             allowed_numbers: vec![],
             proxy_url: None,
+            webhook_secret: None,
             notification_target: None,
         });
         current.channels_config.feishu = Some(crate::config::schema::FeishuConfig {
@@ -2778,7 +2830,6 @@ mod tests {
         let mut incoming = mask_sensitive_fields(&current);
         incoming.default_model = Some("gpt-4.1-mini".to_string());
         // Simulate UI changing only one key and keeping the first masked.
-        incoming.reliability.api_keys = vec![MASKED_SECRET.to_string(), "r2-new".to_string()];
         incoming.gateway.paired_tokens = vec![MASKED_SECRET.to_string(), "pair-2-new".to_string()];
         if let Some(cloudflare) = incoming.tunnel.cloudflare.as_mut() {
             cloudflare.token = MASKED_SECRET.to_string();
@@ -2807,10 +2858,6 @@ mod tests {
         assert_eq!(hydrated.workspace_dir, current.workspace_dir);
         assert_eq!(hydrated.api_key, current.api_key);
         assert_eq!(hydrated.default_model.as_deref(), Some("gpt-4.1-mini"));
-        assert_eq!(
-            hydrated.reliability.api_keys,
-            vec!["r1".to_string(), "r2-new".to_string()]
-        );
         assert_eq!(
             hydrated.gateway.paired_tokens,
             vec!["pair-1".to_string(), "pair-2-new".to_string()]
@@ -3315,5 +3362,61 @@ mod tests {
         headers.insert(SERVICE_TOKEN_HEADER, "".parse().unwrap());
         let err = require_auth(&state, &headers).expect_err("empty config must reject");
         assert_eq!(err.0, StatusCode::UNAUTHORIZED);
+    }
+
+    // ── WsAuthLimiter (rate-limited WS/SSE token checks, #384) ──
+
+    use crate::gateway::auth_rate_limit::MAX_ATTEMPTS;
+    use std::net::SocketAddr;
+
+    /// A non-loopback peer that records a failed attempt per request eventually
+    /// trips the lockout, after which `check()` returns 429 (a retry-after).
+    #[test]
+    fn ws_auth_limiter_locks_out_non_loopback_after_repeated_failures() {
+        let state = auth_test_state();
+        let peer: SocketAddr = "203.0.113.7:54321".parse().unwrap();
+        let headers = HeaderMap::new();
+
+        // Each invalid attempt mirrors the handler failure path: check, then
+        // record the failure.
+        for _ in 0..MAX_ATTEMPTS {
+            let limiter = WsAuthLimiter::new(&state, Some(peer), &headers);
+            assert!(limiter.check().is_ok(), "should be allowed under the limit");
+            limiter.record_failure();
+        }
+
+        let limiter = WsAuthLimiter::new(&state, Some(peer), &headers);
+        let retry_after = limiter.check().expect_err("should be locked out");
+        assert!(retry_after > 0);
+    }
+
+    /// Loopback peers (local administrators) are never rate-limited, even past
+    /// the failure threshold — the limiter trusts only the socket peer.
+    #[test]
+    fn ws_auth_limiter_exempts_loopback_peer() {
+        let state = auth_test_state();
+        let peer: SocketAddr = "127.0.0.1:5000".parse().unwrap();
+        let headers = HeaderMap::new();
+
+        for _ in 0..(MAX_ATTEMPTS * 2) {
+            let limiter = WsAuthLimiter::new(&state, Some(peer), &headers);
+            assert!(limiter.check().is_ok(), "loopback must never lock out");
+            limiter.record_failure();
+        }
+    }
+
+    /// Successful attempts never call `record_failure`, so a client that always
+    /// authenticates is never locked out regardless of volume.
+    #[test]
+    fn ws_auth_limiter_does_not_count_successful_auth() {
+        let state = auth_test_state();
+        let peer: SocketAddr = "198.51.100.4:40000".parse().unwrap();
+        let headers = HeaderMap::new();
+
+        for _ in 0..(MAX_ATTEMPTS * 2) {
+            let limiter = WsAuthLimiter::new(&state, Some(peer), &headers);
+            assert!(limiter.check().is_ok());
+            // No record_failure() — the credential was valid.
+        }
     }
 }
