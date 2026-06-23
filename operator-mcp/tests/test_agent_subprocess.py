@@ -10,6 +10,7 @@ from operator_mcp.agent_subprocess import (
     _is_stderr_noise,
     _resolve_cli,
     _write_agent_home_configs,
+    cli_spawn_refusal,
     compose_agent_prompt,
 )
 
@@ -368,3 +369,25 @@ class TestClaudeSpawnAnthropicKey:
             )
             is None
         )
+
+
+class TestCliSpawnRefusal:
+    """#459: CLI providers launch with permission-bypass flags
+    (danger-full-access / --dangerously-skip-permissions) that can't be revoked
+    mid-run, so an untrusted spawn of one is refused at spawn time. Trusted
+    spawns (the default) always proceed; opencode has no such flag and is never
+    refused."""
+
+    def test_trusted_spawn_always_allowed(self):
+        for agent_type in ("codex", "claude", "agy", "agent", "opencode"):
+            assert cli_spawn_refusal(agent_type, True) is None
+
+    def test_untrusted_bypass_cli_refused(self):
+        for agent_type in ("codex", "claude", "agy", "agent"):
+            reason = cli_spawn_refusal(agent_type, False)
+            assert reason is not None
+            assert agent_type in reason
+
+    def test_untrusted_opencode_allowed(self):
+        # opencode launches without a permission-bypass flag — nothing to gate.
+        assert cli_spawn_refusal("opencode", False) is None

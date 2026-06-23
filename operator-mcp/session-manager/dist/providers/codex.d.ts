@@ -6,6 +6,15 @@
  */
 import { type ChildProcess } from "node:child_process";
 import type { AgentSessionConfig, AgentStreamEvent, AgentUsage } from "../types.js";
+/**
+ * #459: reason to refuse an untrusted permission-bypassing CLI spawn, or null.
+ *
+ * An explicitly-untrusted spawn (config.trusted === false) of a CLI we would
+ * otherwise launch with permissions bypassed is refused rather than run
+ * ungated — there is no headless-safe sandbox/approval flag to downgrade to.
+ * Trusted or unset (default) spawns always proceed; opencode is never refused.
+ */
+export declare function codexSpawnRefusal(agentType: string, trusted: boolean | undefined): string | null;
 export interface CodexSessionHandle {
     id: string;
     process: ChildProcess | null;

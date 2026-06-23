@@ -309,6 +309,7 @@ async def tool_create_agent(args: dict[str, Any], journal: SessionJournal, pool_
         title=title,
         cwd=cwd,
         status="idle",
+        trusted=bool(args.get("trusted", True)),
     )
     AGENTS[agent_id] = agent
 
