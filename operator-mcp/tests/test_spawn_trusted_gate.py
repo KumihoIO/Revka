@@ -14,7 +14,6 @@ import pytest
 
 import operator_mcp.tool_handlers.agents as agents
 from operator_mcp.agent_state import CacheSafeParams
-from operator_mcp.tool_handlers.agents import _coerce_trusted
 
 
 class CapturingSidecar:
@@ -66,17 +65,17 @@ async def test_trusted_codex_omits_trusted(tmp_path, monkeypatch):
 
 class TestCoerceTrusted:
     def test_booleans_pass_through(self):
-        assert _coerce_trusted(True) is True
-        assert _coerce_trusted(False) is False
+        assert agents._coerce_trusted(True) is True
+        assert agents._coerce_trusted(False) is False
 
     def test_missing_defaults_trusted(self):
-        assert _coerce_trusted(None) is True
+        assert agents._coerce_trusted(None) is True
 
     def test_stringified_false_is_untrusted(self):
         # A security gate must not fail open on bool("false") == True.
         for v in ("false", "False", "0", "no", "  FALSE  ", ""):
-            assert _coerce_trusted(v) is False
+            assert agents._coerce_trusted(v) is False
 
     def test_other_strings_are_trusted(self):
-        assert _coerce_trusted("true") is True
-        assert _coerce_trusted("1") is True
+        assert agents._coerce_trusted("true") is True
+        assert agents._coerce_trusted("1") is True
