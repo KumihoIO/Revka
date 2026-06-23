@@ -11,7 +11,8 @@
 <p align="center">
   <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/rust-edition%202024-orange?logo=rust" alt="Rust Edition 2024" /></a>
   <a href="LICENSE-APACHE"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache%202.0-blue.svg" alt="License: MIT OR Apache-2.0" /></a>
-  <a href="https://kumiho.io/pricing"><img src="https://img.shields.io/badge/Kumiho-Free%205k%20nodes-7c3aed" alt="Kumiho free tier" /></a>
+  <a href="https://kumiho.io/pricing"><img src="https://img.shields.io/badge/Kumiho%20Cloud-Free%205k%20nodes-7c3aed" alt="Kumiho Cloud free tier" /></a>
+  <a href="https://kumiho.io/en/resources/community-edition"><img src="https://img.shields.io/badge/Kumiho%20CE-self--host-4CAF50?logo=github" alt="Kumiho CE self-host" /></a>
 </p>
 
 <p align="center">
@@ -22,13 +23,14 @@
 
 ## How Revka fits together
 
-Revka is **open source**. The persistent graph memory it depends on — Kumiho — is a managed service with open SDKs and an Enterprise self-host option. Three layers, plain language:
+Revka is **open source**. The persistent graph memory it depends on — Kumiho — ships in two server flavors: a **managed cloud service** (free tier → paid, zero ops) and **Kumiho CE** (Community Edition, prebuilt binary, free to download, self-host on your own infra). Open SDKs, Enterprise self-host also available. Three layers, plain language:
 
 | Layer | What it is | License |
 |---|---|---|
 | **Revka** (this repo) | Rust gateway + daemon + agent loop + channels + tools + peripherals + embedded React dashboard + Tauri desktop app + CLI + Operator Python MCP | MIT **or** Apache 2.0 — your choice |
 | **Kumiho SDKs** ([kumiho-SDKs](https://github.com/KumihoIO/kumiho-SDKs)) | Python clients: `kumiho` (the graph backend) and `kumiho-memory` (the AI cognitive memory layer Revka integrates with) | Open source |
-| **Kumiho server** (control plane) | The version-controlled, schemaless, typed-edge graph engine — DreamState consolidation runs here, Neo4j is its store. Reached by clients over HTTP through the **kumiho-FastAPI BFF** at `api.kumiho.cloud`. | Managed service · Free 5k nodes → paid tiers from $40/mo · Self-host on Enterprise |
+| **Kumiho server — Cloud** | Managed control plane: version-controlled, schemaless, typed-edge graph engine, DreamState consolidation, Neo4j-backed. Reached via the **kumiho-FastAPI BFF** at `api.kumiho.cloud`. No ops required. | Free 5k nodes → paid tiers from $40/mo · Enterprise dedicated |
+| **Kumiho server — CE** | Community Edition — prebuilt binary, free to download, self-host on your own infra. Set `[kumiho].api_url` to point at it. Neo4j-backed, full graph API, same SDKs. Source not included. | Free download · [kumiho.io/en/resources/community-edition](https://kumiho.io/en/resources/community-edition) |
 
 LLM inference is **bring-your-own-provider**. We don't proxy or mark up tokens. You point Revka at Anthropic, OpenAI, OpenRouter, Ollama, GLM, or any of [14+ providers](docs/reference/api/providers-reference.md), and your keys stay yours.
 
@@ -36,7 +38,7 @@ LLM inference is **bring-your-own-provider**. We don't proxy or mark up tokens. 
 
 **Agents that Operator spawns behave differently.** Each `agent` step invokes a coding CLI subprocess — supporting **Claude Code**, **Codex**, **Antigravity CLI (agy)**, **Cursor CLI (agent)**, and **OpenCode** — with prompts piped over stdin to avoid `ARG_MAX` and shell-encoding issues. The CLI's existing OAuth/login handles auth, so your subscription becomes the spawned-agent runtime: no per-call API spend on the spawned agents themselves. Any Revka-defined MCP servers (such as `kumiho-memory` and `operator-tools`) are cleanly injected and inherited on a per-CLI basis. Direct API keys still apply to one-shot `revka agent` calls and channel-routed conversations.
 
-Revka talks to Kumiho over HTTP via `[kumiho].api_url` in your config. Without a reachable Kumiho endpoint, Revka degrades to stateless single-agent operation — useful for demos and CI, but the cross-session memory, provenance edges, audit chain, and trust scoring all live in the graph. Pricing and self-host: [kumiho.io/pricing](https://kumiho.io/pricing).
+Revka talks to Kumiho over HTTP via `[kumiho].api_url` in your config — point it at the **cloud service** (`https://api.kumiho.cloud`) or at your own **Kumiho CE** instance. Without a reachable Kumiho endpoint, Revka degrades to stateless single-agent operation — useful for demos and CI, but the cross-session memory, provenance edges, audit chain, and trust scoring all live in the graph. Cloud pricing: [kumiho.io/pricing](https://kumiho.io/pricing). CE self-host: [kumiho.io/en/resources/community-edition](https://kumiho.io/en/resources/community-edition).
 
 > **Upstream.** Revka's core Rust runtime is a fork of [ZeroClaw](https://github.com/zeroclaw-labs/zeroclaw). The agent loop, provider/channel/tool architecture, hardware peripheral layer, and CLI scaffolding trace back to that upstream; full attribution in [`NOTICE`](NOTICE) and the consolidated overview at [`docs/upstream/zeroclaw-attribution.md`](docs/upstream/zeroclaw-attribution.md). "ZeroClaw" and the ZeroClaw logo are trademarks of ZeroClaw Labs; Revka is not affiliated with, endorsed by, or sponsored by ZeroClaw Labs.
 
@@ -63,7 +65,8 @@ Kumiho is the persistent backend; Revka is its reference runtime. Trying the who
 - **30-day Studio trial** — unlocks the moment Revka stores its first memory, no credit card. 500,000 nodes, cross-session recall, audit visibility. Whatever you build during the trial, you **keep** when you revert to free; we don't claw back data.
 - **Referrals** — each successful referral earns you another 30 days of Studio, stackable up to 3 (90 days). Beyond the cap, additional referrals convert to account credit. Friend signs up via your link and ingests their first memory; you both win.
 - **Inactivity** — accounts unused for 90 days move to **cold storage**, never deleted. Log back in and the graph re-indexes within minutes. The product promise is *we don't forget*; that includes your account.
-- **Self-host** — available on Enterprise (closed-source license). Email <enterprise@kumiho.io> or see [kumiho.io/pricing](https://kumiho.io/pricing).
+- **Self-host (CE)** — **Kumiho CE** is a prebuilt binary you can download and run on your own infrastructure at no cost. No node limits, no cloud dependency. Source not included. See [kumiho.io/en/resources/community-edition](https://kumiho.io/en/resources/community-edition).
+- **Self-host (Enterprise)** — closed-source license with dedicated SLA, support, and additional hardening. Email <enterprise@kumiho.io> or see [kumiho.io/pricing](https://kumiho.io/pricing).
 
 Full tier matrix and per-feature limits at [kumiho.io/pricing](https://kumiho.io/pricing).
 
@@ -480,7 +483,7 @@ Add `--features channel-matrix,channel-lark,browser-native,hardware,rag-pdf,obse
 - **Rust stable (1.89+)** — `install.sh` / `setup.bat` will install it via rustup if missing.
 - **Python 3.11+** — required for the Kumiho and Operator Python MCP sidecars.
 - **Node.js 20+** — optional, only needed to rebuild the embedded React dashboard from source (`cd web && npm install && npx vite build`). The dashboard is re-embedded into the Rust binary at compile time via `rust-embed`.
-- **Kumiho endpoint** — an HTTP endpoint discoverable via `[kumiho].api_url` in `~/.revka/config.toml`. Default points at the **kumiho-FastAPI BFF** (`https://api.kumiho.cloud`) that fronts the managed control plane; free tier is 5,000 nodes, sign up at [kumiho.io](https://kumiho.io). Self-host is available on Enterprise. Without a reachable Kumiho endpoint Revka runs statelessly. See [docs/setup-guides/kumiho-operator-setup.md](docs/setup-guides/kumiho-operator-setup.md).
+- **Kumiho endpoint** — an HTTP endpoint via `[kumiho].api_url` in `~/.revka/config.toml`. Two options: ① **Cloud** — default points at the **kumiho-FastAPI BFF** (`https://api.kumiho.cloud`), free tier 5,000 nodes, sign up at [kumiho.io](https://kumiho.io); ② **CE** — run [Kumiho CE](https://kumiho.io/en/resources/community-edition) on your own infra and point `api_url` at it (no node limits, no cloud dependency). Without a reachable endpoint Revka runs statelessly. See [docs/setup-guides/kumiho-operator-setup.md](docs/setup-guides/kumiho-operator-setup.md).
 - **Disk / RAM** — source build needs ~6 GB free disk and ~2 GB free RAM; prebuilt binary is ~200 MB.
 
 > **Sidecar re-install.** To re-run sidecar install independently of the main bootstrap:
@@ -566,7 +569,7 @@ See [`docs/reference/api/config-reference.md`](docs/reference/api/config-referen
 | Agent Loop | Rust (async/tokio, 14+ provider adapters: Anthropic, OpenAI, OpenAI-Codex, Bedrock, Azure OpenAI, Gemini, Gemini CLI, GLM, Copilot, Ollama, OpenRouter, Kilo CLI, Telnyx, Claude Code, plus reliable/router/compatible wrappers). Operator's own orchestration calls (decompose / reduce / critic / moderate) use a provider via API key or OAuth under `[operator]`; agents Operator spawns invoke coding CLIs (Claude Code, Codex, agy, Cursor CLI, or OpenCode) as subprocesses, cleanly inheriting and accessing Revka-defined MCP servers. |
 | Orchestration | Python 3.11+ Operator MCP server (20 step types, map-reduce / supervisor / group-chat / handoff / refinement patterns) |
 | Web Dashboard | React 19, TypeScript, Tailwind CSS 4, Vite 6, ReactFlow + react-force-graph-2d |
-| Memory Backend | Kumiho — graph-native, schemaless, version-controlled, typed-edge graph (control plane fronted by kumiho-FastAPI BFF; managed service or Enterprise self-host); Python SDKs at [github.com/KumihoIO/kumiho-SDKs](https://github.com/KumihoIO/kumiho-SDKs) — `kumiho` (graph) + `kumiho-memory` (AI cognitive memory) |
+| Memory Backend | Kumiho — graph-native, schemaless, version-controlled, typed-edge graph. Two deployment flavors: **Kumiho Cloud** (managed service via kumiho-FastAPI BFF at `api.kumiho.cloud`, free → paid tiers) and **Kumiho CE** (prebuilt binary, free download, self-host — [kumiho.io/en/resources/community-edition](https://kumiho.io/en/resources/community-edition)); Enterprise self-host also available. Python SDKs at [github.com/KumihoIO/kumiho-SDKs](https://github.com/KumihoIO/kumiho-SDKs) — `kumiho` (graph) + `kumiho-memory` (AI cognitive memory) |
 | Local Storage | SQLite via `rusqlite` for cron store, pairing, heartbeat, channel sessions, WhatsApp cache (not for primary memory) |
 | Desktop App | Tauri 2 companion under `apps/tauri` (system-tray / menu-bar) launched via `revka desktop` |
 | Real-time | WebSocket (`/ws/chat`, `/ws/canvas/{id}`, `/ws/nodes`, `/ws/terminal`, `/ws/mcp/events`), SSE (`/api/events`, `/api/daemon/logs`) |
@@ -594,7 +597,8 @@ See [`docs/reference/api/config-reference.md`](docs/reference/api/config-referen
 
 ## Related projects
 
-- **Kumiho** — graph memory backend. SDKs at [github.com/KumihoIO/kumiho-SDKs](https://github.com/KumihoIO/kumiho-SDKs); pricing and self-host at [kumiho.io/pricing](https://kumiho.io/pricing).
+- **Kumiho Cloud** — managed graph memory backend. Sign up and pricing at [kumiho.io/pricing](https://kumiho.io/pricing). SDKs at [github.com/KumihoIO/kumiho-SDKs](https://github.com/KumihoIO/kumiho-SDKs).
+- **Kumiho CE** — Community Edition prebuilt binary, free to download and self-host. Same graph engine, no source included. [kumiho.io/en/resources/community-edition](https://kumiho.io/en/resources/community-edition).
 - **ZeroClaw** — upstream Rust agent runtime that Revka's core forks from. [github.com/zeroclaw-labs/zeroclaw](https://github.com/zeroclaw-labs/zeroclaw).
 - **OpenClaw** — separate TypeScript agent platform; Revka can import its data via `revka migrate`. [github.com/openclaw/openclaw](https://github.com/openclaw/openclaw).
 
@@ -607,6 +611,6 @@ See [`docs/reference/api/config-reference.md`](docs/reference/api/config-referen
 
 Both licenses preserve the upstream `Copyright (c) 2025 ZeroClaw Labs` per fork-attribution requirements; see [`NOTICE`](NOTICE) and [`docs/upstream/zeroclaw-attribution.md`](docs/upstream/zeroclaw-attribution.md).
 
-The **Kumiho server** (the control plane where Revka's memory ultimately lives) is *not* covered by these licenses. It is reached over HTTP through the **kumiho-FastAPI BFF** at `api.kumiho.cloud`, and is offered as a managed service; the Kumiho **SDKs** are open source at [github.com/KumihoIO/kumiho-SDKs](https://github.com/KumihoIO/kumiho-SDKs). Self-hosting the Kumiho server is available on Enterprise (closed-source license) — see [kumiho.io/pricing](https://kumiho.io/pricing).
+The **Kumiho server** (the control plane where Revka's memory lives) is *not* covered by these licenses. It ships in two flavors: **Kumiho CE** — a prebuilt binary, free to download and self-host ([kumiho.io/en/resources/community-edition](https://kumiho.io/en/resources/community-edition), source not included) — and the **managed cloud service** reached via the **kumiho-FastAPI BFF** at `api.kumiho.cloud`. The Kumiho **SDKs** are open source at [github.com/KumihoIO/kumiho-SDKs](https://github.com/KumihoIO/kumiho-SDKs). Enterprise self-host (closed-source, dedicated SLA) is also available — see [kumiho.io/pricing](https://kumiho.io/pricing).
 
 Contributions to this repository are accepted under the dual license model; the Apache 2.0 patent grant protects all contributors. See [`docs/contributing/cla.md`](docs/contributing/cla.md).
