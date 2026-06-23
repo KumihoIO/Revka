@@ -120,6 +120,11 @@ async def list_tools() -> list[Tool]:
                         "description": "NODE_ENV value for the agent process. Default: 'development'.",
                         "default": "development",
                     },
+                    "trusted": {
+                        "type": "boolean",
+                        "description": "If false, refuse to spawn permission-bypassing CLIs (codex/claude/agy/agent) whose danger flags can't be revoked after launch. Default true.",
+                        "default": True,
+                    },
                 },
                 "required": ["title", "cwd"],
             },

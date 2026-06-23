@@ -10,6 +10,32 @@ import type { AgentSessionConfig, AgentStreamEvent, AgentUsage } from "../types.
 
 const log = (msg: string) => process.stderr.write(`[session-mgr:codex] ${msg}\n`);
 
+// CLI providers launch with fixed permission flags (codex: danger-full-access;
+// agy/cursor: --dangerously-skip-permissions) that can't be revoked mid-run.
+// opencode has no such flag and is exempt.
+const BYPASS_PERMISSION_TYPES = new Set(["codex", "agy", "cursor"]);
+
+/**
+ * #459: reason to refuse an untrusted permission-bypassing CLI spawn, or null.
+ *
+ * An explicitly-untrusted spawn (config.trusted === false) of a CLI we would
+ * otherwise launch with permissions bypassed is refused rather than run
+ * ungated — there is no headless-safe sandbox/approval flag to downgrade to.
+ * Trusted or unset (default) spawns always proceed; opencode is never refused.
+ */
+export function codexSpawnRefusal(
+  agentType: string,
+  trusted: boolean | undefined,
+): string | null {
+  if (trusted !== false) return null;
+  if (!BYPASS_PERMISSION_TYPES.has(agentType)) return null;
+  return (
+    `Refusing to spawn untrusted '${agentType}' agent: it would run with ` +
+    `permissions bypassed and cannot be gated after launch. Mark the spawn ` +
+    `trusted to allow it.`
+  );
+}
+
 export interface CodexSessionHandle {
   id: string;
   process: ChildProcess | null;
@@ -186,6 +212,13 @@ export function createCodexSession(
 
   const runPrompt = (prompt: string) => {
     const turnId = `turn-${++handle.turnSeq}`;
+    const refusal = codexSpawnRefusal(config.agentType, config.trusted);
+    if (refusal) {
+      onEvent({ type: "turn_started", turnId });
+      onEvent({ type: "turn_failed", turnId, error: refusal, exitCode: null, stderrTail: "" });
+      onEvent({ type: "status_changed", status: "error" });
+      return;
+    }
     onEvent({ type: "turn_started", turnId });
     onEvent({ type: "status_changed", status: "running" });
 

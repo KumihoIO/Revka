@@ -384,6 +384,33 @@ def _claude_spawn_anthropic_key(
     return spawn_key
 
 
+# Agent types whose CLI launches with permissions fully bypassed
+# (codex: --sandbox danger-full-access; claude/agy/agent:
+# --dangerously-skip-permissions). Those flags can't be revoked once the
+# process is running, so an untrusted spawn of one is refused at spawn time
+# (#459). opencode has no such flag and is never refused.
+_BYPASS_PERMISSION_AGENTS = frozenset({"codex", "claude", "agy", "agent"})
+
+
+def cli_spawn_refusal(agent_type: str, trusted: bool) -> str | None:
+    """Reason to refuse an untrusted permission-bypassing CLI spawn, or None.
+
+    Trusted spawns (the default) always proceed. An untrusted spawn is refused
+    only for CLIs we would otherwise launch with permissions bypassed — there
+    is no headless-safe sandbox/approval flag to downgrade to, so the spawn is
+    refused rather than run ungated.
+    """
+    if trusted:
+        return None
+    if agent_type in _BYPASS_PERMISSION_AGENTS:
+        return (
+            f"Refusing to spawn untrusted '{agent_type}' agent: it would run with "
+            "permissions bypassed and cannot be gated after launch. Mark the spawn "
+            "trusted to allow it."
+        )
+    return None
+
+
 async def spawn_agent(
     agent: ManagedAgent,
     prompt: str,
@@ -406,6 +433,13 @@ async def spawn_agent(
       - Claude: serialize to a temp JSON file and pass `--mcp-config <path>`
       - Codex: emit `-c mcp_servers.<name>.<field>=<toml-value>` overrides
     """
+    refusal = cli_spawn_refusal(agent.agent_type, agent.trusted)
+    if refusal:
+        agent.status = "error"
+        agent.stderr_buffer += refusal + "\n"
+        _log(f"Agent {agent.id}: {refusal}")
+        return
+
     # Claude consumes MCP config from a JSON file; codex doesn't read
     # files (only `-c` overrides) so we skip the write for codex agents.
     mcp_config_path: str | None = None
