@@ -360,6 +360,30 @@ async def _monitor_agent(
         _log(f"Agent {agent.id} stderr: {agent.stderr_buffer.strip()[-300:]}")
 
 
+def _claude_spawn_anthropic_key(
+    agent_type: str,
+    env: dict[str, str],
+    spawn_key: str | None,
+) -> str | None:
+    """Value to set as ``ANTHROPIC_API_KEY`` for a spawned agent, or ``None``.
+
+    The Rust daemon hands the operator the decrypted Anthropic key under the
+    dedicated ``REVKA_SPAWN_ANTHROPIC_API_KEY`` name (never ``ANTHROPIC_API_KEY``)
+    so it is never copied into an MCP-server config and serialized onto a codex
+    command line (see ``_kumiho_forward_env`` / ``_codex_mcp_overrides``, which
+    would expose it in process listings). We translate it back to
+    ``ANTHROPIC_API_KEY`` only for ``claude`` agents — which authenticate against
+    api.anthropic.com via that var — and only when the child has no explicit
+    credential already (an inherited ``ANTHROPIC_API_KEY`` or a
+    ``CLAUDE_CODE_OAUTH_TOKEN`` subscription token both take precedence).
+    """
+    if not spawn_key or agent_type != "claude":
+        return None
+    if env.get("ANTHROPIC_API_KEY") or env.get("CLAUDE_CODE_OAUTH_TOKEN"):
+        return None
+    return spawn_key
+
+
 async def spawn_agent(
     agent: ManagedAgent,
     prompt: str,
@@ -405,6 +429,16 @@ async def spawn_agent(
     merged_env_extra = dict(env_extra) if env_extra else {}
     merged_env_extra.update(home_env)
     env = build_agent_env(clean_build=clean_build, node_env=node_env, extra=merged_env_extra)
+
+    # The Rust daemon supplies revka's decrypted Anthropic key under a dedicated,
+    # non-forwarded name so it never lands on a codex command line. Pop that
+    # transport var (so no child carries it) and, for `claude` agents only,
+    # expose it as ANTHROPIC_API_KEY in the child *process env* (never a CLI arg).
+    _spawn_anthropic_key = os.environ.get("REVKA_SPAWN_ANTHROPIC_API_KEY")
+    env.pop("REVKA_SPAWN_ANTHROPIC_API_KEY", None)
+    _claude_key = _claude_spawn_anthropic_key(agent.agent_type, env, _spawn_anthropic_key)
+    if _claude_key:
+        env["ANTHROPIC_API_KEY"] = _claude_key
 
     # Optionally clean build caches before spawning
     if clean_build:
