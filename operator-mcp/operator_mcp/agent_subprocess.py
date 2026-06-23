@@ -535,6 +535,12 @@ _TEAM_MAX_CONCURRENT = 3
 
 async def spawn_with_retry(agent: ManagedAgent, prompt: str, journal: SessionJournal, max_retries: int = 2) -> bool:
     """Spawn agent with retry on immediate failure. Returns True on success."""
+    # A spawn refusal (e.g. untrusted permission-bypassing CLI, #459) is
+    # deterministic — retrying just burns backoff and overwrites the refusal
+    # message. Surface it once via spawn_agent and fail fast, non-retriably.
+    if cli_spawn_refusal(agent.agent_type, agent.trusted):
+        await spawn_agent(agent, prompt, journal)
+        return False
     for attempt in range(max_retries + 1):
         await spawn_agent(agent, prompt, journal)
 
