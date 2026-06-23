@@ -88,6 +88,11 @@ async def list_tools() -> list[Tool]:
                         "description": "Max conversation turns (default 200).",
                         "default": 200,
                     },
+                    "trusted": {
+                        "type": "boolean",
+                        "description": "If false, refuse to spawn permission-bypassing CLIs (codex/claude/agy/agent) whose danger flags can't be revoked after launch. Default true.",
+                        "default": True,
+                    },
                 },
                 "required": ["cwd", "title", "initial_prompt"],
             },
@@ -550,6 +555,12 @@ async def _dispatch(name: str, args: dict[str, Any]) -> dict[str, Any]:
         max_turns = args.get("max_turns", 200)
         if max_turns != 200:
             config["maxTurns"] = max_turns
+        # #459: forward an explicit untrusted marker (only when False, mirroring
+        # _try_sidecar_create) so the session-manager refuses permission-
+        # bypassing CLIs for an untrusted sub-agent spawn.
+        from .tool_handlers.agents import _coerce_trusted
+        if not _coerce_trusted(args.get("trusted", True)):
+            config["trusted"] = False
         return await sidecar.create_agent(config)
 
     if name == "wait_for_agent":

@@ -63,6 +63,93 @@ async def test_trusted_codex_omits_trusted(tmp_path, monkeypatch):
     assert "trusted" not in sidecar.captured_config
 
 
+@pytest.mark.asyncio
+async def test_spawn_and_wait_forwards_trusted(tmp_path, monkeypatch):
+    """The workflow spawn primitive must pass its trusted flag to the sidecar."""
+    import operator_mcp.patterns.refinement as refinement
+    import operator_mcp.tool_handlers.agents as agents_mod
+
+    captured: dict = {}
+
+    async def fake_sidecar(*args, **kwargs):
+        captured.update(kwargs)
+        return {"id": "sc-1"}
+
+    async def fake_wait(agent, timeout=None, cancel_check=None):
+        return "done"
+
+    monkeypatch.setattr(agents_mod, "_try_sidecar_create", fake_sidecar)
+    monkeypatch.setattr(refinement, "_wait_for_agent", fake_wait)
+
+    # include_memory=True forces the sidecar path (not the CLI fast path).
+    await refinement._spawn_and_wait(
+        "codex", "wf-x", str(tmp_path), "do it",
+        trusted=False, include_memory=True, include_operator=False,
+    )
+    assert captured.get("trusted") is False
+
+
+@pytest.mark.asyncio
+async def test_subagent_create_forwards_trusted_false(tmp_path, monkeypatch):
+    """subagent_mcp builds its own sidecar config — it must mark untrusted spawns."""
+    import operator_mcp.subagent_mcp as sub
+    import operator_mcp.policy as policy_mod
+
+    sidecar = CapturingSidecar()
+    monkeypatch.setattr(sub, "_get_sidecar", lambda: sidecar)
+
+    async def no_budget():
+        return None
+
+    monkeypatch.setattr(sub, "check_agent_budget", no_budget)
+
+    class _Policy:
+        def preflight_spawn(self, cwd, agent_type):
+            return []
+
+    monkeypatch.setattr(policy_mod, "load_policy", lambda: _Policy())
+
+    await sub._dispatch("create_agent", {
+        "cwd": str(tmp_path), "title": "t", "initial_prompt": "p",
+        "agent_type": "codex", "trusted": False,
+    })
+    assert sidecar.captured_config is not None
+    assert sidecar.captured_config["trusted"] is False
+
+
+@pytest.mark.asyncio
+async def test_subagent_create_omits_trusted_when_trusted(tmp_path, monkeypatch):
+    import operator_mcp.subagent_mcp as sub
+    import operator_mcp.policy as policy_mod
+
+    sidecar = CapturingSidecar()
+    monkeypatch.setattr(sub, "_get_sidecar", lambda: sidecar)
+
+    async def no_budget():
+        return None
+
+    monkeypatch.setattr(sub, "check_agent_budget", no_budget)
+
+    class _Policy:
+        def preflight_spawn(self, cwd, agent_type):
+            return []
+
+    monkeypatch.setattr(policy_mod, "load_policy", lambda: _Policy())
+
+    await sub._dispatch("create_agent", {
+        "cwd": str(tmp_path), "title": "t", "initial_prompt": "p",
+        "agent_type": "codex",  # trusted defaults to True
+    })
+    assert sidecar.captured_config is not None
+    assert "trusted" not in sidecar.captured_config
+
+
+def test_agent_step_config_has_trusted_field():
+    from operator_mcp.workflow.schema import AgentStepConfig
+    assert AgentStepConfig().trusted is True
+    assert AgentStepConfig(trusted=False).trusted is False
+
+
 class TestCoerceTrusted:
     def test_booleans_pass_through(self):
         assert agents._coerce_trusted(True) is True

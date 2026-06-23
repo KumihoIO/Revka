@@ -614,6 +614,7 @@ async def _spawn_and_wait(
     include_operator: bool = True,
     include_google_agentops: bool = False,
     env_extra: dict[str, str] | None = None,
+    trusted: bool = True,
     cancel_check: Callable[[], bool] | None = None,
 ) -> tuple[ManagedAgent, str]:
     """Spawn an agent, wait for completion, return (agent, output_text).
@@ -634,6 +635,7 @@ async def _spawn_and_wait(
         title=title,
         cwd=cwd,
         status="idle",
+        trusted=trusted,
     )
     AGENTS[agent_id] = agent
 
@@ -679,6 +681,7 @@ async def _spawn_and_wait(
                 include_operator=include_operator,
                 include_google_agentops=include_google_agentops,
                 env_extra=env_extra,
+                trusted=trusted,
             )
         except BudgetGateError as exc:
             agent.status = "error"
