@@ -1744,8 +1744,20 @@ if [[ -z "${REVKA_BUILD_WEB:-}" ]]; then
     export REVKA_BUILD_WEB=1
     step_dot "Web dashboard will be built into the binary (Node detected)"
   else
-    warn "Node.js (>=18) not found — building without the web dashboard."
-    warn "Install Node and re-run, or use --prefer-prebuilt for a release binary that includes it."
+    _webdep_bar="======================================================================"
+    echo >&2
+    echo -e "${YELLOW}${BOLD}${_webdep_bar}${RESET}" >&2
+    echo -e "${YELLOW}${BOLD}  ⚠  WEB DASHBOARD DEPENDENCIES MISSING${RESET}" >&2
+    echo -e "${YELLOW}${BOLD}${_webdep_bar}${RESET}" >&2
+    echo -e "${YELLOW}  Node.js (>=18) and npm were not found on PATH.${RESET}" >&2
+    echo -e "${YELLOW}  Revka will install ${BOLD}backend-only${RESET}${YELLOW} — the web dashboard will NOT be built.${RESET}" >&2
+    echo >&2
+    echo -e "${BOLD}  To get the dashboard, do one of:${RESET}" >&2
+    echo -e "    ${DIM}•${RESET} Install Node.js >= 18, then re-run this installer" >&2
+    echo -e "    ${DIM}•${RESET} Install the prebuilt release (already includes the dashboard):" >&2
+    echo -e "        ${BLUE}curl -fsSL https://revka.ai/install.sh | bash -s -- --prefer-prebuilt${RESET}" >&2
+    echo -e "${YELLOW}${BOLD}${_webdep_bar}${RESET}" >&2
+    echo >&2
   fi
 fi
 
