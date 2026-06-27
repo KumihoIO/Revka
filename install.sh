@@ -1732,6 +1732,23 @@ echo -e "${BOLD_BLUE}[2/3]${RESET} ${BOLD}Installing Revka${RESET}"
 if [[ -n "$TARGET_VERSION" ]]; then
   step_dot "Installing Revka v${TARGET_VERSION}"
 fi
+
+# Build the web dashboard into the binary by default. REVKA_BUILD_WEB=1 makes
+# build.rs run npm and populate web/dist *before* the Rust compile, so
+# rust-embed bakes the dashboard into the binary. Gated on Node so a Node-less
+# box still gets a working backend-only build instead of a hard failure.
+# Exported here so both `cargo build` and `cargo install` below inherit it; an
+# explicit REVKA_BUILD_WEB (e.g. =0 to opt out) is always respected.
+if [[ -z "${REVKA_BUILD_WEB:-}" ]]; then
+  if have_cmd node && have_cmd npm; then
+    export REVKA_BUILD_WEB=1
+    step_dot "Web dashboard will be built into the binary (Node detected)"
+  else
+    warn "Node.js (>=18) not found — building without the web dashboard."
+    warn "Install Node and re-run, or use --prefer-prebuilt for a release binary that includes it."
+  fi
+fi
+
 if [[ "$SKIP_BUILD" == false ]]; then
   # Fail fast on a too-old toolchain before the 15-30 min build (#431).
   check_rust_msrv
@@ -1786,24 +1803,10 @@ else
   step_dot "Skipping install"
 fi
 
-# --- Build web dashboard ---
-if [[ "$SKIP_BUILD" == false && -d "$WORK_DIR/web" ]]; then
-  if have_cmd node && have_cmd npm; then
-    step_dot "Building web dashboard"
-    if (cd "$WORK_DIR/web" && npm ci --ignore-scripts 2>/dev/null && npm run build 2>/dev/null); then
-      step_ok "Web dashboard built"
-    else
-      warn "Web dashboard build failed — dashboard will not be available"
-    fi
-  else
-    warn "node/npm not found — skipping web dashboard build"
-    warn "Install Node.js (>=18) and re-run, or build manually: cd web && npm ci && npm run build"
-  fi
-else
-  if [[ "$SKIP_BUILD" == true ]]; then
-    step_dot "Skipping web dashboard build"
-  fi
-fi
+# The web dashboard is built by build.rs during the Rust compile above when
+# REVKA_BUILD_WEB=1 (set near [2/3] when Node is present). It must be built
+# *before* cargo compiles so rust-embed can bake web/dist into the binary —
+# a post-compile npm build here would never be embedded, so there isn't one.
 
 # --- Companion desktop app (device-class-aware) ---
 # The desktop app is a pre-built download from the website, not built from source.
