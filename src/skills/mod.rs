@@ -15,10 +15,14 @@ mod audit;
 pub mod auto_improve;
 #[cfg(feature = "skill-creation")]
 pub mod auto_rollback;
+pub mod cli;
 #[cfg(feature = "skill-creation")]
 pub mod creator;
 pub mod effectiveness;
 pub mod effectiveness_cache;
+pub mod harness_import;
+pub mod harness_scan;
+mod harness_uri;
 #[cfg(feature = "skill-creation")]
 pub mod improver;
 pub mod registration;
@@ -30,6 +34,13 @@ pub mod testing;
 // `crate::skills::effectiveness::…` when callers need them.
 pub use effectiveness::{EffectivenessScore, SkillEffectivenessProvider};
 pub use effectiveness_cache::EffectivenessCache;
+
+// Harness import: scan existing agent harnesses and register them as
+// on-demand Kumiho skills (without moving the user's files).
+pub use harness_import::{HarnessImportReport, default_ledger_path, import_harness_skills};
+pub use harness_scan::{
+    DiscoveredHarnessSkill, HarnessScanOptions, HarnessScanReport, scan_harnesses,
+};
 
 const OPEN_SKILLS_REPO_URL: &str = "https://github.com/besoeasy/open-skills";
 const OPEN_SKILLS_SYNC_MARKER: &str = ".revka-open-skills-sync";

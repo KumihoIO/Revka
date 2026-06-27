@@ -123,7 +123,7 @@ pub async fn run_wizard(force: bool) -> Result<Config> {
     println!("  {}", style(t!("welcome-subtitle")).dim());
     println!();
 
-    print_step(1, 9, &t!("step-1-title"));
+    print_step(1, 10, &t!("step-1-title"));
     let (workspace_dir, config_path) = setup_workspace().await?;
     match resolve_interactive_onboarding_mode(&config_path, force)? {
         InteractiveOnboardingMode::FullOnboarding => {}
@@ -132,35 +132,38 @@ pub async fn run_wizard(force: bool) -> Result<Config> {
         }
     }
 
-    print_step(2, 9, &t!("step-2-title"));
+    print_step(2, 10, &t!("step-2-title"));
     let (provider, api_key, model, provider_api_url) = setup_provider(&workspace_dir).await?;
 
-    print_step(3, 9, &t!("step-3-title"));
+    print_step(3, 10, &t!("step-3-title"));
     let channels_config = setup_channels()?;
 
-    print_step(4, 9, &t!("step-4-title"));
+    print_step(4, 10, &t!("step-4-title"));
     let tunnel_config = setup_tunnel()?;
 
-    print_step(5, 9, &t!("step-5-title"));
+    print_step(5, 10, &t!("step-5-title"));
     let (composio_config, secrets_config) = setup_tool_mode()?;
 
-    print_step(6, 9, &t!("step-6-title"));
+    print_step(6, 10, &t!("step-6-title"));
     let hardware_config = setup_hardware()?;
 
-    print_step(7, 9, &t!("step-7-title"));
+    print_step(7, 10, &t!("step-7-title"));
     let memory_result = setup_memory()?;
     let is_kumiho_backend = memory_result.memory_config.backend == "kumiho";
     let memory_config = memory_result.memory_config;
 
-    print_step(8, 9, &t!("step-8-title"));
+    print_step(8, 10, &t!("step-harness-title"));
+    let harness_plan = setup_harness_import(is_kumiho_backend)?;
+
+    print_step(9, 10, &t!("step-8-title"));
     let project_ctx = setup_project_context()?;
 
-    print_step(9, 9, &t!("step-9-title"));
+    print_step(10, 10, &t!("step-9-title"));
     scaffold_workspace(&workspace_dir, &project_ctx, &memory_config.backend).await?;
 
     // ── Build config ──
     // Defaults: Kumiho memory, supervised autonomy, workspace-scoped, native runtime
-    let config = Config {
+    let mut config = Config {
         workspace_dir: workspace_dir.clone(),
         config_path: config_path.clone(),
         api_key: if api_key.is_empty() {
@@ -243,6 +246,11 @@ pub async fn run_wizard(force: bool) -> Result<Config> {
             }
             kc
         },
+        harness_import: crate::config::HarnessImportConfig {
+            enabled: harness_plan.enabled,
+            roots: harness_plan.roots.clone(),
+            pending: false,
+        },
         operator: crate::config::OperatorConfig::default(),
         nodes: crate::config::NodesConfig::default(),
         clawhub: crate::config::ClawHubConfig::default(),
@@ -279,6 +287,42 @@ pub async fn run_wizard(force: bool) -> Result<Config> {
 
     config.save().await?;
     persist_workspace_selection(&config.config_path).await?;
+
+    // ── Harness import (opted in at step 8) ───────────────────────
+    // Register the discovered harness skills into Kumiho now that config is
+    // saved.  If Kumiho isn't reachable yet (e.g. a not-yet-started local CE),
+    // mark the import pending so the daemon retries it on next startup.
+    if harness_plan.enabled && !harness_plan.discovered.is_empty() {
+        println!("  {}", style(t!("harness-registering")).dim());
+        let client = crate::gateway::kumiho_client::build_client_from_config(&config);
+        let ledger_path = crate::skills::default_ledger_path();
+        match crate::skills::import_harness_skills(
+            &client,
+            &config.kumiho.memory_project,
+            &harness_plan.discovered,
+            &ledger_path,
+        )
+        .await
+        {
+            Ok(report) if report.registered + report.updated > 0 || report.failed.is_empty() => {
+                println!(
+                    "  {} {}",
+                    style("✓").green().bold(),
+                    t!(
+                        "harness-registered",
+                        count = (report.registered + report.updated) as u32
+                    )
+                );
+            }
+            Ok(_) | Err(_) => {
+                // Nothing landed (Kumiho unreachable / all failed) — defer to the
+                // daemon-startup hook.
+                println!("  {}", style(t!("harness-deferred")).yellow());
+                config.harness_import.pending = true;
+                let _ = config.save().await;
+            }
+        }
+    }
 
     // ── DreamState cron job (Kumiho only) ─────────────────────────
     // DreamState is Kumiho's memory consolidation cycle: it reviews recent
@@ -796,6 +840,7 @@ async fn run_quick_setup_with_home(
         tts: crate::config::TtsConfig::default(),
         mcp: crate::config::McpConfig::default(),
         kumiho: crate::config::KumihoConfig::default(),
+        harness_import: crate::config::HarnessImportConfig::default(),
         operator: crate::config::OperatorConfig::default(),
         nodes: crate::config::NodesConfig::default(),
         clawhub: crate::config::ClawHubConfig::default(),
@@ -2373,6 +2418,76 @@ pub async fn run_models_refresh_all(config: &Config, force: bool) -> Result<()> 
 }
 
 // ── Step helpers ─────────────────────────────────────────────────
+
+/// Outcome of the harness-import onboarding step.
+#[derive(Default)]
+struct HarnessImportPlan {
+    enabled: bool,
+    roots: Vec<String>,
+    discovered: Vec<crate::skills::DiscoveredHarnessSkill>,
+}
+
+/// Step 8: scan for existing agent harnesses (Claude, Codex, Cursor, …) and
+/// offer to register them as on-demand Kumiho skills.  The scan is read-only;
+/// actual registration runs after the config is saved.  Harness skills live in
+/// Kumiho, so this is a no-op unless the Kumiho memory backend was selected.
+fn setup_harness_import(is_kumiho_backend: bool) -> Result<HarnessImportPlan> {
+    let skip = HarnessImportPlan::default();
+    if !is_kumiho_backend {
+        print_bullet(&t!("harness-skip-no-kumiho"));
+        return Ok(skip);
+    }
+    // Scanning + the Confirm prompt only make sense interactively.
+    if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
+        return Ok(skip);
+    }
+
+    print_bullet(&t!("harness-scanning"));
+    let opts = crate::skills::HarnessScanOptions::with_defaults(None, true);
+    let report = crate::skills::scan_harnesses(&opts);
+    if report.discovered.is_empty() {
+        print_bullet(&t!("harness-none-found"));
+        return Ok(skip);
+    }
+
+    println!(
+        "  {} {}",
+        style("✓").green().bold(),
+        t!(
+            "harness-found",
+            skills = report.skills as u32,
+            instructions = report.instructions as u32
+        )
+    );
+    for (tool, count) in &report.per_tool {
+        println!("    {} {tool}: {count}", style("·").dim());
+    }
+
+    let opt_in = Confirm::new()
+        .with_prompt(format!(
+            "  {}",
+            t!(
+                "harness-import-prompt",
+                count = report.discovered.len() as u32
+            )
+        ))
+        .default(true)
+        .interact()?;
+    if !opt_in {
+        return Ok(skip);
+    }
+
+    let roots = opts
+        .project_roots
+        .iter()
+        .map(|p| p.to_string_lossy().to_string())
+        .collect();
+    Ok(HarnessImportPlan {
+        enabled: true,
+        roots,
+        discovered: report.discovered,
+    })
+}
 
 fn print_step(current: u8, total: u8, title: &str) {
     println!();
