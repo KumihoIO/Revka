@@ -1744,6 +1744,23 @@ if [[ -z "${REVKA_BUILD_WEB:-}" ]]; then
     export REVKA_BUILD_WEB=1
     step_dot "Web dashboard will be built into the binary (Node detected)"
   else
+    # Platform-specific Node.js (>=18) install command for the warning below.
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+      _node_cmd="brew install node"
+    elif have_cmd apt-get; then
+      # Ubuntu/Debian's apt nodejs is often <18; NodeSource ships a current LTS.
+      _node_cmd="curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - && sudo apt-get install -y nodejs"
+    elif have_cmd dnf; then
+      _node_cmd="sudo dnf install -y nodejs npm"
+    elif have_cmd pacman; then
+      _node_cmd="sudo pacman -S --needed nodejs npm"
+    elif have_cmd apk; then
+      _node_cmd="sudo apk add nodejs npm"
+    elif have_cmd pkg && [[ -n "${TERMUX_VERSION:-}" ]]; then
+      _node_cmd="pkg install nodejs"
+    else
+      _node_cmd="install Node.js >= 18 from https://nodejs.org/en/download"
+    fi
     _webdep_bar="======================================================================"
     echo >&2
     echo -e "${YELLOW}${BOLD}${_webdep_bar}${RESET}" >&2
@@ -1753,8 +1770,9 @@ if [[ -z "${REVKA_BUILD_WEB:-}" ]]; then
     echo -e "${YELLOW}  Revka will install ${BOLD}backend-only${RESET}${YELLOW} — the web dashboard will NOT be built.${RESET}" >&2
     echo >&2
     echo -e "${BOLD}  To get the dashboard, do one of:${RESET}" >&2
-    echo -e "    ${DIM}•${RESET} Install Node.js >= 18, then re-run this installer" >&2
-    echo -e "    ${DIM}•${RESET} Install the prebuilt release (already includes the dashboard):" >&2
+    echo -e "    ${DIM}1.${RESET} Install Node.js >= 18, then re-run this installer:" >&2
+    echo -e "        ${BLUE}${_node_cmd}${RESET}" >&2
+    echo -e "    ${DIM}2.${RESET} Or install the prebuilt release (already includes the dashboard):" >&2
     echo -e "        ${BLUE}curl -fsSL https://revka.ai/install.sh | bash -s -- --prefer-prebuilt${RESET}" >&2
     echo -e "${YELLOW}${BOLD}${_webdep_bar}${RESET}" >&2
     echo >&2
