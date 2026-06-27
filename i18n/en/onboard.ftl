@@ -33,6 +33,18 @@ step-6-title = Hardware (Physical World)
 step-7-title = Memory Configuration
 step-8-title = Project Context (Personalize Your Agent)
 step-9-title = Workspace Files
+step-harness-title = Import Existing Agent Skills
+
+## ── Harness import step ──────────────────────────────────────────
+
+harness-skip-no-kumiho = Skipped — importing agent skills requires the Kumiho memory backend.
+harness-scanning = Scanning for existing agent harnesses (Claude, Codex, Cursor, …)…
+harness-none-found = No existing harnesses found — nothing to import.
+harness-found = Found {$skills} skill(s) and {$instructions} instruction doc(s)
+harness-import-prompt = Register {$count} harness skill(s) into Kumiho so Revka can use them on demand?
+harness-registering = Registering harness skills with Kumiho…
+harness-registered = Imported {$count} harness skill(s).
+harness-deferred = Kumiho isn't reachable yet — Revka will finish importing on next startup.
 
 ## ── Step 1: Workspace ────────────────────────────────────────────
 
