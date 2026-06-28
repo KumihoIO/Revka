@@ -375,6 +375,15 @@ pub struct Config {
     #[serde(default)]
     pub kumiho: KumihoConfig,
 
+    /// Harness import (`[harness_import]`).
+    ///
+    /// Scan existing agent harnesses (Claude, Codex, Cursor, …) and register
+    /// them as on-demand Kumiho skills.  Populated by onboarding; the daemon
+    /// re-runs the import at startup when enabled (cheap — an on-disk ledger
+    /// skips already-registered, unchanged files).
+    #[serde(default)]
+    pub harness_import: HarnessImportConfig,
+
     /// Operator multi-agent orchestration (`[operator]`).
     ///
     /// Automatically injects the Operator MCP server and system prompt into
@@ -1021,6 +1030,29 @@ pub enum KumihoBackendMode {
     Cloud,
     /// Local self-hosted Community Edition (tokenless, loopback-only).
     LocalCe,
+}
+
+/// Harness import integration (`[harness_import]` section).
+///
+/// Drives the scan-and-register flow that converts existing agent harnesses
+/// into on-demand Kumiho skills.  Defaults to disabled; the onboarding step
+/// turns it on and records the chosen roots.  Files are never moved — each
+/// registered skill points at the original harness file in place.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct HarnessImportConfig {
+    /// Re-scan and register harness skills on daemon startup. Default: `false`.
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Directories to scan (in addition to the global agent config dirs).
+    /// Empty means the workspace / current working directory.
+    #[serde(default)]
+    pub roots: Vec<String>,
+
+    /// Set when onboarding opted in but Kumiho was not reachable yet, so the
+    /// daemon runs the import on its next startup.
+    #[serde(default)]
+    pub pending: bool,
 }
 
 /// Kumiho graph-memory integration (`[kumiho]` section).
@@ -8922,6 +8954,7 @@ impl Default for Config {
             tts: TtsConfig::default(),
             mcp: McpConfig::default(),
             kumiho: KumihoConfig::default(),
+            harness_import: HarnessImportConfig::default(),
             operator: OperatorConfig::default(),
             nodes: NodesConfig::default(),
             clawhub: ClawHubConfig::default(),
@@ -12174,6 +12207,7 @@ default_temperature = 0.7
             tts: TtsConfig::default(),
             mcp: McpConfig::default(),
             kumiho: KumihoConfig::default(),
+            harness_import: HarnessImportConfig::default(),
             operator: OperatorConfig::default(),
             nodes: NodesConfig::default(),
             clawhub: ClawHubConfig::default(),
@@ -12731,6 +12765,7 @@ default_temperature = 0.7
             tts: TtsConfig::default(),
             mcp: McpConfig::default(),
             kumiho: KumihoConfig::default(),
+            harness_import: HarnessImportConfig::default(),
             operator: OperatorConfig::default(),
             nodes: NodesConfig::default(),
             clawhub: ClawHubConfig::default(),

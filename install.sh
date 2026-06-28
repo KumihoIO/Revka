@@ -1700,9 +1700,18 @@ fi
 if [[ "$PREBUILT_INSTALLED" == false && ( "$SKIP_BUILD" == false || "$SKIP_INSTALL" == false ) ]] && ! have_cmd cargo; then
   error "cargo is not installed."
   cat <<'MSG' >&2
-Install Rust first: https://rustup.rs/
-or re-run with:
+
+Revka builds from source here, which needs the Rust toolchain (cargo).
+
+Install Rust, then re-run this installer:
+
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
+…or let this installer set it up for you:
+
   ./install.sh --install-rust
+
+(More options: https://rustup.rs/)
 MSG
   exit 1
 fi
