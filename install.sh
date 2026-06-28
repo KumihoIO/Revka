@@ -1741,6 +1741,53 @@ echo -e "${BOLD_BLUE}[2/3]${RESET} ${BOLD}Installing Revka${RESET}"
 if [[ -n "$TARGET_VERSION" ]]; then
   step_dot "Installing Revka v${TARGET_VERSION}"
 fi
+
+# Build the web dashboard into the binary by default. REVKA_BUILD_WEB=1 makes
+# build.rs run npm and populate web/dist *before* the Rust compile, so
+# rust-embed bakes the dashboard into the binary. Gated on Node so a Node-less
+# box still gets a working backend-only build instead of a hard failure.
+# Exported here so both `cargo build` and `cargo install` below inherit it; an
+# explicit REVKA_BUILD_WEB (e.g. =0 to opt out) is always respected.
+if [[ -z "${REVKA_BUILD_WEB:-}" ]]; then
+  if have_cmd node && have_cmd npm; then
+    export REVKA_BUILD_WEB=1
+    step_dot "Web dashboard will be built into the binary (Node detected)"
+  else
+    # Platform-specific Node.js (>=18) install command for the warning below.
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+      _node_cmd="brew install node"
+    elif have_cmd apt-get; then
+      # Ubuntu/Debian's apt nodejs is often <18; NodeSource ships a current LTS.
+      _node_cmd="curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - && sudo apt-get install -y nodejs"
+    elif have_cmd dnf; then
+      _node_cmd="sudo dnf install -y nodejs npm"
+    elif have_cmd pacman; then
+      _node_cmd="sudo pacman -S --needed nodejs npm"
+    elif have_cmd apk; then
+      _node_cmd="sudo apk add nodejs npm"
+    elif have_cmd pkg && [[ -n "${TERMUX_VERSION:-}" ]]; then
+      _node_cmd="pkg install nodejs"
+    else
+      _node_cmd="install Node.js >= 18 from https://nodejs.org/en/download"
+    fi
+    _webdep_bar="======================================================================"
+    echo >&2
+    echo -e "${YELLOW}${BOLD}${_webdep_bar}${RESET}" >&2
+    echo -e "${YELLOW}${BOLD}  ⚠  WEB DASHBOARD DEPENDENCIES MISSING${RESET}" >&2
+    echo -e "${YELLOW}${BOLD}${_webdep_bar}${RESET}" >&2
+    echo -e "${YELLOW}  Node.js (>=18) and npm were not found on PATH.${RESET}" >&2
+    echo -e "${YELLOW}  Revka will install ${BOLD}backend-only${RESET}${YELLOW} — the web dashboard will NOT be built.${RESET}" >&2
+    echo >&2
+    echo -e "${BOLD}  To get the dashboard, do one of:${RESET}" >&2
+    echo -e "    ${DIM}1.${RESET} Install Node.js >= 18, then re-run this installer:" >&2
+    echo -e "        ${BLUE}${_node_cmd}${RESET}" >&2
+    echo -e "    ${DIM}2.${RESET} Or install the prebuilt release (already includes the dashboard):" >&2
+    echo -e "        ${BLUE}curl -fsSL https://revka.ai/install.sh | bash -s -- --prefer-prebuilt${RESET}" >&2
+    echo -e "${YELLOW}${BOLD}${_webdep_bar}${RESET}" >&2
+    echo >&2
+  fi
+fi
+
 if [[ "$SKIP_BUILD" == false ]]; then
   # Fail fast on a too-old toolchain before the 15-30 min build (#431).
   check_rust_msrv
@@ -1795,24 +1842,10 @@ else
   step_dot "Skipping install"
 fi
 
-# --- Build web dashboard ---
-if [[ "$SKIP_BUILD" == false && -d "$WORK_DIR/web" ]]; then
-  if have_cmd node && have_cmd npm; then
-    step_dot "Building web dashboard"
-    if (cd "$WORK_DIR/web" && npm ci --ignore-scripts 2>/dev/null && npm run build 2>/dev/null); then
-      step_ok "Web dashboard built"
-    else
-      warn "Web dashboard build failed — dashboard will not be available"
-    fi
-  else
-    warn "node/npm not found — skipping web dashboard build"
-    warn "Install Node.js (>=18) and re-run, or build manually: cd web && npm ci && npm run build"
-  fi
-else
-  if [[ "$SKIP_BUILD" == true ]]; then
-    step_dot "Skipping web dashboard build"
-  fi
-fi
+# The web dashboard is built by build.rs during the Rust compile above when
+# REVKA_BUILD_WEB=1 (set near [2/3] when Node is present). It must be built
+# *before* cargo compiles so rust-embed can bake web/dist into the binary —
+# a post-compile npm build here would never be embedded, so there isn't one.
 
 # --- Companion desktop app (device-class-aware) ---
 # The desktop app is a pre-built download from the website, not built from source.
