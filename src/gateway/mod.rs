@@ -1653,6 +1653,64 @@ pub async fn run_gateway_with_mcp_registry(
             }));
         }
 
+        // Daemon-startup harness import (opt-in via `[harness_import] enabled`).
+        //
+        // Re-scans the configured roots (+ global agent config dirs) and
+        // registers any newly-discovered or changed harness skill into Kumiho.
+        // Idempotent through the on-disk ledger, so re-running every startup is
+        // cheap — already-imported, unchanged files make zero Kumiho calls.
+        // This is also the safety net for an onboarding import that was deferred
+        // because Kumiho wasn't reachable yet (`harness_import.pending`).
+        if config.harness_import.enabled {
+            let hi_project = memory_project.clone();
+            let hi_client = crate::gateway::kumiho_client::build_client_from_config(&config);
+            let hi_roots: Vec<std::path::PathBuf> = config
+                .harness_import
+                .roots
+                .iter()
+                .map(std::path::PathBuf::from)
+                .collect();
+            let hi_workspace = workspace_dir.clone();
+            drop(tokio::spawn(async move {
+                let project_roots = if hi_roots.is_empty() {
+                    vec![hi_workspace]
+                } else {
+                    hi_roots
+                };
+                let opts = crate::skills::HarnessScanOptions {
+                    project_roots,
+                    global_roots: crate::skills::harness_scan::default_global_roots(),
+                    max_depth: 6,
+                    max_file_bytes: 512 * 1024,
+                };
+                let report = crate::skills::scan_harnesses(&opts);
+                if report.discovered.is_empty() {
+                    return;
+                }
+                let ledger_path = crate::skills::default_ledger_path();
+                match crate::skills::import_harness_skills(
+                    &hi_client,
+                    &hi_project,
+                    &report.discovered,
+                    &ledger_path,
+                )
+                .await
+                {
+                    Ok(r) => tracing::info!(
+                        registered = r.registered,
+                        updated = r.updated,
+                        unchanged = r.unchanged,
+                        failed = r.failed.len(),
+                        "daemon-startup: harness import complete",
+                    ),
+                    Err(e) => tracing::warn!(
+                        error = ?e,
+                        "daemon-startup: harness import failed; will retry next start",
+                    ),
+                }
+            }));
+        }
+
         // Load the skill names once at startup — the refresh task only
         // queries Kumiho for skills already loaded into the runtime, so a
         // brand-new skill added later won't be reranked until restart.

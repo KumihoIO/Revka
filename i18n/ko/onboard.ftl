@@ -34,6 +34,18 @@ step-6-title = 하드웨어 (물리 세계 연결)
 step-7-title = 메모리 구성
 step-8-title = 프로젝트 컨텍스트 (에이전트 개인화)
 step-9-title = 워크스페이스 파일
+step-harness-title = 기존 에이전트 스킬 가져오기
+
+## ── 하니스 가져오기 단계 ──────────────────────────────────────
+
+harness-skip-no-kumiho = 건너뜀 — 에이전트 스킬 가져오기는 Kumiho 메모리 백엔드가 필요합니다.
+harness-scanning = 기존 에이전트 하니스(Claude, Codex, Cursor 등)를 검색하는 중…
+harness-none-found = 기존 하니스를 찾지 못했습니다 — 가져올 항목이 없습니다.
+harness-found = 스킬 {$skills}개, 지침 문서 {$instructions}개를 찾았습니다
+harness-import-prompt = 하니스 스킬 {$count}개를 Kumiho에 등록하여 Revka가 필요할 때 사용하도록 할까요?
+harness-registering = 하니스 스킬을 Kumiho에 등록하는 중…
+harness-registered = 하니스 스킬 {$count}개를 가져왔습니다.
+harness-deferred = Kumiho에 아직 연결할 수 없습니다 — 다음 시작 시 가져오기를 완료합니다.
 
 ## ── 1단계: 워크스페이스 ────────────────────────────────────────
 

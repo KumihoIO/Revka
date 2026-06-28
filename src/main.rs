@@ -561,6 +561,41 @@ Examples:
         memory_command: MemoryCommands,
     },
 
+    /// Scan existing agent harnesses (Claude, Codex, Cursor, …) and register
+    /// them as on-demand Kumiho skills — without moving your files.
+    #[command(long_about = "\
+Scan for existing AI-agent harnesses on disk and register each discovered \
+skill or instruction file into Kumiho's skills space, so the Operator can \
+load them on demand. Your files are never moved or modified — each skill \
+points at the original file in place.
+
+Scans the current directory tree plus your global agent config dirs \
+(~/.claude, ~/.codex, ~/.gemini) unless --no-global is passed. Supports \
+Claude Code, Codex, Gemini, Cursor, Windsurf, Cline/Roo, Copilot, and Aider.
+
+Examples:
+  revka import-harness                 # scan cwd + global config, confirm, import
+  revka import-harness --path ./repo   # scan a specific directory
+  revka import-harness --dry-run       # show what would be imported
+  revka import-harness --yes           # skip the confirmation prompt")]
+    ImportHarness {
+        /// Directory to scan (defaults to the current working directory).
+        #[arg(long)]
+        path: Option<PathBuf>,
+
+        /// Skip scanning the global agent config dirs (~/.claude, ~/.codex, ~/.gemini).
+        #[arg(long)]
+        no_global: bool,
+
+        /// Scan and report what would be imported without writing to Kumiho.
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Skip the confirmation prompt.
+        #[arg(long)]
+        yes: bool,
+    },
+
     /// Manage configuration
     #[command(long_about = "\
 Manage Revka configuration.
@@ -1716,6 +1751,13 @@ async fn main() -> Result<()> {
         Commands::Memory { memory_command } => {
             memory::cli::handle_command(memory_command, &config).await
         }
+
+        Commands::ImportHarness {
+            path,
+            no_global,
+            dry_run,
+            yes,
+        } => skills::cli::run_harness_import(&config, path.clone(), !no_global, dry_run, yes).await,
 
         Commands::Auth { auth_command } => handle_auth_command(auth_command, &config).await,
 
