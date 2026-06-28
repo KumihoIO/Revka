@@ -457,6 +457,12 @@ On macOS / Linux / WSL the installer sets up `revka` (building from source, inst
 
 > The installers are [`install.sh`](install.sh) and [`install.ps1`](install.ps1) — inspect them first if you like (`curl -fsSL https://revka.ai/install.sh | less`). To build from source, see [From source](#from-source-developers) below.
 
+To fetch a prebuilt release binary instead of building from source — faster, and it includes the web dashboard without needing Node.js — add `--prefer-prebuilt`:
+
+```bash
+curl -fsSL https://revka.ai/install.sh | bash -s -- --prefer-prebuilt
+```
+
 Once installed:
 
 ```bash
@@ -481,8 +487,8 @@ Add `--features channel-matrix,channel-lark,browser-native,hardware,rag-pdf,obse
 ### Prerequisites
 
 - **Rust stable (1.89+)** — `install.sh` / `setup.bat` will install it via rustup if missing.
-- **Python 3.11+** — required for the Kumiho and Operator Python MCP sidecars.
-- **Node.js 20+** — optional, only needed to rebuild the embedded React dashboard from source (`cd web && npm install && npx vite build`). The dashboard is re-embedded into the Rust binary at compile time via `rust-embed`.
+- **Python 3.11+** — required for the Kumiho and Operator Python MCP sidecars. On Debian/Ubuntu also install pip and venv: `sudo apt install -y python3-pip python3-venv`.
+- **Node.js 18+ (20 LTS recommended)** — builds the embedded React dashboard on a source install. `install.sh` builds it automatically when Node is present (set `REVKA_BUILD_WEB=0` to skip); **without Node a source build is backend-only** — install Node and re-run, or use `--prefer-prebuilt` for a release binary with the dashboard already embedded. Manual rebuild: `cd web && npm ci && npm run build`. The dashboard is embedded into the Rust binary at compile time via `rust-embed`.
 - **Kumiho endpoint** — an HTTP endpoint via `[kumiho].api_url` in `~/.revka/config.toml`. Two options: ① **Cloud** — default points at the **kumiho-FastAPI BFF** (`https://api.kumiho.cloud`), free tier 5,000 nodes, sign up at [kumiho.io](https://kumiho.io); ② **CE** — run [Kumiho CE](https://kumiho.io/en/resources/community-edition) on your own infra and point `api_url` at it (no node limits, no cloud dependency). Without a reachable endpoint Revka runs statelessly. See [docs/setup-guides/kumiho-operator-setup.md](docs/setup-guides/kumiho-operator-setup.md).
 - **Disk / RAM** — source build needs ~6 GB free disk and ~2 GB free RAM; prebuilt binary is ~200 MB.
 
