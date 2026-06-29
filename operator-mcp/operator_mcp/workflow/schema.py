@@ -876,6 +876,19 @@ ACTION_DEFAULTS: dict[str, dict[str, str]] = {
 }
 
 
+# Step types whose typed config block is NOT named after the type. Everything
+# else uses a block named exactly after `type` (agent → `agent:`,
+# human_approval → `human_approval:`). Used only to suggest the right block
+# name when rejecting a non-canonical `config:` block.
+STEP_BLOCK_KEY_OVERRIDES: dict[str, str] = {
+    "kumiho_context": "kumiho",
+    "kumiho_bundle_update": "kumiho",
+    "kumiho_patch_apply": "kumiho",
+    "tag": "tag_step",
+    "deprecate": "deprecate_step",
+}
+
+
 # ---------------------------------------------------------------------------
 # Step
 # ---------------------------------------------------------------------------
@@ -993,6 +1006,36 @@ class StepDef(BaseModel):
                     data["type"] = defaults["type"]
 
         return data
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_config_block(cls, data: Any) -> Any:
+        """Reject the non-canonical ``config:`` step block.
+
+        WORKFLOWS.md is the source of truth: per-step settings live under a
+        typed block named after the step ``type`` (``agent:``,
+        ``human_approval:``, ``shell:``, …). A generic ``config:`` key is not a
+        Revka format. Because unknown keys are ignored by default, a ``config:``
+        block would be silently dropped — every prompt/role/message inside it
+        vanishes, the step runs empty, yet ``validate_workflow`` still reports
+        the workflow as valid (a false positive). Fail loudly with the
+        canonical block name so the editor, the executor, and the validator all
+        agree with the manual.
+        """
+        if not isinstance(data, dict) or "config" not in data:
+            return data
+        raw_type = data.get("type") or data.get("action") or "agent"
+        if isinstance(raw_type, StepType):
+            raw_type = raw_type.value
+        raw_type = str(raw_type)
+        resolved = ACTION_DEFAULTS.get(raw_type.lower(), {}).get("type", raw_type)
+        block = STEP_BLOCK_KEY_OVERRIDES.get(resolved, resolved)
+        step_id = data.get("id", "<unknown>")
+        raise ValueError(
+            f"Step '{step_id}' uses a 'config:' block, which Revka ignores. "
+            f"Move its settings under '{block}:' (the block named after the "
+            f"step type) — see WORKFLOWS.md."
+        )
 
     @model_validator(mode="before")
     @classmethod

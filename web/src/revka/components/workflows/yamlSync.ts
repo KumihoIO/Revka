@@ -1504,6 +1504,59 @@ function parseStep(s: YAMLObj): TaskDefinition | null {
   return t;
 }
 
+// Step types whose per-type config lives in a block NOT named after the type.
+// Everything else uses a block named exactly after `type` (agent → `agent:`,
+// human_approval → `human_approval:`). Kept in sync with `parseStep`'s nested
+// block reads and `operator_mcp/workflow/schema.py` StepDef.
+const STEP_BLOCK_KEY_OVERRIDES: Record<string, string> = {
+  kumiho_context: 'kumiho',
+  kumiho_bundle_update: 'kumiho',
+  kumiho_patch_apply: 'kumiho',
+  tag: 'tag_step',
+  deprecate: 'deprecate_step',
+};
+
+/**
+ * Detect steps that bury their settings under a generic `config:` block.
+ *
+ * Revka's executor reads per-step settings from a typed block named after the
+ * step `type` (e.g. `agent:`, `human_approval:`); it ignores a `config:` key
+ * entirely. Hand-written and LLM-generated workflows sometimes use `config:`,
+ * which makes the editor — and the executor itself — silently drop every
+ * prompt/role/message. Surface those steps so the import path can warn loudly
+ * instead of dropping data.
+ *
+ * Only flags a step when `config:` is present AND its canonical typed block is
+ * absent — i.e. the `config:` block is the sole home of the step's settings, so
+ * importing would lose them. A step carrying both blocks is left alone (the
+ * typed block wins and nothing is lost).
+ */
+export function findIgnoredConfigBlocks(
+  yamlText: string,
+): { stepId: string; block: string }[] {
+  let doc: YAMLValue;
+  try {
+    doc = YAML.load(yamlText);
+  } catch {
+    return [];
+  }
+  if (!isObj(doc) || !Array.isArray(doc.steps)) return [];
+
+  const flagged: { stepId: string; block: string }[] = [];
+  for (const raw of doc.steps) {
+    if (!isObj(raw)) continue;
+    if (!isObj(raw.config)) continue;
+    const type = canonicalizeType(
+      asStr(raw.type) ?? asStr(raw.action) ?? asStr(raw.task) ?? 'agent',
+    );
+    const block = STEP_BLOCK_KEY_OVERRIDES[type] ?? type;
+    // Canonical block already present → settings aren't lost; don't flag.
+    if (isObj(raw[block])) continue;
+    flagged.push({ stepId: asStr(raw.id) ?? '(unnamed step)', block });
+  }
+  return flagged;
+}
+
 export function parseWorkflowMeta(yaml: string): WorkflowMeta {
   const meta: WorkflowMeta = {
     name: '', version: '1.0', description: '', tags: [],
