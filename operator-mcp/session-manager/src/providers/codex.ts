@@ -257,7 +257,13 @@ export function createCodexSession(
       args.push(effectivePrompt);
     } else if (config.agentType === "agy") {
       binary = "agy";
-      args.push("--print", "--dangerously-skip-permissions");
+      // Antigravity's `--print` consumes the prompt as the flag argument; a
+      // piped stdin prompt left agy with an empty request, so it printed
+      // nothing and exited 0 — silently failing the step. Put flags first and
+      // `--print <prompt>` LAST so the prompt is the trailing token regardless
+      // of whether agy treats --print as a value flag or a mode flag with a
+      // positional prompt.
+      args.push("--dangerously-skip-permissions");
       // Antigravity's print mode defaults to a 5-minute wait, then prints
       // "Error: timed out waiting for response" as its entire output and
       // exits 0 — failing any longer-running workflow step. Give it
@@ -266,6 +272,7 @@ export function createCodexSession(
       if (config.model) {
         args.push("--model", config.model);
       }
+      args.push("--print", effectivePrompt);
     } else if (config.agentType === "cursor") {
       binary = "agent";
       args.push("--print", "--dangerously-skip-permissions");
@@ -280,9 +287,20 @@ export function createCodexSession(
       args.push(effectivePrompt);
     }
 
-    const isStdinPrompt = config.agentType === "agy" || config.agentType === "cursor";
+    // cursor (`agent`) reads its prompt from stdin; agy and codex take it on
+    // argv (above). Plain-text CLIs (agy, cursor) print human text rather than
+    // JSON events, so their per-line output needs the consolidated full-stdout
+    // message emitted on close.
+    const isStdinPrompt = config.agentType === "cursor";
+    const isPlainTextAgent =
+      config.agentType === "agy" || config.agentType === "cursor";
 
-    log(`Spawning ${binary}: ${args.slice(0, 7).join(" ")}... (${effectivePrompt.length} chars)`);
+    // Keep the prompt (always the final arg when passed on argv) out of the log.
+    const logArgs =
+      args.length > 0 && args[args.length - 1] === effectivePrompt
+        ? args.slice(0, -1)
+        : args;
+    log(`Spawning ${binary}: ${logArgs.slice(0, 7).join(" ")}... (${effectivePrompt.length} chars)`);
 
     const proc = spawn(binary, args, {
       cwd: config.cwd,
@@ -356,13 +374,13 @@ export function createCodexSession(
           }
         }
         handle.jsonBuffer = "";
-        // Stdin-prompt agents (agy, cursor) print plain text, so the
+        // Plain-text agents (agy, cursor) print plain text, so the
         // per-line timeline events above fragment a multi-line answer —
         // and downstream consumers read only the last message, losing all
         // but the final line of e.g. a FINAL_OUTPUT YAML block. Emit one
         // consolidated message with the full stdout so the complete
         // answer is what consumers see last.
-        if (isStdinPrompt) {
+        if (isPlainTextAgent) {
           const fullOutput = handle.stdout.trim();
           if (fullOutput) {
             onEvent({ type: "timeline", item: { type: "assistant_message", text: fullOutput } });
