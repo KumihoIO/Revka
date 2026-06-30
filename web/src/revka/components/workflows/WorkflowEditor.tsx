@@ -57,6 +57,7 @@ import { gateNodeTypes } from '@/components/workflows/GateNode';
 import {
   GATE_EDGE_STYLES,
   computeAncestorClosure,
+  findIgnoredConfigBlocks,
   flowToTasks,
   gateBranchHandle,
   gateBranchIndex,
@@ -1173,6 +1174,27 @@ function validateWorkflowYamlForEditor(yamlText: string): YamlValidationState {
         status: 'invalid',
         message: 'Valid YAML, but no workflow steps were found',
         detail: 'Add a top-level steps list before applying this YAML to the graph.',
+      };
+    }
+
+    // A `config:` block is not a Revka step format — the executor (and this
+    // parser) read settings from the typed block named after `type`, so a
+    // `config:` block's prompt/role/message would be silently dropped on
+    // import. Block the apply with an actionable message instead of eating
+    // the data.
+    const ignoredConfig = findIgnoredConfigBlocks(yamlText);
+    if (ignoredConfig.length > 0) {
+      const first = ignoredConfig[0]!;
+      const more = ignoredConfig.length - 1;
+      return {
+        status: 'invalid',
+        message: `Step "${first.stepId}" puts its settings under "config:", which Revka ignores`,
+        detail:
+          `Move them under "${first.block}:" (the block named after the step's type). `
+          + (more > 0
+            ? `${more} other step${more === 1 ? '' : 's'} affected. `
+            : '')
+          + 'Applying as-is would drop these steps’ prompts/messages.',
       };
     }
 

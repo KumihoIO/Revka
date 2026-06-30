@@ -11,6 +11,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  findIgnoredConfigBlocks,
   findOutputDataRefs,
   flowToTasks,
   hasPersistedTaskPositions,
@@ -1435,4 +1436,81 @@ steps:
 
   const tasks3 = parseWorkflowYaml(yaml2);
   assert.equal(tasks3[0]!.compression, true);
+});
+
+test('findIgnoredConfigBlocks flags a config: block when the typed block is absent', () => {
+  // Mirrors the non-canonical shape (config: instead of agent:/human_approval:)
+  // that the executor and parser both silently drop.
+  const yaml = `
+steps:
+  - id: research
+    type: agent
+    config:
+      agent_type: codex
+      role: researcher
+      prompt: Do the research.
+  - id: approve
+    type: human_approval
+    config:
+      message: Please review.
+      timeout_seconds: 86400
+`;
+  const flagged = findIgnoredConfigBlocks(yaml);
+  assert.deepEqual(flagged, [
+    { stepId: 'research', block: 'agent' },
+    { stepId: 'approve', block: 'human_approval' },
+  ]);
+});
+
+test('findIgnoredConfigBlocks leaves canonical typed blocks alone', () => {
+  const yaml = `
+steps:
+  - id: research
+    type: agent
+    agent:
+      agent_type: codex
+      prompt: Do the research.
+  - id: approve
+    type: human_approval
+    human_approval:
+      message: Please review.
+      timeout: 86400
+`;
+  assert.deepEqual(findIgnoredConfigBlocks(yaml), []);
+});
+
+test('findIgnoredConfigBlocks does not flag when both config: and the typed block exist', () => {
+  // The typed block wins and nothing is lost, so no warning.
+  const yaml = `
+steps:
+  - id: research
+    type: agent
+    agent:
+      prompt: Real prompt.
+    config:
+      prompt: Shadowed and ignored, but no data loss.
+`;
+  assert.deepEqual(findIgnoredConfigBlocks(yaml), []);
+});
+
+test('findIgnoredConfigBlocks maps overridden block names (kumiho, tag)', () => {
+  const yaml = `
+steps:
+  - id: ctx
+    type: kumiho_context
+    config:
+      project: demo
+  - id: tagit
+    type: tag
+    config:
+      tag: current
+`;
+  assert.deepEqual(findIgnoredConfigBlocks(yaml), [
+    { stepId: 'ctx', block: 'kumiho' },
+    { stepId: 'tagit', block: 'tag_step' },
+  ]);
+});
+
+test('findIgnoredConfigBlocks returns [] on malformed YAML', () => {
+  assert.deepEqual(findIgnoredConfigBlocks('steps: [: :'), []);
 });
