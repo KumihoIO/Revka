@@ -2,7 +2,9 @@
 
 Workflow agents are spawned as `claude --print` subprocesses.  Prompts
 are written to temp .md files and piped via stdin to avoid ARG_MAX and
-shell-encoding issues with Korean/Unicode text.
+shell-encoding issues with Korean/Unicode text.  The exception is agy
+(Antigravity), whose `--print` reads the prompt from the flag argument
+rather than stdin — see `_build_command`.
 """
 from __future__ import annotations
 
@@ -231,6 +233,7 @@ def _resolve_cli(name: str) -> str:
 
 def _build_command(
     agent_type: str, *,
+    prompt: str | None = None,
     model: str | None = None,
     mcp_config_path: str | None = None,
     mcp_servers: dict[str, Any] | None = None,
@@ -252,21 +255,35 @@ def _build_command(
     binary_name = agent_type if agent_type in ("claude", "agy", "agent", "opencode") else "claude"
 
     if binary_name == "opencode":
-        cmd = [_resolve_cli("opencode"), "run"]
-    else:
-        # Prompt is piped via stdin — no -p flag, no ARG_MAX issues,
-        # no shell encoding problems with Korean/Unicode text.
-        cmd = [_resolve_cli(binary_name), "--print", "--dangerously-skip-permissions"]
-        if binary_name == "agy":
-            # Antigravity's print mode defaults to a 5-minute wait and then
-            # emits "Error: timed out waiting for response" as its entire
-            # output (exit 0), failing any longer-running workflow step.
-            # Give it headroom beyond the longest step budget instead.
-            cmd.extend(["--print-timeout", "30m"])
+        return [_resolve_cli("opencode"), "run"]
+
+    if binary_name == "agy":
+        # Antigravity (agy) is the one CLI here that does NOT read its prompt
+        # from stdin: its `--print` consumes the prompt as the flag argument.
+        # Piping the prompt in (as we do for claude/agent below) left agy with
+        # an empty request — it printed nothing and exited 0, silently failing
+        # the step. So pass the prompt on the command line, as the LAST token
+        # after `--print`. Trailing placement keeps it out of the cmd[:3] slice
+        # we log, and works whether agy treats `--print` as a value flag (the
+        # prompt is its value) or a mode flag with a positional prompt.
+        cmd = [_resolve_cli("agy"), "--dangerously-skip-permissions"]
+        # Antigravity's print mode defaults to a 5-minute wait and then emits
+        # "Error: timed out waiting for response" as its entire output (exit 0),
+        # failing any longer-running workflow step. Give it headroom beyond the
+        # longest step budget instead.
+        cmd.extend(["--print-timeout", "30m"])
         if model:
             cmd.extend(["--model", model])
-        if mcp_config_path and agent_type == "claude":
-            cmd.extend(["--mcp-config", mcp_config_path])
+        cmd.extend(["--print", prompt or ""])
+        return cmd
+
+    # claude / agent read the prompt from stdin — no -p flag, no ARG_MAX issues,
+    # no shell encoding problems with Korean/Unicode text.
+    cmd = [_resolve_cli(binary_name), "--print", "--dangerously-skip-permissions"]
+    if model:
+        cmd.extend(["--model", model])
+    if mcp_config_path and agent_type == "claude":
+        cmd.extend(["--mcp-config", mcp_config_path])
     return cmd
 
 
@@ -453,11 +470,17 @@ async def spawn_agent(
 
     cmd = _build_command(
         agent.agent_type,
+        prompt=prompt,
         model=model,
         mcp_config_path=mcp_config_path,
         mcp_servers=mcp_servers,
     )
     cwd = os.path.expanduser(agent.cwd)
+
+    # agy carries its prompt on the command line (see _build_command); every
+    # other CLI reads it from stdin. Feeding agy a stdin prompt too is pointless
+    # and risks it blocking on the pipe, so it gets DEVNULL instead.
+    prompt_on_argv = agent.agent_type == "agy"
 
     # Build sanitized environment
     merged_env_extra = dict(env_extra) if env_extra else {}
@@ -499,12 +522,16 @@ async def spawn_agent(
     _log(f"Spawning agent {agent.id}: {cmd[:3]}... ({len(prompt)} chars) in {cwd} [prompt={prompt_path}]")
     prompt_fh = None
     try:
-        prompt_fh = open(prompt_path, "r", encoding="utf-8")
+        if prompt_on_argv:
+            stdin_for_child = asyncio.subprocess.DEVNULL
+        else:
+            prompt_fh = open(prompt_path, "r", encoding="utf-8")
+            stdin_for_child = prompt_fh
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             cwd=cwd,
             env=env,
-            stdin=prompt_fh,
+            stdin=stdin_for_child,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )

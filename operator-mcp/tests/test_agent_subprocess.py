@@ -34,9 +34,11 @@ class TestResolveCli:
 
 
 class TestBuildCommand:
-    # Prompt is piped via stdin (not passed as a CLI arg) to dodge ARG_MAX
-    # and shell-encoding bugs with Korean/Unicode text — so _build_command
-    # only emits flags, not the prompt body.
+    # For claude/codex/agent the prompt is piped via stdin (not a CLI arg) to
+    # dodge ARG_MAX and shell-encoding bugs with Korean/Unicode text — so
+    # _build_command emits only flags for them. agy is the exception: its
+    # `--print` takes the prompt as the flag argument, so _build_command must
+    # place it on the command line.
     #
     # Tests here patch shutil.which to None so cmd[0] is the bare name;
     # the actual path-resolution behavior is covered in TestResolveCli.
@@ -69,14 +71,30 @@ class TestBuildCommand:
         assert "--print" in cmd
         assert "--dangerously-skip-permissions" in cmd
 
+    def test_claude_prompt_stays_off_command_line(self):
+        # claude reads its prompt from stdin; it must never land in argv
+        # (ARG_MAX, and to keep the prompt out of process listings). agy is
+        # the lone exception (its --print takes the prompt as an argument).
+        cmd = _build_command("claude", prompt="secret prompt body")
+        assert "secret prompt body" not in cmd
+
     def test_agy_command(self):
-        cmd = _build_command("agy")
+        # Antigravity reads the prompt from the --print flag argument, NOT
+        # stdin — so the prompt must be on the command line, as the trailing
+        # token after --print (see _build_command for the ordering rationale).
+        cmd = _build_command("agy", prompt="review the plan")
         assert cmd[0] == "agy"
-        assert "--print" in cmd
+        assert cmd[-2:] == ["--print", "review the plan"]
         assert "--dangerously-skip-permissions" in cmd
         # Antigravity defaults --print-timeout to 5m, which silently kills
         # long workflow steps; the spawner must extend it.
         assert cmd[cmd.index("--print-timeout") + 1] == "30m"
+
+    def test_agy_command_without_prompt(self):
+        # A missing prompt degrades to an empty trailing argument rather than
+        # raising — the flag still consumes a value so later flags don't shift.
+        cmd = _build_command("agy")
+        assert cmd[-2:] == ["--print", ""]
 
     def test_agent_command(self):
         cmd = _build_command("agent")
