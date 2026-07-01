@@ -398,11 +398,18 @@ The run viewer records the matched branch on completed conditionals:
     entity_metadata:
       topic: "${inputs.topic}"
       summary: "${analyze.output}"
+    # Optional: attach an EXISTING file as the artifact instead of the rendered
+    # template. Supports ${...} interpolation. The file's own extension is
+    # preserved (e.g. an .html deck stays renderable in Kumiho); the rendered
+    # template still becomes the revision's content_preview / summary metadata.
+    artifact_path: "${build.output_data.artifact_path}"
 ```
 
 When `entity_name` and `entity_kind` are both set, the executor:
 1. Creates a Kumiho item in `entity_space`
-2. Creates a revision with the rendered template as content
+2. Creates a revision with the rendered template as content (or, when
+   `artifact_path` points at an existing file, attaches that file as the
+   artifact and keeps the rendered template as the content preview/summary)
 3. Tags the revision with `entity_tag`
 4. Fires a `revision.tagged` event — which can trigger downstream workflows
 
@@ -411,7 +418,13 @@ downstream trigger auto-mapping. Choose `revision` when resolve steps should
 read it without setting `metadata_source`, or `artifact` when metadata belongs
 to the attached output artifact.
 
-**Output data** includes `entity_kref` and `entity_revision_kref` for downstream reference.
+Use `artifact_path` when the workflow produced a real deliverable file (HTML,
+PDF, video, zip, …) that should be the renderable artifact — rather than the
+default markdown/text rendering of the template. The path must exist on disk
+when the output step runs (a clear error fails the step otherwise).
+
+**Output data** includes `entity_kref` and `entity_revision_kref` for downstream
+reference, plus `entity_artifact_kref` when an artifact was attached.
 
 ### `human_approval` — Pause for yes/no
 

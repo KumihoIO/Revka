@@ -410,6 +410,11 @@ class OutputStepConfig(BaseModel):
                                           # Where entity_metadata is written.
                                           # item preserves legacy trigger auto-map behavior.
     artifact_summary_model: str = ""      # Optional cheap model used to write artifact.metadata.summary
+    # When set, attach THIS existing file as the entity's artifact instead of the
+    # rendered template. The file's own extension is preserved (e.g. an .html deck
+    # stays renderable). Supports ${...} interpolation. The rendered template still
+    # becomes the human-readable content_preview / summary metadata.
+    artifact_path: str = ""               # Path to an existing file to attach as the artifact
 
 
 class ResolveStepConfig(BaseModel):
