@@ -125,7 +125,14 @@ def _write_agent_home_configs(agent_id: str, agent_type: str, mcp_servers: dict[
         
         opencode_mcp = {}
         for name, cfg in mcp_servers.items():
-            cmd_list = [cfg["command"]] + cfg.get("args", [])
+            command = cfg.get("command")
+            if not command:
+                # http/sse-transport servers (e.g. a forwarded config.toml
+                # entry) have no local command to run - opencode only
+                # supports local stdio servers, so skip rather than crash.
+                _log(f"Skipping MCP server '{name}' for opencode agent: no stdio command (transport={cfg.get('type')})")
+                continue
+            cmd_list = [command] + cfg.get("args", [])
             opencode_mcp[name] = {
                 "type": "local",
                 "command": cmd_list,
@@ -162,8 +169,15 @@ def _write_agent_home_configs(agent_id: str, agent_type: str, mcp_servers: dict[
 
         agy_mcp = {}
         for name, cfg in mcp_servers.items():
+            command = cfg.get("command")
+            if not command:
+                # http/sse-transport servers (e.g. a forwarded config.toml
+                # entry) have no local command to run - agy only supports
+                # stdio servers, so skip rather than crash.
+                _log(f"Skipping MCP server '{name}' for agy agent: no stdio command (transport={cfg.get('type')})")
+                continue
             agy_mcp[name] = {
-                "command": cfg["command"],
+                "command": command,
                 "args": cfg.get("args", []),
                 "env": cfg.get("env", {})
             }
