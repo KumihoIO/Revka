@@ -95,6 +95,9 @@ export interface TaskDefinition {
   agent_tools?: 'all' | 'memory' | 'google_agentops' | 'none';
   /** Agent step: required MCP tools that must be visible before launch */
   agent_required_tools?: string[];
+  /** Agent step: named ~/.revka/config.toml [[mcp.servers]] entries to
+   *  forward to this step, independent of agent_tools. */
+  mcp_servers?: string[];
   /** Agent step: expected JSON output fields */
   agent_output_fields?: string[];
   /** Agent step: quality-check block */
@@ -462,6 +465,7 @@ export interface TaskNodeData {
   agentMaxTurns: number;
   agentTools: 'all' | 'memory' | 'google_agentops' | 'none';
   agentRequiredTools: string[];
+  mcpServers: string[];
   agentOutputFields: string[];
   agentQualityEnabled: boolean;
   agentQualityThreshold: number;
@@ -1069,6 +1073,7 @@ function parseStep(s: YAMLObj): TaskDefinition | null {
     const tools = asStr(agent.tools);
     if (tools === 'all' || tools === 'memory' || tools === 'google_agentops' || tools === 'none') t.agent_tools = tools;
     t.agent_required_tools = asStrArr(agent.required_tools);
+    t.mcp_servers = asStrArr(agent.mcp_servers);
     t.agent_output_fields = asStrArr(agent.output_fields);
     const quality = isObj(agent.quality_check) ? agent.quality_check : undefined;
     if (quality) {
@@ -1868,6 +1873,7 @@ export function tasksToFlow(tasks: TaskDefinition[]): { nodes: Node<TaskNodeData
       agentMaxTurns: task.agent_max_turns ?? 3,
       agentTools: task.agent_tools ?? 'none',
       agentRequiredTools: task.agent_required_tools || [],
+      mcpServers: task.mcp_servers || [],
       agentOutputFields: task.agent_output_fields || [],
       agentQualityEnabled: task.agent_quality_enabled ?? false,
       agentQualityThreshold: task.agent_quality_threshold ?? 0.7,
@@ -2851,6 +2857,7 @@ export function flowToTasks(nodes: Node<TaskNodeData>[], edges: Edge[]): TaskDef
       if (d.agentMaxTurns && d.agentMaxTurns !== 3) base.agent_max_turns = d.agentMaxTurns;
       if (d.agentTools && d.agentTools !== 'none') base.agent_tools = d.agentTools;
       if (d.agentRequiredTools?.length) base.agent_required_tools = d.agentRequiredTools;
+      if (d.mcpServers?.length) base.mcp_servers = d.mcpServers;
       if (d.agentOutputFields?.length) base.agent_output_fields = d.agentOutputFields;
       if (d.agentQualityEnabled) {
         base.agent_quality_enabled = true;
@@ -3375,6 +3382,7 @@ export function tasksToYaml(tasks: TaskDefinition[], meta?: Partial<WorkflowMeta
         || task.template
         || task.auth
         || task.agent_required_tools?.length
+        || task.mcp_servers?.length
       )
     ) {
       lines.push(`    agent:`);
@@ -3401,6 +3409,9 @@ export function tasksToYaml(tasks: TaskDefinition[], meta?: Partial<WorkflowMeta
       if (task.agent_tools && task.agent_tools !== 'none') lines.push(`      tools: ${task.agent_tools}`);
       if (task.agent_required_tools?.length) {
         lines.push(`      required_tools: [${task.agent_required_tools.map(yamlEscape).join(', ')}]`);
+      }
+      if (task.mcp_servers?.length) {
+        lines.push(`      mcp_servers: [${task.mcp_servers.map(yamlEscape).join(', ')}]`);
       }
       if (task.agent_output_fields?.length) {
         lines.push(`      output_fields: [${task.agent_output_fields.map(yamlEscape).join(', ')}]`);

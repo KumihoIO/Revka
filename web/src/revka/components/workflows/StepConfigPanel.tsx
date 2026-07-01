@@ -11,7 +11,8 @@ import { Crosshair, Link2, Link2Off, Loader2, Lock, Plus, Search, Sparkles, Tras
 import type { Node } from '@xyflow/react';
 import { type ConditionalBranchDefinition, type TaskNodeData } from '@/revka/components/workflows/yamlSync';
 import type { SkillDefinition } from '@/types/api';
-import { fetchSkills, getChannels } from '@/lib/api';
+import { fetchSkills, getChannels, getConfig } from '@/lib/api';
+import { parseMcpBlock } from '../../lib/mcpToml';
 import Panel from '@/revka/components/ui/Panel';
 import { STEP_TYPES_BY_TYPE } from './stepRegistry';
 import AuthProfilePicker from './AuthProfilePicker';
@@ -406,6 +407,7 @@ export default function StepConfigPanel({
   const [channelOptions, setChannelOptions] = useState<{ value: string; label: string }[]>([
     { value: 'dashboard', label: 'Dashboard' },
   ]);
+  const [mcpServerOptions, setMcpServerOptions] = useState<{ value: string; label: string; transport: string }[]>([]);
 
   // Pool-agent picker — single shared mount lives in WorkflowEditor. The
   // "Choose agent…" button below dispatches OPEN_AGENT_PICKER_EVENT instead
@@ -480,6 +482,28 @@ export default function StepConfigPanel({
       })
       .catch(() => setChannelOptions([{ value: 'dashboard', label: 'Dashboard' }]));
   }, [stepType]);
+
+  // MCP servers: load your configured [[mcp.servers]] entries for the agent
+  // step's "MCP Servers" picker below. Reuses the same TOML parse path the
+  // Settings > MCP page uses (parseMcpBlock), not a dedicated endpoint.
+  useEffect(() => {
+    if (stepType !== 'agent') return;
+    getConfig()
+      .then((toml) => {
+        const parsed = parseMcpBlock(toml);
+        setMcpServerOptions(parsed.servers.map((s) => ({ value: s.name, label: s.name, transport: s.transport })));
+      })
+      .catch(() => setMcpServerOptions([]));
+  }, [stepType]);
+
+  const toggleMcpServer = useCallback(
+    (name: string) => {
+      const current = data.mcpServers || [];
+      const next = current.includes(name) ? current.filter((n) => n !== name) : [...current, name];
+      onUpdate(node.id, { mcpServers: next });
+    },
+    [data.mcpServers, node.id, onUpdate],
+  );
 
   // Skills: load when picker opens
   useEffect(() => {
@@ -1400,6 +1424,54 @@ export default function StepConfigPanel({
                   placeholder="capture_skill, tag_revision"
                   style={monoInputStyle}
                 />
+              </div>
+
+              <div>
+                <label style={labelStyle}>MCP Servers</label>
+                {mcpServerOptions.length === 0 ? (
+                  <p style={helperStyle()}>
+                    No MCP servers configured. Add one under Settings → MCP, then it appears here to forward.
+                  </p>
+                ) : (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                    {mcpServerOptions.map((opt) => {
+                      const active = (data.mcpServers || []).includes(opt.value);
+                      return (
+                        <button
+                          key={opt.value}
+                          type="button"
+                          onClick={() => toggleMcpServer(opt.value)}
+                          title={`transport: ${opt.transport}`}
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 4,
+                            padding: '3px 8px',
+                            borderRadius: 8,
+                            border: active
+                              ? '1px solid var(--revka-signal-selected)'
+                              : '1px solid var(--pc-accent-dim)',
+                            background: active
+                              ? 'color-mix(in srgb, var(--revka-signal-selected) 18%, transparent)'
+                              : 'transparent',
+                            color: active ? 'var(--revka-signal-selected)' : 'var(--pc-accent-light)',
+                            fontSize: 10,
+                            fontWeight: 700,
+                            cursor: 'pointer',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {opt.label}
+                          <span style={{ opacity: 0.6, fontWeight: 400 }}>{opt.transport}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+                <p style={helperStyle()}>
+                  Forwards the named ~/.revka/config.toml server to this step, independent of Tools above. codex
+                  steps can only use stdio-transport servers.
+                </p>
               </div>
 
               <div>
