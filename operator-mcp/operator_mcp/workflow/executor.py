@@ -1171,14 +1171,21 @@ def _tool_base_name(name: str) -> str:
 
 
 def _agent_required_tools(step: StepDef, cfg: AgentStepConfig) -> list[str]:
-    """Declared plus inferred tool names the agent must be able to see."""
+    """Declared plus inferred tool names the agent must be able to see.
+
+    Keeps the original spelling (e.g. "OpenCrab__opencrab_query"), not the
+    ``_tool_base_name``-stripped form - dedup is by base name, but the
+    server-name prefix must survive so ``_agent_required_tool_visible`` can
+    still match it against a step's declared ``mcp_servers:``. Built-in
+    category checks are unaffected: they re-derive ``base`` themselves.
+    """
     required: list[str] = []
     seen: set[str] = set()
 
     def add(tool: str) -> None:
         base = _tool_base_name(tool)
         if base and base not in seen:
-            required.append(base)
+            required.append(tool)
             seen.add(base)
 
     for tool in cfg.required_tools:
@@ -1204,6 +1211,17 @@ def _agent_required_tool_visible(
     base = _tool_base_name(tool)
     if not base:
         return True
+    # _tool_base_name strips everything through the LAST "__", so the server
+    # prefix (if any) only survives on the raw, unstripped `tool` string -
+    # check that, not `base`, for an mcp_servers: match.
+    raw = str(tool or "").strip()
+    if "__" in raw:
+        prefix = raw.split("__", 1)[0]
+        if any(prefix.lower() == name.lower() for name in cfg.mcp_servers):
+            # Declared via mcp_servers: - visible only if config.toml
+            # actually has a usable entry by this name (build_mcp_servers
+            # already dropped missing/malformed ones).
+            return any(key.lower() == prefix.lower() for key in mcp_servers)
     if cfg.tools == "none":
         return False
     if base in _WORKFLOW_MEMORY_ALIAS_TOOLS:
@@ -1237,6 +1255,7 @@ def _preflight_required_tool_visibility(wf: WorkflowDef) -> str | None:
             include_memory=include_memory,
             include_operator=include_operator,
             include_google_agentops=include_google_agentops,
+            extra_server_names=cfg.mcp_servers,
         )
         missing = [
             tool for tool in required
@@ -1429,6 +1448,7 @@ async def _exec_agent(step: StepDef, state: WorkflowState, cwd: str) -> StepResu
         include_memory=include_memory,
         include_operator=include_operator,
         include_google_agentops=include_google_agentops,
+        extra_mcp_servers=cfg.mcp_servers or None,
         env_extra=agent_env_extra or None,
         trusted=cfg.trusted,
         cancel_check=lambda: state.cancel_requested,

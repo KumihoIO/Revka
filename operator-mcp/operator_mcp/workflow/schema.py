@@ -105,6 +105,13 @@ class AgentStepConfig(BaseModel):
     max_turns: int = 3           # Max LLM turns (low default = no tool loops, saves tokens)
     tools: Literal["all", "memory", "google_agentops", "none"] = "none"  # MCP tool injection level
     required_tools: list[str] = Field(default_factory=list)  # Preflight visibility guard
+    # Named ~/.revka/config.toml [[mcp.servers]] entries to forward to this
+    # step's agent (e.g. ["OpenCrab"]), independent of `tools`. Unlike the
+    # `tools` tiers (which only ever bundle Revka's own kumiho-memory/
+    # workflow-memory/operator-tools/google-agentops-tools), this reaches a
+    # user's own MCP server registrations. codex agents can only use stdio
+    # transport servers this way (see mcp_injection._external_server_config).
+    mcp_servers: list[str] = Field(default_factory=list)
     output_fields: list[str] = Field(default_factory=list)  # Required structured output_data fields
     quality_check: QualityCheckConfig | None = None
     # When False, refuse to spawn a permission-bypassing CLI for this step

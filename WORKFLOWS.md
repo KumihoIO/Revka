@@ -122,6 +122,7 @@ steps:                         # At least one step required
     model: null                # Optional model override
     timeout: 300               # Seconds (default 300)
     template: my-template      # Optional agent pool template
+    mcp_servers: [OpenCrab]    # Optional: named ~/.revka/config.toml [[mcp.servers]] entries to forward
   skills:
     - "kref://CognitiveMemory/Skills/some-skill.skilldef"
   retry: 1                    # Retry once on failure
@@ -170,6 +171,41 @@ The parsed fields are merged into `output_data`, so downstream steps can use
 as `final_canon_auditor.output_data.production_ready`. Agent outputs without
 `output_fields` remain backward compatible: valid JSON, fenced JSON, and
 `FINAL_OUTPUT` are parsed when present, but missing fields do not fail the step.
+
+#### Forwarding your own MCP servers to an agent step
+
+`agent.tools` (`all` / `memory` / `google_agentops` / `none`) only ever
+bundles Revka's own kumiho-memory / workflow-memory / operator-tools /
+google-agentops-tools — it has no path to an MCP server you've registered
+yourself under `[[mcp.servers]]` in `~/.revka/config.toml`. Use
+`agent.mcp_servers` to forward one or more of those by name instead, fully
+independent of the `tools` tier:
+
+```yaml
+- id: render
+  type: agent
+  agent:
+    agent_type: claude
+    mcp_servers: [OpenCrab]   # matches [[mcp.servers]] name = "OpenCrab"
+    required_tools: [OpenCrab__opencrab_query]  # optional: fail preflight if missing
+    prompt: |
+      Call OpenCrab__opencrab_query for motion-grammar guidance before
+      touching scene timing.
+```
+
+The tool the agent sees is prefixed the same way Revka prefixes its own MCP
+tools: `<server_name>__<tool_name>` (exact configured name, case preserved).
+
+Constraints:
+
+- **`agent_type: claude`** supports `stdio`, `http`, and `sse` transports.
+- **`agent_type: codex`** only supports `stdio` — an `http`/`sse` entry is
+  silently dropped for a codex step (no error, no tool). Prefer
+  `agent_type: claude` for an http/sse server like a typical remote MCP
+  service.
+- A name with no matching `[[mcp.servers]]` entry (typo, or the server was
+  removed) is silently omitted from injection. Add it to `required_tools`
+  too if the step must fail loudly instead of quietly running without it.
 
 #### Agent output artifacts and dependency handoff
 

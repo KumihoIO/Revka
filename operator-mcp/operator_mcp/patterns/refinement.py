@@ -613,6 +613,7 @@ async def _spawn_and_wait(
     include_memory: bool = True,
     include_operator: bool = True,
     include_google_agentops: bool = False,
+    extra_mcp_servers: list[str] | None = None,
     env_extra: dict[str, str] | None = None,
     trusted: bool = True,
     cancel_check: Callable[[], bool] | None = None,
@@ -623,6 +624,11 @@ async def _spawn_and_wait(
     the sidecar create_agent config (sidecar mode). Used by workflow
     auth-profile bindings to expose REVKA_AUTH_PROFILE_ID without
     injecting it into the system prompt.
+
+    ``extra_mcp_servers`` names ~/.revka/config.toml [[mcp.servers]] entries
+    to forward to the CLI-subprocess path only (agent_subprocess.py) - the
+    sidecar path already reaches config.toml's servers via Revka's own
+    native agent loop and needs no extra wiring here.
     """
     from ..budget_authority import BudgetGateError, require_agent_budget
     from ..mcp_injection import build_mcp_servers, build_system_prompt
@@ -642,7 +648,14 @@ async def _spawn_and_wait(
     # Single-turn workers (no MCP tools) go straight to CLI subprocess.
     # The sidecar's Agent SDK has separate rate limits from the CLI —
     # using `claude --print --bare` shares the user's CLI quota instead.
-    use_cli = not include_memory and not include_operator and not include_google_agentops
+    # A step that only sets extra_mcp_servers (tools left at "none") still
+    # needs the MCP-injection path below, so it counts as "has MCP tools" too.
+    use_cli = (
+        not include_memory
+        and not include_operator
+        and not include_google_agentops
+        and not extra_mcp_servers
+    )
     subprocess_mcp_servers: dict[str, Any] | None = None
     subprocess_prompt = prompt
 
@@ -653,6 +666,7 @@ async def _spawn_and_wait(
             include_operator=include_operator,
             include_google_agentops=include_google_agentops,
             socket_path=socket_path,
+            extra_server_names=extra_mcp_servers,
         )
         system_prompt = build_system_prompt(
             is_top_level=False,

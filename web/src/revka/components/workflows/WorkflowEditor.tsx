@@ -469,6 +469,7 @@ function defaultNodeData(id: string, overrides?: Partial<TaskNodeData>): TaskNod
     agentMaxTurns: 3,
     agentTools: 'none',
     agentRequiredTools: [],
+    mcpServers: [],
     agentOutputFields: [],
     agentQualityEnabled: false,
     agentQualityThreshold: 0.7,

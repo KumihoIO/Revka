@@ -13,7 +13,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from .revka_config import kumiho_connection_config
+from .revka_config import kumiho_connection_config, mcp_servers_by_name
 
 from ._log import _log
 
@@ -201,13 +201,57 @@ def google_agentops_tools_config() -> dict[str, Any]:
     }
 
 
+def _external_server_config(entry: dict[str, Any]) -> dict[str, Any] | None:
+    """Convert a config.toml [[mcp.servers]] entry to agent-injection shape.
+
+    Mirrors src/config/schema.rs::McpServerConfig. Only stdio and http/sse
+    are handled — matches what agent_subprocess.py's --mcp-config passthrough
+    (claude) and _codex_mcp_overrides (codex, stdio-only) can actually use.
+    Returns None for a malformed entry so callers skip it rather than inject
+    something a spawned CLI can't parse.
+    """
+    transport = str(entry.get("transport") or "stdio").lower()
+    if transport == "stdio":
+        command = entry.get("command")
+        if not isinstance(command, str) or not command.strip():
+            return None
+        return {
+            "type": "stdio",
+            "command": command,
+            "args": list(entry.get("args") or []),
+            "env": dict(entry.get("env") or {}),
+        }
+    if transport in ("http", "sse"):
+        url = entry.get("url")
+        if not isinstance(url, str) or not url.strip():
+            return None
+        cfg: dict[str, Any] = {"type": transport, "url": url}
+        headers = entry.get("headers")
+        if isinstance(headers, dict) and headers:
+            cfg["headers"] = dict(headers)
+        return cfg
+    return None
+
+
 def build_mcp_servers(
     include_memory: bool = True,
     include_operator: bool = True,
     include_google_agentops: bool = False,
     socket_path: str | None = None,
+    extra_server_names: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Build the full MCP servers dict for agent session injection."""
+    """Build the full MCP servers dict for agent session injection.
+
+    `extra_server_names` names entries from ~/.revka/config.toml's
+    [[mcp.servers]] to forward alongside the built-in bundles above — e.g. a
+    user-registered OpenCrab server, opted into per-step via an agent step's
+    `mcp_servers:` field. This is independent of `tools:`, since the built-in
+    tiers only ever bundle kumiho-memory/workflow-memory/operator-tools/
+    google-agentops-tools and have no path to a user's own MCP registrations.
+    A name with no matching config.toml entry, or an entry codex/claude can't
+    use, is silently skipped here (not an error) — declare it in the step's
+    `required_tools:` too if it must fail loudly when absent.
+    """
     servers: dict[str, Any] = {}
 
     if include_memory:
@@ -220,6 +264,12 @@ def build_mcp_servers(
         servers["operator-tools"] = operator_tools_config(socket_path)
     elif include_google_agentops:
         servers["google-agentops-tools"] = google_agentops_tools_config()
+
+    if extra_server_names:
+        for name, entry in mcp_servers_by_name(extra_server_names).items():
+            cfg = _external_server_config(entry)
+            if cfg:
+                servers[name] = cfg
 
     return servers
 
