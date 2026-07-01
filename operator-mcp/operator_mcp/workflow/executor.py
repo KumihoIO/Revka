@@ -2633,6 +2633,10 @@ async def _exec_output(step: StepDef, state: WorkflowState) -> StepResult:
             run_id=state.run_id,
             step_id=artifact_step_id,
             artifact_summary_model=cfg.artifact_summary_model,
+            artifact_path_override=(
+                os.path.expanduser(interpolate(cfg.artifact_path, state).strip()) or None
+                if getattr(cfg, "artifact_path", "") else None
+            ),
         )
         if not entity_result:
             result.status = "failed"
