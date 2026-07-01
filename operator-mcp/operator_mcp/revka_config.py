@@ -70,6 +70,33 @@ def _read_section(section: str) -> dict:
     return sec if isinstance(sec, dict) else {}
 
 
+def mcp_servers_by_name(names: list[str]) -> dict[str, dict]:
+    """Return [[mcp.servers]] entries from config.toml matching `names`.
+
+    Matches case-insensitively; the returned dict is keyed by the entry's
+    on-disk `name` verbatim (original case), since Revka's own tool-prefix
+    convention (`<server_name>__<tool_name>`, see src/tools/mcp_client.rs)
+    uses the configured name as-is. Missing/malformed entries are simply
+    absent from the result — callers decide how to treat a miss.
+    """
+    if not names:
+        return {}
+    wanted = {n.strip().lower() for n in names if isinstance(n, str) and n.strip()}
+    if not wanted:
+        return {}
+    servers = _read_section("mcp").get("servers")
+    if not isinstance(servers, list):
+        return {}
+    matched: dict[str, dict] = {}
+    for entry in servers:
+        if not isinstance(entry, dict):
+            continue
+        name = entry.get("name")
+        if isinstance(name, str) and name.strip().lower() in wanted:
+            matched[name] = entry
+    return matched
+
+
 def manus_config(*, force_reload: bool = False) -> dict:
     """Return Manus step defaults from [manus] in ~/.revka/config.toml.
 
