@@ -11,6 +11,7 @@ touches the workspace, plus a repo badge (`repo:branch*`) — you do not need
 to paste diffs into chat; summarize instead.
 
 ## When to Use
+
 - "Fix/implement/refactor X in this repo" requests from any channel
 - Post-review fix-up rounds on an existing branch
 - Scheduled maintenance (dependency bumps, lint cleanups) via cron/workflows
@@ -27,6 +28,7 @@ to paste diffs into chat; summarize instead.
 ```
 
 ### 1. Orient
+
 ```
 git_operations(operation="status")           # repo root, branch, dirty state
 git_operations(operation="log", limit=5)     # commit-message conventions
@@ -40,11 +42,13 @@ git_operations(operation="log", limit=5)     # commit-message conventions
   define build commands, risk tiers, and anti-patterns — follow them.
 
 ### 2. Contract
+
 Restate the task as verifiable acceptance criteria *before* editing
 (e.g. "test X passes", "clippy clean", "endpoint returns Y"). Weak criteria
 ("make it better") → ask one clarifying question, then proceed.
 
 ### 3. Edit
+
 - Prefer `file_edit` (surgical, shows per-edit diffs in the dashboard) over
   whole-file `file_write`.
 - Match the surrounding style; no drive-by refactors.
@@ -53,6 +57,7 @@ Restate the task as verifiable acceptance criteria *before* editing
   workspace and the turn's Code changes card.
 
 ### 4. Verify
+
 - Use the project's own commands (from AGENTS.md or the repo's CI config);
   fall back to the ecosystem default (`cargo check`/`npm test`/`pytest`).
 - On failure: read the error, fix, re-run. **Max 3 fix-verify reflections**;
@@ -60,6 +65,7 @@ Restate the task as verifiable acceptance criteria *before* editing
   broken code, do not weaken tests to pass.
 
 ### 5. Commit
+
 ```
 git_operations(operation="add", files=[...])
 git_operations(operation="commit", message="<type>(<scope>): <what/why>")
@@ -69,6 +75,7 @@ git_operations(operation="commit", message="<type>(<scope>): <what/why>")
   behavior changes.
 
 ### 6. Report
+
 - Post a short summary: what changed (the card carries the diff), what was
   verified (paste the *result*, not the log), what remains.
 - **Push / PR / anything leaving the machine requires approval** under
