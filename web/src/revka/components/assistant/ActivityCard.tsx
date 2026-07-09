@@ -1,7 +1,9 @@
 import { memo, useState } from 'react';
-import { ChevronRight, Copy, Check } from 'lucide-react';
+import { ChevronRight, Copy, Check, GitCommitHorizontal } from 'lucide-react';
 import type { ActivityEvent } from '@/components/chat/types';
+import type { CodeChangeFile, CodeChangesPayload } from '@/types/api';
 import { copyToClipboard } from '@/revka/lib/clipboard';
+import { t } from '@/lib/i18n';
 
 interface ActivityCardProps {
   event: ActivityEvent;
@@ -89,6 +91,112 @@ function DiffDetail({ detail, fontSize }: { detail: string; fontSize: string }) 
   );
 }
 
+function fileStatusGlyph(status: CodeChangeFile['status']): string {
+  if (status === 'added') return 'A';
+  if (status === 'deleted') return 'D';
+  if (status === 'binary') return 'B';
+  return 'M';
+}
+
+function fileStatusColor(status: CodeChangeFile['status']): string {
+  if (status === 'added') return 'var(--revka-status-success)';
+  if (status === 'deleted') return 'var(--revka-status-danger)';
+  if (status === 'binary') return 'var(--revka-text-faint)';
+  return 'var(--revka-text-secondary)';
+}
+
+/** One file inside the changes card: status + path + stats header, with a
+ *  collapsible unified diff underneath (when a patch is available). */
+function FileChangeSection({
+  file,
+  fontSize,
+  defaultOpen,
+}: {
+  file: CodeChangeFile;
+  fontSize: string;
+  defaultOpen: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  const hasPatch = !!file.patch;
+  return (
+    <div className="rounded-[4px] border" style={{ borderColor: 'var(--revka-border-soft)' }}>
+      <button
+        type="button"
+        onClick={() => hasPatch && setOpen((prev) => !prev)}
+        disabled={!hasPatch}
+        className="flex w-full items-center gap-2 px-2 py-1 text-left font-mono"
+        style={{ cursor: hasPatch ? 'pointer' : 'default', fontSize }}
+      >
+        {hasPatch ? (
+          <ChevronRight
+            className="h-3 w-3 shrink-0 transition-transform"
+            style={{
+              color: 'var(--revka-text-faint)',
+              transform: open ? 'rotate(90deg)' : 'rotate(0deg)',
+            }}
+          />
+        ) : (
+          <span className="inline-block h-3 w-3 shrink-0" />
+        )}
+        <span className="shrink-0 font-semibold" style={{ color: fileStatusColor(file.status) }}>
+          {fileStatusGlyph(file.status)}
+        </span>
+        <span className="min-w-0 flex-1 truncate" style={{ color: 'var(--revka-text-secondary)' }} title={file.path}>
+          {file.path}
+        </span>
+        {(file.insertions ?? null) !== null && (
+          <span className="shrink-0" style={{ color: 'var(--revka-status-success)' }}>+{file.insertions}</span>
+        )}
+        {(file.deletions ?? null) !== null && (
+          <span className="shrink-0" style={{ color: 'var(--revka-status-danger)' }}>−{file.deletions}</span>
+        )}
+        {file.truncated && (
+          <span className="shrink-0 uppercase" style={{ color: 'var(--revka-text-faint)', fontSize: '9px' }}>
+            {t('agent.code_changes_truncated')}
+          </span>
+        )}
+      </button>
+      {hasPatch && open && <DiffDetail detail={file.patch ?? ''} fontSize={fontSize} />}
+    </div>
+  );
+}
+
+/** Structured "what this turn changed" card body: per-file diff sections
+ *  plus a commit marker when HEAD moved during the turn. */
+function CodeChangesDetail({ changes, fontSize }: { changes: CodeChangesPayload; fontSize: string }) {
+  return (
+    <div className="space-y-1">
+      {changes.committed && (
+        <div
+          className="flex items-center gap-1.5 font-mono"
+          style={{ color: 'var(--revka-text-muted)', fontSize }}
+        >
+          <GitCommitHorizontal className="h-3 w-3 shrink-0" />
+          <span>
+            {t('agent.code_changes_committed')}
+            {changes.head_before && changes.head_after
+              ? ` ${changes.head_before.slice(0, 8)} → ${changes.head_after.slice(0, 8)}`
+              : ''}
+          </span>
+        </div>
+      )}
+      {changes.files.map((file, index) => (
+        <FileChangeSection
+          key={`${index}:${file.path}`}
+          file={file}
+          fontSize={fontSize}
+          defaultOpen={changes.files.length === 1}
+        />
+      ))}
+      {changes.truncated && (
+        <div style={{ color: 'var(--revka-text-faint)', fontSize }}>
+          {t('agent.code_changes_payload_truncated')}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /**
  * Collapsible card for an Operator activity (tool call, tool result,
  * thinking trace, or status phase).
@@ -103,17 +211,20 @@ function DiffDetail({ detail, fontSize }: { detail: string; fontSize: string }) 
  * collapse into a header-only line that doesn't accept clicks.
  */
 function ActivityCard({ event, accent, fontSize }: ActivityCardProps) {
-  const [expanded, setExpanded] = useState(event.kind === 'thinking');
+  const [expanded, setExpanded] = useState(event.kind === 'thinking' || event.kind === 'code_changes');
   const [copied, setCopied] = useState(false);
 
-  const hasDetail = !!event.detail && event.detail.trim().length > 0;
+  const hasCodeChanges = event.kind === 'code_changes' && !!event.codeChanges;
+  const hasDetail = hasCodeChanges || (!!event.detail && event.detail.trim().length > 0);
   const fs = fontSize ? `${fontSize - 1}px` : undefined;
   const detailFs = fontSize ? `${fontSize - 2}px` : '11px';
 
   const onCopy = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!event.detail) return;
-    if (!(await copyToClipboard(event.detail))) return;
+    const text = event.detail
+      ?? (event.codeChanges ? JSON.stringify(event.codeChanges, null, 2) : '');
+    if (!text) return;
+    if (!(await copyToClipboard(text))) return;
     setCopied(true);
     setTimeout(() => setCopied(false), 1200);
   };
@@ -125,7 +236,9 @@ function ActivityCard({ event, accent, fontSize }: ActivityCardProps) {
         ? '▾' // ▾
         : event.kind === 'thinking'
           ? '…' // …
-          : '•'; // •
+          : event.kind === 'code_changes'
+            ? '±' // ±
+            : '•'; // •
 
   const accentColor = accent ?? 'var(--revka-text-faint)';
 
@@ -175,7 +288,9 @@ function ActivityCard({ event, accent, fontSize }: ActivityCardProps) {
             background: 'var(--revka-bg-base)',
           }}
         >
-          {looksLikeDiff(event.detail ?? '') ? (
+          {hasCodeChanges && event.codeChanges ? (
+            <CodeChangesDetail changes={event.codeChanges} fontSize={detailFs} />
+          ) : looksLikeDiff(event.detail ?? '') ? (
             <DiffDetail detail={event.detail ?? ''} fontSize={detailFs} />
           ) : (
             <pre

@@ -652,7 +652,7 @@ function ArchitectChatSurface({
                           key={evt.id}
                           event={evt}
                           accent={
-                            evt.kind === 'tool_result'
+                            evt.kind === 'tool_result' || evt.kind === 'code_changes'
                               ? 'var(--revka-status-success)'
                               : 'var(--revka-signal-network)'
                           }
@@ -692,7 +692,7 @@ function ArchitectChatSurface({
                     key={evt.id}
                     event={evt}
                     accent={
-                      evt.kind === 'tool_result'
+                      evt.kind === 'tool_result' || evt.kind === 'code_changes'
                         ? 'var(--revka-status-success)'
                         : evt.kind === 'thinking'
                           ? 'var(--revka-text-faint)'
