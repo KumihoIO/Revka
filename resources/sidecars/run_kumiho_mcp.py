@@ -33,6 +33,15 @@ def main() -> int:
     os.environ.pop("KUMIHO_AUTO_CONFIGURE", None)
 
     argv = [str(interp), "-m", "kumiho.mcp_server", *sys.argv[1:]]
+    if os.name == "nt":
+        # os.execv on Windows is emulated as spawn-new-process + exit-parent,
+        # so the MCP client's pipe to THIS process drops while the real server
+        # is still importing — the handshake races and heavy sidecars (e.g.
+        # kumiho-memory >= 0.17) always lose. Stay resident and pass stdio
+        # through instead.
+        import subprocess
+
+        return subprocess.call(argv)
     os.execv(str(interp), argv)
 
 
