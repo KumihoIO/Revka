@@ -435,14 +435,29 @@ impl GitOperationsTool {
             anyhow::bail!("Branch name contains invalid characters");
         }
 
-        let output = self
-            .run_git_command(&["checkout", branch_name], working_dir)
-            .await;
+        // Optional branch creation (`git checkout -b`). Creating a local
+        // branch is no more privileged than the commit/reset/revert
+        // operations this tool already exposes; push remains out of scope.
+        let create = args
+            .get("create")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        let checkout_args: Vec<&str> = if create {
+            vec!["checkout", "-b", branch_name]
+        } else {
+            vec!["checkout", branch_name]
+        };
+        let output = self.run_git_command(&checkout_args, working_dir).await;
 
         match output {
             Ok(_) => Ok(ToolResult {
                 success: true,
-                output: format!("Switched to branch: {branch_name}"),
+                output: if create {
+                    format!("Created and switched to branch: {branch_name}")
+                } else {
+                    format!("Switched to branch: {branch_name}")
+                },
                 error: None,
             }),
             Err(e) => Ok(ToolResult {
@@ -528,6 +543,10 @@ impl Tool for GitOperationsTool {
                 "branch": {
                     "type": "string",
                     "description": "Branch name (for 'checkout' operation)"
+                },
+                "create": {
+                    "type": "boolean",
+                    "description": "Create the branch if it does not exist — `git checkout -b` (for 'checkout' operation)"
                 },
                 "files": {
                     "type": "string",
@@ -810,6 +829,54 @@ mod tests {
                 .as_deref()
                 .unwrap_or("")
                 .contains("higher autonomy")
+        );
+    }
+
+    #[tokio::test]
+    async fn checkout_create_makes_new_branch() {
+        let tmp = TempDir::new().unwrap();
+        for args in [
+            vec!["init", "-b", "main"],
+            vec!["config", "user.email", "test@example.com"],
+            vec!["config", "user.name", "test"],
+            vec!["commit", "--allow-empty", "-m", "init"],
+        ] {
+            std::process::Command::new("git")
+                .args(&args)
+                .current_dir(tmp.path())
+                .output()
+                .unwrap();
+        }
+
+        let security = Arc::new(SecurityPolicy {
+            autonomy: AutonomyLevel::Supervised,
+            ..SecurityPolicy::default()
+        });
+        let tool = GitOperationsTool::new(security, tmp.path().to_path_buf());
+
+        // Without `create`, checking out a nonexistent branch fails.
+        let result = tool
+            .execute(json!({"operation": "checkout", "branch": "fix/new-branch"}))
+            .await
+            .unwrap();
+        assert!(!result.success);
+
+        // With `create: true`, the branch is created and checked out.
+        let result = tool
+            .execute(json!({"operation": "checkout", "branch": "fix/new-branch", "create": true}))
+            .await
+            .unwrap();
+        assert!(result.success, "error: {:?}", result.error);
+        assert!(result.output.contains("Created and switched"));
+
+        let head = std::process::Command::new("git")
+            .args(["rev-parse", "--abbrev-ref", "HEAD"])
+            .current_dir(tmp.path())
+            .output()
+            .unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&head.stdout).trim(),
+            "fix/new-branch"
         );
     }
 
