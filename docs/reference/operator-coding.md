@@ -106,13 +106,43 @@ orient → contract → edit → verify → commit → report
 ```
 
 Highlights: read the repo's own agent instructions (`AGENTS.md`,
-`CLAUDE.md`, harness-imported skills) before editing, restate the task as
+`CLAUDE.md`, harness-imported skills) before editing, recall prior code
+decisions before touching a file (`kumiho_code_why`), restate the task as
 acceptance criteria, verify with the project's own commands (max 3
-fix-verify reflections), commit one logical unit at a time, and require
+fix-verify reflections), commit one logical unit at a time, capture the
+decision behind each real choice (`kumiho_code_capture`), and require
 explicit approval for anything that leaves the machine (push, PR). The
 security posture is unchanged: `git_operations` remains commit-level
 (no push), and pushing goes through `shell` under the standard autonomy
 policy and approval flow.
+
+## Decision memory
+
+The telemetry above answers *what changed*; Kumiho's Decision Memory
+answers *why*. When the installed Kumiho MCP sidecar ships Decision
+Memory, three tools appear in the agent tool catalog and the
+`operator-coding` skill weaves them into the loop:
+
+- **`kumiho_code_why`** (Orient) — git-anchored lookup of prior decisions
+  for a file or question, with rationale, evidence, and reversal state
+  (`superseded_by`). Recalled constraints feed the acceptance criteria, so
+  the agent does not silently re-litigate a settled decision.
+- **`kumiho_code_capture`** (Commit) — stores the decision a commit
+  embodies (title, decision, rationale, `why_question`, files, evidence
+  such as verify results and rejected alternatives), anchored to the
+  commit. The card's `head_before → head_after` shows *that* a commit
+  happened; the capture records *why*. Keyless: the agent in the loop
+  distills the decision itself — no server-side LLM required.
+- **`kumiho_memory_decompose`** (Report) — decomposes the session's
+  reflected outcome into the typed ontology graph (entities, facts,
+  relations), so later sessions reach this work through the systems it
+  touched.
+
+Degradation is graceful by construction: if the sidecar is older or the
+tools are absent from the catalog, the skill instructs the agent to skip
+those steps — the coding loop itself is unchanged. Captures are
+control-plane summaries and must never contain secrets; patch text stays
+local to the dashboard card and passes the gateway's redaction scrubber.
 
 ## Scope notes
 

@@ -172,6 +172,79 @@ If a skill matches, follow it; cache it in working context for the rest of the s
 
 ---
 
+## Decision Memory (code work)
+
+Beyond conversational memory, Kumiho keeps a **git-anchored decision graph** for code: which choice was made, why, on what evidence, and whether it was later reversed (`SUPERSEDES`). The tools appear in the agent tool catalog when the installed sidecar release ships them; agent-facing instructions must degrade gracefully when they are absent (skip the step, never block).
+
+The pattern is symmetric — *read the why before you write; record the why after you commit*:
+
+### `kumiho_code_why` — before modifying unfamiliar code
+
+```json
+{
+  "tool": "kumiho_code_why",
+  "args": {
+    "file": "src/gateway/ws.rs",
+    "question": "why are WS payloads capped at 192 KB?"
+  }
+}
+```
+
+Returns prior decisions anchored to that file (or matching the question), each with its rationale, verbatim evidence, and reversal state. This is a *deterministic, file-anchored* lookup — it complements `kumiho_memory_engage` (semantic recall over conversations) and is not one of the low-level graph tools the bootstrap prompt warns against chaining. Never re-litigate a decision the graph already explains; if the task is to change it, say so explicitly and capture the reversal.
+
+### `kumiho_code_capture` — right after the commit
+
+```json
+{
+  "tool": "kumiho_code_capture",
+  "args": {
+    "decisions": [
+      {
+        "title": "Per-payload cap at 192 KB",
+        "decision": "Cap code_changes WS payloads at 192 KB with per-file 16 KB patches.",
+        "rationale": "Dashboard render stays responsive; oversized diffs flagged truncated instead of dropped.",
+        "why_question": "Why not stream the full diff?",
+        "files": ["src/gateway/workspace_changes.rs"],
+        "evidence": [
+          { "kind": "measurement", "text": "500-file synthetic repo rendered in <100 ms with caps; browser tab froze without" },
+          { "kind": "rejected_alternative", "text": "Chunked streaming rejected: adds protocol state for a review surface that only needs a summary" }
+        ]
+      }
+    ]
+  }
+}
+```
+
+(The evidence values above are illustrative, not recorded measurements from this repository.)
+
+Capture is **keyless** — the agent in the loop distills the decision itself; the tool only stores it (like `reflect`'s captures, no LLM API key required — the agent already did the extraction). Anchors default to `HEAD` and union with the commit's real changed files, so listing `files` is enough. Capture decisions worth a future "why?" — an alternative picked over another, a policy set, a reversal, a measured trade-off — and skip mechanical edits. Evidence kinds: `measurement`, `review_finding`, `incident`, `benchmark`, `constraint`, `rejected_alternative`.
+
+`kumiho_code_ingest` (batch-mine a commit range) and `kumiho_code_mine_session` (mine a transcript) are the detached fallbacks for history that landed with no agent in the loop; they do require a configured model.
+
+---
+
+## Typed ontology decomposition
+
+Flat memories recall by similarity; the **typed ontology graph** recalls by structure. After a substantive exchange — a decision settled, a durable fact, a named system that will recur — decompose the stored memory into entities, facts, and relations so recall can bridge memories through shared entities:
+
+```json
+{
+  "tool": "kumiho_memory_decompose",
+  "args": {
+    "kref": "<revision kref returned by reflect/consolidate>",
+    "entities": [{ "name": "workspace_changes", "type": "module" }],
+    "facts": [{ "statement": "Turn diffs are git-verified and turn-scoped.", "about": ["workspace_changes"] }],
+    "relations": [{ "subject": "workspace_changes", "predicate": "feeds", "object": "code_changes card" }]
+  }
+}
+```
+
+Like `code_capture`, decomposition is keyless — distill from the memory's *compact summary*, not the raw transcript, and keep it lean (a handful of each). Reuse existing entity names so hubs merge across sessions. Decompose only when something worth graphing emerged; skip chit-chat. DreamState maintains the graph afterwards (entity merge, fact dedup, orphan pruning).
+
+For a worked example of both patterns inside an agent loop, see the coding harness: [`../reference/operator-coding.md`](../reference/operator-coding.md).
+
+---
+
 ## Consolidation
 
 After ~20 exchanges, or when the session ends, trigger consolidation:
@@ -203,12 +276,13 @@ This compacts session-buffered responses into durable summaries, runs DreamState
 
 ## Testing your integration
 
-A four-step smoke test for any new Kumiho-aware agent path:
+A five-step smoke test for any new Kumiho-aware agent path:
 
 1. **Tools visible.** `GET /api/tools` returns at least `kumiho_memory_engage`, `kumiho_memory_reflect`, `kumiho_memory_recall`, `kumiho_memory_consolidate`. If not, check the daemon log line `Kumiho MCP script not found:` — the sidecar isn't running.
 2. **Engage round-trip.** Call `kumiho_memory_engage` with a known query that should hit something the agent stored earlier; confirm `results` is non-empty.
 3. **Reflect with captures.** Call `kumiho_memory_reflect` with one capture; verify the kref returns and that the capture appears in the dashboard's Memory view (`/memory`).
 4. **Edge formation.** Confirm that running an engage → reflect pair produces a `DERIVED_FROM` edge from the new capture to the source krefs. Use `kumiho_get_edges` or the Memory force-graph to inspect.
+5. **Decision memory round-trip** (only when the `kumiho_code_*` tools are in the catalog). `kumiho_code_capture` a test decision against a known commit, then confirm `kumiho_code_why` with the same file returns it. If the tools are missing, the sidecar build is too old or registration failed — agent paths must skip, not fail.
 
 If any step fails, the failure is almost always one of: missing auth token, unreachable control plane, MCP sidecar not started, or the daemon's `[kumiho]` config block disagreeing with the running sidecar's environment.
 
