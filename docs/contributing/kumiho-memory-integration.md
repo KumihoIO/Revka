@@ -198,6 +198,7 @@ Returns prior decisions anchored to that file (or matching the question), each w
 {
   "tool": "kumiho_code_capture",
   "args": {
+    "repo_path": "/abs/path/to/workspace",
     "decisions": [
       {
         "title": "Per-payload cap at 192 KB",
@@ -217,7 +218,7 @@ Returns prior decisions anchored to that file (or matching the question), each w
 
 (The evidence values above are illustrative, not recorded measurements from this repository.)
 
-Capture is **keyless** — the agent in the loop distills the decision itself; the tool only stores it (like `reflect`'s captures, no LLM API key required — the agent already did the extraction). Anchors default to `HEAD` and union with the commit's real changed files, so listing `files` is enough. Capture decisions worth a future "why?" — an alternative picked over another, a policy set, a reversal, a measured trade-off — and skip mechanical edits. Evidence kinds: `measurement`, `review_finding`, `incident`, `benchmark`, `constraint`, `rejected_alternative`.
+Capture is **keyless** — the agent in the loop distills the decision itself; the tool only stores it (like `reflect`'s captures, no LLM API key required — the agent already did the extraction). Anchors default to `HEAD` and union with the commit's real changed files, so listing `files` is enough. **Always pass `repo_path`** (the absolute repo root): the MCP sidecar runs outside the workspace, so the default `repo_path="."` resolves to the sidecar's own directory and the capture silently reports `commits_seen: 0` instead of anchoring. Capture decisions worth a future "why?" — an alternative picked over another, a policy set, a reversal, a measured trade-off — and skip mechanical edits. Evidence kinds: `measurement`, `review_finding`, `incident`, `benchmark`, `constraint`, `rejected_alternative`.
 
 `kumiho_code_ingest` (batch-mine a commit range) and `kumiho_code_mine_session` (mine a transcript) are the detached fallbacks for history that landed with no agent in the loop; they do require a configured model.
 

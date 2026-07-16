@@ -86,7 +86,10 @@ git_operations(operation="commit", message="<type>(<scope>): <what/why>")
   choice — an alternative picked over another, a default/policy set, a
   reversal, a measured trade-off — store it immediately:
   `kumiho_code_capture(decisions=[{title, decision, rationale,
-  why_question, files, evidence}])` (anchors to `HEAD` by default). Fold
+  why_question, files, evidence}], repo_path="<workspace root>")`.
+  Always pass `repo_path` (the absolute repo root from Orient) — the
+  memory sidecar does not run inside your workspace, so the default
+  `repo_path="."` silently misses the commit (`commits_seen: 0`). Fold
   Verify results in as `measurement` evidence and rejected approaches as
   `rejected_alternative` — that context is unrecoverable once the session
   ends. Skip mechanical edits (renames, lint fixes, version bumps).
