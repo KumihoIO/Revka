@@ -1,0 +1,300 @@
+# CanonWorks Canon Ontology Reference
+
+CanonWorks bootstraps a Kumiho canon graph of series, characters, relationships,
+timeline, and roadmap items. The **canon ontology** is the controlled-vocabulary
+layer on top of that graph: it names the Item kinds CanonWorks creates, types
+the character-relationship edges with category / symmetry / inverse semantics,
+and defines the structural edges that tie narrative entities together.
+
+The ontology lives in `operator-mcp/operator_mcp/canon_ontology.py` (pure
+standard library, no validation framework — it is a vocabulary the CanonWorks
+tools and downstream workflows reason against). `canonworks_init` publishes it
+into the canon graph as a `canon-ontology` item with a `CANON_ONTOLOGY.md`
+artifact, and records a names-only summary in the generated project config.
+
+The current ontology version is `1` (`ONTOLOGY_VERSION = "1"`).
+
+This layer builds directly on the kumiho-memory edge semantics documented in
+[`../contributing/kumiho-memory-integration.md`](../contributing/kumiho-memory-integration.md)
+(`DERIVED_FROM`, `DEPENDS_ON`, `REFERENCED`, `CONTAINS`, `CREATED_FROM`,
+`BELONGS_TO`). CanonWorks does not replace those provenance edges; it adds a
+narrative-domain vocabulary beside them and reuses `BELONGS_TO` rather than
+inventing a synonym for scope.
+
+## Entity Kinds
+
+Every Item CanonWorks creates carries a canonical `kind`. The registry records
+each kind's home space and the structural edges it may source or target.
+
+| Kind | Label | Space | Description |
+| --- | --- | --- | --- |
+| `series-bible` | Series Bible | series | Top-level canon promise, themes, and guardrails for the serial. |
+| `series-synopsis` | Series Synopsis | series | Canonical rolling synopsis of the series. |
+| `character-index` | Character Index | characters | Roster index of all canonical characters. |
+| `relationship-map` | Relationship Map | relationships | Human-readable rollup of character relationship edges. |
+| `timeline` | Timeline | timeline | Canonical timeline of the series. |
+| `series-roadmap` | Series Roadmap | roadmaps | Long-arc roadmap rollup of storylines and foreshadow threads. |
+| `style-guide` | Production Style Guide | series | Prose, POV, pacing, and platform style rules. |
+| `character` | Character | characters | A canonical character entity. |
+| `storyline` | Storyline | roadmaps | A long-arc storyline entity. |
+| `foreshadow-thread` | Foreshadow Thread | roadmaps | A planted foreshadow thread with a payoff target. |
+| `timeline-event` | Timeline Event | timeline | A canonical timeline event anchored to the series timeline. |
+| `canon-ontology` | Canon Ontology | canon_rules | The published CanonWorks ontology reference for this project. |
+| `character-state` | Character State Snapshot | state | Current per-character state snapshot. |
+| `relationship-state` | Relationship State Snapshot | state | Current relationship state snapshot. |
+| `timeline-progress` | Timeline Progress Snapshot | progress | Current timeline progress snapshot. |
+| `storyline-progress` | Storyline Progress Snapshot | progress | Current storyline progress snapshot. |
+| `foreshadow-progress` | Foreshadow Progress Snapshot | progress | Current foreshadow progress snapshot. |
+| `canonworks-config` | CanonWorks Project Config | config | Generated project config routing the CanonWorks workflows. |
+| `webnovel-episode` | Webnovel Episode | episodes | A produced serial episode revision (episode factory output). |
+| `canon-patch` | Canon Patch Candidate | patches | A propose-only canon patch candidate (workflow output). |
+| `context-pack` | Context Pack | context_packs | A locked context pack assembled for an episode (workflow output). |
+
+The `storyline`, `foreshadow-thread`, and `timeline-event` kinds are first-class
+items as of ontology version `1`: `canonworks_init` materializes them into the
+`active_storylines`, `active_foreshadow`, and timeline spaces so other items can
+point at them with edges. `ROADMAP.md` / `TIMELINE.md` remain the human-readable
+rollups; the items are the graph-native representation.
+
+## Character Relationship Vocabulary
+
+Character-to-character relationship edges are typed against this controlled
+vocabulary. Each type carries a `category`, a `symmetric` flag, and an optional
+`inverse`:
+
+- **Symmetric** types read the same in both directions (`RIVAL_OF`,
+  `SIBLING_OF`), so they never carry an inverse and never get a duplicated
+  reverse edge.
+- **Asymmetric** types are directional. Some name their `inverse`
+  (`MENTOR_OF` ↔ `MENTEE_OF`); others are directional with no defined inverse
+  (`LOVES`, `PROTECTS`, `BETRAYED`, `OWES_DEBT_TO`, `KNOWS_SECRET_OF`).
+
+`RELATED_TO` is the fallback used when a relationship declares no type.
+
+| Edge Type | Category | Symmetric | Inverse | Description |
+| --- | --- | --- | --- | --- |
+| `RELATED_TO` | social | yes | — | Generic fallback relationship when no type is declared. |
+| `ALLY_OF` | social | yes | — | Mutual allies pursuing aligned goals. |
+| `FRIEND_OF` | social | yes | — | Personal friendship. |
+| `CONFIDANT_OF` | social | yes | — | Trusted confidant who shares private matters. |
+| `RIVAL_OF` | conflict | yes | — | Competitive rivalry between near-equals. |
+| `ENEMY_OF` | conflict | yes | — | Declared hostility or opposition. |
+| `ROMANTIC_WITH` | romance | yes | — | Mutual romantic involvement. |
+| `LOVES` | romance | no | — | One-directional love, possibly unrequited. |
+| `MENTOR_OF` | knowledge | no | `MENTEE_OF` | Teaches or guides the target. |
+| `MENTEE_OF` | knowledge | no | `MENTOR_OF` | Is taught or guided by the target. |
+| `PARENT_OF` | family | no | `CHILD_OF` | Parent of the target. |
+| `CHILD_OF` | family | no | `PARENT_OF` | Child of the target. |
+| `SIBLING_OF` | family | yes | — | Shares a sibling bond with the target. |
+| `SPOUSE_OF` | family | yes | — | Married to the target. |
+| `FAMILY_OF` | family | yes | — | Belongs to the same family as the target. |
+| `GUARDIAN_OF` | family | no | `WARD_OF` | Legal or protective guardian of the target. |
+| `WARD_OF` | family | no | `GUARDIAN_OF` | Is under the guardianship of the target. |
+| `COMMANDS` | organization | no | `SERVES` | Holds command authority over the target. |
+| `SERVES` | organization | no | `COMMANDS` | Serves under the authority of the target. |
+| `PROTECTS` | social | no | — | Actively protects the target. |
+| `BETRAYED` | conflict | no | — | Has betrayed the target. |
+| `OWES_DEBT_TO` | social | no | — | Owes a debt or obligation to the target. |
+| `KNOWS_SECRET_OF` | knowledge | no | — | Holds a secret about the target. |
+
+Categories in use: `social`, `conflict`, `romance`, `knowledge`, `family`,
+`organization`.
+
+## Structural Edges
+
+Structural edges tie the narrative-structure entities together. They are emitted
+by `canonworks_init` from the seed data — not declared by the operator — and are
+recorded separately from character-relationship edges (see
+[Created report](#created-report-shape) below).
+
+| Edge Type | Source Kind | Target Kind | Description |
+| --- | --- | --- | --- |
+| `APPEARS_IN` | character | series-bible | A character appears in the series canon. |
+| `INVOLVES` | storyline | character | A storyline involves a character in its cast. |
+| `FORESHADOWS` | foreshadow-thread | storyline | A foreshadow thread points forward to a storyline payoff. |
+| `BELONGS_TO` | timeline-event | timeline | A timeline event belongs to the series timeline. |
+
+`BELONGS_TO` is the existing Kumiho scope edge, reused here rather than
+duplicated under a new name (it is flagged `reused_kumiho_edge` in the
+manifest). This keeps CanonWorks aligned with the kumiho-memory edge philosophy:
+one scope/ownership edge across the graph.
+
+`INVOLVES` edges are created from a storyline's cast, read from the first present
+of the `characters`, `cast`, or `involves` keys. `FORESHADOWS` edges resolve a
+thread's `payoff_target` (or `storyline`) against known storyline ids after slug
+normalization; when the target does not match a storyline id, the raw target is
+kept in item metadata only and no edge is emitted.
+
+## Normalization and Aliases
+
+Free-form relationship input is normalized to the controlled vocabulary by
+`normalize_relationship_type(raw) -> (canonical, known)`:
+
+1. **Case / whitespace / hyphen folding** to the canonical `UPPER_SNAKE` form —
+   `rival-of` and `Rival Of` both resolve to `RIVAL_OF`.
+2. **Alias lookup** (English and Korean) runs before the canonical check, so
+   both a bare noun and a canonical variant resolve — `rival` and `라이벌` both
+   map to `RIVAL_OF`.
+3. **Unknown preservation.** A type that matches neither an alias nor a
+   vocabulary entry is preserved verbatim in today's uppercased/underscored form
+   and flagged `known=False`. It is never coerced to a fallback — backward
+   compatibility is a hard requirement, so any type that worked before the
+   ontology still creates the same edge.
+
+Empty / missing input resolves to the `RELATED_TO` fallback (`known=True`).
+
+### English aliases
+
+| Aliases | Resolves to |
+| --- | --- |
+| `rival`, `rivalry`, `rivals` | `RIVAL_OF` |
+| `ally`, `allies`, `alliance` | `ALLY_OF` |
+| `enemy`, `enemies`, `foe`, `nemesis` | `ENEMY_OF` |
+| `friend`, `friends`, `friendship` | `FRIEND_OF` |
+| `confidant`, `confidante` | `CONFIDANT_OF` |
+| `lover`, `lovers`, `romance`, `romantic`, `partner` | `ROMANTIC_WITH` |
+| `crush`, `unrequited`, `loves` | `LOVES` |
+| `mentor`, `teacher`, `master` | `MENTOR_OF` |
+| `mentee`, `student`, `disciple`, `apprentice`, `pupil` | `MENTEE_OF` |
+| `parent`, `father`, `mother`, `mom`, `dad` | `PARENT_OF` |
+| `child`, `son`, `daughter` | `CHILD_OF` |
+| `sibling`, `brother`, `sister` | `SIBLING_OF` |
+| `spouse`, `husband`, `wife`, `married` | `SPOUSE_OF` |
+| `family`, `kin`, `relative` | `FAMILY_OF` |
+| `guardian` | `GUARDIAN_OF` |
+| `ward` | `WARD_OF` |
+| `commander`, `boss`, `superior` | `COMMANDS` |
+| `servant`, `subordinate`, `retainer` | `SERVES` |
+| `protector`, `guard` | `PROTECTS` |
+| `betrayal`, `betrayer`, `traitor` | `BETRAYED` |
+| `debtor`, `debt` | `OWES_DEBT_TO` |
+
+### Korean aliases
+
+| Aliases | Resolves to |
+| --- | --- |
+| `라이벌`, `경쟁자`, `경쟁` | `RIVAL_OF` |
+| `동맹`, `아군`, `동료` | `ALLY_OF` |
+| `적`, `원수`, `적수` | `ENEMY_OF` |
+| `친구`, `벗` | `FRIEND_OF` |
+| `연인`, `애인` | `ROMANTIC_WITH` |
+| `짝사랑` | `LOVES` |
+| `스승`, `멘토`, `사부` | `MENTOR_OF` |
+| `제자`, `문하생` | `MENTEE_OF` |
+| `부모`, `아버지`, `어머니` | `PARENT_OF` |
+| `자식`, `자녀`, `아들`, `딸` | `CHILD_OF` |
+| `형제`, `자매`, `남매` | `SIBLING_OF` |
+| `부부`, `배우자` | `SPOUSE_OF` |
+| `가족`, `혈육` | `FAMILY_OF` |
+| `보호자`, `후견인` | `GUARDIAN_OF` |
+| `배신`, `배신자` | `BETRAYED` |
+
+## Edge Enrichment
+
+When `canonworks_init` creates a character-relationship edge, it merges ontology
+metadata into the existing edge metadata (`relationship`, `summary`,
+`canonworks` are kept). The enrichment keys are:
+
+```text
+ontology_version    the ontology version that typed the edge
+edge_category       the relationship category (social, family, ...)
+edge_symmetric      whether the type is symmetric
+inverse_edge_type   the inverse type name, or dropped when null
+in_vocabulary       false for a preserved unknown type
+```
+
+`None`-valued keys (such as `inverse_edge_type` for a directional type) are
+dropped by the same `_jsonable_metadata` sanitizer used for all Kumiho item and
+revision metadata, so observable string/bool values are unchanged.
+
+### Inverse edges
+
+`canonworks_init`, `canonworks_commit`, and `canonworks_start` accept a
+`create_inverse_edges` boolean (default `false`). When `true`, each created
+**asymmetric** edge with a defined inverse also gets its reverse edge — e.g. a
+`MENTOR_OF` edge from A→B additionally creates a `MENTEE_OF` edge B→A. The
+derived edge is marked `derived: "inverse"` and `inverse_of_edge_type` in its
+metadata. Symmetric types never get a duplicate reverse edge, and directional
+types with no defined inverse are skipped.
+
+## Warnings
+
+The ontology adds non-blocking warnings; readiness/blocking rules are unchanged.
+
+| Warning `type` | When | Notes |
+| --- | --- | --- |
+| `relationship_edge_skipped` | A relationship endpoint does not match a character id after slug normalization. | Existing behavior, unchanged. A skipped edge never also emits a type warning. |
+| `relationship_edge_type_unknown` | A created edge uses an out-of-vocabulary type. | Includes `declared_type` and the preserved `edge_type`; adds a `suggestion` when the alias table has a near match. The type is preserved, not coerced. |
+| `storyline_character_skipped` | A storyline lists a character id that does not match a known character. | Mirrors the relationship-skip pattern; the `INVOLVES` edge is not created. |
+
+## Preview Parity
+
+`canonworks_preview` surfaces the ontology before commit without touching
+Kumiho. In addition to today's fields it returns:
+
+- the new `storyline` / `foreshadow-thread` / `timeline-event` / `canon-ontology`
+  items in `items`,
+- a `structural_edges` list (`APPEARS_IN` / `INVOLVES` / `FORESHADOWS` /
+  `BELONGS_TO`),
+- an `in_vocabulary` flag on each entry in `relationship_edges`,
+- an `ontology` block: `version`, `character_edge_types`,
+  `structural_edge_types`.
+
+## Created Report Shape
+
+Structural edges are recorded in `created.structural_edges`; `created.edges`
+stays character-relationship edges only. Keeping the two lists separate means
+the character-relationship list is exactly the set of typed relationship edges
+(plus any derived inverse edges), while structural graph edges are reported on
+their own channel.
+
+```text
+created.edges              character-relationship edges (+ inverse when enabled)
+created.structural_edges   APPEARS_IN / INVOLVES / FORESHADOWS / BELONGS_TO
+created.warnings           includes the ontology warnings above
+```
+
+## Config Ontology Section
+
+The generated `canon_project` config carries a names-only ontology summary so
+the workflows and downstream agents can reason about the vocabulary without
+parsing the artifact:
+
+```yaml
+canon_project:
+  krefs:
+    canon_ontology: kref://<Project>/CanonRules/canon-ontology.canon-ontology
+  ontology:
+    version: '1'
+    kref: kref://<Project>/CanonRules/canon-ontology.canon-ontology
+    character_edge_types: [RELATED_TO, ALLY_OF, FRIEND_OF, ...]
+    structural_edge_types: [APPEARS_IN, INVOLVES, FORESHADOWS, BELONGS_TO]
+```
+
+Full semantics (category, symmetry, inverse, descriptions) live in the
+`CANON_ONTOLOGY.md` artifact and the machine-readable manifest, not in the
+config. See
+[`canonworks-project-config.example.yaml`](./canonworks-project-config.example.yaml)
+for the full generated shape.
+
+## Manifest and Document
+
+- `ontology_manifest()` returns a machine-readable summary: `version`,
+  `entity_kinds`, `relationship_types` (with category / symmetric / inverse), and
+  `structural_edges`. Stable ordering.
+- `render_ontology_doc()` renders that manifest as the `CANON_ONTOLOGY.md`
+  artifact — the same tables shown above, published into the `canon-ontology`
+  item at init time.
+
+## Versioning and Backward Compatibility
+
+- `ONTOLOGY_VERSION` is a single string (`"1"`). Every enriched edge records the
+  `ontology_version` it was typed under, so a later vocabulary revision can be
+  told apart from an earlier one on the graph.
+- Unknown relationship types are always preserved verbatim and flagged
+  `in_vocabulary=false` — they are never coerced. Any relationship input that
+  produced an edge before the ontology still produces the same edge, so existing
+  projects re-init cleanly.
+- The vocabulary is a controlled list, not a schema validator: out-of-vocabulary
+  types warn but never block, keeping the operator in control of domain terms the
+  starter vocabulary does not cover.

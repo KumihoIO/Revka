@@ -1842,7 +1842,17 @@ async def list_tools() -> list[Tool]:
                     "relationships": {
                         "type": "array",
                         "items": {"type": "object", "additionalProperties": True},
-                        "description": "Relationship edges: from/to/type|edge_type/label/summary.",
+                        "description": (
+                            "Relationship edges: from/to/type|edge_type/label/summary. "
+                            "edge_type is normalized against the CanonWorks controlled "
+                            "vocabulary (e.g. RIVAL_OF, ALLY_OF, MENTOR_OF), accepting "
+                            "English/Korean aliases; unknown types are preserved but flagged."
+                        ),
+                    },
+                    "create_inverse_edges": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "Also create the inverse edge for asymmetric relationship types (e.g. MENTOR_OF -> MENTEE_OF).",
                     },
                     "timeline_events": {"type": "array", "items": {"type": "object", "additionalProperties": True}},
                     "storylines": {"type": "array", "items": {"type": "object", "additionalProperties": True}},
@@ -1872,6 +1882,7 @@ async def list_tools() -> list[Tool]:
                     "seed": {"type": "object", "additionalProperties": True, "description": "Story seed fields to merge into the draft."},
                     "answers": {"type": "object", "additionalProperties": True, "description": "Answers from the operator interview."},
                     "project_name": {"type": "string", "description": "Kumiho project name to create/use."},
+                    "create_inverse_edges": {"type": "boolean", "default": False, "description": "Also create inverse edges for asymmetric relationship types at commit time."},
                     "defer_kumiho_scaffold": {"type": "boolean", "default": False, "description": "Skip Kumiho project/space creation for dry-run setup."},
                     "state_root": {"type": "string", "description": "Optional CanonWorks state root for tests/custom installs."},
                 },
@@ -1906,6 +1917,7 @@ async def list_tools() -> list[Tool]:
                     "seed": {"type": "object", "additionalProperties": True},
                     "answers": {"type": "object", "additionalProperties": True},
                     "allow_incomplete": {"type": "boolean", "default": False},
+                    "create_inverse_edges": {"type": "boolean", "default": False, "description": "Also create inverse edges for asymmetric relationship types."},
                     "state_root": {"type": "string"},
                 },
                 "additionalProperties": True,

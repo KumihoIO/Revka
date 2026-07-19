@@ -29,10 +29,30 @@ calls the lower-level `canonworks_init` tool and creates:
   active storylines, active foreshadow, context packs, blocked episodes, and
   patch candidates
 - initial canon items, revisions, markdown artifacts, and relationship edges
+- first-class storyline, foreshadow-thread, and timeline-event items (populating
+  the active storylines and active foreshadow bundles) plus their structural
+  edges
+- a published `canon-ontology` item and `CANON_ONTOLOGY.md` artifact
 - a generated `project_config_yaml` artifact that the two workflows consume
 
 `canonworks_init` remains available for debugging and advanced automation, but
 normal operators should not need to hand-write or pass project config paths.
+
+## Canon Ontology
+
+CanonWorks types the canon graph with a controlled vocabulary. Character
+relationship `edge_type` values are normalized against it (English and Korean
+aliases, e.g. `rival` / `라이벌` → `RIVAL_OF`) and enriched with category /
+symmetry / inverse metadata; unknown types are preserved but flagged
+out-of-vocabulary rather than coerced. `canonworks_init` also emits structural
+edges — `APPEARS_IN` (character → series bible), `INVOLVES` (storyline →
+character), `FORESHADOWS` (foreshadow-thread → storyline), and `BELONGS_TO`
+(timeline-event → timeline, reusing the Kumiho scope edge) — and publishes the
+ontology as a `canon-ontology` item. Pass `create_inverse_edges: true` (through
+`canonworks_start` / `canonworks_commit` / `canonworks_init`) to also create the
+reverse edge for asymmetric types with a defined inverse. See
+[`canonworks-ontology.md`](./canonworks-ontology.md) for the full vocabulary and
+edge semantics.
 
 ## Workflows
 
@@ -69,7 +89,9 @@ The config supplies:
 - episode/patch/context/state/progress/report spaces
 - append-only and current snapshot bundle names
 - canonical krefs for series bible, synopsis, characters, relationship map,
-  timeline, roadmap, and current snapshots
+  timeline, roadmap, current snapshots, and the canon ontology item
+- a names-only `ontology` block (version, ontology item kref, character edge
+  types, structural edge types)
 - naming prefixes for episode item names, patch names, context packs, volume
   bundles, and blocked drafts
 - genre modules, persona bindings, priority rules, audit rules, and external

@@ -456,3 +456,227 @@ async def test_canonworks_commit_stores_project_state_for_wrappers(tmp_path, mon
     assert calls[0]["inputs"]["episode_goal"] == "Open with the first archive crime."
     assert calls[1]["inputs"]["project_config_yaml"] == commit["project_config_artifact_path"]
     assert calls[1]["inputs"]["apply_mode"] == "propose_only"
+
+
+# ---------------------------------------------------------------------------
+# Canon ontology integration (Deliverable 2 / 3)
+# ---------------------------------------------------------------------------
+
+
+def _glass_city_ontology_seed(tmp_path) -> dict[str, Any]:
+    return {
+        "title": "Glass City",
+        "project": "GlassCity",
+        "story_slug": "glass-city",
+        "premise": "A serial about a city built from archived memories.",
+        "characters": [
+            {"id": "mira", "display_name": "Mira", "role": "lead"},
+            {"id": "jun", "display_name": "Jun", "role": "rival"},
+        ],
+        "relationships": [
+            {"from": "mira", "to": "jun", "edge_type": "RIVAL_OF", "summary": "Competing investigators."}
+        ],
+        "storylines": [
+            {"id": "archive-murder", "summary": "Mira traces a memory-edit murder.", "goal": "Expose the write path.", "characters": ["mira", "jun"]}
+        ],
+        "foreshadow_threads": [
+            {"id": "jun-private-archive", "summary": "Jun hides an archive.", "payoff_target": "archive-murder"}
+        ],
+        "timeline_events": [
+            {"position": "prelude", "summary": "The archive accepts its first memory backup."}
+        ],
+        "artifact_root": str(tmp_path),
+    }
+
+
+@pytest.mark.asyncio
+async def test_canonworks_init_creates_canon_ontology_item_in_main_canon(tmp_path):
+    sdk = FakeCanonWorksSDK()
+
+    result = await tool_canonworks_init(_glass_city_ontology_seed(tmp_path), sdk)
+
+    assert result["success"] is True
+    ontology_kref = "kref://GlassCity/CanonRules/canon-ontology.canon-ontology"
+    assert ontology_kref in sdk.items
+    assert any(
+        member["bundle"] == "glass-city-main-canon" and member["item_kref"] == ontology_kref
+        for member in result["created"]["bundle_members"]
+    )
+    doc_path = tmp_path / "glass-city" / "canon_ontology" / "CANON_ONTOLOGY.md"
+    assert doc_path.exists()
+    assert "Canon Ontology" in doc_path.read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_canonworks_init_creates_story_structure_items_and_bundles(tmp_path):
+    sdk = FakeCanonWorksSDK()
+
+    result = await tool_canonworks_init(_glass_city_ontology_seed(tmp_path), sdk)
+
+    assert "kref://GlassCity/Roadmaps/archive-murder.storyline" in sdk.items
+    assert "kref://GlassCity/Roadmaps/jun-private-archive.foreshadow-thread" in sdk.items
+    assert "kref://GlassCity/Timeline/event-001.timeline-event" in sdk.items
+
+    members = result["created"]["bundle_members"]
+    assert any(
+        m["bundle"] == "glass-city-active-storylines"
+        and m["item_kref"] == "kref://GlassCity/Roadmaps/archive-murder.storyline"
+        for m in members
+    )
+    assert any(
+        m["bundle"] == "glass-city-active-foreshadow"
+        and m["item_kref"] == "kref://GlassCity/Roadmaps/jun-private-archive.foreshadow-thread"
+        for m in members
+    )
+
+
+@pytest.mark.asyncio
+async def test_canonworks_init_creates_structural_edges(tmp_path):
+    sdk = FakeCanonWorksSDK()
+
+    result = await tool_canonworks_init(_glass_city_ontology_seed(tmp_path), sdk)
+
+    edge_types = {edge["edge_type"] for edge in sdk.edges}
+    assert {"APPEARS_IN", "INVOLVES", "FORESHADOWS", "BELONGS_TO"} <= edge_types
+
+    structural = result["created"]["structural_edges"]
+    assert {"from": "mira", "to": "series-bible", "edge_type": "APPEARS_IN"} in structural
+    assert {"from": "archive-murder", "to": "mira", "edge_type": "INVOLVES"} in structural
+    assert {"from": "jun-private-archive", "to": "archive-murder", "edge_type": "FORESHADOWS"} in structural
+    assert {"from": "event-001", "to": "timeline", "edge_type": "BELONGS_TO"} in structural
+
+
+@pytest.mark.asyncio
+async def test_canonworks_init_normalizes_english_alias_edge_type(tmp_path):
+    sdk = FakeCanonWorksSDK()
+    args = _glass_city_ontology_seed(tmp_path)
+    args["relationships"] = [{"from": "mira", "to": "jun", "edge_type": "rival"}]
+
+    result = await tool_canonworks_init(args, sdk)
+
+    rival_edges = [e for e in sdk.edges if e["edge_type"] == "RIVAL_OF"]
+    assert len(rival_edges) == 1
+    assert result["created"]["warnings"] == []
+    assert {"from": "mira", "to": "jun", "edge_type": "RIVAL_OF", "in_vocabulary": True} in result["created"]["edges"]
+
+
+@pytest.mark.asyncio
+async def test_canonworks_init_normalizes_korean_alias_edge_type(tmp_path):
+    sdk = FakeCanonWorksSDK()
+    args = _glass_city_ontology_seed(tmp_path)
+    args["relationships"] = [{"from": "mira", "to": "jun", "edge_type": "라이벌"}]
+
+    result = await tool_canonworks_init(args, sdk)
+
+    assert any(e["edge_type"] == "RIVAL_OF" for e in sdk.edges)
+    assert result["created"]["warnings"] == []
+
+
+@pytest.mark.asyncio
+async def test_canonworks_init_preserves_unknown_edge_type_with_warning(tmp_path):
+    sdk = FakeCanonWorksSDK()
+    args = _glass_city_ontology_seed(tmp_path)
+    args["relationships"] = [{"from": "mira", "to": "jun", "edge_type": "HAUNTS"}]
+
+    result = await tool_canonworks_init(args, sdk)
+
+    assert any(e["edge_type"] == "HAUNTS" for e in sdk.edges)
+    unknown = [w for w in result["created"]["warnings"] if w["type"] == "relationship_edge_type_unknown"]
+    assert len(unknown) == 1
+    assert unknown[0]["edge_type"] == "HAUNTS"
+    assert unknown[0]["declared_type"] == "HAUNTS"
+    assert {"from": "mira", "to": "jun", "edge_type": "HAUNTS", "in_vocabulary": False} in result["created"]["edges"]
+
+
+@pytest.mark.asyncio
+async def test_canonworks_init_create_inverse_edges_only_for_asymmetric(tmp_path):
+    sdk = FakeCanonWorksSDK()
+    args = _glass_city_ontology_seed(tmp_path)
+    args["characters"] = [{"id": "mira"}, {"id": "jun"}, {"id": "aki"}]
+    args["storylines"] = []
+    args["foreshadow_threads"] = []
+    args["relationships"] = [
+        {"from": "mira", "to": "jun", "edge_type": "MENTOR_OF"},
+        {"from": "mira", "to": "aki", "edge_type": "RIVAL_OF"},
+    ]
+    args["create_inverse_edges"] = True
+
+    result = await tool_canonworks_init(args, sdk)
+
+    relationship_edges = [e for e in sdk.edges if e["edge_type"] in {"MENTOR_OF", "MENTEE_OF", "RIVAL_OF", "ALLY_OF"}]
+    kinds = sorted(e["edge_type"] for e in relationship_edges)
+    # asymmetric MENTOR_OF gets its inverse MENTEE_OF; symmetric RIVAL_OF does not duplicate.
+    assert kinds == ["MENTEE_OF", "MENTOR_OF", "RIVAL_OF"]
+    assert {"from": "jun", "to": "mira", "edge_type": "MENTEE_OF", "derived": "inverse"} in result["created"]["edges"]
+
+
+@pytest.mark.asyncio
+async def test_canonworks_init_without_inverse_edges_by_default(tmp_path):
+    sdk = FakeCanonWorksSDK()
+    args = _glass_city_ontology_seed(tmp_path)
+    args["storylines"] = []
+    args["foreshadow_threads"] = []
+    args["relationships"] = [{"from": "mira", "to": "jun", "edge_type": "MENTOR_OF"}]
+
+    await tool_canonworks_init(args, sdk)
+
+    assert not any(e["edge_type"] == "MENTEE_OF" for e in sdk.edges)
+
+
+@pytest.mark.asyncio
+async def test_canonworks_init_config_contains_ontology_section(tmp_path):
+    sdk = FakeCanonWorksSDK()
+
+    result = await tool_canonworks_init(_glass_city_ontology_seed(tmp_path), sdk)
+
+    yaml_text = result["project_config_yaml"]
+    assert "ontology:" in yaml_text
+    assert "character_edge_types:" in yaml_text
+    assert "structural_edge_types:" in yaml_text
+    assert "RIVAL_OF" in yaml_text
+    assert "canon_ontology: kref://GlassCity/CanonRules/canon-ontology.canon-ontology" in yaml_text
+
+
+@pytest.mark.asyncio
+async def test_canonworks_init_warns_on_unknown_storyline_character(tmp_path):
+    sdk = FakeCanonWorksSDK()
+    args = _glass_city_ontology_seed(tmp_path)
+    args["storylines"] = [{"id": "archive-murder", "characters": ["mira", "ghost"]}]
+
+    result = await tool_canonworks_init(args, sdk)
+
+    skipped = [w for w in result["created"]["warnings"] if w["type"] == "storyline_character_skipped"]
+    assert len(skipped) == 1
+    assert skipped[0]["character"] == "ghost"
+    assert skipped[0]["storyline"] == "archive-murder"
+
+
+@pytest.mark.asyncio
+async def test_canonworks_preview_shows_structural_edges_and_vocabulary_flags(tmp_path):
+    result = await tool_canonworks_preview(
+        {
+            "state_root": str(tmp_path / "state"),
+            "title": "Glass City",
+            "project": "GlassCity",
+            "story_slug": "glass-city",
+            "premise": "A city built from archived memories.",
+            "characters": [{"id": "mira"}, {"id": "jun"}],
+            "relationships": [
+                {"from": "mira", "to": "jun", "edge_type": "rival"},
+                {"from": "mira", "to": "jun", "edge_type": "HAUNTS"},
+            ],
+            "storylines": [{"id": "archive-murder", "characters": ["mira"]}],
+            "foreshadow_threads": [{"id": "jun-secret", "payoff_target": "archive-murder"}],
+            "timeline_events": [{"position": "prelude", "summary": "First backup."}],
+        }
+    )
+
+    preview = result["preview"]
+    struct_types = {e["edge_type"] for e in preview["structural_edges"]}
+    assert {"APPEARS_IN", "INVOLVES", "FORESHADOWS", "BELONGS_TO"} <= struct_types
+
+    rel_by_type = {e["edge_type"]: e for e in preview["relationship_edges"]}
+    assert rel_by_type["RIVAL_OF"]["in_vocabulary"] is True
+    assert rel_by_type["HAUNTS"]["in_vocabulary"] is False
+    assert preview["ontology"]["version"] == "1"
+    assert "RIVAL_OF" in preview["ontology"]["character_edge_types"]

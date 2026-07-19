@@ -73,18 +73,44 @@ timeline
 long-arc roadmap
 production style guide
 one character item per provided character
+one storyline item per provided storyline
+one foreshadow-thread item per provided foreshadow thread
+one timeline-event item per provided timeline event
 current character state snapshot
 current relationship state snapshot
 current timeline progress snapshot
 current storyline progress snapshot
 current foreshadow progress snapshot
+canon ontology reference
 canonworks project config
 ```
 
+The `storyline`, `foreshadow-thread`, and `timeline-event` items are graph-native
+entities added to the `active-storylines`, `active-foreshadow`, and timeline
+spaces, so other items can point at them with edges. `ROADMAP.md` and
+`TIMELINE.md` stay as the human-readable rollups.
+
+## Canon Ontology
+
+CanonWorks types the canon graph with a controlled vocabulary — the **canon
+ontology**. Relationship `edge_type` values are normalized against it (English
+and Korean aliases included: `rival` / `라이벌` → `RIVAL_OF`), enriched with
+category / symmetry / inverse metadata, and unknown types are preserved verbatim
+but flagged out-of-vocabulary rather than coerced. `canonworks_init` also emits
+structural edges (`APPEARS_IN`, `INVOLVES`, `FORESHADOWS`, `BELONGS_TO`) and
+publishes a `canon-ontology` item with a `CANON_ONTOLOGY.md` artifact into the
+`main-canon` bundle. See
+[`docs/reference/canonworks-ontology.md`](docs/reference/canonworks-ontology.md)
+for the full vocabulary, alias tables, and edge semantics.
+
 Relationship entries whose endpoints match character ids are also written as
-Kumiho revision edges. If an endpoint does not match a known character id after
-slug normalization, the tool returns a `relationship_edge_skipped` warning
-instead of silently pretending an edge was created.
+Kumiho revision edges, typed against the ontology vocabulary. If an endpoint does
+not match a known character id after slug normalization, the tool returns a
+`relationship_edge_skipped` warning instead of silently pretending an edge was
+created. If a created edge uses an out-of-vocabulary type, the type is preserved
+and a non-blocking `relationship_edge_type_unknown` warning is returned. Pass
+`create_inverse_edges: true` to also create the reverse edge for asymmetric types
+that define an inverse (for example `MENTOR_OF` → `MENTEE_OF`).
 
 ## Operator Flow
 
@@ -213,9 +239,14 @@ created.revisions
 created.artifacts
 created.bundle_members
 created.edges
+created.structural_edges
 created.warnings
 next_workflows
 ```
+
+`created.edges` holds character-relationship edges (plus any derived inverse
+edges); `created.structural_edges` holds the `APPEARS_IN` / `INVOLVES` /
+`FORESHADOWS` / `BELONGS_TO` edges.
 
 For normal operation, use `project_config_artifact_path` in workflow inputs. Use
 `project_config_yaml` only when inline YAML is more convenient.
@@ -352,10 +383,18 @@ canon_project:
   krefs:
     series_bible: kref://GlassCity/Series/main.series-bible
     relationship_map_artifact: kref://GlassCity/Relationships/main.relationship-map?r=1&a=RELATIONSHIP_MAP.md
+    canon_ontology: kref://GlassCity/CanonRules/canon-ontology.canon-ontology
+  ontology:
+    version: '1'
+    kref: kref://GlassCity/CanonRules/canon-ontology.canon-ontology
+    character_edge_types: [RELATED_TO, ALLY_OF, RIVAL_OF, MENTOR_OF, ...]
+    structural_edge_types: [APPEARS_IN, INVOLVES, FORESHADOWS, BELONGS_TO]
 ```
 
-`story_project` is still accepted by the workflows for compatibility, but new
-CanonWorks configs should use `canon_project`.
+The `ontology` block is names-only; full category / symmetry / inverse semantics
+live in the `CANON_ONTOLOGY.md` artifact. `story_project` is still accepted by
+the workflows for compatibility, but new CanonWorks configs should use
+`canon_project`.
 
 ## Re-Run Behavior
 

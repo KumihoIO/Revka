@@ -58,6 +58,39 @@ canon_project:
     relationship_map_artifact: kref://StoryProject/Relationships/main.relationship-map?r=1&a=RELATIONSHIP_MAP.md
     timeline: kref://StoryProject/Timeline/main.timeline
     roadmap: kref://StoryProject/Roadmaps/long-arc.series-roadmap
+    canon_ontology: kref://StoryProject/CanonRules/canon-ontology.canon-ontology
+  ontology:
+    version: '1'
+    kref: kref://StoryProject/CanonRules/canon-ontology.canon-ontology
+    character_edge_types:
+    - RELATED_TO
+    - ALLY_OF
+    - FRIEND_OF
+    - CONFIDANT_OF
+    - RIVAL_OF
+    - ENEMY_OF
+    - ROMANTIC_WITH
+    - LOVES
+    - MENTOR_OF
+    - MENTEE_OF
+    - PARENT_OF
+    - CHILD_OF
+    - SIBLING_OF
+    - SPOUSE_OF
+    - FAMILY_OF
+    - GUARDIAN_OF
+    - WARD_OF
+    - COMMANDS
+    - SERVES
+    - PROTECTS
+    - BETRAYED
+    - OWES_DEBT_TO
+    - KNOWS_SECRET_OF
+    structural_edge_types:
+    - APPEARS_IN
+    - INVOLVES
+    - FORESHADOWS
+    - BELONGS_TO
   agent_personas:
     showrunner: commercial-serial-showrunner.v1
     intent_planner: serial-arc-architect.v1
