@@ -14,7 +14,7 @@ dependencies = [
     "httpx>=0.27.0",
     "pyyaml>=6.0",
     "kumiho>=0.9.20",
-    "kumiho-memory>=0.5.2",
+    "kumiho-memory>=0.20.0",
     "simpleeval>=1.0.3",
 ]
 

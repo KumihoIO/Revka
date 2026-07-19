@@ -6,6 +6,7 @@ relationship edges.
 """
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 import json
 import re
@@ -19,6 +20,25 @@ except Exception:  # pragma: no cover
     yaml = None  # type: ignore[assignment]
 
 from .. import canon_ontology
+
+# kumiho-memory (>= 0.20.0) ships the decompose MCP handler that materializes an
+# agent-supplied {entities, facts, relations} decomposition into the typed
+# memory graph. CanonWorks projects durable canon facts/relations through it so
+# Kumiho recall can bridge canon entities. Guarded exactly like
+# ``tool_handlers/memory.py``: never hard-fail at import; degrade to a
+# non-blocking notice when the package is absent or too old.
+try:
+    from kumiho_memory.mcp_tools import tool_memory_decompose as _km_tool_memory_decompose
+
+    _HAS_KUMIHO_MEMORY_DECOMPOSE = True
+except ImportError:
+    _km_tool_memory_decompose = None  # type: ignore[assignment]
+    _HAS_KUMIHO_MEMORY_DECOMPOSE = False
+
+#: Upper bound on nodes emitted per kind in a single typed-graph projection.
+#: Keeps the best-effort projection bounded; Kumiho additionally caps at its own
+#: ``OntologySchema.max_per_kind``.
+_PROJECTION_CAP = 100
 
 
 CORE_BUNDLES = {
@@ -824,6 +844,114 @@ def _build_config(
     }
 
 
+def _projection_notice(reason: str) -> dict[str, Any]:
+    """Non-blocking notice when the typed-graph projection is skipped."""
+    return {"projected": False, "reason": reason}
+
+
+async def _project_canon_to_typed_graph(
+    anchor_kref: str,
+    entities: list[dict[str, Any]],
+    facts: list[dict[str, Any]],
+    relations: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Additively project durable canon facts/relations into Kumiho's typed graph.
+
+    Delegates to ``kumiho_memory.mcp_tools.tool_memory_decompose`` (guarded on
+    :data:`_HAS_KUMIHO_MEMORY_DECOMPOSE`), which folds each relation predicate
+    onto a canonical typed-graph edge via Kumiho's predicate registry (unknown
+    narrative predicates -> ``RELATES_TO``, verbatim preserved). This is IN
+    ADDITION to the raw ``sdk.create_edge`` canon edges, which keep the narrative
+    edge types verbatim. Best-effort and non-blocking: any failure, or a missing
+    / too-old package, returns a notice and never breaks ``canonworks_init``.
+    """
+    if not _HAS_KUMIHO_MEMORY_DECOMPOSE or _km_tool_memory_decompose is None:
+        return _projection_notice("kumiho-memory decompose unavailable (absent or < 0.20.0)")
+    if not anchor_kref:
+        return _projection_notice("no anchor revision to decompose against")
+    if not (entities or facts or relations):
+        return _projection_notice("no durable canon facts/relations to project")
+    payload = {
+        "kref": anchor_kref,
+        "entities": entities[:_PROJECTION_CAP],
+        "facts": facts[:_PROJECTION_CAP],
+        "relations": relations[:_PROJECTION_CAP],
+    }
+    try:
+        result = await asyncio.to_thread(_km_tool_memory_decompose, payload)
+    except Exception as exc:  # noqa: BLE001 — projection is best-effort, never fatal.
+        return _projection_notice(f"decompose raised: {type(exc).__name__}: {exc}")
+    notice: dict[str, Any] = {
+        "projected": True,
+        "anchor_kref": anchor_kref,
+        "counts": {
+            "entities": len(payload["entities"]),
+            "facts": len(payload["facts"]),
+            "relations": len(payload["relations"]),
+        },
+    }
+    if isinstance(result, dict):
+        # Surface Kumiho's own stats (or its ontology-disabled error) verbatim.
+        if "decomposed" in result:
+            notice["decomposed"] = result["decomposed"]
+        if "errors" in result:
+            notice["errors"] = result["errors"]
+    return notice
+
+
+async def _publish_canon_ontology(
+    sdk: Any,
+    space_path: str,
+    artifact_root: Path,
+    story_slug: str,
+    project: str,
+    content: str,
+    metadata: dict[str, Any],
+    created: dict[str, list[dict[str, Any]]],
+    record_created_item: Any,
+) -> dict[str, Any]:
+    """Publish the canon ontology as a versioned policy Item (D).
+
+    Mirrors :func:`kumiho_memory.ontology_spec.seed_ontology_spec` semantics:
+    canon uses its OWN item / ``published`` tag / ``canon_spec_version`` and only
+    REFERENCES Kumiho's spec identity in metadata (never overwrites Kumiho's
+    ``SPEC_TAG``). Re-publishing at the same ``canon_spec_version`` is idempotent
+    — the existing published revision is reused rather than duplicated. Degrades
+    to always creating a revision when the SDK cannot fetch by tag.
+    """
+    role = "canon_ontology"
+    node_kind = canon_ontology.kumiho_node_kind_for("canon-ontology")
+    node_meta = {"kumiho_node_kind": node_kind} if node_kind else {}
+    item, is_new = await _ensure_item(
+        sdk, space_path, "canon-ontology", "canon-ontology",
+        {**metadata, **node_meta, "canonworks_role": role},
+    )
+    record_created_item(item, is_new, role)
+    item_kref = item["kref"]
+    spec_version = str(metadata.get("canon_spec_version", ""))
+
+    get_by_tag = getattr(sdk, "get_revision_by_tag", None)
+    if get_by_tag is not None and spec_version:
+        existing = await get_by_tag(item_kref, "published")
+        if existing and (existing.get("metadata") or {}).get("canon_spec_version") == spec_version:
+            # Idempotent re-publish at the same version: no new revision.
+            return {"item": item, "revision": existing, "created_revision": False}
+
+    revision_artifact = await _create_revision_with_artifact(
+        sdk,
+        item_kref,
+        "published",
+        artifact_root / _path_segment(role),
+        "CANON_ONTOLOGY.md",
+        content,
+        {**metadata, **node_meta, "canonworks": "true", "canonworks_role": role,
+         "story_slug": story_slug, "project_id": project},
+    )
+    created["revisions"].append({"role": role, "kref": revision_artifact["revision"].get("kref", ""), "tag": "published"})
+    created["artifacts"].append({"role": role, "kref": revision_artifact["artifact"].get("kref", ""), "path": revision_artifact["path"]})
+    return {"item": item, **revision_artifact, "created_revision": True}
+
+
 async def tool_canonworks_init(args: dict[str, Any], sdk: Any) -> dict[str, Any]:
     """Create a CanonWorks Kumiho project scaffold and initial canon graph."""
     if hasattr(sdk, "_lazy_init"):
@@ -881,7 +1009,12 @@ async def tool_canonworks_init(args: dict[str, Any], sdk: Any) -> dict[str, Any]
         })
 
     async def create_doc(space_key: str, name: str, kind: str, role: str, artifact_name: str, content: str, metadata: dict[str, Any], tag: str = "current") -> dict[str, Any]:
-        item, is_new = await _ensure_item(sdk, spaces[space_key], name, kind, {**metadata, "canonworks_role": role})
+        # Annotate with the mapped Kumiho typed-graph node kind (when this canon
+        # kind has a natural fit) so a cross-referencing reader / the typed-graph
+        # projection picks the right kind. Absent when there is no natural fit.
+        node_kind = canon_ontology.kumiho_node_kind_for(kind)
+        node_meta = {"kumiho_node_kind": node_kind} if node_kind else {}
+        item, is_new = await _ensure_item(sdk, spaces[space_key], name, kind, {**metadata, **node_meta, "canonworks_role": role})
         record_created_item(item, is_new, role)
         revision_artifact = await _create_revision_with_artifact(
             sdk,
@@ -890,7 +1023,7 @@ async def tool_canonworks_init(args: dict[str, Any], sdk: Any) -> dict[str, Any]
             artifact_root / _path_segment(role),
             artifact_name,
             content,
-            {**metadata, "canonworks": "true", "canonworks_role": role, "story_slug": story_slug, "project_id": project},
+            {**metadata, **node_meta, "canonworks": "true", "canonworks_role": role, "story_slug": story_slug, "project_id": project},
         )
         created["revisions"].append({"role": role, "kref": revision_artifact["revision"].get("kref", ""), "tag": tag})
         created["artifacts"].append({"role": role, "kref": revision_artifact["artifact"].get("kref", ""), "path": revision_artifact["path"]})
@@ -938,10 +1071,21 @@ async def tool_canonworks_init(args: dict[str, Any], sdk: Any) -> dict[str, Any]
         {"title": title},
     )
 
+    # Accumulators for the additive Kumiho typed-graph projection (B). Filled as
+    # the durable canon facts/relations are established below; emitted once, at
+    # the end, via _project_canon_to_typed_graph. Kept alongside — never in place
+    # of — the raw sdk.create_edge canon edges.
+    character_display: dict[str, str] = {}
+    storyline_display: dict[str, str] = {}
+    foreshadow_display: dict[str, str] = {}
+    projection_relations: list[dict[str, Any]] = []
+    projection_facts: list[dict[str, Any]] = []
+
     character_revisions: dict[str, str] = {}
     for index, character in enumerate(characters, start=1):
         char_id = _character_name(character, index)
         display = _first(character.get("display_name"), character.get("name"), char_id)
+        character_display[char_id] = display
         content = "\n".join([
             f"# {display}",
             "",
@@ -971,6 +1115,7 @@ async def tool_canonworks_init(args: dict[str, Any], sdk: Any) -> dict[str, Any]
     storyline_revisions: dict[str, str] = {}
     for index, storyline in enumerate(storylines, start=1):
         sid = _storyline_slug(storyline, index)
+        storyline_display[sid] = _first(storyline.get("title"), storyline.get("name"), sid)
         doc = await create_doc(
             "roadmaps", sid, "storyline", f"storyline:{sid}", "STORYLINE.md",
             _render_storyline(storyline, sid),
@@ -987,6 +1132,14 @@ async def tool_canonworks_init(args: dict[str, Any], sdk: Any) -> dict[str, Any]
                     _jsonable_metadata({"canonworks": "true", **canon_ontology.structural_edge_metadata("INVOLVES")}),
                 )
                 created["structural_edges"].append({"from": sid, "to": cslug, "edge_type": "INVOLVES"})
+                # Typed-graph projection: canon INVOLVES (storyline->character)
+                # folds to RELATES_TO in Kumiho (distinct from Kumiho's own
+                # event->entity INVOLVES); verbatim predicate preserved.
+                projection_relations.append({
+                    "subject": storyline_display[sid],
+                    "predicate": "INVOLVES",
+                    "object": character_display[cslug],
+                })
             else:
                 created["warnings"].append({
                     "type": "storyline_character_skipped",
@@ -998,6 +1151,7 @@ async def tool_canonworks_init(args: dict[str, Any], sdk: Any) -> dict[str, Any]
     # First-class foreshadow-thread items.
     for index, thread in enumerate(foreshadow_threads, start=1):
         fid = _foreshadow_slug(thread, index)
+        foreshadow_display[fid] = _first(thread.get("title"), thread.get("name"), fid)
         target_slug = _foreshadow_target_slug(thread)
         doc = await create_doc(
             "roadmaps", fid, "foreshadow-thread", f"foreshadow:{fid}", "FORESHADOW.md",
@@ -1012,6 +1166,13 @@ async def tool_canonworks_init(args: dict[str, Any], sdk: Any) -> dict[str, Any]
                 _jsonable_metadata({"canonworks": "true", **canon_ontology.structural_edge_metadata("FORESHADOWS")}),
             )
             created["structural_edges"].append({"from": fid, "to": target_slug, "edge_type": "FORESHADOWS"})
+            # Typed-graph projection: foreshadow-thread FORESHADOWS storyline
+            # folds to RELATES_TO in Kumiho; verbatim predicate preserved.
+            projection_relations.append({
+                "subject": foreshadow_display[fid],
+                "predicate": "FORESHADOWS",
+                "object": storyline_display[target_slug],
+            })
 
     # First-class timeline-event items, each BELONGS_TO the series timeline.
     timeline_rev = timeline["revision"]["kref"]
@@ -1036,15 +1197,29 @@ async def tool_canonworks_init(args: dict[str, Any], sdk: Any) -> dict[str, Any]
         await create_doc("progress", "current-foreshadow-progress-snapshot", "foreshadow-progress", "current_foreshadow_progress", "CURRENT_FORESHADOW_PROGRESS.md", "# Current Foreshadow Progress\n\nSeeded by CanonWorks.\n", {}),
     ]
 
-    ontology_doc = await create_doc(
-        "canon_rules",
-        "canon-ontology",
-        "canon-ontology",
-        "canon_ontology",
-        "CANON_ONTOLOGY.md",
+    # (D) Publish the canon ontology as a versioned policy Item. Canon carries
+    # its OWN spec version and REFERENCES which Kumiho ontology spec it aligns to
+    # (a reference, not a copy — Kumiho's SPEC_TAG is never touched). Re-publish
+    # at the same canon spec version is idempotent (no duplicate revision).
+    ontology_meta: dict[str, Any] = {
+        "ontology_version": canon_ontology.ONTOLOGY_VERSION,
+        "canon_spec_version": canon_ontology.CANON_ONTOLOGY_SPEC_VERSION,
+        "config_kind": "canon-ontology",
+    }
+    kumiho_ref = canon_ontology.kumiho_spec_reference()
+    if kumiho_ref:
+        ontology_meta["kumiho_spec_version"] = kumiho_ref["spec_version"]
+        ontology_meta["kumiho_spec_tag"] = kumiho_ref["spec_tag"]
+    ontology_doc = await _publish_canon_ontology(
+        sdk,
+        spaces["canon_rules"],
+        artifact_root,
+        story_slug,
+        project,
         canon_ontology.render_ontology_doc(),
-        {"ontology_version": canon_ontology.ONTOLOGY_VERSION, "config_kind": "canon-ontology"},
-        tag="published",
+        ontology_meta,
+        created,
+        record_created_item,
     )
 
     config = _build_config(
@@ -1125,6 +1300,22 @@ async def tool_canonworks_init(args: dict[str, Any], sdk: Any) -> dict[str, Any]
             })
             await sdk.create_edge(character_revisions[source], character_revisions[target], edge_type, metadata)
             created["edges"].append({"from": source, "to": target, "edge_type": edge_type, "in_vocabulary": known})
+            # Typed-graph projection: the raw canon edge above keeps the
+            # narrative type verbatim; the projected relation carries the same
+            # narrative predicate and Kumiho folds it (unknown -> RELATES_TO).
+            projection_relations.append({
+                "subject": character_display[source],
+                "predicate": edge_type,
+                "object": character_display[target],
+            })
+            projection_facts.append({
+                "statement": _first(
+                    rel.get("summary"), rel.get("notes"),
+                    f"{character_display[source]} {edge_type} {character_display[target]}",
+                ),
+                "type": "canon_relationship",
+                "about": [character_display[source], character_display[target]],
+            })
             if not known:
                 warning = {
                     "type": "relationship_edge_type_unknown",
@@ -1160,6 +1351,31 @@ async def tool_canonworks_init(args: dict[str, Any], sdk: Any) -> dict[str, Any]
                 "reason": "relationship endpoints must match character ids after slug normalization",
             })
 
+    # (B) Additively project the durable canon facts/relations into Kumiho's
+    # typed graph so kumiho recall can bridge canon entities. Entities are the
+    # named characters/storylines/foreshadow-threads; relations carry the
+    # narrative predicate which Kumiho folds via its predicate registry. Each
+    # projected predicate is run through canon_ontology.project_predicate (C) so
+    # the fold is recorded even before Kumiho re-folds it internally.
+    projection_entities = (
+        [{"name": name, "type": "character"} for name in character_display.values()]
+        + [{"name": name, "type": "storyline"} for name in storyline_display.values()]
+        + [{"name": name, "type": "foreshadow-thread"} for name in foreshadow_display.values()]
+    )
+    projection_folds: list[dict[str, Any]] = []
+    for rel_proj in projection_relations:
+        canonical, verbatim, fallback = canon_ontology.project_predicate(rel_proj["predicate"])
+        projection_folds.append({"predicate": verbatim, "projected_edge": canonical, "fallback": fallback})
+    projection = await _project_canon_to_typed_graph(
+        str(series_bible["revision"].get("kref", "")),
+        projection_entities,
+        projection_facts,
+        projection_relations,
+    )
+    if projection_folds:
+        projection["predicate_folds"] = projection_folds[:_PROJECTION_CAP]
+    created["typed_graph_projection"] = projection
+
     return {
         "success": True,
         "project": project,
@@ -1170,6 +1386,7 @@ async def tool_canonworks_init(args: dict[str, Any], sdk: Any) -> dict[str, Any]
         "project_config_revision_kref": config_doc["revision"]["kref"],
         "project_config_artifact_path": config_doc["path"],
         "created": created,
+        "typed_graph_projection": projection,
         "next_workflows": [
             "canonworks-serial-episode-factory",
             "canonworks-serial-canon-state-sync",
