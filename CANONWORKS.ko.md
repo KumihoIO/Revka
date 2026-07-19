@@ -424,6 +424,17 @@ BELONGS_TO     timeline-event → timeline (Kumiho scope edge 재사용)
 주면 inverse가 정의된 비대칭 유형에 대해 역방향 edge까지 만든다(예: `MENTOR_OF`
 → `MENTEE_OF`). 대칭 유형은 역방향 edge를 중복해서 만들지 않는다.
 
+두 built-in workflow도 context pack을 만들 때 이 어휘를 그대로 순회한다.
+`canonworks-serial-episode-factory`와 `canonworks-serial-canon-state-sync`는
+`kumiho_context` traversal 필터에 모든 관계 유형과 구조 edge 유형을 문자열
+그대로 나열하고(정확히 일치해야 순회한다), 캐논을 읽는 context step에는
+`canon-ontology` item을 seed로 넣으며, 관계를 다루는 프롬프트가 `relation_kind`을
+이 어휘에서 고르고 어휘에 없는 edge는 out-of-vocabulary로 표시해 patch
+candidate로 보내도록 지시한다. drift-guard 테스트가 workflow의 edge 목록을
+온톨로지 registry와 계속 일치시킨다. 단계별 자세한 내용은
+[`docs/reference/canonworks-ontology.md`](docs/reference/canonworks-ontology.md)를
+참고한다.
+
 생성되는 config의 `canon_project`에는 이름만 담은 `ontology` 블록과
 `krefs.canon_ontology`가 추가된다.
 

@@ -131,6 +131,41 @@ steps:
       episode_id_prefix = first(naming.get('episode_id_prefix'), 'ep')
       volume_bundle_prefix = first(naming.get('volume_bundle_prefix'), f'{story_slug}-vol')
 
+      # CanonWorks ontology (canon_project.ontology, added in the ontology PR).
+      # Backward-compatible: configs generated before the ontology existed have
+      # no 'ontology' section, so fall back to the canonical vocabulary hardcoded
+      # here to mirror operator_mcp/canon_ontology.py exactly.
+      ontology = cfg.get('ontology') if isinstance(cfg.get('ontology'), dict) else {}
+      ontology_character_edge_types_fallback = [
+          'RELATED_TO', 'ALLY_OF', 'FRIEND_OF', 'CONFIDANT_OF', 'RIVAL_OF', 'ENEMY_OF',
+          'ROMANTIC_WITH', 'LOVES', 'MENTOR_OF', 'MENTEE_OF', 'PARENT_OF', 'CHILD_OF',
+          'SIBLING_OF', 'SPOUSE_OF', 'FAMILY_OF', 'GUARDIAN_OF', 'WARD_OF', 'COMMANDS',
+          'SERVES', 'PROTECTS', 'BETRAYED', 'OWES_DEBT_TO', 'KNOWS_SECRET_OF',
+      ]
+      ontology_structural_edge_types_fallback = [
+          'APPEARS_IN', 'INVOLVES', 'FORESHADOWS', 'BELONGS_TO',
+      ]
+
+      def edge_type_list(value, fallback):
+          if isinstance(value, (list, tuple)):
+              items = [str(x).strip() for x in value if str(x).strip()]
+              if items:
+                  return items
+          return list(fallback)
+
+      ontology_version = first(ontology.get('version'), '1')
+      canon_ontology_kref = first(
+          krefs.get('canon_ontology'),
+          ontology.get('kref'),
+          f'kref://{project_id}/CanonRules/canon-ontology.canon-ontology',
+      )
+      ontology_character_edge_types_text = ', '.join(
+          edge_type_list(ontology.get('character_edge_types'), ontology_character_edge_types_fallback)
+      )
+      ontology_structural_edge_types_text = ', '.join(
+          edge_type_list(ontology.get('structural_edge_types'), ontology_structural_edge_types_fallback)
+      )
+
       out = {
           'project_id': project_id,
           'story_slug': story_slug,
@@ -147,6 +182,10 @@ steps:
           'patch_name_suffix': first(naming.get('patch_name_suffix'), 'canon-patch'),
           'blocked_name_suffix': first(naming.get('blocked_name_suffix'), 'blocked'),
           'volume_bundle_prefix': volume_bundle_prefix,
+          'ontology_version': ontology_version,
+          'canon_ontology_kref': canon_ontology_kref,
+          'ontology_character_edge_types_text': ontology_character_edge_types_text,
+          'ontology_structural_edge_types_text': ontology_structural_edge_types_text,
           'episode_space': space('episodes', 'Episodes'),
           'patch_space': space('patches', 'Patches'),
           'context_pack_space': space('context_packs', 'ContextPacks'),
@@ -338,6 +377,7 @@ steps:
       - ${project-config.output_data.relationship_map_artifact_kref}
       - ${project-config.output_data.timeline_kref}
       - ${project-config.output_data.roadmap_kref}
+      - ${project-config.output_data.canon_ontology_kref}
       queries:
       - <<${project-config.output_data.title}>> Ep.${sync-info.output_data.episode_number} post-episode canon state sync
       - latest production-ready episode state deltas character relationship timeline storyline foreshadow
@@ -360,6 +400,36 @@ steps:
       - CONTRADICTS
       - BLOCKS
       - RELATED_TO
+      # CanonWorks ontology structural edges (canon_ontology.structural_edge_names;
+      # FORESHADOWS already present above). Exact-match traversal filter, so every
+      # ontology edge type must appear literally to be followed.
+      - APPEARS_IN
+      - INVOLVES
+      - BELONGS_TO
+      # CanonWorks ontology character relationship vocabulary
+      # (canon_ontology.relationship_type_names; RELATED_TO already present above).
+      - ALLY_OF
+      - FRIEND_OF
+      - CONFIDANT_OF
+      - RIVAL_OF
+      - ENEMY_OF
+      - ROMANTIC_WITH
+      - LOVES
+      - MENTOR_OF
+      - MENTEE_OF
+      - PARENT_OF
+      - CHILD_OF
+      - SIBLING_OF
+      - SPOUSE_OF
+      - FAMILY_OF
+      - GUARDIAN_OF
+      - WARD_OF
+      - COMMANDS
+      - SERVES
+      - PROTECTS
+      - BETRAYED
+      - OWES_DEBT_TO
+      - KNOWS_SECRET_OF
     filters:
       include_kinds:
       - series-bible
@@ -386,6 +456,7 @@ steps:
       - canon-patch
       - continuity-audit
       - canon-state-sync-report
+      - canon-ontology
       exclude_tags:
       - deprecated
       - rejected
@@ -410,13 +481,16 @@ steps:
         foreshadow-thread: 1.6
         timeline-event: 1.5
         canon-rule: 1.8
+        canon-ontology: 1.4
       boost_edge_types:
         CONTRADICTS: 2.5
         BLOCKS: 2.2
         UPDATES: 2
+        INVOLVES: 1.8
         REFERENCED: 1.8
         ADVANCES: 1.7
         FORESHADOWS: 1.5
+        APPEARS_IN: 1.4
     lock:
       revisions: true
       tag_preference:
@@ -480,6 +554,36 @@ steps:
       - ADVANCES
       - FORESHADOWS
       - RELATED_TO
+      # CanonWorks ontology structural edges (canon_ontology.structural_edge_names;
+      # FORESHADOWS already present above). Exact-match traversal filter, so every
+      # ontology edge type must appear literally to be followed.
+      - APPEARS_IN
+      - INVOLVES
+      - BELONGS_TO
+      # CanonWorks ontology character relationship vocabulary
+      # (canon_ontology.relationship_type_names; RELATED_TO already present above).
+      - ALLY_OF
+      - FRIEND_OF
+      - CONFIDANT_OF
+      - RIVAL_OF
+      - ENEMY_OF
+      - ROMANTIC_WITH
+      - LOVES
+      - MENTOR_OF
+      - MENTEE_OF
+      - PARENT_OF
+      - CHILD_OF
+      - SIBLING_OF
+      - SPOUSE_OF
+      - FAMILY_OF
+      - GUARDIAN_OF
+      - WARD_OF
+      - COMMANDS
+      - SERVES
+      - PROTECTS
+      - BETRAYED
+      - OWES_DEBT_TO
+      - KNOWS_SECRET_OF
     filters:
       include_kinds:
       - character-state
@@ -571,6 +675,10 @@ steps:
       - continuity_context: ${inputs.continuity_context}
       - review_focus: ${inputs.review_focus}
 
+      CANON_ONTOLOGY (controlled vocabulary):
+      - character_relationship_vocabulary: ${project-config.output_data.ontology_character_edge_types_text}
+      - structural_edge_vocabulary: ${project-config.output_data.ontology_structural_edge_types_text}
+
       추출 기준:
       - patch candidate에 명시된 변화만 우선 추출한다.
       - 시간축은 예외적으로 반드시 정규화한다: current_story_time, previous_episode_end_time, episode_start_time, episode_end_time, elapsed_time, next_episode_start_anchor를 patch/episode metadata/context에서 추출한다.
@@ -582,6 +690,7 @@ steps:
       - evidence_locator는 patch candidate 항목, episode summary, next_hook, 명시 metadata 중 하나로 짧게 쓴다.
       - 전체 산문 기반 재해석, 장면 재구성, 장황한 근거 설명을 금지한다.
       - 명시적으로 발생하지 않은 심리/관계 변화는 inference_risk를 medium 또는 high로 둔다.
+      - relationship_state_delta_candidates는 관계가 character_relationship_vocabulary(in-vocabulary)에 있으면 canonical ontology type으로 명명하고, 없으면 out_of_vocabulary=true로 표시한다. 어느 경우든 requires_human_approval은 유지한다.
       - 관계 변화와 major timeline 변화는 이 단계에서 적용하지 않는다. proposed delta로만 분리한다.
       - 변화 없음은 no_change에 기록한다.
       - 각 목록은 실제 변화만 담고, 빈 예시 항목을 출력하지 않는다.
@@ -608,6 +717,8 @@ steps:
             confidence: "high|medium|low"
         relationship_state_delta_candidates:
           - relation_label: ""
+            relation_kind: ""
+            out_of_vocabulary: false
             source_character_kref: ""
             target_character_kref: ""
             before: ""
@@ -693,9 +804,14 @@ steps:
       CANON_PATCH_CANDIDATE:
       ${canon-patch-candidate.output}
 
+      CANON_ONTOLOGY (controlled vocabulary):
+      - character_relationship_vocabulary: ${project-config.output_data.ontology_character_edge_types_text}
+      - structural_edge_vocabulary: ${project-config.output_data.ontology_structural_edge_types_text}
+
       운영 원칙:
       - character state와 storyline/foreshadow progress는 명확한 evidence와 patch 근거가 있으면 current snapshot 반영 대상으로 둘 수 있다.
       - relationship 변화는 기본적으로 requires_human_approval이다.
+      - relationship delta는 in-vocabulary이면 canonical ontology type으로 명명하고, vocabulary에 없는(out_of_vocabulary) 관계 변화는 명명을 강제하지 말고 pending_human_approval로 둔다. 어느 쪽도 approval gate를 약화하지 않는다.
       - timeline continuity marker(current_story_time, previous_episode_end_time, episode_start_time, episode_end_time, elapsed_time, next_episode_start_anchor)는 major_timeline_change가 아니면 current snapshot에 반영 대상으로 둔다.
       - major_timeline_change가 true인 변화는 기본적으로 requires_human_approval이다.
       - apply_mode가 apply_approved가 아니면 relationship 변화와 major timeline 변화는 applied_delta가 아니라 pending_human_approval로 분류한다.
@@ -767,9 +883,14 @@ steps:
       DELTA_REVIEW:
       ${state-delta-review.output}
 
+      CANON_ONTOLOGY (controlled vocabulary):
+      - character_relationship_vocabulary: ${project-config.output_data.ontology_character_edge_types_text}
+      - structural_edge_vocabulary: ${project-config.output_data.ontology_structural_edge_types_text}
+
       출력 규칙:
       - current_character_state_snapshot은 accepted character state deltas만 반영한다.
       - current_relationship_state_snapshot은 apply_mode=apply_approved이고 DELTA_REVIEW가 승인한 관계 변화만 applied로 쓴다. 그 외 관계 변화는 pending_human_approval_notes로 둔다.
+      - relationship snapshot 항목은 in-vocabulary이면 canonical ontology type으로 명명하고, out_of_vocabulary 관계 변화는 명명을 강제하지 말고 pending_human_approval_notes로 둔다.
       - current_timeline_progress_snapshot은 극중 시간 연속성을 별도 최상위 섹션으로 반드시 포함한다: current_story_time, previous_episode_end_time, previous_scene_location, previous_scene_cast, active_event, episode_start_time, episode_start_location, episode_start_cast, episode_end_time, episode_end_location, episode_end_cast, elapsed_time, next_episode_start_anchor, next_episode_start_location, next_episode_start_cast, time_shift_policy, time_jump_allowed, source_episode.
       - major timeline change는 apply_mode=apply_approved이고 DELTA_REVIEW가 승인한 경우에만 applied로 쓴다. 그 외에는 pending_human_approval_notes로 둔다.
       - no_time_jump/continued_from_previous 같은 timeline continuity marker는 major change가 아니므로 다음 episode factory용 current 사실로 반영한다.
@@ -894,7 +1015,7 @@ steps:
     entity_metadata:
       series: ${project-config.output_data.title}
       workflow: canonworks-serial-canon-state-sync
-      workflow_version: '1.0'
+      workflow_version: '1.1'
       snapshot_type: character-state
       source_episode: ${sync-info.output_data.source_episode_name}
       source_episode_kref: ${sync-info.output_data.source_episode_kref}
@@ -948,7 +1069,7 @@ steps:
     entity_metadata:
       series: ${project-config.output_data.title}
       workflow: canonworks-serial-canon-state-sync
-      workflow_version: '1.0'
+      workflow_version: '1.1'
       snapshot_type: relationship-state
       source_episode: ${sync-info.output_data.source_episode_name}
       source_episode_kref: ${sync-info.output_data.source_episode_kref}
@@ -1026,7 +1147,7 @@ steps:
     entity_metadata:
       series: ${project-config.output_data.title}
       workflow: canonworks-serial-canon-state-sync
-      workflow_version: '1.0'
+      workflow_version: '1.1'
       snapshot_type: timeline-progress
       source_episode: ${sync-info.output_data.source_episode_name}
       source_episode_kref: ${sync-info.output_data.source_episode_kref}
@@ -1078,7 +1199,7 @@ steps:
     entity_metadata:
       series: ${project-config.output_data.title}
       workflow: canonworks-serial-canon-state-sync
-      workflow_version: '1.0'
+      workflow_version: '1.1'
       snapshot_type: storyline-progress
       source_episode: ${sync-info.output_data.source_episode_name}
       source_episode_kref: ${sync-info.output_data.source_episode_kref}
@@ -1129,7 +1250,7 @@ steps:
     entity_metadata:
       series: ${project-config.output_data.title}
       workflow: canonworks-serial-canon-state-sync
-      workflow_version: '1.0'
+      workflow_version: '1.1'
       snapshot_type: foreshadow-progress
       source_episode: ${sync-info.output_data.source_episode_name}
       source_episode_kref: ${sync-info.output_data.source_episode_kref}
@@ -1192,7 +1313,7 @@ steps:
     entity_metadata:
       series: ${project-config.output_data.title}
       workflow: canonworks-serial-canon-state-sync
-      workflow_version: '1.0'
+      workflow_version: '1.1'
       source_episode: ${sync-info.output_data.source_episode_name}
       source_episode_kref: ${sync-info.output_data.source_episode_kref}
       source_patch: ${sync-info.output_data.patch_name}
@@ -1238,7 +1359,7 @@ steps:
         reason: Current character-state snapshot synced after Ep.${sync-info.output_data.episode_number}
         metadata:
           workflow: canonworks-serial-canon-state-sync
-          workflow_version: '1.0'
+          workflow_version: '1.1'
           snapshot_type: character-state
           episode_number: ${sync-info.output_data.episode_number}
           source_episode: ${sync-info.output_data.source_episode_name}
@@ -1250,7 +1371,7 @@ steps:
           require approval unless apply_mode=apply_approved
         metadata:
           workflow: canonworks-serial-canon-state-sync
-          workflow_version: '1.0'
+          workflow_version: '1.1'
           snapshot_type: relationship-state
           episode_number: ${sync-info.output_data.episode_number}
           source_episode: ${sync-info.output_data.source_episode_name}
@@ -1264,7 +1385,7 @@ steps:
           require approval unless apply_mode=apply_approved
         metadata:
           workflow: canonworks-serial-canon-state-sync
-          workflow_version: '1.0'
+          workflow_version: '1.1'
           snapshot_type: timeline-progress
           episode_number: ${sync-info.output_data.episode_number}
           source_episode: ${sync-info.output_data.source_episode_name}
@@ -1277,7 +1398,7 @@ steps:
         reason: Current storyline-progress snapshot synced after Ep.${sync-info.output_data.episode_number}
         metadata:
           workflow: canonworks-serial-canon-state-sync
-          workflow_version: '1.0'
+          workflow_version: '1.1'
           snapshot_type: storyline-progress
           episode_number: ${sync-info.output_data.episode_number}
           source_episode: ${sync-info.output_data.source_episode_name}
@@ -1288,7 +1409,7 @@ steps:
         reason: Current foreshadow-progress snapshot synced after Ep.${sync-info.output_data.episode_number}
         metadata:
           workflow: canonworks-serial-canon-state-sync
-          workflow_version: '1.0'
+          workflow_version: '1.1'
           snapshot_type: foreshadow-progress
           episode_number: ${sync-info.output_data.episode_number}
           source_episode: ${sync-info.output_data.source_episode_name}
@@ -1328,7 +1449,7 @@ steps:
         reason: Post-episode canon state sync report for Ep.${sync-info.output_data.episode_number}
         metadata:
           workflow: canonworks-serial-canon-state-sync
-          workflow_version: '1.0'
+          workflow_version: '1.1'
           episode_number: ${sync-info.output_data.episode_number}
           source_episode: ${sync-info.output_data.source_episode_name}
           source_patch: ${sync-info.output_data.patch_name}
@@ -1356,7 +1477,7 @@ steps:
       # CanonWorks Canon State Sync Result
 
       - Workflow: `canonworks-serial-canon-state-sync`
-      - Version: `1.0`
+      - Version: `1.1`
       - Episode: `${sync-info.output_data.episode_number}`
       - Episode ID: `${sync-info.output_data.episode_id}`
       - Source Episode: `${sync-info.output_data.source_episode_name}`

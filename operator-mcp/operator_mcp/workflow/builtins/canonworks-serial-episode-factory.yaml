@@ -139,6 +139,41 @@ steps:
       episode_id_prefix = first(naming.get('episode_id_prefix'), 'ep')
       volume_bundle_prefix = first(naming.get('volume_bundle_prefix'), f'{story_slug}-vol')
 
+      # CanonWorks ontology (canon_project.ontology, added in the ontology PR).
+      # Backward-compatible: configs generated before the ontology existed have
+      # no 'ontology' section, so fall back to the canonical vocabulary hardcoded
+      # here to mirror operator_mcp/canon_ontology.py exactly.
+      ontology = cfg.get('ontology') if isinstance(cfg.get('ontology'), dict) else {}
+      ontology_character_edge_types_fallback = [
+          'RELATED_TO', 'ALLY_OF', 'FRIEND_OF', 'CONFIDANT_OF', 'RIVAL_OF', 'ENEMY_OF',
+          'ROMANTIC_WITH', 'LOVES', 'MENTOR_OF', 'MENTEE_OF', 'PARENT_OF', 'CHILD_OF',
+          'SIBLING_OF', 'SPOUSE_OF', 'FAMILY_OF', 'GUARDIAN_OF', 'WARD_OF', 'COMMANDS',
+          'SERVES', 'PROTECTS', 'BETRAYED', 'OWES_DEBT_TO', 'KNOWS_SECRET_OF',
+      ]
+      ontology_structural_edge_types_fallback = [
+          'APPEARS_IN', 'INVOLVES', 'FORESHADOWS', 'BELONGS_TO',
+      ]
+
+      def edge_type_list(value, fallback):
+          if isinstance(value, (list, tuple)):
+              items = [str(x).strip() for x in value if str(x).strip()]
+              if items:
+                  return items
+          return list(fallback)
+
+      ontology_version = first(ontology.get('version'), '1')
+      canon_ontology_kref = first(
+          krefs.get('canon_ontology'),
+          ontology.get('kref'),
+          f'kref://{project_id}/CanonRules/canon-ontology.canon-ontology',
+      )
+      ontology_character_edge_types_text = ', '.join(
+          edge_type_list(ontology.get('character_edge_types'), ontology_character_edge_types_fallback)
+      )
+      ontology_structural_edge_types_text = ', '.join(
+          edge_type_list(ontology.get('structural_edge_types'), ontology_structural_edge_types_fallback)
+      )
+
       out = {
           'project_id': project_id,
           'story_slug': story_slug,
@@ -155,6 +190,10 @@ steps:
           'patch_name_suffix': first(naming.get('patch_name_suffix'), 'canon-patch'),
           'blocked_name_suffix': first(naming.get('blocked_name_suffix'), 'blocked'),
           'volume_bundle_prefix': volume_bundle_prefix,
+          'ontology_version': ontology_version,
+          'canon_ontology_kref': canon_ontology_kref,
+          'ontology_character_edge_types_text': ontology_character_edge_types_text,
+          'ontology_structural_edge_types_text': ontology_structural_edge_types_text,
           'episode_space': space('episodes', 'Episodes'),
           'patch_space': space('patches', 'Patches'),
           'context_pack_space': space('context_packs', 'ContextPacks'),
@@ -318,6 +357,7 @@ steps:
       - ${project-config.output_data.relationship_map_artifact_kref}
       - ${project-config.output_data.timeline_kref}
       - ${project-config.output_data.roadmap_kref}
+      - ${project-config.output_data.canon_ontology_kref}
       queries:
       - <<${project-config.output_data.title}>> 다음 회차 ${next-episode-info.output_data.episode_number} 생산
       - post-episode canon state sync current snapshots for next episode production
@@ -343,6 +383,36 @@ steps:
       - CONTRADICTS
       - BLOCKS
       - RELATED_TO
+      # CanonWorks ontology structural edges (canon_ontology.structural_edge_names;
+      # FORESHADOWS already present above). Exact-match traversal filter, so every
+      # ontology edge type must appear literally to be followed.
+      - APPEARS_IN
+      - INVOLVES
+      - BELONGS_TO
+      # CanonWorks ontology character relationship vocabulary
+      # (canon_ontology.relationship_type_names; RELATED_TO already present above).
+      - ALLY_OF
+      - FRIEND_OF
+      - CONFIDANT_OF
+      - RIVAL_OF
+      - ENEMY_OF
+      - ROMANTIC_WITH
+      - LOVES
+      - MENTOR_OF
+      - MENTEE_OF
+      - PARENT_OF
+      - CHILD_OF
+      - SIBLING_OF
+      - SPOUSE_OF
+      - FAMILY_OF
+      - GUARDIAN_OF
+      - WARD_OF
+      - COMMANDS
+      - SERVES
+      - PROTECTS
+      - BETRAYED
+      - OWES_DEBT_TO
+      - KNOWS_SECRET_OF
     filters:
       include_kinds:
       - series-bible
@@ -370,6 +440,7 @@ steps:
       - canon-state-sync-report
       - continuity-audit
       - pacing-audit
+      - canon-ontology
       exclude_tags:
       - deprecated
       - rejected
@@ -397,12 +468,25 @@ steps:
         foreshadow-thread: 1.5
         foreshadow-progress: 1.8
         webnovel-episode: 1.4
+        canon-ontology: 1.4
       boost_edge_types:
+        # Only edge types that actually surface as via_edges in the pack's
+        # edge_map are boosted here. Structural edges (INVOLVES/APPEARS_IN)
+        # reach new nodes during traversal, so their boosts fire. Character-to-
+        # character relationship edges (RIVAL_OF/ENEMY_OF/BETRAYED, ...) are
+        # still traversed (see traversal.edge_types), but in the graph
+        # canonworks_init builds each character is already reached via APPEARS_IN
+        # from the depth-0 series-bible seed before its own relationship edges
+        # are examined, so those edges never enter edge_map and a via_edge boost
+        # on them would be inert. Relationship-kind context is conveyed through
+        # the selected relationship-map artifact (see relationship-pressure-plan).
         CONTRADICTS: 2.5
         BLOCKS: 2.2
+        INVOLVES: 1.8
         REFERENCED: 1.8
         PAYOFF_TARGET: 1.6
         ADVANCES: 1.4
+        APPEARS_IN: 1.4
     lock:
       revisions: true
       tag_preference:
@@ -548,12 +632,23 @@ steps:
       - episode_goal: ${inputs.episode_goal}
       - must_include: ${inputs.must_include}
 
+      CANON_ONTOLOGY (controlled vocabulary):
+      - ontology_version: ${project-config.output_data.ontology_version}
+      - canon_ontology_kref: ${project-config.output_data.canon_ontology_kref}
+      - character_relationship_vocabulary: ${project-config.output_data.ontology_character_edge_types_text}
+
       Graph policy:
       - main.relationship-map의 primary edge를 우선한다.
       - operational/thematic 확장 edge는 장면에 실제 압력을 줄 때만 쓴다.
       - 모두를 모두에게 연결하지 않는다.
       - 장면에서 쓰는 관계는 기존 edge를 인용하거나 canon patch candidate로 보낸다.
       - P2/inactive 인물은 현재 권, 이전 hook, 사용자 명시 입력, 강한 graph pressure가 있을 때만 쓴다.
+
+      Ontology policy:
+      - relation_kind은 관계가 character_relationship_vocabulary(in-vocabulary)에 있으면 반드시 canonical ontology type을 그대로 쓴다.
+      - vocabulary에 없는 관계 유형은 기존(pre-existing) edge를 인용할 때만 허용하고, 그 항목은 out_of_vocabulary=true로 표시하며 canon patch candidate로 보낸다.
+      - context pack의 edge_map에 실제로 나타난 typed graph edge가 RELATIONSHIP_MAP.md 산문과 다르면 그 typed edge를 우선한다.
+      - 단, 현재 canon 그래프에서는 캐릭터-캐릭터 관계 edge(RIVAL_OF/ALLY_OF/MENTOR_OF 등)가 edge_map에 나타나지 않고 구조 edge(APPEARS_IN/INVOLVES/BELONGS_TO)만 나타나는 것이 정상이다. edge_map에 관계 edge가 없으면 RELATIONSHIP_MAP.md(relationship_map_artifact)를 관계 종류의 권위 소스로 삼고, relation_kind은 character_relationship_vocabulary로 정규화한다.
 
       반드시 FINAL_OUTPUT YAML만 출력하라.
 
@@ -568,6 +663,7 @@ steps:
             target_kref: ""
             relation_label: ""
             relation_kind: ""
+            out_of_vocabulary: false
             relation_layer: "primary|operational|thematic"
             relation_strength: "high|medium|low"
             scene_pressure: ""
@@ -828,6 +924,10 @@ steps:
       최신 production-ready 회차:
       ${latest_production_episode.output_data.artifact_content}
 
+      CANON_ONTOLOGY (controlled vocabulary):
+      - character_relationship_vocabulary: ${project-config.output_data.ontology_character_edge_types_text}
+      - structural_edge_vocabulary: ${project-config.output_data.ontology_structural_edge_types_text}
+
       입력:
       - episode_number: ${next-episode-info.output_data.episode_number}
       - target_length: ${inputs.target_length}
@@ -852,6 +952,7 @@ steps:
       - 이번 회차 장면 압력으로 쓸 active relationship edge 2~4개를 고른다.
       - 이름 있는 인물이 등장하면 character revision kref와 관계 edge 근거를 남긴다.
       - P2 인물은 권별 bundle, prior hook, 사용자 명시 입력, 강한 graph pressure가 있을 때만 사용한다.
+      - active_relationship_edges의 relation_kind은 in-vocabulary이면 character_relationship_vocabulary의 canonical ontology type을 그대로 쓴다. vocabulary에 없으면 out_of_vocabulary=true로 표시하고 patch candidate로 보낸다.
       - 새로운 관계 변화는 조용히 캐논화하지 말고 patch candidate로 보낸다.
       - 이번 단계에서는 대사/본문을 쓰지 않는다.
 
@@ -893,6 +994,7 @@ steps:
           - source_kref: ""
             target_kref: ""
             relation_kind: ""
+            out_of_vocabulary: false
             scene_pressure: ""
         character_state_moves:
           - character: ""
@@ -1439,6 +1541,12 @@ steps:
       FINAL_EPISODE:
       ${episode-finalizer.output}
 
+      CANON_ONTOLOGY (controlled vocabulary):
+      - ontology_version: ${project-config.output_data.ontology_version}
+      - canon_ontology_kref: ${project-config.output_data.canon_ontology_kref}
+      - character_relationship_vocabulary: ${project-config.output_data.ontology_character_edge_types_text}
+      - structural_edge_vocabulary: ${project-config.output_data.ontology_structural_edge_types_text}
+
       작성 기준:
       - source_revision_krefs에는 KUMIHO_CONTEXT_PACK의 locked manifest를 참조한다.
       - evidence_locator는 가능하면 최종 원고의 장면/문단 설명으로 작성한다.
@@ -1446,6 +1554,9 @@ steps:
       - 극중 시간 변화가 없더라도 timeline_events에 no_time_jump/continued_from_previous 같은 continuity marker를 남긴다.
       - current tag 적용은 하지 않는다. patch_status는 candidate로 둔다.
       - 관계 edge/state 변화는 relationship_edge_candidates / relationship_state_delta_candidates에만 기록한다.
+      - relationship_edge_candidates.proposed_relation_kind은 in-vocabulary이면 character_relationship_vocabulary의 canonical ontology type을 그대로 쓰고, vocabulary에 없으면 out_of_vocabulary=true로 표시한다.
+      - proposed_edges[].edge_type은 ontology structural edge(structural_edge_vocabulary: APPEARS_IN, INVOLVES, FORESHADOWS, BELONGS_TO)와 기존 narrative edge set(ADVANCES, PAYOFF_TARGET, UPDATES, REFERENCED 등)에서 고른다.
+      - vocabulary에 없는 새 관계 유형은 조용히 캐논화하지 말고 patch candidate로 유지하며 out_of_vocabulary로 명시한다.
       - 변화가 없는 영역은 no_update_needed에 기록한다.
 
       반드시 FINAL_OUTPUT YAML만 출력하라.
@@ -1471,6 +1582,7 @@ steps:
           - source_character_kref: ""
             target_character_kref: ""
             proposed_relation_kind: ""
+            out_of_vocabulary: false
             proposed_relation_layer: "operational|thematic"
             proposed_relation_strength: "high|medium|low"
             evidence_locator: ""
@@ -1517,7 +1629,7 @@ steps:
       - episode_number: ${next-episode-info.output_data.episode_number}
       - volume: ${next-episode-info.output_data.volume}
       - workflow: canonworks-serial-episode-factory
-      - workflow_version: 2.5
+      - workflow_version: 2.6
       - context_pack: ${next-episode-info.output_data.context_pack_name}
       - canon_patch_candidate: ${next-episode-info.output_data.patch_name}
       - canon_bundle: ${project-config.output_data.main_canon_bundle}
@@ -1536,7 +1648,7 @@ steps:
     entity_metadata:
       series: ${project-config.output_data.title}
       workflow: canonworks-serial-episode-factory
-      workflow_version: '2.5'
+      workflow_version: '2.6'
       episode_number: ${next-episode-info.output_data.episode_number}
       episode_id: ${next-episode-info.output_data.episode_id}
       volume: ${next-episode-info.output_data.volume}
@@ -1599,7 +1711,7 @@ steps:
     entity_metadata:
       series: ${project-config.output_data.title}
       workflow: canonworks-serial-episode-factory
-      workflow_version: '2.5'
+      workflow_version: '2.6'
       patch_status: candidate
       apply_policy: requires-human-approval
       source_episode: ${next-episode-info.output_data.entity_name}
@@ -1653,7 +1765,7 @@ steps:
     entity_metadata:
       series: ${project-config.output_data.title}
       workflow: canonworks-serial-episode-factory
-      workflow_version: '2.5'
+      workflow_version: '2.6'
       episode_number: ${next-episode-info.output_data.episode_number}
       volume: ${next-episode-info.output_data.volume}
       source_latest_episode: ${latest_production_episode.output_data.kref}
@@ -1710,13 +1822,13 @@ steps:
     - bundle: ${project-config.output_data.production_episodes_bundle}
       add:
       - item_kref: ${emit-final-episode.output_data.entity_kref}
-        reason: Ep.${next-episode-info.output_data.episode_number} production-ready episode generated by episode factory v2.5
+        reason: Ep.${next-episode-info.output_data.episode_number} production-ready episode generated by episode factory v2.6
         metadata:
           episode_number: ${next-episode-info.output_data.episode_number}
           episode_id: ${next-episode-info.output_data.episode_id}
           volume: ${next-episode-info.output_data.volume}
           workflow: canonworks-serial-episode-factory
-          workflow_version: '2.5'
+          workflow_version: '2.6'
     - bundle: ${next-episode-info.output_data.volume_episode_bundle}
       add:
       - item_kref: ${emit-final-episode.output_data.entity_kref}
@@ -1784,7 +1896,7 @@ steps:
     entity_metadata:
       series: ${project-config.output_data.title}
       workflow: canonworks-serial-episode-factory
-      workflow_version: '2.5'
+      workflow_version: '2.6'
       episode_number: ${next-episode-info.output_data.episode_number}
       episode_id: ${next-episode-info.output_data.episode_id}
       volume: ${next-episode-info.output_data.volume}
@@ -1838,7 +1950,7 @@ steps:
           episode_id: ${next-episode-info.output_data.episode_id}
           volume: ${next-episode-info.output_data.volume}
           workflow: canonworks-serial-episode-factory
-          workflow_version: '2.5'
+          workflow_version: '2.6'
     fail_if_missing_bundle: true
     fail_if_missing_item: true
   depends_on:
@@ -1856,7 +1968,7 @@ steps:
       # CanonWorks Episode Factory Result
 
       - Workflow: `canonworks-serial-episode-factory`
-      - Version: `2.5`
+      - Version: `2.6`
       - Episode: `${next-episode-info.output_data.episode_number}`
       - Episode ID: `${next-episode-info.output_data.episode_id}`
       - Volume: `${next-episode-info.output_data.volume}`
