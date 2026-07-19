@@ -449,10 +449,12 @@ def render_ontology_doc() -> str:
         "",
         f"- ontology_version: {ONTOLOGY_VERSION}",
         "",
-        "CanonWorks types the Kumiho canon graph on top of the kumiho-memory "
-        "edge semantics (`DERIVED_FROM`, `DEPENDS_ON`, `REFERENCED`, `CONTAINS`, "
-        "`CREATED_FROM`, `BELONGS_TO`). Unknown relationship types are preserved "
-        "as declared but flagged out-of-vocabulary.",
+        (
+            "CanonWorks types the Kumiho canon graph on top of the kumiho-memory "
+            + "edge semantics (`DERIVED_FROM`, `DEPENDS_ON`, `REFERENCED`, `CONTAINS`, "
+            + "`CREATED_FROM`, `BELONGS_TO`). Unknown relationship types are preserved "
+            + "as declared but flagged out-of-vocabulary."
+        ),
         "",
         "## Entity Kinds",
         "",
@@ -489,12 +491,18 @@ def render_ontology_doc() -> str:
         "",
         "## Normalization",
         "",
-        "- Case, whitespace, and hyphens fold to the canonical `UPPER_SNAKE` form "
-        "(`rival-of` → `RIVAL_OF`).",
-        "- English and Korean aliases resolve to a controlled type "
-        "(`rival` / `라이벌` → `RIVAL_OF`).",
-        "- Unknown types are preserved verbatim (uppercased/underscored) and "
-        "flagged `in_vocabulary=false` so callers can warn without data loss.",
+        (
+            "- Case, whitespace, and hyphens fold to the canonical `UPPER_SNAKE` form "
+            + "(`rival-of` → `RIVAL_OF`)."
+        ),
+        (
+            "- English and Korean aliases resolve to a controlled type "
+            + "(`rival` / `라이벌` → `RIVAL_OF`)."
+        ),
+        (
+            "- Unknown types are preserved verbatim (uppercased/underscored) and "
+            + "flagged `in_vocabulary=false` so callers can warn without data loss."
+        ),
         "",
     ])
     return "\n".join(lines).rstrip() + "\n"
