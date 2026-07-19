@@ -51,10 +51,12 @@ each kind's home space and the structural edges it may source or target.
 | `context-pack` | Context Pack | context_packs | A locked context pack assembled for an episode (workflow output). |
 
 The `storyline`, `foreshadow-thread`, and `timeline-event` kinds are first-class
-items as of ontology version `1`: `canonworks_init` materializes them into the
-`active_storylines`, `active_foreshadow`, and timeline spaces so other items can
-point at them with edges. `ROADMAP.md` / `TIMELINE.md` remain the human-readable
-rollups; the items are the graph-native representation.
+items as of ontology version `1`, so other items can point at them with edges.
+`canonworks_init` creates the storyline and foreshadow-thread items in the
+Roadmaps space and adds them to the `active_storylines` / `active_foreshadow`
+bundles, and creates the timeline-event items in the Timeline space. `ROADMAP.md`
+/ `TIMELINE.md` remain the human-readable rollups; the items are the graph-native
+representation.
 
 ## Character Relationship Vocabulary
 
@@ -136,10 +138,17 @@ Free-form relationship input is normalized to the controlled vocabulary by
    both a bare noun and a canonical variant resolve — `rival` and `라이벌` both
    map to `RIVAL_OF`.
 3. **Unknown preservation.** A type that matches neither an alias nor a
-   vocabulary entry is preserved verbatim in today's uppercased/underscored form
-   and flagged `known=False`. It is never coerced to a fallback — backward
-   compatibility is a hard requirement, so any type that worked before the
-   ontology still creates the same edge.
+   vocabulary entry is preserved (never coerced to a fallback) in the canonical
+   `UPPER_SNAKE` form and flagged `known=False`. Letters from any script survive
+   the fold — a single-token or hyphenated type is byte-identical to the
+   pre-ontology `.upper()` / hyphen→underscore output (`blood-oath` →
+   `BLOOD_OATH`, Cyrillic `враг` → `ВРАГ`, CJK `宿敌` → `宿敌`), while
+   whitespace and other separators fold to a single underscore (`blood pact` →
+   `BLOOD_PACT`, `foo@bar` → `FOO_BAR`). Backward compatibility is a hard
+   requirement: any type that produced an edge before the ontology still
+   produces an edge, with the same type name for single-token/hyphenated
+   inputs and its canonical `UPPER_SNAKE` folding for multi-word/special-char
+   inputs.
 
 Empty / missing input resolves to the `RELATED_TO` fallback (`known=True`).
 
@@ -291,10 +300,15 @@ for the full generated shape.
 - `ONTOLOGY_VERSION` is a single string (`"1"`). Every enriched edge records the
   `ontology_version` it was typed under, so a later vocabulary revision can be
   told apart from an earlier one on the graph.
-- Unknown relationship types are always preserved verbatim and flagged
-  `in_vocabulary=false` — they are never coerced. Any relationship input that
-  produced an edge before the ontology still produces the same edge, so existing
-  projects re-init cleanly.
+- Unknown relationship types are always preserved (never coerced to a fallback)
+  and flagged `in_vocabulary=false`. Any relationship input that produced an edge
+  before the ontology still produces an edge: single-token and hyphenated types
+  keep the same name (`blood-oath` → `BLOOD_OATH`), and non-Latin letters are
+  kept (`враг` → `ВРАГ`, `宿敌` → `宿敌`), while multi-word and special-character
+  types fold their separators to the canonical `UPPER_SNAKE` form (`blood pact`
+  → `BLOOD_PACT`). Existing projects re-init cleanly; only unknown types that
+  carried spaces or non-hyphen separators change name (to their `UPPER_SNAKE`
+  folding), never to a different or empty edge.
 - The vocabulary is a controlled list, not a schema validator: out-of-vocabulary
   types warn but never block, keeping the operator in control of domain terms the
   starter vocabulary does not cover.

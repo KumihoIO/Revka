@@ -362,10 +362,11 @@ canon ontology item + CANON_ONTOLOGY.md
 canonworks project config artifact
 ```
 
-`storyline`, `foreshadow-thread`, `timeline-event`은 이제 일급 item으로
-`active-storylines`, `active-foreshadow`, timeline space에 만들어진다. 그래서
-다른 item이 edge로 이들을 가리킬 수 있다. `ROADMAP.md`와 `TIMELINE.md`는 사람이
-읽는 rollup으로 그대로 남는다.
+`storyline`, `foreshadow-thread`, `timeline-event`은 이제 일급 item이라 다른
+item이 edge로 이들을 가리킬 수 있다. storyline과 foreshadow-thread item은
+Roadmaps space에 만들어져 `active-storylines` / `active-foreshadow` bundle에
+추가되고, timeline-event item은 Timeline space에 만들어진다. `ROADMAP.md`와
+`TIMELINE.md`는 사람이 읽는 rollup으로 그대로 남는다.
 
 중요한 반환값:
 

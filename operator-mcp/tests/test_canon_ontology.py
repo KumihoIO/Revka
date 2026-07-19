@@ -102,6 +102,24 @@ def test_normalize_empty_falls_back_to_related_to():
     assert o.normalize_relationship_type(None) == ("RELATED_TO", True)
 
 
+def test_normalize_non_latin_unknown_is_preserved_not_collapsed():
+    # Unknown CJK / kana / Cyrillic types must survive the fold verbatim
+    # (uppercased, matching the pre-ontology .upper() behavior), never coerced
+    # to the empty string, and never collide two distinct types onto one edge.
+    assert o.normalize_relationship_type("宿敌") == ("宿敌", False)
+    assert o.normalize_relationship_type("恋人") == ("恋人", False)
+    assert o.normalize_relationship_type("враг") == ("ВРАГ", False)
+    assert o.normalize_relationship_type("ライバル") == ("ライバル", False)
+    # Distinct non-Latin inputs stay distinct (no empty-string collision).
+    assert o.normalize_relationship_type("宿敌")[0] != o.normalize_relationship_type("恋人")[0]
+    # Mixed non-Latin + separators still fold separators only.
+    assert o.normalize_relationship_type("宿 敌") == ("宿_敌", False)
+    # Pathological all-punctuation input is preserved, never empty.
+    canonical, known = o.normalize_relationship_type("---")
+    assert canonical != ""
+    assert known is False
+
+
 def test_edge_metadata_and_helpers():
     meta = o.edge_metadata_for("MENTOR_OF")
     assert meta["in_vocabulary"] is True

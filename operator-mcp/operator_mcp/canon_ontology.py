@@ -240,14 +240,27 @@ def is_structural_edge(edge_type: str) -> bool:
 
 
 def _alias_key(text: str) -> str:
-    """Lowercase and collapse separators for alias lookup (Korean preserved)."""
-    key = re.sub(r"[^0-9a-z가-힣]+", " ", str(text).strip().lower())
+    """Lowercase and collapse separators for alias lookup.
+
+    Separators are runs of non-word characters plus the underscore; word
+    characters from *any* script (Latin, Hangul, CJK ideographs, kana, Cyrillic,
+    …) are preserved, so non-Latin relationship types survive the fold and are
+    matched against the alias table by their own characters.
+    """
+    key = re.sub(r"[\W_]+", " ", str(text).strip().lower(), flags=re.UNICODE)
     return re.sub(r"\s+", " ", key).strip()
 
 
 def _canonical_token(text: str) -> str:
-    """Uppercase, underscore-join tokens (today's behavior, superset-safe)."""
-    token = re.sub(r"[^0-9A-Za-z가-힣]+", "_", str(text).strip()).strip("_")
+    """Uppercase, underscore-join tokens (today's behavior, superset-safe).
+
+    Only runs of non-word characters and underscores fold to a single ``_``;
+    word characters from any script are kept verbatim. This preserves unknown
+    non-Latin types (e.g. ``宿敌`` → ``宿敌``, ``враг`` → ``ВРАГ``) instead of
+    deleting them, matching the pre-ontology ``.upper().replace('-','_')``
+    behavior for out-of-vocabulary input.
+    """
+    token = re.sub(r"[\W_]+", "_", str(text).strip(), flags=re.UNICODE).strip("_")
     return token.upper()
 
 
@@ -323,6 +336,11 @@ def normalize_relationship_type(raw: object) -> tuple[str, bool]:
     if alias_hit is not None:
         return alias_hit, True
     canonical = _canonical_token(text)
+    if not canonical:
+        # Folding stripped the whole token (e.g. pure punctuation like "---").
+        # Preserve the original uppercased rather than coercing to "" — never
+        # collide distinct out-of-vocabulary inputs onto one empty edge type.
+        canonical = text.upper()
     if canonical in RELATIONSHIP_TYPES:
         return canonical, True
     return canonical, False

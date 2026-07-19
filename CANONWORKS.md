@@ -86,9 +86,11 @@ canonworks project config
 ```
 
 The `storyline`, `foreshadow-thread`, and `timeline-event` items are graph-native
-entities added to the `active-storylines`, `active-foreshadow`, and timeline
-spaces, so other items can point at them with edges. `ROADMAP.md` and
-`TIMELINE.md` stay as the human-readable rollups.
+entities so other items can point at them with edges. Storyline and
+foreshadow-thread items are created in the Roadmaps space and added to the
+`active-storylines` / `active-foreshadow` bundles; timeline-event items are
+created in the Timeline space. `ROADMAP.md` and `TIMELINE.md` stay as the
+human-readable rollups.
 
 ## Canon Ontology
 
