@@ -54,6 +54,19 @@ reverse edge for asymmetric types with a defined inverse. See
 [`canonworks-ontology.md`](./canonworks-ontology.md) for the full vocabulary and
 edge semantics.
 
+Both builtin workflows traverse this vocabulary when they assemble context
+packs. Their `kumiho_context` steps list every relationship and structural edge
+type in `traversal.edge_types` (an exact-match filter), seed the `canon-ontology`
+item on the canon-facing context step, and pass the vocabulary into the
+relationship-bearing prompts so proposed edges name canonical types and flag
+out-of-vocabulary ones. See
+[Consumed by the Workflows](./canonworks-ontology.md#consumed-by-the-workflows)
+for the per-step wiring and the drift-guard test. This work bumped
+`canonworks-serial-episode-factory` to `workflow_version` `2.6` and
+`canonworks-serial-canon-state-sync` to `workflow_version` `1.1`; the edits are
+additive apart from the version strings — step ids, order, and entity kinds are
+unchanged.
+
 ## Workflows
 
 - `canonworks-serial-episode-factory`
@@ -61,12 +74,16 @@ edge semantics.
   - Reads canon, style, volume, current state/progress, prior production
     episodes, relationship graph, storyline, and foreshadow bundles from
     Kumiho.
+  - Traverses the full canon-ontology edge vocabulary (character relationships
+    plus structural edges) when assembling its context pack.
   - Emits a production-ready episode, locked context pack, canon patch
     candidate, or blocked draft.
 
 - `canonworks-serial-canon-state-sync`
   - Runs after the episode factory.
   - Reads the production-ready episode plus its canon patch candidate.
+  - Traverses the same ontology edge vocabulary across both of its context
+    steps.
   - Emits current character, relationship, timeline, storyline, and foreshadow
     snapshots for the next episode run.
   - Supports `target_episode_number`, `target_episode_kref`,
