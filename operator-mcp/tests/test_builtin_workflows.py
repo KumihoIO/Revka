@@ -355,6 +355,7 @@ def _run_project_config(code: str, project_config: dict) -> dict:
         input=json.dumps(payload),
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=30,
     )
     assert proc.returncode == 0, (

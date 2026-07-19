@@ -864,6 +864,13 @@ async def _project_canon_to_typed_graph(
     ADDITION to the raw ``sdk.create_edge`` canon edges, which keep the narrative
     edge types verbatim. Best-effort and non-blocking: any failure, or a missing
     / too-old package, returns a notice and never breaks ``canonworks_init``.
+
+    Scope caveat: ``tool_memory_decompose`` accepts only the anchor ``kref`` plus
+    the entity/fact/relation payload — not a project name — so the memory manager
+    writes the typed nodes into its own configured project. The projected nodes
+    therefore bridge canon entities only when the manager's project is the canon
+    project; this is a property of the Kumiho decompose contract, not something
+    this consumer can override.
     """
     if not _HAS_KUMIHO_MEMORY_DECOMPOSE or _km_tool_memory_decompose is None:
         return _projection_notice("kumiho-memory decompose unavailable (absent or < 0.20.0)")
@@ -1357,6 +1364,10 @@ async def tool_canonworks_init(args: dict[str, Any], sdk: Any) -> dict[str, Any]
     # narrative predicate which Kumiho folds via its predicate registry. Each
     # projected predicate is run through canon_ontology.project_predicate (C) so
     # the fold is recorded even before Kumiho re-folds it internally.
+    # NOTE: decompose's contract (kref + entities/facts/relations) has no
+    # project_name; the memory manager materializes typed nodes into its own
+    # configured project. Bridging is fullest when that project is the canon
+    # project. This is a Kumiho-side contract property, not a canon defect.
     projection_entities = (
         [{"name": name, "type": "character"} for name in character_display.values()]
         + [{"name": name, "type": "storyline"} for name in storyline_display.values()]
