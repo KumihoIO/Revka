@@ -324,6 +324,14 @@ pub fn kumiho_mcp_server_config(kumiho_cfg: &KumihoConfig) -> McpServerConfig {
         "KUMIHO_MEMORY_RETRIEVAL_LIMIT".to_string(),
         kumiho_cfg.memory_retrieval_limit.max(1).to_string(),
     );
+    // Decision Memory tools (kumiho_code_why / kumiho_code_capture / ...) are
+    // opt-in for kumiho.mcp_server — without this flag they never register in
+    // the agent tool catalog and the operator-coding skill's memory steps are
+    // permanently skipped. Enable by default; an explicit override wins.
+    env.insert(
+        "KUMIHO_MEMORY_CODE".to_string(),
+        std::env::var("KUMIHO_MEMORY_CODE").unwrap_or_else(|_| "1".to_string()),
+    );
     if kumiho_cfg.is_local_ce() {
         // Local self-hosted Community Edition: tokenless, loopback-only.
         // Point the Python SDK (kumiho[mcp] >= 0.10.0) at the local server.
@@ -845,6 +853,39 @@ mod tests {
             !server.env.contains_key("KUMIHO_AUTO_CONFIGURE"),
             "Kumiho MCP must answer initialize before network discovery"
         );
+    }
+
+    #[test]
+    fn kumiho_mcp_server_config_enables_decision_memory_by_default() {
+        let _guard = ENV_LOCK.lock().expect("env lock poisoned");
+        let previous = std::env::var("KUMIHO_MEMORY_CODE").ok();
+
+        unsafe {
+            std::env::remove_var("KUMIHO_MEMORY_CODE");
+        }
+        let server = kumiho_mcp_server_config(&KumihoConfig::default());
+        assert_eq!(
+            server.env.get("KUMIHO_MEMORY_CODE").map(String::as_str),
+            Some("1"),
+            "Decision Memory tools must be enabled by default"
+        );
+
+        // An explicit operator override must win.
+        unsafe {
+            std::env::set_var("KUMIHO_MEMORY_CODE", "0");
+        }
+        let server = kumiho_mcp_server_config(&KumihoConfig::default());
+        assert_eq!(
+            server.env.get("KUMIHO_MEMORY_CODE").map(String::as_str),
+            Some("0")
+        );
+
+        unsafe {
+            match previous {
+                Some(value) => std::env::set_var("KUMIHO_MEMORY_CODE", value),
+                None => std::env::remove_var("KUMIHO_MEMORY_CODE"),
+            }
+        }
     }
 
     #[test]

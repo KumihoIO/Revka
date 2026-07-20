@@ -40,6 +40,7 @@ pub mod session_queue;
 pub mod sse;
 pub mod static_files;
 pub mod workspace_assets;
+pub mod workspace_changes;
 // portable-pty needs `openpty` from libutil which Android's NDK does not
 // reliably link.  The websocket terminal isn't a meaningful surface on a
 // phone runtime anyway, so we drop the module + its route on Android.

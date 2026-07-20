@@ -93,6 +93,10 @@ const translations: Record<Locale, Record<string, string>> = {
     'agent.activity_diff_label': '差异',
     'agent.activity_output_label': '输出',
     'agent.reasoning_trace_label': '思考过程',
+    'agent.code_changes_label': '代码变更',
+    'agent.code_changes_committed': '已提交',
+    'agent.code_changes_truncated': '截断',
+    'agent.code_changes_payload_truncated': '差异内容超出预算，部分文件未附带补丁。',
 
     // Tools
     'tools.name': '名称',
@@ -1596,6 +1600,10 @@ const translations: Record<Locale, Record<string, string>> = {
     'agent.activity_diff_label': 'Diff',
     'agent.activity_output_label': 'Output',
     'agent.reasoning_trace_label': 'Reasoning trace',
+    'agent.code_changes_label': 'Code changes',
+    'agent.code_changes_committed': 'committed',
+    'agent.code_changes_truncated': 'truncated',
+    'agent.code_changes_payload_truncated': 'Diff truncated — some files exceeded the payload budget.',
 
     // Tools
     'tools.name': 'Name',
@@ -3170,6 +3178,10 @@ const translations: Record<Locale, Record<string, string>> = {
     'agent.activity_diff_label': 'Diff',
     'agent.activity_output_label': 'Çıktı',
     'agent.reasoning_trace_label': 'Düşünce izi',
+    'agent.code_changes_label': 'Kod değişiklikleri',
+    'agent.code_changes_committed': 'commit edildi',
+    'agent.code_changes_truncated': 'kısaltıldı',
+    'agent.code_changes_payload_truncated': 'Diff kısaltıldı — bazı dosyalar yük bütçesini aştı.',
 
     // Tools
     'tools.name': 'Ad',
@@ -4601,6 +4613,10 @@ const translations: Record<Locale, Record<string, string>> = {
     'agent.activity_diff_label': 'Diff',
     'agent.activity_output_label': '출력',
     'agent.reasoning_trace_label': '사고 과정',
+    'agent.code_changes_label': '코드 변경',
+    'agent.code_changes_committed': '커밋됨',
+    'agent.code_changes_truncated': '잘림',
+    'agent.code_changes_payload_truncated': 'diff가 잘렸습니다 — 일부 파일이 페이로드 예산을 초과했습니다.',
 
     // Tools
     'tools.name': '이름',

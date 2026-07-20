@@ -757,7 +757,9 @@ export interface WsMessage {
     | 'stopped'
     | 'error'
     | 'session_start'
-    | 'connected';
+    | 'connected'
+    | 'workspace_context'
+    | 'code_changes';
   content?: string;
   full_response?: string;
   name?: string;
@@ -773,6 +775,49 @@ export interface WsMessage {
   detail?: string;
   /** Channel event payload from operator (for agent_event type) */
   event?: AgentChannelEvent;
+  /** Git repository context (for workspace_context type) */
+  workspace?: WorkspaceContextInfo;
+  /** Git-verified turn change summary (for code_changes type) */
+  changes?: CodeChangesPayload;
+}
+
+/** Git repository the Operator chat is working in (workspace badge). */
+export interface WorkspaceContextInfo {
+  /** Absolute repository root (git toplevel). */
+  root: string;
+  /** Repository directory name, e.g. `Revka`. */
+  repo: string;
+  /** Current branch, or `(detached)`. */
+  branch: string;
+  /** Short HEAD sha; null on an unborn branch. */
+  head?: string | null;
+  /** Dirty entry count from `git status --porcelain`. */
+  dirty_files: number;
+}
+
+/** One changed file inside a `code_changes` turn summary. */
+export interface CodeChangeFile {
+  path: string;
+  status: 'added' | 'modified' | 'deleted' | 'binary';
+  insertions?: number | null;
+  deletions?: number | null;
+  /** Unified diff, capped + secret-redacted. Absent for binary files. */
+  patch?: string;
+  truncated: boolean;
+}
+
+/** Git-verified summary of what an Operator turn changed on disk. */
+export interface CodeChangesPayload {
+  repo: string;
+  branch: string;
+  head_before?: string | null;
+  head_after?: string | null;
+  /** True when HEAD moved during the turn (the agent committed). */
+  committed: boolean;
+  files: CodeChangeFile[];
+  total_insertions: number;
+  total_deletions: number;
+  truncated: boolean;
 }
 
 /** Structured channel event relayed from the operator via the gateway. */

@@ -36,6 +36,14 @@ def main() -> int:
     os.environ.setdefault("GLOG_minloglevel", "2")
 
     argv = [str(interp), "-m", "operator_mcp", *sys.argv[1:]]
+    if os.name == "nt":
+        # os.execv on Windows is emulated as spawn-new-process + exit-parent,
+        # so the MCP client's pipe to THIS process drops while the real server
+        # is still importing — the handshake races and slow-importing sidecars
+        # lose. Stay resident and pass stdio through instead.
+        import subprocess
+
+        return subprocess.call(argv)
     os.execv(str(interp), argv)
 
 

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useContext } from 'react';
-import type { WsMessage, AgentChannelEvent } from '@/types/api';
+import type { WsMessage, AgentChannelEvent, WorkspaceContextInfo } from '@/types/api';
 import { WebSocketClient } from '@/lib/ws';
 import { generateUUID } from '@/lib/uuid';
 import { DraftContext } from '@/revka/hooks/useDraft';
@@ -134,6 +134,7 @@ export function useAgentChatSession({
   const [streamingThinking, setStreamingThinking] = useState('');
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [agentEvents, setAgentEvents] = useState<AgentChannelEvent[]>([]);
+  const [workspace, setWorkspace] = useState<WorkspaceContextInfo | null>(null);
   const [queuedTurns, setQueuedTurns] = useState<QueuedTurn[]>([]);
   const [stopping, setStopping] = useState(false);
   // Staged attachments waiting to ship with the next user message. Each
@@ -631,7 +632,46 @@ export function useAgentChatSession({
             break;
           }
 
-          case 'error':
+          case 'workspace_context': {
+            if (msg.workspace) setWorkspace(msg.workspace);
+            break;
+          }
+
+          case 'code_changes': {
+            const changes = msg.changes;
+            if (!changes || (changes.files.length === 0 && !changes.committed)) break;
+            markSendingTurnsSent();
+            const stats = `+${changes.total_insertions} −${changes.total_deletions}`;
+            const summary = changes.files.length > 0
+              ? `${changes.files.length} · ${stats}`
+              : t('agent.code_changes_committed');
+            // Combined patch text doubles as the copyable fallback detail for
+            // surfaces that render activity logs without the structured card.
+            const combined = changes.files
+              .map((f) => f.patch ?? '')
+              .filter(Boolean)
+              .join('\n');
+            const nextActivities = [
+              ...activitiesRef.current,
+              {
+                id: generateUUID(),
+                kind: 'code_changes' as const,
+                label: `${t('agent.code_changes_label')} · ${summary} · ⎇ ${changes.branch}`,
+                detail: combined || undefined,
+                codeChanges: changes,
+                timestamp: new Date(),
+              },
+            ];
+            activitiesRef.current = nextActivities;
+            setActivities(nextActivities);
+            break;
+          }
+
+          case 'error': {
+            // Persist in-flight activities into the error message (mirrors
+            // the `stopped` path) — a failed coding turn may already have
+            // changed files, and the code_changes card must survive.
+            const erroredActivities = activitiesRef.current;
             setMessages((prev) => [
               ...prev,
               {
@@ -639,6 +679,7 @@ export function useAgentChatSession({
                 role: 'agent',
                 content: `${t('agent.error_prefix')} ${msg.message ?? t('agent.unknown_error')}`,
                 timestamp: new Date(),
+                activityLog: erroredActivities.length > 0 ? erroredActivities : undefined,
               },
             ]);
             if (msg.code === 'AGENT_INIT_FAILED' || msg.code === 'AUTH_ERROR' || msg.code === 'PROVIDER_ERROR') {
@@ -656,6 +697,7 @@ export function useAgentChatSession({
             markSendingTurnsSent();
             setStopping(false);
             break;
+          }
         }
       };
 
@@ -992,5 +1034,6 @@ export function useAgentChatSession({
     submitMessage,
     typing,
     uploadingCount,
+    workspace,
   };
 }

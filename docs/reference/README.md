@@ -9,6 +9,7 @@ Structured reference index for commands, providers, channels, config, and integr
 - Channel setup + allowlists: [api/channels-reference.md](api/channels-reference.md)
 - Config defaults and keys: [api/config-reference.md](api/config-reference.md)
 - UI skin package format and gateway API: [ui-skins.md](ui-skins.md)
+- Operator coding harness (workspace badge, code-changes card, coding skill): [operator-coding.md](operator-coding.md)
 
 ## Provider & Integration Extensions
 

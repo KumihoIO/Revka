@@ -1,20 +1,22 @@
-import { useState } from 'react';
-import { Brain, Wrench, Zap, Bot, ChevronDown, ChevronRight } from 'lucide-react';
+import { useState, type ReactElement } from 'react';
+import { Brain, Wrench, Zap, Bot, ChevronDown, ChevronRight, GitCommitHorizontal } from 'lucide-react';
 import type { ActivityEvent } from './types';
 
-const ICON_MAP = {
+const ICON_MAP: Record<ActivityEvent['kind'], ReactElement> = {
   thinking: <Brain className="h-3.5 w-3.5" />,
   tool_call: <Wrench className="h-3.5 w-3.5" />,
   tool_result: <Zap className="h-3.5 w-3.5" />,
   operator: <Bot className="h-3.5 w-3.5" />,
-} as const;
+  code_changes: <GitCommitHorizontal className="h-3.5 w-3.5" />,
+};
 
-const COLOR_MAP = {
+const COLOR_MAP: Record<ActivityEvent['kind'], string> = {
   thinking: 'var(--pc-accent)',
   tool_call: '#f59e0b',
   tool_result: '#10b981',
   operator: '#8b5cf6',
-} as const;
+  code_changes: '#10b981',
+};
 
 interface ActivityIndicatorProps {
   event: ActivityEvent;

@@ -360,6 +360,15 @@ async fn handle_socket(
         .send(Message::Text(session_start.to_string().into()))
         .await;
 
+    // Workspace badge: tell the dashboard which git repository this chat
+    // operates in (best-effort; silently absent outside a repo). Detection
+    // runs concurrently with the connect handshake below so its git spawns
+    // never delay reading the client's first frame.
+    let workspace_ctx_task = {
+        let workspace_dir = state.config.lock().workspace_dir.clone();
+        tokio::spawn(async move { super::workspace_changes::detect_context(&workspace_dir).await })
+    };
+
     // ── Optional connect handshake ──────────────────────────────────
     // The first message may be a `{"type":"connect",...}` frame carrying
     // connection parameters.  If it is, we extract the params, send an
@@ -420,6 +429,14 @@ async fn handle_socket(
             // main loop so listen-only connections still receive broadcasts.
             debug!(session_id = %session_id, "No initial message within 5s — entering listen-only mode");
         }
+    }
+
+    // Deliver the workspace badge computed alongside the handshake. The
+    // dashboard treats `workspace_context` as order-independent state, so
+    // sending it after the connected ack is safe.
+    if let Ok(Some(ctx)) = workspace_ctx_task.await {
+        let msg = serde_json::json!({ "type": "workspace_context", "workspace": ctx });
+        let _ = sender.send(Message::Text(msg.to_string().into())).await;
     }
 
     // Subscribe to the broadcast channel early so we can relay operator channel
@@ -983,6 +1000,47 @@ fn stream_scan_region(buf: &str, prev_len: usize) -> &str {
     &buf[start..]
 }
 
+/// Send the post-turn workspace updates: a `code_changes` summary when the
+/// turn changed files (or committed), then a refreshed `workspace_context`
+/// so the dashboard badge tracks branch/head/dirty-state changes. Both are
+/// best-effort and silently absent outside a git repository.
+///
+/// `snapshot` should be `None` when the turn ran no tools — a tool-less
+/// turn cannot have changed the workspace, and skipping the diff avoids
+/// attributing a concurrent session's edits to this turn.
+///
+/// The whole telemetry pass shares one aggregate deadline: it runs on the
+/// turn's critical path before `done`/`stopped`/`error`, and a degraded
+/// filesystem must not stack per-invocation git timeouts into a
+/// minutes-long silent gap that stalls the client (or trips proxy idle
+/// windows) right after the model finished.
+async fn send_workspace_updates(
+    sender: &mut futures_util::stream::SplitSink<WebSocket, Message>,
+    snapshot: Option<&super::workspace_changes::WorkspaceSnapshot>,
+    workspace_dir: &std::path::Path,
+) {
+    const OVERALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+    let (changes, ctx) = tokio::time::timeout(OVERALL_TIMEOUT, async {
+        let changes = match snapshot {
+            Some(snap) => super::workspace_changes::compute_changes(snap).await,
+            None => None,
+        };
+        let ctx = super::workspace_changes::detect_context(workspace_dir).await;
+        (changes, ctx)
+    })
+    .await
+    .unwrap_or((None, None));
+
+    if let Some(changes) = changes {
+        let msg = serde_json::json!({ "type": "code_changes", "changes": changes });
+        let _ = sender.send(Message::Text(msg.to_string().into())).await;
+    }
+    if let Some(ctx) = ctx {
+        let msg = serde_json::json!({ "type": "workspace_context", "workspace": ctx });
+        let _ = sender.send(Message::Text(msg.to_string().into())).await;
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn process_chat_message(
     state: &AppState,
@@ -1016,6 +1074,12 @@ async fn process_chat_message(
     if let Some(ref backend) = state.session_backend {
         let _ = backend.set_session_state(session_key, "running", Some(&turn_id));
     }
+
+    // Pre-turn git snapshot: lets the gateway attach a git-verified change
+    // summary to this turn no matter which tool produced the edits
+    // (file_edit, shell, delegated coding CLIs). `None` outside a repo.
+    let workspace_dir = state.config.lock().workspace_dir.clone();
+    let ws_snapshot = super::workspace_changes::snapshot(&workspace_dir).await;
 
     // Channel for streaming turn events from the agent.
     let (event_tx, mut event_rx) = tokio::sync::mpsc::channel::<TurnEvent>(64);
@@ -1135,6 +1199,10 @@ async fn process_chat_message(
     // persisted or delivered.
     let mut streamed_buf = String::new();
     let mut chunk_redaction_active = false;
+    // Tool-less turns (pure Q&A) skip the post-turn git diff: they cannot
+    // have changed the workspace, and diffing anyway would attribute a
+    // concurrent session's edits to this turn.
+    let mut turn_used_tools = false;
 
     tokio::pin!(turn_fut);
     let result = loop {
@@ -1171,6 +1239,7 @@ async fn process_chat_message(
                             Some(serde_json::json!({ "type": "thinking", "content": delta }))
                         }
                         TurnEvent::ToolCall { name, args } => {
+                            turn_used_tools = true;
                             Some(serde_json::json!({ "type": "tool_call", "name": name, "args": args }))
                         }
                         TurnEvent::ToolResult { name, output } => {
@@ -1283,6 +1352,14 @@ async fn process_chat_message(
         if let Some(ref backend) = state.session_backend {
             let _ = backend.set_session_state(session_key, "idle", None);
         }
+        // Surface whatever the interrupted turn already changed on disk —
+        // the client persists in-flight activities into the stopped notice.
+        let snapshot = if turn_used_tools {
+            ws_snapshot.as_ref()
+        } else {
+            None
+        };
+        send_workspace_updates(sender, snapshot, &workspace_dir).await;
         let stopped = serde_json::json!({
             "type": "stopped",
             "message": "Stopped current Operator turn."
@@ -1312,6 +1389,12 @@ async fn process_chat_message(
             if let Some(ref backend) = state.session_backend {
                 let _ = backend.set_session_state(session_key, "idle", None);
             }
+            let snapshot = if turn_used_tools {
+                ws_snapshot.as_ref()
+            } else {
+                None
+            };
+            send_workspace_updates(sender, snapshot, &workspace_dir).await;
             let stopped = serde_json::json!({
                 "type": "stopped",
                 "message": format!(
@@ -1349,6 +1432,16 @@ async fn process_chat_message(
                 let _ = backend.append(session_key, &assistant_msg);
             }
 
+            // Git-verified change summary + refreshed workspace badge. Sent
+            // before `done` so the client folds the changes card into this
+            // turn's activity log.
+            let snapshot = if turn_used_tools {
+                ws_snapshot.as_ref()
+            } else {
+                None
+            };
+            send_workspace_updates(sender, snapshot, &workspace_dir).await;
+
             // Send chunk_reset so the client clears any accumulated draft
             // before the authoritative done message.
             let reset = serde_json::json!({ "type": "chunk_reset" });
@@ -1379,6 +1472,15 @@ async fn process_chat_message(
             }
 
             tracing::error!(error = %e, "Agent turn failed");
+            // A failed turn may still have edited files — surface the
+            // changes so the user isn't left guessing what a crashed
+            // coding turn did to the workspace.
+            let snapshot = if turn_used_tools {
+                ws_snapshot.as_ref()
+            } else {
+                None
+            };
+            send_workspace_updates(sender, snapshot, &workspace_dir).await;
             let sanitized = crate::providers::sanitize_api_error(&e.to_string());
             let error_code = if sanitized.to_lowercase().contains("api key")
                 || sanitized.to_lowercase().contains("authentication")

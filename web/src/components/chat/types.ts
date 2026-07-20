@@ -1,5 +1,7 @@
 // Shared chat types used by AgentChat (full-page) and ChatPanel (modal).
 
+import type { CodeChangesPayload } from '@/types/api';
+
 export interface ChatMessage {
   id: string;
   role: 'user' | 'agent' | 'operator';
@@ -14,12 +16,14 @@ export interface ChatMessage {
 
 export interface ActivityEvent {
   id: string;
-  kind: 'thinking' | 'tool_call' | 'tool_result' | 'operator';
+  kind: 'thinking' | 'tool_call' | 'tool_result' | 'operator' | 'code_changes';
   label: string;
   detail?: string;
   toolName?: string;
   status?: 'running' | 'done';
   timestamp: Date;
+  /** Structured payload for kind === 'code_changes' (git-verified turn diff). */
+  codeChanges?: CodeChangesPayload;
 }
 
 export type ActivityKind = ActivityEvent['kind'];
