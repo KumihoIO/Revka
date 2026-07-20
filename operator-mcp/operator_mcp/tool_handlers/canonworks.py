@@ -18,6 +18,8 @@ try:  # pragma: no cover - PyYAML is present in normal runtime/test envs.
 except Exception:  # pragma: no cover
     yaml = None  # type: ignore[assignment]
 
+from .. import canon_ontology
+
 
 CORE_BUNDLES = {
     "main_canon": "main-canon",
@@ -82,6 +84,7 @@ TOP_LEVEL_SEED_FIELDS = {
     "guardrails",
     "characters",
     "relationships",
+    "create_inverse_edges",
     "timeline_events",
     "storylines",
     "foreshadow_threads",
@@ -452,16 +455,62 @@ def _preview_graph(args: dict[str, Any]) -> dict[str, Any]:
             "artifact": "CHARACTER.md",
         })
 
-    edges: list[dict[str, str]] = []
+    storylines = [_as_dict(s) for s in _as_list(args.get("storylines"))]
+    foreshadow_threads = [_as_dict(f) for f in _as_list(args.get("foreshadow_threads"))]
+    timeline_events = [_as_dict(e) for e in _as_list(args.get("timeline_events"))]
+
+    storyline_ids: set[str] = set()
+    for index, storyline in enumerate(storylines, start=1):
+        sid = _storyline_slug(storyline, index)
+        storyline_ids.add(sid)
+        items.append({
+            "role": f"storyline:{sid}",
+            "space": spaces["roadmaps"],
+            "name": sid,
+            "kind": "storyline",
+            "kref": f"kref://{spaces['roadmaps']}/{sid}.storyline",
+            "artifact": "STORYLINE.md",
+        })
+    for index, thread in enumerate(foreshadow_threads, start=1):
+        fid = _foreshadow_slug(thread, index)
+        items.append({
+            "role": f"foreshadow:{fid}",
+            "space": spaces["roadmaps"],
+            "name": fid,
+            "kind": "foreshadow-thread",
+            "kref": f"kref://{spaces['roadmaps']}/{fid}.foreshadow-thread",
+            "artifact": "FORESHADOW.md",
+        })
+    for index, _event in enumerate(timeline_events, start=1):
+        eid = _timeline_event_name(index)
+        items.append({
+            "role": f"timeline_event:{eid}",
+            "space": spaces["timeline"],
+            "name": eid,
+            "kind": "timeline-event",
+            "kref": f"kref://{spaces['timeline']}/{eid}.timeline-event",
+            "artifact": "TIMELINE_EVENT.md",
+        })
+    items.append({
+        "role": "canon_ontology",
+        "space": spaces["canon_rules"],
+        "name": "canon-ontology",
+        "kind": "canon-ontology",
+        "kref": f"kref://{spaces['canon_rules']}/canon-ontology.canon-ontology",
+        "artifact": "CANON_ONTOLOGY.md",
+    })
+
+    edges: list[dict[str, Any]] = []
     warnings: list[dict[str, str]] = []
     for rel in relationships:
         source_raw = _first(rel.get("from"), rel.get("source"), rel.get("source_id"))
         target_raw = _first(rel.get("to"), rel.get("target"), rel.get("target_id"))
         source = _slugify(source_raw, "")
         target = _slugify(target_raw, "")
-        edge_type = _first(rel.get("edge_type"), rel.get("type"), "RELATED_TO").upper().replace("-", "_")
+        declared = _first(rel.get("edge_type"), rel.get("type"), "RELATED_TO")
+        edge_type, known = canon_ontology.normalize_relationship_type(declared)
         if source in character_ids and target in character_ids:
-            edges.append({"from": source, "to": target, "edge_type": edge_type})
+            edges.append({"from": source, "to": target, "edge_type": edge_type, "in_vocabulary": known})
         else:
             warnings.append({
                 "type": "relationship_edge_skipped",
@@ -469,6 +518,31 @@ def _preview_graph(args: dict[str, Any]) -> dict[str, Any]:
                 "to": target_raw,
                 "reason": "relationship endpoints must match character ids after slug normalization",
             })
+
+    structural_edges: list[dict[str, str]] = []
+    for char_id in character_ids:
+        structural_edges.append({"from": char_id, "to": "series-bible", "edge_type": "APPEARS_IN"})
+    for index, storyline in enumerate(storylines, start=1):
+        sid = _storyline_slug(storyline, index)
+        for raw_char in _storyline_character_ids(storyline):
+            cslug = _slugify(str(raw_char), "")
+            if cslug in character_ids:
+                structural_edges.append({"from": sid, "to": cslug, "edge_type": "INVOLVES"})
+            else:
+                warnings.append({
+                    "type": "storyline_character_skipped",
+                    "storyline": sid,
+                    "character": str(raw_char),
+                    "reason": "storyline character must match a character id after slug normalization",
+                })
+    for index, thread in enumerate(foreshadow_threads, start=1):
+        fid = _foreshadow_slug(thread, index)
+        target_slug = _foreshadow_target_slug(thread)
+        if target_slug and target_slug in storyline_ids:
+            structural_edges.append({"from": fid, "to": target_slug, "edge_type": "FORESHADOWS"})
+    for index, _event in enumerate(timeline_events, start=1):
+        eid = _timeline_event_name(index)
+        structural_edges.append({"from": eid, "to": "timeline", "edge_type": "BELONGS_TO"})
 
     return {
         "project": shape["project"],
@@ -478,6 +552,12 @@ def _preview_graph(args: dict[str, Any]) -> dict[str, Any]:
         "bundles": [{"key": key, "name": name, "space": spaces["bundles"]} for key, name in bundles.items()],
         "items": items,
         "relationship_edges": edges,
+        "structural_edges": structural_edges,
+        "ontology": {
+            "version": canon_ontology.ONTOLOGY_VERSION,
+            "character_edge_types": canon_ontology.relationship_type_names(),
+            "structural_edge_types": canon_ontology.structural_edge_names(),
+        },
         "warnings": warnings,
     }
 
@@ -543,6 +623,32 @@ async def _create_revision_with_artifact(
 def _character_name(character: dict[str, Any], index: int) -> str:
     raw = _first(character.get("id"), character.get("name"), character.get("display_name"), f"character-{index}")
     return _slugify(raw, f"character-{index}")
+
+
+def _storyline_slug(storyline: dict[str, Any], index: int) -> str:
+    raw = _first(storyline.get("id"), storyline.get("title"), storyline.get("name"), f"storyline-{index}")
+    return _slugify(raw, f"storyline-{index}")
+
+
+def _foreshadow_slug(thread: dict[str, Any], index: int) -> str:
+    raw = _first(thread.get("id"), thread.get("title"), thread.get("name"), f"foreshadow-{index}")
+    return _slugify(raw, f"foreshadow-{index}")
+
+
+def _timeline_event_name(index: int) -> str:
+    return f"event-{index:03d}"
+
+
+def _storyline_character_ids(storyline: dict[str, Any]) -> list[str]:
+    for key in ("characters", "cast", "involves"):
+        if storyline.get(key) is not None:
+            return _as_list(storyline.get(key))
+    return []
+
+
+def _foreshadow_target_slug(thread: dict[str, Any]) -> str:
+    raw = _first(thread.get("payoff_target"), thread.get("storyline"), thread.get("target"))
+    return _slugify(raw, "") if raw else ""
 
 
 def _render_series_bible(args: dict[str, Any]) -> str:
@@ -618,6 +724,39 @@ def _render_roadmap(storylines: list[dict[str, Any]], foreshadow_threads: list[d
     return "\n".join(lines).strip() + "\n"
 
 
+def _render_storyline(storyline: dict[str, Any], sid: str) -> str:
+    return "\n".join([
+        f"# Storyline: {_first(storyline.get('title'), sid)}",
+        "",
+        f"- id: {sid}",
+        f"- summary: {_first(storyline.get('summary'), storyline.get('description'))}",
+        f"- goal: {_first(storyline.get('goal'), storyline.get('payoff'))}",
+        "",
+    ])
+
+
+def _render_foreshadow(thread: dict[str, Any], fid: str) -> str:
+    return "\n".join([
+        f"# Foreshadow Thread: {_first(thread.get('title'), fid)}",
+        "",
+        f"- id: {fid}",
+        f"- summary: {_first(thread.get('summary'), thread.get('description'))}",
+        f"- payoff_target: {_first(thread.get('payoff_target'), thread.get('storyline'))}",
+        "",
+    ])
+
+
+def _render_timeline_event(event: dict[str, Any], eid: str) -> str:
+    when = _first(event.get("time"), event.get("date"), event.get("position"), "unplaced")
+    return "\n".join([
+        f"# Timeline Event: {eid}",
+        "",
+        f"- when: {when}",
+        f"- summary: {_first(event.get('summary'), event.get('event'), event.get('title'))}",
+        "",
+    ])
+
+
 def _build_config(
     args: dict[str, Any],
     project: str,
@@ -625,6 +764,7 @@ def _build_config(
     spaces: dict[str, str],
     bundles: dict[str, str],
     actual_krefs: dict[str, str] | None = None,
+    ontology_kref: str = "",
 ) -> dict[str, Any]:
     krefs = {
         "series_bible": f"kref://{spaces['series']}/main.series-bible",
@@ -636,6 +776,8 @@ def _build_config(
         "roadmap": f"kref://{spaces['roadmaps']}/long-arc.series-roadmap",
     }
     krefs.update({key: value for key, value in (actual_krefs or {}).items() if value})
+    if ontology_kref:
+        krefs["canon_ontology"] = ontology_kref
     return {
         "canon_project": {
             "id": story_slug,
@@ -656,6 +798,12 @@ def _build_config(
                 "blocked_name_suffix": "blocked",
             },
             "krefs": krefs,
+            "ontology": {
+                "version": canon_ontology.ONTOLOGY_VERSION,
+                "kref": ontology_kref,
+                "character_edge_types": canon_ontology.relationship_type_names(),
+                "structural_edge_types": canon_ontology.structural_edge_names(),
+            },
             "agent_personas": _as_dict(args.get("agent_personas")),
             "priority_rules": _as_list(args.get("priority_rules") or [
                 "canon_integrity_over_hook",
@@ -705,6 +853,7 @@ async def tool_canonworks_init(args: dict[str, Any], sdk: Any) -> dict[str, Any]
         "artifacts": [],
         "bundle_members": [],
         "edges": [],
+        "structural_edges": [],
         "warnings": [],
     }
 
@@ -809,6 +958,76 @@ async def tool_canonworks_init(args: dict[str, Any], sdk: Any) -> dict[str, Any]
         )
         character_revisions[char_id] = doc["revision"]["kref"]
 
+    # Structural ontology edges: each character APPEARS_IN the series bible.
+    series_bible_rev = series_bible["revision"]["kref"]
+    for char_id, char_rev in character_revisions.items():
+        await sdk.create_edge(
+            char_rev, series_bible_rev, "APPEARS_IN",
+            _jsonable_metadata({"canonworks": "true", **canon_ontology.structural_edge_metadata("APPEARS_IN")}),
+        )
+        created["structural_edges"].append({"from": char_id, "to": "series-bible", "edge_type": "APPEARS_IN"})
+
+    # First-class storyline items (graph-native, in addition to ROADMAP.md).
+    storyline_revisions: dict[str, str] = {}
+    for index, storyline in enumerate(storylines, start=1):
+        sid = _storyline_slug(storyline, index)
+        doc = await create_doc(
+            "roadmaps", sid, "storyline", f"storyline:{sid}", "STORYLINE.md",
+            _render_storyline(storyline, sid),
+            {"storyline_id": sid, "summary": _first(storyline.get("summary"), storyline.get("description")), "goal": _first(storyline.get("goal"), storyline.get("payoff"))},
+        )
+        storyline_revisions[sid] = doc["revision"]["kref"]
+        if await sdk.add_bundle_member(bundle_krefs["active_storylines"], doc["item"]["kref"]):
+            created["bundle_members"].append({"bundle": bundles["active_storylines"], "item_kref": doc["item"]["kref"]})
+        for raw_char in _storyline_character_ids(storyline):
+            cslug = _slugify(str(raw_char), "")
+            if cslug in character_revisions:
+                await sdk.create_edge(
+                    doc["revision"]["kref"], character_revisions[cslug], "INVOLVES",
+                    _jsonable_metadata({"canonworks": "true", **canon_ontology.structural_edge_metadata("INVOLVES")}),
+                )
+                created["structural_edges"].append({"from": sid, "to": cslug, "edge_type": "INVOLVES"})
+            else:
+                created["warnings"].append({
+                    "type": "storyline_character_skipped",
+                    "storyline": sid,
+                    "character": str(raw_char),
+                    "reason": "storyline character must match a character id after slug normalization",
+                })
+
+    # First-class foreshadow-thread items.
+    for index, thread in enumerate(foreshadow_threads, start=1):
+        fid = _foreshadow_slug(thread, index)
+        target_slug = _foreshadow_target_slug(thread)
+        doc = await create_doc(
+            "roadmaps", fid, "foreshadow-thread", f"foreshadow:{fid}", "FORESHADOW.md",
+            _render_foreshadow(thread, fid),
+            {"foreshadow_id": fid, "summary": _first(thread.get("summary"), thread.get("description")), "payoff_target": _first(thread.get("payoff_target"), thread.get("storyline"))},
+        )
+        if await sdk.add_bundle_member(bundle_krefs["active_foreshadow"], doc["item"]["kref"]):
+            created["bundle_members"].append({"bundle": bundles["active_foreshadow"], "item_kref": doc["item"]["kref"]})
+        if target_slug and target_slug in storyline_revisions:
+            await sdk.create_edge(
+                doc["revision"]["kref"], storyline_revisions[target_slug], "FORESHADOWS",
+                _jsonable_metadata({"canonworks": "true", **canon_ontology.structural_edge_metadata("FORESHADOWS")}),
+            )
+            created["structural_edges"].append({"from": fid, "to": target_slug, "edge_type": "FORESHADOWS"})
+
+    # First-class timeline-event items, each BELONGS_TO the series timeline.
+    timeline_rev = timeline["revision"]["kref"]
+    for index, event in enumerate(timeline_events, start=1):
+        eid = _timeline_event_name(index)
+        doc = await create_doc(
+            "timeline", eid, "timeline-event", f"timeline_event:{eid}", "TIMELINE_EVENT.md",
+            _render_timeline_event(event, eid),
+            {"event_id": eid, "summary": _first(event.get("summary"), event.get("event"), event.get("title"))},
+        )
+        await sdk.create_edge(
+            doc["revision"]["kref"], timeline_rev, "BELONGS_TO",
+            _jsonable_metadata({"canonworks": "true", **canon_ontology.structural_edge_metadata("BELONGS_TO")}),
+        )
+        created["structural_edges"].append({"from": eid, "to": "timeline", "edge_type": "BELONGS_TO"})
+
     current_docs = [
         await create_doc("state", "current-character-state-snapshot", "character-state", "current_character_state", "CURRENT_CHARACTER_STATE.md", "# Current Character State\n\nSeeded by CanonWorks.\n", {}),
         await create_doc("state", "current-relationship-state-snapshot", "relationship-state", "current_relationship_state", "CURRENT_RELATIONSHIP_STATE.md", "# Current Relationship State\n\nSeeded by CanonWorks.\n", {}),
@@ -816,6 +1035,17 @@ async def tool_canonworks_init(args: dict[str, Any], sdk: Any) -> dict[str, Any]
         await create_doc("progress", "current-storyline-progress-snapshot", "storyline-progress", "current_storyline_progress", "CURRENT_STORYLINE_PROGRESS.md", "# Current Storyline Progress\n\nSeeded by CanonWorks.\n", {}),
         await create_doc("progress", "current-foreshadow-progress-snapshot", "foreshadow-progress", "current_foreshadow_progress", "CURRENT_FORESHADOW_PROGRESS.md", "# Current Foreshadow Progress\n\nSeeded by CanonWorks.\n", {}),
     ]
+
+    ontology_doc = await create_doc(
+        "canon_rules",
+        "canon-ontology",
+        "canon-ontology",
+        "canon_ontology",
+        "CANON_ONTOLOGY.md",
+        canon_ontology.render_ontology_doc(),
+        {"ontology_version": canon_ontology.ONTOLOGY_VERSION, "config_kind": "canon-ontology"},
+        tag="published",
+    )
 
     config = _build_config(
         args,
@@ -832,6 +1062,7 @@ async def tool_canonworks_init(args: dict[str, Any], sdk: Any) -> dict[str, Any]
             "timeline": str(timeline["item"].get("kref", "")),
             "roadmap": str(roadmap["item"].get("kref", "")),
         },
+        ontology_kref=str(ontology_doc["item"].get("kref", "")),
     )
     config_yaml = _yaml_dump(config)
     config_doc = await create_doc(
@@ -852,6 +1083,7 @@ async def tool_canonworks_init(args: dict[str, Any], sdk: Any) -> dict[str, Any]
         relationship_map["item"]["kref"],
         timeline["item"]["kref"],
         roadmap["item"]["kref"],
+        ontology_doc["item"]["kref"],
     ]
     for item_kref in main_members:
         if await sdk.add_bundle_member(bundle_krefs["main_canon"], item_kref):
@@ -871,20 +1103,55 @@ async def tool_canonworks_init(args: dict[str, Any], sdk: Any) -> dict[str, Any]
         if await sdk.add_bundle_member(bundle_krefs["state_sync_snapshots"], doc["item"]["kref"]):
             created["bundle_members"].append({"bundle": bundles["state_sync_snapshots"], "item_kref": doc["item"]["kref"]})
 
+    create_inverse = bool(args.get("create_inverse_edges"))
     for rel in relationships:
         source_raw = _first(rel.get("from"), rel.get("source"), rel.get("source_id"))
         target_raw = _first(rel.get("to"), rel.get("target"), rel.get("target_id"))
         source = _slugify(source_raw, "")
         target = _slugify(target_raw, "")
         if source in character_revisions and target in character_revisions:
-            edge_type = _first(rel.get("edge_type"), rel.get("type"), "RELATED_TO").upper().replace("-", "_")
-            metadata = {
+            declared = _first(rel.get("edge_type"), rel.get("type"), "RELATED_TO")
+            edge_type, known = canon_ontology.normalize_relationship_type(declared)
+            onto = canon_ontology.edge_metadata_for(edge_type)
+            metadata = _jsonable_metadata({
                 "relationship": _first(rel.get("label"), rel.get("relationship"), edge_type),
                 "summary": _first(rel.get("summary"), rel.get("notes")),
                 "canonworks": "true",
-            }
+                "ontology_version": onto["ontology_version"],
+                "edge_category": onto["category"],
+                "edge_symmetric": onto["symmetric"],
+                "inverse_edge_type": onto["inverse_of"],
+                "in_vocabulary": onto["in_vocabulary"],
+            })
             await sdk.create_edge(character_revisions[source], character_revisions[target], edge_type, metadata)
-            created["edges"].append({"from": source, "to": target, "edge_type": edge_type})
+            created["edges"].append({"from": source, "to": target, "edge_type": edge_type, "in_vocabulary": known})
+            if not known:
+                warning = {
+                    "type": "relationship_edge_type_unknown",
+                    "from": source,
+                    "to": target,
+                    "edge_type": edge_type,
+                    "declared_type": str(declared),
+                    "reason": "relationship edge_type is not in the CanonWorks ontology vocabulary; preserved as declared",
+                }
+                suggestion = canon_ontology.suggest_relationship_type(declared)
+                if suggestion:
+                    warning["suggestion"] = suggestion
+                created["warnings"].append(warning)
+            if create_inverse and not onto["symmetric"] and onto["inverse_of"]:
+                inverse_type = str(onto["inverse_of"])
+                inverse_metadata = _jsonable_metadata({
+                    "relationship": inverse_type,
+                    "summary": _first(rel.get("summary"), rel.get("notes")),
+                    "canonworks": "true",
+                    "ontology_version": onto["ontology_version"],
+                    "edge_category": onto["category"],
+                    "derived": "inverse",
+                    "inverse_of_edge_type": edge_type,
+                    "in_vocabulary": True,
+                })
+                await sdk.create_edge(character_revisions[target], character_revisions[source], inverse_type, inverse_metadata)
+                created["edges"].append({"from": target, "to": source, "edge_type": inverse_type, "derived": "inverse"})
         else:
             created["warnings"].append({
                 "type": "relationship_edge_skipped",

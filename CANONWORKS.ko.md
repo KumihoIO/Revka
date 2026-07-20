@@ -352,10 +352,21 @@ timeline
 long-arc roadmap
 production style guide
 character items
+storyline items
+foreshadow-thread items
+timeline-event items
 current state/progress snapshots
 relationship revision edges
+structural edges (APPEARS_IN / INVOLVES / FORESHADOWS / BELONGS_TO)
+canon ontology item + CANON_ONTOLOGY.md
 canonworks project config artifact
 ```
+
+`storyline`, `foreshadow-thread`, `timeline-event`은 이제 일급 item이라 다른
+item이 edge로 이들을 가리킬 수 있다. storyline과 foreshadow-thread item은
+Roadmaps space에 만들어져 `active-storylines` / `active-foreshadow` bundle에
+추가되고, timeline-event item은 Timeline space에 만들어진다. `ROADMAP.md`와
+`TIMELINE.md`는 사람이 읽는 rollup으로 그대로 남는다.
 
 중요한 반환값:
 
@@ -371,11 +382,64 @@ created.revisions
 created.artifacts
 created.bundle_members
 created.edges
+created.structural_edges
 created.warnings
 next_workflows
 ```
 
+`created.edges`는 캐릭터 관계 edge(그리고 켜져 있으면 파생된 inverse edge)를,
+`created.structural_edges`는 `APPEARS_IN` / `INVOLVES` / `FORESHADOWS` /
+`BELONGS_TO` edge를 담는다.
+
 다음 workflow에는 보통 `project_config_artifact_path`를 넘긴다.
+
+## 캐논 온톨로지
+
+CanonWorks는 캐논 그래프를 **캐논 온톨로지**라는 통제된 어휘로 타입화한다.
+관계 `edge_type`은 이 어휘로 정규화되며, 영어와 한국어 별칭을 모두 받는다
+(`rival` / `라이벌` → `RIVAL_OF`, `동맹` → `ALLY_OF`, `스승` → `MENTOR_OF`).
+각 관계 유형은 category, 대칭 여부, inverse 의미를 함께 갖는다. 어휘에 없는
+유형은 강제로 바꾸지 않고 선언된 형태 그대로 보존하되 out-of-vocabulary로
+표시한다. 즉 온톨로지 이전에 만들어지던 edge는 지금도 똑같이 만들어진다(하위
+호환).
+
+`canonworks_init`는 관계 edge 외에 구조 edge도 만든다.
+
+```text
+APPEARS_IN     character → series bible
+INVOLVES       storyline → character
+FORESHADOWS    foreshadow-thread → storyline
+BELONGS_TO     timeline-event → timeline (Kumiho scope edge 재사용)
+```
+
+또한 `canon-ontology` item과 `CANON_ONTOLOGY.md` artifact를 만들어
+`main-canon` bundle에 넣는다. 어휘 전체, 별칭 표, edge 의미는
+[`docs/reference/canonworks-ontology.md`](docs/reference/canonworks-ontology.md)를
+참고한다.
+
+관계 endpoint가 캐릭터 id와 맞으면 edge가 만들어지고, 맞지 않으면
+`relationship_edge_skipped` warning이 반환된다(기존 동작 그대로). 만들어진 edge가
+어휘에 없는 유형을 쓰면 유형은 보존되고, 차단하지 않는
+`relationship_edge_type_unknown` warning이 반환된다. `create_inverse_edges: true`를
+주면 inverse가 정의된 비대칭 유형에 대해 역방향 edge까지 만든다(예: `MENTOR_OF`
+→ `MENTEE_OF`). 대칭 유형은 역방향 edge를 중복해서 만들지 않는다.
+
+생성되는 config의 `canon_project`에는 이름만 담은 `ontology` 블록과
+`krefs.canon_ontology`가 추가된다.
+
+```yaml
+canon_project:
+  krefs:
+    canon_ontology: kref://GlassCity/CanonRules/canon-ontology.canon-ontology
+  ontology:
+    version: '1'
+    kref: kref://GlassCity/CanonRules/canon-ontology.canon-ontology
+    character_edge_types: [RELATED_TO, ALLY_OF, RIVAL_OF, MENTOR_OF, ...]
+    structural_edge_types: [APPEARS_IN, INVOLVES, FORESHADOWS, BELONGS_TO]
+```
+
+category, 대칭, inverse 같은 전체 의미는 config가 아니라 `CANON_ONTOLOGY.md`
+artifact에 들어간다.
 
 ## 저수준 2단계: 다음 회차 만들기
 

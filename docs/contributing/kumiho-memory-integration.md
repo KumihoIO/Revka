@@ -129,6 +129,16 @@ Provenance is what separates a graph memory from a flat note. Revka uses six edg
 
 When in doubt, let `discover_edges: true` on `reflect` infer the edges. Manually create edges only when you have semantic information the LLM can't infer (`DEPENDS_ON` ordering is the typical case).
 
+### CanonWorks narrative ontology
+
+CanonWorks layers a narrative-domain **canon ontology** on top of these
+provenance edges rather than replacing them. It adds a controlled
+character-relationship vocabulary (`RIVAL_OF`, `MENTOR_OF`, …) and structural
+edges (`APPEARS_IN`, `INVOLVES`, `FORESHADOWS`), and it reuses the `BELONGS_TO`
+scope edge above for timeline events instead of inventing a synonym. See
+[`../reference/canonworks-ontology.md`](../reference/canonworks-ontology.md) for
+the full vocabulary and semantics.
+
 ---
 
 ## Space organisation
