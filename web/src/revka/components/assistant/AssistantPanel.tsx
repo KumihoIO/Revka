@@ -358,7 +358,11 @@ const ChatScrollback = memo(function ChatScrollback({
                   <ActivityCard
                     key={evt.id}
                     event={evt}
-                    accent={evt.kind === 'tool_result' ? 'var(--revka-status-success)' : colors.secondary}
+                    accent={
+                      evt.kind === 'tool_result' || evt.kind === 'code_changes'
+                        ? 'var(--revka-status-success)'
+                        : colors.secondary
+                    }
                     fontSize={fontSize}
                   />
                 ))}
@@ -422,7 +426,7 @@ const ChatScrollback = memo(function ChatScrollback({
               key={evt.id}
               event={evt}
               accent={
-                evt.kind === 'tool_result'
+                evt.kind === 'tool_result' || evt.kind === 'code_changes'
                   ? 'var(--revka-status-success)'
                   : evt.kind === 'thinking'
                     ? 'var(--revka-text-faint)'
@@ -517,6 +521,7 @@ function ChatPane({
     stopping,
     typing,
     uploadingCount,
+    workspace,
   } = useAgentChatSession({
     sessionId,
     sessionName,
@@ -1082,6 +1087,21 @@ function ChatPane({
             />
             {connected ? 'live' : 'offline'}
           </span>
+          {/* Workspace badge — which git repo/branch this Operator session
+              works in. `*` marks a dirty working tree. Hidden outside a repo. */}
+          {workspace && (
+            <span
+              className="flex min-w-0 shrink items-center gap-1 font-mono text-[10px]"
+              style={{ color: 'var(--revka-text-muted)' }}
+              title={`${workspace.root}${workspace.head ? ` @ ${workspace.head}` : ''}`}
+            >
+              <GitBranch className="h-3 w-3 shrink-0" />
+              <span className="truncate">
+                {workspace.repo}:{workspace.branch}
+                {workspace.dirty_files > 0 ? '*' : ''}
+              </span>
+            </span>
+          )}
           {/* In-flight notice — sits between the live/offline indicator
               and the pageContext crumb. Clarifies why the send button is
               disabled while the previous turn is still streaming. */}

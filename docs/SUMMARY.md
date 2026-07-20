@@ -38,6 +38,7 @@ Last refreshed: **April 27, 2026**.
 - [reference/api/providers-reference.md](reference/api/providers-reference.md)
 - [reference/api/channels-reference.md](reference/api/channels-reference.md)
 - [reference/ui-skins.md](reference/ui-skins.md)
+- [reference/operator-coding.md](reference/operator-coding.md)
 - [openai-temperature-compatibility.md](openai-temperature-compatibility.md)
 
 ## 3) Standard Operating Procedures
