@@ -114,6 +114,17 @@ and a non-blocking `relationship_edge_type_unknown` warning is returned. Pass
 `create_inverse_edges: true` to also create the reverse edge for asymmetric types
 that define an inverse (for example `MENTOR_OF` → `MENTEE_OF`).
 
+Both builtin workflows traverse this vocabulary when they build context packs.
+`canonworks-serial-episode-factory` and `canonworks-serial-canon-state-sync` list
+every relationship and structural edge type in their `kumiho_context` traversal
+filter (an exact string match, so each type must appear literally), seed the
+`canon-ontology` item on the canon-facing context step, and instruct the
+relationship-bearing prompts to name `relation_kind` from the vocabulary and flag
+out-of-vocabulary edges as patch candidates. A drift-guard test keeps the
+workflow edge lists in sync with the ontology registry. See
+[`docs/reference/canonworks-ontology.md`](docs/reference/canonworks-ontology.md)
+for the per-step details.
+
 ## Operator Flow
 
 Use this flow when the operator says "start CanonWorks":

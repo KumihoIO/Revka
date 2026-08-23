@@ -286,6 +286,67 @@ config. See
 [`canonworks-project-config.example.yaml`](./canonworks-project-config.example.yaml)
 for the full generated shape.
 
+## Consumed by the Workflows
+
+The two builtin CanonWorks workflows —
+`canonworks-serial-episode-factory` and `canonworks-serial-canon-state-sync` —
+traverse this vocabulary when they assemble context packs. Their
+`kumiho_context` steps run in `graph_augmented_context` mode, where the
+traversal filter (`traversal.edge_types`) is an **exact string match**: an edge
+is followed only if its type is listed literally. So every character-relationship
+type (23) and structural edge (4) in the ontology is enumerated in each step's
+`traversal.edge_types`, appended after the legacy narrative / provenance edges
+those steps already carried (`ADVANCES`, `PAYOFF_TARGET`, `CONTRADICTS`, ...).
+Before the workflows listed the vocabulary, every ontology edge except the
+`RELATED_TO` fallback was invisible to context assembly.
+
+- **Episode factory** — the `episode-context` step traverses the full ontology
+  edge set, seeds the `canon-ontology` item kref (default
+  `kref://<Project>/CanonRules/canon-ontology.canon-ontology`, honoring
+  `krefs.canon_ontology` then `ontology.kref`), adds `canon-ontology` to
+  `include_kinds` (kind boost `1.4`), and boosts the structural edges that
+  actually surface as `via_edges` in the pack's `edge_map` (`INVOLVES` `1.8`,
+  `APPEARS_IN` `1.4`) so the graph edges an episode rests on outrank generic
+  ones. Character-to-character relationship edges are traversed (they are listed
+  in `traversal.edge_types`) but are **not** given a via-edge boost: in the
+  graph `canonworks_init` builds, every character is already reached via
+  `APPEARS_IN` from the depth-0 series-bible seed before its own relationship
+  edges are examined, so those edges never enter `edge_map` and a boost on them
+  would be inert. Relationship-kind context is conveyed through the selected
+  relationship-map artifact instead.
+- **State sync** — the canon-facing `state-sync-context` step gets the same
+  ontology edge set, the seeded `canon-ontology` kref, the `include_kinds`
+  entry, and matching boosts (`INVOLVES` `1.8`, `APPEARS_IN` `1.4`); the
+  snapshot-focused `state-delta-context-lite` step traverses the ontology edges
+  too but stays lean — no ontology kref seed and no `include_kinds` entry — to
+  keep the delta pass cheap.
+
+Each workflow's `project-config` step parses the config's `ontology` block and
+emits `ontology_version`, `canon_ontology_kref`, and comma-joined
+`ontology_character_edge_types_text` / `ontology_structural_edge_types_text`.
+Because that step runs as an isolated subprocess and cannot import the ontology
+module, it hardcodes the fallback vocabulary so a pre-ontology config (no
+`ontology` block) still traverses and names the full edge set. The
+relationship-bearing agent prompts carry that vocabulary as context, name
+`relation_kind` / `proposed_relation_kind` values from it when the edge is
+in-vocabulary, and flag out-of-vocabulary edges (`out_of_vocabulary: true`) as
+canon-patch candidates rather than coercing or silently canonizing them. When a
+typed graph edge does surface in the pack's `edge_map`, it takes precedence over
+`RELATIONSHIP_MAP.md` prose if the two disagree; but because character-
+relationship edges typically do not surface (only structural edges such as
+`APPEARS_IN` / `INVOLVES` do), the relationship-map artifact remains the
+authoritative source for relationship kinds, which the prompts normalize to the
+vocabulary. In state sync, out-of-vocabulary relationship deltas stay
+`pending_human_approval` (no approval gate is weakened).
+
+A **drift-guard test** (`operator-mcp/tests/test_builtin_workflows.py`) keeps
+this wiring honest. It imports `operator_mcp.canon_ontology` and asserts that
+every `relationship_type_names()` and `structural_edge_names()` entry appears in
+every `kumiho_context` step's `traversal.edge_types` in both YAMLs — so adding a
+vocabulary type without teaching the workflows to traverse it fails the test. A
+companion test executes each `project-config` step and sync-asserts that its
+hardcoded fallback lists equal the ontology module's names.
+
 ## Manifest and Document
 
 - `ontology_manifest()` returns a machine-readable summary: `version`,

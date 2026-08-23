@@ -8,10 +8,15 @@ validation.
 from __future__ import annotations
 
 import glob
+import json
 import os
+import subprocess
+import sys
 
 import pytest
+import yaml
 
+from operator_mcp import canon_ontology
 from operator_mcp.workflow.loader import load_workflow_from_yaml
 from operator_mcp.workflow.schema import StepType
 from operator_mcp.workflow.validator import validate_workflow
@@ -263,3 +268,211 @@ def test_canonworks_project_config_fallbacks_match_init_defaults(yaml_path: str)
     assert "Roadmaps/long-arc.series-roadmap" in text
     assert "main.relationship-map.md" not in text
     assert "series-roadmap.series-roadmap" not in text
+
+
+# ---------------------------------------------------------------------------
+# Ontology-aware graph traversal (canonworks ontology workflows PR).
+# ---------------------------------------------------------------------------
+
+
+def _kumiho_context_edge_types(yaml_path: str) -> dict[str, set[str]]:
+    """Return {step_id: set(traversal.edge_types)} for every kumiho_context step.
+
+    Parsed straight from the raw YAML so the assertion pins the shipped edge
+    lists, independent of how the loader models a kumiho_context step.
+    """
+    with open(yaml_path, encoding="utf-8") as f:
+        doc = yaml.safe_load(f)
+    out: dict[str, set[str]] = {}
+    for step in doc.get("steps", []) or []:
+        if step.get("type") != "kumiho_context":
+            continue
+        traversal = (step.get("kumiho") or {}).get("traversal") or {}
+        edge_types = [str(e).strip() for e in (traversal.get("edge_types") or []) if str(e).strip()]
+        out[str(step.get("id"))] = set(edge_types)
+    return out
+
+
+@pytest.mark.parametrize(
+    "yaml_path",
+    [_CANONWORKS_EPISODE_PATH, _CANONWORKS_SYNC_PATH],
+    ids=lambda p: os.path.basename(p),
+)
+def test_canonworks_kumiho_context_traverses_full_ontology(yaml_path: str) -> None:
+    """Ontology drift guard (load-bearing).
+
+    Every character relationship type and structural edge type declared in
+    ``operator_mcp.canon_ontology`` must appear literally in every
+    ``kumiho_context`` step's ``traversal.edge_types`` in both builtin
+    workflows. The expected set is DERIVED FROM the ontology module (imported),
+    never a copied literal — so adding a vocabulary type without teaching the
+    workflows to traverse it fails here.
+    """
+    ontology_edge_types = set(canon_ontology.relationship_type_names()) | set(
+        canon_ontology.structural_edge_names()
+    )
+    # Sanity: the ontology registry is non-trivial (guards an empty-import fluke).
+    assert "RIVAL_OF" in ontology_edge_types
+    assert "INVOLVES" in ontology_edge_types
+
+    steps = _kumiho_context_edge_types(yaml_path)
+    assert steps, (
+        f"{os.path.basename(yaml_path)} has no kumiho_context steps to check — "
+        f"the drift guard would be vacuous."
+    )
+    for step_id, edge_types in steps.items():
+        missing = ontology_edge_types - edge_types
+        assert not missing, (
+            f"{os.path.basename(yaml_path)} kumiho_context step '{step_id}' is "
+            f"missing ontology edge types from traversal.edge_types: "
+            f"{sorted(missing)}. Every canon_ontology relationship + structural "
+            f"edge type must be traversable (exact string match)."
+        )
+
+
+def _project_config_python_code(yaml_path: str) -> str:
+    with open(yaml_path, encoding="utf-8") as f:
+        doc = yaml.safe_load(f)
+    for step in doc.get("steps", []) or []:
+        if step.get("id") == "project-config":
+            code = (step.get("python") or {}).get("code")
+            assert code, f"project-config step in {yaml_path} has no python.code"
+            return code
+    raise AssertionError(f"no project-config step in {yaml_path}")
+
+
+def _run_project_config(code: str, project_config: dict) -> dict:
+    """Execute the project-config python.code block the way the executor does.
+
+    The step reads a JSON payload on stdin and writes a JSON dict on stdout.
+    """
+    payload = {
+        "args": {"project_config_yaml": json.dumps(project_config)},
+        "context": {"inputs": {}},
+    }
+    proc = subprocess.run(
+        [sys.executable, "-c", code],
+        input=json.dumps(payload),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert proc.returncode == 0, (
+        f"project-config step exited {proc.returncode}: {proc.stderr}"
+    )
+    return json.loads(proc.stdout)
+
+
+@pytest.mark.parametrize(
+    "yaml_path",
+    [_CANONWORKS_EPISODE_PATH, _CANONWORKS_SYNC_PATH],
+    ids=lambda p: os.path.basename(p),
+)
+def test_canonworks_project_config_echoes_ontology_section(yaml_path: str) -> None:
+    """A config WITH an ontology section is echoed by the project-config step."""
+    code = _project_config_python_code(yaml_path)
+    project_config = {
+        "canon_project": {
+            "project": "GlassCity",
+            "title": "Glass City",
+            "krefs": {
+                "canon_ontology": "kref://GlassCity/CanonRules/canon-ontology.canon-ontology",
+            },
+            "ontology": {
+                "version": "1",
+                "kref": "kref://GlassCity/CanonRules/canon-ontology.canon-ontology",
+                "character_edge_types": ["RELATED_TO", "RIVAL_OF", "ALLY_OF"],
+                "structural_edge_types": ["APPEARS_IN", "INVOLVES"],
+            },
+        }
+    }
+    out = _run_project_config(code, project_config)
+    assert out["ontology_version"] == "1"
+    assert (
+        out["canon_ontology_kref"]
+        == "kref://GlassCity/CanonRules/canon-ontology.canon-ontology"
+    )
+    assert out["ontology_character_edge_types_text"] == "RELATED_TO, RIVAL_OF, ALLY_OF"
+    assert out["ontology_structural_edge_types_text"] == "APPEARS_IN, INVOLVES"
+
+
+@pytest.mark.parametrize(
+    "yaml_path",
+    [_CANONWORKS_EPISODE_PATH, _CANONWORKS_SYNC_PATH],
+    ids=lambda p: os.path.basename(p),
+)
+def test_canonworks_project_config_ontology_fallbacks_match_canon_ontology(yaml_path: str) -> None:
+    """A pre-ontology config (no ontology section) gets fallback defaults, and
+    the hardcoded fallback vocabulary matches ``operator_mcp.canon_ontology``.
+
+    This is the sync assert: it makes the YAML's hardcoded fallback lists drift
+    from the ontology module impossible without a test failure.
+    """
+    code = _project_config_python_code(yaml_path)
+    project_config = {
+        "canon_project": {
+            "project": "GlassCity",
+            "title": "Glass City",
+        }
+    }
+    out = _run_project_config(code, project_config)
+    assert out["ontology_version"] == canon_ontology.ONTOLOGY_VERSION
+    assert (
+        out["canon_ontology_kref"]
+        == "kref://GlassCity/CanonRules/canon-ontology.canon-ontology"
+    )
+    assert out["ontology_character_edge_types_text"] == ", ".join(
+        canon_ontology.relationship_type_names()
+    )
+    assert out["ontology_structural_edge_types_text"] == ", ".join(
+        canon_ontology.structural_edge_names()
+    )
+
+
+def _kumiho_context_boost_edge_types(yaml_path: str) -> dict[str, set[str]]:
+    """Return {step_id: set(ranking.boost_edge_types keys)} per kumiho_context step."""
+    with open(yaml_path, encoding="utf-8") as f:
+        doc = yaml.safe_load(f)
+    out: dict[str, set[str]] = {}
+    for step in doc.get("steps", []) or []:
+        if step.get("type") != "kumiho_context":
+            continue
+        ranking = (step.get("kumiho") or {}).get("ranking") or {}
+        boosts = ranking.get("boost_edge_types") or {}
+        out[str(step.get("id"))] = {str(k) for k in boosts.keys()}
+    return out
+
+
+@pytest.mark.parametrize(
+    "yaml_path",
+    [_CANONWORKS_EPISODE_PATH, _CANONWORKS_SYNC_PATH],
+    ids=lambda p: os.path.basename(p),
+)
+def test_canonworks_context_does_not_boost_inert_character_relationship_edges(
+    yaml_path: str,
+) -> None:
+    """``boost_edge_types`` must not reward inert character-relationship edges.
+
+    ``ranking.boost_edge_types`` only rewards an edge type that surfaces as a
+    ``via_edge`` in the assembled pack's ``edge_map``. In the graph
+    ``canonworks_init`` builds, every character is reached via ``APPEARS_IN``
+    from the depth-0 series-bible seed before its own relationship edges are
+    examined, so character-to-character relationship edges (``RIVAL_OF``,
+    ``ALLY_OF``, ``BETRAYED``, ...) never enter ``edge_map`` and a boost on them
+    is inert. Structural edges (``APPEARS_IN`` / ``INVOLVES`` / ``BELONGS_TO`` /
+    ``FORESHADOWS``) do surface and may be boosted. This guard keeps an inert
+    relationship boost from being (re-)added; relationship-kind context is
+    conveyed via the relationship-map artifact, not a via-edge boost.
+    """
+    relationship_types = set(canon_ontology.relationship_type_names())
+    steps = _kumiho_context_boost_edge_types(yaml_path)
+    assert steps, f"{os.path.basename(yaml_path)} has no kumiho_context steps"
+    for step_id, boosts in steps.items():
+        inert = boosts & relationship_types
+        assert not inert, (
+            f"{os.path.basename(yaml_path)} kumiho_context step '{step_id}' "
+            f"boosts character-relationship ontology edges that never surface as "
+            f"via_edges in the canonworks_init graph (inert boosts): "
+            f"{sorted(inert)}. Remove them — relationship context flows through "
+            f"the relationship-map artifact."
+        )
