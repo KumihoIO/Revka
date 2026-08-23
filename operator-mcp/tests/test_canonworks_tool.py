@@ -4,6 +4,7 @@ from typing import Any
 
 import pytest
 
+from operator_mcp.tool_handlers import canonworks as cw
 from operator_mcp.tool_handlers.canonworks import (
     tool_canonworks_commit,
     tool_canonworks_init,
@@ -80,6 +81,13 @@ class FakeCanonWorksSDK:
         }
         self.revisions[revision["kref"]] = revision
         return revision
+
+    async def get_revision_by_tag(self, item_kref: str, tag: str) -> dict[str, Any] | None:
+        matches = [
+            rev for rev in self.revisions.values()
+            if rev["item_kref"] == item_kref and tag in (rev.get("tags") or [])
+        ]
+        return matches[-1] if matches else None
 
     async def create_artifact(
         self,
@@ -680,3 +688,131 @@ async def test_canonworks_preview_shows_structural_edges_and_vocabulary_flags(tm
     assert rel_by_type["HAUNTS"]["in_vocabulary"] is False
     assert preview["ontology"]["version"] == "1"
     assert "RIVAL_OF" in preview["ontology"]["character_edge_types"]
+
+
+# ---------------------------------------------------------------------------
+# Kumiho typed-graph projection (Deliverable A / B / C / D consumption)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_canonworks_init_annotates_kumiho_node_kind_metadata(tmp_path):
+    # (A) Canon items are annotated with the mapped Kumiho node kind so a
+    # cross-referencing reader / the typed projection picks the right kind.
+    sdk = FakeCanonWorksSDK()
+    await tool_canonworks_init(_glass_city_ontology_seed(tmp_path), sdk)
+
+    char = sdk.items["kref://GlassCity/Characters/mira.character"]
+    assert char["metadata"]["kumiho_node_kind"] == "entity"
+    event = sdk.items["kref://GlassCity/Timeline/event-001.timeline-event"]
+    assert event["metadata"]["kumiho_node_kind"] == "event"
+    # A kind with no natural fit carries no node-kind annotation.
+    config = sdk.items["kref://GlassCity/Config/canonworks-project-config.canonworks-config"]
+    assert "kumiho_node_kind" not in config["metadata"]
+
+
+@pytest.mark.asyncio
+async def test_canonworks_init_noops_projection_when_kumiho_absent(tmp_path, monkeypatch):
+    # (B) When kumiho-memory decompose is unavailable, the projection no-ops
+    # gracefully and init still succeeds — raw canon edges are unaffected.
+    monkeypatch.setattr(cw, "_HAS_KUMIHO_MEMORY_DECOMPOSE", False)
+    monkeypatch.setattr(cw, "_km_tool_memory_decompose", None)
+
+    sdk = FakeCanonWorksSDK()
+    result = await tool_canonworks_init(_glass_city_ontology_seed(tmp_path), sdk)
+
+    assert result["success"] is True
+    projection = result["typed_graph_projection"]
+    assert projection["projected"] is False
+    assert "unavailable" in projection["reason"]
+    # The raw narrative canon edge is still written verbatim.
+    assert any(e["edge_type"] == "RIVAL_OF" for e in sdk.edges)
+
+
+@pytest.mark.asyncio
+async def test_canonworks_init_routes_durable_facts_through_decompose(tmp_path, monkeypatch):
+    # (B/C) When decompose is present, canon routes durable facts/relations
+    # through it IN ADDITION to the raw canon edges, and the narrative predicate
+    # is passed through for Kumiho to fold (RELATES_TO for narrative types).
+    captured: list[dict[str, Any]] = []
+
+    def fake_decompose(payload: dict[str, Any]) -> dict[str, Any]:
+        captured.append(payload)
+        return {
+            "decomposed": {
+                "entities": len(payload["entities"]),
+                "facts": len(payload["facts"]),
+                "relations": len(payload["relations"]),
+            },
+            "kref": payload["kref"],
+        }
+
+    monkeypatch.setattr(cw, "_HAS_KUMIHO_MEMORY_DECOMPOSE", True)
+    monkeypatch.setattr(cw, "_km_tool_memory_decompose", fake_decompose)
+
+    sdk = FakeCanonWorksSDK()
+    result = await tool_canonworks_init(_glass_city_ontology_seed(tmp_path), sdk)
+
+    assert result["success"] is True
+    assert len(captured) == 1
+    payload = captured[0]
+    # Anchored to a real revision (the series bible).
+    assert payload["kref"].startswith("kref://GlassCity/Series/main.series-bible")
+    # Entities include the named characters + storyline + foreshadow thread.
+    entity_names = {e["name"] for e in payload["entities"]}
+    assert {"Mira", "Jun"} <= entity_names
+    # Relations carry the narrative predicate verbatim (Kumiho folds it).
+    predicates = {(r["subject"], r["predicate"], r["object"]) for r in payload["relations"]}
+    assert ("Mira", "RIVAL_OF", "Jun") in predicates
+    assert any(p == "INVOLVES" for _, p, _ in predicates)
+    assert any(p == "FORESHADOWS" for _, p, _ in predicates)
+
+    projection = result["typed_graph_projection"]
+    assert projection["projected"] is True
+    assert projection["decomposed"]["relations"] >= 1
+    # (C) resolve_predicate fold recorded: narrative RIVAL_OF -> RELATES_TO.
+    folds = {f["predicate"]: f for f in projection["predicate_folds"]}
+    assert folds["RIVAL_OF"]["projected_edge"] == "RELATES_TO"
+    assert folds["RIVAL_OF"]["fallback"] is True
+
+    # The raw narrative canon edge is preserved verbatim (not folded).
+    assert any(e["edge_type"] == "RIVAL_OF" for e in sdk.edges)
+
+
+@pytest.mark.asyncio
+async def test_canonworks_init_projection_survives_decompose_failure(tmp_path, monkeypatch):
+    # (B) A raising decompose never breaks init — the failure is a notice.
+    def boom(payload: dict[str, Any]) -> dict[str, Any]:
+        raise RuntimeError("kumiho exploded")
+
+    monkeypatch.setattr(cw, "_HAS_KUMIHO_MEMORY_DECOMPOSE", True)
+    monkeypatch.setattr(cw, "_km_tool_memory_decompose", boom)
+
+    sdk = FakeCanonWorksSDK()
+    result = await tool_canonworks_init(_glass_city_ontology_seed(tmp_path), sdk)
+
+    assert result["success"] is True
+    assert result["typed_graph_projection"]["projected"] is False
+    assert "decompose raised" in result["typed_graph_projection"]["reason"]
+
+
+@pytest.mark.asyncio
+async def test_canonworks_init_ontology_publish_is_idempotent_at_same_version(tmp_path):
+    # (D) Re-publishing the canon ontology at the same canon spec version does
+    # not create a duplicate revision (mirrors ontology_spec seed semantics).
+    sdk = FakeCanonWorksSDK()
+    args = _glass_city_ontology_seed(tmp_path)
+
+    await tool_canonworks_init(args, sdk)
+    await tool_canonworks_init(args, sdk)
+
+    ontology_kref = "kref://GlassCity/CanonRules/canon-ontology.canon-ontology"
+    published = [
+        rev for rev in sdk.revisions.values()
+        if rev["item_kref"] == ontology_kref and "published" in (rev.get("tags") or [])
+    ]
+    assert len(published) == 1
+    # The single published revision records canon's own spec version and (when
+    # kumiho-memory is present) references Kumiho's spec identity.
+    meta = published[0]["metadata"]
+    assert meta["canon_spec_version"] == "canonworks.ontology.v1"

@@ -45,8 +45,10 @@ def test_structural_edges_reference_known_entity_kinds():
     for se in o.STRUCTURAL_EDGES.values():
         assert se.source_kind in o.ENTITY_KINDS, se.edge_type
         assert se.target_kind in o.ENTITY_KINDS, se.edge_type
-    # BELONGS_TO reuses the existing Kumiho edge instead of a synonym.
-    assert o.STRUCTURAL_EDGES["BELONGS_TO"].reused_kumiho_edge is True
+    # BELONGS_TO is a CanonWorks / Revka operator-mcp structural edge: it reuses
+    # the kumiho *core SDK* generic grouping type but is NOT part of the
+    # kumiho-memory ontology contract, so the (contract-scoped) flag is False.
+    assert o.STRUCTURAL_EDGES["BELONGS_TO"].reused_kumiho_edge is False
 
 
 def test_expected_core_types_present():
@@ -157,3 +159,128 @@ def test_render_doc_mentions_every_edge_type():
     for edge_type in o.structural_edge_names():
         assert edge_type in doc, edge_type
     assert f"ontology_version: {o.ONTOLOGY_VERSION}" in doc
+
+
+# ---------------------------------------------------------------------------
+# Kumiho node-kind mapping (Deliverable A)
+# ---------------------------------------------------------------------------
+
+
+def test_kumiho_node_kinds_are_the_six_real_kinds():
+    # Whether sourced from kumiho-memory or the local fallback, the set is the
+    # six canonical Kumiho node kinds.
+    assert set(o.kumiho_node_kinds()) == {
+        "entity", "fact", "decision", "event", "action", "question"
+    }
+
+
+def test_node_kind_mapping_only_uses_real_kumiho_kinds():
+    mapping = o.node_kind_mapping()
+    # Every canon kind is present in the mapping.
+    assert set(mapping) == set(o.entity_kind_names())
+    valid = set(o.kumiho_node_kinds())
+    for kind, node_kind in mapping.items():
+        # Unmapped kinds are None (no natural fit forced); mapped values are real.
+        assert node_kind is None or node_kind in valid, (kind, node_kind)
+
+
+def test_node_kind_mapping_expected_fits():
+    mapping = o.node_kind_mapping()
+    assert mapping["character"] == "entity"
+    assert mapping["series-bible"] == "entity"
+    assert mapping["storyline"] == "entity"
+    assert mapping["foreshadow-thread"] == "entity"
+    assert mapping["canon-ontology"] == "entity"
+    assert mapping["timeline-event"] == "event"
+    # A kind with no natural fit is left unmapped, not forced.
+    assert mapping["canonworks-config"] is None
+    assert o.kumiho_node_kind_for("character") == "entity"
+    assert o.kumiho_node_kind_for("timeline-event") == "event"
+    assert o.kumiho_node_kind_for("canonworks-config") is None
+
+
+def test_manifest_and_doc_surface_node_kinds():
+    manifest = o.ontology_manifest()
+    assert set(manifest["kumiho_node_kinds"]) == set(o.kumiho_node_kinds())
+    by_kind = {e["kind"]: e for e in manifest["entity_kinds"]}
+    assert by_kind["character"]["kumiho_node_kind"] == "entity"
+    assert by_kind["timeline-event"]["kumiho_node_kind"] == "event"
+    assert by_kind["canonworks-config"]["kumiho_node_kind"] is None
+    doc = o.render_ontology_doc()
+    assert "Kumiho Node Kind" in doc
+
+
+# ---------------------------------------------------------------------------
+# Typed-graph predicate projection via resolve_predicate (Deliverable C)
+# ---------------------------------------------------------------------------
+
+
+def test_project_predicate_folds_narrative_types_to_relates_to():
+    # Narrative predicates are NOT among Kumiho's 10 canonical predicates, so
+    # they fold onto the RELATES_TO fallback with the verbatim preserved. This
+    # holds both when kumiho-memory is present (its registry folds) and when
+    # absent (local RELATES_TO fallback).
+    canonical, verbatim, fallback = o.project_predicate("RIVAL_OF")
+    assert canonical == "RELATES_TO"
+    assert verbatim == "RIVAL_OF"
+    assert fallback is True
+    # canon INVOLVES also folds to RELATES_TO (distinct from Kumiho's INVOLVES).
+    canonical, verbatim, _ = o.project_predicate("INVOLVES")
+    assert canonical == "RELATES_TO"
+    assert verbatim == "INVOLVES"
+
+
+def test_project_predicate_consults_resolve_predicate_when_available(monkeypatch):
+    # When kumiho-memory is present, resolve_predicate is the authority for the
+    # fold — canon must consult it, not a hand-maintained copy.
+    calls: list[str] = []
+
+    class _Resolution:
+        def __init__(self, fallback: bool) -> None:
+            self.normalized = ""
+            self.folded = False
+            self.fallback = fallback
+
+    def fake_resolve(predicate: str):
+        calls.append(predicate)
+        # Pretend the registry maps this narrative type to a canonical edge.
+        return "DEPENDS_ON", _Resolution(fallback=False)
+
+    monkeypatch.setattr(o, "_km_resolve_predicate", fake_resolve)
+    canonical, verbatim, fallback = o.project_predicate("USES_ARTIFACT")
+    assert calls == ["USES_ARTIFACT"]
+    assert canonical == "DEPENDS_ON"
+    assert verbatim == "USES_ARTIFACT"
+    assert fallback is False
+
+
+def test_project_predicate_degrades_without_kumiho(monkeypatch):
+    # With the registry unavailable, canon degrades to its local RELATES_TO
+    # fallback for the typed projection (never raises).
+    monkeypatch.setattr(o, "_km_resolve_predicate", None)
+    canonical, verbatim, fallback = o.project_predicate("rival")
+    assert canonical == o.KUMIHO_FALLBACK_PREDICATE == "RELATES_TO"
+    assert verbatim == "RIVAL_OF"  # canon-local normalization still applies
+    assert fallback is True
+
+
+# ---------------------------------------------------------------------------
+# Canon spec version + Kumiho spec reference (Deliverable D)
+# ---------------------------------------------------------------------------
+
+
+def test_canon_spec_version_is_distinct_and_stable():
+    assert o.CANON_ONTOLOGY_SPEC_VERSION == f"canonworks.ontology.v{o.ONTOLOGY_VERSION}"
+    # Canon's fallback edge is intentionally distinct from Kumiho's canonical.
+    assert o.DEFAULT_RELATIONSHIP_TYPE == "RELATED_TO"
+    assert o.KUMIHO_FALLBACK_PREDICATE == "RELATES_TO"
+    assert o.DEFAULT_RELATIONSHIP_TYPE != o.KUMIHO_FALLBACK_PREDICATE
+
+
+def test_kumiho_spec_reference_shape():
+    ref = o.kumiho_spec_reference()
+    # None when kumiho-memory is absent/too old; a {spec_version, spec_tag} dict
+    # when present. Either way, never raises and never fabricates.
+    if ref is not None:
+        assert set(ref) == {"spec_version", "spec_tag"}
+        assert ref["spec_tag"] == "ontology.spec"
