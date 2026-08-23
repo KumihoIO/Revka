@@ -5,7 +5,7 @@
 <h1 align="center">Revka</h1>
 
 <p align="center">
-  <strong>A memory-native agent runtime. Graph-backed orchestration, trust-scored agents, a full Web UI — and a complete record of everything your agents have ever done.</strong>
+  <strong>Graph Engineering for governed AI agents — explicit workflows, versioned knowledge, reactive memory, and verifiable evidence.</strong>
 </p>
 
 <p align="center">
@@ -18,6 +18,45 @@
 <p align="center">
   <a href="README.md">🇺🇸 English</a> · <a href="README.ko.md">🇰🇷 한국어</a>
 </p>
+
+---
+
+## Graph Engineering for AI agents
+
+Revka is an open-source **Graph Engineering runtime**. It does more than draw an
+agent workflow DAG: it connects the graph agents execute, the graph they
+remember, the evidence they produce, and the feedback that changes what runs
+next.
+
+| Graph plane | What Revka makes explicit |
+| --- | --- |
+| **Execution graph** | Typed workflow nodes, `depends_on` edges, conditional routing, guarded loops, parallel joins, map-reduce, supervisors, handoffs, and human approval/input gates |
+| **Knowledge graph** | Kumiho items, immutable revisions, artifacts, sessions, goals, skills, outcomes, trust records, and typed provenance edges |
+| **Evidence graph** | Workflow state, per-agent RunLog JSONL, tool calls, approvals, outputs, costs, hashes, and a verifiable SHA-256 audit chain |
+| **Reactive graph** | `revision.tagged` events that launch downstream workflows; outcomes and trust signals that inform later delegation and controlled improvement |
+
+The implementation is source-visible: workflow validation performs dependency
+checks, cycle detection, and topological ordering; the executor persists
+checkpoints for resume/retry; handoffs create `HANDED_OFF_TO` edges; Kumiho
+revision tags can trigger new workflows; and the Rust security logger chains
+audit entries as `SHA-256(previous_hash || canonical_event)`.
+
+Where Revka goes beyond a typical state-machine graph is the combination of
+**execution topology + versioned graph memory + provenance + reactive events +
+tamper-evident evidence** in one operating record.
+
+Revka is not a GraphRAG indexing engine and does not claim Microsoft
+GraphRAG-style entity extraction, community detection, or hierarchical graph
+summaries. Its checkpoints support recovery, approval continuation, and retry,
+but not yet a general time-travel API for forking from any historical execution
+state. See the source-grounded
+[Graph Engineering guide](https://revka.ai/docs/concepts/graph-engineering/) for
+the full capability map, comparisons, and current gaps.
+
+**Search terms:** graph engineering, graph engineering for AI agents, agent
+workflow graph, stateful agent orchestration, durable agent workflows, context
+graph, graph-native agent memory, versioned knowledge graph, reactive knowledge
+graph, agent provenance, AI agent governance.
 
 ---
 
