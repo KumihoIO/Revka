@@ -134,8 +134,13 @@ When in doubt, let `discover_edges: true` on `reflect` infer the edges. Manually
 CanonWorks layers a narrative-domain **canon ontology** on top of these
 provenance edges rather than replacing them. It adds a controlled
 character-relationship vocabulary (`RIVAL_OF`, `MENTOR_OF`, …) and structural
-edges (`APPEARS_IN`, `INVOLVES`, `FORESHADOWS`), and it reuses the `BELONGS_TO`
-scope edge above for timeline events instead of inventing a synonym. See
+edges (`APPEARS_IN`, `INVOLVES`, `FORESHADOWS`), and for timeline events it
+reuses the `BELONGS_TO` grouping/scope edge above instead of inventing a synonym.
+Note that `BELONGS_TO` — like the other five edges in this section — is a kumiho
+**core SDK** edge, *not* part of the kumiho-memory *ontology contract* (the ten
+canonical relation predicates and six node kinds that ship in kumiho-memory
+`>= 0.20.0`); CanonWorks records that distinction in its manifest via the
+`reused_kumiho_edge` flag, which stays `false` for `BELONGS_TO`. See
 [`../reference/canonworks-ontology.md`](../reference/canonworks-ontology.md) for
 the full vocabulary and semantics.
 

@@ -12,14 +12,24 @@ ontology by defining:
 * the canonical Item **kinds** CanonWorks creates (entity-kind registry),
 * a controlled **character relationship** vocabulary with category / symmetry /
   inverse semantics,
-* a **structural** edge vocabulary tying narrative entities together, reusing
-  the existing Kumiho ``BELONGS_TO`` edge rather than inventing a synonym,
+* a **structural** edge vocabulary tying narrative entities together (a
+  CanonWorks / Revka operator-mcp layer; ``BELONGS_TO`` reuses the kumiho *core
+  SDK* generic grouping edge and is NOT part of the kumiho-memory ontology
+  contract — see :class:`StructuralEdge`),
 * **normalization** of free-form relationship types (case/hyphen folding plus an
   English + Korean alias table) that preserves unknown types for backward
   compatibility while flagging them as out-of-vocabulary.
 
-Pure standard library. No new dependencies, no validation framework — this is a
-vocabulary the CanonWorks tools and downstream agents can reason against.
+When kumiho-memory (>= 0.20.0) is installed, this module additionally CONSUMES
+its released ontology contract: the authoritative node-kind list
+(:mod:`kumiho_memory.ontology_spec`) that canon entity kinds map onto, and the
+predicate registry (:func:`kumiho_memory.predicate_registry.resolve_predicate`)
+used to fold narrative predicates onto Kumiho's canonical typed-graph edges for
+the typed-graph projection. Both are imported behind a guard and degrade to
+local constants when the package is absent or too old, so this module never
+hard-fails at import (mirroring ``tool_handlers/memory.py``). The narrative
+vocabulary is never rewritten — it stays canon's domain language on the raw
+canon graph; the fold applies only to the Kumiho typed projection.
 """
 from __future__ import annotations
 
@@ -31,7 +41,76 @@ from typing import Optional
 ONTOLOGY_VERSION = "1"
 
 #: Fallback relationship type used when none is declared. Symmetric, in-vocab.
+#: NOTE: this is canon's NARRATIVE raw-edge fallback, stored verbatim on the
+#: canon graph. It is intentionally DISTINCT from Kumiho's canonical
+#: ``RELATES_TO`` (see :data:`KUMIHO_FALLBACK_PREDICATE`), which is only used in
+#: the typed-graph projection. The look-alike spelling denotes two different
+#: edges in two different graphs — do not conflate them.
 DEFAULT_RELATIONSHIP_TYPE = "RELATED_TO"
+
+
+# ---------------------------------------------------------------------------
+# Consumed kumiho-memory 0.20.0 ontology contract (guarded, degrades locally)
+# ---------------------------------------------------------------------------
+
+#: The six canonical node kinds Kumiho's typed graph recognises. Local fallback
+#: copy, used only when the kumiho-memory contract cannot be imported.
+_LOCAL_KUMIHO_NODE_KINDS: tuple[str, ...] = (
+    "entity", "fact", "decision", "event", "action", "question",
+)
+
+try:  # kumiho-memory >= 0.20.0 ships the fetchable ontology spec.
+    from kumiho_memory.ontology import OntologySchema as _KmOntologySchema
+    from kumiho_memory.ontology_spec import build_spec as _km_build_spec
+
+    KUMIHO_NODE_KINDS: tuple[str, ...] = tuple(
+        _km_build_spec(_KmOntologySchema())["node_kinds"].keys()
+    )
+    _HAS_KUMIHO_ONTOLOGY = True
+except Exception:  # ImportError (absent / too old) or any spec-shape drift.
+    KUMIHO_NODE_KINDS = _LOCAL_KUMIHO_NODE_KINDS
+    _HAS_KUMIHO_ONTOLOGY = False
+
+try:  # The canonical predicate registry (fold + synonyms + fallback).
+    from kumiho_memory.predicate_registry import resolve_predicate as _km_resolve_predicate
+
+    _HAS_KUMIHO_PREDICATES = True
+except Exception:
+    _km_resolve_predicate = None
+    _HAS_KUMIHO_PREDICATES = False
+
+#: Kumiho's canonical typed-graph edge that an unregistered narrative predicate
+#: folds onto in the typed projection. Distinct from
+#: :data:`DEFAULT_RELATIONSHIP_TYPE` (canon's narrative raw-edge fallback).
+KUMIHO_FALLBACK_PREDICATE = "RELATES_TO"
+
+#: Version string for the *canon* ontology spec, mirroring how
+#: :mod:`kumiho_memory.ontology_spec` versions its own policy Item. Canon uses
+#: its OWN item/tag/version and only REFERENCES Kumiho's spec identity (see
+#: :func:`kumiho_spec_reference`); it never overwrites Kumiho's SPEC_TAG.
+CANON_ONTOLOGY_SPEC_VERSION = f"canonworks.ontology.v{ONTOLOGY_VERSION}"
+
+
+def kumiho_spec_reference() -> Optional[dict[str, str]]:
+    """Identity of the kumiho-memory ontology spec this canon ontology aligns to.
+
+    Returns ``{"spec_version", "spec_tag"}`` when kumiho-memory (>= 0.20.0) is
+    installed, so the published canon ontology can record which Kumiho ontology
+    version it was aligned to (a reference, not a copy). Returns ``None`` when
+    the package is absent or too old.
+    """
+    if not _HAS_KUMIHO_ONTOLOGY:
+        return None
+    try:
+        from kumiho_memory.ontology_spec import SPEC_TAG
+
+        spec = _km_build_spec(_KmOntologySchema())
+        return {
+            "spec_version": str(spec.get("spec_version", "")),
+            "spec_tag": str(SPEC_TAG),
+        }
+    except Exception:
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -49,12 +128,16 @@ class EntityKind:
     description: str
     sources: tuple[str, ...] = ()  # edge types this kind may originate
     targets: tuple[str, ...] = ()  # edge types this kind may receive
+    #: The Kumiho typed-graph node kind (one of :data:`KUMIHO_NODE_KINDS`) this
+    #: canon kind projects onto, or ``None`` when there is no natural fit (not
+    #: forced). Consumed by the typed-graph projection in ``canonworks.py``.
+    kumiho_node_kind: Optional[str] = None
 
 
 _ENTITY_KINDS: tuple[EntityKind, ...] = (
     EntityKind("series-bible", "Series Bible", "series",
                "Top-level canon promise, themes, and guardrails for the serial.",
-               targets=("APPEARS_IN",)),
+               targets=("APPEARS_IN",), kumiho_node_kind="entity"),
     EntityKind("series-synopsis", "Series Synopsis", "series",
                "Canonical rolling synopsis of the series."),
     EntityKind("character-index", "Character Index", "characters",
@@ -70,18 +153,21 @@ _ENTITY_KINDS: tuple[EntityKind, ...] = (
                "Prose, POV, pacing, and platform style rules."),
     EntityKind("character", "Character", "characters",
                "A canonical character entity.",
-               sources=("APPEARS_IN",), targets=("INVOLVES",)),
+               sources=("APPEARS_IN",), targets=("INVOLVES",),
+               kumiho_node_kind="entity"),
     EntityKind("storyline", "Storyline", "roadmaps",
                "A long-arc storyline entity.",
-               sources=("INVOLVES",), targets=("FORESHADOWS",)),
+               sources=("INVOLVES",), targets=("FORESHADOWS",),
+               kumiho_node_kind="entity"),
     EntityKind("foreshadow-thread", "Foreshadow Thread", "roadmaps",
                "A planted foreshadow thread with a payoff target.",
-               sources=("FORESHADOWS",)),
+               sources=("FORESHADOWS",), kumiho_node_kind="entity"),
     EntityKind("timeline-event", "Timeline Event", "timeline",
                "A canonical timeline event anchored to the series timeline.",
-               sources=("BELONGS_TO",)),
+               sources=("BELONGS_TO",), kumiho_node_kind="event"),
     EntityKind("canon-ontology", "Canon Ontology", "canon_rules",
-               "The published CanonWorks ontology reference for this project."),
+               "The published CanonWorks ontology reference for this project.",
+               kumiho_node_kind="entity"),
     EntityKind("character-state", "Character State Snapshot", "state",
                "Current per-character state snapshot."),
     EntityKind("relationship-state", "Relationship State Snapshot", "state",
@@ -107,6 +193,30 @@ ENTITY_KINDS: dict[str, EntityKind] = {ek.kind: ek for ek in _ENTITY_KINDS}
 
 def entity_kind_names() -> list[str]:
     return [ek.kind for ek in _ENTITY_KINDS]
+
+
+def kumiho_node_kinds() -> tuple[str, ...]:
+    """The authoritative Kumiho typed-graph node kinds.
+
+    Sourced from the kumiho-memory ontology contract when installed
+    (>= 0.20.0), else a local fallback copy of the same six kinds.
+    """
+    return KUMIHO_NODE_KINDS
+
+
+def node_kind_mapping() -> dict[str, Optional[str]]:
+    """Map each canon entity kind to its Kumiho node kind (``None`` if unmapped).
+
+    Every mapped value is guaranteed to be one of :func:`kumiho_node_kinds`;
+    kinds with no natural fit stay ``None`` rather than being force-mapped.
+    """
+    return {ek.kind: ek.kumiho_node_kind for ek in _ENTITY_KINDS}
+
+
+def kumiho_node_kind_for(kind: object) -> Optional[str]:
+    """The Kumiho node kind a canon entity ``kind`` projects onto, or ``None``."""
+    entry = ENTITY_KINDS.get(str(kind))
+    return entry.kumiho_node_kind if entry else None
 
 
 # ---------------------------------------------------------------------------
@@ -199,12 +309,22 @@ def is_known_relationship_type(edge_type: str) -> bool:
 
 @dataclass(frozen=True)
 class StructuralEdge:
-    """An edge type tying narrative-structure entities together."""
+    """An edge type tying narrative-structure entities together.
+
+    These are CanonWorks / Revka operator-mcp edges: canon defines them here and
+    writes them via ``sdk.create_edge``. ``reused_kumiho_edge`` flags whether the
+    edge name is part of the **kumiho-memory ontology contract** — it is not for
+    any current edge (``BELONGS_TO`` merely reuses the kumiho *core SDK* generic
+    grouping type; ``INVOLVES`` is canon's own storyline->character edge, DISTINCT
+    from the kumiho-memory INVOLVES which is event->entity).
+    """
 
     edge_type: str
     source_kind: str
     target_kind: str
     description: str
+    #: True only if this edge name belongs to the kumiho-memory ontology
+    #: contract. Currently False for every canon structural edge.
     reused_kumiho_edge: bool = False
 
 
@@ -212,13 +332,18 @@ _STRUCTURAL_EDGES: tuple[StructuralEdge, ...] = (
     StructuralEdge("APPEARS_IN", "character", "series-bible",
                    "A character appears in the series canon."),
     StructuralEdge("INVOLVES", "storyline", "character",
-                   "A storyline involves a character in its cast."),
+                   "A storyline involves a character in its cast. DISTINCT from "
+                   "the kumiho-memory ontology INVOLVES (event->entity): this is "
+                   "canon's storyline->character edge and folds to RELATES_TO in "
+                   "the typed-graph projection."),
     StructuralEdge("FORESHADOWS", "foreshadow-thread", "storyline",
                    "A foreshadow thread points forward to a storyline payoff."),
     StructuralEdge("BELONGS_TO", "timeline-event", "timeline",
-                   "A timeline event belongs to the series timeline "
-                   "(reuses the Kumiho BELONGS_TO scope edge).",
-                   reused_kumiho_edge=True),
+                   "A timeline event belongs to the series timeline. A CanonWorks "
+                   "/ Revka operator-mcp structural edge; it reuses the kumiho "
+                   "core SDK's generic BELONGS_TO grouping type and is NOT part "
+                   "of the kumiho-memory ontology contract.",
+                   reused_kumiho_edge=False),
 )
 
 STRUCTURAL_EDGES: dict[str, StructuralEdge] = {
@@ -362,6 +487,35 @@ def suggest_relationship_type(raw: object) -> Optional[str]:
     return None
 
 
+def project_predicate(raw: object) -> tuple[str, str, bool]:
+    """Fold a narrative predicate onto Kumiho's canonical typed-graph edge.
+
+    Used ONLY for the Kumiho typed-graph projection (the ``relations`` a canon
+    edge emits into ``memory_decompose``). The raw canon graph keeps the
+    narrative type verbatim; this never rewrites it.
+
+    Consults :func:`kumiho_memory.predicate_registry.resolve_predicate` when the
+    package is installed, so canon inherits Kumiho's registry (and any future
+    synonyms) instead of a hand-maintained copy: narrative types the registry
+    does not recognise (``RIVAL_OF``, ``INVOLVES``, ``FORESHADOWS``, …) fold onto
+    ``RELATES_TO`` with the verbatim predicate preserved. Degrades to the local
+    ``RELATES_TO`` fallback when kumiho-memory is absent or too old.
+
+    Returns ``(canonical, verbatim, fallback)``:
+
+    * ``verbatim`` — the narrative predicate (canon-normalized) to pass through
+      to ``decompose`` as the relation's ``predicate`` (Kumiho re-folds it
+      identically and stores it in edge metadata);
+    * ``canonical`` — the edge type Kumiho will store the relation as;
+    * ``fallback`` — whether the fold landed on the ``RELATES_TO`` fallback.
+    """
+    verbatim, _known = normalize_relationship_type(raw)
+    if _km_resolve_predicate is not None:
+        canonical, resolution = _km_resolve_predicate(verbatim)
+        return str(canonical), verbatim, bool(getattr(resolution, "fallback", False))
+    return KUMIHO_FALLBACK_PREDICATE, verbatim, True
+
+
 # ---------------------------------------------------------------------------
 # Edge semantics helpers
 # ---------------------------------------------------------------------------
@@ -426,6 +580,8 @@ def ontology_manifest() -> dict[str, object]:
     """Machine-readable summary of the ontology (stable ordering)."""
     return {
         "version": ONTOLOGY_VERSION,
+        "kumiho_node_kinds": list(KUMIHO_NODE_KINDS),
+        "kumiho_ontology_available": _HAS_KUMIHO_ONTOLOGY,
         "entity_kinds": [
             {
                 "kind": ek.kind,
@@ -434,6 +590,7 @@ def ontology_manifest() -> dict[str, object]:
                 "description": ek.description,
                 "sources": list(ek.sources),
                 "targets": list(ek.targets),
+                "kumiho_node_kind": ek.kumiho_node_kind,
             }
             for ek in _ENTITY_KINDS
         ],
@@ -468,19 +625,33 @@ def render_ontology_doc() -> str:
         f"- ontology_version: {ONTOLOGY_VERSION}",
         "",
         (
-            "CanonWorks types the Kumiho canon graph on top of the kumiho-memory "
-            + "edge semantics (`DERIVED_FROM`, `DEPENDS_ON`, `REFERENCED`, `CONTAINS`, "
-            + "`CREATED_FROM`, `BELONGS_TO`). Unknown relationship types are preserved "
-            + "as declared but flagged out-of-vocabulary."
+            "CanonWorks types the Kumiho canon graph on top of the kumiho *core "
+            + "SDK* edge semantics (`DERIVED_FROM`, `DEPENDS_ON`, `REFERENCED`, "
+            + "`CONTAINS`, `CREATED_FROM`, `BELONGS_TO`). Unknown relationship types "
+            + "are preserved as declared but flagged out-of-vocabulary."
+        ),
+        "",
+        (
+            "When kumiho-memory (>= 0.20.0) is installed, canon additionally "
+            + "projects durable narrative facts/relations into Kumiho's typed graph "
+            + "via `memory_decompose`. The **Kumiho Node Kind** column below records "
+            + "which of Kumiho's six node kinds each canon kind maps onto (blank = no "
+            + "natural fit, not projected). Narrative relationship predicates fold "
+            + "onto Kumiho's canonical edges in that projection only (unknown types "
+            + "-> `RELATES_TO`, verbatim preserved); the raw canon edge keeps the "
+            + "narrative type."
         ),
         "",
         "## Entity Kinds",
         "",
-        "| Kind | Label | Space | Description |",
-        "| --- | --- | --- | --- |",
+        "| Kind | Label | Space | Kumiho Node Kind | Description |",
+        "| --- | --- | --- | --- | --- |",
     ]
     for ek in _ENTITY_KINDS:
-        lines.append(f"| `{ek.kind}` | {ek.label} | {ek.space} | {ek.description} |")
+        node_kind = ek.kumiho_node_kind if ek.kumiho_node_kind else "—"
+        lines.append(
+            f"| `{ek.kind}` | {ek.label} | {ek.space} | {node_kind} | {ek.description} |"
+        )
     lines.extend([
         "",
         "## Character Relationship Vocabulary",

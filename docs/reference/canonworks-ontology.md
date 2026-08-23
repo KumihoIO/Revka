@@ -116,10 +116,13 @@ recorded separately from character-relationship edges (see
 | `FORESHADOWS` | foreshadow-thread | storyline | A foreshadow thread points forward to a storyline payoff. |
 | `BELONGS_TO` | timeline-event | timeline | A timeline event belongs to the series timeline. |
 
-`BELONGS_TO` is the existing Kumiho scope edge, reused here rather than
-duplicated under a new name (it is flagged `reused_kumiho_edge` in the
-manifest). This keeps CanonWorks aligned with the kumiho-memory edge philosophy:
-one scope/ownership edge across the graph.
+`BELONGS_TO` is a CanonWorks / Revka operator-mcp structural edge that reuses the
+kumiho **core SDK** generic grouping/scope type rather than duplicating it under
+a new name. It is **not** part of the kumiho-memory ontology contract, so it is
+flagged `reused_kumiho_edge: false` in the manifest (that flag marks only edges
+whose name belongs to the kumiho-memory ontology contract, of which there are
+currently none). Reusing the core-SDK scope edge keeps a single scope/ownership
+edge across the graph.
 
 `INVOLVES` edges are created from a storyline's cast, read from the first present
 of the `characters`, `cast`, or `involves` keys. `FORESHADOWS` edges resolve a
