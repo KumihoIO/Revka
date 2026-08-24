@@ -289,6 +289,17 @@ jobs:
 
       - name: Build Tauri app (universal binary)
         working-directory: apps/tauri
+        # Codesigning/notarization/updater-signing are opt-in via repository
+        # secrets; empty values keep the previous unsigned behavior.
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: cargo tauri build --target universal-apple-darwin
 
       - name: Prepare desktop release assets
@@ -356,6 +367,9 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       digests: ${{ steps.digests.outputs.digests }}
+    env:
+      # Job-level so the minisign step's `if:` can probe secret presence.
+      REVKA_MINISIGN_PRIVATE_KEY: ${{ secrets.REVKA_MINISIGN_PRIVATE_KEY }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
@@ -426,11 +440,27 @@ jobs:
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \
             SHA256SUMS
 
+      - name: Sign SHA256SUMS (minisign)
+        if: env.REVKA_MINISIGN_PRIVATE_KEY != ''
+        env:
+          REVKA_MINISIGN_PRIVATE_KEY: ${{ secrets.REVKA_MINISIGN_PRIVATE_KEY }}
+        run: |
+          cd artifacts
+          curl -fsSL -o minisign.tgz https://github.com/jedisct1/minisign/releases/download/0.12/minisign-0.12-linux.tar.gz
+          echo "9a599b48ba6eb7b1e80f12f36b94ceca7c00b7a5173c95c3efc88d9822957e73  minisign.tgz" | sha256sum -c -
+          tar xzf minisign.tgz
+          printf '%s\n' "$REVKA_MINISIGN_PRIVATE_KEY" > minisign.sec
+          chmod 600 minisign.sec
+          minisign-linux/x86_64/minisign -S -s minisign.sec -m SHA256SUMS -x SHA256SUMS.minisig
+          rm -f minisign.sec minisign.tgz
+          cat SHA256SUMS.minisig
+
       - name: Collect release assets
         run: |
           mkdir -p release-assets
           find artifacts -type f \( -name '*.tar.gz' -o -name '*.zip' -o -name '*.dmg' \
             -o -name 'SHA256SUMS' -o -name 'SHA256SUMS.sig' -o -name 'SHA256SUMS.pem' -o -name 'SHA256SUMS.bundle' \
+            -o -name 'SHA256SUMS.minisig' \
             -o -name '*.cdx.json' \) -exec cp {} release-assets/ \;
           cp install.sh release-assets/
           echo "--- Assets ---"
