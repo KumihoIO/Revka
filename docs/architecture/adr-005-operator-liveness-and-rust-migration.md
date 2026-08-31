@@ -39,6 +39,16 @@ as-of recall, and duplicate-call suppression remain outside this slice. Output
 quality and latency must be measured against the Python reference path before
 any default-on decision.
 
+Operational workflow state follows the same incremental-migration rule. The
+existing Python `WorkflowState` is the current execution envelope; local JSON
+checkpoints are authoritative for pause/retry recovery, while versioned Kumiho
+`Revka/WorkflowRuns` records are a best-effort audit and UI projection. The
+Rust gateway may read that projection and forward lifecycle commands, but it
+must not become a second workflow-status writer. If workflow execution later
+moves to Rust, checkpointing, recovery, cancellation, retry, workflow-revision
+pinning, and graph projection move in one ownership cutover. See
+[`kumiho-memory-integration.md`](../contributing/kumiho-memory-integration.md#runtime-state-ownership).
+
 ## Context
 
 The Revka operator orchestrates multi-agent workflows (e.g. quantum-soul
