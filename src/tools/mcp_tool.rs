@@ -132,6 +132,14 @@ enum CognitiveMemoryTool {
 }
 
 #[cfg(feature = "kumiho-native")]
+enum CognitiveMemoryRequest {
+    Engage(EngageRequest),
+    Reflect(ReflectRequest),
+    Recall(RecallRequest),
+    Consolidate(ConsolidateRequest),
+}
+
+#[cfg(feature = "kumiho-native")]
 fn cognitive_memory_tool(name: &str) -> Option<CognitiveMemoryTool> {
     match name {
         "kumiho-memory__kumiho_memory_engage" => Some(CognitiveMemoryTool::Engage),
@@ -139,6 +147,38 @@ fn cognitive_memory_tool(name: &str) -> Option<CognitiveMemoryTool> {
         "kumiho-memory__kumiho_memory_recall" => Some(CognitiveMemoryTool::Recall),
         "kumiho-memory__kumiho_memory_consolidate" => Some(CognitiveMemoryTool::Consolidate),
         _ => None,
+    }
+}
+
+#[cfg(feature = "kumiho-native")]
+fn decode_cognitive_memory_request(
+    operation: CognitiveMemoryTool,
+    args: serde_json::Value,
+) -> Option<CognitiveMemoryRequest> {
+    let decoded = match operation {
+        CognitiveMemoryTool::Engage => {
+            serde_json::from_value(args).map(CognitiveMemoryRequest::Engage)
+        }
+        CognitiveMemoryTool::Reflect => {
+            serde_json::from_value(args).map(CognitiveMemoryRequest::Reflect)
+        }
+        CognitiveMemoryTool::Recall => {
+            serde_json::from_value(args).map(CognitiveMemoryRequest::Recall)
+        }
+        CognitiveMemoryTool::Consolidate => {
+            serde_json::from_value(args).map(CognitiveMemoryRequest::Consolidate)
+        }
+    };
+    match decoded {
+        Ok(request) => Some(request),
+        Err(error) => {
+            tracing::debug!(
+                ?operation,
+                error = %error,
+                "typed native memory dispatch fell back to the Python MCP tool"
+            );
+            None
+        }
     }
 }
 
@@ -166,26 +206,19 @@ async fn execute_memory_provider_call(
     args: serde_json::Value,
 ) -> Option<anyhow::Result<String>> {
     let operation = cognitive_memory_tool(tool_name)?;
+    let request = decode_cognitive_memory_request(operation, args)?;
     let result = async {
-        let payload = match operation {
-            CognitiveMemoryTool::Engage => {
-                let request: EngageRequest = serde_json::from_value(args)
-                    .context("invalid kumiho_memory_engage arguments")?;
+        let payload = match request {
+            CognitiveMemoryRequest::Engage(request) => {
                 serde_json::to_value(provider.engage(request).await?)?
             }
-            CognitiveMemoryTool::Reflect => {
-                let request: ReflectRequest = serde_json::from_value(args)
-                    .context("invalid kumiho_memory_reflect arguments")?;
+            CognitiveMemoryRequest::Reflect(request) => {
                 serde_json::to_value(provider.reflect(request).await?)?
             }
-            CognitiveMemoryTool::Recall => {
-                let request: RecallRequest = serde_json::from_value(args)
-                    .context("invalid kumiho_memory_recall arguments")?;
+            CognitiveMemoryRequest::Recall(request) => {
                 serde_json::to_value(provider.recall(request).await?)?
             }
-            CognitiveMemoryTool::Consolidate => {
-                let request: ConsolidateRequest = serde_json::from_value(args)
-                    .context("invalid kumiho_memory_consolidate arguments")?;
+            CognitiveMemoryRequest::Consolidate(request) => {
                 serde_json::to_value(provider.consolidate(request).await?)?
             }
         };
@@ -588,5 +621,18 @@ mod tests {
             .await
             .is_none()
         );
+    }
+
+    #[cfg(feature = "kumiho-native")]
+    #[tokio::test]
+    async fn cognitive_memory_decode_failure_falls_back_to_python_mcp_tool() {
+        let result = execute_memory_provider_call(
+            &AdapterMemoryProvider,
+            "kumiho-memory__kumiho_memory_recall",
+            json!({"query": "architecture", "recall_mode": "future-mode"}),
+        )
+        .await;
+
+        assert!(result.is_none());
     }
 }

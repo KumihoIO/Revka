@@ -127,9 +127,8 @@ impl NativeRecallSource for SdkRecallSource {
             .await
             .with_context(|| format!("native Kumiho search failed in `{}`", call.context))?;
 
-        let matched_count = page.items.len();
         let mut first_resolution_error = None;
-        let mut resolved = Vec::with_capacity(matched_count);
+        let mut resolved = Vec::with_capacity(page.items.len());
 
         for search_result in page.items {
             let item = search_result.item;
@@ -162,11 +161,7 @@ impl NativeRecallSource for SdkRecallSource {
             });
         }
 
-        if matched_count > 0 && resolved.is_empty() {
-            if let Some(error) = first_resolution_error {
-                bail!("native Kumiho revision resolution failed: {error}");
-            }
-        }
+        reject_revision_resolution_error(first_resolution_error)?;
 
         Ok(resolved)
     }
@@ -250,7 +245,7 @@ impl NativeKumihoProvider {
         }
 
         let started = Instant::now();
-        let contexts = normalized_contexts(&self.project, space_paths);
+        let contexts = normalized_contexts(&self.project, space_paths)?;
         let page_size = i32::try_from(limit.saturating_mul(2))
             .expect("native limit ceiling keeps page size within i32");
         let mut candidates = Vec::new();
@@ -306,6 +301,9 @@ impl NativeKumihoProvider {
 
         apply_evidence_weights(&mut results);
         results.retain(|memory| memory.score.is_some_and(|score| score >= min_score));
+        if results.is_empty() {
+            bail!("native search results did not meet the requested min_score");
+        }
         results.truncate(limit);
         let count = results.len();
         tracing::debug!(
@@ -461,14 +459,26 @@ fn is_loopback_endpoint(endpoint: &str) -> bool {
             .is_ok_and(|address| address.is_loopback())
 }
 
-fn normalized_contexts(project: &str, space_paths: Option<&[String]>) -> Vec<String> {
+fn reject_revision_resolution_error(first_error: Option<String>) -> Result<()> {
+    if let Some(error) = first_error {
+        bail!("native Kumiho revision resolution failed: {error}");
+    }
+    Ok(())
+}
+
+fn normalized_contexts(project: &str, space_paths: Option<&[String]>) -> Result<Vec<String>> {
+    let Some(space_paths) = space_paths else {
+        return Ok(vec![project.to_owned()]);
+    };
+
     let mut contexts = Vec::new();
     let mut seen = HashSet::new();
-    for path in space_paths.unwrap_or(&[]) {
+    for path in space_paths {
         let path = path.trim().trim_matches('/');
-        let context = if path.is_empty() {
-            project.to_owned()
-        } else if path == project || path.starts_with(&format!("{project}/")) {
+        if path.is_empty() {
+            continue;
+        }
+        let context = if path == project || path.starts_with(&format!("{project}/")) {
             path.to_owned()
         } else {
             format!("{project}/{path}")
@@ -478,9 +488,9 @@ fn normalized_contexts(project: &str, space_paths: Option<&[String]>) -> Vec<Str
         }
     }
     if contexts.is_empty() {
-        contexts.push(project.to_owned());
+        bail!("native recall received explicit space_paths without a usable path");
     }
-    contexts
+    Ok(contexts)
 }
 
 fn normalized_memory_types(memory_types: Option<&[String]>) -> Option<HashSet<String>> {
@@ -840,6 +850,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn explicit_space_paths_ignore_blanks_without_widening_scope() {
+        let source = Arc::new(FakeRecallSource::default().with_response(
+            "CognitiveMemory/work",
+            true,
+            vec![hit(
+                "kref://CognitiveMemory/work/a.conversation",
+                "kref://CognitiveMemory/work/a.conversation?r=1",
+                0.8,
+                "decision",
+                "A",
+                "Scoped memory",
+                "official",
+            )],
+        ));
+        let provider = NativeKumihoProvider::with_source(source.clone(), "CognitiveMemory");
+        let mut request = RecallRequest::new("query");
+        request.space_paths = Some(vec![" ".to_owned(), "work".to_owned(), "/".to_owned()]);
+
+        let outcome = provider.recall(request).await.unwrap();
+
+        assert_eq!(outcome.count, 1);
+        let calls = source.calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].context, "CognitiveMemory/work");
+    }
+
+    #[tokio::test]
+    async fn explicit_space_paths_with_only_blanks_request_python_fallback() {
+        let source = Arc::new(FakeRecallSource::default());
+        let provider = NativeKumihoProvider::with_source(source.clone(), "CognitiveMemory");
+        let mut request = RecallRequest::new("query");
+        request.space_paths = Some(vec![" ".to_owned(), "/".to_owned()]);
+
+        let error = provider.recall(request).await.unwrap_err();
+
+        assert!(error.to_string().contains("without a usable path"));
+        assert!(source.calls().is_empty());
+    }
+
+    #[tokio::test]
     async fn deep_hits_skip_shallow_retry() {
         let source = Arc::new(FakeRecallSource::default().with_response(
             "CognitiveMemory",
@@ -925,6 +975,39 @@ mod tests {
         assert_eq!(outcome.count, 1);
         assert_eq!(outcome.results[0].score, Some(0.75));
         assert_eq!(source.calls()[0].min_score, 0.0);
+    }
+
+    #[tokio::test]
+    async fn min_score_filtering_every_result_requests_python_fallback() {
+        let source = Arc::new(FakeRecallSource::default().with_response(
+            "CognitiveMemory",
+            true,
+            vec![hit(
+                "kref://CognitiveMemory/a.conversation",
+                "kref://CognitiveMemory/a.conversation?r=1",
+                0.40,
+                "decision",
+                "A",
+                "Below threshold",
+                "unverified",
+            )],
+        ));
+        let provider = NativeKumihoProvider::with_source(source, "CognitiveMemory");
+        let mut request = RecallRequest::new("query");
+        request.min_score = Some(0.90);
+
+        let error = provider.recall(request).await.unwrap_err();
+
+        assert!(error.to_string().contains("requested min_score"));
+    }
+
+    #[test]
+    fn any_revision_resolution_error_rejects_partial_native_results() {
+        let error = reject_revision_resolution_error(Some("latest RPC failed".to_owned()))
+            .expect_err("partial revision errors must request Python fallback");
+
+        assert!(error.to_string().contains("latest RPC failed"));
+        assert!(reject_revision_resolution_error(None).is_ok());
     }
 
     #[tokio::test]
