@@ -5,6 +5,15 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
+#[cfg(feature = "kumiho-native")]
+use anyhow::Context;
+
+#[cfg(feature = "kumiho-native")]
+use crate::memory::{
+    ConsolidateRequest, EngageRequest, HybridMemoryProvider, MemoryProvider,
+    MemoryProviderTransport, PythonMemoryProvider, RecallRequest, ReflectRequest,
+};
+
 use crate::tools::mcp_client::McpRegistry;
 use crate::tools::mcp_protocol::McpToolDef;
 use crate::tools::traits::{Tool, ToolResult};
@@ -23,16 +32,22 @@ pub struct McpToolWrapper {
     input_schema: serde_json::Value,
     /// Shared registry — used to dispatch actual tool calls.
     registry: Arc<McpRegistry>,
+    #[cfg(feature = "kumiho-native")]
+    memory_provider: Option<Arc<dyn MemoryProvider>>,
 }
 
 impl McpToolWrapper {
     pub fn new(prefixed_name: String, def: McpToolDef, registry: Arc<McpRegistry>) -> Self {
         let description = def.description.unwrap_or_else(|| "MCP tool".to_string());
+        #[cfg(feature = "kumiho-native")]
+        let memory_provider = build_memory_provider(&prefixed_name, Arc::clone(&registry));
         Self {
             prefixed_name,
             description,
             input_schema: def.input_schema,
             registry,
+            #[cfg(feature = "kumiho-native")]
+            memory_provider,
         }
     }
 }
@@ -70,6 +85,28 @@ impl Tool for McpToolWrapper {
             }
             other => other,
         };
+
+        #[cfg(feature = "kumiho-native")]
+        if let Some(provider) = &self.memory_provider {
+            if let Some(result) =
+                execute_memory_provider_call(provider.as_ref(), &self.prefixed_name, args.clone())
+                    .await
+            {
+                return match result {
+                    Ok(output) => Ok(ToolResult {
+                        success: true,
+                        output,
+                        error: None,
+                    }),
+                    Err(error) => Ok(ToolResult {
+                        success: false,
+                        output: String::new(),
+                        error: Some(error.to_string()),
+                    }),
+                };
+            }
+        }
+
         match self.registry.call_tool(&self.prefixed_name, args).await {
             Ok(output) => Ok(ToolResult {
                 success: true,
@@ -83,6 +120,118 @@ impl Tool for McpToolWrapper {
             }),
         }
     }
+}
+
+#[cfg(feature = "kumiho-native")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CognitiveMemoryTool {
+    Engage,
+    Reflect,
+    Recall,
+    Consolidate,
+}
+
+#[cfg(feature = "kumiho-native")]
+enum CognitiveMemoryRequest {
+    Engage(EngageRequest),
+    Reflect(ReflectRequest),
+    Recall(RecallRequest),
+    Consolidate(ConsolidateRequest),
+}
+
+#[cfg(feature = "kumiho-native")]
+fn cognitive_memory_tool(name: &str) -> Option<CognitiveMemoryTool> {
+    match name {
+        "kumiho-memory__kumiho_memory_engage" => Some(CognitiveMemoryTool::Engage),
+        "kumiho-memory__kumiho_memory_reflect" => Some(CognitiveMemoryTool::Reflect),
+        "kumiho-memory__kumiho_memory_recall" => Some(CognitiveMemoryTool::Recall),
+        "kumiho-memory__kumiho_memory_consolidate" => Some(CognitiveMemoryTool::Consolidate),
+        _ => None,
+    }
+}
+
+#[cfg(feature = "kumiho-native")]
+fn decode_cognitive_memory_request(
+    operation: CognitiveMemoryTool,
+    args: serde_json::Value,
+) -> Option<CognitiveMemoryRequest> {
+    let decoded = match operation {
+        CognitiveMemoryTool::Engage => {
+            serde_json::from_value(args).map(CognitiveMemoryRequest::Engage)
+        }
+        CognitiveMemoryTool::Reflect => {
+            serde_json::from_value(args).map(CognitiveMemoryRequest::Reflect)
+        }
+        CognitiveMemoryTool::Recall => {
+            serde_json::from_value(args).map(CognitiveMemoryRequest::Recall)
+        }
+        CognitiveMemoryTool::Consolidate => {
+            serde_json::from_value(args).map(CognitiveMemoryRequest::Consolidate)
+        }
+    };
+    match decoded {
+        Ok(request) => Some(request),
+        Err(error) => {
+            tracing::debug!(
+                ?operation,
+                error = %error,
+                "typed native memory dispatch fell back to the Python MCP tool"
+            );
+            None
+        }
+    }
+}
+
+#[cfg(feature = "kumiho-native")]
+fn build_memory_provider(
+    tool_name: &str,
+    registry: Arc<McpRegistry>,
+) -> Option<Arc<dyn MemoryProvider>> {
+    cognitive_memory_tool(tool_name)?;
+    let native = registry.native_memory_provider()?;
+    let read_provider: Arc<dyn MemoryProvider> = native;
+    let transport: Arc<dyn MemoryProviderTransport> = registry.clone();
+    let cognitive_provider: Arc<dyn MemoryProvider> =
+        Arc::new(PythonMemoryProvider::new(transport));
+    Some(Arc::new(HybridMemoryProvider::new(
+        read_provider,
+        cognitive_provider,
+    )))
+}
+
+#[cfg(feature = "kumiho-native")]
+async fn execute_memory_provider_call(
+    provider: &dyn MemoryProvider,
+    tool_name: &str,
+    args: serde_json::Value,
+) -> Option<anyhow::Result<String>> {
+    let operation = cognitive_memory_tool(tool_name)?;
+    let request = decode_cognitive_memory_request(operation, args)?;
+    let result = async {
+        let payload = match request {
+            CognitiveMemoryRequest::Engage(request) => {
+                serde_json::to_value(provider.engage(request).await?)?
+            }
+            CognitiveMemoryRequest::Reflect(request) => {
+                serde_json::to_value(provider.reflect(request).await?)?
+            }
+            CognitiveMemoryRequest::Recall(request) => {
+                serde_json::to_value(provider.recall(request).await?)?
+            }
+            CognitiveMemoryRequest::Consolidate(request) => {
+                serde_json::to_value(provider.consolidate(request).await?)?
+            }
+        };
+        let text = serde_json::to_string(&payload)
+            .context("failed to encode cognitive memory response")?;
+        serde_json::to_string_pretty(&serde_json::json!({
+            "content": [{"type": "text", "text": text}],
+            "isError": false
+        }))
+        .context("failed to encode cognitive memory MCP envelope")
+    }
+    .await;
+    Some(result)
 }
 
 /// Coerce string-encoded values to their schema-declared types before MCP
@@ -375,5 +524,115 @@ mod tests {
                 .expect("non-object args must not propagate Err");
             assert!(!result.success, "expected non-fatal failure for {non_obj}");
         }
+    }
+
+    #[cfg(feature = "kumiho-native")]
+    struct AdapterMemoryProvider;
+
+    #[cfg(feature = "kumiho-native")]
+    #[async_trait]
+    impl MemoryProvider for AdapterMemoryProvider {
+        async fn engage(
+            &self,
+            request: EngageRequest,
+        ) -> anyhow::Result<crate::memory::MemoryContext> {
+            Ok(crate::memory::MemoryContext {
+                context: format!("native:{}", request.query),
+                count: 1,
+                ..crate::memory::MemoryContext::default()
+            })
+        }
+
+        async fn reflect(
+            &self,
+            _request: ReflectRequest,
+        ) -> anyhow::Result<crate::memory::ReflectOutcome> {
+            Ok(crate::memory::ReflectOutcome {
+                buffered: true,
+                ..crate::memory::ReflectOutcome::default()
+            })
+        }
+
+        async fn recall(
+            &self,
+            _request: RecallRequest,
+        ) -> anyhow::Result<crate::memory::RecallOutcome> {
+            Ok(crate::memory::RecallOutcome::default())
+        }
+
+        async fn consolidate(
+            &self,
+            _request: ConsolidateRequest,
+        ) -> anyhow::Result<crate::memory::ConsolidateOutcome> {
+            Ok(crate::memory::ConsolidateOutcome {
+                success: true,
+                ..crate::memory::ConsolidateOutcome::default()
+            })
+        }
+    }
+
+    #[cfg(feature = "kumiho-native")]
+    #[test]
+    fn cognitive_memory_interception_requires_exact_tool_names() {
+        for name in [
+            "kumiho-memory__kumiho_memory_engage",
+            "kumiho-memory__kumiho_memory_reflect",
+            "kumiho-memory__kumiho_memory_recall",
+            "kumiho-memory__kumiho_memory_consolidate",
+        ] {
+            assert!(cognitive_memory_tool(name).is_some(), "missing {name}");
+        }
+        for name in [
+            "kumiho_memory_engage",
+            "other__kumiho_memory_engage",
+            "kumiho-memory__kumiho_memory_store",
+            "kumiho-memory__kumiho_memory_dream_state",
+        ] {
+            assert!(cognitive_memory_tool(name).is_none(), "intercepted {name}");
+        }
+    }
+
+    #[cfg(feature = "kumiho-native")]
+    #[tokio::test]
+    async fn cognitive_memory_adapter_preserves_mcp_content_envelope() {
+        let output = execute_memory_provider_call(
+            &AdapterMemoryProvider,
+            "kumiho-memory__kumiho_memory_engage",
+            json!({"query": "architecture"}),
+        )
+        .await
+        .expect("exact memory tool must be intercepted")
+        .unwrap();
+
+        let outer: serde_json::Value = serde_json::from_str(&output).unwrap();
+        assert_eq!(outer["isError"], false);
+        assert_eq!(outer["content"][0]["type"], "text");
+        let inner: serde_json::Value =
+            serde_json::from_str(outer["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(inner["context"], "native:architecture");
+        assert_eq!(inner["count"], 1);
+
+        assert!(
+            execute_memory_provider_call(
+                &AdapterMemoryProvider,
+                "kumiho-memory__kumiho_memory_store",
+                json!({})
+            )
+            .await
+            .is_none()
+        );
+    }
+
+    #[cfg(feature = "kumiho-native")]
+    #[tokio::test]
+    async fn cognitive_memory_decode_failure_falls_back_to_python_mcp_tool() {
+        let result = execute_memory_provider_call(
+            &AdapterMemoryProvider,
+            "kumiho-memory__kumiho_memory_recall",
+            json!({"query": "architecture", "recall_mode": "future-mode"}),
+        )
+        .await;
+
+        assert!(result.is_none());
     }
 }

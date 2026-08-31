@@ -179,11 +179,12 @@ jobs:
       - name: Install cargo-nextest
         run: curl -LsSf https://get.nexte.st/latest/linux | tar zxf - -C ${CARGO_HOME:-~/.cargo}/bin
 
-      # Runs the ~167 inline tests in the feature-gated channel modules
+      # Runs inline tests in the feature-gated channel and native-memory modules
       # (matrix, lark, nostr, whatsapp-web — incl. its whatsapp_storage backend —
-      # and voice-wake) that the default-only `test` job never executes (#433).
+      # voice-wake, and kumiho-native) that the default-only `test` job never
+      # executes (#433).
       - name: Run feature-gated channel tests
-        run: cargo nextest run --locked --features channel-matrix,channel-lark,channel-nostr,whatsapp-web,voice-wake
+        run: cargo nextest run --locked --features channel-matrix,channel-lark,channel-nostr,whatsapp-web,voice-wake,kumiho-native
         env:
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: clang
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: "-C link-arg=-fuse-ld=mold"
@@ -309,6 +310,8 @@ jobs:
             flags: "--no-default-features --features plugins-wasm"
           - feature: rag-pdf
             flags: "--no-default-features --features rag-pdf"
+          - feature: kumiho-native
+            flags: "--no-default-features --features kumiho-native"
           # Features below only ever compiled inside `ci-all` (with defaults on),
           # so an isolated `--no-default-features` build was never exercised (#436).
           - feature: hardware

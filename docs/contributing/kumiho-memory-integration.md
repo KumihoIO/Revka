@@ -15,7 +15,7 @@ A stateless LLM call forgets everything once the response is sent. Kumiho gives 
 - **Provenance** — every capture can link back to the sources that produced it, so a downstream agent can audit how a fact was derived.
 - **Shared substrate** — multiple agents on the same Kumiho control plane see each other's reflections, which is the foundation for handoff (`HANDED_OFF_TO`), supervisor delegation, and team memory.
 
-Revka does not own this memory; the Kumiho control plane (`api.kumiho.cloud` by default) does. Revka talks to it through the **Kumiho MCP server** that runs as a sidecar of the Revka daemon.
+Revka does not own the persisted cognitive records; the Kumiho control plane (`api.kumiho.cloud` by default) does. Revka talks to it through the **Kumiho MCP server** that runs as a sidecar of the Revka daemon.
 
 ---
 
@@ -26,6 +26,44 @@ Revka does not own this memory; the Kumiho control plane (`api.kumiho.cloud` by 
 3. The Revka daemon has Kumiho MCP wired up — verify by querying the dashboard at `http://127.0.0.1:42617/tools` and confirming the `kumiho_memory_*` tools appear in the agent tool catalog.
 
 If MCP tools don't appear, check `~/.revka/logs/` for the Kumiho MCP stderr trail. Most failures are missing `KUMIHO_AUTH_TOKEN` or an unreachable `api_url`.
+
+---
+
+## Runtime state ownership
+
+Do not treat every Kumiho-backed record as cognitive memory, and do not add a
+second Rust execution-state writer while the Python workflow executor is
+authoritative. The current ownership model is:
+
+| State | Authoritative owner | Durable form | Readers |
+|---|---|---|---|
+| Active workflow execution (the current execution envelope) | Python [`WorkflowState`](../../operator-mcp/operator_mcp/workflow/schema.py) and [`executor.py`](../../operator-mcp/operator_mcp/workflow/executor.py) | In-process state | Python workflow tools |
+| Paused/failed run recovery and retry | Python executor | `~/.revka/workflow_checkpoints/<run_id>.json` | Python resume/retry tools |
+| Workflow history and UI projection | Python [`persist_workflow_run`](../../operator-mcp/operator_mcp/workflow/memory.py) | Versioned `<harness_project>/WorkflowRuns` Kumiho items and revisions (`Revka/WorkflowRuns` by default) | Rust gateway, Python recall tools, dashboard |
+| Session-scoped agent outcomes | Python [`outcomes.py`](../../operator-mcp/operator_mcp/tool_handlers/outcomes.py) | `<harness_project>/Sessions/<session_id>/Outcomes` | Downstream agents and trust tooling |
+| Long-term cognitive memory | Python `kumiho-memory` | `CognitiveMemory/...` | MCP reflexes; optional Rust read canary |
+
+`WorkflowState` already carries the fields a separate `ExecutionEnvelope`
+would otherwise duplicate: run identity and status, exact workflow item and
+revision pins, inputs, step results, loop/branch state, timestamps, error, and
+checkpoint location. Local checkpoints are the resume/retry source; the
+`WorkflowRuns` graph is a best-effort, versioned audit/read projection. A
+Kumiho write failure must not stop an active run, and a graph projection alone
+is not assumed to contain enough untruncated state to resume it.
+
+The single-writer invariants are:
+
+1. Only the Python operator runtime transitions workflow status while it
+   executes or recovers the workflow. The Rust gateway may read the graph
+   projection and forward approve/retry/cancel commands to Python, but must not
+   independently write a competing status revision.
+2. Cognitive writes (`reflect`, consolidation, Dream State, ontology and edge
+   discovery) remain owned by Python `kumiho-memory`. Rust canary paths are
+   read-only.
+3. Moving workflow execution to Rust is a single cutover, not a dual-write
+   phase: Rust must take checkpoint, recovery, cancellation, retry, exact
+   workflow-revision pinning, and Kumiho projection together, after which the
+   Python executor stops writing those transitions.
 
 ---
 

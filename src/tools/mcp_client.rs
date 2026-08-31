@@ -16,6 +16,7 @@ use tokio::sync::Mutex;
 use tokio::time::{Duration, timeout};
 
 use crate::config::schema::McpServerConfig;
+use crate::memory::provider::MemoryProviderTransport;
 use crate::tools::mcp_protocol::{
     JsonRpcRequest, MCP_PROTOCOL_VERSION, McpToolDef, McpToolsListResult,
 };
@@ -238,6 +239,8 @@ pub struct McpRegistry {
     servers: Vec<McpServer>,
     /// prefixed_name → (server_index, original_tool_name)
     tool_index: HashMap<String, (usize, String)>,
+    #[cfg(feature = "kumiho-native")]
+    native_memory_provider: Option<Arc<crate::memory::NativeKumihoProvider>>,
 }
 
 impl McpRegistry {
@@ -266,9 +269,15 @@ impl McpRegistry {
             }
         }
 
+        #[cfg(feature = "kumiho-native")]
+        let native_memory_provider =
+            crate::memory::NativeKumihoProvider::from_mcp_configs(configs).map(Arc::new);
+
         Ok(Self {
             servers,
             tool_index,
+            #[cfg(feature = "kumiho-native")]
+            native_memory_provider,
         })
     }
 
@@ -317,6 +326,13 @@ impl McpRegistry {
         self.tool_index.len()
     }
 
+    #[cfg(feature = "kumiho-native")]
+    pub(crate) fn native_memory_provider(
+        &self,
+    ) -> Option<Arc<crate::memory::NativeKumihoProvider>> {
+        self.native_memory_provider.clone()
+    }
+
     /// Map of `<server-name>` → `instructions` for every connected server
     /// that advertised a non-empty `instructions` field on initialize.
     /// Empty when no server provided one.
@@ -332,6 +348,17 @@ impl McpRegistry {
             }
         }
         out
+    }
+}
+
+#[async_trait::async_trait]
+impl MemoryProviderTransport for McpRegistry {
+    async fn call_memory_tool(
+        &self,
+        tool_name: &str,
+        arguments: serde_json::Value,
+    ) -> Result<String> {
+        McpRegistry::call_tool(self, tool_name, arguments).await
     }
 }
 

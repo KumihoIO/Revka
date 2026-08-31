@@ -34,6 +34,8 @@ pub mod canvas;
 pub mod click_tracking;
 pub mod kumiho_bridge;
 pub mod kumiho_client;
+#[cfg(feature = "kumiho-native")]
+mod kumiho_native;
 pub mod mcp_discovery;
 pub mod nodes;
 pub mod session_queue;

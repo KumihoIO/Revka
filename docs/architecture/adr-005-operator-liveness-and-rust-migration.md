@@ -4,6 +4,51 @@
 
 **Date:** 2026-04-15
 
+## Addendum: Native Kumiho graph access (2026-08-31)
+
+The original analysis below assumed that Kumiho had no Rust client. That
+constraint no longer holds: `KumihoIO/kumiho-SDKs` now publishes the
+`rust-v0.10.0` Rust SDK for typed gRPC graph operations.
+
+This changes the migration boundary for low-level graph I/O, not for the
+client-side cognitive-memory pipeline. Revka may move narrow, measured graph
+read/write paths to the Rust SDK while `kumiho-memory` continues to own
+`engage`, `reflect`, consolidation, Dream State, ontology extraction, and other
+rapidly evolving memory semantics in Python.
+
+The first compatibility slice requires both the compile-time `kumiho-native`
+feature and the runtime `REVKA_KUMIHO_NATIVE_SDK=1` opt-in. Exact item and
+revision reads then try the Rust SDK first and fall back to the existing Python
+SDK bridge and hosted FastAPI path on any native initialization or RPC failure.
+The feature remains outside the default build until broader route parity and
+binary/build-cost measurements justify making it standard.
+
+A second, narrower canary uses `REVKA_KUMIHO_NATIVE_MEMORY=1` with the same
+compile-time feature. It intercepts only summarized, non-graph `engage` and
+`recall` requests, reads them through the Rust SDK, and falls back to the
+Python MCP implementation on unsupported request shapes, empty results, or
+native errors. `reflect`, consolidation, Dream State, graph augmentation, and
+full recall remain Python-owned; the flag must not be treated as a complete
+`kumiho-memory` Rust port.
+
+The canary intentionally implements only server search, published/latest
+revision resolution, memory-type filtering, explicit `min_score`, evidence
+weighting, deterministic item deduplication, and summarized context assembly.
+Python's candidate-multiplier, cross-encoder, recency/MMR, sibling enrichment,
+as-of recall, and duplicate-call suppression remain outside this slice. Output
+quality and latency must be measured against the Python reference path before
+any default-on decision.
+
+Operational workflow state follows the same incremental-migration rule. The
+existing Python `WorkflowState` is the current execution envelope; local JSON
+checkpoints are authoritative for pause/retry recovery, while versioned Kumiho
+`Revka/WorkflowRuns` records are a best-effort audit and UI projection. The
+Rust gateway may read that projection and forward lifecycle commands, but it
+must not become a second workflow-status writer. If workflow execution later
+moves to Rust, checkpointing, recovery, cancellation, retry, workflow-revision
+pinning, and graph projection move in one ownership cutover. See
+[`kumiho-memory-integration.md`](../contributing/kumiho-memory-integration.md#runtime-state-ownership).
+
 ## Context
 
 The Revka operator orchestrates multi-agent workflows (e.g. quantum-soul
