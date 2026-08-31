@@ -1,6 +1,8 @@
 # OpenAI Temperature Compatibility Reference
 
-This document provides empirical evidence for temperature parameter compatibility across OpenAI models.
+This document records Revka's temperature compatibility policy across OpenAI models.
+
+Last verified: **September 1, 2026**.
 
 ## Summary
 
@@ -33,6 +35,10 @@ Different OpenAI model families have different temperature requirements:
 | gpt-5.1-chat-latest | ❌ | ✅ | USE_1.0 |
 | gpt-5.2-chat-latest | ❌ | ✅ | USE_1.0 |
 | gpt-5.3-chat-latest | ❌ | ✅ | USE_1.0 |
+| gpt-5.6 | ❌ | ✅ | USE_1.0 |
+| gpt-5.6-sol | ❌ | ✅ | USE_1.0 |
+| gpt-5.6-terra | ❌ | ✅ | USE_1.0 |
+| gpt-5.6-luna | ❌ | ✅ | USE_1.0 |
 
 ### Models Accepting Flexible Temperature (0.7 works)
 
@@ -65,9 +71,10 @@ Models were tested with:
 2. temperature=0.7 (common default)
 3. temperature=1.0 (reasoning model requirement)
 
-Results were validated against actual OpenAI API responses.
+Results are based on actual API responses or current first-party model documentation.
 
 ## References
 
-- OpenAI API Documentation: https://platform.openai.com/docs/api-reference/chat
+- [GPT-5.6 model documentation](https://developers.openai.com/api/docs/models)
+- [OpenAI Chat Completions API reference](https://platform.openai.com/docs/api-reference/chat)
 - Related Issue: Temperature errors with o1/o3/gpt-5 models

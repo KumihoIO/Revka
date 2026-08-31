@@ -16,10 +16,13 @@ use crate::memory::{
     default_memory_backend_key, memory_backend_profile, selectable_memory_backends,
 };
 use crate::onboard::kumiho_cloud::{KumihoCloudClient, OnboardingConfig, PlanOption, RegionOption};
+use crate::providers::model_catalog::{
+    canonical_provider_name, curated_models_for_provider as catalog_curated_models_for_provider,
+    default_model_for_provider as catalog_default_model_for_provider,
+};
 use crate::providers::{
-    canonical_china_provider_name, is_glm_alias, is_glm_cn_alias, is_minimax_alias,
-    is_moonshot_alias, is_qianfan_alias, is_qwen_alias, is_qwen_oauth_alias, is_zai_alias,
-    is_zai_cn_alias,
+    is_glm_alias, is_glm_cn_alias, is_minimax_alias, is_moonshot_alias, is_qianfan_alias,
+    is_qwen_alias, is_zai_alias, is_zai_cn_alias,
 };
 use crate::t;
 use anyhow::{Context, Result, bail};
@@ -1056,29 +1059,6 @@ async fn run_quick_setup_with_home(
     Ok(config)
 }
 
-fn canonical_provider_name(provider_name: &str) -> &str {
-    if is_qwen_oauth_alias(provider_name) {
-        return "qwen-code";
-    }
-
-    if let Some(canonical) = canonical_china_provider_name(provider_name) {
-        return canonical;
-    }
-
-    match provider_name {
-        "grok" => "xai",
-        "together" => "together-ai",
-        "google" | "google-gemini" => "gemini",
-        "github-copilot" => "copilot",
-        "openai_codex" | "codex" => "openai-codex",
-        "kimi_coding" | "kimi_for_coding" => "kimi-code",
-        "nvidia-nim" | "build.nvidia.com" => "nvidia",
-        "aws-bedrock" => "bedrock",
-        "llama.cpp" => "llamacpp",
-        _ => provider_name,
-    }
-}
-
 fn allows_unauthenticated_model_fetch(provider_name: &str) -> bool {
     matches!(
         canonical_provider_name(provider_name),
@@ -1094,492 +1074,17 @@ fn allows_unauthenticated_model_fetch(provider_name: &str) -> bool {
     )
 }
 
-/// Pick a sensible default model for the given provider.
-const MINIMAX_ONBOARD_MODELS: [(&str, &str); 7] = [
-    (
-        "MiniMax-M2.7",
-        "MiniMax M2.7 (latest flagship, recommended)",
-    ),
-    ("MiniMax-M2.7-highspeed", "MiniMax M2.7 High-Speed (faster)"),
-    ("MiniMax-M2.5", "MiniMax M2.5 (stable)"),
-    ("MiniMax-M2.5-highspeed", "MiniMax M2.5 High-Speed (faster)"),
-    ("MiniMax-M2.1", "MiniMax M2.1 (previous gen)"),
-    ("MiniMax-M2.1-highspeed", "MiniMax M2.1 High-Speed (faster)"),
-    ("MiniMax-M2", "MiniMax M2 (legacy)"),
-];
-
+/// Pick the shared provider default and return the owned form used by onboarding.
 fn default_model_for_provider(provider: &str) -> String {
-    match canonical_provider_name(provider) {
-        "anthropic" => "claude-sonnet-4-5-20250929".into(),
-        "openai" => "gpt-5.2".into(),
-        "openai-codex" => "gpt-5-codex".into(),
-        "venice" => "zai-org-glm-5".into(),
-        "groq" => "llama-3.3-70b-versatile".into(),
-        "mistral" => "mistral-large-latest".into(),
-        "deepseek" => "deepseek-chat".into(),
-        "xai" => "grok-4-1-fast-reasoning".into(),
-        "perplexity" => "sonar-pro".into(),
-        "fireworks" => "accounts/fireworks/models/llama-v3p3-70b-instruct".into(),
-        "novita" => "minimax/minimax-m2.7".into(),
-        "together-ai" => "meta-llama/Llama-3.3-70B-Instruct-Turbo".into(),
-        "cohere" => "command-a-03-2025".into(),
-        "moonshot" => "kimi-k2.5".into(),
-        "glm" | "zai" => "glm-5".into(),
-        "minimax" => "MiniMax-M2.7".into(),
-        "qwen" => "qwen-plus".into(),
-        "qwen-code" => "qwen3-coder-plus".into(),
-        "ollama" => "llama3.2".into(),
-        "llamacpp" => "ggml-org/gpt-oss-20b-GGUF".into(),
-        "sglang" | "vllm" | "osaurus" | "opencode-go" => "default".into(),
-        "gemini" => "gemini-2.5-pro".into(),
-        "kimi-code" => "kimi-for-coding".into(),
-        "bedrock" => "anthropic.claude-sonnet-4-5-20250929-v1:0".into(),
-        "nvidia" => "meta/llama-3.3-70b-instruct".into(),
-        "avian" => "deepseek/deepseek-v3.2".into(),
-        _ => "anthropic/claude-sonnet-4.6".into(),
-    }
+    catalog_default_model_for_provider(provider).to_string()
 }
 
 fn curated_models_for_provider(provider_name: &str) -> Vec<(String, String)> {
-    match canonical_provider_name(provider_name) {
-        "openrouter" => vec![
-            (
-                "anthropic/claude-sonnet-4.6".to_string(),
-                "Claude Sonnet 4.6 (balanced, recommended)".to_string(),
-            ),
-            (
-                "openai/gpt-5.2".to_string(),
-                "GPT-5.2 (latest flagship)".to_string(),
-            ),
-            (
-                "openai/gpt-5-mini".to_string(),
-                "GPT-5 mini (fast, cost-efficient)".to_string(),
-            ),
-            (
-                "google/gemini-3-pro-preview".to_string(),
-                "Gemini 3 Pro Preview (frontier reasoning)".to_string(),
-            ),
-            (
-                "x-ai/grok-4.1-fast".to_string(),
-                "Grok 4.1 Fast (reasoning + speed)".to_string(),
-            ),
-            (
-                "deepseek/deepseek-v3.2".to_string(),
-                "DeepSeek V3.2 (agentic + affordable)".to_string(),
-            ),
-            (
-                "meta-llama/llama-4-maverick".to_string(),
-                "Llama 4 Maverick (open model)".to_string(),
-            ),
-        ],
-        "anthropic" => vec![
-            (
-                "claude-sonnet-4-5-20250929".to_string(),
-                "Claude Sonnet 4.5 (balanced, recommended)".to_string(),
-            ),
-            (
-                "claude-opus-4-6".to_string(),
-                "Claude Opus 4.6 (best quality)".to_string(),
-            ),
-            (
-                "claude-haiku-4-5-20251001".to_string(),
-                "Claude Haiku 4.5 (fastest, cheapest)".to_string(),
-            ),
-        ],
-        "openai" => vec![
-            (
-                "gpt-5.2".to_string(),
-                "GPT-5.2 (latest coding/agentic flagship)".to_string(),
-            ),
-            (
-                "gpt-5-mini".to_string(),
-                "GPT-5 mini (faster, cheaper)".to_string(),
-            ),
-            (
-                "gpt-5-nano".to_string(),
-                "GPT-5 nano (lowest latency/cost)".to_string(),
-            ),
-            (
-                "gpt-5.2-codex".to_string(),
-                "GPT-5.2 Codex (agentic coding)".to_string(),
-            ),
-        ],
-        "openai-codex" => vec![
-            (
-                "gpt-5-codex".to_string(),
-                "GPT-5 Codex (recommended)".to_string(),
-            ),
-            (
-                "gpt-5.2-codex".to_string(),
-                "GPT-5.2 Codex (agentic coding)".to_string(),
-            ),
-            ("o4-mini".to_string(), "o4-mini (fallback)".to_string()),
-        ],
-        "venice" => vec![
-            (
-                "zai-org-glm-5".to_string(),
-                "GLM-5 via Venice (agentic flagship)".to_string(),
-            ),
-            (
-                "claude-sonnet-4-6".to_string(),
-                "Claude Sonnet 4.6 via Venice (best quality)".to_string(),
-            ),
-            (
-                "deepseek-v3.2".to_string(),
-                "DeepSeek V3.2 via Venice (strong value)".to_string(),
-            ),
-            (
-                "grok-41-fast".to_string(),
-                "Grok 4.1 Fast via Venice (low latency)".to_string(),
-            ),
-        ],
-        "groq" => vec![
-            (
-                "llama-3.3-70b-versatile".to_string(),
-                "Llama 3.3 70B (fast, recommended)".to_string(),
-            ),
-            (
-                "openai/gpt-oss-120b".to_string(),
-                "GPT-OSS 120B (strong open-weight)".to_string(),
-            ),
-            (
-                "openai/gpt-oss-20b".to_string(),
-                "GPT-OSS 20B (cost-efficient open-weight)".to_string(),
-            ),
-        ],
-        "mistral" => vec![
-            (
-                "mistral-large-latest".to_string(),
-                "Mistral Large (latest flagship)".to_string(),
-            ),
-            (
-                "mistral-medium-latest".to_string(),
-                "Mistral Medium (balanced)".to_string(),
-            ),
-            (
-                "codestral-latest".to_string(),
-                "Codestral (code-focused)".to_string(),
-            ),
-            (
-                "devstral-latest".to_string(),
-                "Devstral (software engineering specialist)".to_string(),
-            ),
-        ],
-        "deepseek" => vec![
-            (
-                "deepseek-chat".to_string(),
-                "DeepSeek Chat (mapped to V3.2 non-thinking)".to_string(),
-            ),
-            (
-                "deepseek-reasoner".to_string(),
-                "DeepSeek Reasoner (mapped to V3.2 thinking)".to_string(),
-            ),
-        ],
-        "xai" => vec![
-            (
-                "grok-4-1-fast-reasoning".to_string(),
-                "Grok 4.1 Fast Reasoning (recommended)".to_string(),
-            ),
-            (
-                "grok-4-1-fast-non-reasoning".to_string(),
-                "Grok 4.1 Fast Non-Reasoning (low latency)".to_string(),
-            ),
-            (
-                "grok-code-fast-1".to_string(),
-                "Grok Code Fast 1 (coding specialist)".to_string(),
-            ),
-            ("grok-4".to_string(), "Grok 4 (max quality)".to_string()),
-        ],
-        "perplexity" => vec![
-            (
-                "sonar-pro".to_string(),
-                "Sonar Pro (flagship web-grounded model)".to_string(),
-            ),
-            (
-                "sonar-reasoning-pro".to_string(),
-                "Sonar Reasoning Pro (complex multi-step reasoning)".to_string(),
-            ),
-            (
-                "sonar-deep-research".to_string(),
-                "Sonar Deep Research (long-form research)".to_string(),
-            ),
-            ("sonar".to_string(), "Sonar (search, fast)".to_string()),
-        ],
-        "fireworks" => vec![
-            (
-                "accounts/fireworks/models/llama-v3p3-70b-instruct".to_string(),
-                "Llama 3.3 70B".to_string(),
-            ),
-            (
-                "accounts/fireworks/models/mixtral-8x22b-instruct".to_string(),
-                "Mixtral 8x22B".to_string(),
-            ),
-        ],
-        "novita" => vec![
-            (
-                "minimax/minimax-m2.7".to_string(),
-                "MiniMax M2.7 (latest flagship)".to_string(),
-            ),
-            (
-                "minimax/minimax-m2.5".to_string(),
-                "MiniMax M2.5".to_string(),
-            ),
-        ],
-        "together-ai" => vec![
-            (
-                "meta-llama/Llama-3.3-70B-Instruct-Turbo".to_string(),
-                "Llama 3.3 70B Instruct Turbo (recommended)".to_string(),
-            ),
-            (
-                "moonshotai/Kimi-K2.5".to_string(),
-                "Kimi K2.5 (reasoning + coding)".to_string(),
-            ),
-            (
-                "deepseek-ai/DeepSeek-V3.1".to_string(),
-                "DeepSeek V3.1 (strong value)".to_string(),
-            ),
-        ],
-        "cohere" => vec![
-            (
-                "command-a-03-2025".to_string(),
-                "Command A (flagship enterprise model)".to_string(),
-            ),
-            (
-                "command-a-reasoning-08-2025".to_string(),
-                "Command A Reasoning (agentic reasoning)".to_string(),
-            ),
-            (
-                "command-r-08-2024".to_string(),
-                "Command R (stable fast baseline)".to_string(),
-            ),
-        ],
-        "kimi-code" => vec![
-            (
-                "kimi-for-coding".to_string(),
-                "Kimi for Coding (official coding-agent model)".to_string(),
-            ),
-            (
-                "kimi-k2.5".to_string(),
-                "Kimi K2.5 (general coding endpoint model)".to_string(),
-            ),
-        ],
-        "moonshot" => vec![
-            (
-                "kimi-k2.5".to_string(),
-                "Kimi K2.5 (latest flagship, recommended)".to_string(),
-            ),
-            (
-                "kimi-k2-thinking".to_string(),
-                "Kimi K2 Thinking (deep reasoning + tool use)".to_string(),
-            ),
-            (
-                "kimi-k2-0905-preview".to_string(),
-                "Kimi K2 0905 Preview (strong coding)".to_string(),
-            ),
-        ],
-        "glm" | "zai" => vec![
-            ("glm-5".to_string(), "GLM-5 (high reasoning)".to_string()),
-            (
-                "glm-4.7".to_string(),
-                "GLM-4.7 (strong general-purpose quality)".to_string(),
-            ),
-            (
-                "glm-4.5-air".to_string(),
-                "GLM-4.5 Air (lower latency)".to_string(),
-            ),
-        ],
-        "minimax" => vec![
-            (
-                "MiniMax-M2.7".to_string(),
-                "MiniMax M2.7 (latest flagship)".to_string(),
-            ),
-            (
-                "MiniMax-M2.7-highspeed".to_string(),
-                "MiniMax M2.7 High-Speed (fast)".to_string(),
-            ),
-            (
-                "MiniMax-M2.5".to_string(),
-                "MiniMax M2.5 (stable)".to_string(),
-            ),
-            (
-                "MiniMax-M2.5-highspeed".to_string(),
-                "MiniMax M2.5 High-Speed (fast)".to_string(),
-            ),
-            (
-                "MiniMax-M2.1".to_string(),
-                "MiniMax M2.1 (previous gen)".to_string(),
-            ),
-        ],
-        "qwen" => vec![
-            (
-                "qwen-max".to_string(),
-                "Qwen Max (highest quality)".to_string(),
-            ),
-            (
-                "qwen-plus".to_string(),
-                "Qwen Plus (balanced default)".to_string(),
-            ),
-            (
-                "qwen-turbo".to_string(),
-                "Qwen Turbo (fast and cost-efficient)".to_string(),
-            ),
-        ],
-        "qwen-code" => vec![
-            (
-                "qwen3-coder-plus".to_string(),
-                "Qwen3 Coder Plus (recommended for coding workflows)".to_string(),
-            ),
-            (
-                "qwen3.5-plus".to_string(),
-                "Qwen3.5 Plus (reasoning + coding)".to_string(),
-            ),
-            (
-                "qwen3-max-2026-01-23".to_string(),
-                "Qwen3 Max (high-capability coding model)".to_string(),
-            ),
-        ],
-        "nvidia" => vec![
-            (
-                "meta/llama-3.3-70b-instruct".to_string(),
-                "Llama 3.3 70B Instruct (balanced default)".to_string(),
-            ),
-            (
-                "deepseek-ai/deepseek-v3.2".to_string(),
-                "DeepSeek V3.2 (advanced reasoning + coding)".to_string(),
-            ),
-            (
-                "nvidia/llama-3.3-nemotron-super-49b-v1.5".to_string(),
-                "Llama 3.3 Nemotron Super 49B v1.5 (NVIDIA-tuned)".to_string(),
-            ),
-            (
-                "nvidia/llama-3.1-nemotron-ultra-253b-v1".to_string(),
-                "Llama 3.1 Nemotron Ultra 253B v1 (max quality)".to_string(),
-            ),
-        ],
-        "astrai" => vec![
-            (
-                "anthropic/claude-sonnet-4.6".to_string(),
-                "Claude Sonnet 4.6 (balanced default)".to_string(),
-            ),
-            (
-                "openai/gpt-5.2".to_string(),
-                "GPT-5.2 (latest flagship)".to_string(),
-            ),
-            (
-                "deepseek/deepseek-v3.2".to_string(),
-                "DeepSeek V3.2 (agentic + affordable)".to_string(),
-            ),
-            (
-                "z-ai/glm-5".to_string(),
-                "GLM-5 (high reasoning)".to_string(),
-            ),
-        ],
-        "avian" => vec![
-            (
-                "deepseek/deepseek-v3.2".to_string(),
-                "DeepSeek V3.2 (164K context, recommended)".to_string(),
-            ),
-            (
-                "moonshotai/kimi-k2.5".to_string(),
-                "Kimi K2.5 (131K context)".to_string(),
-            ),
-            ("z-ai/glm-5".to_string(), "GLM-5 (131K context)".to_string()),
-            (
-                "minimax/minimax-m2.5".to_string(),
-                "MiniMax M2.5 (1M context)".to_string(),
-            ),
-        ],
-        "ollama" => vec![
-            (
-                "llama3.2".to_string(),
-                "Llama 3.2 (recommended local)".to_string(),
-            ),
-            ("mistral".to_string(), "Mistral 7B".to_string()),
-            ("codellama".to_string(), "Code Llama".to_string()),
-            ("phi3".to_string(), "Phi-3 (small, fast)".to_string()),
-        ],
-        "llamacpp" => vec![
-            (
-                "ggml-org/gpt-oss-20b-GGUF".to_string(),
-                "GPT-OSS 20B GGUF (llama.cpp server example)".to_string(),
-            ),
-            (
-                "bartowski/Llama-3.3-70B-Instruct-GGUF".to_string(),
-                "Llama 3.3 70B GGUF (high quality)".to_string(),
-            ),
-            (
-                "Qwen/Qwen2.5-Coder-7B-Instruct-GGUF".to_string(),
-                "Qwen2.5 Coder 7B GGUF (coding-focused)".to_string(),
-            ),
-        ],
-        "sglang" | "vllm" => vec![
-            (
-                "meta-llama/Llama-3.1-8B-Instruct".to_string(),
-                "Llama 3.1 8B Instruct (popular, fast)".to_string(),
-            ),
-            (
-                "meta-llama/Llama-3.1-70B-Instruct".to_string(),
-                "Llama 3.1 70B Instruct (high quality)".to_string(),
-            ),
-            (
-                "Qwen/Qwen2.5-Coder-7B-Instruct".to_string(),
-                "Qwen2.5 Coder 7B Instruct (coding-focused)".to_string(),
-            ),
-        ],
-        "osaurus" => vec![
-            (
-                "qwen3-30b-a3b-8bit".to_string(),
-                "Qwen3 30B A3B (local, balanced)".to_string(),
-            ),
-            (
-                "gemma-3n-e4b-it-lm-4bit".to_string(),
-                "Gemma 3N E4B (local, efficient)".to_string(),
-            ),
-            (
-                "phi-4-mini-reasoning-mlx-4bit".to_string(),
-                "Phi-4 Mini Reasoning (local, fast reasoning)".to_string(),
-            ),
-        ],
-        "bedrock" => vec![
-            (
-                "anthropic.claude-sonnet-4-6".to_string(),
-                "Claude Sonnet 4.6 (latest, recommended)".to_string(),
-            ),
-            (
-                "anthropic.claude-opus-4-6-v1".to_string(),
-                "Claude Opus 4.6 (strongest)".to_string(),
-            ),
-            (
-                "anthropic.claude-haiku-4-5-20251001-v1:0".to_string(),
-                "Claude Haiku 4.5 (fastest, cheapest)".to_string(),
-            ),
-            (
-                "anthropic.claude-sonnet-4-5-20250929-v1:0".to_string(),
-                "Claude Sonnet 4.5".to_string(),
-            ),
-        ],
-        "gemini" => vec![
-            (
-                "gemini-3-pro-preview".to_string(),
-                "Gemini 3 Pro Preview (latest frontier reasoning)".to_string(),
-            ),
-            (
-                "gemini-2.5-pro".to_string(),
-                "Gemini 2.5 Pro (stable reasoning)".to_string(),
-            ),
-            (
-                "gemini-2.5-flash".to_string(),
-                "Gemini 2.5 Flash (best price/performance)".to_string(),
-            ),
-            (
-                "gemini-2.5-flash-lite".to_string(),
-                "Gemini 2.5 Flash-Lite (lowest cost)".to_string(),
-            ),
-        ],
-        _ => vec![("default".to_string(), "Default model".to_string())],
-    }
+    catalog_curated_models_for_provider(provider_name)
+        .iter()
+        .map(|entry| (entry.id.to_string(), entry.label.to_string()))
+        .collect()
 }
-
 fn supports_live_model_fetch(provider_name: &str) -> bool {
     if provider_name.trim().starts_with("custom:") {
         return true;
@@ -8223,40 +7728,37 @@ mod tests {
     fn default_model_for_provider_uses_latest_defaults() {
         assert_eq!(
             default_model_for_provider("openrouter"),
-            "anthropic/claude-sonnet-4.6"
+            "anthropic/claude-sonnet-5"
         );
-        assert_eq!(default_model_for_provider("openai"), "gpt-5.2");
-        assert_eq!(default_model_for_provider("openai-codex"), "gpt-5-codex");
-        assert_eq!(
-            default_model_for_provider("anthropic"),
-            "claude-sonnet-4-5-20250929"
-        );
-        assert_eq!(default_model_for_provider("qwen"), "qwen-plus");
-        assert_eq!(default_model_for_provider("qwen-intl"), "qwen-plus");
-        assert_eq!(default_model_for_provider("qwen-code"), "qwen3-coder-plus");
-        assert_eq!(default_model_for_provider("glm-cn"), "glm-5");
-        assert_eq!(default_model_for_provider("minimax-cn"), "MiniMax-M2.7");
-        assert_eq!(default_model_for_provider("zai-cn"), "glm-5");
-        assert_eq!(default_model_for_provider("gemini"), "gemini-2.5-pro");
-        assert_eq!(default_model_for_provider("google"), "gemini-2.5-pro");
+        assert_eq!(default_model_for_provider("openai"), "gpt-5.6-sol");
+        assert_eq!(default_model_for_provider("openai-codex"), "gpt-5.6-sol");
+        assert_eq!(default_model_for_provider("anthropic"), "claude-sonnet-5");
+        assert_eq!(default_model_for_provider("qwen"), "qwen3.7-plus");
+        assert_eq!(default_model_for_provider("qwen-intl"), "qwen3.7-plus");
+        assert_eq!(default_model_for_provider("qwen-code"), "qwen3.7-plus");
+        assert_eq!(default_model_for_provider("glm-cn"), "glm-5.3");
+        assert_eq!(default_model_for_provider("minimax-cn"), "MiniMax-M3");
+        assert_eq!(default_model_for_provider("zai-cn"), "glm-5.3");
+        assert_eq!(default_model_for_provider("gemini"), "gemini-3.7-flash");
+        assert_eq!(default_model_for_provider("google"), "gemini-3.7-flash");
         assert_eq!(default_model_for_provider("kimi-code"), "kimi-for-coding");
         assert_eq!(
             default_model_for_provider("bedrock"),
-            "anthropic.claude-sonnet-4-5-20250929-v1:0"
+            "anthropic.claude-sonnet-5"
         );
         assert_eq!(
             default_model_for_provider("google-gemini"),
-            "gemini-2.5-pro"
+            "gemini-3.7-flash"
         );
-        assert_eq!(default_model_for_provider("venice"), "zai-org-glm-5");
+        assert_eq!(default_model_for_provider("venice"), "z-ai-glm-5-3");
         assert_eq!(default_model_for_provider("moonshot"), "kimi-k2.5");
         assert_eq!(
             default_model_for_provider("nvidia"),
-            "meta/llama-3.3-70b-instruct"
+            "deepseek-ai/deepseek-v4-pro-0813"
         );
         assert_eq!(
             default_model_for_provider("nvidia-nim"),
-            "meta/llama-3.3-70b-instruct"
+            "deepseek-ai/deepseek-v4-pro-0813"
         );
         assert_eq!(
             default_model_for_provider("llamacpp"),
@@ -8270,7 +7772,7 @@ mod tests {
         );
         assert_eq!(
             default_model_for_provider("avian"),
-            "deepseek/deepseek-v3.2"
+            "deepseek/deepseek-v4-flash"
         );
     }
 
@@ -8304,8 +7806,9 @@ mod tests {
             .map(|(id, _)| id)
             .collect();
 
-        assert!(ids.contains(&"gpt-5.2".to_string()));
-        assert!(ids.contains(&"gpt-5-mini".to_string()));
+        assert!(ids.contains(&"gpt-5.6-sol".to_string()));
+        assert!(ids.contains(&"gpt-5.6-terra".to_string()));
+        assert!(ids.contains(&"gpt-5.6-luna".to_string()));
     }
 
     #[test]
@@ -8315,9 +7818,9 @@ mod tests {
             .map(|(id, _)| id)
             .collect();
 
-        assert!(ids.contains(&"glm-5".to_string()));
-        assert!(ids.contains(&"glm-4.7".to_string()));
-        assert!(ids.contains(&"glm-4.5-air".to_string()));
+        assert!(ids.contains(&"glm-5.3".to_string()));
+        assert!(ids.contains(&"glm-5.2".to_string()));
+        assert!(ids.contains(&"glm-5.1".to_string()));
         assert!(!ids.contains(&"glm-4-plus".to_string()));
         assert!(!ids.contains(&"glm-4-flash".to_string()));
     }
@@ -8329,8 +7832,9 @@ mod tests {
             .map(|(id, _)| id)
             .collect();
 
-        assert!(ids.contains(&"gpt-5-codex".to_string()));
-        assert!(ids.contains(&"gpt-5.2-codex".to_string()));
+        assert!(ids.contains(&"gpt-5.6-sol".to_string()));
+        assert!(ids.contains(&"gpt-5.6-terra".to_string()));
+        assert!(!ids.contains(&"gpt-5.2-codex".to_string()));
     }
 
     #[test]
@@ -8340,7 +7844,7 @@ mod tests {
             .map(|(id, _)| id)
             .collect();
 
-        assert!(ids.contains(&"anthropic/claude-sonnet-4.6".to_string()));
+        assert!(ids.contains(&"anthropic/claude-sonnet-5".to_string()));
     }
 
     #[test]
@@ -8350,10 +7854,10 @@ mod tests {
             .map(|(id, _)| id)
             .collect();
 
+        assert!(ids.contains(&"anthropic.claude-sonnet-5".to_string()));
         assert!(ids.contains(&"anthropic.claude-sonnet-4-6".to_string()));
         assert!(ids.contains(&"anthropic.claude-opus-4-6-v1".to_string()));
         assert!(ids.contains(&"anthropic.claude-haiku-4-5-20251001-v1:0".to_string()));
-        assert!(ids.contains(&"anthropic.claude-sonnet-4-5-20250929-v1:0".to_string()));
     }
 
     #[test]
@@ -8404,6 +7908,7 @@ mod tests {
             .map(|(id, _)| id)
             .collect();
 
+        assert!(ids.contains(&"qwen3.7-plus".to_string()));
         assert!(ids.contains(&"qwen3-coder-plus".to_string()));
         assert!(ids.contains(&"qwen3.5-plus".to_string()));
         assert!(ids.contains(&"qwen3-max-2026-01-23".to_string()));
@@ -8416,10 +7921,10 @@ mod tests {
             .map(|(id, _)| id)
             .collect();
 
-        assert!(ids.contains(&"deepseek/deepseek-v3.2".to_string()));
-        assert!(ids.contains(&"moonshotai/kimi-k2.5".to_string()));
-        assert!(ids.contains(&"z-ai/glm-5".to_string()));
-        assert!(ids.contains(&"minimax/minimax-m2.5".to_string()));
+        assert!(ids.contains(&"deepseek/deepseek-v4-flash".to_string()));
+        assert!(ids.contains(&"deepseek/deepseek-v4-pro-0813".to_string()));
+        assert!(ids.contains(&"moonshotai/kimi-k2.6".to_string()));
+        assert!(ids.contains(&"z-ai/glm-5.2".to_string()));
     }
 
     #[test]
@@ -8506,9 +8011,9 @@ mod tests {
             .map(|(id, _)| id)
             .collect();
 
-        assert!(ids.contains(&"meta/llama-3.3-70b-instruct".to_string()));
-        assert!(ids.contains(&"deepseek-ai/deepseek-v3.2".to_string()));
-        assert!(ids.contains(&"nvidia/llama-3.3-nemotron-super-49b-v1.5".to_string()));
+        assert!(ids.contains(&"deepseek-ai/deepseek-v4-pro-0813".to_string()));
+        assert!(ids.contains(&"deepseek-ai/deepseek-v4-flash-0731".to_string()));
+        assert!(ids.contains(&"minimaxai/minimax-m3".to_string()));
     }
 
     #[test]

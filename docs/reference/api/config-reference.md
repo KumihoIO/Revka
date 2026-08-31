@@ -29,7 +29,7 @@ Schema export command:
 | Key | Default | Notes |
 |---|---|---|
 | `default_provider` | `openrouter` | provider ID or alias |
-| `default_model` | `anthropic/claude-sonnet-4-6` | model routed through selected provider |
+| `default_model` | `anthropic/claude-sonnet-5` | model routed through selected provider |
 | `default_temperature` | `0.7` | model temperature |
 | `provider_timeout_secs` | `120` | HTTP request timeout in seconds for LLM provider API calls |
 | `provider_max_tokens` | unset (install default: `16256`) | Maximum output tokens included in provider API requests |
@@ -297,7 +297,7 @@ Notes:
 ```toml
 [agents.researcher]
 provider = "openrouter"
-model = "anthropic/claude-sonnet-4-6"
+model = "anthropic/claude-sonnet-5"
 system_prompt = "You are a research assistant."
 max_depth = 2
 agentic = true

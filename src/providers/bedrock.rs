@@ -375,7 +375,20 @@ enum SystemBlock {
 #[serde(rename_all = "camelCase")]
 struct InferenceConfig {
     max_tokens: u32,
-    temperature: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f64>,
+}
+
+fn model_supports_temperature(model: &str) -> bool {
+    let model = model.to_ascii_lowercase();
+    ![
+        "claude-sonnet-5",
+        "claude-opus-5",
+        "claude-fable-5",
+        "claude-mythos-5",
+    ]
+    .iter()
+    .any(|prefix| model.contains(prefix))
 }
 
 #[derive(Debug, Serialize)]
@@ -1134,7 +1147,7 @@ impl Provider for BedrockProvider {
             }],
             inference_config: Some(InferenceConfig {
                 max_tokens: self.max_tokens,
-                temperature,
+                temperature: model_supports_temperature(model).then_some(temperature),
             }),
             tool_config: None,
         };
@@ -1187,7 +1200,7 @@ impl Provider for BedrockProvider {
             messages: converse_messages,
             inference_config: Some(InferenceConfig {
                 max_tokens: self.max_tokens,
-                temperature,
+                temperature: model_supports_temperature(model).then_some(temperature),
             }),
             tool_config,
         };
@@ -1647,7 +1660,7 @@ mod tests {
             }],
             inference_config: Some(InferenceConfig {
                 max_tokens: 4096,
-                temperature: 0.7,
+                temperature: Some(0.7),
             }),
             tool_config: None,
         };
@@ -1655,6 +1668,20 @@ mod tests {
         assert!(!json.contains("system"));
         assert!(json.contains("Hello"));
         assert!(json.contains("maxTokens"));
+    }
+
+    #[test]
+    fn claude_5_inference_config_omits_temperature() {
+        assert!(!model_supports_temperature("anthropic.claude-sonnet-5"));
+        assert!(!model_supports_temperature("us.anthropic.claude-opus-5"));
+        assert!(model_supports_temperature("anthropic.claude-sonnet-4-6"));
+
+        let config = InferenceConfig {
+            max_tokens: 4096,
+            temperature: None,
+        };
+        let json = serde_json::to_string(&config).unwrap();
+        assert!(!json.contains("temperature"));
     }
 
     #[test]

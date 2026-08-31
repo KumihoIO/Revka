@@ -1,6 +1,7 @@
 use super::traits::{Tool, ToolResult};
 use crate::agent::loop_::get_model_switch_state;
 use crate::providers;
+use crate::providers::model_catalog::curated_models_for_provider;
 use crate::security::SecurityPolicy;
 use crate::security::policy::ToolOperation;
 use async_trait::async_trait;
@@ -42,7 +43,7 @@ impl Tool for ModelSwitchTool {
                 },
                 "model": {
                     "type": "string",
-                    "description": "Model ID (e.g., 'gpt-4o', 'claude-sonnet-4-6'). Required for 'set' action."
+                    "description": "Model ID (e.g., 'gpt-5.6-sol', 'claude-sonnet-5'). Required for 'set' action."
                 }
             },
             "required": ["action"]
@@ -200,45 +201,11 @@ impl ModelSwitchTool {
             }
         };
 
-        // Return common models for known providers
-        let models = match provider.to_lowercase().as_str() {
-            "openai" => vec![
-                "gpt-4o",
-                "gpt-4o-mini",
-                "gpt-4-turbo",
-                "gpt-4",
-                "gpt-3.5-turbo",
-            ],
-            "anthropic" => vec![
-                "claude-sonnet-4-6",
-                "claude-sonnet-4-5",
-                "claude-3-5-sonnet",
-                "claude-3-opus",
-                "claude-3-haiku",
-            ],
-            "openrouter" => vec![
-                "anthropic/claude-sonnet-4-6",
-                "openai/gpt-4o",
-                "google/gemini-pro",
-                "meta-llama/llama-3-70b-instruct",
-            ],
-            "groq" => vec![
-                "llama-3.3-70b-versatile",
-                "mixtral-8x7b-32768",
-                "llama-3.1-70b-speculative",
-            ],
-            "ollama" => vec!["llama3", "llama3.1", "mistral", "codellama", "phi3"],
-            "deepseek" => vec!["deepseek-chat", "deepseek-coder"],
-            "mistral" => vec![
-                "mistral-large-latest",
-                "mistral-small-latest",
-                "mistral-nemo",
-            ],
-            "google" | "gemini" => vec!["gemini-2.0-flash", "gemini-1.5-pro", "gemini-1.5-flash"],
-            "xai" | "grok" => vec!["grok-2", "grok-2-vision", "grok-beta"],
-            _ => vec![],
-        };
-
+        let normalized_provider = provider.trim().to_ascii_lowercase();
+        let models: Vec<&str> = curated_models_for_provider(&normalized_provider)
+            .iter()
+            .map(|entry| entry.id)
+            .collect();
         if models.is_empty() {
             return Ok(ToolResult {
                 success: true,
@@ -260,5 +227,37 @@ impl ModelSwitchTool {
             }))?,
             error: None,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tool() -> ModelSwitchTool {
+        ModelSwitchTool::new(Arc::new(SecurityPolicy::default()))
+    }
+
+    #[test]
+    fn list_models_uses_shared_current_catalog_for_aliases() {
+        let result = tool()
+            .handle_list_models(&json!({ "provider": "GROK" }))
+            .unwrap();
+        assert!(result.success);
+
+        let output: serde_json::Value = serde_json::from_str(&result.output).unwrap();
+        assert_eq!(output["models"], json!(["grok-4.6"]));
+    }
+
+    #[test]
+    fn list_models_keeps_unknown_provider_response_empty() {
+        let result = tool()
+            .handle_list_models(&json!({ "provider": "unknown-provider" }))
+            .unwrap();
+        assert!(result.success);
+
+        let output: serde_json::Value = serde_json::from_str(&result.output).unwrap();
+        assert_eq!(output["models"], json!([]));
+        assert!(output["note"].as_str().is_some_and(|note| !note.is_empty()));
     }
 }

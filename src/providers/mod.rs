@@ -26,6 +26,7 @@ pub mod gemini;
 pub mod gemini_cli;
 pub(crate) mod image_media;
 pub mod kilocli;
+pub(crate) mod model_catalog;
 pub mod ollama;
 pub mod openai;
 pub mod openai_codex;

@@ -82,7 +82,7 @@ pub struct Config {
     /// Default provider ID or alias (e.g. `"openrouter"`, `"ollama"`, `"anthropic"`). Default: `"openrouter"`.
     #[serde(alias = "model_provider")]
     pub default_provider: Option<String>,
-    /// Default model routed through the selected provider (e.g. `"anthropic/claude-sonnet-4-6"`).
+    /// Default model routed through the selected provider (e.g. `"anthropic/claude-sonnet-5"`).
     #[serde(alias = "model")]
     pub default_model: Option<String>,
     /// Optional named provider profiles keyed by id (Codex app-server compatible layout).
@@ -2273,7 +2273,38 @@ impl Default for CostConfig {
 fn get_default_pricing() -> std::collections::HashMap<String, ModelPricing> {
     let mut prices = std::collections::HashMap::new();
 
+    // Current prices verified against first-party pricing pages on 2026-09-01.
+    // Keep legacy entries below so existing configurations retain cost tracking.
+
     // Anthropic models
+    prices.insert(
+        "anthropic/claude-sonnet-5".into(),
+        ModelPricing {
+            input: 2.0,
+            output: 10.0,
+        },
+    );
+    prices.insert(
+        "anthropic/claude-opus-5".into(),
+        ModelPricing {
+            input: 5.0,
+            output: 25.0,
+        },
+    );
+    prices.insert(
+        "anthropic/claude-fable-5".into(),
+        ModelPricing {
+            input: 10.0,
+            output: 50.0,
+        },
+    );
+    prices.insert(
+        "anthropic/claude-haiku-4-5-20251001".into(),
+        ModelPricing {
+            input: 1.0,
+            output: 5.0,
+        },
+    );
     prices.insert(
         "anthropic/claude-sonnet-4-20250514".into(),
         ModelPricing {
@@ -2304,6 +2335,29 @@ fn get_default_pricing() -> std::collections::HashMap<String, ModelPricing> {
     );
 
     // OpenAI models
+    for provider in ["openai", "openai-codex"] {
+        prices.insert(
+            format!("{provider}/gpt-5.6-sol"),
+            ModelPricing {
+                input: 4.0,
+                output: 20.0,
+            },
+        );
+        prices.insert(
+            format!("{provider}/gpt-5.6-terra"),
+            ModelPricing {
+                input: 2.0,
+                output: 12.0,
+            },
+        );
+        prices.insert(
+            format!("{provider}/gpt-5.6-luna"),
+            ModelPricing {
+                input: 0.20,
+                output: 1.20,
+            },
+        );
+    }
     prices.insert(
         "openai/gpt-4o".into(),
         ModelPricing {
@@ -2342,7 +2396,14 @@ fn get_default_pricing() -> std::collections::HashMap<String, ModelPricing> {
         },
     );
 
-    // Google models
+    // Google models. Gemini 3.7 Flash pricing is introductory through 2026-12-31.
+    prices.insert(
+        "gemini/gemini-3.7-flash".into(),
+        ModelPricing {
+            input: 0.75,
+            output: 3.75,
+        },
+    );
     prices.insert(
         "google/gemini-2.0-flash".into(),
         ModelPricing {
@@ -6024,7 +6085,7 @@ impl Default for SchedulerConfig {
 /// [[model_routes]]
 /// hint = "fast"
 /// provider = "groq"
-/// model = "llama-3.3-70b-versatile"
+/// model = "openai/gpt-oss-120b"
 /// ```
 ///
 /// Usage: pass `hint:reasoning` as the model parameter to route the request.
@@ -8894,7 +8955,7 @@ impl Default for Config {
             api_url: None,
             api_path: None,
             default_provider: Some("openrouter".to_string()),
-            default_model: Some("anthropic/claude-sonnet-4.6".to_string()),
+            default_model: Some(crate::providers::model_catalog::GLOBAL_DEFAULT_MODEL.to_string()),
             model_providers: HashMap::new(),
             default_temperature: default_temperature(),
             language: None,
@@ -16785,5 +16846,28 @@ auto_approve = ["file_read", "file_write", "file_edit", "web_search_tool", "web_
         let config = CostConfig::default();
         assert_eq!(config.enforcement.mode, "warn");
         assert_eq!(config.enforcement.reserve_percent, 10);
+    }
+
+    #[test]
+    async fn cost_config_prices_current_default_models() {
+        let prices = get_default_pricing();
+        assert_eq!(
+            prices
+                .get(crate::providers::model_catalog::GLOBAL_DEFAULT_MODEL)
+                .map(|price| (price.input, price.output)),
+            Some((2.0, 10.0))
+        );
+        assert_eq!(
+            prices
+                .get("openai/gpt-5.6-sol")
+                .map(|price| (price.input, price.output)),
+            Some((4.0, 20.0))
+        );
+        assert_eq!(
+            prices
+                .get("gemini/gemini-3.7-flash")
+                .map(|price| (price.input, price.output)),
+            Some((0.75, 3.75))
+        );
     }
 }

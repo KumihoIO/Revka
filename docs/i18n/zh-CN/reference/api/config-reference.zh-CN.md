@@ -25,7 +25,7 @@ Revka 在启动时以 `INFO` 级别记录解析后的配置：
 | 键 | 默认值 | 说明 |
 |---|---|---|
 | `default_provider` | `openrouter` | 提供商 ID 或别名 |
-| `default_model` | `anthropic/claude-sonnet-4-6` | 通过所选提供商路由的模型 |
+| `default_model` | `anthropic/claude-sonnet-5` | 通过所选提供商路由的模型 |
 | `default_temperature` | `0.7` | 模型温度 |
 
 ## `[observability]`
@@ -164,7 +164,7 @@ gated_domain_categories = [\"banking\"]
 ```toml
 [agents.researcher]
 provider = \"openrouter\"
-model = \"anthropic/claude-sonnet-4-6\"
+model = \"anthropic/claude-sonnet-5\"
 system_prompt = \"You are a research assistant.\"
 max_depth = 2
 agentic = true

@@ -127,7 +127,7 @@ nano ~/.revka/config.toml
 ```toml
 api_key = "YOUR_OPENROUTER_API_KEY"
 default_provider = "openrouter"
-default_model = "anthropic/claude-sonnet-4-6"
+default_model = "anthropic/claude-sonnet-5"
 
 [peripherals]
 enabled = false

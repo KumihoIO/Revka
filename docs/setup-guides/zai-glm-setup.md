@@ -31,7 +31,7 @@ Edit `~/.revka/config.toml`:
 ```toml
 api_key = "YOUR_ZAI_API_KEY"
 default_provider = "zai"
-default_model = "glm-5"
+default_model = "glm-5.3"
 default_temperature = 0.7
 ```
 
@@ -39,10 +39,9 @@ default_temperature = 0.7
 
 | Model | Description |
 |-------|-------------|
-| `glm-5` | Default in onboarding; strongest reasoning |
-| `glm-4.7` | Strong general-purpose quality |
-| `glm-4.6` | Balanced baseline |
-| `glm-4.5-air` | Lower-latency option |
+| `glm-5.3` | Default in onboarding; current flagship |
+| `glm-5.2` | Previous generation |
+| `glm-5.1` | Stable fallback |
 
 Model availability can vary by account/region, so use the `/models` API when in doubt.
 
@@ -56,7 +55,7 @@ curl -X POST "https://api.z.ai/api/coding/paas/v4/chat/completions" \
   -H "Authorization: Bearer YOUR_ZAI_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "glm-5",
+    "model": "glm-5.3",
     "messages": [{"role": "user", "content": "Hello"}]
   }'
 ```

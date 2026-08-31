@@ -169,8 +169,12 @@ pub(crate) fn context_window_for_model(model: &str) -> usize {
         .to_ascii_lowercase();
     let bare = bare.as_str();
 
-    // Anthropic Claude 4-family (Opus/Sonnet/Haiku 4.x): 1M context.
-    if bare.starts_with("claude-opus-4")
+    // Current Claude 5 models and the long-context Claude 4 families: 1M.
+    if bare.starts_with("claude-sonnet-5")
+        || bare.starts_with("claude-opus-5")
+        || bare.starts_with("claude-fable-5")
+        || bare.starts_with("claude-mythos-5")
+        || bare.starts_with("claude-opus-4")
         || bare.starts_with("claude-sonnet-4")
         || bare.starts_with("claude-haiku-4")
         || bare.starts_with("claude-4")
@@ -179,7 +183,7 @@ pub(crate) fn context_window_for_model(model: &str) -> usize {
     } else if bare.starts_with("claude-3") || bare.starts_with("claude-") {
         // Older Claude 3.x / 3.5 / 3.7: 200K.
         200_000
-    } else if bare.starts_with("gpt-5.5") {
+    } else if bare.starts_with("gpt-5.6") || bare.starts_with("gpt-5.5") {
         1_050_000
     } else if bare.starts_with("gpt-5.4-mini") || bare.starts_with("gpt-5.4-nano") {
         400_000
@@ -639,9 +643,9 @@ impl AgentBuilder {
                 .memory_loader
                 .unwrap_or_else(|| Box::new(DefaultMemoryLoader::default())),
             config: self.config.unwrap_or_default(),
-            model_name: self
-                .model_name
-                .unwrap_or_else(|| "anthropic/claude-sonnet-4-20250514".into()),
+            model_name: self.model_name.unwrap_or_else(|| {
+                crate::providers::model_catalog::GLOBAL_DEFAULT_MODEL.to_string()
+            }),
             temperature: self.temperature.unwrap_or(0.7),
             workspace_dir: self
                 .workspace_dir
@@ -907,7 +911,7 @@ impl Agent {
         let model_name = config
             .default_model
             .as_deref()
-            .unwrap_or("anthropic/claude-sonnet-4-20250514")
+            .unwrap_or(crate::providers::model_catalog::GLOBAL_DEFAULT_MODEL)
             .to_string();
 
         let provider_runtime_options = providers::provider_runtime_options_from_config(config);
@@ -2578,7 +2582,7 @@ pub async fn run(
     let model_name = effective_config
         .default_model
         .as_deref()
-        .unwrap_or("anthropic/claude-sonnet-4-20250514")
+        .unwrap_or(crate::providers::model_catalog::GLOBAL_DEFAULT_MODEL)
         .to_string();
 
     agent.observer.record_event(&ObserverEvent::AgentStart {
@@ -2615,6 +2619,17 @@ mod tests {
     fn context_window_uses_current_gpt55_fallback() {
         assert_eq!(context_window_for_model("gpt-5.5"), 1_050_000);
         assert_eq!(context_window_for_model("openai/gpt-5.5"), 1_050_000);
+        assert_eq!(context_window_for_model("gpt-5.6-sol"), 1_050_000);
+        assert_eq!(context_window_for_model("openai/gpt-5.6-luna"), 1_050_000);
+    }
+
+    #[test]
+    fn context_window_knows_claude_5_family() {
+        assert_eq!(context_window_for_model("claude-sonnet-5"), 1_000_000);
+        assert_eq!(
+            context_window_for_model("anthropic/claude-opus-5"),
+            1_000_000
+        );
     }
 
     #[test]

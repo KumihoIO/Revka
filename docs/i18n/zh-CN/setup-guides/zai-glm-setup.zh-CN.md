@@ -31,7 +31,7 @@ revka onboard \
 ```toml
 api_key = \"YOUR_ZAI_API_KEY\"
 default_provider = \"zai\"
-default_model = \"glm-5\"
+default_model = \"glm-5.3\"
 default_temperature = 0.7
 ```
 
@@ -39,10 +39,9 @@ default_temperature = 0.7
 
 | 模型 | 描述 |
 |-------|-------------|
-| `glm-5` | 引导流程默认模型；最强推理能力 |
-| `glm-4.7` | 强大的通用质量 |
-| `glm-4.6` | 平衡基线 |
-| `glm-4.5-air` | 低延迟选项 |
+| `glm-5.3` | 引导流程默认模型；当前旗舰 |
+| `glm-5.2` | 上一代模型 |
+| `glm-5.1` | 稳定备用模型 |
 
 模型可用性可能因账户/地区而异，如有疑问请使用 `/models` API 查询。
 
@@ -56,7 +55,7 @@ curl -X POST \"https://api.z.ai/api/coding/paas/v4/chat/completions\" \
   -H \"Authorization: Bearer YOUR_ZAI_API_KEY\" \
   -H \"Content-Type: application/json\" \
   -d '{
-    \"model\": \"glm-5\",
+    \"model\": \"glm-5.3\",
     \"messages\": [{\"role\": \"user\", \"content\": \"Hello\"}]
   }'
 ```
