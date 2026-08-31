@@ -289,7 +289,7 @@ impl NativeKumihoProvider {
 
         let allowed_types = normalized_memory_types(memory_types);
         let mut seen_items = HashSet::new();
-        let mut results = Vec::with_capacity(limit);
+        let mut results = Vec::with_capacity(candidates.len());
         for candidate in candidates {
             if !matches_memory_type(&candidate.metadata, allowed_types.as_ref()) {
                 continue;
@@ -298,9 +298,6 @@ impl NativeKumihoProvider {
                 continue;
             }
             results.push(memory_record(candidate));
-            if results.len() == limit {
-                break;
-            }
         }
 
         if results.is_empty() {
@@ -309,6 +306,7 @@ impl NativeKumihoProvider {
 
         apply_evidence_weights(&mut results);
         results.retain(|memory| memory.score.is_some_and(|score| score >= min_score));
+        results.truncate(limit);
         let count = results.len();
         tracing::debug!(
             provider = "kumiho-rust",
@@ -927,6 +925,46 @@ mod tests {
         assert_eq!(outcome.count, 1);
         assert_eq!(outcome.results[0].score, Some(0.75));
         assert_eq!(source.calls()[0].min_score, 0.0);
+    }
+
+    #[tokio::test]
+    async fn evidence_weighting_can_promote_a_candidate_across_the_result_limit() {
+        let source = Arc::new(FakeRecallSource::default().with_response(
+            "CognitiveMemory",
+            true,
+            vec![
+                hit(
+                    "kref://CognitiveMemory/unverified.conversation",
+                    "kref://CognitiveMemory/unverified.conversation?r=1",
+                    0.70,
+                    "decision",
+                    "Unverified",
+                    "Higher base score",
+                    "unverified",
+                ),
+                hit(
+                    "kref://CognitiveMemory/official.conversation",
+                    "kref://CognitiveMemory/official.conversation?r=1",
+                    0.65,
+                    "decision",
+                    "Official",
+                    "Higher weighted score",
+                    "official",
+                ),
+            ],
+        ));
+        let provider = NativeKumihoProvider::with_source(source, "CognitiveMemory");
+        let mut request = RecallRequest::new("query");
+        request.limit = Some(1);
+
+        let outcome = provider.recall(request).await.unwrap();
+
+        assert_eq!(outcome.count, 1);
+        assert_eq!(
+            outcome.results[0].item_kref.as_deref(),
+            Some("kref://CognitiveMemory/official.conversation")
+        );
+        assert_eq!(outcome.results[0].score, Some(0.80));
     }
 
     #[test]

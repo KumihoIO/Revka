@@ -22,6 +22,7 @@ pub use backend::{
 #[cfg(feature = "kumiho-native")]
 pub use kumiho_native::NativeKumihoProvider;
 pub use none::NoneMemory;
+#[allow(unused_imports)]
 pub use provider::{
     ConsolidateOutcome, ConsolidateRequest, DroppedEventDate, EngageRequest, HybridMemoryProvider,
     MemoryCapture, MemoryContext, MemoryProvider, MemoryProviderTransport, MemoryRecord,
