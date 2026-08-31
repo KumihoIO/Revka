@@ -340,6 +340,7 @@ ci-all = [
     "skill-creation",
     "whatsapp-web",
     "plugins-wasm",
+    "kumiho-native",
 ]
 
 [profile.dev]
