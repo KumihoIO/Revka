@@ -16,6 +16,7 @@ use tokio::sync::Mutex;
 use tokio::time::{Duration, timeout};
 
 use crate::config::schema::McpServerConfig;
+use crate::memory::provider::MemoryProviderTransport;
 use crate::tools::mcp_protocol::{
     JsonRpcRequest, MCP_PROTOCOL_VERSION, McpToolDef, McpToolsListResult,
 };
@@ -332,6 +333,17 @@ impl McpRegistry {
             }
         }
         out
+    }
+}
+
+#[async_trait::async_trait]
+impl MemoryProviderTransport for McpRegistry {
+    async fn call_memory_tool(
+        &self,
+        tool_name: &str,
+        arguments: serde_json::Value,
+    ) -> Result<String> {
+        McpRegistry::call_tool(self, tool_name, arguments).await
     }
 }
 
