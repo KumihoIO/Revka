@@ -22,6 +22,10 @@ const REFLECT_TOOL: &str = "kumiho_memory_reflect";
 const RECALL_TOOL: &str = "kumiho_memory_recall";
 const CONSOLIDATE_TOOL: &str = "kumiho_memory_consolidate";
 
+fn is_false(value: &bool) -> bool {
+    !value
+}
+
 /// Transport boundary used by [`PythonMemoryProvider`].
 ///
 /// Revka's MCP registry implements this trait in `tools::mcp_client`, keeping
@@ -53,7 +57,7 @@ pub enum RecallMode {
     Summarized,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EngageRequest {
     pub query: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -68,6 +72,8 @@ pub struct EngageRequest {
     pub graph_augmented: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recall_mode: Option<RecallMode>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
 }
 
 impl EngageRequest {
@@ -80,11 +86,12 @@ impl EngageRequest {
             memory_types: None,
             graph_augmented: None,
             recall_mode: None,
+            extra: BTreeMap::new(),
         }
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RecallRequest {
     pub query: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -99,6 +106,8 @@ pub struct RecallRequest {
     pub graph_augmented: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recall_mode: Option<RecallMode>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
 }
 
 impl RecallRequest {
@@ -111,11 +120,12 @@ impl RecallRequest {
             memory_types: None,
             graph_augmented: None,
             recall_mode: None,
+            extra: BTreeMap::new(),
         }
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MemoryCapture {
     #[serde(rename = "type")]
     pub memory_type: String,
@@ -127,9 +137,11 @@ pub struct MemoryCapture {
     pub space_hint: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub event_date: Option<String>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ReflectRequest {
     pub session_id: String,
     pub response: String,
@@ -143,6 +155,8 @@ pub struct ReflectRequest {
     pub discover_edges: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub idempotency_prefix: Option<String>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
 }
 
 impl ReflectRequest {
@@ -155,17 +169,20 @@ impl ReflectRequest {
             space_path: None,
             discover_edges: None,
             idempotency_prefix: None,
+            extra: BTreeMap::new(),
         }
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ConsolidateRequest {
     pub session_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub evidence_level: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
 }
 
 impl ConsolidateRequest {
@@ -174,6 +191,7 @@ impl ConsolidateRequest {
             session_id: session_id.into(),
             evidence_level: None,
             source: None,
+            extra: BTreeMap::new(),
         }
     }
 }
@@ -202,7 +220,12 @@ pub struct MemoryRecord {
     pub created_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub event_date: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        rename = "type",
+        alias = "memory_type",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub memory_type: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sibling_revisions: Option<Vec<Value>>,
@@ -228,7 +251,7 @@ pub struct MemoryContext {
     pub approx_tokens: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub backend_error: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_false")]
     pub deduplicated: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
@@ -246,7 +269,7 @@ pub struct RecallOutcome {
     pub recall_mode: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub backend_error: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "is_false")]
     pub deduplicated: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
@@ -266,7 +289,7 @@ pub struct ReflectOutcome {
     pub stored_krefs: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub capture_results: Option<Vec<Value>>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dropped_event_dates: Vec<DroppedEventDate>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
@@ -301,6 +324,67 @@ pub struct ConsolidateOutcome {
 pub struct PythonMemoryProvider {
     transport: Arc<dyn MemoryProviderTransport>,
     server_name: String,
+}
+
+/// Composition used by Revka's opt-in native read path.
+///
+/// Read failures are deliberately fail-open to the Python reference provider;
+/// cognitive writes never reach the native provider.
+#[derive(Clone)]
+pub struct HybridMemoryProvider {
+    read_provider: Arc<dyn MemoryProvider>,
+    cognitive_provider: Arc<dyn MemoryProvider>,
+}
+
+impl HybridMemoryProvider {
+    pub fn new(
+        read_provider: Arc<dyn MemoryProvider>,
+        cognitive_provider: Arc<dyn MemoryProvider>,
+    ) -> Self {
+        Self {
+            read_provider,
+            cognitive_provider,
+        }
+    }
+
+    fn trace_read_fallback(operation: &str, error: &anyhow::Error) {
+        tracing::debug!(
+            operation,
+            error = %error,
+            "native Kumiho memory read fell back to the Python reference provider"
+        );
+    }
+}
+
+#[async_trait]
+impl MemoryProvider for HybridMemoryProvider {
+    async fn engage(&self, request: EngageRequest) -> Result<MemoryContext> {
+        match self.read_provider.engage(request.clone()).await {
+            Ok(context) => Ok(context),
+            Err(error) => {
+                Self::trace_read_fallback("engage", &error);
+                self.cognitive_provider.engage(request).await
+            }
+        }
+    }
+
+    async fn reflect(&self, request: ReflectRequest) -> Result<ReflectOutcome> {
+        self.cognitive_provider.reflect(request).await
+    }
+
+    async fn recall(&self, request: RecallRequest) -> Result<RecallOutcome> {
+        match self.read_provider.recall(request.clone()).await {
+            Ok(outcome) => Ok(outcome),
+            Err(error) => {
+                Self::trace_read_fallback("recall", &error);
+                self.cognitive_provider.recall(request).await
+            }
+        }
+    }
+
+    async fn consolidate(&self, request: ConsolidateRequest) -> Result<ConsolidateOutcome> {
+        self.cognitive_provider.consolidate(request).await
+    }
 }
 
 impl PythonMemoryProvider {
@@ -415,6 +499,27 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    #[test]
+    fn response_defaults_serialize_like_python_payloads() {
+        assert_eq!(
+            serde_json::to_value(MemoryContext::default()).unwrap(),
+            json!({"context": "", "results": [], "source_krefs": [], "count": 0})
+        );
+        assert_eq!(
+            serde_json::to_value(RecallOutcome::default()).unwrap(),
+            json!({"results": [], "count": 0})
+        );
+        assert_eq!(
+            serde_json::to_value(ReflectOutcome::default()).unwrap(),
+            json!({
+                "buffered": false,
+                "captures_stored": 0,
+                "edges_discovered": 0,
+                "stored_krefs": []
+            })
+        );
+    }
+
     #[derive(Default)]
     struct RecordingTransport {
         responses: BTreeMap<String, String>,
@@ -487,6 +592,7 @@ mod tests {
             memory_types: Some(vec!["preference".into()]),
             graph_augmented: Some(false),
             recall_mode: Some(RecallMode::Summarized),
+            extra: BTreeMap::new(),
         };
 
         let outcome = provider.engage(request).await.unwrap();
@@ -559,6 +665,7 @@ mod tests {
             tags: Some(vec!["architecture".into()]),
             space_hint: Some("CognitiveMemory/Decisions".into()),
             event_date: Some("2026-08-31".into()),
+            extra: BTreeMap::new(),
         }]);
         request.source_krefs = Some(vec!["kref://CognitiveMemory/Plans/revka?r=2".into()]);
         request.discover_edges = Some(true);
@@ -667,5 +774,126 @@ mod tests {
             .await
             .unwrap_err();
         assert!(error.to_string().contains("malformed JSON"));
+    }
+
+    struct StubProvider {
+        name: &'static str,
+        fail_reads: bool,
+        calls: Mutex<Vec<&'static str>>,
+    }
+
+    impl StubProvider {
+        fn new(name: &'static str, fail_reads: bool) -> Self {
+            Self {
+                name,
+                fail_reads,
+                calls: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn calls(&self) -> Vec<&'static str> {
+            self.calls.lock().expect("calls lock poisoned").clone()
+        }
+
+        fn record(&self, operation: &'static str) {
+            self.calls
+                .lock()
+                .expect("calls lock poisoned")
+                .push(operation);
+        }
+    }
+
+    #[async_trait]
+    impl MemoryProvider for StubProvider {
+        async fn engage(&self, _request: EngageRequest) -> Result<MemoryContext> {
+            self.record("engage");
+            if self.fail_reads {
+                bail!("{} engage failed", self.name);
+            }
+            Ok(MemoryContext {
+                context: self.name.to_owned(),
+                ..MemoryContext::default()
+            })
+        }
+
+        async fn reflect(&self, _request: ReflectRequest) -> Result<ReflectOutcome> {
+            self.record("reflect");
+            Ok(ReflectOutcome {
+                buffered: true,
+                ..ReflectOutcome::default()
+            })
+        }
+
+        async fn recall(&self, _request: RecallRequest) -> Result<RecallOutcome> {
+            self.record("recall");
+            if self.fail_reads {
+                bail!("{} recall failed", self.name);
+            }
+            Ok(RecallOutcome {
+                count: 1,
+                ..RecallOutcome::default()
+            })
+        }
+
+        async fn consolidate(&self, _request: ConsolidateRequest) -> Result<ConsolidateOutcome> {
+            self.record("consolidate");
+            Ok(ConsolidateOutcome {
+                success: true,
+                ..ConsolidateOutcome::default()
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn hybrid_uses_native_reads_and_python_cognitive_writes() {
+        let native = Arc::new(StubProvider::new("native", false));
+        let python = Arc::new(StubProvider::new("python", false));
+        let provider = HybridMemoryProvider::new(native.clone(), python.clone());
+
+        let engage = provider.engage(EngageRequest::new("query")).await.unwrap();
+        let recall = provider.recall(RecallRequest::new("query")).await.unwrap();
+        let reflect = provider
+            .reflect(ReflectRequest::new("session", "response"))
+            .await
+            .unwrap();
+        let consolidate = provider
+            .consolidate(ConsolidateRequest::new("session"))
+            .await
+            .unwrap();
+
+        assert_eq!(engage.context, "native");
+        assert_eq!(recall.count, 1);
+        assert!(reflect.buffered);
+        assert!(consolidate.success);
+        assert_eq!(native.calls(), ["engage", "recall"]);
+        assert_eq!(python.calls(), ["reflect", "consolidate"]);
+    }
+
+    #[tokio::test]
+    async fn hybrid_read_failure_preserves_future_fields_in_python_fallback() {
+        let native = Arc::new(StubProvider::new("native", true));
+        let transport = Arc::new(RecordingTransport::with_responses([(
+            "kumiho-memory__kumiho_memory_recall",
+            json!({"results": [], "count": 0}),
+        )]));
+        let python: Arc<dyn MemoryProvider> =
+            Arc::new(PythonMemoryProvider::new(transport.clone()));
+        let provider = HybridMemoryProvider::new(native.clone(), python);
+        let mut request = RecallRequest::new("query");
+        request
+            .extra
+            .insert("future_filter".into(), json!({"v": 2}));
+
+        let outcome = provider.recall(request).await.unwrap();
+
+        assert_eq!(outcome.count, 0);
+        assert_eq!(native.calls(), ["recall"]);
+        assert_eq!(
+            transport.calls(),
+            vec![(
+                "kumiho-memory__kumiho_memory_recall".into(),
+                json!({"query": "query", "future_filter": {"v": 2}})
+            )]
+        );
     }
 }

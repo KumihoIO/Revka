@@ -23,6 +23,22 @@ SDK bridge and hosted FastAPI path on any native initialization or RPC failure.
 The feature remains outside the default build until broader route parity and
 binary/build-cost measurements justify making it standard.
 
+A second, narrower canary uses `REVKA_KUMIHO_NATIVE_MEMORY=1` with the same
+compile-time feature. It intercepts only summarized, non-graph `engage` and
+`recall` requests, reads them through the Rust SDK, and falls back to the
+Python MCP implementation on unsupported request shapes, empty results, or
+native errors. `reflect`, consolidation, Dream State, graph augmentation, and
+full recall remain Python-owned; the flag must not be treated as a complete
+`kumiho-memory` Rust port.
+
+The canary intentionally implements only server search, published/latest
+revision resolution, memory-type filtering, explicit `min_score`, evidence
+weighting, deterministic item deduplication, and summarized context assembly.
+Python's candidate-multiplier, cross-encoder, recency/MMR, sibling enrichment,
+as-of recall, and duplicate-call suppression remain outside this slice. Output
+quality and latency must be measured against the Python reference path before
+any default-on decision.
+
 ## Context
 
 The Revka operator orchestrates multi-agent workflows (e.g. quantum-soul

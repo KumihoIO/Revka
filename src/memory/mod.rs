@@ -3,6 +3,8 @@ pub mod chunker;
 pub mod cli;
 pub mod decay;
 pub mod embeddings;
+#[cfg(feature = "kumiho-native")]
+pub mod kumiho_native;
 pub mod none;
 pub mod provider;
 pub mod response_cache;
@@ -17,11 +19,13 @@ pub use backend::{
     MemoryBackendKind, MemoryBackendProfile, classify_memory_backend, default_memory_backend_key,
     memory_backend_profile, selectable_memory_backends,
 };
+#[cfg(feature = "kumiho-native")]
+pub use kumiho_native::NativeKumihoProvider;
 pub use none::NoneMemory;
 pub use provider::{
-    ConsolidateOutcome, ConsolidateRequest, DroppedEventDate, EngageRequest, MemoryCapture,
-    MemoryContext, MemoryProvider, MemoryProviderTransport, MemoryRecord, PythonMemoryProvider,
-    RecallMode, RecallOutcome, RecallRequest, ReflectOutcome, ReflectRequest,
+    ConsolidateOutcome, ConsolidateRequest, DroppedEventDate, EngageRequest, HybridMemoryProvider,
+    MemoryCapture, MemoryContext, MemoryProvider, MemoryProviderTransport, MemoryRecord,
+    PythonMemoryProvider, RecallMode, RecallOutcome, RecallRequest, ReflectOutcome, ReflectRequest,
 };
 pub use response_cache::ResponseCache;
 pub use traits::Memory;

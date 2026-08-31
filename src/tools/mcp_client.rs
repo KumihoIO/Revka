@@ -239,6 +239,8 @@ pub struct McpRegistry {
     servers: Vec<McpServer>,
     /// prefixed_name → (server_index, original_tool_name)
     tool_index: HashMap<String, (usize, String)>,
+    #[cfg(feature = "kumiho-native")]
+    native_memory_provider: Option<Arc<crate::memory::NativeKumihoProvider>>,
 }
 
 impl McpRegistry {
@@ -267,9 +269,15 @@ impl McpRegistry {
             }
         }
 
+        #[cfg(feature = "kumiho-native")]
+        let native_memory_provider =
+            crate::memory::NativeKumihoProvider::from_mcp_configs(configs).map(Arc::new);
+
         Ok(Self {
             servers,
             tool_index,
+            #[cfg(feature = "kumiho-native")]
+            native_memory_provider,
         })
     }
 
@@ -316,6 +324,13 @@ impl McpRegistry {
 
     pub fn tool_count(&self) -> usize {
         self.tool_index.len()
+    }
+
+    #[cfg(feature = "kumiho-native")]
+    pub(crate) fn native_memory_provider(
+        &self,
+    ) -> Option<Arc<crate::memory::NativeKumihoProvider>> {
+        self.native_memory_provider.clone()
     }
 
     /// Map of `<server-name>` → `instructions` for every connected server
