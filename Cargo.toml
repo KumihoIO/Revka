@@ -185,6 +185,7 @@ prost = { version = "0.14", default-features = false, features = ["derive"], opt
 # Note: rusqlite kept for non-memory uses (cron store, gateway pairing, heartbeat, etc.)
 # The SQLite *memory backend* has been stripped; persistent memory uses Kumiho MCP.
 rusqlite = { version = "0.37", features = ["bundled"] }
+kumiho = { git = "https://github.com/KumihoIO/kumiho-SDKs.git", tag = "rust-v0.10.0", optional = true }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
 chrono-tz = "0.10"
 cron = "0.16"
@@ -286,6 +287,7 @@ windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
 
 [features]
 default = ["observability-prometheus", "skill-creation"]
+kumiho-native = ["dep:kumiho"]
 channel-nostr = ["dep:nostr-sdk"]
 hardware = ["nusb", "tokio-serial"]
 channel-matrix = ["dep:matrix-sdk"]

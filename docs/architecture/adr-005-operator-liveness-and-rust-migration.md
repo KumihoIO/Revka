@@ -4,6 +4,25 @@
 
 **Date:** 2026-04-15
 
+## Addendum: Native Kumiho graph access (2026-08-31)
+
+The original analysis below assumed that Kumiho had no Rust client. That
+constraint no longer holds: `KumihoIO/kumiho-SDKs` now publishes the
+`rust-v0.10.0` Rust SDK for typed gRPC graph operations.
+
+This changes the migration boundary for low-level graph I/O, not for the
+client-side cognitive-memory pipeline. Revka may move narrow, measured graph
+read/write paths to the Rust SDK while `kumiho-memory` continues to own
+`engage`, `reflect`, consolidation, Dream State, ontology extraction, and other
+rapidly evolving memory semantics in Python.
+
+The first compatibility slice requires both the compile-time `kumiho-native`
+feature and the runtime `REVKA_KUMIHO_NATIVE_SDK=1` opt-in. Exact item and
+revision reads then try the Rust SDK first and fall back to the existing Python
+SDK bridge and hosted FastAPI path on any native initialization or RPC failure.
+The feature remains outside the default build until broader route parity and
+binary/build-cost measurements justify making it standard.
+
 ## Context
 
 The Revka operator orchestrates multi-agent workflows (e.g. quantum-soul

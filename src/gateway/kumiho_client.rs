@@ -127,6 +127,8 @@ pub struct KumihoClient {
     base_url: String,
     service_token: String,
     auth_token: String,
+    #[cfg(feature = "kumiho-native")]
+    native: super::kumiho_native::NativeKumihoTransport,
 }
 
 // ── Response types (match Kumiho FastAPI JSON) ──────────────────────────
@@ -718,11 +720,15 @@ impl KumihoClient {
             .tcp_keepalive(Some(std::time::Duration::from_secs(60)))
             .build()
             .unwrap_or_else(|_| Client::new());
+        #[cfg(feature = "kumiho-native")]
+        let native = super::kumiho_native::NativeKumihoTransport::new(auth_token.clone());
         Self {
             client,
             base_url: base_url.trim_end_matches('/').to_string(),
             service_token,
             auth_token,
+            #[cfg(feature = "kumiho-native")]
+            native,
         }
     }
 
@@ -1576,6 +1582,17 @@ impl KumihoClient {
     /// Get an item by kref.
     pub async fn get_item_by_kref(&self, kref: &str) -> Result<ItemResponse> {
         let item_kref = item_kref_without_selectors(kref);
+        #[cfg(feature = "kumiho-native")]
+        if let Some(result) = self.native.get_item_by_kref(item_kref).await {
+            match result {
+                Ok(item) => return Ok(item),
+                Err(error) => tracing::debug!(
+                    %error,
+                    %item_kref,
+                    "Native Kumiho item read failed; falling back to SDK bridge/FastAPI"
+                ),
+            }
+        }
         if let Some(result) = self
             .bridge_json(
                 Method::GET,
@@ -1902,6 +1919,17 @@ impl KumihoClient {
     /// The Kumiho server's `/revisions/by-kref` endpoint parses the `?r=N`
     /// suffix out of the kref and returns that exact revision's metadata.
     pub async fn get_revision(&self, revision_kref: &str) -> Result<RevisionResponse> {
+        #[cfg(feature = "kumiho-native")]
+        if let Some(result) = self.native.get_revision(revision_kref).await {
+            match result {
+                Ok(revision) => return Ok(revision),
+                Err(error) => tracing::debug!(
+                    %error,
+                    %revision_kref,
+                    "Native Kumiho revision read failed; falling back to SDK bridge/FastAPI"
+                ),
+            }
+        }
         if let Some(result) = self
             .bridge_json(
                 Method::GET,
@@ -2799,6 +2827,49 @@ mod tests {
         // Empty token keeps the local SDK bridge disabled for this unit test;
         // the raw proxy path still exercises hosted FastAPI fallback logic.
         KumihoClient::new(base_url.to_string(), String::new())
+    }
+
+    #[cfg(feature = "kumiho-native")]
+    #[tokio::test]
+    async fn native_sdk_failure_falls_back_to_existing_http_path() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/v1/items/by-kref"))
+            .and(query_param(
+                "kref",
+                "kref://Revka/WorkflowRuns/run.workflow_run",
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "kref": "kref://Revka/WorkflowRuns/run.workflow_run",
+                "name": "run.workflow_run",
+                "item_name": "run",
+                "kind": "workflow_run",
+                "deprecated": false,
+                "created_at": "2026-08-31T00:00:00Z",
+                "author": "user-id",
+                "username": "operator@example.com",
+                "author_display": "operator@example.com",
+                "metadata": {"status": "running"}
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let mut client = make_raw_client(&server.uri());
+        client.native = super::super::kumiho_native::NativeKumihoTransport::failing_for_test(
+            "native unavailable",
+        );
+
+        let item = client
+            .get_item_by_kref("kref://Revka/WorkflowRuns/run.workflow_run?r=7")
+            .await
+            .expect("HTTP fallback should preserve the existing read path");
+
+        assert_eq!(item.item_name, "run");
+        assert_eq!(
+            item.metadata.get("status").map(String::as_str),
+            Some("running")
+        );
     }
 
     #[tokio::test]
