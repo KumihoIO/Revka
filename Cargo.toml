@@ -34,7 +34,7 @@ phf_generator = { path = "vendor/security-patches/phf_generator-0.8.0" }
 
 [package]
 name = "revka"
-version = "2026.8.31"
+version = "2026.9.1"
 edition = "2024"
 authors = ["Kumiho Inc."]
 license = "MIT OR Apache-2.0"
@@ -185,7 +185,7 @@ prost = { version = "0.14", default-features = false, features = ["derive"], opt
 # Note: rusqlite kept for non-memory uses (cron store, gateway pairing, heartbeat, etc.)
 # The SQLite *memory backend* has been stripped; persistent memory uses Kumiho MCP.
 rusqlite = { version = "0.37", features = ["bundled"] }
-kumiho = { git = "https://github.com/KumihoIO/kumiho-SDKs.git", tag = "rust-v0.10.0", optional = true }
+kumiho = { version = "0.10.0", git = "https://github.com/KumihoIO/kumiho-SDKs.git", tag = "rust-v0.10.0", optional = true }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
 chrono-tz = "0.10"
 cron = "0.16"
