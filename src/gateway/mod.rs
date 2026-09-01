@@ -696,7 +696,7 @@ pub async fn run_gateway_with_mcp_registry(
     let model = config
         .default_model
         .clone()
-        .unwrap_or_else(|| "anthropic/claude-sonnet-4".into());
+        .unwrap_or_else(|| crate::providers::model_catalog::GLOBAL_DEFAULT_MODEL.to_string());
     let temperature = config.default_temperature;
     let mem: Arc<dyn Memory> = Arc::from(memory::create_memory_with_storage_and_routes(
         &config.memory,

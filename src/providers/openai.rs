@@ -201,27 +201,29 @@ impl OpenAiProvider {
     /// Adjust temperature for models that have specific requirements.
     /// Some OpenAI models (like gpt-5-mini, o1, o3, etc) only accept temperature=1.0.
     fn adjust_temperature_for_model(model: &str, requested_temperature: f64) -> f64 {
+        let model = model.rsplit('/').next().unwrap_or(model);
         // Models that require temperature=1.0
-        let requires_1_0 = matches!(
-            model,
-            "gpt-5"
-                | "gpt-5-2025-08-07"
-                | "gpt-5-mini"
-                | "gpt-5-mini-2025-08-07"
-                | "gpt-5-nano"
-                | "gpt-5-nano-2025-08-07"
-                | "gpt-5.1-chat-latest"
-                | "gpt-5.2-chat-latest"
-                | "gpt-5.3-chat-latest"
-                | "o1"
-                | "o1-2024-12-17"
-                | "o3"
-                | "o3-2025-04-16"
-                | "o3-mini"
-                | "o3-mini-2025-01-31"
-                | "o4-mini"
-                | "o4-mini-2025-04-16"
-        );
+        let requires_1_0 = model.starts_with("gpt-5.6")
+            || matches!(
+                model,
+                "gpt-5"
+                    | "gpt-5-2025-08-07"
+                    | "gpt-5-mini"
+                    | "gpt-5-mini-2025-08-07"
+                    | "gpt-5-nano"
+                    | "gpt-5-nano-2025-08-07"
+                    | "gpt-5.1-chat-latest"
+                    | "gpt-5.2-chat-latest"
+                    | "gpt-5.3-chat-latest"
+                    | "o1"
+                    | "o1-2024-12-17"
+                    | "o3"
+                    | "o3-2025-04-16"
+                    | "o3-mini"
+                    | "o3-mini-2025-01-31"
+                    | "o4-mini"
+                    | "o4-mini-2025-04-16"
+            );
 
         if requires_1_0 {
             1.0
@@ -940,6 +942,14 @@ mod tests {
 
     #[test]
     fn adjust_temperature_for_gpt5_models() {
+        assert_eq!(
+            OpenAiProvider::adjust_temperature_for_model("gpt-5.6-sol", 0.7),
+            1.0
+        );
+        assert_eq!(
+            OpenAiProvider::adjust_temperature_for_model("openai/gpt-5.6-luna", 0.3),
+            1.0
+        );
         assert_eq!(
             OpenAiProvider::adjust_temperature_for_model("gpt-5", 0.7),
             1.0

@@ -1028,21 +1028,12 @@ impl GeminiProvider {
 
     fn format_model_name(model: &str) -> String {
         let bare = model.strip_prefix("models/").unwrap_or(model);
-        let mapped = match bare {
-            "gemini-3.5-flash" => "gemini-2.5-flash",
-            "gemini-3.5-pro" => "gemini-2.5-pro",
-            other => other,
-        };
-        format!("models/{mapped}")
+        format!("models/{bare}")
     }
 
     fn format_internal_model_name(model: &str) -> String {
         let bare = model.strip_prefix("models/").unwrap_or(model);
-        match bare {
-            "gemini-3.5-flash" => "gemini-2.5-flash".to_string(),
-            "gemini-3.5-pro" => "gemini-2.5-pro".to_string(),
-            other => other.to_string(),
-        }
+        bare.to_string()
     }
 
     /// Build the API URL based on auth type.
@@ -1969,6 +1960,14 @@ mod tests {
         assert_eq!(
             GeminiProvider::format_internal_model_name("gemini-2.5-flash"),
             "gemini-2.5-flash"
+        );
+        assert_eq!(
+            GeminiProvider::format_model_name("gemini-3.5-flash"),
+            "models/gemini-3.5-flash"
+        );
+        assert_eq!(
+            GeminiProvider::format_internal_model_name("gemini-3.7-flash"),
+            "gemini-3.7-flash"
         );
     }
 

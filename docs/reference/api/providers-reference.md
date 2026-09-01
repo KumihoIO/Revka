@@ -2,7 +2,7 @@
 
 This document maps provider IDs, aliases, and credential environment variables.
 
-Last verified: **April 21, 2026**.
+Last verified: **September 1, 2026**.
 
 ## How to List Providers
 
@@ -45,7 +45,8 @@ credential is not reused for fallback providers.
 | `bedrock` | `aws-bedrock` | No | `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` (optional: `AWS_REGION`) |
 | `qianfan` | `baidu` | No | `QIANFAN_API_KEY` |
 | `doubao` | `volcengine`, `ark`, `doubao-cn` | No | `ARK_API_KEY`, `DOUBAO_API_KEY` |
-| `qwen` | `dashscope`, `qwen-intl`, `dashscope-intl`, `qwen-us`, `dashscope-us`, `qwen-code`, `qwen-oauth`, `qwen_oauth` | No | `QWEN_OAUTH_TOKEN`, `DASHSCOPE_API_KEY` |
+| `qwen` | `dashscope`, `qwen-intl`, `dashscope-intl`, `qwen-us`, `dashscope-us` | No | `DASHSCOPE_API_KEY` |
+| `qwen-code` | `qwen-oauth`, `qwen_oauth` | No | `QWEN_OAUTH_TOKEN`, `DASHSCOPE_API_KEY` |
 | `groq` | — | No | `GROQ_API_KEY` |
 | `mistral` | — | No | `MISTRAL_API_KEY` |
 | `xai` | `grok` | No | `XAI_API_KEY` |
@@ -85,7 +86,7 @@ credential is not reused for fallback providers.
 - Auth can come from `GEMINI_API_KEY`, `GOOGLE_API_KEY`, or Gemini CLI OAuth cache (`~/.gemini/oauth_creds.json`)
 - API key requests use `generativelanguage.googleapis.com/v1beta`
 - Gemini CLI OAuth requests use `cloudcode-pa.googleapis.com/v1internal` with Code Assist request envelope semantics
-- Thinking models (e.g. `gemini-3-pro-preview`) are supported — internal reasoning parts are automatically filtered from the response
+- Thinking models (e.g. `gemini-3.7-flash`) are supported — internal reasoning parts are automatically filtered from the response
 
 ### Ollama Vision Notes
 
@@ -141,10 +142,10 @@ credential is not reused for fallback providers.
 - API: [Converse API](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Converse.html)
 - Authentication: AWS AKSK (not a single API key). Set `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` environment variables.
 - Optional: `AWS_SESSION_TOKEN` for temporary/STS credentials, `AWS_REGION` or `AWS_DEFAULT_REGION` (default: `us-east-1`).
-- Default onboarding model: `anthropic.claude-sonnet-4-5-20250929-v1:0`
+- Default onboarding model: `anthropic.claude-sonnet-5`
 - Supports native tool calling and prompt caching (`cachePoint`).
 - Cross-region inference profiles supported (e.g., `us.anthropic.claude-*`).
-- Model IDs use Bedrock format: `anthropic.claude-sonnet-4-6`, `anthropic.claude-opus-4-6-v1`, etc.
+- Model IDs use Bedrock format: `anthropic.claude-sonnet-5`, `anthropic.claude-sonnet-4-6`, etc.
 
 ### Ollama Reasoning Toggle
 
@@ -175,12 +176,12 @@ Behavior:
 - Base API URL: `https://integrate.api.nvidia.com/v1`
 - Model discovery: `revka models refresh --provider nvidia`
 
-Recommended starter model IDs (verified against NVIDIA API catalog on February 18, 2026):
+Recommended starter model IDs (verified against NVIDIA API catalog on September 1, 2026):
 
-- `meta/llama-3.3-70b-instruct`
-- `deepseek-ai/deepseek-v3.2`
-- `nvidia/llama-3.3-nemotron-super-49b-v1.5`
-- `nvidia/llama-3.1-nemotron-ultra-253b-v1`
+- `deepseek-ai/deepseek-v4-pro-0813`
+- `deepseek-ai/deepseek-v4-flash-0731`
+- `minimaxai/minimax-m3`
+- `moonshotai/kimi-k3`
 
 ### Claude Code / Codex / Gemini CLI Subscription Providers
 
@@ -267,7 +268,7 @@ model = "anthropic/claude-opus-4-20250514"
 [[model_routes]]
 hint = "fast"
 provider = "groq"
-model = "llama-3.3-70b-versatile"
+model = "openai/gpt-oss-120b"
 ```
 
 Then call with a hint model name (for example from tool or integration paths):

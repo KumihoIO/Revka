@@ -31,7 +31,7 @@ Chỉnh sửa `~/.revka/config.toml`:
 ```toml
 api_key = "YOUR_ZAI_API_KEY"
 default_provider = "zai"
-default_model = "glm-5"
+default_model = "glm-5.3"
 default_temperature = 0.7
 ```
 
@@ -39,10 +39,9 @@ default_temperature = 0.7
 
 | Model | Mô tả |
 |-------|-------|
-| `glm-5` | Mặc định khi onboarding; khả năng suy luận mạnh nhất |
-| `glm-4.7` | Chất lượng đa năng cao |
-| `glm-4.6` | Mức cơ bản cân bằng |
-| `glm-4.5-air` | Tùy chọn độ trễ thấp hơn |
+| `glm-5.3` | Mặc định khi onboarding; model chủ lực hiện tại |
+| `glm-5.2` | Thế hệ trước |
+| `glm-5.1` | Lựa chọn dự phòng ổn định |
 
 Khả năng khả dụng của model có thể thay đổi theo tài khoản/khu vực, hãy dùng API `/models` khi không chắc chắn.
 
@@ -56,7 +55,7 @@ curl -X POST "https://api.z.ai/api/coding/paas/v4/chat/completions" \
   -H "Authorization: Bearer YOUR_ZAI_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "glm-5",
+    "model": "glm-5.3",
     "messages": [{"role": "user", "content": "Hello"}]
   }'
 ```

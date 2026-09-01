@@ -4047,7 +4047,7 @@ pub async fn run(
     let mut model_name = model_override
         .as_deref()
         .or(config.default_model.as_deref())
-        .unwrap_or("anthropic/claude-sonnet-4")
+        .unwrap_or(crate::providers::model_catalog::GLOBAL_DEFAULT_MODEL)
         .to_string();
 
     let provider_runtime_options = providers::provider_runtime_options_from_config(&config);
@@ -5056,7 +5056,7 @@ pub async fn process_message(
     let model_name = config
         .default_model
         .clone()
-        .unwrap_or_else(|| "anthropic/claude-sonnet-4-20250514".into());
+        .unwrap_or_else(|| crate::providers::model_catalog::GLOBAL_DEFAULT_MODEL.to_string());
     let provider_runtime_options = providers::provider_runtime_options_from_config(&config);
     let provider: Box<dyn Provider> = providers::create_routed_provider_with_options(
         provider_name,

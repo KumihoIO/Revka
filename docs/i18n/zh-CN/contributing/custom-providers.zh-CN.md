@@ -33,7 +33,7 @@ default_model = "your-model-name"
 ```toml
 api_key = "your-api-key"
 default_provider = "anthropic-custom:https://api.example.com"
-default_model = "claude-sonnet-4-6"
+default_model = "claude-sonnet-5"
 ```
 
 ### 环境变量

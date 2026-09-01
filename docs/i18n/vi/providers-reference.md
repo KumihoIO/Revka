@@ -1,10 +1,10 @@
 # Tài liệu tham khảo Providers — Revka
 
-_Source English version updated 2026-04-21; localized version may be stale until retranslated._
+_Source English version updated 2026-09-01; localized version may be stale until retranslated._
 
 Tài liệu này liệt kê các provider ID, alias và biến môi trường chứa thông tin xác thực.
 
-Cập nhật lần cuối: **2026-03-10**.
+Cập nhật lần cuối: **2026-09-01**.
 
 ## Cách liệt kê các Provider
 
@@ -44,7 +44,8 @@ Với chuỗi provider dự phòng (`reliability.fallback_providers`), mỗi pro
 | `minimax` | `minimax-intl`, `minimax-io`, `minimax-global`, `minimax-cn`, `minimaxi`, `minimax-oauth`, `minimax-oauth-cn`, `minimax-portal`, `minimax-portal-cn` | Không | `MINIMAX_OAUTH_TOKEN`, `MINIMAX_API_KEY` |
 | `bedrock` | `aws-bedrock` | Không | `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` (tùy chọn: `AWS_REGION`) |
 | `qianfan` | `baidu` | Không | `QIANFAN_API_KEY` |
-| `qwen` | `dashscope`, `qwen-intl`, `dashscope-intl`, `qwen-us`, `dashscope-us`, `qwen-code`, `qwen-oauth`, `qwen_oauth` | Không | `QWEN_OAUTH_TOKEN`, `DASHSCOPE_API_KEY` |
+| `qwen` | `dashscope`, `qwen-intl`, `dashscope-intl`, `qwen-us`, `dashscope-us` | Không | `DASHSCOPE_API_KEY` |
+| `qwen-code` | `qwen-oauth`, `qwen_oauth` | Không | `QWEN_OAUTH_TOKEN`, `DASHSCOPE_API_KEY` |
 | `groq` | — | Không | `GROQ_API_KEY` |
 | `mistral` | — | Không | `MISTRAL_API_KEY` |
 | `xai` | `grok` | Không | `XAI_API_KEY` |
@@ -78,10 +79,10 @@ Với chuỗi provider dự phòng (`reliability.fallback_providers`), mỗi pro
 - API: [Converse API](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Converse.html)
 - Xác thực: AWS AKSK (không phải một API key đơn lẻ). Cần đặt biến môi trường `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY`.
 - Tùy chọn: `AWS_SESSION_TOKEN` cho thông tin xác thực tạm thời/STS, `AWS_REGION` hoặc `AWS_DEFAULT_REGION` (mặc định: `us-east-1`).
-- Model mặc định khi khởi tạo: `anthropic.claude-sonnet-4-5-20250929-v1:0`
+- Model mặc định khi khởi tạo: `anthropic.claude-sonnet-5`
 - Hỗ trợ native tool calling và prompt caching (`cachePoint`).
 - Hỗ trợ cross-region inference profiles (ví dụ: `us.anthropic.claude-*`).
-- Model ID dùng định dạng Bedrock: `anthropic.claude-sonnet-4-6`, `anthropic.claude-opus-4-6-v1`, v.v.
+- Model ID dùng định dạng Bedrock: `anthropic.claude-sonnet-5`, `anthropic.claude-sonnet-4-6`, v.v.
 
 ### Bật/tắt tính năng Reasoning của Ollama
 
@@ -112,12 +113,12 @@ Hành vi:
 - Base API URL: `https://integrate.api.nvidia.com/v1`
 - Khám phá model: `revka models refresh --provider nvidia`
 
-Các model ID khởi đầu được khuyến nghị (đã xác minh với danh mục NVIDIA API ngày 2026-02-18):
+Các model ID khởi đầu được khuyến nghị (đã xác minh với danh mục NVIDIA API ngày 2026-09-01):
 
-- `meta/llama-3.3-70b-instruct`
-- `deepseek-ai/deepseek-v3.2`
-- `nvidia/llama-3.3-nemotron-super-49b-v1.5`
-- `nvidia/llama-3.1-nemotron-ultra-253b-v1`
+- `deepseek-ai/deepseek-v4-pro-0813`
+- `deepseek-ai/deepseek-v4-flash-0731`
+- `minimaxai/minimax-m3`
+- `moonshotai/kimi-k3`
 
 ## Endpoint Tùy chỉnh
 
@@ -193,7 +194,7 @@ model = "anthropic/claude-opus-4-20250514"
 [[model_routes]]
 hint = "fast"
 provider = "groq"
-model = "llama-3.3-70b-versatile"
+model = "openai/gpt-oss-120b"
 ```
 
 Sau đó gọi với tên model hint (ví dụ từ tool hoặc các đường dẫn tích hợp):

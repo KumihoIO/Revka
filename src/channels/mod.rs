@@ -989,7 +989,7 @@ fn resolved_default_model(config: &Config) -> String {
     config
         .default_model
         .clone()
-        .unwrap_or_else(|| "anthropic/claude-sonnet-4.6".to_string())
+        .unwrap_or_else(|| crate::providers::model_catalog::GLOBAL_DEFAULT_MODEL.to_string())
 }
 
 fn runtime_defaults_from_config(config: &Config) -> ChannelRuntimeDefaults {

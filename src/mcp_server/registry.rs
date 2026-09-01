@@ -437,7 +437,7 @@ pub fn build_tools_with_runtime(
         let model = config
             .default_model
             .clone()
-            .unwrap_or_else(|| "openai/gpt-4o-mini".into());
+            .unwrap_or_else(|| crate::providers::model_catalog::GLOBAL_DEFAULT_MODEL.to_string());
         let runtime_opts = runtime
             .provider_runtime_options
             .as_deref()

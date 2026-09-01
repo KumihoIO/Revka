@@ -77,7 +77,7 @@ impl Tool for LlmTaskTool {
                 },
                 "model": {
                     "type": "string",
-                    "description": "Optional model override (e.g. 'anthropic/claude-sonnet-4-6'). \
+                    "description": "Optional model override (e.g. 'anthropic/claude-sonnet-5'). \
                                     Defaults to the configured default model."
                 },
                 "temperature": {

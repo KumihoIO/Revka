@@ -25,7 +25,7 @@ Lệnh xuất schema:
 | Khóa | Mặc định | Ghi chú |
 |---|---|---|
 | `default_provider` | `openrouter` | ID hoặc bí danh provider |
-| `default_model` | `anthropic/claude-sonnet-4-6` | Model định tuyến qua provider đã chọn |
+| `default_model` | `anthropic/claude-sonnet-5` | Model định tuyến qua provider đã chọn |
 | `default_temperature` | `0.7` | Nhiệt độ model |
 
 ## `[observability]`
@@ -107,7 +107,7 @@ Lưu ý:
 ```toml
 [agents.researcher]
 provider = "openrouter"
-model = "anthropic/claude-sonnet-4-6"
+model = "anthropic/claude-sonnet-5"
 system_prompt = "You are a research assistant."
 max_depth = 2
 agentic = true

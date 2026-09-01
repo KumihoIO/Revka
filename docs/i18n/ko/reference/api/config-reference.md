@@ -29,7 +29,7 @@ Revka는 시작 시 결정된 설정을 `INFO` 레벨로 기록합니다.
 | 키 | 기본값 | 메모 |
 |---|---|---|
 | `default_provider` | `openrouter` | 프로바이더 ID 또는 별칭 |
-| `default_model` | `anthropic/claude-sonnet-4-6` | 선택된 프로바이더로 라우팅되는 모델 |
+| `default_model` | `anthropic/claude-sonnet-5` | 선택된 프로바이더로 라우팅되는 모델 |
 | `default_temperature` | `0.7` | 모델 temperature |
 
 <!-- TODO screenshot: editor showing the [observability] section of config.toml -->
@@ -238,7 +238,7 @@ gated_domain_categories = ["banking"]
 ```toml
 [agents.researcher]
 provider = "openrouter"
-model = "anthropic/claude-sonnet-4-6"
+model = "anthropic/claude-sonnet-5"
 system_prompt = "You are a research assistant."
 max_depth = 2
 agentic = true

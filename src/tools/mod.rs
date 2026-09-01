@@ -454,7 +454,7 @@ pub fn all_tools_with_runtime(
         let llm_task_model = root_config
             .default_model
             .clone()
-            .unwrap_or_else(|| "openai/gpt-4o-mini".to_string());
+            .unwrap_or_else(|| crate::providers::model_catalog::GLOBAL_DEFAULT_MODEL.to_string());
         let llm_task_runtime_options = crate::providers::ProviderRuntimeOptions {
             auth_profile_override: None,
             provider_api_url: root_config.api_url.clone(),

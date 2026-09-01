@@ -2,7 +2,7 @@
 
 이 문서는 프로바이더 ID, 별칭, 자격 환경 변수의 매핑을 정리합니다.
 
-마지막 검증: **2026년 4월 21일**.
+마지막 검증: **2026년 9월 1일**.
 
 ## 프로바이더 목록 보기
 
@@ -43,7 +43,8 @@ revka providers
 | `bedrock` | `aws-bedrock` | 아니오 | `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` (선택: `AWS_REGION`) |
 | `qianfan` | `baidu` | 아니오 | `QIANFAN_API_KEY` |
 | `doubao` | `volcengine`, `ark`, `doubao-cn` | 아니오 | `ARK_API_KEY`, `DOUBAO_API_KEY` |
-| `qwen` | `dashscope`, `qwen-intl`, `dashscope-intl`, `qwen-us`, `dashscope-us`, `qwen-code`, `qwen-oauth`, `qwen_oauth` | 아니오 | `QWEN_OAUTH_TOKEN`, `DASHSCOPE_API_KEY` |
+| `qwen` | `dashscope`, `qwen-intl`, `dashscope-intl`, `qwen-us`, `dashscope-us` | 아니오 | `DASHSCOPE_API_KEY` |
+| `qwen-code` | `qwen-oauth`, `qwen_oauth` | 아니오 | `QWEN_OAUTH_TOKEN`, `DASHSCOPE_API_KEY` |
 | `groq` | — | 아니오 | `GROQ_API_KEY` |
 | `mistral` | — | 아니오 | `MISTRAL_API_KEY` |
 | `xai` | `grok` | 아니오 | `XAI_API_KEY` |
@@ -83,7 +84,7 @@ revka providers
 - 인증은 `GEMINI_API_KEY`, `GOOGLE_API_KEY`, 또는 Gemini CLI OAuth 캐시(`~/.gemini/oauth_creds.json`)에서 올 수 있습니다.
 - API 키 요청은 `generativelanguage.googleapis.com/v1beta`를 사용합니다.
 - Gemini CLI OAuth 요청은 `cloudcode-pa.googleapis.com/v1internal`에 Code Assist 요청 봉투 의미론으로 보냅니다.
-- Thinking 모델(예: `gemini-3-pro-preview`)을 지원합니다 — 내부 추론 부분은 응답에서 자동 필터링됩니다.
+- Thinking 모델(예: `gemini-3.7-flash`)을 지원합니다 — 내부 추론 부분은 응답에서 자동 필터링됩니다.
 
 ### Ollama Vision 메모
 
@@ -139,10 +140,10 @@ revka providers
 - API: [Converse API](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Converse.html)
 - 인증: AWS AKSK (단일 API 키 아님). `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` 환경 변수를 설정하세요.
 - 선택: 임시/STS 자격을 위한 `AWS_SESSION_TOKEN`, `AWS_REGION` 또는 `AWS_DEFAULT_REGION` (기본 `us-east-1`).
-- 기본 온보딩 모델: `anthropic.claude-sonnet-4-5-20250929-v1:0`
+- 기본 온보딩 모델: `anthropic.claude-sonnet-5`
 - 네이티브 도구 호출과 프롬프트 캐싱(`cachePoint`) 지원.
 - 크로스 리전 추론 프로파일 지원 (예: `us.anthropic.claude-*`).
-- 모델 ID는 Bedrock 포맷을 사용합니다: `anthropic.claude-sonnet-4-6`, `anthropic.claude-opus-4-6-v1` 등.
+- 모델 ID는 Bedrock 포맷을 사용합니다: `anthropic.claude-sonnet-5`, `anthropic.claude-sonnet-4-6` 등.
 
 ### Ollama Reasoning 토글
 
@@ -173,12 +174,12 @@ reasoning_enabled = false
 - 베이스 API URL: `https://integrate.api.nvidia.com/v1`
 - 모델 디스커버리: `revka models refresh --provider nvidia`
 
-권장 시작 모델 ID (2026년 2월 18일 NVIDIA API 카탈로그 기준):
+권장 시작 모델 ID (2026년 9월 1일 NVIDIA API 카탈로그 기준):
 
-- `meta/llama-3.3-70b-instruct`
-- `deepseek-ai/deepseek-v3.2`
-- `nvidia/llama-3.3-nemotron-super-49b-v1.5`
-- `nvidia/llama-3.1-nemotron-ultra-253b-v1`
+- `deepseek-ai/deepseek-v4-pro-0813`
+- `deepseek-ai/deepseek-v4-flash-0731`
+- `minimaxai/minimax-m3`
+- `moonshotai/kimi-k3`
 
 ### Claude Code / Codex / Gemini CLI 구독 프로바이더
 
@@ -264,7 +265,7 @@ model = "anthropic/claude-opus-4-20250514"
 [[model_routes]]
 hint = "fast"
 provider = "groq"
-model = "llama-3.3-70b-versatile"
+model = "openai/gpt-oss-120b"
 ```
 
 그 후 도구나 통합 경로에서 힌트 모델 이름으로 호출합니다:

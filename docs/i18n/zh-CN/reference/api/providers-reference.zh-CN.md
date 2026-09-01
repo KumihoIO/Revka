@@ -1,10 +1,10 @@
 # Revka 提供商参考文档
 
-_Source English version updated 2026-04-21; localized version may be stale until retranslated._
+_Source English version updated 2026-09-01; localized version may be stale until retranslated._
 
 本文档映射提供商 ID、别名和凭证环境变量。
 
-最后验证时间：**2026年2月21日**。
+最后验证时间：**2026年9月1日**。
 
 ## 如何列出提供商
 
@@ -45,7 +45,8 @@ revka providers
 | `bedrock` | `aws-bedrock` | 否 | `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY`（可选：`AWS_REGION`） |
 | `qianfan` | `baidu` | 否 | `QIANFAN_API_KEY` |
 | `doubao` | `volcengine`、`ark`、`doubao-cn` | 否 | `ARK_API_KEY`、`DOUBAO_API_KEY` |
-| `qwen` | `dashscope`、`qwen-intl`、`dashscope-intl`、`qwen-us`、`dashscope-us`、`qwen-code`、`qwen-oauth`、`qwen_oauth` | 否 | `QWEN_OAUTH_TOKEN`、`DASHSCOPE_API_KEY` |
+| `qwen` | `dashscope`、`qwen-intl`、`dashscope-intl`、`qwen-us`、`dashscope-us` | 否 | `DASHSCOPE_API_KEY` |
+| `qwen-code` | `qwen-oauth`、`qwen_oauth` | 否 | `QWEN_OAUTH_TOKEN`、`DASHSCOPE_API_KEY` |
 | `groq` | — | 否 | `GROQ_API_KEY` |
 | `mistral` | — | 否 | `MISTRAL_API_KEY` |
 | `xai` | `grok` | 否 | `XAI_API_KEY` |
@@ -77,7 +78,7 @@ revka providers
 - 认证可以来自 `GEMINI_API_KEY`、`GOOGLE_API_KEY` 或 Gemini CLI OAuth 缓存（`~/.gemini/oauth_creds.json`）
 - API 密钥请求使用 `generativelanguage.googleapis.com/v1beta`
 - Gemini CLI OAuth 请求使用 `cloudcode-pa.googleapis.com/v1internal` 搭配代码辅助请求信封语义
-- 支持思考模型（例如 `gemini-3-pro-preview`）—— 内部推理部分会自动从响应中过滤掉。
+- 支持思考模型（例如 `gemini-3.7-flash`）—— 内部推理部分会自动从响应中过滤掉。
 
 ### Ollama 视觉说明
 
@@ -133,10 +134,10 @@ revka providers
 - API：[Converse API](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Converse.html)
 - 认证：AWS AKSK（不是单个 API 密钥）。设置 `AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY` 环境变量。
 - 可选：`AWS_SESSION_TOKEN` 用于临时/STS 凭证，`AWS_REGION` 或 `AWS_DEFAULT_REGION`（默认：`us-east-1`）。
-- 默认引导模型：`anthropic.claude-sonnet-4-5-20250929-v1:0`
+- 默认引导模型：`anthropic.claude-sonnet-5`
 - 支持原生工具调用和提示缓存（`cachePoint`）。
 - 支持跨区域推理配置文件（例如 `us.anthropic.claude-*`）。
-- 模型 ID 使用 Bedrock 格式：`anthropic.claude-sonnet-4-6`、`anthropic.claude-opus-4-6-v1` 等。
+- 模型 ID 使用 Bedrock 格式：`anthropic.claude-sonnet-5`、`anthropic.claude-sonnet-4-6` 等。
 
 ### Ollama 推理切换
 
@@ -167,12 +168,12 @@ reasoning_enabled = false
 - 基础 API URL：`https://integrate.api.nvidia.com/v1`
 - 模型发现：`revka models refresh --provider nvidia`
 
-推荐的入门模型 ID（2026年2月18日针对 NVIDIA API 目录验证）：
+推荐的入门模型 ID（2026年9月1日针对 NVIDIA API 目录验证）：
 
-- `meta/llama-3.3-70b-instruct`
-- `deepseek-ai/deepseek-v3.2`
-- `nvidia/llama-3.3-nemotron-super-49b-v1.5`
-- `nvidia/llama-3.1-nemotron-ultra-253b-v1`
+- `deepseek-ai/deepseek-v4-pro-0813`
+- `deepseek-ai/deepseek-v4-flash-0731`
+- `minimaxai/minimax-m3`
+- `moonshotai/kimi-k3`
 
 ## 自定义端点
 
@@ -248,7 +249,7 @@ model = \"anthropic/claude-opus-4-20250514\"
 [[model_routes]]
 hint = \"fast\"
 provider = \"groq\"
-model = \"llama-3.3-70b-versatile\"
+model = \"openai/gpt-oss-120b\"
 ```
 
 然后使用提示模型名称调用（例如从工具或集成路径）：
