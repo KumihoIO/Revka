@@ -196,29 +196,30 @@ def _check_cycles(adj: dict[str, set[str]], result: ValidationResult) -> list[st
     WHITE, GRAY, BLACK = 0, 1, 2
     color: dict[str, int] = {node: WHITE for node in adj}
     order: list[str] = []
-    cycle_nodes: list[str] = []
-
-    def dfs(node: str) -> bool:
-        color[node] = GRAY
-        for dep in adj[node]:
+    for start in adj:
+        if color[start] != WHITE:
+            continue
+        color[start] = GRAY
+        # Explicit stack keeps valid deep DAGs independent of Python's
+        # recursion limit while retaining dependencies-first DFS ordering.
+        stack = [(start, iter(adj[start]))]
+        while stack:
+            node, deps = stack[-1]
+            try:
+                dep = next(deps)
+            except StopIteration:
+                color[node] = BLACK
+                order.append(node)
+                stack.pop()
+                continue
             if dep not in color:
                 continue
             if color[dep] == GRAY:
-                cycle_nodes.append(f"{node} -> {dep}")
-                return True
+                result.add_error(f"Dependency cycle detected: {node} -> {dep}")
+                return order
             if color[dep] == WHITE:
-                if dfs(dep):
-                    return True
-        color[node] = BLACK
-        order.append(node)
-        return False
-
-    for node in adj:
-        if color[node] == WHITE:
-            if dfs(node):
-                result.add_error(
-                    f"Dependency cycle detected: {', '.join(cycle_nodes)}"
-                )
+                color[dep] = GRAY
+                stack.append((dep, iter(adj[dep])))
 
     return order  # Topological order (dependencies first)
 
